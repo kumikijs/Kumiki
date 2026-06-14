@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/mcp",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "type": "module",
   "description": "Kumiki MCP server — exposes the compiler (check/build/list/view/add/replace/remove/fix) and spec search as MCP tools.",
   "license": "Apache-2.0",
