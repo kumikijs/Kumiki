@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/docs",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "description": "Kumiki documentation site (VitePress) — serves the spec, guide, and design notes plus a browser playground with WebMCP tools.",

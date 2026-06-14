@@ -1,5 +1,19 @@
 # @kumikijs/cli
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [47bc7aa]
+- Updated dependencies [47bc7aa]
+- Updated dependencies [47bc7aa]
+- Updated dependencies [47bc7aa]
+- Updated dependencies [47bc7aa]
+- Updated dependencies [47bc7aa]
+- Updated dependencies [47bc7aa]
+  - @kumikijs/compiler@0.10.0
+  - @kumikijs/runtime@0.10.0
+
 ## 0.5.0
 
 ### Minor Changes

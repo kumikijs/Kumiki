@@ -1,5 +1,11 @@
 # kumiki
 
+## 0.3.8
+
+### Patch Changes
+
+- @kumikijs/cli@0.5.1
+
 ## 0.3.7
 
 ### Patch Changes

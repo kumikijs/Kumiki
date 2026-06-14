@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "description": "Kumiki CLI — build, check, and AI-edit (list/view/add/replace/remove/rename/fix) Kumiki sources.",
   "license": "Apache-2.0",
