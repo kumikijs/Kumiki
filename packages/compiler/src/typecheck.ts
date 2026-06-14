@@ -125,7 +125,7 @@ function checkAll(program: Program, registeredCaps: Set<string>): KumikiError[] 
   return errors;
 }
 
-// ----- motion layer (v0.2 M5) -----
+// ----- motion layer -----
 
 const MOTION_KEYFRAME_PROPS = new Set(["opacity", "translate-x", "translate-y", "scale", "rotate"]);
 const MOTION_EASINGS = new Set(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]);
@@ -1187,7 +1187,6 @@ function resolveType(t: TypeExpr, sym: SymbolTable, errors: KumikiError[]): void
     case "TypeRef":
       if (!sym.types.has(t.name)) {
         // Could be an in-scope type param of an enclosing TypeDef; we don't track those yet.
-        // Accept silently for Phase 2.
         return;
       }
       return;

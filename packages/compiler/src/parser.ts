@@ -1940,7 +1940,7 @@ class Parser {
     const path = this.eat("str").value;
     if (this.matchOp("->>")) {
       this.next();
-      // redirect target as string. Represent it as a tile name; not actually used in Phase 2.
+      // redirect target as string. Represent it as a tile name.
       const target = this.eat("str").value;
       return { path, tile: `>>${target}` };
     }

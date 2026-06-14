@@ -50,7 +50,7 @@ describe("parser", () => {
     expect(appTile?.body.name).toBe("column");
   });
 
-  it("parses an effect definition (Phase 2)", () => {
+  it("parses an effect definition", () => {
     const program = parse(lex("effect foo cap=http.get in=Unit out=Unit"));
     expect(program.defs).toHaveLength(1);
     expect(program.defs[0]).toMatchObject({ kind: "EffectDef", name: "foo", cap: "http.get" });
