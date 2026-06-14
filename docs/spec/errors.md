@@ -1,6 +1,6 @@
 # Error Code Specification
 
-The diagnostics reported by the Kumiki compiler (`@kumiki/compiler`) split into two families: **parse errors** and **type-check errors**. This document enumerates both normatively. If a code is added or changed on the implementation side, this document must be updated at the same time.
+The diagnostics reported by the Kumiki compiler (`@kumikijs/compiler`) split into two families: **parse errors** and **type-check errors**. This document enumerates both normatively. If a code is added or changed on the implementation side, this document must be updated at the same time.
 
 ## The Form of an Error
 
@@ -48,7 +48,7 @@ Two or more `timer(d, name=N)` triggers declare the same timer name `N`. Timer n
 
 > `Timer name "<name>" is declared more than once`
 
-**Fix**: Rename one of the timers so each `name=` is unique. See [Lifecycle](./lifecycle.md) §7.1.5.
+**Fix**: Rename one of the timers so each `name=` is unique. See [timer](./lifecycle.md#_7-1-5-timer).
 
 ## E01xx — Name Resolution
 
@@ -81,7 +81,7 @@ A `stop-timer(N)` statement refers to a timer name `N` that no `timer(d, name=N)
 
 > `stop-timer refers to undefined timer name "<name>"`
 
-**Fix**: Check the spelling, or declare the timer with `timer(d, name=N)`. See [Lifecycle](./lifecycle.md) §7.1.5.
+**Fix**: Check the spelling, or declare the timer with `timer(d, name=N)`. See [timer](./lifecycle.md#_7-1-5-timer).
 
 ### E0105 `undef-tile`
 
@@ -96,7 +96,7 @@ A tile's `motion: "<name>"` prop refers to a motion that no `motion <name> = {�
 
 > `Reference to undefined motion "<name>"`
 
-**Fix**: Check the spelling, or declare the motion. See [Style](./style.md) §4.9.1.
+**Fix**: Check the spelling, or declare the motion. See [The motion definition](./style.md#_4-9-1-the-motion-definition).
 
 ### E0108 `undef-member`
 
@@ -104,11 +104,11 @@ A `recv.member` access where the **inferred type** of `recv` is known, but `memb
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
 
-**Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [Standard Library](./stdlib.md) §2.2.3.
+**Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [List(T)](./stdlib.md#_2-2-3-list-t).
 
 ### E0109 `test-wildcard-misuse`
 
-A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `expect` — in a reducer/tile/fn/app body, or in a test's `given`. Wildcards are a matching construct for the expected result only (§8.2.2); they have no meaning as a value to compute or feed in.
+A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `expect` — in a reducer/tile/fn/app body, or in a test's `given`. Wildcards are a matching construct for the expected result only ([Wildcards](./testing.md#_8-2-2-wildcards)); they have no meaning as a value to compute or feed in.
 
 > `Test wildcard "<any-id>" is only valid inside a reducer-test \`expect\``
 
@@ -135,11 +135,11 @@ A capability required by an effect is not declared in `app.caps`.
 
 ### E0302 `unknown-capability`
 
-An entry in `app.caps` is neither a standard capability ([Standard Library](./stdlib.md) §2.5) nor one registered in a `kumiki.caps.json` manifest.
+An entry in `app.caps` is neither a standard capability ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)) nor one registered in a `kumiki.caps.json` manifest.
 
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
-**Fix**: Use a standard capability, correct the spelling, or register the custom capability in a `kumiki.caps.json` next to the `.kumiki` file. See [Standard Library](./stdlib.md) §2.5.
+**Fix**: Use a standard capability, correct the spelling, or register the custom capability in a `kumiki.caps.json` next to the `.kumiki` file. See [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities).
 
 ### E0305 `fn-impurity`
 
@@ -151,7 +151,7 @@ A `fn` (pure function) is reading a slot. A `fn` must depend only on its argumen
 
 ## E04xx — Motion
 
-Validity of a `motion` definition's closed grammar ([Style](./style.md) §4.9.1).
+Validity of a `motion` definition's closed grammar ([The motion definition](./style.md#_4-9-1-the-motion-definition)).
 
 ### E0401 `motion-unknown-property`
 
@@ -207,7 +207,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 ## E08xx — Runtime Hazards
 
-A band for statically catching, at the `check` stage, "code" that passes type checking but breaks at runtime. For the three-layer verification model, see [Testing](./testing.md) §8.10.
+A band for statically catching, at the `check` stage, "code" that passes type checking but breaks at runtime. For the three-layer verification model, see [The Three Layers of Tooling Verification](./testing.md#_8-10-the-three-layers-of-tooling-verification).
 
 ### E0801 `unimplemented-method`
 
@@ -215,6 +215,6 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**Note**: The set of implemented methods is solely authoritative in `@kumiki/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). Calling a no-argument method with `()` is also caught by this band. For the list of standard library methods, see [Standard Library](./stdlib.md).
+**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). Calling a no-argument method with `()` is also caught by this band. For the list of standard library methods, see [Standard Library](./stdlib.md).
 
 **Fix**: Correct it to the right method name, or rewrite the operation using implemented means such as `match` / `fold`. If you need an unimplemented specification method, implement it in `packages/` and add a working example in `examples/`.

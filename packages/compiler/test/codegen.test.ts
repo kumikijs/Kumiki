@@ -286,4 +286,28 @@ describe("codegen", () => {
     expect(result.js).toContain("storageWrite(");
     expect(result.js).toMatch(/import \{[^}]*storageWrite[^}]*\}/);
   });
+
+  it("dispatches session.read/write to sessionRead/sessionWrite handlers (#84)", () => {
+    const src = `
+      slot v : Text = ""
+      effect load cap=session.read  in=Unit out=Result(Option(Text), Text) map-request={key: "v", decode: Decoder.Json(Text)}
+      effect save cap=session.write in=Text out=Result(Unit, Text)        map-request={key: "v", value: $1}
+      reducer boot on=app.start do= emit load()
+      reducer loaded on=load.ok($o, _) do= v := $o.get-or("")
+      reducer onClick on=ui.click(B) do= emit save(v)
+      tile B = button(text="save")
+      tile App = column(B)
+      app A caps=[session.read, session.write] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("sessionRead(");
+    expect(result.js).toContain("sessionWrite(");
+    expect(result.js).toMatch(/import \{[^}]*sessionRead[^}]*\}/);
+    expect(result.js).toMatch(/import \{[^}]*sessionWrite[^}]*\}/);
+    // session.* must NOT spuriously pull in the localStorage handlers
+    expect(result.js).not.toContain("storageRead");
+    expect(result.js).not.toContain("storageWrite");
+  });
 });

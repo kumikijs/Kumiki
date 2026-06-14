@@ -1,0 +1,45 @@
+# Feature: confirm effect + route.leave guard.
+#
+# lifecycle.md §7.6: `confirm` is a built-in effect that renders a modal
+# dialog with Yes / No, dispatching the named reducer for the chosen
+# answer.
+# routing.md §3.5.2: a `route.leave` reducer can emit `confirm` to gate
+# the transition — Yes commits, No stays on the old route.
+
+slot dirty   : Bool = false
+slot saved   : Int  = 0
+slot visits  : Int  = 0
+
+reducer edit       on=ui.input(EditField) do= dirty := true
+reducer save       on=ui.click(SaveBtn)   do= dirty := false
+                                              saved := saved + 1
+reducer onEnterHome on=route.enter("/")       do= visits := visits + 1
+
+reducer guardEdit  on=route.leave("/edit")
+    do= if dirty
+        then emit confirm({title: "Discard changes?",
+                           message: "You have unsaved edits.",
+                           onYes: continueLeave,
+                           onNo:  stayHere})
+        else ()
+
+reducer continueLeave on=ui.click(_) do= dirty := false
+reducer stayHere      on=ui.click(_) do= ()
+
+tile EditField = textarea(placeholder="Type something", onInput=edit)
+tile SaveBtn   = button(text="Save", onClick=save)
+tile Home      = page(heading("Home"),
+                      text("saved: " + saved.show),
+                      text("home visits: " + visits.show),
+                      link(to="/edit") {text: "Go edit"})
+tile Editor    = page(heading("Editor"),
+                      text("dirty: " + dirty.show),
+                      EditField,
+                      SaveBtn,
+                      link(to="/") {text: "Back home"})
+tile NotFound  = page(heading("404"), link(to="/") {text: "Home"})
+
+app ConfirmLeaveGuard
+    caps   = [notification.show, nav.push, nav.replace]
+    routes = {"/" -> Home, "/edit" -> Editor, "/404" -> NotFound}
+    init   = []

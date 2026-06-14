@@ -50,7 +50,7 @@ describe("parser", () => {
     expect(appTile?.body.name).toBe("column");
   });
 
-  it("parses an effect definition (Phase 2)", () => {
+  it("parses an effect definition", () => {
     const program = parse(lex("effect foo cap=http.get in=Unit out=Unit"));
     expect(program.defs).toHaveLength(1);
     expect(program.defs[0]).toMatchObject({ kind: "EffectDef", name: "foo", cap: "http.get" });
@@ -134,5 +134,78 @@ reducer stop on=ui.click(B) do= stop-timer(t)`;
     expect(stmt.kind).toBe("StopTimer");
     if (stmt.kind !== "StopTimer") throw new Error("expected StopTimer");
     expect(stmt.name).toBe("t");
+  });
+
+  // Closed-set lifecycle events (docs/spec/language.md §1.6.1, lifecycle.md
+  // §7.1). The parser must accept every legal name, encode `tile.mount(X)` /
+  // `route.error("/p")` with their argument so the runtime can match by
+  // identity, and reject unknown variants.
+  it("parses the full app.* lifecycle event set", () => {
+    const src = `slot s : Bool = false
+reducer aStop    on=app.stop     do= s := true
+reducer aShow    on=app.visible  do= s := true
+reducer aHide    on=app.hidden   do= s := true
+reducer aOn      on=app.online   do= s := true
+reducer aOff     on=app.offline  do= s := true
+reducer a401     on=app.http-401 do= s := true
+reducer a403     on=app.http-403 do= s := true
+reducer a5xx     on=app.http-5xx do= s := true`;
+    const program = parse(lex(src));
+    const names = (program.defs.filter((d) => d.kind === "ReducerDef") as ReducerDef[]).map((r) =>
+      r.on.kind === "LifecycleEvent" ? r.on.name : null,
+    );
+    expect(names).toEqual([
+      "app.stop",
+      "app.visible",
+      "app.hidden",
+      "app.online",
+      "app.offline",
+      "app.http-401",
+      "app.http-403",
+      "app.http-5xx",
+    ]);
+  });
+
+  it("encodes tile.mount(X) / tile.unmount(X) with the tile name", () => {
+    const src = `slot s : Int = 0
+reducer up on=tile.mount(Panel)   do= s := s + 1
+reducer dn on=tile.unmount(Panel) do= s := s - 1`;
+    const program = parse(lex(src));
+    const [up, dn] = (program.defs as ReducerDef[]).slice(1, 3);
+    expect(up?.on.kind).toBe("LifecycleEvent");
+    if (up?.on.kind !== "LifecycleEvent") throw new Error("expected LifecycleEvent");
+    expect(up.on.name).toBe('tile.mount("Panel")');
+    if (dn?.on.kind !== "LifecycleEvent") throw new Error("expected LifecycleEvent");
+    expect(dn.on.name).toBe('tile.unmount("Panel")');
+  });
+
+  it('encodes route.error("/p") with the route pattern', () => {
+    const src = `slot s : Bool = false
+reducer onErr on=route.error("/p") do= s := true`;
+    const program = parse(lex(src));
+    const r = program.defs[1] as ReducerDef;
+    if (r.on.kind !== "LifecycleEvent") throw new Error("expected LifecycleEvent");
+    expect(r.on.name).toBe('route.error("/p")');
+  });
+
+  it("rejects unknown lifecycle event names", () => {
+    expect(() =>
+      parse(
+        lex(`slot s : Int = 0
+reducer bad on=app.bogus do= s := 1`),
+      ),
+    ).toThrow(/Unknown app lifecycle event/);
+    expect(() =>
+      parse(
+        lex(`slot s : Int = 0
+reducer bad on=tile.bogus(X) do= s := 1`),
+      ),
+    ).toThrow(/Unknown tile lifecycle event/);
+    expect(() =>
+      parse(
+        lex(`slot s : Int = 0
+reducer bad on=route.bogus("/p") do= s := 1`),
+      ),
+    ).toThrow(/Unknown route lifecycle event/);
   });
 });

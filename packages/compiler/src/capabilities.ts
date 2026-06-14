@@ -16,6 +16,7 @@ export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
   "session.write",
   "indexed.read",
   "indexed.write",
+  "indexed.delete",
   "nav.push",
   "nav.replace",
   "nav.back",

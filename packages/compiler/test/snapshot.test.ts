@@ -82,7 +82,7 @@ describe("compile output snapshots", () => {
     expect(result.js).toMatch(/sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)\.map\(/);
   });
 
-  it("counter: variant equality stays correct (Phase 2 regression guard)", () => {
+  it("counter: variant equality stays correct", () => {
     const src = readFileSync(COUNTER, "utf8");
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");

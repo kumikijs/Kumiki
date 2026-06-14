@@ -1,6 +1,6 @@
 # Playground
 
-ブラウザ上で Kumiki を編集 → コンパイル → プレビューできる。コンパイラ（`@kumiki/compiler`）とランタイム（`@kumiki/runtime`）はブラウザ内で動く。左で編集すると右に結果が出る。`例を選ぶ…` から [機能別カタログ](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features)の各例を読み込める。
+ブラウザ上で Kumiki を編集 → コンパイル → プレビューできる。コンパイラ（`@kumikijs/compiler`）とランタイム（`@kumikijs/runtime`）はブラウザ内で動く。左で編集すると右に結果が出る。`例を選ぶ…` から [機能別カタログ](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features)の各例を読み込める。
 
 <Playground />
 
@@ -15,4 +15,4 @@
 | `kumiki_load_example` | 名前を指定して例をエディタに読み込む |
 | `kumiki_set_source` | エディタのソースを差し替えてプレビューする |
 
-ローカル CLI / エディタ統合用には、stdio で動く [`@kumiki/mcp`](https://github.com/kage1020/kumiki/tree/main/packages/mcp) サーバーもある。
+ローカル CLI / エディタ統合用には、stdio で動く [`@kumikijs/mcp`](https://github.com/kage1020/Kumiki/tree/main/packages/mcp) サーバーもある。

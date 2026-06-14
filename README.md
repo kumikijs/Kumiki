@@ -2,7 +2,7 @@
 
 English · [日本語](./README.ja.md)
 
-**A web framework of AI, by AI, for AI.** Definitions interlock like Japanese joinery (_kumiki_) — no nails, no glue, no hidden state — so AI can write, edit, and reassemble an app in parallel without breaking it. (experimental, v0.1)
+**A web framework of AI, by AI, for AI.** Definitions interlock like Japanese joinery (_kumiki_) — no nails, no glue, no hidden state — so AI can write, edit, and reassemble an app in parallel without breaking it.
 
 ```kumiki
 slot count : Int = 0
@@ -20,7 +20,7 @@ app Counter
 
 Kumiki has none of the "optimized for human cognition" machinery like JSX, Hooks, dependency arrays, or Providers. Instead, it represents an app as a set of independent definitions across **7 layers** (type / slot / effect / reducer / tile / fn / app). Syntax overhead is small, dependencies between definitions are explicit, and AI can safely edit parts of it.
 
-> ⚠️ **experimental**. The language, runtime, and tools may change. Production use is not intended.
+> The language, runtime, and tools are still pre-1.0 and may change between minor versions. Pin exact versions when you depend on it.
 
 ## Why Kumiki
 
@@ -51,10 +51,10 @@ If you're new, go to [docs/guide/getting-started.md](./docs/guide/getting-starte
 
 | Package | Contents |
 |---|---|
-| [`@kumiki/compiler`](./packages/compiler/) | lexer, parser, typechecker, codegen |
-| [`@kumiki/runtime`](./packages/runtime/) | DOM runtime (signal graph, mount, dispatch) |
-| [`@kumiki/cli`](./packages/cli/) | `kumiki` command (build / check / list / view / add / replace / remove / rename / fix) |
-| [`@kumiki/mcp`](./packages/mcp/) | MCP server. Exposes the compiler, AI editing, and spec search as MCP tools |
+| [`@kumikijs/compiler`](./packages/compiler/) | lexer, parser, typechecker, codegen |
+| [`@kumikijs/runtime`](./packages/runtime/) | DOM runtime (signal graph, mount, dispatch) |
+| [`@kumikijs/cli`](./packages/cli/) | `kumiki` command (build / check / list / view / add / replace / remove / rename / fix) |
+| [`@kumikijs/mcp`](./packages/mcp/) | MCP server. Exposes the compiler, AI editing, and spec search as MCP tools |
 
 ## Operating model
 

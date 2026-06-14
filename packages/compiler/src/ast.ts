@@ -1,4 +1,4 @@
-// AST types for Kumiki v0.1 — Phase 1 + Phase 2 (TodoMVC).
+// AST types for Kumiki.
 
 export type Pos = { line: number; col: number };
 
@@ -60,7 +60,7 @@ export type ThemeDef = {
   pos: Pos;
 };
 
-// ----- motion layer (reusable, scoped animations; v0.2 M5) -----
+// ----- motion layer (reusable, scoped animations) -----
 // A purely-presentational definition modeled on `theme`: the body is a record
 // literal (so it cannot reference slots/effects — purity is structural).
 export type MotionDef = {
@@ -125,6 +125,58 @@ export type EffectDef = {
   pos: Pos;
 };
 
+export type AppHttpConfig = {
+  // `headers` stays as an Expr because it may reference live slot state
+  // (e.g. session tokens) and must be re-evaluated on every request, not frozen
+  // at mount.
+  baseUrl?: Expr;
+  headers?: Expr;
+  on401?: string;
+  on403?: string;
+  on5xx?: string;
+  timeout?: Expr;
+  credentials?: Expr;
+  pos: Pos;
+};
+
+export type AppIndexedDbStore = {
+  name: string;
+  key: string;
+  indexes?: string[];
+};
+
+export type AppIndexedDbConfig = {
+  name: string;
+  version: number;
+  stores: AppIndexedDbStore[];
+  pos: Pos;
+};
+
+// app.meta — document-level metadata reflected into <head> at mount.
+// All fields are static string literals (no slot refs): the head is set once
+// at startup and the AI should be able to read these values without running
+// the app. Keys are the spec's closed set (style.md §4): title, description,
+// og-image, favicon. Unknown keys are rejected by the parser.
+export type AppMetaConfig = {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+  favicon?: string;
+  pos: Pos;
+};
+
+// app.analytics — opts the app into a default `analytics.send` provider so an
+// app can emit measurement events without a host registering one (runtime.md
+// §10.4.6). `provider: "console"` logs each event; `"noop"` silently absorbs
+// them — useful in tests / preview environments where you want the capability
+// declared but no actual sink. A host-supplied provider for `analytics.send`
+// still takes precedence over this default (the inbound ecosystem seam).
+export type AppAnalyticsConfig = {
+  provider: "console" | "noop";
+  appId?: string;
+  pos: Pos;
+};
+
 export type AppDef = {
   kind: "AppDef";
   name: string;
@@ -132,6 +184,10 @@ export type AppDef = {
   routes: { path: string; tile: string }[];
   init: Expr[];
   theme?: string;
+  http?: AppHttpConfig;
+  indexedDb?: AppIndexedDbConfig;
+  meta?: AppMetaConfig;
+  analytics?: AppAnalyticsConfig;
   pos: Pos;
 };
 

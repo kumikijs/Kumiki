@@ -2,7 +2,7 @@
 
 English · [日本語](./CONTRIBUTING.ja.md)
 
-Kumiki is experimental OSS, and its operating policy is somewhat unusual. Please read this before getting your hands dirty.
+Kumiki is pre-1.0 OSS, and its operating policy is somewhat unusual. Please read this before getting your hands dirty.
 
 ## Core policy: answer questions and bugs with examples and tests
 

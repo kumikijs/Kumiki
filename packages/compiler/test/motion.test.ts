@@ -14,7 +14,7 @@ const SPIN = `motion Spin = {
 }
 tile Spinner = box(text("…")) {motion: "Spin"}`;
 
-describe("motion layer (v0.2 M5)", () => {
+describe("motion layer", () => {
   it("parses a `motion` definition as a MotionDef (sibling of theme, not a 7-layer)", () => {
     const program = parse(lex(`${SPIN}${APP_TAIL}`));
     const motions = program.defs.filter((d): d is MotionDef => d.kind === "MotionDef");

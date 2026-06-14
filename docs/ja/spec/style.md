@@ -11,11 +11,11 @@ Kumiki は **CSS を直接書かせない**。CSS のカスケード・特異度
 3. **レイアウトはタイルプリミティブ**（`row` / `column` / `grid`）の props で表現
 4. **どうしても必要なときだけ** `class` / `style` props で素通し
 
-これで普通の SPA に必要な見た目はカバーできる。再利用可能で任意のアニメーションは `motion` 定義（§4.9.1）が提供する。
+これで普通の SPA に必要な見た目はカバーできる。再利用可能で任意のアニメーションは [`motion` 定義](#_4-9-1-the-motion-definition) が提供する。
 
 ---
 
-## 4.2 デザイントークン
+## 4.2 デザイントークン {#_4-2-design-tokens}
 
 `theme` 定義で宣言する：
 
@@ -317,7 +317,7 @@ button(text="Save") {
 icon(name="check") {size: "md", color: "success"}
 ```
 
-組み込みアイコンセットを v0.1 で 100 個程度提供する予定（リストは後日）。カスタムアイコンは `theme.icons` でパス登録：
+組み込みアイコンセットを提供予定（リストは後日）。カスタムアイコンは `theme.icons` でパス登録：
 
 ```kumiki
 theme MyTheme = {
@@ -330,9 +330,7 @@ theme MyTheme = {
 
 ---
 
-## 4.9 アニメーション (v0.1 では限定)
-
-v0.1 では以下のみ：
+## 4.9 アニメーション
 
 | prop | 効果 |
 |---|---|
@@ -347,9 +345,9 @@ v0.1 では以下のみ：
 when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 ```
 
-### 4.9.1 `motion` 定義 (v0.2)
+### 4.9.1 `motion` 定義 {#_4-9-1-the-motion-definition}
 
-再利用可能で任意（ただし閉じた文法）のアニメーション — スピナー、パルス、独自の入退場 — には **`motion`** を宣言する。これは `theme` と同格のトップレベル定義（純粋に表示用の定義で、7 つのロジックレイヤーには**含めない** — [language.ja.md §1.1.1](./language.md) 参照）であり、任意の tile の `motion` プロップから参照する。
+再利用可能で任意（ただし閉じた文法）のアニメーション — スピナー、パルス、独自の入退場 — には **`motion`** を宣言する。これは `theme` と同格のトップレベル定義（純粋に表示用の定義で、7 つのロジックレイヤーには**含めない** — [レイヤ一覧](./language.md#_1-1-1-list-of-layers) 参照）であり、任意の tile の `motion` プロップから参照する。
 
 ```kumiki
 motion Spin = {
@@ -375,7 +373,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
   1 ストップ上の複数 transform プロパティは、記述順によらず**固定順** — `translate-x` → `translate-y` → `scale` → `rotate` — で単一の `transform` に合成される（CSS `transform` は非可換なので、決定論のため順序を固定している）。未知プロパティはコンパイルエラー（**E0401**）、不正な keyframes（`from`/`to` 無し）は **E0403**。
 - タイミングフィールドは任意（既定 `duration:"normal"`、`easing:"ease"`、`iteration:1`、`direction:"normal"`）。閉じた集合外の値は **E0402**。
 - 未定義の motion を指す `motion: "X"` プロップは **E0107**。
-- body はリテラルレコードなので、motion は **slot の読み書きや effect emit ができない** — 純粋に表示用。`when(...)` や `overlay` と合成でき、生成 keyframes はスコープされる（グローバル CSS を漏らさない、§4.10）。`prefers-reduced-motion: reduce` で motion（と上記 v0.1 transition）を無効化する。
+- body はリテラルレコードなので、motion は **slot の読み書きや effect emit ができない** — 純粋に表示用。`when(...)` や `overlay` と合成でき、生成 keyframes はスコープされる（グローバル CSS を漏らさない、[グローバル CSS / リセット](#_4-10-global-css-reset) 参照）。`prefers-reduced-motion: reduce` で motion と上記 transition を無効化する。
 
 繰り延べ：多段パーセンテージ keyframes、色/blur/skew プロパティ。
 
@@ -399,24 +397,3 @@ app TodoApp
         favicon: "/favicon.ico"
     }
 ```
-
----
-
-## 4.11 設計上の判断記録
-
-| 判断 | 理由 |
-|---|---|
-| CSS を直接書かせない | カスケードと特異度が AI に追跡不能な暗黙依存を生む |
-| デザイントークンを theme に集約 | スタイル値の散逸を構造で防ぐ |
-| 短縮 props (`bg`, `pad` 等) を提供 | トークン消費を削減 |
-| レイアウトはタイル構造で表現 | レイアウト用 CSS を AI が学ぶ必要をなくす |
-| グローバル CSS 禁止 | 「どこから来たスタイルか」を必ず親 tile に紐付ける |
-| アニメーション v0.1 は限定 | 多すぎる選択肢は AI の判断を不安定にする |
-| `motion` は生 CSS でなく閉じた文法の定義 | アニメーションを静的に特定でき AI が編集しやすい。グローバル CSS 無しの不変条件を維持 |
-
----
-
-## 4.12 次
-
-- フォームのスタイル → [フォーム](./forms.md)
-- アクセシビリティ → [ライフサイクル](./lifecycle.md)

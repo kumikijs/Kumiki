@@ -1,5 +1,10 @@
 import type {
+  AppAnalyticsConfig,
   AppDef,
+  AppHttpConfig,
+  AppIndexedDbConfig,
+  AppIndexedDbStore,
+  AppMetaConfig,
   BinOp,
   Def,
   EffectDef,
@@ -40,6 +45,21 @@ export class ParseError extends Error {
 }
 
 const PRIM_TYPES = new Set(["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes"]);
+// Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
+// lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
+// already treats `-` as ident-continuation, so they arrive as a single token.
+const APP_LIFECYCLE_EVENTS = new Set([
+  "start",
+  "stop",
+  "error",
+  "visible",
+  "hidden",
+  "online",
+  "offline",
+  "http-401",
+  "http-403",
+  "http-5xx",
+]);
 const _GENERIC_TYPES = new Set(["Map", "Set", "List", "Option", "Result", "Tuple"]);
 // Builtins whose positional argument is a value expression (Text/Number), not a tile.
 // Named args whose value is always a value expression (Text / Number / etc.),
@@ -501,35 +521,46 @@ class Parser {
         return { kind: "UiEvent", ev: sub as UiEventKind, selector: sel, pos: t.pos };
       }
       if (name === "app") {
+        if (!APP_LIFECYCLE_EVENTS.has(sub)) {
+          throw new ParseError(`Unknown app lifecycle event "app.${sub}"`, t.pos);
+        }
         return { kind: "LifecycleEvent", name: `app.${sub}`, pos: t.pos };
       }
       if (name === "tile") {
-        // tile.mount(X) — not parsed in Phase 2, but reserved
-        if (this.matchOp("(")) {
-          this.next();
-          this.eat("ident");
-          this.eat("op", ")");
+        // `tile.mount(TileName)` / `tile.unmount(TileName)` carry the tile name.
+        // The name is part of the event identity: the runtime fires the reducer
+        // when *that* user-defined tile enters/leaves the rendered tree, so the
+        // ident must be preserved here. Encode the same way the runtime sees it.
+        if (sub !== "mount" && sub !== "unmount") {
+          throw new ParseError(`Unknown tile lifecycle event "tile.${sub}"`, t.pos);
         }
-        return { kind: "LifecycleEvent", name: `tile.${sub}`, pos: t.pos };
+        this.eat("op", "(");
+        const tile = this.eat("ident").value;
+        this.eat("op", ")");
+        return {
+          kind: "LifecycleEvent",
+          name: `tile.${sub}(${JSON.stringify(tile)})`,
+          pos: t.pos,
+        };
       }
       if (name === "route") {
-        // `route.enter("/p")` / `route.leave("/p")` carry the route pattern.
-        // The pattern is part of the event identity: the runtime dispatches by
-        // matching the reducer's name against `route.enter(${JSON.stringify(
-        // matchedPattern)})`, so the literal must be preserved here (dropping it
-        // would leave every route.enter/leave reducer dead). Encode it the same
-        // way the runtime does so the names match verbatim.
-        if (this.matchOp("(")) {
-          this.next();
-          const pattern = this.eat("str").value;
-          this.eat("op", ")");
-          return {
-            kind: "LifecycleEvent",
-            name: `route.${sub}(${JSON.stringify(pattern)})`,
-            pos: t.pos,
-          };
+        // `route.enter("/p")` / `route.leave("/p")` / `route.error("/p")` carry
+        // the route pattern. The pattern is part of the event identity: the
+        // runtime dispatches by matching the reducer's name against
+        // `route.enter(${JSON.stringify(matchedPattern)})`, so the literal must
+        // be preserved here (dropping it would leave every route reducer dead).
+        // Encode it the same way the runtime does so the names match verbatim.
+        if (sub !== "enter" && sub !== "leave" && sub !== "error") {
+          throw new ParseError(`Unknown route lifecycle event "route.${sub}"`, t.pos);
         }
-        return { kind: "LifecycleEvent", name: `route.${sub}`, pos: t.pos };
+        this.eat("op", "(");
+        const pattern = this.eat("str").value;
+        this.eat("op", ")");
+        return {
+          kind: "LifecycleEvent",
+          name: `route.${sub}(${JSON.stringify(pattern)})`,
+          pos: t.pos,
+        };
       }
       // effect-name.ok / .err
       if (sub === "ok" || sub === "err") {
@@ -1519,6 +1550,10 @@ class Parser {
     let routes: { path: string; tile: string }[] = [];
     let init: Expr[] = [];
     let theme: string | undefined;
+    let http: AppHttpConfig | undefined;
+    let indexedDb: AppIndexedDbConfig | undefined;
+    let meta: AppMetaConfig | undefined;
+    let analytics: AppAnalyticsConfig | undefined;
 
     while (!this.isAppEnd()) {
       const ident = this.eat("ident");
@@ -1528,17 +1563,218 @@ class Parser {
       else if (k === "routes") routes = this.parseRouteMap();
       else if (k === "init") init = this.parseInitList();
       else if (k === "theme") theme = this.eat("ident").value;
-      else if (k === "meta" || k === "http" || k === "indexed-db" || k === "analytics") {
-        // skip the value (Phase 2: parse record literal but ignore)
-        this.parseExpr();
-      } else {
+      else if (k === "http") http = this.parseAppHttp(ident.pos);
+      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos);
+      else if (k === "meta") meta = this.parseAppMeta(ident.pos);
+      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos);
+      else {
         throw new ParseError(`Unknown app field "${k}"`, ident.pos);
       }
     }
 
     const def: AppDef = { kind: "AppDef", name, caps, routes, init, pos: start.pos };
     if (theme) def.theme = theme;
+    if (http) def.http = http;
+    if (indexedDb) def.indexedDb = indexedDb;
+    if (meta) def.meta = meta;
+    if (analytics) def.analytics = analytics;
     return def;
+  }
+
+  // app.meta = { title?, description?, og-image?, favicon? } — spec style.md §4.10.
+  private parseAppMeta(pos: Pos): AppMetaConfig {
+    const rec = this.parseExpr();
+    if (rec.kind !== "RecordLit") {
+      throw new ParseError(`app.meta must be a record literal`, pos);
+    }
+    const cfg: AppMetaConfig = { pos };
+    for (const f of rec.fields) {
+      const v = f.value;
+      if (v.kind !== "Str") {
+        throw new ParseError(`app.meta.${f.name} must be a string literal`, v.pos);
+      }
+      switch (f.name) {
+        case "title":
+          cfg.title = v.value;
+          break;
+        case "description":
+          cfg.description = v.value;
+          break;
+        case "og-image":
+          cfg.ogImage = v.value;
+          break;
+        case "favicon":
+          cfg.favicon = v.value;
+          break;
+        default:
+          throw new ParseError(`Unknown app.meta field "${f.name}"`, v.pos);
+      }
+    }
+    return cfg;
+  }
+
+  // app.analytics = { provider: "console" | "noop", app-id? } — spec runtime.md §10.4.6.
+  private parseAppAnalytics(pos: Pos): AppAnalyticsConfig {
+    const rec = this.parseExpr();
+    if (rec.kind !== "RecordLit") {
+      throw new ParseError(`app.analytics must be a record literal`, pos);
+    }
+    let provider: "console" | "noop" | undefined;
+    let appId: string | undefined;
+    for (const f of rec.fields) {
+      const v = f.value;
+      if (f.name === "provider") {
+        if (v.kind !== "Str" || (v.value !== "console" && v.value !== "noop")) {
+          throw new ParseError(`app.analytics.provider must be "console" or "noop"`, v.pos);
+        }
+        provider = v.value;
+      } else if (f.name === "app-id") {
+        if (v.kind !== "Str") {
+          throw new ParseError(`app.analytics.app-id must be a string literal`, v.pos);
+        }
+        appId = v.value;
+      } else {
+        throw new ParseError(`Unknown app.analytics field "${f.name}"`, v.pos);
+      }
+    }
+    if (provider === undefined) {
+      throw new ParseError(`app.analytics requires a "provider" field`, pos);
+    }
+    const cfg: AppAnalyticsConfig = { provider, pos };
+    if (appId !== undefined) cfg.appId = appId;
+    return cfg;
+  }
+
+  // app.indexed-db = { name, version, stores: [{ name, key, indexes? }] } — spec http.md §6.7.4.
+  private parseAppIndexedDb(pos: Pos): AppIndexedDbConfig {
+    const rec = this.parseExpr();
+    if (rec.kind !== "RecordLit") {
+      throw new ParseError(`app.indexed-db must be a record literal`, pos);
+    }
+    let dbName: string | undefined;
+    let version: number | undefined;
+    const stores: AppIndexedDbStore[] = [];
+    for (const f of rec.fields) {
+      if (f.name === "name") {
+        if (f.value.kind !== "Str") {
+          throw new ParseError(`app.indexed-db.name must be a string literal`, f.value.pos);
+        }
+        dbName = f.value.value;
+      } else if (f.name === "version") {
+        if (f.value.kind !== "Num") {
+          throw new ParseError(`app.indexed-db.version must be a numeric literal`, f.value.pos);
+        }
+        version = f.value.value;
+      } else if (f.name === "stores") {
+        if (f.value.kind !== "ListLit") {
+          throw new ParseError(`app.indexed-db.stores must be a list literal`, f.value.pos);
+        }
+        for (const item of f.value.items) {
+          stores.push(this.parseIndexedDbStore(item));
+        }
+      } else {
+        throw new ParseError(`Unknown app.indexed-db field "${f.name}"`, pos);
+      }
+    }
+    if (dbName === undefined) {
+      throw new ParseError(`app.indexed-db requires a "name" field`, pos);
+    }
+    if (version === undefined) {
+      throw new ParseError(`app.indexed-db requires a "version" field`, pos);
+    }
+    if (stores.length === 0) {
+      throw new ParseError(`app.indexed-db requires at least one store`, pos);
+    }
+    return { name: dbName, version, stores, pos };
+  }
+
+  private parseIndexedDbStore(expr: Expr): AppIndexedDbStore {
+    if (expr.kind !== "RecordLit") {
+      throw new ParseError(`indexed-db store must be a record literal`, expr.pos);
+    }
+    let name: string | undefined;
+    let key: string | undefined;
+    let indexes: string[] | undefined;
+    for (const f of expr.fields) {
+      if (f.name === "name") {
+        if (f.value.kind !== "Str") {
+          throw new ParseError(`indexed-db store "name" must be a string literal`, f.value.pos);
+        }
+        name = f.value.value;
+      } else if (f.name === "key") {
+        if (f.value.kind !== "Str") {
+          throw new ParseError(`indexed-db store "key" must be a string literal`, f.value.pos);
+        }
+        key = f.value.value;
+      } else if (f.name === "indexes") {
+        if (f.value.kind !== "ListLit") {
+          throw new ParseError(`indexed-db store "indexes" must be a list literal`, f.value.pos);
+        }
+        indexes = f.value.items.map((it) => {
+          if (it.kind !== "Str") {
+            throw new ParseError(`indexed-db store index must be a string literal`, it.pos);
+          }
+          return it.value;
+        });
+      } else {
+        throw new ParseError(`Unknown indexed-db store field "${f.name}"`, expr.pos);
+      }
+    }
+    if (name === undefined) {
+      throw new ParseError(`indexed-db store requires a "name" field`, expr.pos);
+    }
+    if (key === undefined) {
+      throw new ParseError(`indexed-db store requires a "key" field`, expr.pos);
+    }
+    const store: AppIndexedDbStore = { name, key };
+    if (indexes) store.indexes = indexes;
+    return store;
+  }
+
+  // app.http = { base-url, headers, on-401, on-403, on-5xx, timeout, credentials } — spec http.md §6.3.
+  // headers is kept as Expr so the codegen can wrap it in a closure (slot
+  // references must re-evaluate on every request, not freeze at mount).
+  private parseAppHttp(pos: Pos): AppHttpConfig {
+    const rec = this.parseExpr();
+    if (rec.kind !== "RecordLit") {
+      throw new ParseError(`app.http must be a record literal`, pos);
+    }
+    const cfg: AppHttpConfig = { pos };
+    for (const f of rec.fields) {
+      switch (f.name) {
+        case "base-url":
+          cfg.baseUrl = f.value;
+          break;
+        case "headers":
+          cfg.headers = f.value;
+          break;
+        case "on-401":
+          cfg.on401 = this.appHttpReducerRef(f.name, f.value);
+          break;
+        case "on-403":
+          cfg.on403 = this.appHttpReducerRef(f.name, f.value);
+          break;
+        case "on-5xx":
+          cfg.on5xx = this.appHttpReducerRef(f.name, f.value);
+          break;
+        case "timeout":
+          cfg.timeout = f.value;
+          break;
+        case "credentials":
+          cfg.credentials = f.value;
+          break;
+        default:
+          throw new ParseError(`Unknown app.http field "${f.name}"`, pos);
+      }
+    }
+    return cfg;
+  }
+
+  private appHttpReducerRef(field: string, value: Expr): string {
+    if (value.kind !== "Ref") {
+      throw new ParseError(`app.http.${field} must be a reducer name (bare identifier)`, value.pos);
+    }
+    return value.name;
   }
 
   private isAppEnd(): boolean {
@@ -1704,7 +1940,7 @@ class Parser {
     const path = this.eat("str").value;
     if (this.matchOp("->>")) {
       this.next();
-      // redirect target as string. Represent it as a tile name; not actually used in Phase 2.
+      // redirect target as string. Represent it as a tile name.
       const target = this.eat("str").value;
       return { path, tile: `>>${target}` };
     }

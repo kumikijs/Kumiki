@@ -1,4 +1,4 @@
-# Feature: the `motion` layer (v0.2). Reusable, scoped animations are declared
+# Feature: the `motion` layer. Reusable, scoped animations are declared
 # with `motion N = {...}` (closed grammar: a from/to keyframe over a closed
 # property set + timing) and referenced from any tile's `motion` prop. Motion
 # composes with `when(...)` and `overlay`, and honors prefers-reduced-motion.

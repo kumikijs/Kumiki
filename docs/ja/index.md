@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Kumiki
   text: AI の、AI による、AI のための Web フレームワーク
-  tagline: 定義同士は組木のように噛み合うから、AI が並列にアプリを書き・直し・組み替えられる。experimental。
+  tagline: 定義同士は組木のように噛み合うから、AI が並列にアプリを書き・直し・組み替えられる。
   image:
     light: /kumiki-mark-animated.svg
     dark: /kumiki-mark-animated-dark.svg
@@ -35,7 +35,7 @@ features:
 
 ## 同じUI、違う思想
 
-同じアプリ——ローディングとエラー状態を持つ quote フェッチャー——を 2 つの世界で。左は [feature example 19](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki)、右はその慣用的な React 等価実装です。
+同じアプリを 2 つの世界で。左は Kumiki での [fetch example](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki)、右はその慣用的な React 等価実装。
 
 <div class="home-compare">
 <div class="home-compare-col">
@@ -126,16 +126,14 @@ export function App() {
 </div>
 </div>
 
-左の Kumiki コードは擬似コードではありません。ブラウザ内コンパイラでコンパイルし、デモ用 `http.get` provider に向けて実行しているのがこれです。ボタンを押してみてください:
-
 <KumikiDemo example="19-effect-http.kumiki" height="240px" />
 
 書き換えて試したくなったら [Playground](/ja/guide/playground) へ。
 
 注目すべき点:
 
-- **`policy=latest` はアノテーション 1 つ。** React で古いレスポンスを捨てるには `AbortController` の手書きの儀式が要る——まさに「テキストの外」にあって AI の編集で壊れる類の機構。
-- **副作用は隠さず宣言する。** `caps = [http.get]` はコンパイラが検査し、未宣言 capability の effect は実行時の驚きではなくコンパイルエラーになる。
-- **すべての定義がフラットで独立。** AI は `reducer failed` や `tile App` だけを差し替えられる——他は一切動かさなくてよい。
+- **`policy=latest` はアノテーション 1 つ。** React で古いレスポンスを捨てるには `AbortController` の手書きの儀式が要る。まさに「テキストの外」にあって AI の編集で壊れる類の機構。
+- **副作用は隠さず宣言する。** `caps = [http.get]` はコンパイラが検査し、未宣言 capability の effect はコンパイルエラーになる。
+- **すべての定義がフラットで独立。** AI は `reducer failed` や `tile App` だけを差し替えられる。他は一切動かさなくてよい。
 
-差はアプリの規模とともに開きます。ベンチマークの TodoMVC では、Kumiki は React 等価実装より**トークン約 1.4× 減・行数約 2× 減**。[ベンチマーク](/ja/guide/benchmarks) を参照。
+差はアプリの規模とともに開く。[ベンチマーク](/ja/guide/benchmarks)では、Kumiki は React 等価実装より**トークン約 1.4× 減・行数約 2× 減**。

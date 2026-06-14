@@ -88,8 +88,7 @@ function makeCounterApp(): AppShape {
   // Provide `_live` so the root() closure can read count after mounts.
   (app as unknown as { _live: Record<string, unknown> })._live = { count: 0 };
   // Intercept the runtime's slot writes by patching apply functions to also
-  // write into our shadow `_live` mirror. (Phase 2 runtime keeps the canonical
-  // live values internally; we mirror to make assertions simpler.)
+  // write into our shadow `_live` mirror.
   const originalReducers = app.reducers;
   app.reducers = originalReducers.map((r) => ({
     ...r,
@@ -425,7 +424,7 @@ function makeMotionApp(): AppShape {
   return app;
 }
 
-describe("motion layer (v0.2 M5)", () => {
+describe("motion layer", () => {
   let root: HTMLElement;
   beforeEach(() => {
     root = document.createElement("div");
@@ -622,7 +621,7 @@ describe("in-language test runner helpers", () => {
     expect(r.leaf).toBeUndefined();
   });
 
-  // ----- v0.6 M1: `expect` wildcards (spec/testing.md §8.2.2) -----
+  // ----- `expect` wildcards (spec/testing.md §8.2.2) -----
 
   it("wildcard <any-id> matches any value at a slot position", () => {
     const r = _stdlib.runReducerTest({
@@ -740,7 +739,7 @@ describe("in-language test runner helpers", () => {
   });
 });
 
-// ----- v0.6 M2: effect-result mocks inside reducer-test (spec/testing.md §8.5) -----
+// -----effect-result mocks inside reducer-test (spec/testing.md §8.5) -----
 
 describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   // A two-step flow: `fetchUser` emits `loadUser`; its result drives `userLoaded`
@@ -873,7 +872,7 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   });
 });
 
-// ----- v0.6 M3: property-test generators + runner (spec/testing.md §8.3) -----
+// ----- property-test generators + runner (spec/testing.md §8.3) -----
 
 describe("runPropertyTest", () => {
   it("genValue keeps an Int within its [min, max] bounds", () => {
@@ -1319,7 +1318,7 @@ describe("capability providers", () => {
 });
 
 // ---------------------------------------------------------------------------
-// No-silent-failure contract (#37, v0.4 M2): an effect `err` result that no
+// No-silent-failure contract: an effect `err` result that no
 // `.err` reducer consumes must be surfaced (console.error → smoke/runScenario
 // flag it), never swallowed. The storage-unavailable case (sandbox / private
 // mode) otherwise looks like the app does nothing. An app opts into ignoring an
@@ -1420,10 +1419,31 @@ describe("unhandled effect-error contract (#37)", () => {
       Object.defineProperty(globalThis, "localStorage", { value: orig, configurable: true });
     }
   });
+
+  it("session backend follows the same unavailable-→-err contract as storage (#84, #37)", async () => {
+    const throwing = {
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
+      setItem: () => {
+        throw new Error("SecurityError");
+      },
+    } as unknown as Storage;
+    const orig = globalThis.sessionStorage;
+    Object.defineProperty(globalThis, "sessionStorage", { value: throwing, configurable: true });
+    try {
+      const r = await builtinEffects.sessionRead({ key: "x" });
+      expect(r.kind).toBe("err");
+      const w = await builtinEffects.sessionWrite({ key: "x", value: 1 });
+      expect(w.kind).toBe("err");
+    } finally {
+      Object.defineProperty(globalThis, "sessionStorage", { value: orig, configurable: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Memory router mode (#37 sibling #36, v0.4 M3): routing must work without the
+// Memory router mode: routing must work without the
 // ambient location/history — for the playground srcdoc sandbox and any embedded
 // host that owns the URL. mount(..., { router: "memory" }) holds the path in
 // memory and never calls history.*.

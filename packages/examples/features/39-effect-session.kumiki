@@ -1,0 +1,41 @@
+# Feature: sessionStorage persistence — survives reload within the same tab,
+# wiped when the tab closes. Same effect shape as `storage-*` (spec §6.7.4);
+# the `.err` branch keeps an unavailable backend (opaque-origin sandbox /
+# private mode) visible instead of silently failing (#37, #84).
+
+slot draft  : Text = ""
+slot ready  : Bool = false
+slot status : Text = "loading…"
+
+effect loadDraft cap=session.read
+                 in=Unit
+                 out=Result(Option(Text), Text)
+                 policy=once
+                 map-request={key: "draft", decode: Decoder.Json(Text)}
+
+effect saveDraft cap=session.write
+                 in=Text
+                 out=Result(Unit, Text)
+                 policy=debounce(300ms)
+                 map-request={key: "draft", value: $1}
+
+reducer boot     on=app.start            do= emit loadDraft()
+reducer loaded   on=loadDraft.ok($o, _)  do= draft  := $o.get-or("")
+                                            ready  := true
+                                            status := "ready"
+reducer loadFail on=loadDraft.err(_, _)  do= ready  := true
+                                            status := "session unavailable"
+reducer edit     on=ui.input(DraftInput)
+    do= draft := $el.value
+        emit saveDraft(draft)
+reducer saved    on=saveDraft.ok(_, _)   do= status := "saved (this tab only)"
+reducer saveFail on=saveDraft.err(_, _)  do= status := "session unavailable"
+
+tile DraftInput = textarea(bind=draft, placeholder="Draft kept until the tab closes...")
+tile StatusLine = text(status)
+tile App = column(DraftInput, StatusLine) {pad: "lg", gap: "md"}
+
+app EffectSession
+    caps   = [session.read, session.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

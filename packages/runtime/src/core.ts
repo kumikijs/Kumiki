@@ -172,6 +172,14 @@ export type EffectSpec = {
     | { kind: "debounce"; ms: number }
     | { kind: "throttle"; ms: number }
     | { kind: "once" };
+  /**
+   * Retry policy (#83, spec http.md §6.5). Only 5xx / connection errors are
+   * retried; 4xx is treated as a final failure. The dispatcher reads this on
+   * each `launch` cycle — invoke itself stays single-shot.
+   */
+  retry?:
+    | { kind: "linear"; n: number; ms: number }
+    | { kind: "exponential"; n: number; ms: number; factor: number };
   invoke: (input: unknown, caps: CapabilityRegistry) => Promise<EffectResult>;
 };
 
@@ -298,14 +306,39 @@ export type AppShape = {
     baseUrl?: string;
     headers?: () => Record<string, string>;
     on401?: string;
+    on403?: string;
+    on5xx?: string;
     timeout?: number;
+    credentials?: RequestCredentials;
   };
-  /** Phase 4: registered themes by name. */
+  /** §6.7.4: declared IndexedDB stores. The runtime opens the DB on first indexed-* effect. */
+  indexedDb?: {
+    name: string;
+    version: number;
+    stores: { name: string; key: string; indexes?: string[] }[];
+  };
   themes?: Record<string, Theme>;
-  /** Phase 4: selected theme name. */
+  /** selected theme name. */
   themeName?: string | null;
-  /** v0.2 M5: reusable scoped animations by name (closed-grammar keyframes + timing). */
+  /** reusable scoped animations by name (closed-grammar keyframes + timing). */
   motions?: Record<string, unknown>;
+  /** §4.10: document-level metadata applied to <head> at mount. */
+  meta?: {
+    title?: string;
+    description?: string;
+    ogImage?: string;
+    favicon?: string;
+  };
+  /**
+   * §10.4.6: default sink for the `analytics.send` capability. Installed only
+   * when no host provider for `analytics.send` is registered, so the inbound
+   * ecosystem seam (real analytics SDK) still wins. `appId` (if set) is merged
+   * into every event payload.
+   */
+  analytics?: {
+    provider: "console" | "noop";
+    appId?: string;
+  };
   root?: () => TileNode;
   live?: Record<string, unknown>;
   _rerender?: () => void;
@@ -382,10 +415,26 @@ export function mountCore(
     : null;
   let routerUnsub: (() => void) | undefined;
 
-  const caps = makeCapabilityRegistry(app.caps, options.providers);
+  // Apply document-level metadata (§4.10) once at mount. Skipped silently in
+  // non-DOM hosts (tests using a mock `target` without a real document).
+  applyAppMeta(app);
+  // Merge the default `analytics.send` provider from `app.analytics` (§10.4.6).
+  // Host-supplied providers (options.providers) take precedence — this only
+  // fills the gap when the app declares an analytics sink directly.
+  const providers = withAnalyticsDefault(app, options.providers);
+  const caps = makeCapabilityRegistry(app.caps, providers);
   const dispatcher = makeEffectDispatcher(app, caps, (effect, outcome, value, key) => {
     handleEffectResult(effect, outcome, value, key);
   });
+
+  // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
+  // when a route.leave reducer emits `confirm`, the runtime holds the
+  // transition — the modal stays on top of the OLD route's tile, and Yes/No
+  // (from the confirm effect handler) either commits newRoute + fires
+  // route.enter, or reverts the router to oldRoute's path.
+  let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
+  let observeLeaveConfirm = false;
+  let leaveAskedConfirm = false;
 
   let currentRoot: HTMLElement | null = null;
   let disposed = false;
@@ -393,6 +442,10 @@ export function mountCore(
   // `stop-timer(N)`. Anonymous timers have no handle exposed to the app.
   const namedTimers = new Map<string, ReturnType<typeof setInterval>>();
   const anonTimers: ReturnType<typeof setInterval>[] = [];
+  // Names of user-defined tiles currently mounted, from the previous render's
+  // tree walk. The diff with the new render's set drives the
+  // `tile.mount(X) / tile.unmount(X)` lifecycle reducers (§7.1.6).
+  let prevMountedTiles = new Set<string>();
   const render = (): void => {
     // Late effect results (e.g. an in-flight fetch that resolves after the app
     // was disposed) must not touch the DOM — `currentRoot` has already been
@@ -424,16 +477,33 @@ export function mountCore(
 
     maybeReapplyTheme(app);
     let dom: HTMLElement;
+    let renderedTree: TileNode | null = null;
     try {
-      const tree = pickRootTile(app);
-      dom = tileCtx.render(tree);
+      renderedTree = pickRootTile(app);
+      dom = tileCtx.render(renderedTree);
     } catch (e) {
       // A render panic NOT caught by a per-tile `error-boundary` (e.g. one under
-      // the root) lands here: render a top-level panic fallback instead of
-      // letting the exception escape and leaving the DOM stale. Logged via
-      // console.error so the smoke / scenario tiers still flag it (#24).
+      // the root) lands here: surface it to a per-route `route.error(<pattern>)`
+      // reducer if one matches (§7.5.2) so the app can replace the broken page;
+      // otherwise render a top-level panic fallback so the exception does not
+      // escape and leave the DOM stale. Logged via console.error so the smoke /
+      // scenario tiers still flag it (#24).
       reportPanic("render", e);
-      dom = renderPanicFallback(e);
+      if (!fireRouteError(e)) {
+        dom = renderPanicFallback(e);
+      } else {
+        // route.error handlers ran — they may have navigated. Re-render once
+        // (without retrying the broken tile) and use whatever the next pick
+        // produces. If the re-render still throws, fall back to the panic UI.
+        try {
+          renderedTree = pickRootTile(app);
+          dom = tileCtx.render(renderedTree);
+        } catch (e2) {
+          reportPanic("render", e2);
+          renderedTree = null;
+          dom = renderPanicFallback(e2);
+        }
+      }
     }
     if (currentRoot) target.replaceChild(dom, currentRoot);
     else target.appendChild(dom);
@@ -460,7 +530,51 @@ export function mountCore(
         }
       }
     }
+
+    // tile.mount(X) / tile.unmount(X): walk the tree, diff against the previous
+    // render's set, fire the lifecycle reducer for each newly-present / newly-
+    // absent user tile (§7.1.6). The set is updated BEFORE the reducer fires so
+    // a re-render kicked off by the reducer sees the post-mount snapshot — that
+    // is what prevents mount events from re-firing every reducer cycle.
+    const nowMounted = renderedTree ? collectMountedTiles(renderedTree) : new Set<string>();
+    if (nowMounted.size > 0 || prevMountedTiles.size > 0) {
+      const toMount: string[] = [];
+      const toUnmount: string[] = [];
+      for (const n of nowMounted) if (!prevMountedTiles.has(n)) toMount.push(n);
+      for (const n of prevMountedTiles) if (!nowMounted.has(n)) toUnmount.push(n);
+      prevMountedTiles = nowMounted;
+      for (const n of toMount) fireLifecycle(`tile.mount(${JSON.stringify(n)})`);
+      for (const n of toUnmount) fireLifecycle(`tile.unmount(${JSON.stringify(n)})`);
+    }
   };
+
+  function fireLifecycle(name: string): void {
+    for (const r of app.reducers) {
+      if (r.event.kind === "lifecycle" && r.event.name === name) applyReducer(r, {});
+    }
+  }
+
+  function fireRouteError(e: unknown): boolean {
+    if (!app.routes || app.routes.length === 0) return false;
+    const cur = slotValues.route as ParsedRoute | undefined;
+    const pattern = cur?.pattern;
+    if (!pattern) return false;
+    const eventName = `route.error(${JSON.stringify(pattern)})`;
+    const handlers = app.reducers.filter(
+      (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
+    );
+    if (handlers.length === 0) return false;
+    const info = { ...panicInfo(e), pattern };
+    for (const h of handlers) {
+      try {
+        applyReducer(h, { $event: info, $route: cur });
+      } catch {
+        // a panic inside route.error itself is logged via the inner applyReducer
+        // path; we just keep iterating other handlers.
+      }
+    }
+    return true;
+  }
 
   function pickRootTile(app: AppShape): TileNode {
     if (app.routes && app.routes.length > 0) {
@@ -522,7 +636,10 @@ export function mountCore(
       if (meta?.refine && !meta.refine(v)) continue;
       slotValues[k] = v;
     }
-    for (const emit of result.emits) dispatcher.dispatch(emit);
+    for (const emit of result.emits) {
+      if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;
+      dispatcher.dispatch(emit);
+    }
     for (const name of result.stopTimers ?? []) {
       const h = namedTimers.get(name);
       if (h !== undefined) {
@@ -546,6 +663,30 @@ export function mountCore(
         matched++;
       }
     }
+    // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
+    // an err whose value carries a 401/403/5xx is forwarded to the global
+    // `app.http.on-*` reducer — independent of whether a per-effect `.err`
+    // reducer also matched.
+    if (outcome === "err" && app.http) {
+      const status = readStatus(value);
+      if (status !== null) {
+        const name =
+          status === 401
+            ? app.http.on401
+            : status === 403
+              ? app.http.on403
+              : status >= 500
+                ? app.http.on5xx
+                : undefined;
+        if (name) {
+          const r = app.reducers.find((r) => r.name === name);
+          if (r) {
+            applyReducer(r, { $1: value, $2: key });
+            matched++;
+          }
+        }
+      }
+    }
     // No-silent-failure contract (#37): an `err` result that no `.err` reducer
     // consumes is a dropped error — surfaced (never swallowed) exactly like a
     // live panic. An app that means to ignore an error opts in with an `.err`
@@ -562,20 +703,39 @@ export function mountCore(
 
   function syncRouteFromLocation(): void {
     if (!routing || !router) return;
+    // A pending leave guard is already gating the previous transition; ignore
+    // re-entrant syncs (e.g. a router.replace from the No path would re-call us).
+    if (pendingLeave) return;
     const oldRoute = slotValues.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
-    slotValues.route = newRoute;
-    // Fire route.leave / route.enter reducers
+    // Fire route.leave reducers BEFORE committing the new route so a guard can
+    // gate the transition. We observe whether any leave reducer emitted
+    // `confirm` — if so, we hold off updating slotValues.route and firing
+    // route.enter until the confirm modal resolves via `_resolveLeave`.
     if (oldRoute && oldRoute.pattern !== newRoute.pattern) {
-      for (const r of app.reducers) {
-        if (
-          r.event.kind === "lifecycle" &&
-          r.event.name === `route.leave(${JSON.stringify(oldRoute.pattern)})`
-        ) {
-          applyReducer(r, { $route: oldRoute });
+      observeLeaveConfirm = true;
+      leaveAskedConfirm = false;
+      try {
+        for (const r of app.reducers) {
+          if (
+            r.event.kind === "lifecycle" &&
+            r.event.name === `route.leave(${JSON.stringify(oldRoute.pattern)})`
+          ) {
+            applyReducer(r, { $route: oldRoute });
+          }
         }
+      } finally {
+        observeLeaveConfirm = false;
+      }
+      if (leaveAskedConfirm) {
+        pendingLeave = { oldRoute, newRoute };
+        // The OLD route's tile remains visible underneath the modal; render so
+        // any slot writes the leave reducer made (or the modal itself) flush.
+        render();
+        return;
       }
     }
+    slotValues.route = newRoute;
     for (const r of app.reducers) {
       if (
         r.event.kind === "lifecycle" &&
@@ -585,6 +745,32 @@ export function mountCore(
       }
     }
     render();
+  }
+
+  function resolveLeave(outcome: "yes" | "no"): void {
+    const p = pendingLeave;
+    if (!p) return;
+    pendingLeave = null;
+    if (outcome === "yes") {
+      slotValues.route = p.newRoute;
+      for (const r of app.reducers) {
+        if (
+          r.event.kind === "lifecycle" &&
+          r.event.name === `route.enter(${JSON.stringify(p.newRoute.pattern)})`
+        ) {
+          applyReducer(r, { $route: p.newRoute });
+        }
+      }
+      render();
+    } else {
+      // Revert: rewrite the URL back to the old path without re-firing the
+      // leave guard (pendingLeave is already null, but the recursion guard at
+      // the top of syncRouteFromLocation also short-circuits if this somehow
+      // re-enters before the new state is observed).
+      if (router) router.replace(p.oldRoute.path);
+      slotValues.route = p.oldRoute;
+      render();
+    }
   }
 
   // Register the built-in effects this mount carries: `log` is core (a few
@@ -638,6 +824,8 @@ export function mountCore(
   ) => {
     updateRoute(path, !!replace);
   };
+  (app as AppShape & { _resolveLeave?: (outcome: "yes" | "no") => void })._resolveLeave =
+    resolveLeave;
 
   // Fire app.start lifecycle + init effects.
   for (const emit of app.init) dispatcher.dispatch(emit);
@@ -646,6 +834,14 @@ export function mountCore(
       applyReducer(r, {});
     }
   }
+  // Wire host-level lifecycle events (lifecycle.md §7.1.2–7.1.4): beforeunload
+  // → app.stop, visibilitychange → app.visible / app.hidden, online / offline
+  // → app.online / app.offline. Listeners are registered against the host
+  // window once we know a reducer subscribes to the corresponding event; on
+  // dispose they are removed (the dispose path tracks them via
+  // `lifecycleUnsubs` so multiple Kumiki mounts on the same page stay
+  // isolated). Guarded for non-DOM hosts (importing this module from Node).
+  const lifecycleUnsubs = installLifecycleListeners(app, applyReducer);
   // Start timer reducers — each fires its reducer every intervalMs. A named
   // timer is registered so `stop-timer(name)` can clear it; anonymous timers
   // only stop on dispose.
@@ -677,10 +873,60 @@ export function mountCore(
       for (const h of namedTimers.values()) clearInterval(h);
       namedTimers.clear();
       routerUnsub?.();
+      for (const unsub of lifecycleUnsubs) unsub();
       target.replaceChildren();
       dispatcher.dispose();
     },
   };
+}
+
+/**
+ * Register host-level lifecycle listeners (lifecycle.md §7.1.2–7.1.4):
+ * beforeunload (app.stop), visibilitychange (app.visible / app.hidden), and
+ * the network online / offline events. Listeners are installed only for the
+ * events the app actually subscribes to — a routeless / lifecycle-less app
+ * pays nothing. Returns the unsub callbacks the mount's dispose path drains.
+ *
+ * `disposed`-guarded indirectly: every listener routes through `applyReducer`,
+ * which short-circuits when the mount has been torn down.
+ */
+function installLifecycleListeners(
+  app: AppShape,
+  applyReducer: (r: ReducerSpec, payload: Record<string, unknown>) => void,
+): Array<() => void> {
+  if (typeof window === "undefined") return [];
+  const has = (name: string): boolean =>
+    app.reducers.some((r) => r.event.kind === "lifecycle" && r.event.name === name);
+  const fire = (name: string): void => {
+    for (const r of app.reducers) {
+      if (r.event.kind === "lifecycle" && r.event.name === name) applyReducer(r, {});
+    }
+  };
+  const unsubs: Array<() => void> = [];
+  if (has("app.stop")) {
+    const onUnload = (): void => fire("app.stop");
+    window.addEventListener("beforeunload", onUnload);
+    unsubs.push(() => window.removeEventListener("beforeunload", onUnload));
+  }
+  if (has("app.visible") || has("app.hidden")) {
+    const onVis = (): void => {
+      // `document` is available alongside `window` in every DOM host.
+      fire(document.visibilityState === "visible" ? "app.visible" : "app.hidden");
+    };
+    document.addEventListener("visibilitychange", onVis);
+    unsubs.push(() => document.removeEventListener("visibilitychange", onVis));
+  }
+  if (has("app.online")) {
+    const onOnline = (): void => fire("app.online");
+    window.addEventListener("online", onOnline);
+    unsubs.push(() => window.removeEventListener("online", onOnline));
+  }
+  if (has("app.offline")) {
+    const onOffline = (): void => fire("app.offline");
+    window.addEventListener("offline", onOffline);
+    unsubs.push(() => window.removeEventListener("offline", onOffline));
+  }
+  return unsubs;
 }
 
 function makeCapabilityRegistry(
@@ -692,6 +938,79 @@ function makeCapabilityRegistry(
     has: (c) => ok.has(c),
     provider: (c) => providers?.[c],
   };
+}
+
+/**
+ * Reflect `app.meta` into the host document at mount (§4.10). Each field is
+ * applied independently so a partial declaration only touches the heads it
+ * names; the favicon is upserted via a `<link rel="icon">` element, the meta
+ * tags via name/property keys. Runs against the live `document` — guarded for
+ * non-DOM hosts (tests without a global document) so importing this module
+ * stays side-effect-free.
+ */
+function applyAppMeta(app: AppShape): void {
+  const meta = app.meta;
+  if (!meta) return;
+  if (typeof document === "undefined") return;
+  if (meta.title !== undefined) document.title = meta.title;
+  if (meta.description !== undefined) upsertMetaTag("name", "description", meta.description);
+  if (meta.ogImage !== undefined) upsertMetaTag("property", "og:image", meta.ogImage);
+  if (meta.favicon !== undefined) upsertFavicon(meta.favicon);
+}
+
+function upsertMetaTag(attr: "name" | "property", key: string, content: string): void {
+  const head = document.head;
+  if (!head) return;
+  let el = head.querySelector(`meta[${attr}="${key}"]`) as HTMLMetaElement | null;
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute(attr, key);
+    head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
+function upsertFavicon(href: string): void {
+  const head = document.head;
+  if (!head) return;
+  let el = head.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
+  if (!el) {
+    el = document.createElement("link");
+    el.setAttribute("rel", "icon");
+    head.appendChild(el);
+  }
+  el.setAttribute("href", href);
+}
+
+/**
+ * Build the provider map for the capability registry, defaulting
+ * `analytics.send` to the implementation chosen by `app.analytics` when the
+ * host did not register one (the spec's "hook injected at app startup",
+ * §10.4.6). When `appId` is configured it is merged into every payload so
+ * downstream sinks can route by app without each caller threading the id.
+ */
+function withAnalyticsDefault(
+  app: AppShape,
+  hostProviders?: Record<string, CapabilityProvider>,
+): Record<string, CapabilityProvider> | undefined {
+  const cfg = app.analytics;
+  if (!cfg) return hostProviders;
+  if (hostProviders?.["analytics.send"]) return hostProviders;
+  const tag = (input: unknown): unknown => {
+    if (cfg.appId === undefined) return input;
+    if (input && typeof input === "object" && !Array.isArray(input)) {
+      return { ...(input as Record<string, unknown>), appId: cfg.appId };
+    }
+    return { appId: cfg.appId, payload: input };
+  };
+  const provider: CapabilityProvider =
+    cfg.provider === "console"
+      ? (input) => {
+          console.log("[kumiki:analytics]", tag(input));
+          return { kind: "ok", value: null };
+        }
+      : () => ({ kind: "ok", value: null });
+  return { ...(hostProviders ?? {}), "analytics.send": provider };
 }
 
 type Dispatcher = {
@@ -717,7 +1036,7 @@ function makeEffectDispatcher(
       return;
     }
     try {
-      const res = await eff.invoke(input, caps);
+      const res = await runWithRetry(eff, input, caps);
       onResult(eff.name, res.kind, res.value, input);
     } catch (e) {
       onResult(eff.name, "err", { message: String(e) }, input);
@@ -870,10 +1189,69 @@ function reportPanic(where: string, e: unknown): void {
  * capability must never fail silently — the storage-unavailable case (sandbox /
  * private mode) otherwise looks like the app does nothing. Reported via
  * console.error so the verification tiers (smoke / runScenario, which patch
- * console.error) flag it, consistent with the v0.3 panic model. Production noise
+ * console.error) flag it. Production noise
  * is the app's own choice: wire an `.err` reducer to handle (or deliberately
  * ignore) the error.
  */
+/**
+ * Walk a rendered TileNode tree and collect the names of every user-defined
+ * tile boundary in it (lifecycle.md §7.1.6). Codegen marks each user-tile call
+ * site by attaching `_tile: "Name"` to the produced node's props via `_named`,
+ * so this walk is the inverse of that marker. Builtin tiles (button, page, …)
+ * carry no marker — `tile.mount` only fires for *user-defined* tiles, matching
+ * the spec example `tile.mount(SettingsPage)`.
+ */
+function collectMountedTiles(root: TileNode): Set<string> {
+  const out = new Set<string>();
+  const visit = (n: TileNode | null | undefined): void => {
+    if (!n || typeof n !== "object") return;
+    const props = (n as { props?: Record<string, unknown> }).props;
+    const tileName = props?._tile;
+    if (typeof tileName === "string") out.add(tileName);
+    const children = (n as { children?: TileNode[] }).children;
+    if (Array.isArray(children)) for (const c of children) visit(c);
+  };
+  visit(root);
+  return out;
+}
+
+/** Pull `status` off an HttpError-shaped err value; returns null otherwise. */
+function readStatus(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  const s = (value as { status?: unknown }).status;
+  return typeof s === "number" ? s : null;
+}
+
+/**
+ * Run an effect with its retry policy (#83). Spec http.md §6.5: only 5xx
+ * responses and connection errors (status 0) retry — 4xx and ok results are
+ * final. `n` in the policy is the **maximum total attempts**, matching the
+ * docs' "Up to N times" wording.
+ */
+async function runWithRetry(
+  eff: EffectSpec,
+  input: unknown,
+  caps: CapabilityRegistry,
+): Promise<EffectResult> {
+  const policy = eff.retry;
+  if (!policy) return eff.invoke(input, caps);
+  let last: EffectResult = await eff.invoke(input, caps);
+  for (let attempt = 1; attempt < policy.n; attempt++) {
+    if (last.kind !== "err") return last;
+    const status = readStatus(last.value);
+    const retriable = status === null || status === 0 || status >= 500;
+    if (!retriable) return last;
+    const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
+    await sleep(delay);
+    last = await eff.invoke(input, caps);
+  }
+  return last;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function reportUnhandledEffectError(effect: string, value: unknown): void {
   const message =
     value && typeof value === "object" && "message" in value
@@ -967,7 +1345,7 @@ function applyResponsive(_el: HTMLElement, raw: unknown, set: (v: unknown) => vo
 
 export function ensureAnimationStyles(): void {
   // Keyed by presence in the active style root, so each root (document head or a
-  // shadow root) gets its own copy of the v0.1 animation keyframes.
+  // shadow root) gets its own copy of the animation keyframes.
   if (findStyleNode("kumiki-animations")) return;
   const css = `
 @keyframes kumiki-fade { from { opacity: 0 } to { opacity: 1 } }
@@ -1006,7 +1384,7 @@ function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
 }
 
-// ----- motion layer (v0.2 M5) -----
+// ----- motion layer -----
 // Reusable, scoped animations declared with `motion N = {...}` and referenced
 // from a tile's `motion` prop. Codegen puts the parsed definitions on
 // `App.motions`; the runtime turns each into a scoped `@keyframes` + class at
@@ -1089,7 +1467,7 @@ function styleHostEl(): HTMLElement {
 function ensureMotionStyles(app: AppShape): void {
   const motions = app.motions ?? {};
   const rules = Object.entries(motions).map(([name, spec]) => motionCss(name, spec));
-  // a11y (M5 AC5): disable motion AND the v0.1 transitions when the user asks.
+  // a11y (M5 AC5): disable motion AND the transitions when the user asks.
   rules.push(
     `@media (prefers-reduced-motion: reduce) { .kumiki-motion, .kumiki-anim { animation: none !important } }`,
   );

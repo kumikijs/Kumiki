@@ -222,6 +222,46 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
+  // Issue #82: route.leave guard + confirm effect. Drives the example end-to-end
+  // through the compiled .kumiki: dirty edit → navigation triggers the modal
+  // → click No reverts → click Yes commits and the user reducer cleans up dirty.
+  it("gates a route.leave with confirm; No reverts, Yes commits (38-confirm-leave-guard)", async () => {
+    const app = await loadApp(join(examples, "features", "38-confirm-leave-guard.kumiki"));
+    const root = freshRoot();
+    const report = await runScenario(
+      app,
+      root,
+      {
+        steps: [
+          { do: { navigate: "/edit" }, expect: { noErrors: true } },
+          { do: { fill: "textarea", value: "draft" }, expect: { state: { dirty: true } } },
+          // Click the link back home — the leave guard emits `confirm`, the modal
+          // is appended to <body>. Wait briefly for the modal to mount.
+          { do: { clickText: "Back home" } },
+          {
+            label: "No keeps us on /edit, dirty preserved",
+            do: { click: "[data-kumiki-confirm] button[data-kumiki-confirm-action='no']" },
+            expect: { state: { dirty: true } },
+          },
+          { do: { clickText: "Back home" } },
+          {
+            label: "Yes commits — continueLeave clears dirty, route.enter('/') runs",
+            do: { click: "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" },
+            expect: { state: { dirty: false, visits: 2 }, domIncludes: ["Home"] },
+          },
+        ],
+      },
+      { router: "memory" },
+    );
+    if (!report.ok) {
+      const detail = report.steps
+        .flatMap((s, i) => [...s.errors, ...s.failures].map((m) => `step ${i}: ${m}`))
+        .join("\n");
+      throw new Error(`confirm/leave scenario failed:\n${detail}`);
+    }
+    expect(report.ok).toBe(true);
+  });
+
   // Regression: this app's scenario guards two framework fixes found via the
   // iterate loop — List.fold codegen, and Int.parse numeric coercion (a total
   // that was silently wrong via string concatenation).

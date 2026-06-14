@@ -2,7 +2,7 @@
 
 [English](./CONTRIBUTING.md) · 日本語
 
-Kumiki は experimental OSS であり、運用方針がやや特殊です。読んでから手を動かしてください。
+Kumiki は 1.0 未満の OSS で、運用方針がやや特殊です。読んでから手を動かしてください。
 
 ## 基本方針：質問・バグには example と test で答える
 

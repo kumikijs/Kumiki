@@ -1,6 +1,10 @@
 # Design Philosophy
 
-Why is Kumiki shaped the way it is? This page condenses the design rationale — the premises behind the language. For *how* the 7 layers work in practice, read [Thinking in Kumiki](./thinking-in-kumiki.md); this page is about *why* they exist at all.
+Why is Kumiki shaped the way it is? This page condenses the design rationale. For *how* the 7 layers work in practice, read [Thinking in Kumiki](./thinking-in-kumiki.md); this page is about *why* they exist at all.
+
+## Origins
+
+The premise is simple: **if you design from scratch for AI to *write* the code, human-centered idioms like Hooks and JSX become liabilities**. Kumiki began as a test of that premise.
 
 ## Why not React
 
@@ -14,7 +18,7 @@ React is a human-centered optimum: Hooks, Context, and JSX are idioms refined ov
 | Implicit scope | Provider hierarchies, Context resolved invisibly from descendants |
 | Non-local rendering | A parent re-render propagates; suppressing it with `memo` adds complexity |
 
-The pattern: all of these are writable when an AI *writes* them, and become sharply harder when an AI must *fix* them or *touch them in parallel*. When the cause of a bug lives outside the program text — execution history, a dependency array, a stale closure — the AI cannot reason about it without cramming the entire history into its context window.
+The pattern: all of these are writable when an AI *writes* them, and become sharply harder when an AI must *fix* them or *touch them in parallel*. When the cause of a bug lives outside the program text the AI cannot reason about it without cramming the entire history into its context window.
 
 Kumiki removes this friction **structurally**, not by convention.
 
@@ -30,7 +34,7 @@ Requirements 1 and (partially) 2–4 are not aspirations — they are measured c
 
 ## Where four independent designs converged
 
-Kumiki did not start as one design. It started as **four independent proposals**, each from a separate model-assisted exploration that never saw the others: an S-expression IR with Elm-style actors, an episode-oriented runtime ("Loom"), a one-declaration-per-line effect-typed tile language ("Pyramid"), and a CRDT-native triple-graph ("Nexus").
+Kumiki did not start as one design. It started as **four independent proposals**, each from a separate model-assisted exploration that never saw the others.
 
 Comparing them critically revealed that despite entirely different surface syntax, **all four converged on the same four cores**:
 
@@ -66,7 +70,7 @@ Kumiki deliberately does **not** aim for:
 
 The non-goals above imply a positive principle: **the language itself never grows holes** for interop. Connection to the existing JS ecosystem happens at three boundaries, all outside the language:
 
-- **Inbound** — host code injects implementations for declared capabilities (`mount(app, target, { providers })`); standard capabilities like `http.*` can be overridden the same way. See [Standard Library §2.5](../spec/stdlib.md).
+- **Inbound** — host code injects implementations for declared capabilities (`mount(app, target, { providers })`); standard capabilities like `http.*` can be overridden the same way. See [Standard Capabilities](../spec/stdlib.md#_2-5-standard-capabilities).
 - **Outbound** — a Kumiki app embeds into any page as a Web Component (`defineKumikiElement`). See [Runtime](../spec/runtime.md).
 - **Build** — `@kumikijs/vite` lets any Vite project `import App from "./app.kumiki"`, with generated TS types for the providers.
 
@@ -74,8 +78,4 @@ A `.kumiki` file means the same thing everywhere, because nothing host-specific 
 
 ## The operating model is part of the design
 
-The repository is run on the rule that **looking at it resolves every question**: questions and bugs are answered by adding working examples and tests, not prose; the spec is normative and every example must compile, build, and survive a smoke test in CI. A language designed for machine consumers needs documentation with the same property — verifiable, not persuasive.
-
----
-
-*This page summarizes the former `design-notes/` directory (removed in [#46](https://github.com/kage1020/Kumiki/pull/46); design decisions now live in PR descriptions). The full original rationale remains readable in [git history](https://github.com/kage1020/Kumiki/blob/246466c551689657c4bd15f44b68591e7db6bfdb/docs/design-notes/rationale.md).*
+The repository is run on the rule that **looking at it resolves every question**: questions and bugs are answered by adding working examples and tests, not prose; the spec is normative and every example must compile, build, and survive a smoke test in CI. A language designed for machine consumers needs documentation with the same property.

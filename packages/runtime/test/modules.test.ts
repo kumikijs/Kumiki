@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppShape, mountCore } from "../src/core.ts";
 import { httpFetch } from "../src/effects-http.ts";
-import { storageRead, storageWrite } from "../src/effects-storage.ts";
+import { sessionRead, sessionWrite, storageRead, storageWrite } from "../src/effects-storage.ts";
 import { installToast } from "../src/effects-toast.ts";
 import { _stdlib, builtinEffects, mount } from "../src/index.ts";
 import { routing } from "../src/router.ts";
@@ -175,9 +175,33 @@ describe("builtin effect modules", () => {
     expect(miss).toEqual({ kind: "ok", value: { _tag: "None" } });
   });
 
+  it("session effects round-trip through sessionStorage as Option values (#84)", async () => {
+    const w = await sessionWrite({ key: "k84", value: { b: 2 } });
+    expect(w.kind).toBe("ok");
+    const r = await sessionRead({ key: "k84" });
+    expect(r).toEqual({ kind: "ok", value: { _tag: "Some", _0: { b: 2 } } });
+    const miss = await sessionRead({ key: "k84-missing" });
+    expect(miss).toEqual({ kind: "ok", value: { _tag: "None" } });
+  });
+
+  it("session effects are isolated from localStorage (different backing stores)", async () => {
+    await storageWrite({ key: "iso", value: "from-local" });
+    await sessionWrite({ key: "iso", value: "from-session" });
+    expect(await storageRead({ key: "iso" })).toEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: "from-local" },
+    });
+    expect(await sessionRead({ key: "iso" })).toEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: "from-session" },
+    });
+  });
+
   it("builtinEffects (index) aliases the granular effect exports", () => {
     expect(builtinEffects.storageRead).toBe(storageRead);
     expect(builtinEffects.storageWrite).toBe(storageWrite);
+    expect(builtinEffects.sessionRead).toBe(sessionRead);
+    expect(builtinEffects.sessionWrite).toBe(sessionWrite);
     expect(builtinEffects.httpFetch).toBe(httpFetch);
   });
 });

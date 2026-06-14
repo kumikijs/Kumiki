@@ -1,0 +1,66 @@
+# Feature: IndexedDB persistence — store-scoped key/value, with clean failure
+# when the backend is unavailable (sandbox / unsupported environment). Mirrors
+# the storage feature's two-branch shape so the unavailable case stays visible
+# rather than silent (#37 / #79).
+
+type Note = {id: Text, body: Text, createdAt: Time}
+
+slot id     : Text         = ""
+slot body   : Text         = ""
+slot loaded : Option(Note) = None
+slot status : Text         = "idle"
+
+effect loadNote cap=indexed.read
+                in=Text
+                out=Result(Option(Note), Text)
+                policy=latest
+                map-request={store: "notes", key: $1, decode: Decoder.Json(Note)}
+
+effect saveNote cap=indexed.write
+                in=Note
+                out=Result(Unit, Text)
+                policy=debounce(200ms)
+                map-request={store: "notes", key: $1.id, value: $1}
+
+effect deleteNote cap=indexed.delete
+                  in=Text
+                  out=Result(Unit, Text)
+                  map-request={store: "notes", key: $1}
+
+reducer onLoad on=ui.click(LoadBtn)   do= status := "loading…"
+                                          emit loadNote(id)
+reducer noteLoaded on=loadNote.ok($o, _) do= loaded := $o
+                                             status := "ready"
+reducer loadFail   on=loadNote.err(_, _) do= status := "indexed-db unavailable"
+reducer onSave on=ui.click(SaveBtn)   do= status := "saving…"
+                                          emit saveNote({id, body, createdAt: now})
+reducer saved      on=saveNote.ok(_, _)  do= status := "saved"
+reducer saveFail   on=saveNote.err(_, _) do= status := "indexed-db unavailable"
+reducer onDelete on=ui.click(DeleteBtn) do= emit deleteNote(id)
+reducer deleted    on=deleteNote.ok(_, _)  do= loaded := None
+                                               status := "deleted"
+reducer deleteFail on=deleteNote.err(_, _) do= status := "indexed-db unavailable"
+
+tile IdInput   = input(bind=id, placeholder="note id")
+tile BodyInput = textarea(bind=body, placeholder="note body")
+tile LoadBtn   = button(text="Load")
+tile SaveBtn   = button(text="Save")
+tile DeleteBtn = button(text="Delete")
+tile App = column(
+             IdInput,
+             BodyInput,
+             row(LoadBtn, SaveBtn, DeleteBtn) {gap: "sm"},
+             text(status))
+           {pad: "lg", gap: "md"}
+
+app EffectIndexedDb
+    caps   = [indexed.read, indexed.write, indexed.delete]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    indexed-db = {
+        name:    "notes-db",
+        version: 1,
+        stores: [
+            {name: "notes", key: "id", indexes: ["createdAt"]}
+        ]
+    }

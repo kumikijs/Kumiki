@@ -1,0 +1,41 @@
+# Feature: the rest of the lifecycle events — beyond app.start / route.enter / leave.
+#   - app.stop / app.visible / app.hidden / app.online / app.offline (#81)
+#   - tile.mount(X) / tile.unmount(X) — fires when a user-defined tile enters /
+#     leaves the rendered tree.
+#   - route.error("/p") — render error under a routed tile.
+
+slot stops    : Int  = 0
+slot visible  : Bool = true
+slot online   : Bool = true
+slot panelOn  : Bool = false
+slot mounts   : Int  = 0
+slot unmounts : Int  = 0
+slot routeErr : Bool = false
+
+reducer stop    on=app.stop    do= stops := stops + 1
+reducer show    on=app.visible do= visible := true
+reducer hide    on=app.hidden  do= visible := false
+reducer goOn    on=app.online  do= online := true
+reducer goOff   on=app.offline do= online := false
+
+reducer togglePanel on=ui.click(ToggleBtn) do= panelOn := not panelOn
+
+reducer onPanelOn   on=tile.mount(Panel)   do= mounts := mounts + 1
+reducer onPanelOff  on=tile.unmount(Panel) do= unmounts := unmounts + 1
+
+reducer routeFailed on=route.error("/page") do= routeErr := true
+
+tile Panel     = card(text("Panel mounted"))
+tile ToggleBtn = button(text="Toggle")
+tile Home      = page(
+                   heading("Lifecycle demo"),
+                   ToggleBtn,
+                   if panelOn then Panel else text(""))
+
+tile Page      = page(heading("Page"))
+tile NotFound  = page(heading("404"))
+
+app LifecycleEvents
+    caps   = []
+    routes = {"/" -> Home, "/page" -> Page, "/404" -> NotFound}
+    init   = []

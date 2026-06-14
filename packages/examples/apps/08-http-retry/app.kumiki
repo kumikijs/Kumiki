@@ -1,0 +1,36 @@
+# HTTP retry — exponential backoff on 5xx / connection errors (spec §6.5, #83)
+# Demonstrates: declaring `retry=exponential(N, ms, factor)` on an http effect.
+# The runtime retries 5xx + connection errors with the configured backoff and
+# leaves 4xx as a final failure.
+
+type Quote = {text: Text, author: Text}
+type Load  = Idle | Loading | Loaded(Quote) | Failed(Text)
+
+slot state : Load = Idle
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Quote, HttpError)
+                 policy=latest
+                 retry=exponential(3, 200ms, 2.0)
+                 map-request={url: "/quote", decode: Decoder.Json(Quote)}
+
+reducer load   on=ui.click(LoadBtn)         do= state := Loading
+                                               emit loadQuote()
+reducer loaded on=loadQuote.ok($q, _)       do= state := Loaded($q)
+reducer failed on=loadQuote.err($e, _)      do= state := Failed("request failed")
+
+tile LoadBtn = button(text="Load quote", onClick=load)
+tile App = column(
+             LoadBtn,
+             match state with
+               | Idle        -> text("Click to load.")
+               | Loading     -> spinner()
+               | Loaded(q)   -> card(text(q.text), text("— " + q.author)) {pad: "md"}
+               | Failed(msg) -> text(msg) {color: "danger"})
+           {pad: "lg", gap: "md"}
+
+app HttpRetryExample
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

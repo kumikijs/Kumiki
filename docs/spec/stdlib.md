@@ -135,7 +135,7 @@ fn empty?() -> Bool = todos.is-empty          ; same as above
 fn norm() -> List(Todo) = todos.reverse       ; same as above
 ```
 
-> **Dispatch rule (v0.3, ADR-002).** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors.md](./errors.md) E0108). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
+> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
 **The lambda arguments of `map` / `filter` / `sort-by`**:
 - For a List element, `$1` is bound; for the `[k, v]` pair after `.entries`, `$1=key, $2=value` are bound (the runtime destructures automatically)
@@ -170,7 +170,7 @@ or(other)                   : Result(T, E)
 to-option                   : Option(T)
 ```
 
-> **Panic semantics (v0.3).** `Option.get` / `Result.get` (the polymorphic unwrap, also written paren-free as `value.get`) panic on the empty case (`None` / `Err`); `Result.get-err` panics on `Ok`. All raise the one controlled panic signal handled by the live runtime — see [lifecycle.md §7.2](./lifecycle.md). Prefer `get-or(default)` outside a reducer.
+> **Panic semantics.** `Option.get` / `Result.get` (the polymorphic unwrap, also written paren-free as `value.get`) panic on the empty case (`None` / `Err`); `Result.get-err` panics on `Ok`. All raise the one controlled panic signal handled by the live runtime — see [Error Handling](./lifecycle.md#_7-2-error-handling). Prefer `get-or(default)` outside a reducer.
 
 ### 2.2.6 Text
 
@@ -413,7 +413,7 @@ The standard set of capabilities that can be declared in `app.caps`:
 | `geo.read` | location information |
 | `socket.connect`, `socket.send` | WebSocket |
 
-Writing a capability in `app.caps` that is neither standard nor registered is a compile error ([E0302](./errors.md)).
+Writing a capability in `app.caps` that is neither standard nor registered is a compile error ([E0302](./errors.md#e0302-unknown-capability)).
 
 #### Registering custom capabilities (`kumiki.caps.json`)
 
@@ -429,7 +429,7 @@ A project can extend the accepted set with a **`kumiki.caps.json`** manifest pla
 
 Each entry is a capability name in `group.action` form (lowercase, dot-separated) — either a bare string or an object with a `description`. A registered name is then accepted in `app.caps`, and an effect bound to it (`effect track cap=telemetry.track …`) becomes emittable and is dispatched at the capability boundary — and is mockable in scenarios exactly like a standard effect. A name already in the standard set must not be re-declared.
 
-This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [packages/examples/features/27-custom-capability.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
+This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [27-custom-capability](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
 
 #### Supplying the implementation (host capability providers)
 
@@ -460,7 +460,7 @@ The compiled bundle auto-mounts to `#root`; a host embedding the bundle can regi
 
 **Overriding a standard capability.** A provider may also be registered for a *standard* capability (`http.*`, `storage.*`, `nav.*`, `notification.show`, `log.write`, …) — every effect invoke consults `caps.provider(cap)` before its built-in implementation. This lets a host swap the HTTP transport (axios / ofetch), inject auth headers, plug in a framework router, or replace the toast UI, without changing the Kumiki source. The provider receives the effect's (already `map-request`-mapped) request; when none is registered the built-in behavior runs unchanged.
 
-**Unhandled effect errors are surfaced, never silent.** An effect that resolves to `err` is delivered to every matching `.err` reducer. If a program wires **no** `.err` reducer for that effect, the dropped error is reported via `console.error` (`[kumiki] effect "<name>" returned an error with no .err reducer: …`), so the verification tiers (`smoke` / `runScenario`, which capture `console.error`) flag it — consistent with the live-panic model ([lifecycle.md §7.2](./lifecycle.md)). A failed capability must never look like a no-op: the storage-unavailable case (opaque-origin sandbox, private mode) is exactly this — `storage.read` / `storage.write` return `err`, and an app handling only `.ok` would otherwise silently do nothing. The default contract is therefore **`err` plus a surfaced report**; a program opts into handling (or deliberately ignoring) the error by wiring an `.err` reducer — even an empty one. An in-memory storage fallback is **not** the default behavior (it would paper over this contract); a host that wants one supplies it explicitly via a `storage.*` provider.
+**Unhandled effect errors are surfaced, never silent.** An effect that resolves to `err` is delivered to every matching `.err` reducer. If a program wires **no** `.err` reducer for that effect, the dropped error is reported via `console.error` (`[kumiki] effect "<name>" returned an error with no .err reducer: …`), so the verification tiers (`smoke` / `runScenario`, which capture `console.error`) flag it — consistent with the live-panic model ([Error Handling](./lifecycle.md#_7-2-error-handling)). A failed capability must never look like a no-op: the storage-unavailable case (opaque-origin sandbox, private mode) is exactly this — `storage.read` / `storage.write` return `err`, and an app handling only `.ok` would otherwise silently do nothing. The default contract is therefore **`err` plus a surfaced report**; a program opts into handling (or deliberately ignoring) the error by wiring an `.err` reducer — even an empty one. An in-memory storage fallback is **not** the default behavior (it would paper over this contract); a host that wants one supplies it explicitly via a `storage.*` provider.
 
 ---
 

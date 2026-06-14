@@ -44,6 +44,7 @@
 | [18-routing](https://github.com/kage1020/Kumiki/blob/main/examples/features/18-routing.kumiki) | パスパラメータ・リダイレクト・404 |
 | [19-effect-http](https://github.com/kage1020/Kumiki/blob/main/examples/features/19-effect-http.kumiki) | HTTP effect と `latest` ポリシー |
 | [20-effect-storage](https://github.com/kage1020/Kumiki/blob/main/examples/features/20-effect-storage.kumiki) | localStorage 永続化（once / debounce） |
+| [39-effect-session](https://github.com/kage1020/Kumiki/blob/main/examples/features/39-effect-session.kumiki) | sessionStorage 永続化（タブ単位・`storage-*` と同じ形） |
 | [21-timer](https://github.com/kage1020/Kumiki/blob/main/examples/features/21-timer.kumiki) | `timer(1s)` による定期実行 |
 | [23-lifecycle-route-enter](https://github.com/kage1020/Kumiki/blob/main/examples/features/23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
 

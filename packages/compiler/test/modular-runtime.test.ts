@@ -31,6 +31,15 @@ tile App = column(B)
 app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
+const SESSIONED = `
+slot v : Text = ""
+effect save cap=session.write in={key: Text, value: Text} out=Unit
+reducer go on=ui.click(B) do= emit save({key: "k", value: v})
+tile B = button(text="save")
+tile App = column(B)
+app A caps=[session.write] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
 function modular(src: string) {
   const result = compile(src, { runtimeSpecifier: "unused", runtimeModulesDir: "./runtime" });
   expect(result.kind).toBe("ok");
@@ -75,7 +84,18 @@ describe("modular runtime emission (#71)", () => {
     const r = modular(STORED);
     expect(r.js).toContain('import { storageWrite } from "./runtime/effects-storage.js"');
     expect(r.js).not.toContain("storageRead");
+    expect(r.js).not.toContain("sessionRead");
+    expect(r.js).not.toContain("sessionWrite");
     expect(r.js).not.toContain("effects-http.js");
+    expect(r.runtimeModules).toContain("effects-storage");
+  });
+
+  it("a session app ships sessionWrite from the same effects-storage module (#84)", () => {
+    const r = modular(SESSIONED);
+    expect(r.js).toContain('import { sessionWrite } from "./runtime/effects-storage.js"');
+    expect(r.js).not.toContain("sessionRead");
+    expect(r.js).not.toContain("storageRead");
+    expect(r.js).not.toContain("storageWrite");
     expect(r.runtimeModules).toContain("effects-storage");
   });
 

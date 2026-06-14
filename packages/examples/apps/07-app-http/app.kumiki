@@ -1,0 +1,44 @@
+# app.http — global base-url, headers, on-401/403/5xx routing (spec §6.3, #78)
+# Demonstrates: configuring HTTP at the app level so individual effects don't
+# repeat the base URL, auth header, or status-coded error handlers.
+
+type Quote = {text: Text, author: Text}
+type Load  = Idle | Loading | Loaded(Quote) | Failed(Text)
+
+slot state   : Load = Idle
+slot session : Text = "anon"
+
+effect fetchQuote cap=http.get
+                  in=Unit
+                  out=Result(Quote, HttpError)
+                  policy=latest
+                  map-request={url: "/quote", decode: Decoder.Json(Quote)}
+
+reducer load          on=ui.click(LoadBtn)         do= state := Loading
+                                                      emit fetchQuote()
+reducer loaded        on=fetchQuote.ok($q, _)      do= state := Loaded($q)
+reducer failed        on=fetchQuote.err($e, _)     do= state := Failed("request failed")
+reducer onUnauth      on=ui.click(LoadBtn)         do= session := "anon"
+
+tile LoadBtn = button(text="Load quote", onClick=load)
+tile App = column(
+             text("session: " + session),
+             LoadBtn,
+             match state with
+               | Idle        -> text("Click to load.")
+               | Loading     -> spinner()
+               | Loaded(q)   -> card(text(q.text), text("— " + q.author)) {pad: "md"}
+               | Failed(msg) -> text(msg) {color: "danger"})
+           {pad: "lg", gap: "md"}
+
+app AppHttpExample
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    http   = {
+        base-url: "https://api.example.com",
+        headers: { "X-Session": session },
+        on-401: onUnauth,
+        timeout: 5000,
+        credentials: "include"
+    }

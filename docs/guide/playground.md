@@ -1,6 +1,6 @@
 # Playground
 
-You can edit → compile → preview Kumiki in the browser. The compiler (`@kumiki/compiler`) and runtime (`@kumiki/runtime`) run inside the browser. Edit on the left and the result appears on the right. From `Choose an example…` you can load each example from the [feature catalog](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features).
+You can edit → compile → preview Kumiki in the browser. The compiler (`@kumikijs/compiler`) and runtime (`@kumikijs/runtime`) run inside the browser. Edit on the left and the result appears on the right. From `Choose an example…` you can load each example from the [feature catalog](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features).
 
 <Playground />
 
@@ -15,4 +15,4 @@ For [WebMCP](https://github.com/webmachinelearning/webmcp)-capable browsers/agen
 | `kumiki_load_example` | Loads an example into the editor by name |
 | `kumiki_set_source` | Replaces the editor's source and previews it |
 
-For local CLI / editor integration, there is also the [`@kumiki/mcp`](https://github.com/kage1020/kumiki/tree/main/packages/mcp) server that runs over stdio.
+For local CLI / editor integration, there is also the [`@kumikijs/mcp`](https://github.com/kage1020/Kumiki/tree/main/packages/mcp) server that runs over stdio.

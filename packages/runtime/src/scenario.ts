@@ -209,7 +209,11 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("click" in a) {
-    const el = root.querySelector<HTMLElement>(a.click);
+    // Some built-in effects (confirm modal, toast) render to <body>, not under
+    // the mount root. Fall back to a document-wide lookup so the scenario tier
+    // can drive those overlays.
+    const el =
+      root.querySelector<HTMLElement>(a.click) ?? document.querySelector<HTMLElement>(a.click);
     if (!el) throw new Error(`no element matching selector ${a.click}`);
     el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return;

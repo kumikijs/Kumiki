@@ -125,7 +125,7 @@ function checkAll(program: Program, registeredCaps: Set<string>): KumikiError[] 
   return errors;
 }
 
-// ----- motion layer (v0.2 M5) -----
+// ----- motion layer -----
 
 const MOTION_KEYFRAME_PROPS = new Set(["opacity", "translate-x", "translate-y", "scale", "rotate"]);
 const MOTION_EASINGS = new Set(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]);
@@ -543,6 +543,7 @@ function checkStmt(
       s.effect === "navigate-replace" ||
       s.effect === "navigate-back" ||
       s.effect === "toast" ||
+      s.effect === "confirm" ||
       s.effect === "log";
     if (!eff && !isBuiltinNav) {
       errors.push({
@@ -558,6 +559,28 @@ function checkStmt(
         message: `Effect "${s.effect}" requires capability "${eff.cap}" which is not declared in app.caps`,
         pos: s.pos,
       });
+    }
+    // `emit confirm({onYes: <reducer>, onNo: <reducer>})` (lifecycle §7.6):
+    // the onYes/onNo fields name reducers, not values. Skip the standard
+    // checkExpr on those Refs (which would flag them as undefined names),
+    // but verify they DO resolve to a defined reducer.
+    const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
+    if (confirmArg && confirmArg.kind === "RecordLit") {
+      for (const f of confirmArg.fields) {
+        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+          if (!sym.reducers.has(f.value.name)) {
+            errors.push({
+              code: "E0103",
+              kind: "undef-ref",
+              message: `confirm "${f.name}" refers to undefined reducer "${f.value.name}"`,
+              pos: f.value.pos,
+            });
+          }
+          continue;
+        }
+        checkExpr(f.value, sym, errors, ctx);
+      }
+      return;
     }
     for (const a of s.args) checkExpr(a, sym, errors, ctx);
     return;
@@ -1164,7 +1187,6 @@ function resolveType(t: TypeExpr, sym: SymbolTable, errors: KumikiError[]): void
     case "TypeRef":
       if (!sym.types.has(t.name)) {
         // Could be an in-scope type param of an enclosing TypeDef; we don't track those yet.
-        // Accept silently for Phase 2.
         return;
       }
       return;

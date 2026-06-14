@@ -189,6 +189,7 @@ onBeforeUnmount(() => playgroundToolHost.release(webMcpApi));
   display: flex; align-items: center; gap: 12px;
   padding: 8px 12px; background: var(--vp-c-bg-soft); border-bottom: 1px solid var(--vp-c-divider);
 }
+.sp-bar select { padding-inline: 8px }
 .sp-status.ok { color: var(--vp-c-green-1); }
 .sp-status.err { color: var(--vp-c-red-1); }
 .sp-grid { display: grid; grid-template-columns: 1fr 1fr; min-height: 360px; }

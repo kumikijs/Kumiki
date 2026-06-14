@@ -44,6 +44,7 @@ Minimal examples, one feature per file. Each file is a self-contained, working K
 | [18-routing](https://github.com/kage1020/Kumiki/blob/main/examples/features/18-routing.kumiki) | path parameters, redirects, 404 |
 | [19-effect-http](https://github.com/kage1020/Kumiki/blob/main/examples/features/19-effect-http.kumiki) | HTTP effect and the `latest` policy |
 | [20-effect-storage](https://github.com/kage1020/Kumiki/blob/main/examples/features/20-effect-storage.kumiki) | localStorage persistence (once / debounce) |
+| [39-effect-session](https://github.com/kage1020/Kumiki/blob/main/examples/features/39-effect-session.kumiki) | sessionStorage persistence (per-tab; same shape as `storage-*`) |
 | [21-timer](https://github.com/kage1020/Kumiki/blob/main/examples/features/21-timer.kumiki) | periodic execution with `timer(1s)` |
 | [23-lifecycle-route-enter](https://github.com/kage1020/Kumiki/blob/main/examples/features/23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
 

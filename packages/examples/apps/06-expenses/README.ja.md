@@ -19,8 +19,8 @@
 ## 検証
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts smoke examples/apps/06-expenses/app.kumiki
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts run   examples/apps/06-expenses/app.kumiki examples/apps/06-expenses/scenario.json
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts smoke examples/apps/06-expenses/app.kumiki
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts run   examples/apps/06-expenses/app.kumiki examples/apps/06-expenses/scenario.json
 ```
 
 `scenario.json` は要件を実行可能な受け入れ基準（AC）に落としたもの。`tests/` が CI で実行する。

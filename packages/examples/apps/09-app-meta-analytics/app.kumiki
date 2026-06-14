@@ -1,0 +1,32 @@
+# app.meta — head metadata (title/description/og-image/favicon) reflected at mount.
+# app.analytics — default sink for the analytics.send capability so the app can
+# emit measurement events without a host SDK wired in (#80, runtime.md §10.4.6).
+
+slot clicks : Int = 0
+
+effect track cap=analytics.send
+              in={event: Text, count: Int}
+              out=Unit
+
+reducer add on=ui.click(Bump) do= clicks := clicks + 1
+                                  emit track({event: "bump", count: clicks + 1})
+
+tile Bump = button(text="Bump")
+tile App  = column(
+              heading("Clicks: " + clicks),
+              Bump) {pad: "lg", gap: "md"}
+
+app MetaAnalyticsDemo
+    caps   = [analytics.send]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    meta   = {
+        title: "Kumiki meta demo",
+        description: "Demonstrates app.meta and app.analytics",
+        og-image: "/og.png",
+        favicon: "/favicon.ico"
+    }
+    analytics = {
+        provider: "console",
+        app-id: "meta-analytics-demo"
+    }

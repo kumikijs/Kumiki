@@ -3,10 +3,27 @@
 
 import type { EffectResult } from "./core.ts";
 
+export type HttpCfg = {
+  baseUrl?: string;
+  // `headers` is a thunk so slot references (e.g. an auth token) are
+  // re-evaluated on every request rather than frozen at mount (spec #78).
+  headers?: () => Record<string, string>;
+  on401?: string;
+  on403?: string;
+  on5xx?: string;
+  // Timeout in milliseconds; spec http.md §6.9 default is 30s.
+  timeout?: number;
+  // fetch credentials mode; spec http.md §6.9 default is "same-origin".
+  credentials?: RequestCredentials;
+};
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_CREDENTIALS: RequestCredentials = "same-origin";
+
 export async function httpFetch(
   method: string,
   input: unknown,
-  baseUrl: string,
+  httpCfg?: HttpCfg,
 ): Promise<EffectResult> {
   const x = input as {
     url?: string;
@@ -16,10 +33,17 @@ export async function httpFetch(
     key?: string;
     value?: unknown;
   };
-  const url = (baseUrl ?? "") + (x.url ?? "");
-  const init: RequestInit = { method, headers: { ...(x.headers ?? {}) } };
+  const baseUrl = httpCfg?.baseUrl ?? "";
+  const url = baseUrl + (x.url ?? "");
+  // Header precedence (spec http.md §6.1.5): auto < global < input.
+  const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
+  const headers: Record<string, string> = { ...globalHeaders, ...(x.headers ?? {}) };
+  const init: RequestInit = {
+    method,
+    headers,
+    credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
+  };
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
-    const headers = init.headers as Record<string, string>;
     if (typeof x.body === "string") {
       init.body = x.body;
     } else {
@@ -27,6 +51,12 @@ export async function httpFetch(
       if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
     }
   }
+
+  const timeoutMs = httpCfg?.timeout ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  init.signal = controller.signal;
+
   try {
     const res = await fetch(url, init);
     if (res.status === 401 || res.status === 403 || res.status >= 500) {
@@ -58,5 +88,15 @@ export async function httpFetch(
     return { kind: "ok", value };
   } catch (e) {
     return { kind: "err", value: { status: 0, message: String(e), body: "" } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function safeCallHeaders(thunk: () => Record<string, string>): Record<string, string> {
+  try {
+    return thunk() ?? {};
+  } catch {
+    return {};
   }
 }
