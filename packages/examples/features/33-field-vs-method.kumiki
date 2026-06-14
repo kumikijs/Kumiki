@@ -3,7 +3,6 @@
 #  - `seg.head` / `seg.size` on a RECORD read the fields (no shadow), even
 #    though `head` / `size` are also stdlib method names;
 #  - `items.head` on a LIST uses the List.head shortcut (→ Option(T)).
-# Before v0.3 the record fields were silently shadowed by the methods.
 
 type Segment = { head: Text, size: Int }
 

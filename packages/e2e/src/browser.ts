@@ -29,7 +29,7 @@ export type Expect = {
   /**
    * Browser-only: CSS selectors that must carry a running keyframe animation
    * (`getComputedStyle().animationName !== "none"`). A headless DOM can't observe this —
-   * it's the verification tier for the v0.2 `motion` layer.
+   * it's the verification tier for the `motion` layer.
    */
   animating?: string[];
 };

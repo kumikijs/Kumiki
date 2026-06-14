@@ -32,7 +32,7 @@ export default defineConfig({
       label: "English",
       lang: "en",
       description:
-        "A declarative web app language designed first and foremost for AI to write, edit, and touch in parallel",
+        "A declarative web framework designed first and foremost for AI to write, edit, and touch in parallel",
       themeConfig: {
         nav: [
           { text: "Guide", link: "/guide/getting-started" },
@@ -79,7 +79,7 @@ export default defineConfig({
     ja: {
       label: "日本語",
       lang: "ja",
-      description: "AI が書き・直し・並列に触ることを最優先に設計した宣言的 Web アプリ言語",
+      description: "AI が書き・直し・並列に触ることを最優先に設計した宣言的 Web フレームワーク",
       themeConfig: {
         nav: [
           { text: "ガイド", link: "/ja/guide/getting-started" },

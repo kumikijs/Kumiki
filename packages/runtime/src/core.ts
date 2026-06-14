@@ -317,11 +317,10 @@ export type AppShape = {
     version: number;
     stores: { name: string; key: string; indexes?: string[] }[];
   };
-  /** Phase 4: registered themes by name. */
   themes?: Record<string, Theme>;
-  /** Phase 4: selected theme name. */
+  /** selected theme name. */
   themeName?: string | null;
-  /** v0.2 M5: reusable scoped animations by name (closed-grammar keyframes + timing). */
+  /** reusable scoped animations by name (closed-grammar keyframes + timing). */
   motions?: Record<string, unknown>;
   /** §4.10: document-level metadata applied to <head> at mount. */
   meta?: {
@@ -1190,7 +1189,7 @@ function reportPanic(where: string, e: unknown): void {
  * capability must never fail silently — the storage-unavailable case (sandbox /
  * private mode) otherwise looks like the app does nothing. Reported via
  * console.error so the verification tiers (smoke / runScenario, which patch
- * console.error) flag it, consistent with the v0.3 panic model. Production noise
+ * console.error) flag it. Production noise
  * is the app's own choice: wire an `.err` reducer to handle (or deliberately
  * ignore) the error.
  */
@@ -1346,7 +1345,7 @@ function applyResponsive(_el: HTMLElement, raw: unknown, set: (v: unknown) => vo
 
 export function ensureAnimationStyles(): void {
   // Keyed by presence in the active style root, so each root (document head or a
-  // shadow root) gets its own copy of the v0.1 animation keyframes.
+  // shadow root) gets its own copy of the animation keyframes.
   if (findStyleNode("kumiki-animations")) return;
   const css = `
 @keyframes kumiki-fade { from { opacity: 0 } to { opacity: 1 } }
@@ -1385,7 +1384,7 @@ function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
 }
 
-// ----- motion layer (v0.2 M5) -----
+// ----- motion layer -----
 // Reusable, scoped animations declared with `motion N = {...}` and referenced
 // from a tile's `motion` prop. Codegen puts the parsed definitions on
 // `App.motions`; the runtime turns each into a scoped `@keyframes` + class at
@@ -1468,7 +1467,7 @@ function styleHostEl(): HTMLElement {
 function ensureMotionStyles(app: AppShape): void {
   const motions = app.motions ?? {};
   const rules = Object.entries(motions).map(([name, spec]) => motionCss(name, spec));
-  // a11y (M5 AC5): disable motion AND the v0.1 transitions when the user asks.
+  // a11y (M5 AC5): disable motion AND the transitions when the user asks.
   rules.push(
     `@media (prefers-reduced-motion: reduce) { .kumiki-motion, .kumiki-anim { animation: none !important } }`,
   );

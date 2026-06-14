@@ -2,7 +2,7 @@
 
 [English](./README.md) · 日本語
 
-このディレクトリは Kumiki の**網羅的な実例集**である。運用方針として、質問・issue・バグ報告があるたびにここへ例を追加し、「リポジトリを見れば疑問が解決する」状態を維持する。
+このディレクトリは Kumiki の実例集である。運用方針として、質問・issue・バグ報告があるたびにここへ例を追加し、「リポジトリを見れば疑問が解決する」状態を維持する。
 
 すべての例は CI でパース・型検査・ビルドが検証される（→ [Tests](https://github.com/kage1020/Kumiki/tree/main/tests)）。壊れた例はマージされない。
 
@@ -28,8 +28,8 @@
 
 ```sh
 # 型検査
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts check examples/apps/01-counter/app.kumiki
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts check examples/apps/01-counter/app.kumiki
 
 # ビルド（index.html / app.js / runtime/ を出力 — アプリが使うランタイムモジュールのみ）
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts build examples/apps/01-counter/app.kumiki ./out
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/01-counter/app.kumiki ./out
 ```

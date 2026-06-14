@@ -1,4 +1,4 @@
-# Counter — Kumiki v0.1 minimal example
+# Counter
 # 12 lines of code, demonstrates: type, slot, reducer, tile, app
 
 type   N      = nominal Int where between(0, 999)

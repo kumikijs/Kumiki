@@ -168,7 +168,7 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).not.toContain("dec-decrements");
   });
 
-  it("reports per-test timings and a property case count (v0.6 M4)", { timeout: 30000 }, () => {
+  it("reports per-test timings and a property case count", { timeout: 30000 }, () => {
     const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS], {
       stdio: "pipe",
       shell: true,
@@ -178,7 +178,7 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toMatch(/PASS {2}inc-dec-roundtrips \(100 cases, \d+ms\)/);
   });
 
-  it("--coverage reports reducer / effect / tile coverage (v0.6 M4)", { timeout: 30000 }, () => {
+  it("--coverage reports reducer / effect / tile coverage", { timeout: 30000 }, () => {
     const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS, "--coverage"], {
       stdio: "pipe",
       shell: true,

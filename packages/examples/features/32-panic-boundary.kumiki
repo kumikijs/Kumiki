@@ -2,8 +2,7 @@
 # spec/stdlib.md §2.2). `.get` on a `None` is a panic. Here a child tile reads
 # it only after a button flips `reveal`, so the read panics during render — and
 # the enclosing `error-boundary` catches it and shows the fallback instead of
-# the exception escaping uncaught. This is the v0.3 (#24) clean panic model:
-# a render panic under a boundary is recoverable; the app stays alive.
+# the exception escaping uncaught.
 
 slot secret : Option(Text) = None
 slot reveal : Bool         = false

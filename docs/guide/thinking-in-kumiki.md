@@ -39,4 +39,4 @@ tasks := tasks.remove(id).filter(pred)
 
 ## A Design Easy for AI to Partially Edit
 
-Because each definition is independent and references are explicit, `@kumiki/cli` / `@kumiki/mcp` can list / view / add / replace / remove / rename / fix at the **per-definition** level. This is the core of the goal that "AI can work in parallel." For details, see [AI Editing](../spec/ai-edit.md).
+Because each definition is independent and references are explicit, `@kumikijs/cli` / `@kumikijs/mcp` can list / view / add / replace / remove / rename / fix at the **per-definition** level. This is the core of the goal that "AI can work in parallel." For details, see [AI Editing](../spec/ai-edit.md).

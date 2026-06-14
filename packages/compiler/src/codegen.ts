@@ -1,4 +1,4 @@
-// Phase 2 codegen: AST → self-contained ES module that uses the runtime API.
+// AST → self-contained ES module that uses the runtime API.
 
 import type {
   AppDef,
@@ -1137,7 +1137,6 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "values") return `_s.mapValues(${baseJs})`;
       if (e.field === "entries") return `_s.mapEntries(${baseJs})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
-      // Time / Duration helpers: in Phase 2 these are stored as raw numbers.
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
       // .show on values (variants → _tag, numbers/strings → String)
       if (e.field === "show") return `_s.show(${baseJs})`;
@@ -2143,7 +2142,7 @@ function propsFor(
     // event handler from enclosing tile (e.g. ResetBtn has no onClick but reducer subscribes to ui.click(ResetBtn))
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
-  // Implicit onClick from reducers subscribing to this enclosing tile name (matches Phase 1 behavior)
+  // Implicit onClick from reducers subscribing to this enclosing tile name
   if (t.name === "button" && enclosingTile) {
     const r = ctx.gen.reducers.find(
       (rr) =>

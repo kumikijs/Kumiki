@@ -174,7 +174,7 @@ tile ErrorFallback
 
 When you write `error-boundary = X` in a tile definition, a panic during rendering under that tile calls the X tile with `in=PanicInfo` and shows the fallback.
 
-> **Implementation status (v0.3).** The live runtime implements the panic model of §7.2: a panic during a reducer dispatch rolls back that episode's `slot` changes (no partial writes), is surfaced to the verification tiers (`smoke` / scenario), and fires the `app.error` reducer (§7.2.3) with `PanicInfo` as `$event`. A panic during rendering is caught by the nearest enclosing `error-boundary` tile; a render panic with **no** enclosing boundary (e.g. under the root) falls back to a built-in top-level panic display instead of escaping the event handler uncaught. `panic(message)` and the polymorphic `.get` (which panics on `None` / `Err`, consistent with `.get-err`) raise this same controlled signal. (#24)
+> **Implementation status.** The live runtime implements the panic model of [Error Handling](#_7-2-error-handling): a panic during a reducer dispatch rolls back that episode's `slot` changes (no partial writes), is surfaced to the verification tiers (`smoke` / scenario), and fires the `app.error` reducer ([The app.error reducer](#_7-2-3-the-app-error-reducer)) with `PanicInfo` as `$event`. A panic during rendering is caught by the nearest enclosing `error-boundary` tile; a render panic with **no** enclosing boundary (e.g. under the root) falls back to a built-in top-level panic display instead of escaping the event handler uncaught. `panic(message)` and the polymorphic `.get` (which panics on `None` / `Err`, consistent with `.get-err`) raise this same controlled signal.
 
 ---
 

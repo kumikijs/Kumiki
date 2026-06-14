@@ -53,7 +53,7 @@ test t = reducer-test inc given={slots:{count:0}, event:{type: ui.click, target:
     expect(checkSrc(src)).toEqual([]);
   });
 
-  // ----- v0.6 M1: `expect` wildcards (spec/testing.md §8.2.2) -----
+  // ----- `expect` wildcards (spec/testing.md §8.2.2) -----
 
   it("parses and accepts `<any-id>` / `<slots.X>` wildcards in a reducer-test expect", () => {
     const src = `
@@ -121,7 +121,7 @@ test t = reducer-test inc given={slots:{count:0}, event:{type: ui.click, target:
     expect(checkSrc(src).some((e) => e.code === "E0103" && e.message.includes("itms"))).toBe(true);
   });
 
-  // ----- v0.6 M2: effect-result mocks (spec/testing.md §8.5) -----
+  // ----- effect-result mocks (spec/testing.md §8.5) -----
 
   it("accepts a reducer-test with `given.mocks` for a declared effect", () => {
     const src = `
@@ -152,7 +152,7 @@ test t = reducer-test inc given={slots:{count:0}, event:{type: ui.click, target:
     expect(checkSrc(src).some((e) => e.code === "E0104" && e.message.includes("nope"))).toBe(true);
   });
 
-  // ----- v0.6 M3: property-test (spec/testing.md §8.3) -----
+  // ----- property-test (spec/testing.md §8.3) -----
 
   it("parses and accepts a property-test with for-all / invariant / run-reducer", () => {
     const src = `

@@ -172,9 +172,7 @@ export const _stdlibCore = {
   /**
    * `.get` — the polymorphic unwrap for Option AND Result. Per docs/spec/stdlib.md
    * §2.2 it PANICS on the empty case (`None` / `Err`); `Some(v)` / `Ok(v)`
-   * unwrap to `v`. A plain (non-variant) value passes through unchanged. (Before
-   * v0.3 this returned the value unchanged on the empty case, so `.get` and
-   * `.get-err` behaved oppositely — #24.)
+   * unwrap to `v`. A plain (non-variant) value passes through unchanged.
    */
   unwrap(opt: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {

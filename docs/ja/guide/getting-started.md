@@ -1,18 +1,16 @@
 # はじめに
 
-Kumiki は実験的な「AI ファースト」の Web フレームワークです。アプリを小さな定義の組み合わせとして記述し、ツールチェインが素のブラウザアプリへコンパイルします。このページでは、ゼロから動く例までを数分で辿ります。
-
-> 言語そのものが初めてなら、考え方は [Kumiki の考え方](./thinking-in-kumiki.md)、実例は [examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples) を参照。1 行ずつ自分で組み立てたいなら [最初のアプリ](./your-first-app.md) へ。
+Kumiki は「AI ファースト」の Web フレームワークである。アプリを小さな定義の組み合わせとして記述し、ツールチェインが素のブラウザアプリへコンパイルする。
 
 ## インストールせずに試す
 
-最速の入口は [Playground](./playground.md) です。コンパイラとランタイムがブラウザ内で動き、左で編集すると右に描画されます。clone もインストールも不要です。
+最速の入口は [Playground](./playground.md)。コンパイラとランタイムがブラウザ内で動き、左で編集すると右に描画される。clone もインストールも不要。
 
-CLI・MCP・自分のファイルを扱うときは、以下のローカル環境を用意してください。
+CLI・MCP・自分のファイルを扱うときは、以下のローカル環境を用意する。
 
 ## Kumiki プログラムの見た目
 
-カウンターはわずかな定義です。`slot` が状態、`reducer` がイベントを状態変更に変え、`tile` が状態を UI へ投影し、`app` が全体を束ねます:
+カウンターはわずかな定義である。`slot` が状態、`reducer` がイベントを状態変更に変え、`tile` が状態を UI へ投影し、`app` が全体を束ねる:
 
 ```kumiki
 slot count : Int = 0
@@ -28,11 +26,19 @@ app Counter
     init   = []
 ```
 
-これがメンタルモデルの全体です。`-` / `reset` まで含む完成版は [packages/examples/apps/01-counter/app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)、7 レイヤの解説は [Kumiki の考え方](./thinking-in-kumiki.md) にあります。
+これがメンタルモデルの全体である。完成版は [app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)、7 レイヤの解説は [Kumiki の考え方](./thinking-in-kumiki.md) にある。
 
 ## ローカル環境を用意する
 
-**Node.js 22+** と **pnpm** が必要です。Kumiki はまだ npm に公開していないため、リポジトリを clone して動かします:
+**Node.js 22+** が必要。CLI は `@kumikijs/cli` をインストールする:
+
+```sh
+npm i -g @kumikijs/cli
+# またはインストールせず直接実行
+npx @kumikijs/cli --help
+```
+
+example・benchmarks・playground までソースを触りたい場合は、リポジトリを clone してワークスペースの `kumiki` スクリプトを使う:
 
 ```sh
 git clone https://github.com/kage1020/Kumiki.git
@@ -42,55 +48,49 @@ pnpm build          # 全パッケージをビルド
 pnpm test           # 任意: 全パッケージが緑になることを確認
 ```
 
-`pnpm install` が `kumiki` コマンドとパッケージ間の import を成立させます。飛ばさないでください。
-
 ## 最初の例を動かす
 
-リポジトリにはルートから CLI を呼ぶ `kumiki` スクリプトが入っており、パスは今いる場所（リポジトリルート）基準で書けます:
-
-**check** — `.kumiki` ファイルをパース + 型検査:
+**check** — `.kumiki` ファイルをパース + 型検査する:
 
 ```sh
 pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
 # → ok
 ```
 
-**build** — 静的アプリにコンパイル:
+**build** — 静的アプリにコンパイルする:
 
 ```sh
 pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
 # → Wrote out/index.html, app.js, runtime/ (core, stdlib, tiles-layout, tiles-text, tiles-input)
 ```
 
-`out/index.html` をブラウザで開けばカウンターが動きます（「Count: 0」と、加算・減算・リセットのボタン）。`app.js` は生成された純粋なロジック、`runtime/` はこのアプリが実際に使う DOM ランタイムモジュールだけを含みます（minify 済み。カウンターは gzip 約 9KB で、ルーティングやテーブルを使わないアプリにルーターやテーブルのコードは含まれません）。
+`out/index.html` をブラウザで開けばカウンターが動く（「Count: 0」と、加算・減算・リセットのボタン）。`app.js` は生成された純粋なロジック、`runtime/` はこのアプリが実際に使う DOM ランタイムモジュールだけを含む（minify 済み。カウンターは gzip 約 9KB で、ルーティングやテーブルを使わないアプリにルーターやテーブルのコードは含まれない）。
 
-**smoke** — 「コンパイルが通る」だけでなく「実際に動く」ことを確認します。ヘッドレス DOM にマウントしてクリックまで通します:
+**smoke** — 「コンパイルが通る」だけでなく「実際に動く」ことを確認する。ヘッドレス DOM にマウントしてクリックまで通す:
 
 ```sh
 pnpm kumiki smoke packages/examples/apps/01-counter/app.kumiki
 # → ok — mounted, rendered, 3 interaction(s), no runtime errors
 ```
 
-`pnpm kumiki` を引数なしで実行すると全サブコマンド（`build` / `check` / `smoke` / `list` / `view` / `refs` / `run`）が表示されます。
-
 ## うまくいかないとき
 
-check のエラーはコードと位置付きで出ます:
+check のエラーはコードと位置付きで出る:
 
 ```
 E0103 undef-ref at 3:39: Reference to undefined name "total"
 ```
 
-コード（ここでは `E0103`）が種類を表します。意味は [エラーカタログ](../spec/errors.md) を参照。多くはタイプミスか定義漏れで、よくある直し方は [Kumiki の考え方](./thinking-in-kumiki.md) と [レシピ](./recipes.md) でカバーしています。
+コード（ここでは `E0103`）が種類を表す。意味は [エラーカタログ](../spec/errors.md) を参照。多くはタイプミスか定義漏れで、よくある直し方は [Kumiki の考え方](./thinking-in-kumiki.md) と [レシピ](./recipes.md) でカバーする。
 
 コマンド自体が失敗する場合:
 
-- `Cannot find package '@kumiki/compiler'` や `tsx: command not found` → `pnpm install` の実行漏れです。実行してください。
-- `.kumiki` ファイルのパスが見つからない → パスはリポジトリルート基準か確認（`pnpm kumiki` はルートで動きます）。
+- `Cannot find package '@kumikijs/compiler'` や `tsx: command not found` → `pnpm install` の実行漏れ。実行する。
+- `.kumiki` ファイルのパスが見つからない → パスはリポジトリルート基準か確認（`pnpm kumiki` はルートで動く）。
 
 ## エディタ / AI 連携（MCP）
 
-`@kumiki/mcp` は check・build・編集・仕様検索を MCP ツールとして公開し、AI エージェントが Kumiki を一気通貫で操作できます。クライアント設定例は [packages/mcp/README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md) を参照。
+`@kumikijs/mcp` は check・build・編集・仕様検索を MCP ツールとして公開し、AI エージェントが Kumiki を一気通貫で操作できる。クライアント設定例は [README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md) を参照。
 
 ## 次へ
 

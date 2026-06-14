@@ -2,7 +2,7 @@
 
 [English](./README.md) · 日本語
 
-**AI の、AI による、AI のための Web フレームワーク。** 定義同士は組木（_kumiki_）のように噛み合う——釘も糊も、隠れた状態もない——から、AI が並列にアプリを書き・直し・組み替えても壊れない。（experimental, v0.1）
+**AI の、AI による、AI のための Web フレームワーク。** 定義同士は組木（_kumiki_）のように噛み合う——釘も糊も、隠れた状態もない——から、AI が並列にアプリを書き・直し・組み替えても壊れない。
 
 ```kumiki
 slot count : Int = 0
@@ -20,7 +20,7 @@ app Counter
 
 Kumiki は JSX・Hooks・依存配列・Provider といった「人間の認知に最適化された」装置を持たない。代わりに **7 レイヤ**（type / slot / effect / reducer / tile / fn / app）の独立した定義の集合としてアプリを表す。構文オーバーヘッドが小さく、定義同士の依存が明示的で、AI が安全に部分編集できる。
 
-> ⚠️ **experimental**。言語・ランタイム・ツールは変わりうる。本番利用は想定していない。
+> 言語・ランタイム・ツールは 1.0 未満で、マイナーバージョン間で破壊的変更が入りうる。依存させる場合はバージョンを固定すること。
 
 ## なぜ Kumiki か
 
@@ -51,10 +51,10 @@ pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
 
 | パッケージ | 内容 |
 |---|---|
-| [`@kumiki/compiler`](./packages/compiler/) | lexer・parser・typechecker・codegen |
-| [`@kumiki/runtime`](./packages/runtime/) | DOM ランタイム（signal graph・mount・dispatch） |
-| [`@kumiki/cli`](./packages/cli/) | `kumiki` コマンド（build / check / list / view / add / replace / remove / rename / fix） |
-| [`@kumiki/mcp`](./packages/mcp/) | MCP サーバー。コンパイラと AI 編集・仕様検索を MCP ツールとして公開 |
+| [`@kumikijs/compiler`](./packages/compiler/) | lexer・parser・typechecker・codegen |
+| [`@kumikijs/runtime`](./packages/runtime/) | DOM ランタイム（signal graph・mount・dispatch） |
+| [`@kumikijs/cli`](./packages/cli/) | `kumiki` コマンド（build / check / list / view / add / replace / remove / rename / fix） |
+| [`@kumikijs/mcp`](./packages/mcp/) | MCP サーバー。コンパイラと AI 編集・仕様検索を MCP ツールとして公開 |
 
 ## 運用モデル
 

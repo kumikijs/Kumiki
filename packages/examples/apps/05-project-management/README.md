@@ -16,7 +16,7 @@ The largest reference app (~1255 lines). It covers a full range of elements that
 ## Run
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts build examples/apps/05-project-management/app.kumiki ./out
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/05-project-management/app.kumiki ./out
 ```
 
 Related specs: [language](../../../spec/language.md) / [stdlib](../../../spec/stdlib.md) / [style](../../../spec/style.md) / [errors](../../../spec/errors.md)

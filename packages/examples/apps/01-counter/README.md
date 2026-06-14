@@ -14,7 +14,7 @@ The smallest Kumiki app. With this alone, you get one full cycle of "state, upda
 ## Run
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts build examples/apps/01-counter/app.kumiki ./out
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/01-counter/app.kumiki ./out
 ```
 
 Related specs: [language](../../../spec/language.md)

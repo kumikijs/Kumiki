@@ -39,4 +39,4 @@ tasks := tasks.remove(id).filter(pred)
 
 ## AI が部分編集しやすい設計
 
-各定義が独立し参照が明示的なので、`@kumiki/cli` / `@kumiki/mcp` は **定義単位**で list / view / add / replace / remove / rename / fix できる。これが「AI が並列に触れる」狙いの中核。詳しくは [AI 編集](../spec/ai-edit.md)。
+各定義が独立し参照が明示的なので、`@kumikijs/cli` / `@kumikijs/mcp` は **定義単位**で list / view / add / replace / remove / rename / fix できる。これが「AI が並列に触れる」狙いの中核。詳しくは [AI 編集](../spec/ai-edit.md)。

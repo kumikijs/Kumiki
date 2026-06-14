@@ -15,7 +15,7 @@
 ## 実行
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts build examples/apps/03-blog/app.kumiki ./out
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/03-blog/app.kumiki ./out
 ```
 
 関連仕様: [routing](../../../spec/routing.md) / [http](../../../spec/http.md) / [lifecycle](../../../spec/lifecycle.md)

@@ -17,7 +17,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 A `test` definition is **the sixth layer**. It is stored in the CRDT graph and run with `kumiki test`. It is not included in the production build.
 
-> **Implementation status (v0.6).** Implemented: `reducer-test`, `tile-test`, `property-test` (§8.3); the `kumiki test` runner with name / `prefix*` filtering, per-test **timings** (`(1ms)` / `(100 cases, 23ms)`), `--coverage`, and `--watch`; `kumiki fix --auto-patch <test-name>` (§8.7.2); `expect` **wildcards** (`<any-id>` / `<slots.X>`, §8.2.2); and **effect-result mocks** inside `reducer-test` (`given.mocks`, §8.5). The runner prints `PASS` / `FAIL` lines plus `expected` / `actual` / `diff at <path>` and — when it can isolate a scalar leaf — the §8.7.1 value arrow (`"a" -> "b"`) on failure. Still specified but **not yet implemented**: `episode-test` (it needs the runtime episode logger of [runtime.md](./runtime.md) §10.5).
+> **Implementation status.** Implemented: `reducer-test`, `tile-test`, `property-test` ([Property Tests](#_8-3-property-tests)); the `kumiki test` runner with name / `prefix*` filtering, per-test **timings** (`(1ms)` / `(100 cases, 23ms)`), `--coverage`, and `--watch`; `kumiki fix --auto-patch <test-name>` ([Fixing from a failing test](#_8-7-2-fixing-from-a-failing-test)); `expect` **wildcards** (`<any-id>` / `<slots.X>`, [Wildcards](#_8-2-2-wildcards)); and **effect-result mocks** inside `reducer-test` (`given.mocks`, [Effect mock](#_8-5-effect-mock)). The runner prints `PASS` / `FAIL` lines plus `expected` / `actual` / `diff at <path>` and — when it can isolate a scalar leaf — the value arrow (`"a" -> "b"`) on failure. Still specified but **not yet implemented**: `episode-test` (it needs the runtime episode loop of [Episode Loop](./runtime.md#_10-5-episode-loop)).
 
 ## 8.2 Reducer Tests
 
@@ -149,7 +149,7 @@ test loadUser-success =
 
 With `mocks: {effect-name: ok(value) | err(error) | delay(ms, ok(value))}`, you can replace the result of any effect.
 
-The runner dispatches the triggering event, then drives the emit → result → reducer loop headlessly: an emitted effect **with** a `mocks` entry is delivered to its `.ok` / `.err` reducer (the mock's `value` arrives as the reducer's first bind), and the loop continues until quiescent. An emitted effect **without** a mock is *residual* — recorded and asserted via `expect.effects`, with no result delivered (so a mocked effect is "consumed" and does not appear in `expect.effects`, which is why `loadUser` above leaves `effects: []`). `delay(ms, …)` resolves immediately — time is virtualized (no real wait), results process in emit order. A mock's key must name a declared effect (else **E0104**), and a mocked `err` that no `.err` reducer consumes fails the test (the §2.5 no-silent-failure contract), rather than passing silently.
+The runner dispatches the triggering event, then drives the emit → result → reducer loop headlessly: an emitted effect **with** a `mocks` entry is delivered to its `.ok` / `.err` reducer (the mock's `value` arrives as the reducer's first bind), and the loop continues until quiescent. An emitted effect **without** a mock is *residual* — recorded and asserted via `expect.effects`, with no result delivered (so a mocked effect is "consumed" and does not appear in `expect.effects`, which is why `loadUser` above leaves `effects: []`). `delay(ms, …)` resolves immediately — time is virtualized (no real wait), results process in emit order. A mock's key must name a declared effect (else **E0104**), and a mocked `err` that no `.err` reducer consumes fails the test (the [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities) no-silent-failure contract), rather than passing silently.
 
 ## 8.6 Episode replay
 
@@ -205,7 +205,7 @@ FAIL  counter-display
 `kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it and re-run (reporting whether the test now passes and whether any other test regressed). It repairs only what it can prove deterministically:
 
 - If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run.
-- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the §8.7.1 snapshot case).
+- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the [Output](#_8-7-1-output) snapshot case).
 
 Non-literal divergences (numeric slots, wrong operators, effect-list mismatches) are reported as a diff rather than guessed.
 
@@ -248,14 +248,14 @@ Separate from the `test` definitions above (in-language tests), the toolchain pr
 
 `kumiki smoke <file>` mounts a compiled app to a headless DOM (happy-dom), fires events at all operable elements after the initial render, and at each step monitors for runtime exceptions, console errors, unhandled rejections, and empty rendering. It automatically detects the class of bugs previously verified by a human in the browser, such as "the type passes, but it calls a method that doesn't exist in the runtime and crashes on operation" or "it doesn't render." It is general-purpose and has no app-specific knowledge.
 
-Real rendering in a browser (CSS layout, real focus, etc.) cannot be fully reproduced by a headless DOM. The **real-browser tier** for that is `@kumiki/e2e` (Chromium / Playwright), which runs in the **same scenario format** as the headless-DOM tier. The state oracle is likewise `window.__kumikiApp.live`, and displayed text is `innerText` (visible only). In addition, it has browser-only assertions:
+Real rendering in a browser (CSS layout, real focus, etc.) cannot be fully reproduced by a headless DOM. The **real-browser tier** for that is `@kumikijs/e2e` (Chromium / Playwright), which runs in the **same scenario format** as the headless-DOM tier. The state oracle is likewise `window.__kumikiApp.live`, and displayed text is `innerText` (visible only). In addition, it has browser-only assertions:
 
 - `focused`: that the specified selector is actually focused (detects focus-stealing bugs on re-render)
 - `visible` / `hidden`: that it is really visible/invisible per computed style (`display:none`, etc.)
 
 Because it is heavy (browser binaries), it is not included in the default CI tests; it is an opt-in layer used for verifying focus, layout, and real rendering, and for final verification. The **correctness** of results cannot be judged by smoke; the layer-3 assertions handle that.
 
-`@kumiki/mcp` provides an equivalent `kumiki_smoke`, allowing an AI agent to self-verify after editing.
+`@kumikijs/mcp` provides an equivalent `kumiki_smoke`, allowing an AI agent to self-verify after editing.
 
 ### Example-corpus guard: runtime truth, not just compilation
 

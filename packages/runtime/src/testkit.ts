@@ -205,7 +205,7 @@ function compareReducerExpect(
     };
   }
   // M2 (§8.5): a mocked `err` that no `.err` reducer consumes is a dropped error
-  // (the v0.5 #37 contract) — a clear test failure rather than a silent pass.
+  // — a clear test failure rather than a silent pass.
   if (unhandledErr !== null) {
     return {
       name,
@@ -539,7 +539,7 @@ export const _stdlibTest = {
    * result `value` as `$1`); one with no mock is *residual* and asserted via
    * `expect.effects`. `delay(ms, …)` is resolved immediately (virtualized time —
    * no real wait, FIFO order). A mocked `err` with no `.err` reducer fails the
-   * test (the v0.5 #37 no-silent-failure contract).
+   * test.
    */
   runReducerTestFlow(input: {
     name: string;

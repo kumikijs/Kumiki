@@ -1,4 +1,4 @@
-// AST types for Kumiki v0.1 — Phase 1 + Phase 2 (TodoMVC).
+// AST types for Kumiki.
 
 export type Pos = { line: number; col: number };
 
@@ -60,7 +60,7 @@ export type ThemeDef = {
   pos: Pos;
 };
 
-// ----- motion layer (reusable, scoped animations; v0.2 M5) -----
+// ----- motion layer (reusable, scoped animations) -----
 // A purely-presentational definition modeled on `theme`: the body is a record
 // literal (so it cannot reference slots/effects — purity is structural).
 export type MotionDef = {

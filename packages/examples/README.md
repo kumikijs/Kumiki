@@ -2,7 +2,7 @@
 
 English · [日本語](./README.ja.md)
 
-This directory is a **comprehensive set of working examples** for Kumiki. As an operating policy, every time a question, issue, or bug report comes in, an example is added here, keeping the state where "looking at the repository resolves your question".
+This directory is the set of working examples for Kumiki. As an operating policy, every time a question, issue, or bug report comes in, an example is added here, keeping the state where "looking at the repository resolves your question".
 
 All examples have parsing, type checking, and build verified in CI (→ [Tests](https://github.com/kage1020/Kumiki/tree/main/tests)). Broken examples are not merged.
 
@@ -28,8 +28,8 @@ From small to large. Shows how features combine in real apps.
 
 ```sh
 # Type check
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts check examples/apps/01-counter/app.kumiki
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts check examples/apps/01-counter/app.kumiki
 
 # Build (outputs index.html / app.js / runtime/ — only the runtime modules the app uses)
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts build examples/apps/01-counter/app.kumiki ./out
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/01-counter/app.kumiki ./out
 ```

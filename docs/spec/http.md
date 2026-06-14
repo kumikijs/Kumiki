@@ -73,7 +73,7 @@ All HTTP effects automatically apply the following:
 - `Accept: application/json` (when the Decoder is Json)
 - `Content-Type: application/json` (when the HttpBody is Json)
 - `Content-Type: multipart/form-data` (when Multipart)
-- `User-Agent: Kumiki/0.1`
+- `User-Agent: Kumiki`
 
 User-specified headers take precedence.
 
@@ -191,7 +191,7 @@ reducer cancelSearch
     do= emit cancel(searchEffectId)
 ```
 
-`EffectId` is returned at `emit` time (implemented in v0.2). In v0.1, it is left to the policy.
+`EffectId` is returned at `emit` time.
 
 ---
 
@@ -389,7 +389,7 @@ Defaults for all HTTP effects:
 | `retry` | `none` |
 | `Accept` | `application/json` |
 | `Content-Type` (with Json body) | `application/json` |
-| `User-Agent` | `Kumiki/0.1` |
+| `User-Agent` | `Kumiki` |
 | `credentials` | `same-origin` |
 
 Defaults for storage effects:

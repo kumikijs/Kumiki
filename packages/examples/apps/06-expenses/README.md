@@ -19,8 +19,8 @@ This app was built as a **demo of the autonomous iterate loop**, and in the proc
 ## Validation
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts smoke examples/apps/06-expenses/app.kumiki
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts run   examples/apps/06-expenses/app.kumiki examples/apps/06-expenses/scenario.json
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts smoke examples/apps/06-expenses/app.kumiki
+pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts run   examples/apps/06-expenses/app.kumiki examples/apps/06-expenses/scenario.json
 ```
 
 `scenario.json` distills the requirements into executable acceptance criteria (AC). `tests/` runs them in CI.
