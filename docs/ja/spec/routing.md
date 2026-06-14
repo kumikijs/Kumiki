@@ -109,7 +109,7 @@ emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 
 `{name}` は params で置換される。未指定の `{name}` はコンパイル時警告。
 
-### 3.3.4 ルータソース：`history` と `memory`（#36）
+### 3.3.4 ルータソース：`history` と `memory`
 
 デフォルトでは、ランタイムは**周辺 document** の location/history を読み書きする：`mount(app, el)` は初期ルートを `location.pathname` から解決し、`navigate` / link クリックは `history.pushState` / `replaceState` を呼ぶ。実 origin で配信されるアプリにはこれが正しい。
 

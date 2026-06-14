@@ -1,8 +1,6 @@
 # はじめに
 
-Kumiki は「AI ファースト」の Web フレームワークである。アプリを小さな定義の組み合わせとして記述し、ツールチェインが素のブラウザアプリへコンパイルする。このページでは、ゼロから動く例までを数分で辿る。
-
-> 言語そのものが初めてなら、考え方は [Kumiki の考え方](./thinking-in-kumiki.md)、実例は [examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples) を参照。1 行ずつ自分で組み立てたいなら [最初のアプリ](./your-first-app.md) へ。
+Kumiki は「AI ファースト」の Web フレームワークである。アプリを小さな定義の組み合わせとして記述し、ツールチェインが素のブラウザアプリへコンパイルする。
 
 ## インストールせずに試す
 
@@ -28,11 +26,11 @@ app Counter
     init   = []
 ```
 
-これがメンタルモデルの全体である。`-` / `reset` まで含む完成版は [packages/examples/apps/01-counter/app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)、7 レイヤの解説は [Kumiki の考え方](./thinking-in-kumiki.md) にある。
+これがメンタルモデルの全体である。完成版は [app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)、7 レイヤの解説は [Kumiki の考え方](./thinking-in-kumiki.md) にある。
 
 ## ローカル環境を用意する
 
-**Node.js 22+** が必要。CLI は `@kumikijs/cli` として npm に公開されている:
+**Node.js 22+** が必要。CLI は `@kumikijs/cli` をインストールする:
 
 ```sh
 npm i -g @kumikijs/cli
@@ -50,11 +48,7 @@ pnpm build          # 全パッケージをビルド
 pnpm test           # 任意: 全パッケージが緑になることを確認
 ```
 
-`pnpm install` が `kumiki` コマンドとパッケージ間の import を成立させる。飛ばさないこと。
-
 ## 最初の例を動かす
-
-リポジトリにはルートから CLI を呼ぶ `kumiki` スクリプトが入っており、パスは今いる場所（リポジトリルート）基準で書ける（グローバルインストールした `kumiki` コマンドも同じ）:
 
 **check** — `.kumiki` ファイルをパース + 型検査する:
 
@@ -79,8 +73,6 @@ pnpm kumiki smoke packages/examples/apps/01-counter/app.kumiki
 # → ok — mounted, rendered, 3 interaction(s), no runtime errors
 ```
 
-`pnpm kumiki` を引数なしで実行すると全サブコマンド（`build` / `check` / `smoke` / `list` / `view` / `refs` / `run`）が表示される。
-
 ## うまくいかないとき
 
 check のエラーはコードと位置付きで出る:
@@ -98,7 +90,7 @@ E0103 undef-ref at 3:39: Reference to undefined name "total"
 
 ## エディタ / AI 連携（MCP）
 
-`@kumikijs/mcp` は check・build・編集・仕様検索を MCP ツールとして公開し、AI エージェントが Kumiki を一気通貫で操作できる。クライアント設定例は [packages/mcp/README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md) を参照。
+`@kumikijs/mcp` は check・build・編集・仕様検索を MCP ツールとして公開し、AI エージェントが Kumiki を一気通貫で操作できる。クライアント設定例は [README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md) を参照。
 
 ## 次へ
 

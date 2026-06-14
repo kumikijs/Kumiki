@@ -1,9 +1,9 @@
 # Benchmarks
 
-Kumiki's claims — "fewer tokens than React" and "an LLM can learn it from the spec alone" — are measured, not asserted. Two suites live in [`packages/benchmarks`](https://github.com/kage1020/Kumiki/tree/main/packages/benchmarks); every number on this page comes from them and can be reproduced with the commands at the bottom.
+Kumiki's claims — "fewer tokens than React" and "an LLM can learn it from the spec alone" — are measured, not asserted. Two suites live in [`benchmarks`](https://github.com/kage1020/Kumiki/tree/main/packages/benchmarks).
 
-- **Size comparison** — how compact is a Kumiki app, and a Kumiki *edit*, versus the equivalent React? Deterministic; re-measured 2026-06-11.
-- **Learning cost** — given only the spec, can an LLM write a program that parses, typechecks, and builds in a single pass? Cross-vendor (Claude / Codex / Gemini), re-scored 2026-06 against the current compiler.
+- **Size comparison** — how compact is a Kumiki app, and a Kumiki *edit*, versus the equivalent React? Deterministic.
+- **Learning cost** — given only the spec, can an LLM write a program that parses, typechecks, and builds in a single pass?
 
 ## Size comparison (Kumiki vs React)
 

@@ -1,6 +1,6 @@
 # 最初のアプリ — Counter
 
-7 レイヤを順に足しながら、動く Counter を組み立てる。完成形は [packages/examples/apps/01-counter/app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)。
+7 レイヤを順に足しながら、動く Counter を組み立てる。完成形は [01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)。
 
 ## 1. 状態を宣言する（slot）
 
@@ -47,8 +47,8 @@ kumiki build counter.kumiki ./out
 
 ## 発展
 
-- 値の範囲を縛りたい → nominal 型 + refinement（[packages/examples/features/02-nominal-type.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/02-nominal-type.kumiki)）
-- 入力欄と双方向結合 → `bind`（[packages/examples/features/13-text-input-bind.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/13-text-input-bind.kumiki)）
-- 一覧を描く → `for ... in`（[packages/examples/features/07-list.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/07-list.kumiki)）
+- 値の範囲を縛りたい → nominal 型 + refinement（[02-nominal-type](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/02-nominal-type.kumiki)）
+- 入力欄と双方向結合 → `bind`（[13-text-input-bind](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/13-text-input-bind.kumiki)）
+- 一覧を描く → `for ... in`（[07-list](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/07-list.kumiki)）
 
 考え方の全体像は [Kumiki の考え方](./thinking-in-kumiki.md) へ。

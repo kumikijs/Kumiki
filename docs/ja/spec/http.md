@@ -73,7 +73,7 @@ type Decoder = Json(TypeRef)        ; JSON を型に decode
 - `Accept: application/json`（Decoder が Json のとき）
 - `Content-Type: application/json`（HttpBody が Json のとき）
 - `Content-Type: multipart/form-data`（Multipart のとき）
-- `User-Agent: Kumiki/0.1`
+- `User-Agent: Kumiki`
 
 ユーザー指定の headers が優先される。
 
@@ -191,7 +191,7 @@ reducer cancelSearch
     do= emit cancel(searchEffectId)
 ```
 
-`EffectId` は `emit` 時に返される（v0.2 で実装）。v0.1 では policy 任せ。
+`EffectId` は `emit` 時に返される。
 
 ---
 
@@ -389,7 +389,7 @@ reducer addErr
 | `retry` | `none` |
 | `Accept` | `application/json` |
 | `Content-Type` (Json body 時) | `application/json` |
-| `User-Agent` | `Kumiki/0.1` |
+| `User-Agent` | `Kumiki` |
 | `credentials` | `same-origin` |
 
 ストレージ effect のデフォルト：

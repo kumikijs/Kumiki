@@ -135,7 +135,7 @@ fn empty?() -> Bool = todos.is-empty          ; 同上
 fn norm() -> List(Todo) = todos.reverse       ; 同上
 ```
 
-> **dispatch 規則（v0.3、ADR-002）.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[errors.md](./errors.md) E0108）。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
+> **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
 
 **`map` / `filter` / `sort-by` の lambda 引数**:
 - List 要素には `$1` を、`.entries` 後の `[k, v]` ペアには `$1=key, $2=value` を束縛します（ランタイムが自動 destructure）
@@ -170,7 +170,7 @@ or(other)                   : Result(T, E)
 to-option                   : Option(T)
 ```
 
-> **panic 意味論（v0.3）.** `Option.get` / `Result.get`（多相 unwrap、カッコ無しで `value.get` とも書ける）は空ケース（`None` / `Err`）で panic し、`Result.get-err` は `Ok` で panic する。いずれも live runtime が扱う唯一の制御された panic シグナルを送出する — [lifecycle.md §7.2](./lifecycle.md) を参照。reducer 外では `get-or(default)` を推奨。
+> **panic 意味論.** `Option.get` / `Result.get`（多相 unwrap、カッコ無しで `value.get` とも書ける）は空ケース（`None` / `Err`）で panic し、`Result.get-err` は `Ok` で panic する。いずれも live runtime が扱う唯一の制御された panic シグナルを送出する — [エラー処理](./lifecycle.md#_7-2-エラー処理) を参照。reducer 外では `get-or(default)` を推奨。
 
 ### 2.2.6 Text
 
@@ -393,7 +393,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 ---
 
-## 2.5 標準 capability
+## 2.5 標準 capability {#_2-5-standard-capabilities}
 
 `app.caps` で宣言できる capability の標準セット：
 
@@ -413,7 +413,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 | `geo.read` | 位置情報 |
 | `socket.connect`, `socket.send` | WebSocket |
 
-標準でも登録済みでもない capability を `app.caps` に書くとコンパイルエラー（[E0302](./errors.md)）。
+標準でも登録済みでもない capability を `app.caps` に書くとコンパイルエラー（[E0302](./errors.md#e0302-unknown-capability)）。
 
 #### カスタム capability の登録（`kumiki.caps.json`）
 
@@ -429,9 +429,9 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 各エントリは `group.action` 形式（小文字・ドット区切り）の capability 名で、裸の文字列でも `description` を持つオブジェクトでもよい。登録された名前は `app.caps` で受理され、それに紐づく effect（`effect track cap=telemetry.track …`）は emit 可能になり、capability 境界で dispatch される — 標準 effect と全く同様に scenario でモックできる。標準集合に既にある名前は再宣言してはならない。
 
-これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[packages/examples/features/27-custom-capability.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
+これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[27-custom-capability](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
 
-**未処理の effect エラーは surface され、決して silent にならない。** `err` に解決した effect は、対応するすべての `.err` reducer へ配送される。プログラムがその effect に `.err` reducer を**一切**配線していない場合、捨てられたエラーは `console.error`（`[kumiki] effect "<name>" returned an error with no .err reducer: …`）で報告され、検証 tier（`console.error` を捕捉する `smoke` / `runScenario`）が検知する — live panic モデル（[lifecycle.md §7.2](./lifecycle.md)）と整合する。失敗した capability が no-op に見えてはならない：storage 利用不可ケース（opaque-origin サンドボックス、プライベートモード）がまさにこれで、`storage.read` / `storage.write` は `err` を返し、`.ok` だけを扱うアプリは黙って何もしないことになる。よってデフォルト契約は **`err` + surface された報告**であり、プログラムは `.err` reducer（空でもよい）を配線してエラーを処理（または意図的に無視）することを選ぶ。in-memory storage フォールバックはデフォルト挙動では**ない**（契約を覆い隠すため）；欲しいホストは `storage.*` provider で明示的に供給する。
+**未処理の effect エラーは surface され、決して silent にならない。** `err` に解決した effect は、対応するすべての `.err` reducer へ配送される。プログラムがその effect に `.err` reducer を**一切**配線していない場合、捨てられたエラーは `console.error`（`[kumiki] effect "<name>" returned an error with no .err reducer: …`）で報告され、検証 tier（`console.error` を捕捉する `smoke` / `runScenario`）が検知する — live panic モデル（[エラー処理](./lifecycle.md#_7-2-error-handling)）と整合する。失敗した capability が no-op に見えてはならない：storage 利用不可ケース（opaque-origin サンドボックス、プライベートモード）がまさにこれで、`storage.read` / `storage.write` は `err` を返し、`.ok` だけを扱うアプリは黙って何もしないことになる。よってデフォルト契約は **`err` + surface された報告**であり、プログラムは `.err` reducer（空でもよい）を配線してエラーを処理（または意図的に無視）することを選ぶ。in-memory storage フォールバックはデフォルト挙動では**ない**（契約を覆い隠すため）；欲しいホストは `storage.*` provider で明示的に供給する。
 
 ---
 

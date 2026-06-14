@@ -1,9 +1,9 @@
 # ベンチマーク
 
-「React よりトークンが少ない」「LLM が仕様書だけで習得できる」という Kumiki の主張は、宣言ではなく実測である。2 つのスイートが [`packages/benchmarks`](https://github.com/kage1020/Kumiki/tree/main/packages/benchmarks) にあり、このページの数値はすべてそこから得られたもので、末尾のコマンドで再現できる。
+「React よりトークンが少ない」「LLM が仕様書だけで習得できる」という Kumiki の主張は、宣言ではなく実測である。2 つのスイートが [`benchmarks`](https://github.com/kage1020/Kumiki/tree/main/packages/benchmarks) にある。
 
-- **サイズ比較** — Kumiki のアプリと*編集*は、等価な React と比べてどれだけコンパクトか。決定的に再実行可能。2026-06-11 に再計測。
-- **学習コスト** — 仕様書だけを与えられた LLM が、単一パスで parse / typecheck / build を通るプログラムを書けるか。クロスベンダー（Claude / Codex / Gemini）、現行コンパイラで 2026-06 に再採点。
+- **サイズ比較** — Kumiki のアプリと*編集*は、等価な React と比べてどれだけコンパクトか。決定的に再実行可能。
+- **学習コスト** — 仕様書だけを与えられた LLM が、単一パスで parse / typecheck / build を通るプログラムを書けるか。
 
 ## サイズ比較（Kumiki vs React）
 

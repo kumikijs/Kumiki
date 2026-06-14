@@ -35,7 +35,7 @@ features:
 
 ## Same UI, different philosophy
 
-The same app — a quote fetcher with loading and error states — in two worlds: [feature example 19](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
+The same app in two worlds: [fetch example](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
 
 <div class="home-compare">
 <div class="home-compare-col">
@@ -126,8 +126,6 @@ export function App() {
 </div>
 </div>
 
-And the Kumiki column is not pseudocode — this is it running, compiled by the in-browser compiler against a demo `http.get` provider. Click the button:
-
 <KumikiDemo example="19-effect-http.kumiki" height="240px" />
 
 Want to change it? It's loaded in the [Playground](/guide/playground).
@@ -138,4 +136,4 @@ What to notice:
 - **The side effect is declared, not hidden.** `caps = [http.get]` is checked by the compiler; an effect with an undeclared capability is a compile error, not a surprise.
 - **Every definition is flat and independent.** An AI can replace `reducer failed` or `tile App` alone — nothing else needs to move.
 
-The gap grows with app size: on the benchmarked TodoMVC, Kumiki is **~1.4× fewer tokens and ~2× fewer lines** than the React equivalent. See [Benchmarks](/guide/benchmarks).
+The gap grows with app size: on the [Benchmarks](/guide/benchmarks), Kumiki is **~1.4× fewer tokens and ~2× fewer lines** than the React equivalent.

@@ -247,7 +247,7 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 ---
 
-## 10.5 Episode Loop
+## 10.5 Episode Loop {#_10-5-episode-loop}
 
 1 つのトリガから派生する因果列を 1 つの **episode** として記録する。
 

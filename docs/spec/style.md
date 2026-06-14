@@ -11,7 +11,7 @@ Instead:
 3. Express **layout via tile primitives** (`row` / `column` / `grid`) props
 4. Pass through with `class` / `style` props **only when absolutely necessary**
 
-This covers the visual needs of an ordinary SPA. Reusable, arbitrary animations are provided by the `motion` definition (§4.9.1).
+This covers the visual needs of an ordinary SPA. Reusable, arbitrary animations are provided by the [`motion` definition](#_4-9-1-the-motion-definition).
 
 ---
 
@@ -317,7 +317,7 @@ The `icon` element is referenced by name:
 icon(name="check") {size: "md", color: "success"}
 ```
 
-We plan to provide a built-in icon set of around 100 icons in v0.1 (the list comes later). Custom icons are registered by path in `theme.icons`:
+A built-in icon set is planned (the list comes later). Custom icons are registered by path in `theme.icons`:
 
 ```kumiki
 theme MyTheme = {
@@ -330,9 +330,7 @@ theme MyTheme = {
 
 ---
 
-## 4.9 Animation (limited in v0.1)
-
-In v0.1, only the following:
+## 4.9 Animation
 
 | prop | Effect |
 |---|---|
@@ -347,9 +345,9 @@ Applied automatically to tiles whose visibility is toggled with `when`:
 when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 ```
 
-### 4.9.1 The `motion` definition (v0.2)
+### 4.9.1 The `motion` definition
 
-For reusable, arbitrary (but still closed-grammar) animations — spinners, pulses, custom enter/exit — declare a **`motion`**. It is a top-level definition, a sibling of `theme` (a purely presentational definition, **not** one of the seven logic layers — see [language.md §1.1.1](./language.md)). It is referenced from any tile's `motion` prop.
+For reusable, arbitrary (but still closed-grammar) animations — spinners, pulses, custom enter/exit — declare a **`motion`**. It is a top-level definition, a sibling of `theme` (a purely presentational definition, **not** one of the seven logic layers — see [List of Layers](./language.md#_1-1-1-list-of-layers)). It is referenced from any tile's `motion` prop.
 
 ```kumiki
 motion Spin = {
@@ -375,7 +373,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
   Multiple transform properties on one stop compose into a single `transform` in a **fixed order** — `translate-x`, `translate-y`, `scale`, `rotate` — regardless of the order you write them (CSS `transform` is not commutative, so the order is fixed for determinism). An unknown property is a compile error (**E0401**); malformed keyframes (no `from`/`to`) are **E0403**.
 - The timing fields are optional (defaults `duration:"normal"`, `easing:"ease"`, `iteration:1`, `direction:"normal"`); a value outside its closed set is **E0402**.
 - A `motion: "X"` prop naming an undefined motion is **E0107**.
-- Because the body is a literal record, a motion **cannot read/write slots or emit effects** — it is purely presentational. It composes with `when(...)` and `overlay`, and the generated keyframes are scoped (no global-CSS leak, §4.10). `prefers-reduced-motion: reduce` disables motion (and the v0.1 transitions above).
+- Because the body is a literal record, a motion **cannot read/write slots or emit effects** — it is purely presentational. It composes with `when(...)` and `overlay`, and the generated keyframes are scoped (no global-CSS leak, see [Global CSS / Reset](#_4-10-global-css-reset)). `prefers-reduced-motion: reduce` disables both motion and the transitions above.
 
 Deferred: multi-stop percentage keyframes, color/blur/skew properties.
 
@@ -399,24 +397,3 @@ app TodoApp
         favicon: "/favicon.ico"
     }
 ```
-
----
-
-## 4.11 Design Decision Record
-
-| Decision | Rationale |
-|---|---|
-| Don't let users write CSS directly | Cascade and specificity create implicit dependencies the AI cannot track |
-| Consolidate design tokens in the theme | Structurally prevents style values from scattering |
-| Provide shorthand props (`bg`, `pad`, etc.) | Reduces token consumption |
-| Express layout via tile structure | Eliminates the need for the AI to learn layout CSS |
-| Ban global CSS | Always ties "where a style came from" to the parent tile |
-| Limit animation in v0.1 | Too many choices destabilize the AI's decisions |
-| `motion` is a closed-grammar definition, not raw CSS | Keeps animations statically locatable and AI-editable; preserves the no-global-CSS invariant |
-
----
-
-## 4.12 Next
-
-- Form styling → [Forms](./forms.md)
-- Accessibility → [Lifecycle](./lifecycle.md)

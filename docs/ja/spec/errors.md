@@ -48,7 +48,7 @@ type KumikiError = {
 
 > `Timer name "<name>" is declared more than once`
 
-**修正**：いずれかのタイマーを改名し、各 `name=` を一意にする。詳細は [ライフサイクル](./lifecycle.md) §7.1.5。
+**修正**：いずれかのタイマーを改名し、各 `name=` を一意にする。詳細は [timer](./lifecycle.md#_7-1-5-timer)。
 
 ## E01xx — 名前解決
 
@@ -81,7 +81,7 @@ type KumikiError = {
 
 > `stop-timer refers to undefined timer name "<name>"`
 
-**修正**：綴りを確認するか、`timer(d, name=N)` でタイマーを宣言する。詳細は [ライフサイクル](./lifecycle.md) §7.1.5。
+**修正**：綴りを確認するか、`timer(d, name=N)` でタイマーを宣言する。詳細は [timer](./lifecycle.md#_7-1-5-timer)。
 
 ### E0105 `undef-tile`
 
@@ -96,7 +96,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 > `Reference to undefined motion "<name>"`
 
-**修正**：綴りを確認するか、motion を宣言する。詳細は [スタイル](./style.md) §4.9.1。
+**修正**：綴りを確認するか、motion を宣言する。詳細は [`motion` 定義](./style.md#_4-9-1-the-motion-definition)。
 
 ### E0108 `undef-member`
 
@@ -104,7 +104,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
 
-**修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [標準ライブラリ](./stdlib.md) §2.2.3。
+**修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 
 ## E02xx — 型
 
@@ -127,11 +127,11 @@ effect が要求するケイパビリティが `app.caps` で宣言されてい�
 
 ### E0302 `unknown-capability`
 
-`app.caps` のエントリが、標準ケイパビリティ（[標準ライブラリ](./stdlib.md) §2.5）でも `kumiki.caps.json` マニフェストで登録されたものでもない。
+`app.caps` のエントリが、標準ケイパビリティ（[標準ケイパビリティ](./stdlib.md#_2-5-standard-capabilities)）でも `kumiki.caps.json` マニフェストで登録されたものでもない。
 
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
-**修正**：標準ケイパビリティを使うか、綴りを直すか、`.kumiki` ファイルと同じディレクトリの `kumiki.caps.json` にカスタムケイパビリティを登録する。詳細は [標準ライブラリ](./stdlib.md) §2.5。
+**修正**：標準ケイパビリティを使うか、綴りを直すか、`.kumiki` ファイルと同じディレクトリの `kumiki.caps.json` にカスタムケイパビリティを登録する。詳細は [標準ケイパビリティ](./stdlib.md#_2-5-standard-capabilities)。
 
 ### E0305 `fn-impurity`
 
@@ -143,7 +143,7 @@ effect が要求するケイパビリティが `app.caps` で宣言されてい�
 
 ## E04xx — モーション
 
-`motion` 定義の閉じた文法の妥当性（[スタイル](./style.md) §4.9.1）。
+`motion` 定義の閉じた文法の妥当性（[`motion` 定義](./style.md#_4-9-1-the-motion-definition)）。
 
 ### E0401 `motion-unknown-property`
 
@@ -199,7 +199,7 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
 ## E08xx — ランタイムハザード
 
-型は通るが実行時に壊れる「書き方」を、`check` の段階で静的に捕まえるための帯。検証の3層モデルは [テスト](./testing.md) §8.10 を参照。
+型は通るが実行時に壊れる「書き方」を、`check` の段階で静的に捕まえるための帯。検証の3層モデルは [3 層検証モデル](./testing.md#_8-10-the-three-layers-of-tooling-verification) を参照。
 
 ### E0801 `unimplemented-method`
 

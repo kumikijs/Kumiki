@@ -17,7 +17,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 A `test` definition is **the sixth layer**. It is stored in the CRDT graph and run with `kumiki test`. It is not included in the production build.
 
-> **Implementation status (v0.6).** Implemented: `reducer-test`, `tile-test`, `property-test` (§8.3); the `kumiki test` runner with name / `prefix*` filtering, per-test **timings** (`(1ms)` / `(100 cases, 23ms)`), `--coverage`, and `--watch`; `kumiki fix --auto-patch <test-name>` (§8.7.2); `expect` **wildcards** (`<any-id>` / `<slots.X>`, §8.2.2); and **effect-result mocks** inside `reducer-test` (`given.mocks`, §8.5). The runner prints `PASS` / `FAIL` lines plus `expected` / `actual` / `diff at <path>` and — when it can isolate a scalar leaf — the §8.7.1 value arrow (`"a" -> "b"`) on failure. Still specified but **not yet implemented**: `episode-test` (it needs the runtime episode logger of [runtime.md](./runtime.md) §10.5).
+> **Implementation status.** Implemented: `reducer-test`, `tile-test`, `property-test` ([Property Tests](#_8-3-property-tests)); the `kumiki test` runner with name / `prefix*` filtering, per-test **timings** (`(1ms)` / `(100 cases, 23ms)`), `--coverage`, and `--watch`; `kumiki fix --auto-patch <test-name>` ([Fixing from a failing test](#_8-7-2-fixing-from-a-failing-test)); `expect` **wildcards** (`<any-id>` / `<slots.X>`, [Wildcards](#_8-2-2-wildcards)); and **effect-result mocks** inside `reducer-test` (`given.mocks`, [Effect mock](#_8-5-effect-mock)). The runner prints `PASS` / `FAIL` lines plus `expected` / `actual` / `diff at <path>` and — when it can isolate a scalar leaf — the value arrow (`"a" -> "b"`) on failure. Still specified but **not yet implemented**: `episode-test` (it needs the runtime episode loop of [Episode Loop](./runtime.md#_10-5-episode-loop)).
 
 ## 8.2 Reducer Tests
 
@@ -149,7 +149,7 @@ test loadUser-success =
 
 With `mocks: {effect-name: ok(value) | err(error) | delay(ms, ok(value))}`, you can replace the result of any effect.
 
-The runner dispatches the triggering event, then drives the emit → result → reducer loop headlessly: an emitted effect **with** a `mocks` entry is delivered to its `.ok` / `.err` reducer (the mock's `value` arrives as the reducer's first bind), and the loop continues until quiescent. An emitted effect **without** a mock is *residual* — recorded and asserted via `expect.effects`, with no result delivered (so a mocked effect is "consumed" and does not appear in `expect.effects`, which is why `loadUser` above leaves `effects: []`). `delay(ms, …)` resolves immediately — time is virtualized (no real wait), results process in emit order. A mock's key must name a declared effect (else **E0104**), and a mocked `err` that no `.err` reducer consumes fails the test (the §2.5 no-silent-failure contract), rather than passing silently.
+The runner dispatches the triggering event, then drives the emit → result → reducer loop headlessly: an emitted effect **with** a `mocks` entry is delivered to its `.ok` / `.err` reducer (the mock's `value` arrives as the reducer's first bind), and the loop continues until quiescent. An emitted effect **without** a mock is *residual* — recorded and asserted via `expect.effects`, with no result delivered (so a mocked effect is "consumed" and does not appear in `expect.effects`, which is why `loadUser` above leaves `effects: []`). `delay(ms, …)` resolves immediately — time is virtualized (no real wait), results process in emit order. A mock's key must name a declared effect (else **E0104**), and a mocked `err` that no `.err` reducer consumes fails the test (the [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities) no-silent-failure contract), rather than passing silently.
 
 ## 8.6 Episode replay
 
@@ -205,7 +205,7 @@ FAIL  counter-display
 `kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it and re-run (reporting whether the test now passes and whether any other test regressed). It repairs only what it can prove deterministically:
 
 - If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run.
-- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the §8.7.1 snapshot case).
+- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the [Output](#_8-7-1-output) snapshot case).
 
 Non-literal divergences (numeric slots, wrong operators, effect-list mismatches) are reported as a diff rather than guessed.
 

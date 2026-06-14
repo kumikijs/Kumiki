@@ -17,7 +17,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 `test` 定義は **6 つ目のレイヤ**。CRDT graph に格納され、`kumiki test` で実行される。本番ビルドには含まれない。
 
-> **実装状況（v0.2）.** `reducer-test`・`tile-test`・`kumiki test` ランナー（名前 / `prefix*` フィルタ）・`kumiki fix --auto-patch <test-name>`（§8.7.2）は実装済み。ランナーは `PASS` / `FAIL` 行と、失敗時に `expected` / `actual` / `diff at <path>`、およびスカラーのリーフを特定できる場合は §8.7.1 の値矢印（`"a" -> "b"`）を表示する — テストごとの時間・property-test のケース数は**未出力**。その他**未実装**：`property-test` と `episode-test`、`expect` のワイルドカード（`<any-id>` / `<slots.X>`）、`reducer-test` 内の effect 結果モック（§8.5 の多段フロー — 現状は scenario ランナーがその形を担う）、`--watch` / `--coverage`。
+> **実装状況.** 実装済み：`reducer-test`、`tile-test`、`property-test`（[Property テスト](#_8-3-property-tests)）、`kumiki test` ランナー（名前 / `prefix*` フィルタ、テストごとの**時間**表示 `(1ms)` / `(100 cases, 23ms)`、`--coverage`、`--watch`）、`kumiki fix --auto-patch <test-name>`（[失敗テストからの修正](#_8-7-2-fixing-from-a-failing-test)）、`expect` の**ワイルドカード**（`<any-id>` / `<slots.X>`、[ワイルドカード](#_8-2-2-wildcards)）、`reducer-test` 内の **effect 結果モック**（`given.mocks`、[Effect mock](#_8-5-effect-mock)）。ランナーは `PASS` / `FAIL` 行と、失敗時に `expected` / `actual` / `diff at <path>`、およびスカラーのリーフを特定できる場合は値矢印（`"a" -> "b"`）を表示する。仕様化済みで**未実装**：`episode-test`（ランタイムの episode loop [Episode Loop](./runtime.md#_10-5-episode-loop) が前提）。
 
 ## 8.2 Reducer テスト
 
@@ -45,7 +45,7 @@ event-lit ::= '{' 'type' ':' event-pattern (',' kv)* '}'
 effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 ```
 
-### 8.2.2 ワイルドカード
+### 8.2.2 ワイルドカード {#_8-2-2-wildcards}
 
 `<any-id>` は「任意の生成 ID」、`<slots.todos>` は「実行後の slot 値への参照」。
 
@@ -58,7 +58,7 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
-## 8.3 Property テスト
+## 8.3 Property テスト {#_8-3-property-tests}
 
 ```kumiki
 test toggle-is-involution =
@@ -121,7 +121,7 @@ test counter-display =
 
 snapshot は深い構造比較。クラス名やスタイルは比較対象外（明示指定したものだけ）。
 
-## 8.5 Effect mock
+## 8.5 Effect mock {#_8-5-effect-mock}
 
 effect の戻り値を差し替える：
 
@@ -181,7 +181,7 @@ kumiki test --watch            # 変更時に再実行
 kumiki test --coverage         # カバレッジ (reducer/effect/tile 単位)
 ```
 
-### 8.7.1 出力
+### 8.7.1 出力 {#_8-7-1-output}
 
 ```
 PASS  addTodo-basic        (1ms)
@@ -192,12 +192,12 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-### 8.7.2 失敗テストからの修正
+### 8.7.2 失敗テストからの修正 {#_8-7-2-fixing-from-a-failing-test}
 
 `kumiki fix <file> --auto-patch <test-name>` は名前付きテストを実行し、失敗から**修正パッチを提案**する。`--apply` を付けると書き込んで再実行する（テストが通るようになったか、他テストが退行したかを報告）。決定論的に証明できるものだけを修復する：
 
 - ファイルがコンパイルできなければテストは走れない — [`fix`](./ai-edit.md) の型エラー修復（did-you-mean の名前修正、`/404` 欠落）を再利用してテストを走らせる。
-- tile-test / reducer-test が、実際値が*一意の*ソースリテラルである**文字列リーフ**で失敗した場合、そのリテラルを期待値に置換する（§8.7.1 のスナップショット事例）。
+- tile-test / reducer-test が、実際値が*一意の*ソースリテラルである**文字列リーフ**で失敗した場合、そのリテラルを期待値に置換する（[出力](#_8-7-1-output) のスナップショット事例）。
 
 リテラルでない乖離（数値 slot、誤った演算子、effect リスト不一致）は推測せず diff として報告する。
 
@@ -226,7 +226,7 @@ expect(Object.keys(todos)).toHaveLength(1)
 | episode replay を一級市民に | 本番バグを自動的にテスト化できる |
 | E2E は外部ツール | Kumiki のスコープ外、既存ツールを尊重 |
 
-## 8.10 ツールによる検証の 3 層
+## 8.10 ツールによる検証の 3 層 {#_8-10-the-three-layers-of-tooling-verification}
 
 上記の `test` 定義（言語内テスト）とは別に、ツールチェインは段階的な検証を提供する。各層は前の層が捕まえられないものを捕まえる。**`check`/`build` が通っても「動く」ことの証明にはならない**点が重要である。
 

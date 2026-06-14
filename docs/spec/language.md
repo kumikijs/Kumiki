@@ -29,7 +29,7 @@ Definitions are unordered and may be forward-referenced. The compiler performs a
 | `fn` | Auxiliary pure functions | Pure |
 | `app` | Application entry | Declaration |
 
-These seven are the **logic/data/UI core** — what an author must learn to express behavior. Kumiki also has **auxiliary presentational/meta definitions** that sit alongside the seven without expanding that core: `theme` ([style.md §4.2](./style.md)), `motion` ([style.md §4.9.1](./style.md)), and `test` ([testing.md §8](./testing.md)). They are real top-level definitions but are not counted among the seven layers; the production-grammar EBNF above lists only the core.
+These seven are the **logic/data/UI core** — what an author must learn to express behavior. Kumiki also has **auxiliary presentational/meta definitions** that sit alongside the seven without expanding that core: `theme` ([Design Tokens](./style.md#_4-2-design-tokens)), `motion` ([The motion definition](./style.md#_4-9-1-the-motion-definition)), and `test` ([Testing](./testing.md)). They are real top-level definitions but are not counted among the seven layers; the production-grammar EBNF above lists only the core.
 
 ---
 
@@ -322,7 +322,7 @@ tile NewForm = form(...) {id: "new"}
 reducer add on=ui.submit(NewForm) do= ...
 ```
 
-`NewForm#some-instance` is reserved in v0.2 for referring to a specific instance within a list.
+`NewForm#some-instance` is reserved for referring to a specific instance within a list.
 
 ### 1.6.3 lvalue Semantics
 
@@ -376,7 +376,7 @@ issue.copy(status=Done, priority=High)
 | `$route` | the Route at route.enter/leave |
 | `$now` | the current time |
 
-> **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See §1.7.4.
+> **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
 ### 1.6.6 Examples
 
@@ -741,13 +741,13 @@ fn current() = todos                          # receive it via a fn argument
 reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 
 # ❌ literal match pattern
-match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (§1.9.1)
+match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
 
 # ❌ $1 in a tile with no in=
-tile Row = card(text(issues[$1].title))               # E0103: declare `tile Row in=IssueId = …` (§1.6.5, §1.7.4)
+tile Row = card(text(issues[$1].title))               # E0103: declare `tile Row in=IssueId = …` (Positional Binding / Examples)
 
 # ❌ a tile call inside the props block
-link(to="/x") {text("Home")}                           # `{...}` is key:value props only; pass the label as text="Home" (§1.7.1)
+link(to="/x") {text("Home")}                           # `{...}` is key:value props only; pass the label as text="Home" (Syntax)
 ```
 
 ---
@@ -776,4 +776,4 @@ app Counter
     init   = []
 ```
 
-→ [Standard Library](./stdlib.md), [Routing](./routing.md), [packages/examples/apps/01-counter/app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
+→ [Standard Library](./stdlib.md), [Routing](./routing.md), [apps/01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)

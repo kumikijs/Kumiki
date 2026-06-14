@@ -109,7 +109,7 @@ emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 
 `{name}` is substituted from params. An unspecified `{name}` produces a compile-time warning.
 
-### 3.3.4 Router source: `history` vs `memory` (#36)
+### 3.3.4 Router source: `history` vs `memory`
 
 By default the runtime reads and writes the **ambient document** location/history: `mount(app, el)` resolves the initial route from `location.pathname` and `navigate` / link clicks call `history.pushState` / `replaceState`. This is correct for an app served at a real origin.
 

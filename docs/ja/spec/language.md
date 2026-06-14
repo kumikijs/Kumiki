@@ -29,7 +29,7 @@ definition  ::= type-def | slot-def | effect-def | reducer-def | tile-def | fn-d
 | `fn` | 補助の純粋関数 | 純粋 |
 | `app` | アプリのエントリ | 宣言 |
 
-この 7 つが**ロジック/データ/UI のコア** — 振る舞いを表現するために学ぶべきもの。Kumiki にはこれに加えて、そのコアを膨らませずに傍らに在る**補助的な表示用・メタ定義**がある：`theme`（[style.ja.md §4.2](./style.md)）、`motion`（[style.ja.md §4.9.1](./style.md)）、`test`（[testing.ja.md §8](./testing.md)）。いずれも実在のトップレベル定義だが 7 レイヤーには数えない。上の生成文法 EBNF はコアのみを列挙する。
+この 7 つが**ロジック/データ/UI のコア** — 振る舞いを表現するために学ぶべきもの。Kumiki にはこれに加えて、そのコアを膨らませずに傍らに在る**補助的な表示用・メタ定義**がある：`theme`（[デザイントークン](./style.md#_4-2-design-tokens)）、`motion`（[motion 定義](./style.md#_4-9-1-the-motion-definition)）、`test`（[テスト](./testing.md)）。いずれも実在のトップレベル定義だが 7 レイヤーには数えない。上の生成文法 EBNF はコアのみを列挙する。
 
 ---
 
@@ -322,7 +322,7 @@ tile NewForm = form(...) {id: "new"}
 reducer add on=ui.submit(NewForm) do= ...
 ```
 
-`NewForm#some-instance` は v0.2 でリスト中の特定インスタンスを指す用途に予約。
+`NewForm#some-instance` はリスト中の特定インスタンスを指す用途に予約。
 
 ### 1.6.3 lvalue の意味論
 
@@ -742,4 +742,4 @@ app Counter
     init   = []
 ```
 
-→ [標準ライブラリ](./stdlib.md), [ルーティング](./routing.md), [packages/examples/apps/01-counter/app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
+→ [標準ライブラリ](./stdlib.md), [ルーティング](./routing.md), [01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
