@@ -21,7 +21,7 @@ describe("preview pipeline", () => {
 
   it("AC2: buildSrcdoc embeds the app JS and every sandbox seam", () => {
     const srcdoc = buildSrcdoc("console.log('app-module-here')");
-    expect(srcdoc).toContain('<script type="module">console.log(\'app-module-here\')');
+    expect(srcdoc).toContain("<script type=\"module\">console.log('app-module-here')");
     expect(srcdoc).toContain('router: "memory"');
     expect(srcdoc).toContain("/api/quote");
     expect(srcdoc).toContain("telemetry.track");

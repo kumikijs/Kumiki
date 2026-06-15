@@ -156,29 +156,33 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     } else {
       const tile = tiles.find((t) => t.name === r.tile);
       if (!tile) throw new Error(`Route ${r.path} targets undefined tile "${r.tile}"`);
+      const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
       if (tile.subRoutes && tile.subRoutes.length > 0) {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}, subRoutes: [`,
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr}, subRoutes: [`,
         );
-        for (const sr of tile.subRoutes) {
-          if (sr.tile.startsWith(">>")) {
+        for (const subR of tile.subRoutes) {
+          if (subR.tile.startsWith(">>")) {
             lines.push(
-              `    { pattern: ${JSON.stringify(sr.path)}, redirectTo: ${JSON.stringify(sr.tile.slice(2))} },`,
+              `    { pattern: ${JSON.stringify(subR.path)}, redirectTo: ${JSON.stringify(subR.tile.slice(2))} },`,
             );
           } else {
-            const childTile = tiles.find((t) => t.name === sr.tile);
+            const childTile = tiles.find((t) => t.name === subR.tile);
             if (!childTile)
               throw new Error(
-                `Sub-route ${sr.path} in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+                `Sub-route ${subR.path} in tile "${tile.name}" targets undefined tile "${subR.tile}"`,
               );
+            const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
             lines.push(
-              `    { pattern: ${JSON.stringify(sr.path)}, tile: () => ${genTile(childTile, ctx)} },`,
+              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genTile(childTile, ctx)}${csr} },`,
             );
           }
         }
         lines.push(`  ] },`);
       } else {
-        lines.push(`  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)} },`);
+        lines.push(
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr} },`,
+        );
       }
     }
   }
@@ -401,6 +405,7 @@ function analyzeRuntimeUsage(
     emits.has("navigate") ||
     emits.has("navigate-replace") ||
     emits.has("navigate-back") ||
+    emits.has("scroll-to") ||
     usedTiles.has("link") ||
     usedTiles.has("route-outlet") ||
     app.routes.some((r) => r.tile.startsWith(">>") || (r.path !== "/" && r.path !== "/404"));
@@ -1957,7 +1962,27 @@ function tileCallJs(
       const textProp = t.props.find((p) => p.name === "text");
       const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
       const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
-      return `({ kind: "link", text: _s.show(${text}), to: _s.show(${to}), props: ${propsObj} })`;
+      // §3.8 prefetch — the prop value is a bare reducer ident (Ref) or a
+      // string literal. We surface it as a literal string so the runtime can
+      // route it through `_dispatch` without re-resolving identifiers.
+      const fields = [`kind: "link"`, `text: _s.show(${text})`, `to: _s.show(${to})`];
+      const prefetchProp = t.props.find((p) => p.name === "prefetch");
+      if (prefetchProp) {
+        const v = prefetchProp.value as Expr;
+        if (v.kind === "Ref") {
+          fields.push(`prefetch: ${JSON.stringify((v as Expr & { name: string }).name)}`);
+        } else if (v.kind === "Str") {
+          fields.push(`prefetch: ${JSON.stringify((v as Expr & { value: string }).value)}`);
+        } else {
+          fields.push(`prefetch: ${jsOfExpr(v, ctx)}`);
+        }
+      }
+      const prefetchArgsProp = t.props.find((p) => p.name === "prefetch-args");
+      if (prefetchArgsProp) {
+        fields.push(`prefetchArgs: ${jsOfExpr(prefetchArgsProp.value, ctx)}`);
+      }
+      fields.push(`props: ${propsObj}`);
+      return `({ ${fields.join(", ")} })`;
     }
     case "markdown": {
       const text = t.args[0] ? jsOfExpr(asExpr(t.args[0].value), ctx) : '""';
@@ -2165,6 +2190,10 @@ function propsFor(
       }
       continue;
     }
+    // §3.8 link prefetch — the link tile lifts these into top-level fields, so
+    // do not also echo them through `props` (the bare-ident `prefetch: foo`
+    // value would otherwise emit as a JS variable reference at codegen).
+    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
     // event handler from enclosing tile (e.g. ResetBtn has no onClick but reducer subscribes to ui.click(ResetBtn))
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
@@ -2238,6 +2267,9 @@ function propsFor(
       p.name === "onClose"
     )
       continue;
+    // §3.8 link prefetch — these are runtime-side fields, not slot data; their
+    // value space (reducer-name ident / argument record) doesn't belong in `el`.
+    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
     elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   if (elProps.length > 0) {

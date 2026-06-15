@@ -40,6 +40,51 @@ export const textTiles: TileRenderers = {
         ?._navigate;
       if (nav) nav(node.to, false);
     });
+    // §3.8 prefetch — fire the named reducer once the link enters the viewport.
+    // Dedupe by `to` URL (kept on the app instance) so that re-renders triggered
+    // by the reducer itself don't re-observe and re-dispatch in a tight loop.
+    if (node.prefetch) {
+      const reducer = node.prefetch;
+      const payload = node.prefetchArgs ?? {};
+      const winRef = window as unknown as { __kumikiApp?: AppShape };
+      const app = winRef.__kumikiApp as
+        | (AppShape & {
+            _dispatch?: (name: string, el: Record<string, unknown>) => void;
+            _prefetched?: Set<string>;
+          })
+        | undefined;
+      let seen: Set<string> | undefined;
+      if (app) {
+        if (!app._prefetched) app._prefetched = new Set<string>();
+        seen = app._prefetched;
+      }
+      const dedupeKey = node.to;
+      if (!seen?.has(dedupeKey)) {
+        const fire = (): void => {
+          if (seen?.has(dedupeKey)) return;
+          seen?.add(dedupeKey);
+          app?._dispatch?.(reducer, payload);
+        };
+        const IO = (globalThis as { IntersectionObserver?: typeof IntersectionObserver })
+          .IntersectionObserver;
+        if (typeof IO === "function") {
+          const observer = new IO((entries, obs) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                obs.disconnect();
+                fire();
+                return;
+              }
+            }
+          });
+          observer.observe(a);
+        } else {
+          // Fallback for DOMs without IntersectionObserver — dispatch once on
+          // the next microtask so smoke tests still observe the call.
+          queueMicrotask(fire);
+        }
+      }
+    }
     return a;
   },
   markdown(node) {

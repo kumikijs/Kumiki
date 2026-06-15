@@ -1,0 +1,42 @@
+# Feature: link prefetch — IntersectionObserver-driven preload of route data.
+# Spec: routing.md §3.8.
+#
+# The link declares the reducer to run when it enters the viewport, plus the
+# argument record. The runtime fires the reducer exactly once per element, and
+# in headless DOMs (no IntersectionObserver) falls back to a microtask so smoke
+# / scenario runs can still observe the dispatch.
+
+slot prefetched : Int       = 0
+slot lastId     : Text      = ""
+
+reducer loadTodo
+    on=ui.click(PrefetchProbe)
+    do= prefetched := prefetched + 1
+        lastId     := $el.id.get-or("")
+
+tile Home = page(
+    heading("Home"),
+    link(to="/todos/abc-123") {
+        text: "Todo abc-123",
+        prefetch: loadTodo,
+        prefetch-args: {"id": "abc-123"}
+    },
+    text("prefetched: " + prefetched.show),
+    text("lastId: " + lastId)
+)
+
+tile Todo = page(
+    heading("Todo"),
+    link(to="/") {text: "Home"}
+)
+
+tile NotFound = page(heading("404"), link(to="/") {text: "Home"})
+
+app LinkPrefetch
+    caps   = []
+    routes = {
+        "/"            -> Home,
+        "/todos/:id"   -> Todo,
+        "/404"         -> NotFound
+    }
+    init   = []

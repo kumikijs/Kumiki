@@ -67,7 +67,16 @@ export type TileNode =
   | { kind: "skeleton"; props?: TileProps }
   | { kind: "form"; children: TileNode[]; props?: TileProps }
   | { kind: "label"; text: string; props?: TileProps }
-  | { kind: "link"; text: string; to: string; props?: TileProps }
+  | {
+      kind: "link";
+      text: string;
+      to: string;
+      /** §3.8 prefetch: name of the reducer to dispatch on viewport entry. */
+      prefetch?: string;
+      /** §3.8 prefetch-args: payload passed to the reducer's `$el` / `$event` binding. */
+      prefetchArgs?: Record<string, unknown>;
+      props?: TileProps;
+    }
   | { kind: "markdown"; text: string; props?: TileProps }
   | { kind: "image"; src: string; props?: TileProps }
   | { kind: "icon"; name: string; props?: TileProps }
@@ -303,6 +312,13 @@ export type RouteEntry = {
    * child tile into the first `route-outlet` of the parent's render tree.
    */
   subRoutes?: Array<RouteEntry | RedirectEntry>;
+  /**
+   * §3.9 scroll-restoration. When `false`, the runtime skips both the
+   * forward-navigation scrollTo(0,0) and the back-navigation restore for this
+   * route. Tiles that own their own internal scroll surface (chats, virtual
+   * lists) set this to keep the chrome stable across transitions.
+   */
+  scrollRestoration?: false;
 };
 
 export type RedirectEntry = { pattern: string; redirectTo: string };
@@ -452,6 +468,13 @@ export function mountCore(
   let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
   let observeLeaveConfirm = false;
   let leaveAskedConfirm = false;
+
+  // §3.9 scroll restoration: track per-path scroll positions and the source of
+  // each navigation. push / replace forward → scroll to top (unless the matched
+  // tile opted out with `scroll-restoration = false`); popstate → restore the
+  // saved position for the destination path.
+  const scrollSaved = new Map<string, { x: number; y: number }>();
+  let lastNavSource: "push" | "replace" | "pop" = "push";
 
   let currentRoot: HTMLElement | null = null;
   let disposed = false;
@@ -750,6 +773,7 @@ export function mountCore(
 
   function updateRoute(newPath: string, replace: boolean): void {
     if (!router) return;
+    lastNavSource = replace ? "replace" : "push";
     if (replace) router.replace(newPath);
     else router.push(newPath);
     syncRouteFromLocation();
@@ -767,6 +791,13 @@ export function mountCore(
     if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slotValues.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
+    // §3.9: save the OLD route's scroll position before any transition work, so
+    // it is available when the user lands here again via back / forward.
+    if (oldRoute && typeof window !== "undefined") {
+      const sx = typeof window.scrollX === "number" ? window.scrollX : 0;
+      const sy = typeof window.scrollY === "number" ? window.scrollY : 0;
+      scrollSaved.set(oldRoute.path, { x: sx, y: sy });
+    }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
     // gate the transition. We observe whether any leave reducer emitted
     // `confirm` — if so, we hold off updating slotValues.route and firing
@@ -803,7 +834,37 @@ export function mountCore(
         applyReducer(r, { $route: newRoute });
       }
     }
+    applyScrollFor(newRoute);
     render();
+  }
+
+  function findRouteEntry(route: ParsedRoute): RouteEntry | undefined {
+    if (!app.routes) return undefined;
+    for (const r of app.routes) {
+      if ("redirectTo" in r) continue;
+      if (r.pattern !== route.pattern) continue;
+      if (route.childPattern && r.subRoutes) {
+        for (const sr of r.subRoutes) {
+          if ("redirectTo" in sr) continue;
+          if (sr.pattern === route.childPattern) return sr;
+        }
+      }
+      return r;
+    }
+    return undefined;
+  }
+
+  function applyScrollFor(route: ParsedRoute): void {
+    if (typeof window === "undefined" || typeof window.scrollTo !== "function") return;
+    const entry = findRouteEntry(route);
+    if (entry?.scrollRestoration === false) return;
+    if (lastNavSource === "pop") {
+      const saved = scrollSaved.get(route.path);
+      if (saved) window.scrollTo(saved.x, saved.y);
+      else window.scrollTo(0, 0);
+    } else {
+      window.scrollTo(0, 0);
+    }
   }
 
   function resolveLeave(outcome: "yes" | "no"): void {
@@ -820,6 +881,7 @@ export function mountCore(
           applyReducer(r, { $route: p.newRoute });
         }
       }
+      applyScrollFor(p.newRoute);
       render();
     } else {
       // Revert: rewrite the URL back to the old path without re-firing the
@@ -851,10 +913,23 @@ export function mountCore(
   // Initial route sync — but first resolve any static redirect (top-level
   // `->>` or one declared inside a matched parent's sub-routes per §3.6).
   if (routing && router && app.routes && app.routes.length > 0) {
+    // §3.9: take manual control so we can restore positions explicitly on pop
+    // and reset to top on push, without the browser's auto-restore racing us.
+    if (typeof history !== "undefined" && "scrollRestoration" in history) {
+      try {
+        (history as History & { scrollRestoration: ScrollRestoration }).scrollRestoration =
+          "manual";
+      } catch {
+        // Some embedded contexts (sandboxed iframes) forbid writes; ignore.
+      }
+    }
     const redirectTo = routing.findRedirect(app.routes, router.read());
     if (redirectTo !== null) router.replace(redirectTo);
     slotValues.route = routing.parseLocation(app.routes, router.read());
-    routerUnsub = router.subscribe(syncRouteFromLocation);
+    routerUnsub = router.subscribe(() => {
+      lastNavSource = "pop";
+      syncRouteFromLocation();
+    });
   }
 
   app._rerender = render;
@@ -1087,7 +1162,8 @@ function makeEffectDispatcher(
   const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
 
   const launch = async (eff: EffectSpec, input: unknown, key: string): Promise<void> => {
-    if (!caps.has(eff.cap)) {
+    // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
+    if (eff.cap !== "" && !caps.has(eff.cap)) {
       console.warn(`Capability "${eff.cap}" not declared in app.caps`);
       return;
     }

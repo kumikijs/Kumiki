@@ -234,6 +234,22 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
+  // §3.9 scroll-to — standard presentation effect. No capability gate (parity
+  // with confirm / toast on the presentation side); `window.scrollTo` is a
+  // no-op in headless DOMs, so it stays safe under smoke / scenario runs.
+  app.effects["scroll-to"] = {
+    name: "scroll-to",
+    cap: "",
+    invoke: overridableInvoke("", async (input) => {
+      const xy = input as { x?: number; y?: number };
+      const x = typeof xy?.x === "number" ? xy.x : 0;
+      const y = typeof xy?.y === "number" ? xy.y : 0;
+      if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+        window.scrollTo(x, y);
+      }
+      return { kind: "ok", value: null };
+    }),
+  };
 }
 
 /** The routing module surface consumed by `mountCore` (see core `RoutingImpl`). */

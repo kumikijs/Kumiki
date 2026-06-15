@@ -540,6 +540,27 @@ function checkTileCall(
           pos: prop.value.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch") {
+      // §3.8 prefetch — value names a reducer (bare ident or string literal),
+      // not a value expression. Skip checkExpr (would flag the ident as undef)
+      // and instead verify the reducer exists.
+      const ref = prop.value;
+      const name = ref.kind === "Ref" ? ref.name : ref.kind === "Str" ? ref.value : null;
+      if (name === null) {
+        errors.push({
+          code: "E0201",
+          kind: "type-mismatch",
+          message: `link prefetch must be a reducer name`,
+          pos: ref.pos,
+        });
+      } else if (!sym.reducers.has(name)) {
+        errors.push({
+          code: "E0102",
+          kind: "undef-reducer",
+          message: `Reference to undefined reducer "${name}"`,
+          pos: ref.pos,
+        });
+      }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
@@ -640,6 +661,7 @@ function checkStmt(
       s.effect === "navigate" ||
       s.effect === "navigate-replace" ||
       s.effect === "navigate-back" ||
+      s.effect === "scroll-to" ||
       s.effect === "toast" ||
       s.effect === "confirm" ||
       s.effect === "log";
