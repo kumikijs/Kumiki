@@ -106,6 +106,30 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 
+### E0110 `sub-routes-without-wildcard-parent`
+
+`sub-routes` を宣言した tile を `app.routes` から指している親エントリの pattern が wildcard（`/*`）で終わっていない。親が wildcard でないと runtime はネストマッチャに到達せず、sub-routes は永遠に発火しない。詳細は [Nested Routes](./routing.md#_3-6-nested-routes)。
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**修正**：親 pattern を `/*` で終わるように変える（`/settings` → `/settings/*`）か、`sub-routes` ブロックを外す。
+
+### E0111 `orphan-sub-routes`
+
+`sub-routes` を持つ tile が `app.routes` のどのエントリからも参照されていない。ネストルートテーブルに到達経路が無い。
+
+> `Tile "<name>" declares sub-routes but is not the target of any route in app.routes`
+
+**修正**：その tile を target とする `/*` 付きルートを `app.routes` に追加するか、`sub-routes` を削除する。
+
+### E0112 `duplicate-sub-route`
+
+同じ tile の `sub-routes` 内で同一 path が複数回出現している。マッチは定義順なので、重複はデッドコードかタイポ。
+
+> `Sub-route path "<path>" is declared more than once in tile "<name>"`
+
+**修正**：重複を削除する。別パスを表現したいなら綴りを直す。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`

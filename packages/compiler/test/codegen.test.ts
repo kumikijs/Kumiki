@@ -310,4 +310,31 @@ describe("codegen", () => {
     expect(result.js).not.toContain("storageRead");
     expect(result.js).not.toContain("storageWrite");
   });
+
+  // Issue #85: a parent route whose tile declares `sub-routes` must emit a
+  // nested `subRoutes:` array on the route entry so the runtime can re-match.
+  it("emits sub-routes on the parent route entry", () => {
+    const src = `
+      tile NotFound = page(heading("404"))
+      tile Account = page(heading("a"))
+      tile Home = page(heading("home"))
+      tile Layout
+        sub-routes = {
+          "/settings/account" -> Account,
+          "/settings"         -> Home
+        }
+        = page(route-outlet())
+      app A caps=[nav.push] routes={
+        "/settings/*" -> Layout,
+        "/404"        -> NotFound
+      } init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('pattern: "/settings/*"');
+    expect(result.js).toContain("subRoutes:");
+    expect(result.js).toContain('pattern: "/settings/account"');
+    expect(result.js).toContain('pattern: "/settings"');
+  });
 });

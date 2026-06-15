@@ -288,6 +288,13 @@ export type RouteEntry = {
   pattern: string;
   /** Returns the TileNode for this route given the current state. */
   tile: () => TileNode;
+  /**
+   * Nested route table for parent routes that delegate to a `route-outlet`
+   * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
+   * runtime re-matches the path against these entries and injects the matched
+   * child tile into the first `route-outlet` of the parent's render tree.
+   */
+  subRoutes?: Array<RouteEntry | RedirectEntry>;
 };
 
 export type RedirectEntry = { pattern: string; redirectTo: string };
@@ -350,6 +357,8 @@ export type ParsedRoute = {
   params: Record<string, string>;
   query: Record<string, string>;
   hash: string | null;
+  /** Matched sub-route pattern when the parent route delegates to `route-outlet` (§3.6). */
+  childPattern?: string;
 };
 
 /** The slice of `Location` the routing path actually reads. */
@@ -580,7 +589,17 @@ export function mountCore(
     if (app.routes && app.routes.length > 0) {
       const cur = slotValues.route as ParsedRoute;
       for (const r of app.routes) {
-        if (r.pattern === cur.pattern && "tile" in r) return r.tile();
+        if (r.pattern === cur.pattern && "tile" in r) {
+          const root = r.tile();
+          // §3.6: parent route delegates child rendering to `route-outlet`.
+          if (cur.childPattern && r.subRoutes) {
+            const childEntry = r.subRoutes.find(
+              (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+            );
+            if (childEntry) injectRouteOutlet(root, childEntry.tile());
+          }
+          return root;
+        }
       }
       // 404 fallback tile
       for (const r of app.routes) {
@@ -588,6 +607,28 @@ export function mountCore(
       }
     }
     return app.root ? app.root() : { kind: "text", text: "(no root)" };
+  }
+
+  /**
+   * Walk the parent tile tree and inject the matched child as the children of
+   * the first `route-outlet` node we find (spec/routing.md §3.6). The render
+   * pass in tiles-layout.ts then mounts the child via the normal renderer.
+   * Spec leaves multi-outlet behavior unspecified, so we treat the first one
+   * as the active slot and leave any additional outlets empty.
+   */
+  function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
+    if (!node || typeof node !== "object") return false;
+    if ((node as { kind?: string }).kind === "route-outlet") {
+      (node as { children: TileNode[] }).children = [child];
+      return true;
+    }
+    const children = (node as { children?: TileNode[] }).children;
+    if (Array.isArray(children)) {
+      for (const c of children) {
+        if (injectRouteOutlet(c, child)) return true;
+      }
+    }
+    return false;
   }
 
   // Re-entrancy guard so a panic inside the `app.error` handler itself does not

@@ -82,7 +82,27 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
   for (const r of routes) {
     if ("redirectTo" in r) continue;
     const m = matchPattern(r.pattern, path);
-    if (m) return { path, pattern: r.pattern, params: m, query, hash };
+    if (m) {
+      // §3.6: if the parent declares sub-routes, re-match within them. A
+      // parent with sub-routes but no child match falls through to /404.
+      if (r.subRoutes && r.subRoutes.length > 0) {
+        for (const sr of r.subRoutes) {
+          if ("redirectTo" in sr) continue;
+          const cm = matchPattern(sr.pattern, path);
+          if (cm)
+            return {
+              path,
+              pattern: r.pattern,
+              params: { ...m, ...cm },
+              query,
+              hash,
+              childPattern: sr.pattern,
+            };
+        }
+        return { path, pattern: "/404", params: {}, query, hash };
+      }
+      return { path, pattern: r.pattern, params: m, query, hash };
+    }
   }
   // 404 fallback
   return { path, pattern: "/404", params: {}, query, hash };

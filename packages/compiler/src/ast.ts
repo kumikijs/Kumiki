@@ -100,6 +100,7 @@ export type TileDef = {
   name: string;
   in?: TypeExpr;
   errorBoundary?: string;
+  subRoutes?: { path: string; tile: string }[];
   body: TileExpr;
   pos: Pos;
 };

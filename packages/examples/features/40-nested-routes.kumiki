@@ -1,0 +1,35 @@
+# Feature: nested routes — `sub-routes` declared on a parent tile, with
+# `route-outlet()` selecting the child render. (spec/routing.md §3.6)
+
+tile NotFound        = page(heading("404 — not found"))
+tile AccountSettings = page(heading("Account settings"))
+tile BillingSettings = page(heading("Billing settings"))
+tile SettingsHome    = page(heading("Settings home"))
+
+tile SettingsLayout
+    sub-routes = {
+        "/settings/account" -> AccountSettings,
+        "/settings/billing" -> BillingSettings,
+        "/settings"         -> SettingsHome
+    }
+    = page(
+        heading("Settings"),
+        row(
+          column(
+            link(to="/settings") {text: "Home"},
+            link(to="/settings/account") {text: "Account"},
+            link(to="/settings/billing") {text: "Billing"}),
+          route-outlet()))
+
+tile Landing = page(
+    heading("Landing"),
+    link(to="/settings") {text: "Open settings"})
+
+app NestedRoutes
+    caps   = [nav.push]
+    routes = {
+        "/"            -> Landing,
+        "/settings/*"  -> SettingsLayout,
+        "/404"         -> NotFound
+    }
+    init   = []

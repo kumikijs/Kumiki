@@ -260,6 +260,63 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     ctx.localTypes?.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
+  if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
+}
+
+function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const subRoutes = tile.subRoutes;
+  if (!subRoutes) return;
+  // Each sub-route's target tile must exist (redirects skip).
+  for (const sr of subRoutes) {
+    if (sr.tile.startsWith(">>")) continue;
+    if (!sym.tiles.has(sr.tile)) {
+      errors.push({
+        code: "E0105",
+        kind: "undef-tile",
+        message: `Sub-route "${sr.path}" in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // Duplicate sub-route paths within the same tile.
+  const seen = new Set<string>();
+  for (const sr of subRoutes) {
+    if (seen.has(sr.path)) {
+      errors.push({
+        code: "E0112",
+        kind: "duplicate-sub-route",
+        message: `Sub-route path "${sr.path}" is declared more than once in tile "${tile.name}"`,
+        pos: tile.pos,
+      });
+    }
+    seen.add(sr.path);
+  }
+  // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
+  // never match because the runtime only looks them up after the parent
+  // wildcard matches the path. If the tile isn't a route target at all,
+  // emit `orphan-sub-routes` instead.
+  const app = sym.app;
+  if (!app) return;
+  const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
+  if (parents.length === 0) {
+    errors.push({
+      code: "E0111",
+      kind: "orphan-sub-routes",
+      message: `Tile "${tile.name}" declares sub-routes but is not the target of any route in app.routes`,
+      pos: tile.pos,
+    });
+    return;
+  }
+  for (const parent of parents) {
+    if (!parent.path.endsWith("/*")) {
+      errors.push({
+        code: "E0110",
+        kind: "sub-routes-without-wildcard-parent",
+        message: `Tile "${tile.name}" declares sub-routes but its parent route "${parent.path}" is not a wildcard pattern (must end with "/*")`,
+        pos: tile.pos,
+      });
+    }
+  }
 }
 
 type Ctx = {

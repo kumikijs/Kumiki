@@ -262,6 +262,70 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
+  // Issue #85: nested routes — a parent's `/settings/*` wildcard delegates to
+  // a `route-outlet`, and the runtime re-matches the path against the parent's
+  // sub-routes. Verifies the default child, switching between siblings, and
+  // the §3.6.3 fallthrough to global /404 when no child matches.
+  it("nested routes select the right child via route-outlet (40-nested-routes)", async () => {
+    const app = await loadApp(join(examples, "features", "40-nested-routes.kumiki"));
+    const report = await runScenario(
+      app,
+      freshRoot(),
+      {
+        steps: [
+          {
+            label: "the landing tile mounts at /",
+            expect: { noErrors: true, domIncludes: ["Landing"], domExcludes: ["Settings home"] },
+          },
+          {
+            label: "/settings renders the parent and the default sub-route home",
+            do: { navigate: "/settings" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Settings home", "Account", "Billing"],
+              domExcludes: ["Account settings", "Billing settings"],
+            },
+          },
+          {
+            label: "/settings/account swaps the outlet to the account child",
+            do: { navigate: "/settings/account" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Account settings"],
+              domExcludes: ["Settings home", "Billing settings"],
+            },
+          },
+          {
+            label: "/settings/billing swaps the outlet to the billing child",
+            do: { navigate: "/settings/billing" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Billing settings"],
+              domExcludes: ["Settings home", "Account settings"],
+            },
+          },
+          {
+            label: "/settings/unknown falls through to global /404 (§3.6.3)",
+            do: { navigate: "/settings/unknown-child" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["404 — not found"],
+              domExcludes: ["Settings home", "Account settings", "Billing settings"],
+            },
+          },
+        ],
+      },
+      { router: "memory" },
+    );
+    if (!report.ok) {
+      const detail = report.steps
+        .flatMap((s, i) => [...s.errors, ...s.failures].map((m) => `step ${i}: ${m}`))
+        .join("\n");
+      throw new Error(`nested-routes scenario failed:\n${detail}`);
+    }
+    expect(report.ok).toBe(true);
+  });
+
   // Regression: this app's scenario guards two framework fixes found via the
   // iterate loop — List.fold codegen, and Int.parse numeric coercion (a total
   // that was silently wrong via string concatenation).
