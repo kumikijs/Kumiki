@@ -138,6 +138,14 @@ The same sub-route path is declared more than once on a single tile. Match order
 
 **Fix**: Remove the duplicate entry, or rename one of the paths.
 
+### E0113 `sub-routes-without-outlet`
+
+A tile declares `sub-routes` but its body never calls `route-outlet`. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
+
+> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+
+**Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`

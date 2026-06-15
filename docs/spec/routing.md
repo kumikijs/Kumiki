@@ -223,6 +223,7 @@ tile SettingsLayout
 - Child routes are re-matched within the parent pattern `/settings/*`
 - If no child route matches, the parent's `/settings` (default) is used
 - If that also fails, fall through to the global `/404`
+- Multiple `route-outlet()` calls inside a single parent tile are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
 
 ---
 

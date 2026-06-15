@@ -264,8 +264,8 @@ describe("scenario runner", () => {
 
   // Issue #85: nested routes — a parent's `/settings/*` wildcard delegates to
   // a `route-outlet`, and the runtime re-matches the path against the parent's
-  // sub-routes. Verifies the default child, switching between siblings, and
-  // the §3.6.3 fallthrough to global /404 when no child matches.
+  // sub-routes. Verifies the default child (§3.6.3), sibling switching,
+  // sub-route redirects (`->>`), and the global /404 fallthrough.
   it("nested routes select the right child via route-outlet (40-nested-routes)", async () => {
     const app = await loadApp(join(examples, "features", "40-nested-routes.kumiki"));
     const report = await runScenario(
@@ -305,8 +305,26 @@ describe("scenario runner", () => {
             },
           },
           {
-            label: "/settings/unknown falls through to global /404 (§3.6.3)",
+            label: "§3.6.3: unmatched child falls back to the parent's default sub-route",
             do: { navigate: "/settings/unknown-child" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Settings home"],
+              domExcludes: ["Account settings", "Billing settings", "404"],
+            },
+          },
+          {
+            label: "§3.10: a sub-route redirect lands the user on the redirect target",
+            do: { navigate: "/settings/legacy" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Billing settings"],
+              domExcludes: ["Settings home", "Account settings"],
+            },
+          },
+          {
+            label: "a path with no matching parent still hits the global /404",
+            do: { navigate: "/totally-unrelated" },
             expect: {
               noErrors: true,
               domIncludes: ["404 — not found"],

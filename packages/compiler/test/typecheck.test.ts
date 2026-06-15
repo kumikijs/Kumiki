@@ -293,5 +293,22 @@ describe("typecheck", () => {
       const errors = checkSrc(src);
       expect(errors.some((e) => e.code === "E0112" && e.kind === "duplicate-sub-route")).toBe(true);
     });
+
+    it("reports a parent without route-outlet in its body as E0113", () => {
+      // sub-routes declared but the body just has a heading — the matched
+      // child would have nowhere to render.
+      const src = `
+        tile NotFound = page(heading("404"))
+        tile Account = page(heading("a"))
+        tile Layout
+          sub-routes = { "/x/a" -> Account }
+          = page(heading("settings"))
+        app A caps=[] routes={ "/x/*" -> Layout, "/404" -> NotFound } init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0113" && e.kind === "sub-routes-without-outlet")).toBe(
+        true,
+      );
+    });
   });
 });

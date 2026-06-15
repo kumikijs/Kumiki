@@ -10,6 +10,7 @@ tile SettingsLayout
     sub-routes = {
         "/settings/account" -> AccountSettings,
         "/settings/billing" -> BillingSettings,
+        "/settings/legacy"  ->> "/settings/billing",
         "/settings"         -> SettingsHome
     }
     = page(

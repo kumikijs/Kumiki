@@ -36,8 +36,26 @@
       }
     },
     {
-      "label": "an unmatched child path under /settings/* falls through to /404",
+      "label": "an unmatched child path under /settings/* falls back to the default child (§3.6.3)",
       "do": { "navigate": "/settings/unknown-child" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Settings home"],
+        "domExcludes": ["Account settings", "Billing settings", "404"]
+      }
+    },
+    {
+      "label": "a sub-route redirect (->>) lands on the redirect target",
+      "do": { "navigate": "/settings/legacy" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Billing settings"],
+        "domExcludes": ["Settings home", "Account settings"]
+      }
+    },
+    {
+      "label": "a path with no matching top-level route still falls through to the global /404",
+      "do": { "navigate": "/totally-unrelated" },
       "expect": {
         "noErrors": true,
         "domIncludes": ["404 — not found"],

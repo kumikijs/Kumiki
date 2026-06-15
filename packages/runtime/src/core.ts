@@ -242,6 +242,14 @@ export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
   matchPattern(pattern: string, path: string): Record<string, string> | null;
+  /**
+   * Resolve any static redirect (`->>`) that applies to the current location —
+   * top-level entry, or one under a matched parent's `subRoutes`. Returns the
+   * redirect target path, or `null` if no redirect applies. The runtime then
+   * `router.replace`s before parsing so the URL bar stays in sync with what is
+   * rendered.
+   */
+  findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -615,6 +623,11 @@ export function mountCore(
    * pass in tiles-layout.ts then mounts the child via the normal renderer.
    * Spec leaves multi-outlet behavior unspecified, so we treat the first one
    * as the active slot and leave any additional outlets empty.
+   *
+   * NOTE: this mutates `node` in place, so each call site MUST hand in a fresh
+   * tree — i.e. tile factories returned by codegen must produce a new object
+   * literal per invocation (they do today). A cached / shared tree would be
+   * corrupted across navigations.
    */
   function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
     if (!node || typeof node !== "object") return false;
@@ -747,6 +760,11 @@ export function mountCore(
     // A pending leave guard is already gating the previous transition; ignore
     // re-entrant syncs (e.g. a router.replace from the No path would re-call us).
     if (pendingLeave) return;
+    // Resolve any static redirect for the current path BEFORE computing the
+    // new route — keeps the URL bar in sync with what gets rendered and
+    // covers both top-level and sub-route redirects.
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slotValues.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
     // Fire route.leave reducers BEFORE committing the new route so a guard can
@@ -830,14 +848,11 @@ export function mountCore(
   lastAppliedThemeName =
     (app.live?.[app.themeName ?? ""] as string | undefined) ?? app.themeName ?? null;
 
-  // Initial route sync — but first check for a static redirect on the current path.
+  // Initial route sync — but first resolve any static redirect (top-level
+  // `->>` or one declared inside a matched parent's sub-routes per §3.6).
   if (routing && router && app.routes && app.routes.length > 0) {
-    for (const r of app.routes) {
-      if ("redirectTo" in r && routing.matchPattern(r.pattern, router.read().pathname)) {
-        router.replace(r.redirectTo);
-        break;
-      }
-    }
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     slotValues.route = routing.parseLocation(app.routes, router.read());
     routerUnsub = router.subscribe(syncRouteFromLocation);
   }
