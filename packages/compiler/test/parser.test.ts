@@ -188,6 +188,26 @@ reducer onErr on=route.error("/p") do= s := true`;
     expect(r.on.name).toBe('route.error("/p")');
   });
 
+  // Issue #85: nested routes — `sub-routes = {...}` on a tile must be parsed
+  // into TileDef.subRoutes (previously the parser swallowed and discarded it).
+  it("stores tile sub-routes on TileDef.subRoutes", () => {
+    const src = `tile Layout
+  sub-routes = {
+    "/settings/account" -> Account,
+    "/settings"         -> Home,
+    "/legacy"           ->> "/settings"
+  }
+  = page(route-outlet())`;
+    const program = parse(lex(src));
+    const tile = program.defs[0] as TileDef;
+    expect(tile.kind).toBe("TileDef");
+    expect(tile.subRoutes).toEqual([
+      { path: "/settings/account", tile: "Account" },
+      { path: "/settings", tile: "Home" },
+      { path: "/legacy", tile: ">>/settings" },
+    ]);
+  });
+
   it("rejects unknown lifecycle event names", () => {
     expect(() =>
       parse(

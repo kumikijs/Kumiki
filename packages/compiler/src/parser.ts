@@ -1188,6 +1188,7 @@ class Parser {
     const name = this.eat("ident").value;
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
+    let subRoutes: { path: string; tile: string }[] | undefined;
     while (!this.matchOp("=")) {
       if (this.matchKw("in")) {
         this.next();
@@ -1213,8 +1214,7 @@ class Parser {
       if (this.matchT("ident", "sub-routes")) {
         this.next();
         this.eat("op", "=");
-        // accept and discard a route-map literal
-        this.parseRouteMap();
+        subRoutes = this.parseRouteMap();
         continue;
       }
       const t = this.peek();
@@ -1225,6 +1225,7 @@ class Parser {
     const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
+    if (subRoutes) def.subRoutes = subRoutes;
     return def;
   }
 

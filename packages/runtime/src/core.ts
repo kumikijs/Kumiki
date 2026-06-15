@@ -242,6 +242,14 @@ export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
   matchPattern(pattern: string, path: string): Record<string, string> | null;
+  /**
+   * Resolve any static redirect (`->>`) that applies to the current location —
+   * top-level entry, or one under a matched parent's `subRoutes`. Returns the
+   * redirect target path, or `null` if no redirect applies. The runtime then
+   * `router.replace`s before parsing so the URL bar stays in sync with what is
+   * rendered.
+   */
+  findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -288,6 +296,13 @@ export type RouteEntry = {
   pattern: string;
   /** Returns the TileNode for this route given the current state. */
   tile: () => TileNode;
+  /**
+   * Nested route table for parent routes that delegate to a `route-outlet`
+   * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
+   * runtime re-matches the path against these entries and injects the matched
+   * child tile into the first `route-outlet` of the parent's render tree.
+   */
+  subRoutes?: Array<RouteEntry | RedirectEntry>;
 };
 
 export type RedirectEntry = { pattern: string; redirectTo: string };
@@ -350,6 +365,8 @@ export type ParsedRoute = {
   params: Record<string, string>;
   query: Record<string, string>;
   hash: string | null;
+  /** Matched sub-route pattern when the parent route delegates to `route-outlet` (§3.6). */
+  childPattern?: string;
 };
 
 /** The slice of `Location` the routing path actually reads. */
@@ -580,7 +597,17 @@ export function mountCore(
     if (app.routes && app.routes.length > 0) {
       const cur = slotValues.route as ParsedRoute;
       for (const r of app.routes) {
-        if (r.pattern === cur.pattern && "tile" in r) return r.tile();
+        if (r.pattern === cur.pattern && "tile" in r) {
+          const root = r.tile();
+          // §3.6: parent route delegates child rendering to `route-outlet`.
+          if (cur.childPattern && r.subRoutes) {
+            const childEntry = r.subRoutes.find(
+              (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+            );
+            if (childEntry) injectRouteOutlet(root, childEntry.tile());
+          }
+          return root;
+        }
       }
       // 404 fallback tile
       for (const r of app.routes) {
@@ -588,6 +615,33 @@ export function mountCore(
       }
     }
     return app.root ? app.root() : { kind: "text", text: "(no root)" };
+  }
+
+  /**
+   * Walk the parent tile tree and inject the matched child as the children of
+   * the first `route-outlet` node we find (spec/routing.md §3.6). The render
+   * pass in tiles-layout.ts then mounts the child via the normal renderer.
+   * Spec leaves multi-outlet behavior unspecified, so we treat the first one
+   * as the active slot and leave any additional outlets empty.
+   *
+   * NOTE: this mutates `node` in place, so each call site MUST hand in a fresh
+   * tree — i.e. tile factories returned by codegen must produce a new object
+   * literal per invocation (they do today). A cached / shared tree would be
+   * corrupted across navigations.
+   */
+  function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
+    if (!node || typeof node !== "object") return false;
+    if ((node as { kind?: string }).kind === "route-outlet") {
+      (node as { children: TileNode[] }).children = [child];
+      return true;
+    }
+    const children = (node as { children?: TileNode[] }).children;
+    if (Array.isArray(children)) {
+      for (const c of children) {
+        if (injectRouteOutlet(c, child)) return true;
+      }
+    }
+    return false;
   }
 
   // Re-entrancy guard so a panic inside the `app.error` handler itself does not
@@ -706,6 +760,11 @@ export function mountCore(
     // A pending leave guard is already gating the previous transition; ignore
     // re-entrant syncs (e.g. a router.replace from the No path would re-call us).
     if (pendingLeave) return;
+    // Resolve any static redirect for the current path BEFORE computing the
+    // new route — keeps the URL bar in sync with what gets rendered and
+    // covers both top-level and sub-route redirects.
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slotValues.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
     // Fire route.leave reducers BEFORE committing the new route so a guard can
@@ -789,14 +848,11 @@ export function mountCore(
   lastAppliedThemeName =
     (app.live?.[app.themeName ?? ""] as string | undefined) ?? app.themeName ?? null;
 
-  // Initial route sync — but first check for a static redirect on the current path.
+  // Initial route sync — but first resolve any static redirect (top-level
+  // `->>` or one declared inside a matched parent's sub-routes per §3.6).
   if (routing && router && app.routes && app.routes.length > 0) {
-    for (const r of app.routes) {
-      if ("redirectTo" in r && routing.matchPattern(r.pattern, router.read().pathname)) {
-        router.replace(r.redirectTo);
-        break;
-      }
-    }
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     slotValues.route = routing.parseLocation(app.routes, router.read());
     routerUnsub = router.subscribe(syncRouteFromLocation);
   }

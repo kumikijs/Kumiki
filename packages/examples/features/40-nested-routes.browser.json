@@ -1,0 +1,66 @@
+{
+  "steps": [
+    {
+      "label": "the landing tile mounts at /",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Landing", "Open settings"],
+        "domExcludes": ["Account settings", "Billing settings"]
+      }
+    },
+    {
+      "label": "navigating to /settings renders the parent and the default child via route-outlet",
+      "do": { "navigate": "/settings" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Settings home", "Account", "Billing"],
+        "domExcludes": ["Landing", "Account settings", "Billing settings"]
+      }
+    },
+    {
+      "label": "navigating to /settings/account swaps the outlet to the account child",
+      "do": { "navigate": "/settings/account" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Account settings"],
+        "domExcludes": ["Settings home", "Billing settings"]
+      }
+    },
+    {
+      "label": "navigating to /settings/billing swaps the outlet to the billing child",
+      "do": { "navigate": "/settings/billing" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Billing settings"],
+        "domExcludes": ["Settings home", "Account settings"]
+      }
+    },
+    {
+      "label": "an unmatched child path under /settings/* falls back to the default child (§3.6.3)",
+      "do": { "navigate": "/settings/unknown-child" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Settings home"],
+        "domExcludes": ["Account settings", "Billing settings", "404"]
+      }
+    },
+    {
+      "label": "a sub-route redirect (->>) lands on the redirect target",
+      "do": { "navigate": "/settings/legacy" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Billing settings"],
+        "domExcludes": ["Settings home", "Account settings"]
+      }
+    },
+    {
+      "label": "a path with no matching top-level route still falls through to the global /404",
+      "do": { "navigate": "/totally-unrelated" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["404 — not found"],
+        "domExcludes": ["Settings home", "Account settings", "Billing settings"]
+      }
+    }
+  ]
+}

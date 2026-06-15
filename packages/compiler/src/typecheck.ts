@@ -260,6 +260,104 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     ctx.localTypes?.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
+  if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
+}
+
+function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const subRoutes = tile.subRoutes;
+  if (!subRoutes) return;
+  // Each sub-route's target tile must exist (redirects skip).
+  for (const sr of subRoutes) {
+    if (sr.tile.startsWith(">>")) continue;
+    if (!sym.tiles.has(sr.tile)) {
+      errors.push({
+        code: "E0105",
+        kind: "undef-tile",
+        message: `Sub-route "${sr.path}" in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // Duplicate sub-route paths within the same tile.
+  const seen = new Set<string>();
+  for (const sr of subRoutes) {
+    if (seen.has(sr.path)) {
+      errors.push({
+        code: "E0112",
+        kind: "duplicate-sub-route",
+        message: `Sub-route path "${sr.path}" is declared more than once in tile "${tile.name}"`,
+        pos: tile.pos,
+      });
+    }
+    seen.add(sr.path);
+  }
+  // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
+  // never match because the runtime only looks them up after the parent
+  // wildcard matches the path. If the tile isn't a route target at all,
+  // emit `orphan-sub-routes` instead.
+  const app = sym.app;
+  if (!app) return;
+  const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
+  if (parents.length === 0) {
+    errors.push({
+      code: "E0111",
+      kind: "orphan-sub-routes",
+      message: `Tile "${tile.name}" declares sub-routes but is not the target of any route in app.routes`,
+      pos: tile.pos,
+    });
+    return;
+  }
+  for (const parent of parents) {
+    if (!parent.path.endsWith("/*")) {
+      errors.push({
+        code: "E0110",
+        kind: "sub-routes-without-wildcard-parent",
+        message: `Tile "${tile.name}" declares sub-routes but its parent route "${parent.path}" is not a wildcard pattern (must end with "/*")`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // The matched child can only render if the parent's body actually contains
+  // a `route-outlet`. Without one, sub-routes compile but silently render
+  // nothing — exactly the "compiles but does nothing" failure mode Kumiki
+  // refuses to ship. Catch it at the type check.
+  if (!tileBodyUsesRouteOutlet(tile.body)) {
+    errors.push({
+      code: "E0113",
+      kind: "sub-routes-without-outlet",
+      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      pos: tile.pos,
+    });
+  }
+}
+
+/** True if any sub-tree of the tile body is a `route-outlet` call. */
+function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
+  switch (t.kind) {
+    case "TileCall": {
+      if (t.name === "route-outlet") return true;
+      for (const arg of t.args) {
+        const v = arg.value as TileExpr;
+        if (
+          v.kind === "TileCall" ||
+          v.kind === "TileFor" ||
+          v.kind === "TileWhen" ||
+          v.kind === "TileIf" ||
+          v.kind === "TileMatch"
+        ) {
+          if (tileBodyUsesRouteOutlet(v)) return true;
+        }
+      }
+      return false;
+    }
+    case "TileFor":
+    case "TileWhen":
+      return tileBodyUsesRouteOutlet(t.body);
+    case "TileIf":
+      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
+    case "TileMatch":
+      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
+  }
 }
 
 type Ctx = {

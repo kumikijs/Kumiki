@@ -225,4 +225,90 @@ describe("typecheck", () => {
       true,
     );
   });
+
+  // Issue #85: nested routes — the spec/§3.6 contract is enforced at the type
+  // check layer so a misuse fails before it reaches the runtime.
+  describe("sub-routes (issue #85)", () => {
+    const nested = (parentPath: string, extra = "") => `
+      tile NotFound = page(heading("404"))
+      tile Account = page(heading("account"))
+      tile SettingsHome = page(heading("home"))
+      tile SettingsLayout
+        sub-routes = {
+          "/settings/account" -> Account,
+          "/settings"         -> SettingsHome${extra}
+        }
+        = page(route-outlet())
+      app A caps=[] routes={
+        "${parentPath}" -> SettingsLayout,
+        "/404" -> NotFound
+      } init=[]
+    `;
+
+    it("accepts a wildcard parent with valid sub-routes", () => {
+      expect(checkSrc(nested("/settings/*"))).toEqual([]);
+    });
+
+    it("reports an undefined sub-route target as E0105", () => {
+      const src = `
+        tile NotFound = page(heading("404"))
+        tile Layout sub-routes = { "/x" -> Missing } = page(route-outlet())
+        app A caps=[] routes={ "/x/*" -> Layout, "/404" -> NotFound } init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0105" && e.message.includes("Missing"))).toBe(true);
+    });
+
+    it("reports a non-wildcard parent as E0110", () => {
+      const errors = checkSrc(nested("/settings"));
+      expect(
+        errors.some((e) => e.code === "E0110" && e.kind === "sub-routes-without-wildcard-parent"),
+      ).toBe(true);
+    });
+
+    it("reports orphan sub-routes (tile not reachable from app.routes) as E0111", () => {
+      const src = `
+        tile NotFound = page(heading("404"))
+        tile Account = page(heading("a"))
+        tile Orphan sub-routes = { "/x" -> Account } = page(route-outlet())
+        tile App = page(heading("root"))
+        app A caps=[] routes={ "/" -> App, "/404" -> NotFound } init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0111" && e.kind === "orphan-sub-routes")).toBe(true);
+    });
+
+    it("reports duplicate sub-route paths as E0112", () => {
+      const src = `
+        tile NotFound = page(heading("404"))
+        tile Account = page(heading("a"))
+        tile Layout
+          sub-routes = {
+            "/x/a" -> Account,
+            "/x/a" -> Account
+          }
+          = page(route-outlet())
+        app A caps=[] routes={ "/x/*" -> Layout, "/404" -> NotFound } init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0112" && e.kind === "duplicate-sub-route")).toBe(true);
+    });
+
+    it("reports a parent without route-outlet in its body as E0113", () => {
+      // sub-routes declared but the body just has a heading — the matched
+      // child would have nowhere to render.
+      const src = `
+        tile NotFound = page(heading("404"))
+        tile Account = page(heading("a"))
+        tile Layout
+          sub-routes = { "/x/a" -> Account }
+          = page(heading("settings"))
+        app A caps=[] routes={ "/x/*" -> Layout, "/404" -> NotFound } init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0113" && e.kind === "sub-routes-without-outlet")).toBe(
+        true,
+      );
+    });
+  });
 });

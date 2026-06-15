@@ -143,6 +143,9 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // Routes table — each route entry produces either a tile factory or a redirect.
+  // If the parent tile declares `sub-routes`, attach a nested route table
+  // (spec/routing.md §3.6) so the runtime can re-match the path inside the
+  // parent's wildcard pattern and inject the matched child into `route-outlet`.
   lines.push("const _routes = [");
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) {
@@ -153,7 +156,30 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     } else {
       const tile = tiles.find((t) => t.name === r.tile);
       if (!tile) throw new Error(`Route ${r.path} targets undefined tile "${r.tile}"`);
-      lines.push(`  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)} },`);
+      if (tile.subRoutes && tile.subRoutes.length > 0) {
+        lines.push(
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}, subRoutes: [`,
+        );
+        for (const sr of tile.subRoutes) {
+          if (sr.tile.startsWith(">>")) {
+            lines.push(
+              `    { pattern: ${JSON.stringify(sr.path)}, redirectTo: ${JSON.stringify(sr.tile.slice(2))} },`,
+            );
+          } else {
+            const childTile = tiles.find((t) => t.name === sr.tile);
+            if (!childTile)
+              throw new Error(
+                `Sub-route ${sr.path} in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+              );
+            lines.push(
+              `    { pattern: ${JSON.stringify(sr.path)}, tile: () => ${genTile(childTile, ctx)} },`,
+            );
+          }
+        }
+        lines.push(`  ] },`);
+      } else {
+        lines.push(`  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)} },`);
+      }
     }
   }
   lines.push("];");
