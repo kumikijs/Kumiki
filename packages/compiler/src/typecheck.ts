@@ -916,8 +916,26 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
 // inference never guesses, so an untyped receiver keeps the historical
 // name-based shortcut dispatch with no diagnostic.
 
-const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes"]);
+const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes", "File"]);
 const STDLIB_CONTAINERS = new Set(["List", "Map", "Set", "Option", "Result"]);
+
+/**
+ * Structural fields exposed by built-in prim types. `File` is treated as a
+ * scalar at the type system level (its handle is opaque, never inspected by
+ * the compiler) but the runtime stores it as a record so Kumiki expressions
+ * can read its metadata — `f.name : Text`, `f.size : Int`, `f.type : Text`
+ * (docs/spec/stdlib.md §2.1). Without this table classifyFieldAccess would
+ * emit E0108 on every legitimate File field read.
+ */
+const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
+  File: { name: "Text", size: "Int", type: "Text" },
+};
+
+function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
+  const name = PRIM_FIELDS[primName]?.[field];
+  if (!name) return null;
+  return { kind: "TypePrim", name, pos };
+}
 
 /** Unwrap type aliases (`TypeRef` → its `TypeDef` body) and nominal/refinement wrappers. */
 function unaliasType(
@@ -962,6 +980,10 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
+      if (base.kind === "TypePrim") {
+        const t = primFieldType(base.name, e.field, e.pos);
+        if (t) return t;
+      }
       // `.get` unwraps Option(T) / Result(T,E) → T
       if (
         e.field === "get" &&
@@ -1054,6 +1076,10 @@ function classifyFieldAccess(
     (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
     (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
   if (isKnownReceiver) {
+    if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[e.field]) {
+      e.accessKind = "field";
+      return;
+    }
     if (KNOWN_MEMBERS.has(e.field)) {
       e.accessKind = "shortcut";
       return;

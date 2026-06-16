@@ -1257,6 +1257,13 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
         return `_s.panic(${a})`;
       }
+      // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
+      // The runtime helper is None-safe so `file-url(avatar.get)` does not
+      // throw before `is-some` guards inside `when(...)` short-circuit.
+      if (cn === "file-url") {
+        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : "undefined";
+        return `_s.fileUrl(${a})`;
+      }
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
       return `${jsName(cn)}(${args})`;
@@ -1866,6 +1873,8 @@ function tileCallJs(
         else if (arg.name === "id") fields.push(`id: ${valJs}`);
         else if (arg.name === "auto-focus") fields.push(`autoFocus: ${valJs}`);
         else if (arg.name === "required") fields.push(`required: ${valJs}`);
+        else if (arg.name === "accept") fields.push(`accept: ${valJs}`);
+        else if (arg.name === "multiple") fields.push(`multiple: ${valJs}`);
       }
       if (bindInfo) {
         fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);

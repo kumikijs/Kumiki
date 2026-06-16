@@ -51,6 +51,8 @@ export type TileNode =
       required?: boolean;
       autoFocus?: boolean;
       id?: string;
+      accept?: string;
+      multiple?: boolean;
     }
   | {
       kind: "textarea";
