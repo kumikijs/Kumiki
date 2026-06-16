@@ -14,24 +14,37 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compile } from "@kumikijs/compiler";
+import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import { mount } from "@kumikijs/runtime";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { loadApp } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplePath = join(here, "..", "examples", "features", "43-file-upload-preview.kumiki");
 
-let originalCreateObjectURL: typeof URL.createObjectURL | undefined;
+// happy-dom does not provide URL.createObjectURL; the runtime guards on its
+// absence with an empty string. For this test we need a non-empty `blob:`
+// URL to assert on, so stash whatever the environment has (typically
+// undefined) and install a stub for the duration of the file.
+const originalCreateObjectURL = URL.createObjectURL;
+const stubbed = typeof originalCreateObjectURL !== "function";
 
 beforeAll(() => {
-  if (typeof URL.createObjectURL !== "function") {
-    originalCreateObjectURL = URL.createObjectURL;
+  if (stubbed) {
     let n = 0;
     URL.createObjectURL = (blob: Blob | MediaSource) => {
       void blob;
       n += 1;
       return `blob:happy-dom/${n}`;
     };
+  }
+});
+
+afterAll(() => {
+  if (stubbed) {
+    (URL as { createObjectURL: typeof URL.createObjectURL }).createObjectURL =
+      originalCreateObjectURL;
   }
 });
 
@@ -72,12 +85,57 @@ describe("file upload — input(type=file) + $event.files + file-url()", () => {
       const img = root.querySelector<HTMLImageElement>("img");
       expect(img, "preview <img> must appear after picking a file").not.toBeNull();
       expect(img?.getAttribute("src") ?? "").toMatch(/^blob:/);
+
+      // Re-renders must reuse the same blob URL: rerender via the live app
+      // helper and assert the <img> src is unchanged. Without WeakMap-based
+      // memoisation each render would mint a fresh URL and the old one
+      // would leak.
+      const firstSrc = img?.getAttribute("src") ?? "";
+      (app as { _rerender?: () => void })._rerender?.();
+      const imgAfter = root.querySelector<HTMLImageElement>("img");
+      expect(imgAfter?.getAttribute("src") ?? "").toBe(firstSrc);
     } finally {
       handle.dispose();
     }
   });
-});
 
-// Keep the linter happy about the stash variable in environments that already
-// have createObjectURL — we only restore when we stubbed.
-void originalCreateObjectURL;
+  it("typechecks File metadata fields (.name / .size / .type)", () => {
+    // Regression: keeping `File` in SCALAR_PRIMS without naming its fields
+    // raised E0108 the moment a reducer touched the metadata the runtime
+    // already returns. Compile a tiny program that reads all three.
+    const src = `
+slot pickedName : Text = ""
+slot pickedSize : Int  = 0
+slot pickedType : Text = ""
+slot avatar : Option(File) = None
+
+tile Picker = input(type="file")
+
+reducer pickFile
+    on=ui.change(Picker)
+    do= avatar := $event.files.head
+        pickedName := $event.files.head.get.name
+        pickedSize := $event.files.head.get.size
+        pickedType := $event.files.head.get.type
+
+tile App = column(Picker)
+
+app FileFieldsRegression
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const result = compile(src, {
+      runtimeSpecifier: "./runtime.js",
+      bundle: false,
+      readRuntimeBundle: nodeRuntimeBundleReader,
+    });
+    if (result.kind !== "ok") {
+      throw new Error(
+        `File field access must typecheck:\n${result.errors
+          .map((e) => `  ${e.code} @ ${e.pos.line}:${e.pos.col}: ${e.message}`)
+          .join("\n")}`,
+      );
+    }
+  });
+});

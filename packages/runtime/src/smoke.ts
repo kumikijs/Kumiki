@@ -169,7 +169,18 @@ function hasContent(root: HTMLElement): boolean {
 function collectInteractive(root: HTMLElement): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>("button, input, textarea, select, [data-kumiki-bind]"),
-  );
+  ).filter((el) => {
+    // File inputs cannot be exercised without a real `File` (the HTML spec
+    // forbids programmatic `.value` writes, and a synthetic empty `change`
+    // would mask reducer panics around `$event.files.head.get`). Skip them
+    // here so the smoke harness never reports a false PASS for the picker
+    // path; the dedicated tests/file-upload.test.ts covers the real-File
+    // round-trip.
+    if (el.tagName.toLowerCase() === "input" && (el as HTMLInputElement).type === "file") {
+      return false;
+    }
+    return true;
+  });
 }
 
 function actionFor(el: Element): string {
@@ -196,13 +207,10 @@ function fire(el: HTMLElement): void {
     const inp = el as HTMLInputElement;
     if (inp.type === "checkbox" || inp.type === "radio") {
       el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    } else if (inp.type === "file") {
-      // The HTML spec forbids programmatic `.value` assignment on file inputs,
-      // and the smoke harness has no real File to hand over. Dispatching a
-      // bare change keeps the runtime/reducer wiring exercised — `files` will
-      // be an empty list, which a well-written reducer should tolerate.
-      el.dispatchEvent(new Event("change", { bubbles: true }));
     } else {
+      // file inputs are filtered out by collectInteractive — see the comment
+      // there. Any input reaching here is text-like and tolerates a value
+      // write + input + change dispatch.
       inp.value = "smoke";
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));

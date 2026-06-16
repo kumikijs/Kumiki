@@ -365,15 +365,19 @@ export const _stdlibCore = {
   /**
    * `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10). The
    * runtime stores picked files as `{name, size, type, _file: File}`; this
-   * helper unwraps `_file` and hands it to URL.createObjectURL. Passing
-   * undefined / None / a value with no `_file` returns "" so that
-   * `image(src=file-url(opt.get))` does not throw when the slot is empty —
-   * `when(opt.is-some, ...)` is the recommended guard, but a missing src on
-   * <img> is preferable to a panic when a render races a clear.
+   * helper unwraps `_file` and hands it to URL.createObjectURL.
+   *
+   * Memoised on the File handle and registered for revocation on GC so that
+   * (a) repeated renders of the same `image(src=file-url(...))` reuse one
+   * blob URL and (b) when the picker slot is replaced and the old File
+   * becomes unreachable, the URL is released without manual bookkeeping in
+   * user code. The spec calls this out as "automatic release".
+   *
+   * Passing undefined / None / a value with no `_file` returns "" so a
+   * render that races a slot clear cannot blow up.
    */
   fileUrl(file: unknown): string {
     if (!file || typeof file !== "object") return "";
-    // Unwrap Option(File): Some({_file: File}) → File, None → "".
     const tagged = file as { _tag?: string; _0?: unknown };
     const inner = tagged._tag === "Some" ? tagged._0 : file;
     if (!inner || typeof inner !== "object") return "";
@@ -385,6 +389,28 @@ export const _stdlibCore = {
     ) {
       return "";
     }
-    return URL.createObjectURL(handle);
+    const cached = _fileUrlCache.get(handle);
+    if (cached) return cached;
+    const url = URL.createObjectURL(handle);
+    _fileUrlCache.set(handle, url);
+    _fileUrlRegistry?.register(handle, url);
+    return url;
   },
 };
+
+// File → blob URL memoisation. WeakMap so a File made unreachable (slot
+// overwritten, picker reset) can be collected; the FinalizationRegistry then
+// revokes the URL it was holding. The registry is environments-gated because
+// older runtimes / SSR shims may not expose it — the cache still works there,
+// only the explicit revoke degrades to "let the browser reclaim at page end".
+const _fileUrlCache: WeakMap<Blob, string> = new WeakMap();
+const _fileUrlRegistry: FinalizationRegistry<string> | null =
+  typeof FinalizationRegistry !== "undefined" && typeof URL !== "undefined"
+    ? new FinalizationRegistry((url: string) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Old URLs on a closed document throw; nothing to do.
+        }
+      })
+    : null;
