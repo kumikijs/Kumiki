@@ -58,12 +58,15 @@ describe("issue #86 — link prefetch", () => {
     (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = originalIO;
   });
 
-  it("dispatches the named reducer with prefetch-args on viewport entry", async () => {
+  it("dispatches the named reducer with $route.params on viewport entry", async () => {
     const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
     const root = freshRoot();
     mount(app, root, { router: "memory" });
     // Allow the synchronous IO callback's reducer dispatch + re-render to settle.
     await new Promise((r) => setTimeout(r, 0));
+    // The reducer reads `$route.params.get-or("id", "")` — spec §3.8 says the
+    // prefetch binding matches `route.enter`, so `prefetch-args` must surface
+    // as the route's `params`.
     expect(app.live?.prefetched).toBe(1);
     expect(app.live?.lastId).toBe("abc-123");
     expect(root.textContent).toContain("prefetched: 1");
@@ -84,11 +87,30 @@ describe("issue #86 — scroll restoration", () => {
     scrollSpy.mockRestore();
   });
 
-  it("emits scroll-to and scrolls to top on a push-style navigation", async () => {
+  it("emits scroll-to({0,0}) from a reducer and routes it to window.scrollTo", async () => {
     const app = await loadApp(join(features, "42-scroll-restoration.kumiki"));
     const root = freshRoot();
     mount(app, root, { router: "memory" });
-    // `route.enter("/")` fires `emit scroll-to({x:0, y:0})` on mount.
+    // `route.enter("/")` fires `emit scroll-to({x:0, y:0})` on mount, which the
+    // runtime's `scroll-to` effect dispatches to `window.scrollTo(0, 0)`.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(scrollSpy).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("auto-scrolls to (0,0) on a push-style navigation into a standard tile", async () => {
+    // Uses 41 because all of its tiles take the default scroll-restoration;
+    // the navigation from `/` to `/todos/:id` is therefore the exact path the
+    // runtime's push hook (`updateRoute` → `applyScrollFor`) must service.
+    const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
+    const root = freshRoot();
+    mount(app, root, { router: "memory" });
+    await new Promise((r) => setTimeout(r, 0));
+    scrollSpy.mockClear();
+
+    (app as typeof app & { _navigate: (path: string, replace?: boolean) => void })._navigate(
+      "/todos/abc-123",
+      false,
+    );
     await new Promise((r) => setTimeout(r, 0));
     expect(scrollSpy).toHaveBeenCalledWith(0, 0);
   });

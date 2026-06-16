@@ -49,7 +49,7 @@ export const textTiles: TileRenderers = {
       const winRef = window as unknown as { __kumikiApp?: AppShape };
       const app = winRef.__kumikiApp as
         | (AppShape & {
-            _dispatch?: (name: string, el: Record<string, unknown>) => void;
+            _prefetch?: (name: string, args: Record<string, string>, to: string) => void;
             _prefetched?: Set<string>;
           })
         | undefined;
@@ -63,7 +63,7 @@ export const textTiles: TileRenderers = {
         const fire = (): void => {
           if (seen?.has(dedupeKey)) return;
           seen?.add(dedupeKey);
-          app?._dispatch?.(reducer, payload);
+          app?._prefetch?.(reducer, payload as Record<string, string>, node.to);
         };
         const IO = (globalThis as { IntersectionObserver?: typeof IntersectionObserver })
           .IntersectionObserver;

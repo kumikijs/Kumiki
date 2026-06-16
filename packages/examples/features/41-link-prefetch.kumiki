@@ -1,18 +1,22 @@
 # Feature: link prefetch — IntersectionObserver-driven preload of route data.
 # Spec: routing.md §3.8.
 #
-# The link declares the reducer to run when it enters the viewport, plus the
-# argument record. The runtime fires the reducer exactly once per element, and
-# in headless DOMs (no IntersectionObserver) falls back to a microtask so smoke
-# / scenario runs can still observe the dispatch.
+# `prefetch` names a reducer; `prefetch-args` becomes the `$route.params` of
+# that reducer (the same binding shape `route.enter` uses, per §3.8). The
+# runtime fires it exactly once per link `to`, on viewport entry — and on
+# headless DOMs that lack IntersectionObserver, on the next microtask, so
+# smoke and scenario runs observe the dispatch deterministically.
+#
+# Because the binding matches `route.enter`, the same reducer can drive both
+# the preload AND the actual navigation arrival — no duplicated logic.
 
 slot prefetched : Int       = 0
 slot lastId     : Text      = ""
 
 reducer loadTodo
-    on=ui.click(PrefetchProbe)
+    on=route.enter("/todos/:id")
     do= prefetched := prefetched + 1
-        lastId     := $el.id.get-or("")
+        lastId     := $route.params.get-or("id", "")
 
 tile Home = page(
     heading("Home"),

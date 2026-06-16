@@ -859,6 +859,10 @@ export function mountCore(
     const entry = findRouteEntry(route);
     if (entry?.scrollRestoration === false) return;
     if (lastNavSource === "pop") {
+      // pop with no saved entry (e.g. first-visit hash deep-link or a path that
+      // bypassed our save hook) — fall through to (0,0) instead of leaving the
+      // viewport where the last route left it. Because we took manual control
+      // of `history.scrollRestoration`, the browser default won't kick in here.
       const saved = scrollSaved.get(route.path);
       if (saved) window.scrollTo(saved.x, saved.y);
       else window.scrollTo(0, 0);
@@ -939,6 +943,27 @@ export function mountCore(
     const r = app.reducers.find((x) => x.name === reducerName);
     if (!r) return;
     applyReducer(r, { $el: el, $event: el });
+  };
+  // §3.8 prefetch — same argument binding as route.enter so the prefetch and
+  // the actual navigation share one reducer body. `prefetch-args` lowers to
+  // `$route.params`; `path` / `pattern` carry the link target verbatim (the
+  // matched pattern is unknowable at the link site, but `params` is what
+  // reducer bodies read).
+  (
+    app as AppShape & {
+      _prefetch?: (name: string, args: Record<string, string>, to: string) => void;
+    }
+  )._prefetch = (reducerName: string, args: Record<string, string>, to: string) => {
+    const r = app.reducers.find((x) => x.name === reducerName);
+    if (!r) return;
+    const syntheticRoute: ParsedRoute = {
+      path: to,
+      pattern: to,
+      params: args,
+      query: {},
+      hash: null,
+    };
+    applyReducer(r, { $route: syntheticRoute });
   };
   (app as AppShape & { _setSlot?: (name: string, value: unknown) => void })._setSlot = (
     name: string,
