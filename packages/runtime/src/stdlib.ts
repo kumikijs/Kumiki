@@ -362,4 +362,29 @@ export const _stdlibCore = {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
   },
+  /**
+   * `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10). The
+   * runtime stores picked files as `{name, size, type, _file: File}`; this
+   * helper unwraps `_file` and hands it to URL.createObjectURL. Passing
+   * undefined / None / a value with no `_file` returns "" so that
+   * `image(src=file-url(opt.get))` does not throw when the slot is empty —
+   * `when(opt.is-some, ...)` is the recommended guard, but a missing src on
+   * <img> is preferable to a panic when a render races a clear.
+   */
+  fileUrl(file: unknown): string {
+    if (!file || typeof file !== "object") return "";
+    // Unwrap Option(File): Some({_file: File}) → File, None → "".
+    const tagged = file as { _tag?: string; _0?: unknown };
+    const inner = tagged._tag === "Some" ? tagged._0 : file;
+    if (!inner || typeof inner !== "object") return "";
+    const handle = (inner as { _file?: unknown })._file;
+    if (
+      typeof URL === "undefined" ||
+      typeof URL.createObjectURL !== "function" ||
+      !(handle instanceof Blob)
+    ) {
+      return "";
+    }
+    return URL.createObjectURL(handle);
+  },
 };

@@ -58,16 +58,24 @@ export const inputTiles: TileRenderers = {
     if (node.required) inp.required = true;
     if (node.autoFocus) inp.autofocus = true;
     if (node.id) inp.id = node.id;
-    if (node.bind) bindDataset(inp, node.bind, node.bindPath);
-    inp.value = node.value ?? "";
-    if (node.bind) {
-      const slotName = node.bind;
-      const bindPath = node.bindPath;
-      inp.addEventListener("input", () => {
-        const app = liveApp();
-        if (!app?._setSlot) return;
-        writeBind(app, slotName, bindPath, inp.value);
-      });
+    if (node.accept) inp.accept = String(node.accept);
+    if (node.multiple) inp.multiple = true;
+    const isFile = inp.type === "file";
+    // File inputs reject programmatic `.value` assignment (security) and have no
+    // text representation worth pre-populating; the picked-file state lives in
+    // the slot, not in the DOM. bind= is undefined for files (spec §5.1.1 table).
+    if (!isFile) {
+      if (node.bind) bindDataset(inp, node.bind, node.bindPath);
+      inp.value = node.value ?? "";
+      if (node.bind) {
+        const slotName = node.bind;
+        const bindPath = node.bindPath;
+        inp.addEventListener("input", () => {
+          const app = liveApp();
+          if (!app?._setSlot) return;
+          writeBind(app, slotName, bindPath, inp.value);
+        });
+      }
     }
     if (node.props?.onInput) {
       inp.addEventListener("input", () => {
@@ -76,7 +84,23 @@ export const inputTiles: TileRenderers = {
     }
     if (node.props?.onChange) {
       inp.addEventListener("change", () => {
-        node.props?.onChange?.({ ...(node.props?.el ?? {}), value: inp.value });
+        if (isFile) {
+          // FileList → plain records the Kumiki layer can read: name / size /
+          // type are visible to Kumiki expressions; `_file` keeps the original
+          // DOM File so `file-url()` can hand it to URL.createObjectURL and a
+          // future http effect can wrap it in Multipart.
+          const list = inp.files;
+          const files: Array<{ name: string; size: number; type: string; _file: File }> = [];
+          if (list) {
+            for (let i = 0; i < list.length; i++) {
+              const f = list[i];
+              if (f) files.push({ name: f.name, size: f.size, type: f.type, _file: f });
+            }
+          }
+          node.props?.onChange?.({ ...(node.props?.el ?? {}), files });
+        } else {
+          node.props?.onChange?.({ ...(node.props?.el ?? {}), value: inp.value });
+        }
       });
     }
     return inp;

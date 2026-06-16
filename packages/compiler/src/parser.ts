@@ -44,7 +44,7 @@ export class ParseError extends Error {
   }
 }
 
-const PRIM_TYPES = new Set(["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes"]);
+const PRIM_TYPES = new Set(["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes", "File"]);
 // Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
 // lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
 // already treats `-` as ident-continuation, so they arrive as a single token.

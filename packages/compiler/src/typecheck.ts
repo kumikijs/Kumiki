@@ -916,7 +916,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
 // inference never guesses, so an untyped receiver keeps the historical
 // name-based shortcut dispatch with no diagnostic.
 
-const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes"]);
+const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes", "File"]);
 const STDLIB_CONTAINERS = new Set(["List", "Map", "Set", "Option", "Result"]);
 
 /** Unwrap type aliases (`TypeRef` → its `TypeDef` body) and nominal/refinement wrappers. */

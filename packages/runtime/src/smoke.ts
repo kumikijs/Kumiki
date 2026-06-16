@@ -196,6 +196,12 @@ function fire(el: HTMLElement): void {
     const inp = el as HTMLInputElement;
     if (inp.type === "checkbox" || inp.type === "radio") {
       el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    } else if (inp.type === "file") {
+      // The HTML spec forbids programmatic `.value` assignment on file inputs,
+      // and the smoke harness has no real File to hand over. Dispatching a
+      // bare change keeps the runtime/reducer wiring exercised — `files` will
+      // be an empty list, which a well-written reducer should tolerate.
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     } else {
       inp.value = "smoke";
       el.dispatchEvent(new Event("input", { bubbles: true }));
