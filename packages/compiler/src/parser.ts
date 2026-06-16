@@ -1189,6 +1189,7 @@ class Parser {
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
     let subRoutes: { path: string; tile: string }[] | undefined;
+    let scrollRestoration: boolean | undefined;
     while (!this.matchOp("=")) {
       if (this.matchKw("in")) {
         this.next();
@@ -1203,12 +1204,18 @@ class Parser {
         continue;
       }
       if (this.matchT("ident", "scroll-restoration")) {
-        this.next();
+        const head = this.next();
         this.eat("op", "=");
-        // accept boolean
         const t = this.peek();
-        if (t.kind === "kw" && (t.value === "true" || t.value === "false")) this.next();
-        else this.parseExpr();
+        if (t.kind === "kw" && (t.value === "true" || t.value === "false")) {
+          scrollRestoration = t.value === "true";
+          this.next();
+        } else {
+          throw new ParseError(
+            `scroll-restoration expects a boolean literal (true or false)`,
+            head.pos,
+          );
+        }
         continue;
       }
       if (this.matchT("ident", "sub-routes")) {
@@ -1226,6 +1233,7 @@ class Parser {
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
     if (subRoutes) def.subRoutes = subRoutes;
+    if (scrollRestoration === false) def.scrollRestoration = false;
     return def;
   }
 
