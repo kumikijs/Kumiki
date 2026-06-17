@@ -57,6 +57,7 @@ export {
   type TileProps,
   type TileRenderer,
   type TileRenderers,
+  tokenRef,
 } from "./core.ts";
 export { installConfirm } from "./effects-confirm.ts";
 export { httpFetch } from "./effects-http.ts";

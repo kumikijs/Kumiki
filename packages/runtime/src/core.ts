@@ -1474,8 +1474,25 @@ export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
   if (mw !== undefined) el.style.maxWidth = typeof mw === "number" ? `${mw}px` : String(mw);
   if (typeof props.bg === "string") el.style.background = mapColor(props.bg as string);
   if (typeof props.radius === "string") el.style.borderRadius = mapToken(props.radius as string);
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
   applyTransition(el, props);
+}
+
+/**
+ * Apply a `style: { ... }` block (spec/style.md §4.3) — each key is set as a CSS
+ * property on the element verbatim. Keys are kebab-case CSS property names
+ * (`background`, `padding`, `border-radius`, `box-shadow`, …) and their values
+ * are resolved strings/numbers (`@token` references are already lowered by the
+ * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
+ */
+function applyStyleBlock(el: HTMLElement, raw: unknown): void {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === undefined || value === null) continue;
+    const v = typeof value === "number" ? `${value}px` : String(value);
+    el.style.setProperty(key, v);
+  }
 }
 
 /** Apply a value that may be a literal or a responsive `{base, sm, md, lg, xl}` map. */
@@ -1695,6 +1712,7 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   if (typeof props.color === "string") el.style.color = mapColor(props.color as string);
   if (typeof props.size === "string") el.style.fontSize = mapSize(props.size as string);
   if (props.weight === "bold") el.style.fontWeight = "700";
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
 }
 
@@ -1927,7 +1945,6 @@ function mapSize(s: string): string {
       if (typeof v === "number") return `${v}px`;
     }
   }
-  void resolveToken;
   switch (s) {
     case "sm":
       return "14px";
@@ -1942,4 +1959,35 @@ function mapSize(s: string): string {
     default:
       return s;
   }
+}
+
+/**
+ * Resolve a theme token reference written as `@<group>.<seg>(.<seg>)*` in source
+ * (spec/style.md §4.3). Walks the active theme's group/path; on miss, dispatches
+ * to the group-specific `map*` helpers so the spec's built-in defaults (e.g.
+ * `surface` → `#f7f7f7`) still apply when no theme defines the name.
+ */
+export function tokenRef(group: string, path: string[]): string {
+  const theme = currentTheme();
+  if (theme) {
+    let node: ThemeValue | undefined = theme[group];
+    for (const seg of path) {
+      if (node && typeof node === "object" && !Array.isArray(node) && seg in node) {
+        node = (node as Record<string, ThemeValue>)[seg];
+      } else {
+        node = undefined;
+        break;
+      }
+    }
+    if (typeof node === "string") return node;
+    if (typeof node === "number") return `${node}px`;
+  }
+  // Group-specific fallback to the built-in defaults baked into the runtime.
+  const last = path[path.length - 1] ?? "";
+  if (group === "colors") return mapColor(last);
+  if (group === "spacing") return mapToken(last);
+  if (group === "radius") return mapToken(last);
+  if (group === "shadow") return resolveToken("shadow", last);
+  if (group === "typography" && path[0] === "size") return mapSize(last);
+  return resolveToken(group, last);
 }

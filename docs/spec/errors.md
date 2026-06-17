@@ -106,6 +106,14 @@ A `recv.member` access where the **inferred type** of `recv` is known, but `memb
 
 **Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [List(T)](./stdlib.md#_2-2-3-list-t).
 
+### E0110 `unknown-token-group`
+
+A `@<group>.<name>` theme-token reference ([Style §4.3](./style.md#_4-3-token-references)) names a `<group>` that is not one of the closed theme namespaces (`colors`, `spacing`, `radius`, `shadow`, `typography`, `breakpoints`).
+
+> `Unknown theme token group "@<group>" (allowed: …)`
+
+**Fix**: Use one of the listed groups (e.g. `@colors.surface`, `@spacing.md`), or — if you wanted a plain identifier — drop the `@` prefix.
+
 ### E0109 `test-wildcard-misuse`
 
 A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `expect` — in a reducer/tile/fn/app body, or in a test's `given`. Wildcards are a matching construct for the expected result only ([Wildcards](./testing.md#_8-2-2-wildcards)); they have no meaning as a value to compute or feed in.
