@@ -5,10 +5,12 @@
 //   * project navigation + edits (list, view, refs, add, replace, remove, rename, fix)
 //   * spec access                (spec_search, spec_list, spec_get)
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   addDef,
+  editDef,
+  episodeLogPathFor,
   findReferences,
   listDefs,
   load,
@@ -19,6 +21,7 @@ import {
   runScenarioSource,
   smokeSource,
   viewDef,
+  viewHistory,
   viewWithDeps,
 } from "@kumikijs/cli";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -370,6 +373,65 @@ export function createServer(): McpServer {
     async ({ path, name, newName }) => {
       renameDef(resolve(process.cwd(), path), name, newName);
       return text(`renamed ${name} -> ${newName}`);
+    },
+  );
+
+  server.registerTool(
+    "kumiki_edit",
+    {
+      title: "Edit part of a definition",
+      description:
+        "Apply a partial patch to a definition body (e.g. inside a reducer's do=). Patch shape: {find,replace} for a single textual swap, or {body:<line>: \"replace 'a' -> 'b'\"} for per-line edits. Returns the new op-id.",
+      inputSchema: {
+        path: z.string(),
+        name: z.string().describe("Qualified name, e.g. reducer.addTodo"),
+        patch: z
+          .union([
+            z.object({ find: z.string(), replace: z.string() }),
+            z.record(z.string(), z.string()),
+          ])
+          .describe("Patch object (see description)"),
+      },
+    },
+    async ({ path, name, patch }) => {
+      const opId = editDef(resolve(process.cwd(), path), name, patch);
+      return text(`edited ${name}  (${opId})`);
+    },
+  );
+
+  server.registerTool(
+    "kumiki_history",
+    {
+      title: "Show edit history",
+      description:
+        "Return the op-log entries that touched this definition, in chronological order. Each entry has op-id, op kind, ts, author, parent-ops, depends-on, and (for add/replace) the body or patch.",
+      inputSchema: { path: z.string(), name: z.string() },
+    },
+    async ({ path, name }) => {
+      const log = viewHistory(resolve(process.cwd(), path), name);
+      if (log.length === 0) return text(`(no history for ${name})`);
+      return text(JSON.stringify(log, null, 2));
+    },
+  );
+
+  server.registerTool(
+    "kumiki_episode",
+    {
+      title: "Fetch a runtime episode",
+      description:
+        "Read one episode (from `<file>.kumiki-episodes.jsonl`) by id. Episodes are written by `kumiki run` and capture the per-trigger trace described in docs/spec/runtime.md §10.5.1.",
+      inputSchema: { path: z.string(), episodeId: z.string() },
+    },
+    async ({ path, episodeId }) => {
+      const logPath = episodeLogPathFor(resolve(process.cwd(), path));
+      if (!existsSync(logPath)) return text("(no episode log)");
+      const lines = readFileSync(logPath, "utf8").split(/\r?\n/);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const entry = JSON.parse(line) as { id?: string };
+        if (entry.id === episodeId) return text(JSON.stringify(entry, null, 2));
+      }
+      return text(`(no episode with id ${episodeId})`);
     },
   );
 

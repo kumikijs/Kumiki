@@ -4,16 +4,25 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   addDef,
+  editDef,
   findReferences,
   fixCmd,
   listDefs,
   load,
+  lockDef,
+  type OpLogEntry,
+  patchApplyFile,
+  patchRevert,
   planFixes,
   planTestPatch,
+  readOpLog,
   removeDef,
   renameDef,
   replaceDef,
+  unlockDef,
   viewDef,
+  viewHash,
+  viewHistory,
 } from "@kumikijs/cli";
 import { check } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -293,6 +302,232 @@ describe("planTestPatch: deterministic literal repair from a failing test", () =
       leaf: { expected: "a\bc", actual: "a" },
     });
     expect(patch).toBeNull();
+  });
+});
+
+describe("op log: spec §9.3.2 wire format", () => {
+  let path: string;
+  beforeEach(() => {
+    path = copy(TODOMVC);
+  });
+  afterEach(() => {
+    rmSync(dirname(path), { recursive: true, force: true });
+  });
+
+  it("emits kebab-case op-id, parent-ops, depends-on, author, ts", () => {
+    // Reference Filter — a locally-defined type — so depends-on can pick it up.
+    const id = addDef(path, "slot", "lastFilter", "Filter = All");
+    const log = readOpLog(path);
+    expect(log).toHaveLength(1);
+    const entry = log[0]!;
+    expect(entry["op-id"]).toBe(id);
+    expect(entry["parent-ops"]).toEqual([]);
+    expect(Array.isArray(entry["depends-on"])).toBe(true);
+    expect(entry["depends-on"].some((d) => d.startsWith("type:Filter@h:"))).toBe(true);
+    expect(typeof entry.author).toBe("string");
+    expect(typeof entry.ts).toBe("number");
+  });
+
+  it("chains parent-ops to the last op-id", () => {
+    const first = addDef(path, "slot", "lastSync", "Time = 0");
+    const second = addDef(path, "slot", "prevSync", "Time = 0");
+    const log = readOpLog(path);
+    expect(log).toHaveLength(2);
+    expect(log[0]!["op-id"]).toBe(first);
+    expect(log[1]!["op-id"]).toBe(second);
+    expect(log[1]!["parent-ops"]).toEqual([first]);
+  });
+
+  it("honors KUMIKI_AUTHOR for the author field", () => {
+    const prev = process.env.KUMIKI_AUTHOR;
+    process.env.KUMIKI_AUTHOR = "agent:claude-7";
+    try {
+      addDef(path, "slot", "lastSync", "Time = 0");
+      const log = readOpLog(path);
+      expect(log[0]!.author).toBe("agent:claude-7");
+    } finally {
+      if (prev === undefined) delete process.env.KUMIKI_AUTHOR;
+      else process.env.KUMIKI_AUTHOR = prev;
+    }
+  });
+});
+
+describe("editDef: partial edits", () => {
+  let path: string;
+  beforeEach(() => {
+    path = copy(TODOMVC);
+  });
+  afterEach(() => {
+    rmSync(dirname(path), { recursive: true, force: true });
+  });
+
+  it("applies a find/replace patch and logs an edit op", () => {
+    addDef(path, "slot", "counter", "Int = 0");
+    const id = editDef(path, "slot.counter", { find: "= 0", replace: "= 5" });
+    expect(id.startsWith("op_")).toBe(true);
+    const store = load(path);
+    const body = viewDef(store, "slot.counter");
+    expect(body).toContain("= 5");
+    const log = readOpLog(path);
+    const editEntry = log.find((e: OpLogEntry) => e.op === "edit");
+    expect(editEntry).toBeDefined();
+    expect(editEntry?.layer).toBe("slot");
+    expect(editEntry?.name).toBe("counter");
+  });
+
+  it("rejects an edit whose find pattern is absent", () => {
+    addDef(path, "slot", "counter", "Int = 0");
+    expect(() => editDef(path, "slot.counter", { find: "ZZZ", replace: "AAA" })).toThrowError(
+      /not present/,
+    );
+  });
+
+  it("rolls back an edit that breaks validation", () => {
+    addDef(path, "slot", "counter", "Int = 0");
+    const before = readFileSync(path, "utf8");
+    // Inject a clearly malformed token sequence so the parser/typechecker rejects.
+    expect(() =>
+      editDef(path, "slot.counter", { find: "Int = 0", replace: "Int = ???" }),
+    ).toThrowError(/edit rejected/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("applies per-line body patches in spec auto-patch format", () => {
+    addDef(path, "slot", "counter", "Int = 0");
+    // body:1 is the first line of the definition body — the §9.6.1 auto-patch
+    // keys are relative to the definition, not the whole file.
+    const id = editDef(path, "slot.counter", {
+      "body:1": "replace '0' -> '7'",
+    });
+    expect(id.startsWith("op_")).toBe(true);
+    const next = load(path);
+    expect(viewDef(next, "slot.counter")).toContain("= 7");
+  });
+});
+
+describe("patch apply / revert", () => {
+  let path: string;
+  beforeEach(() => {
+    path = copy(TODOMVC);
+  });
+  afterEach(() => {
+    rmSync(dirname(path), { recursive: true, force: true });
+  });
+
+  it("applies a JSONL ops bundle in order", () => {
+    const opsFile = join(dirname(path), "ops.jsonl");
+    const ops = [
+      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "replace", layer: "slot", name: "lastSync", body: "Time = 100" },
+    ];
+    writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
+    const ids = patchApplyFile(path, opsFile);
+    expect(ids).toHaveLength(2);
+    const store = load(path);
+    expect(viewDef(store, "slot.lastSync")).toContain("= 100");
+  });
+
+  it("rolls back the file when any op in the bundle fails", () => {
+    const before = readFileSync(path, "utf8");
+    const opsFile = join(dirname(path), "ops.jsonl");
+    const ops = [
+      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "add", layer: "tile", name: "Broken", body: "column(Nonexistent)" },
+    ];
+    writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
+    expect(() => patchApplyFile(path, opsFile)).toThrowError(/patch apply rejected/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("reverts an add op via patchRevert", () => {
+    const id = addDef(path, "slot", "lastSync", "Time = 0");
+    expect(load(path).byQName.has("slot.lastSync")).toBe(true);
+    patchRevert(path, id);
+    expect(load(path).byQName.has("slot.lastSync")).toBe(false);
+  });
+
+  it("reverts a replace op by restoring the prior body", () => {
+    addDef(path, "slot", "counter", "Int = 0");
+    const replaceId = replaceDef(path, "slot.counter", "Int = 9");
+    patchRevert(path, replaceId);
+    const store = load(path);
+    expect(viewDef(store, "slot.counter")).toContain("= 0");
+  });
+});
+
+describe("viewHistory / viewHash", () => {
+  let path: string;
+  beforeEach(() => {
+    path = copy(TODOMVC);
+  });
+  afterEach(() => {
+    rmSync(dirname(path), { recursive: true, force: true });
+  });
+
+  it("returns ops for one qname in chronological order", () => {
+    addDef(path, "slot", "lastSync", "Time = 0");
+    replaceDef(path, "slot.lastSync", "Time = 1");
+    replaceDef(path, "slot.lastSync", "Time = 2");
+    addDef(path, "slot", "other", "Time = 0"); // irrelevant
+    const hist = viewHistory(path, "slot.lastSync");
+    expect(hist).toHaveLength(3);
+    expect(hist[0]!.op).toBe("add");
+    expect(hist[1]!.op).toBe("replace");
+    expect(hist[2]!.op).toBe("replace");
+  });
+
+  it("produces a stable hash for the same body and a different hash when deps change", () => {
+    addDef(path, "type", "Counter", "Int");
+    addDef(path, "slot", "n", "Counter = 0");
+    const store1 = load(path);
+    const h1 = viewHash(store1, "slot.n");
+    // mutate dep — hash must change
+    replaceDef(path, "type.Counter", "Int where between(0, 99)");
+    const store2 = load(path);
+    const h2 = viewHash(store2, "slot.n");
+    expect(h1).not.toBe(h2);
+    // same source → same hash
+    expect(viewHash(store2, "slot.n")).toBe(h2);
+  });
+});
+
+describe("ownership lock", () => {
+  let path: string;
+  beforeEach(() => {
+    path = copy(TODOMVC);
+    delete process.env.KUMIKI_AUTHOR;
+  });
+  afterEach(() => {
+    rmSync(dirname(path), { recursive: true, force: true });
+    delete process.env.KUMIKI_AUTHOR;
+  });
+
+  it("rejects ops from another author within a locked pattern", () => {
+    process.env.KUMIKI_AUTHOR = "agent-1";
+    lockDef(path, "agent-1", "slot.todos*,reducer.todo*");
+    process.env.KUMIKI_AUTHOR = "agent-2";
+    expect(() => addDef(path, "slot", "todosNew", "Int = 0")).toThrowError(/lock violation/);
+  });
+
+  it("permits the lock holder to keep editing", () => {
+    process.env.KUMIKI_AUTHOR = "agent-1";
+    lockDef(path, "agent-1", "slot.todos*");
+    expect(() => addDef(path, "slot", "todosBackup", "Int = 0")).not.toThrow();
+  });
+
+  it("permits unrelated ops by other authors", () => {
+    process.env.KUMIKI_AUTHOR = "agent-1";
+    lockDef(path, "agent-1", "slot.todos*");
+    process.env.KUMIKI_AUTHOR = "agent-2";
+    expect(() => addDef(path, "slot", "lastSync", "Time = 0")).not.toThrow();
+  });
+
+  it("unlock removes the agent's claim", () => {
+    process.env.KUMIKI_AUTHOR = "agent-1";
+    lockDef(path, "agent-1", "slot.todos*");
+    unlockDef(path, "agent-1");
+    process.env.KUMIKI_AUTHOR = "agent-2";
+    expect(() => addDef(path, "slot", "todosNew", "Int = 0")).not.toThrow();
   });
 });
 

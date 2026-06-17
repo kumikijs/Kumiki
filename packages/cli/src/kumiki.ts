@@ -2,10 +2,22 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { check, compile } from "@kumikijs/compiler";
+import { check, compile, type KumikiError } from "@kumikijs/compiler";
 import { CapabilityManifestError, resolveCapabilities } from "@kumikijs/compiler/node";
 import { fixCmd, fixFromTest } from "./fix.ts";
-import { addDef, removeDef, renameDef, replaceDef } from "./mutate.ts";
+import {
+  addDef,
+  editDef,
+  lockDef,
+  patchApplyFile,
+  patchRevert,
+  removeDef,
+  renameDef,
+  replaceDef,
+  unlockDef,
+  viewHash,
+  viewHistory,
+} from "./mutate.ts";
 import { runCmd, smokeCmd, testCmd } from "./smoke.ts";
 import { findReferences, listDefs, load, viewDef, viewWithDeps } from "./store.ts";
 
@@ -15,14 +27,19 @@ function usage(): never {
   console.error("Usage:");
   console.error("  kumiki build <input.kumiki> <outdir>");
   console.error("  kumiki list <input.kumiki> [layer]");
-  console.error("  kumiki view <input.kumiki> <qname> [--with-deps]");
+  console.error("  kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]");
   console.error("  kumiki refs <input.kumiki> <qname>");
-  console.error("  kumiki check <input.kumiki> [--strict-a11y]");
+  console.error("  kumiki check <input.kumiki> [--strict-a11y|--types|--refs|--effects]");
   console.error("  kumiki smoke <input.kumiki>");
-  console.error("  kumiki run <input.kumiki> <scenario.json>");
+  console.error("  kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
   console.error("  kumiki test <input.kumiki> [name|prefix*]");
   console.error("  kumiki fix <input.kumiki> [--apply] [<code>]");
   console.error("  kumiki fix <input.kumiki> --auto-patch <test-name> [--apply]");
+  console.error("  kumiki edit <input.kumiki> <qname> <patch-json>");
+  console.error("  kumiki patch apply <input.kumiki> <ops.jsonl>");
+  console.error("  kumiki patch revert <input.kumiki> <op-id>");
+  console.error("  kumiki lock <input.kumiki> <agent-id> <pattern>");
+  console.error("  kumiki unlock <input.kumiki> <agent-id>");
   process.exit(2);
 }
 
@@ -75,9 +92,31 @@ function listCmd(inputArg: string, layer?: string): void {
   }
 }
 
-function viewCmd(inputArg: string, qname: string, withDeps: boolean): void {
-  const store = load(resolve(process.cwd(), inputArg));
-  const out = withDeps ? viewWithDeps(store, qname) : viewDef(store, qname);
+type ViewMode = "text" | "with-deps" | "hash" | "history";
+
+function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
+  const path = resolve(process.cwd(), inputArg);
+  if (mode === "history") {
+    const log = viewHistory(path, qname);
+    if (log.length === 0) {
+      console.log(`(no history for ${qname})`);
+      return;
+    }
+    for (const e of log) {
+      console.log(`${e["op-id"]}  ${new Date(e.ts).toISOString()}  ${e.op}  by ${e.author}`);
+    }
+    return;
+  }
+  const store = load(path);
+  if (mode === "hash") {
+    if (!store.byQName.has(qname)) {
+      console.error(`Definition "${qname}" not found`);
+      process.exit(1);
+    }
+    console.log(viewHash(store, qname));
+    return;
+  }
+  const out = mode === "with-deps" ? viewWithDeps(store, qname) : viewDef(store, qname);
   if (out === null) {
     console.error(`Definition "${qname}" not found`);
     process.exit(1);
@@ -95,10 +134,25 @@ function refsCmd(inputArg: string, qname: string): void {
   for (const r of refs) console.log(`${r.qname}  ${inputArg}:${r.line}`);
 }
 
-function checkCmd(inputArg: string, strictA11y: boolean): void {
+type CheckScope = "all" | "types" | "refs" | "effects";
+
+function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
+  if (scope === "all") return errors;
+  return errors.filter((e) => {
+    const code = e.code;
+    if (scope === "types")
+      return code.startsWith("E02") || code.startsWith("E04") || code.startsWith("E06");
+    if (scope === "refs") return code.startsWith("E01") || code.startsWith("E05");
+    if (scope === "effects") return code.startsWith("E03");
+    return true;
+  });
+}
+
+function checkCmd(inputArg: string, strictA11y: boolean, scope: CheckScope): void {
   const inputPath = resolve(process.cwd(), inputArg);
   const store = load(inputPath);
-  const errors = check(store.program, { strictA11y, capabilities: capsFor(inputPath) });
+  const all = check(store.program, { strictA11y, capabilities: capsFor(inputPath) });
+  const errors = filterByScope(all, scope);
   if (errors.length === 0) {
     console.log("ok");
     return;
@@ -107,6 +161,20 @@ function checkCmd(inputArg: string, strictA11y: boolean): void {
     console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
   }
   process.exit(1);
+}
+
+function viewModeFrom(argv: string[]): ViewMode {
+  if (argv.includes("--history")) return "history";
+  if (argv.includes("--hash")) return "hash";
+  if (argv.includes("--with-deps")) return "with-deps";
+  return "text";
+}
+
+function checkScopeFrom(argv: string[]): CheckScope {
+  if (argv.includes("--types")) return "types";
+  if (argv.includes("--refs")) return "refs";
+  if (argv.includes("--effects")) return "effects";
+  return "all";
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -130,8 +198,7 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       const qname = argv[4];
       if (!input || !qname) usage();
-      const withDeps = argv.includes("--with-deps");
-      viewCmd(input, qname, withDeps);
+      viewCmd(input, qname, viewModeFrom(argv));
       return;
     }
     case "refs": {
@@ -145,7 +212,7 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       if (!input) usage();
       const strictA11y = argv.includes("--strict-a11y");
-      checkCmd(input, strictA11y);
+      checkCmd(input, strictA11y, checkScopeFrom(argv));
       return;
     }
     case "smoke": {
@@ -171,7 +238,9 @@ async function main(argv: string[]): Promise<void> {
       const scenario = argv[4];
       if (!input || !scenario) usage();
       const inputPath = resolve(process.cwd(), input);
-      await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath));
+      const epIdx = argv.indexOf("--episode-log");
+      const runOpts = epIdx !== -1 ? { episodeLog: resolve(process.cwd(), argv[epIdx + 1]!) } : {};
+      await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath), runOpts);
       return;
     }
     case "add": {
@@ -183,8 +252,8 @@ async function main(argv: string[]): Promise<void> {
       }
       const body = rest.join(" ");
       try {
-        addDef(resolve(process.cwd(), file), layer, name, body);
-        console.log(`added ${layer}.${name}`);
+        const opId = addDef(resolve(process.cwd(), file), layer, name, body);
+        console.log(`added ${layer}.${name}  (${opId})`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);
@@ -200,8 +269,8 @@ async function main(argv: string[]): Promise<void> {
       }
       const body = rest.join(" ");
       try {
-        replaceDef(resolve(process.cwd(), file), qname, body);
-        console.log(`replaced ${qname}`);
+        const opId = replaceDef(resolve(process.cwd(), file), qname, body);
+        console.log(`replaced ${qname}  (${opId})`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);
@@ -215,8 +284,8 @@ async function main(argv: string[]): Promise<void> {
         process.exit(2);
       }
       try {
-        removeDef(resolve(process.cwd(), file), qname, argv.includes("--cascade"));
-        console.log(`removed ${qname}`);
+        const opId = removeDef(resolve(process.cwd(), file), qname, argv.includes("--cascade"));
+        console.log(`removed ${qname}  (${opId})`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);
@@ -230,8 +299,91 @@ async function main(argv: string[]): Promise<void> {
         process.exit(2);
       }
       try {
-        renameDef(resolve(process.cwd(), file), qname, newName);
-        console.log(`renamed ${qname} -> ${newName}`);
+        const opId = renameDef(resolve(process.cwd(), file), qname, newName);
+        console.log(`renamed ${qname} -> ${newName}  (${opId})`);
+      } catch (e) {
+        console.error(String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    case "edit": {
+      const [, , , file, qname, patchJson] = argv;
+      if (!file || !qname || !patchJson) {
+        console.error("Usage: kumiki edit <file> <qname> <patch-json>");
+        process.exit(2);
+      }
+      try {
+        const patch = JSON.parse(patchJson) as unknown;
+        const opId = editDef(resolve(process.cwd(), file), qname, patch);
+        console.log(`edited ${qname}  (${opId})`);
+      } catch (e) {
+        console.error(String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    case "patch": {
+      const sub = argv[3];
+      if (sub === "apply") {
+        const [, , , , file, opsFile] = argv;
+        if (!file || !opsFile) {
+          console.error("Usage: kumiki patch apply <file> <ops.jsonl>");
+          process.exit(2);
+        }
+        try {
+          const ids = patchApplyFile(resolve(process.cwd(), file), resolve(process.cwd(), opsFile));
+          console.log(`applied ${ids.length} ops: ${ids.join(", ")}`);
+        } catch (e) {
+          console.error(String(e));
+          process.exit(1);
+        }
+        return;
+      }
+      if (sub === "revert") {
+        const [, , , , file, opId] = argv;
+        if (!file || !opId) {
+          console.error("Usage: kumiki patch revert <file> <op-id>");
+          process.exit(2);
+        }
+        try {
+          const newId = patchRevert(resolve(process.cwd(), file), opId);
+          console.log(`reverted ${opId}  (${newId})`);
+        } catch (e) {
+          console.error(String(e));
+          process.exit(1);
+        }
+        return;
+      }
+      console.error("Usage: kumiki patch apply <file> <ops.jsonl>");
+      console.error("       kumiki patch revert <file> <op-id>");
+      process.exit(2);
+      return;
+    }
+    case "lock": {
+      const [, , , file, agentId, pattern] = argv;
+      if (!file || !agentId || !pattern) {
+        console.error("Usage: kumiki lock <file> <agent-id> <pattern>");
+        process.exit(2);
+      }
+      try {
+        lockDef(resolve(process.cwd(), file), agentId, pattern);
+        console.log(`locked ${pattern} for ${agentId}`);
+      } catch (e) {
+        console.error(String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    case "unlock": {
+      const [, , , file, agentId] = argv;
+      if (!file || !agentId) {
+        console.error("Usage: kumiki unlock <file> <agent-id>");
+        process.exit(2);
+      }
+      try {
+        unlockDef(resolve(process.cwd(), file), agentId);
+        console.log(`unlocked ${agentId}`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);

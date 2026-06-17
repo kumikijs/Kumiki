@@ -2,7 +2,7 @@
 // headless DOM (happy-dom), exercises its UI, and reports failures that check/build
 // cannot catch: runtime throws, empty renders, and unhandled rejections.
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -111,11 +111,59 @@ export async function runScenarioSource(
   }
 }
 
+type EpisodeStep = {
+  kind: string;
+  emits: string[];
+  ts: number;
+};
+
+type Episode = {
+  id: string;
+  trigger: { kind: string; target: string; ts: number };
+  steps: EpisodeStep[];
+  status: "completed" | "panic" | "cancelled" | "ongoing";
+};
+
+function randomEpisodeId(): string {
+  const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  let s = "ep_";
+  for (let i = 0; i < 16; i++) s += ALPHABET[Math.floor(Math.random() * 32)];
+  return s;
+}
+
+/**
+ * Map a scenario report into a sequence of §10.5.1 episode records. One episode
+ * per scenario step is the closest 1:1 mapping for the PoC episode logger; the
+ * full runtime-side logger (per-reducer / per-effect step) is out of scope here.
+ */
+function reportToEpisodes(report: ScenarioReport): Episode[] {
+  const out: Episode[] = [];
+  for (let i = 0; i < report.steps.length; i++) {
+    const s = report.steps[i];
+    if (!s) continue;
+    const ts = Date.now();
+    out.push({
+      id: randomEpisodeId(),
+      trigger: { kind: s.action ?? "scenario.step", target: s.label ?? `step-${i}`, ts },
+      steps: [
+        {
+          kind: "scenario-step",
+          emits: s.emits.map((e) => e.effect),
+          ts,
+        },
+      ],
+      status: s.errors.length === 0 && s.failures.length === 0 ? "completed" : "panic",
+    });
+  }
+  return out;
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
   scenarioPath: string,
   capabilities: string[] = [],
+  opts: { episodeLog?: string } = {},
 ): Promise<void> {
   const scenario = JSON.parse(readFileSync(scenarioPath, "utf8")) as Scenario;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities);
@@ -129,7 +177,20 @@ export async function runCmd(
     for (const f of s.failures) console.log(`    assert: ${f}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
+  const logFile =
+    opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG ?? defaultEpisodeLog(kumikiPath);
+  if (logFile) {
+    const episodes = reportToEpisodes(report);
+    for (const ep of episodes) appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
+  }
   if (!report.ok) process.exit(1);
+}
+
+function defaultEpisodeLog(kumikiPath: string): string | undefined {
+  // Always co-locate the log next to the source so MCP `kumiki_episode` can
+  // find it without an explicit path. When neither env nor flag was set this
+  // is still cheap: a tiny JSONL append per scenario run.
+  return `${kumikiPath}.kumiki-episodes.jsonl`;
 }
 
 // ----- `kumiki test` — run in-language `test` definitions -----
