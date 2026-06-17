@@ -2,15 +2,32 @@
 // file and appends an entry to `<file>.kumiki-ops.jsonl`.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { check, lex, parse } from "@kumikijs/compiler";
 import { directDeps, findReferences, load, type Store } from "./store.ts";
 
+// Crockford base32. The mutate-op id is a §9.3.3 ULID — 10-char ms timestamp
+// prefix followed by 16 random chars — so that lexicographic ordering matches
+// time order. §9.3.3 decides same-name add winners by op-id lexicographic
+// order; without the time prefix the tie-break would be random.
 const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-function ulid(): string {
-  let s = "op_";
-  for (let i = 0; i < 16; i++) s += ULID_ALPHABET[Math.floor(Math.random() * 32)];
+
+function encodeTime(ms: number): string {
+  let s = "";
+  let n = ms;
+  for (let i = 0; i < 10; i++) {
+    s = ULID_ALPHABET[n % 32] + s;
+    n = Math.floor(n / 32);
+  }
   return s;
+}
+
+/** Generate a ULID-shape id with the given prefix. */
+export function newId(prefix: string): string {
+  const ts = encodeTime(Date.now());
+  let rand = "";
+  for (let i = 0; i < 16; i++) rand += ULID_ALPHABET[Math.floor(Math.random() * 32)];
+  return `${prefix}_${ts}${rand}`;
 }
 
 export type OpLogEntry = {
@@ -78,8 +95,10 @@ function lastOpId(path: string): string | undefined {
 /**
  * Compute the `depends-on` list for an op. The body is scanned for identifiers
  * matching other definitions; each match contributes `<layer>:<name>@h:<hash>`
- * where the hash digests the referenced definition body. Falls back to the
- * raw body identifiers when the file has not yet parsed (e.g. mid-rollback).
+ * where the hash is the §9.5.1 transitive content hash (same algorithm as
+ * `viewHash`), so `view --hash <q>` of any dependency is directly comparable
+ * to the `@h:` digest recorded here. Falls back to the raw body identifiers
+ * when the file has not yet parsed (e.g. mid-rollback).
  */
 function computeDependsOn(path: string, layer: string, name: string, body: string): string[] {
   try {
@@ -88,14 +107,12 @@ function computeDependsOn(path: string, layer: string, name: string, body: strin
     const deps = store.byQName.has(qname)
       ? directDeps(store, qname)
       : depsFromBody(store, body, name);
+    const memo = new Map<string, string>();
     return deps
       .map((q) => {
         const entry = store.byQName.get(q);
         if (!entry) return null;
-        const depBody = store.lines
-          .slice(entry.range.startLine - 1, entry.range.endLine)
-          .join("\n");
-        return `${entry.layer}:${entry.name}@h:${hashBody(depBody)}`;
+        return `${entry.layer}:${entry.name}@h:${computeHash(store, q, memo)}`;
       })
       .filter((s): s is string => s !== null)
       .sort();
@@ -117,7 +134,7 @@ function depsFromBody(store: Store, body: string, selfName: string): string[] {
 }
 
 function logOp(path: string, op: RawOp): string {
-  const id = ulid();
+  const id = newId("op");
   const parents = lastOpId(path);
   const dependsOn = op.body !== undefined ? computeDependsOn(path, op.layer, op.name, op.body) : [];
   const entry: OpLogEntry = {
@@ -370,7 +387,10 @@ export function editDef(path: string, qname: string, patch: unknown): string {
     if (!joined.includes(patch.find)) {
       throw new Error(`edit rejected: "find" pattern not present in ${qname}`);
     }
-    updated = joined.replace(patch.find, patch.replace).split("\n");
+    // Function replacer so that `$&` / `$$` / `` $` `` / `$'` in the replacement
+    // string aren't interpreted by String.prototype.replace.
+    const replaceWith = patch.replace;
+    updated = joined.replace(patch.find, () => replaceWith).split("\n");
   } else if (isPerLinePatch(patch)) {
     updated = target.slice();
     for (const [key, instruction] of Object.entries(patch)) {
@@ -383,7 +403,8 @@ export function editDef(path: string, qname: string, patch: unknown): string {
       const cur = updated[lineIdx];
       if (cur === undefined)
         throw new Error(`edit rejected: body line ${lineIdx + 1} out of range`);
-      updated[lineIdx] = cur.replace(from!, to!);
+      const toStr = to!;
+      updated[lineIdx] = cur.replace(from!, () => toStr);
     }
   } else {
     throw new Error(
@@ -397,7 +418,52 @@ export function editDef(path: string, qname: string, patch: unknown): string {
     writeFileSync(path, original);
     throw new Error(`edit rejected: ${v.message}`);
   }
-  return logOp(path, { op: "edit", layer: entry.layer, name: entry.name, patch });
+  // Record the post-edit body so `depends-on` is computable and
+  // `patchRevert(editId)` can find a usable prior body via the op log. The
+  // recorded body is the *logical* body (the RHS of `assemble`), so feeding
+  // it back into addDef/replaceDef round-trips cleanly.
+  const updatedStore = load(path);
+  const updatedEntry = updatedStore.byQName.get(qname);
+  const fullDef = updatedEntry
+    ? updatedStore.lines
+        .slice(updatedEntry.range.startLine - 1, updatedEntry.range.endLine)
+        .join("\n")
+    : undefined;
+  const newBody = fullDef !== undefined ? extractBody(entry.layer, entry.name, fullDef) : undefined;
+  return logOp(path, {
+    op: "edit",
+    layer: entry.layer,
+    name: entry.name,
+    patch,
+    ...(newBody !== undefined ? { body: newBody } : {}),
+  });
+}
+
+/**
+ * Inverse of `assemble`: strip the layer-specific opener (`slot <name> :`,
+ * `type <name> =`, …) so we recover the "logical body" written by the user
+ * and stored in op log entries.
+ */
+function extractBody(layer: string, name: string, source: string): string {
+  const n = escapeRegExp(name);
+  const text = source;
+  switch (layer) {
+    case "type":
+    case "tile":
+    case "theme":
+      return text.replace(new RegExp(`^\\s*${layer}\\s+${n}\\s*=\\s*`), "").trimEnd();
+    case "slot":
+      return text.replace(new RegExp(`^\\s*slot\\s+${n}\\s*:\\s*`), "").trimEnd();
+    case "effect":
+    case "reducer":
+      return text.replace(new RegExp(`^\\s*${layer}\\s+${n}\\s+`), "").trimEnd();
+    case "fn":
+      return text.replace(new RegExp(`^\\s*fn\\s+${n}\\s*`), "").trimEnd();
+    case "app":
+      return text.replace(new RegExp(`^\\s*app\\s+${n}\\n?`), "").trimEnd();
+    default:
+      return text;
+  }
 }
 
 function isFindReplacePatch(p: unknown): p is { find: string; replace: string } {
@@ -411,7 +477,11 @@ function isFindReplacePatch(p: unknown): p is { find: string; replace: string } 
 
 function isPerLinePatch(p: unknown): p is Record<string, string> {
   if (typeof p !== "object" || p === null) return false;
-  for (const k of Object.keys(p)) if (!k.startsWith("body:")) return false;
+  const keys = Object.keys(p);
+  // An empty object would vacuously satisfy the per-line predicate; reject it
+  // so callers can't record a no-op edit.
+  if (keys.length === 0) return false;
+  for (const k of keys) if (!k.startsWith("body:")) return false;
   return true;
 }
 
@@ -437,7 +507,9 @@ export function patchApplyFile(path: string, opsFile: string): string[] {
   } catch (e) {
     writeFileSync(path, original);
     if (originalLog === null) {
-      if (existsSync(opLogPath(path))) writeFileSync(opLogPath(path), "");
+      // Bundle started without an op log — delete the file the partial apply
+      // created instead of leaving an empty one behind.
+      if (existsSync(opLogPath(path))) unlinkSync(opLogPath(path));
     } else {
       writeFileSync(opLogPath(path), originalLog);
     }
@@ -536,23 +608,34 @@ export function viewHistory(path: string, qname: string): OpLogEntry[] {
 }
 
 /**
- * Content hash of a definition: sha256 of its canonical body XOR-mixed with
- * the hashes of its transitive deps. This is the PoC stand-in for the
- * blake3-based hash specified in §9.5.1.
+ * Content hash of a definition: sha256 of its body XOR-mixed with the hashes
+ * of its transitive deps. PoC stand-in for the blake3-based hash specified in
+ * §9.5.1. Shared with `computeDependsOn` so `view --hash <q>` and the `@h:`
+ * digest in another op's `depends-on` line up.
  */
 export function viewHash(store: Store, qname: string): string {
-  return computeHash(store, qname, new Set());
+  return computeHash(store, qname, new Map());
 }
 
-function computeHash(store: Store, qname: string, seen: Set<string>): string {
-  if (seen.has(qname)) return hashBody(qname);
-  seen.add(qname);
+function computeHash(store: Store, qname: string, memo: Map<string, string>): string {
+  const cached = memo.get(qname);
+  if (cached !== undefined) return cached;
+  // Insert a sentinel up-front so diamond deps reach the same hash regardless
+  // of traversal order and a true cycle (kumiki spec disallows them, but be
+  // robust) terminates instead of stack-overflowing.
+  memo.set(qname, "__cyc__");
   const entry = store.byQName.get(qname);
-  if (!entry) return hashBody(qname);
+  if (!entry) {
+    const h = hashBody(qname);
+    memo.set(qname, h);
+    return h;
+  }
   const body = store.lines.slice(entry.range.startLine - 1, entry.range.endLine).join("\n");
   const deps = directDeps(store, qname).sort();
-  const depPart = deps.map((d) => computeHash(store, d, seen)).join(":");
-  return hashBody(`${body}|${depPart}`);
+  const depPart = deps.map((d) => computeHash(store, d, memo)).join(":");
+  const h = hashBody(`${body}|${depPart}`);
+  memo.set(qname, h);
+  return h;
 }
 
 export function lockDef(path: string, agentId: string, pattern: string): void {

@@ -239,7 +239,15 @@ async function main(argv: string[]): Promise<void> {
       if (!input || !scenario) usage();
       const inputPath = resolve(process.cwd(), input);
       const epIdx = argv.indexOf("--episode-log");
-      const runOpts = epIdx !== -1 ? { episodeLog: resolve(process.cwd(), argv[epIdx + 1]!) } : {};
+      let runOpts: { episodeLog?: string } = {};
+      if (epIdx !== -1) {
+        const value = argv[epIdx + 1];
+        if (!value || value.startsWith("--")) {
+          console.error("Usage: kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
+          process.exit(2);
+        }
+        runOpts = { episodeLog: resolve(process.cwd(), value) };
+      }
       await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath), runOpts);
       return;
     }

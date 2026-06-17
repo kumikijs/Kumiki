@@ -338,6 +338,18 @@ describe("op log: spec §9.3.2 wire format", () => {
     expect(log[1]!["parent-ops"]).toEqual([first]);
   });
 
+  it("emits ULID-shaped op-ids that sort by time", () => {
+    // §9.3.3 decides same-name add winners by op-id lexicographic order, so
+    // op-ids must be monotonic with creation time — that's why the id is a
+    // ULID (10-char ms timestamp + 16 random chars) rather than fully random.
+    const first = addDef(path, "slot", "lastSync", "Time = 0");
+    const second = addDef(path, "slot", "prevSync", "Time = 0");
+    expect(first).toMatch(/^op_[0-9A-HJ-NP-TV-Z]{26}$/);
+    expect(second).toMatch(/^op_[0-9A-HJ-NP-TV-Z]{26}$/);
+    // Time-prefix (chars 3..13) must be non-decreasing across calls.
+    expect(second.slice(3, 13) >= first.slice(3, 13)).toBe(true);
+  });
+
   it("honors KUMIKI_AUTHOR for the author field", () => {
     const prev = process.env.KUMIKI_AUTHOR;
     process.env.KUMIKI_AUTHOR = "agent:claude-7";
@@ -380,6 +392,31 @@ describe("editDef: partial edits", () => {
     expect(() => editDef(path, "slot.counter", { find: "ZZZ", replace: "AAA" })).toThrowError(
       /not present/,
     );
+  });
+
+  it("rejects an empty patch", () => {
+    addDef(path, "slot", "counter", "Int = 0");
+    expect(() => editDef(path, "slot.counter", {})).toThrowError(/edit rejected/);
+  });
+
+  it("treats $-sequences in the replacement as literal text", () => {
+    // String.prototype.replace would interpret `$&` as the match; a function
+    // replacer must short-circuit that. Use a Text slot so quotes parse.
+    addDef(path, "slot", "label", 'Text = "hi"');
+    editDef(path, "slot.label", { find: '"hi"', replace: '"$& $$ $`"' });
+    const next = load(path);
+    expect(viewDef(next, "slot.label")).toContain('"$& $$ $`"');
+  });
+
+  it("records the post-edit body so depends-on is populated for edit ops", () => {
+    addDef(path, "slot", "lastFilter", "Filter = All");
+    const id = editDef(path, "slot.lastFilter", { find: "= All", replace: "= Active" });
+    const log = readOpLog(path);
+    const entry = log.find((e) => e["op-id"] === id);
+    expect(entry).toBeDefined();
+    expect(typeof entry?.body).toBe("string");
+    expect(entry?.body).toContain("= Active");
+    expect(entry?.["depends-on"].some((d) => d.startsWith("type:Filter@h:"))).toBe(true);
   });
 
   it("rolls back an edit that breaks validation", () => {
@@ -439,6 +476,21 @@ describe("patch apply / revert", () => {
     expect(readFileSync(path, "utf8")).toBe(before);
   });
 
+  it("removes the op log entirely when the bundle started without one", async () => {
+    // If the partial apply created the op log file, a rollback should delete
+    // it rather than leave an empty file behind that future ops would chain
+    // off of (with no parent-ops).
+    const { existsSync: exists } = await import("node:fs");
+    const opsFile = join(dirname(path), "ops.jsonl");
+    const ops = [
+      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "add", layer: "tile", name: "Broken", body: "column(Nonexistent)" },
+    ];
+    writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
+    expect(() => patchApplyFile(path, opsFile)).toThrow();
+    expect(exists(`${path}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
   it("reverts an add op via patchRevert", () => {
     const id = addDef(path, "slot", "lastSync", "Time = 0");
     expect(load(path).byQName.has("slot.lastSync")).toBe(true);
@@ -452,6 +504,18 @@ describe("patch apply / revert", () => {
     patchRevert(path, replaceId);
     const store = load(path);
     expect(viewDef(store, "slot.counter")).toContain("= 0");
+  });
+
+  it("reverts edit2 in an add → edit1 → edit2 chain to the edit1 state", () => {
+    // Without the post-edit body on edit1, priorBody would walk back to the
+    // add op and edit1's contribution would silently vanish. Recording the
+    // body keeps revert faithful to the immediate predecessor.
+    addDef(path, "slot", "counter", "Int = 0");
+    editDef(path, "slot.counter", { find: "= 0", replace: "= 1" });
+    const edit2 = editDef(path, "slot.counter", { find: "= 1", replace: "= 2" });
+    patchRevert(path, edit2);
+    const store = load(path);
+    expect(viewDef(store, "slot.counter")).toContain("= 1");
   });
 });
 
@@ -488,6 +552,20 @@ describe("viewHistory / viewHash", () => {
     expect(h1).not.toBe(h2);
     // same source → same hash
     expect(viewHash(store2, "slot.n")).toBe(h2);
+  });
+
+  it("aligns the depends-on hash with view --hash of the same dep", () => {
+    // depends-on records `<layer>:<name>@h:<hash>` where the hash is the same
+    // §9.5.1 transitive content hash that view --hash exposes. The two must
+    // line up so an agent can cross-check references.
+    const id = addDef(path, "slot", "lastFilter", "Filter = All");
+    const log = readOpLog(path);
+    const entry = log.find((e) => e["op-id"] === id);
+    const filterDep = entry?.["depends-on"].find((d) => d.startsWith("type:Filter@h:"));
+    expect(filterDep).toBeDefined();
+    const recordedHash = filterDep!.split("@h:")[1]!;
+    const store = load(path);
+    expect(viewHash(store, "type.Filter")).toBe(recordedHash);
   });
 });
 

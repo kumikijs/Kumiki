@@ -18,6 +18,7 @@ import {
   smoke,
   type TestResult,
 } from "@kumikijs/runtime";
+import { newId } from "./mutate.ts";
 
 let domReady = false;
 function ensureDom(): void {
@@ -124,13 +125,6 @@ type Episode = {
   status: "completed" | "panic" | "cancelled" | "ongoing";
 };
 
-function randomEpisodeId(): string {
-  const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  let s = "ep_";
-  for (let i = 0; i < 16; i++) s += ALPHABET[Math.floor(Math.random() * 32)];
-  return s;
-}
-
 /**
  * Map a scenario report into a sequence of §10.5.1 episode records. One episode
  * per scenario step is the closest 1:1 mapping for the PoC episode logger; the
@@ -143,7 +137,7 @@ function reportToEpisodes(report: ScenarioReport): Episode[] {
     if (!s) continue;
     const ts = Date.now();
     out.push({
-      id: randomEpisodeId(),
+      id: newId("ep"),
       trigger: { kind: s.action ?? "scenario.step", target: s.label ?? `step-${i}`, ts },
       steps: [
         {
@@ -177,20 +171,15 @@ export async function runCmd(
     for (const f of s.failures) console.log(`    assert: ${f}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
-  const logFile =
-    opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG ?? defaultEpisodeLog(kumikiPath);
+  // Episode log is opt-in: write only when the caller asked for it via the
+  // `--episode-log <file>` flag or the `KUMIKI_EPISODE_LOG` env var. This keeps
+  // example runs from littering sidecar JSONL next to every .kumiki file.
+  const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
   if (logFile) {
     const episodes = reportToEpisodes(report);
     for (const ep of episodes) appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
   }
   if (!report.ok) process.exit(1);
-}
-
-function defaultEpisodeLog(kumikiPath: string): string | undefined {
-  // Always co-locate the log next to the source so MCP `kumiki_episode` can
-  // find it without an explicit path. When neither env nor flag was set this
-  // is still cheap: a tiny JSONL append per scenario run.
-  return `${kumikiPath}.kumiki-episodes.jsonl`;
 }
 
 // ----- `kumiki test` — run in-language `test` definitions -----
