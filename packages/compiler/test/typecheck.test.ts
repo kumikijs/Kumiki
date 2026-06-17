@@ -77,6 +77,25 @@ describe("typecheck", () => {
     expect(errors.some((e) => e.code === "E0002" && e.message.includes("dup"))).toBe(true);
   });
 
+  it("accepts a `@token` reference under a known group (§4.3)", () => {
+    const src = `
+      tile Card = box() {style: {background: @colors.surface, padding: @spacing.md, radius: @radius.md, shadow: @shadow.sm}}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    expect(checkSrc(src)).toEqual([]);
+  });
+
+  it("reports an unknown token group as E0110 (§4.3)", () => {
+    const src = `
+      tile Card = box() {style: {background: @nope.foo}}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const errors = checkSrc(src);
+    expect(errors.some((e) => e.code === "E0110" && e.message.includes("nope"))).toBe(true);
+  });
+
   it("accepts the overlay builtin", () => {
     const src = `
       slot open : Bool = false

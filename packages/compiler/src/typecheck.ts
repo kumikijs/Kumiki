@@ -906,8 +906,31 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.body, sym, errors, inner);
       return;
     }
+    case "TokenRef":
+      if (!KNOWN_TOKEN_GROUPS.has(e.group)) {
+        errors.push({
+          code: "E0110",
+          kind: "unknown-token-group",
+          message: `Unknown theme token group "@${e.group}" (allowed: ${[...KNOWN_TOKEN_GROUPS].join(", ")})`,
+          pos: e.pos,
+        });
+      }
+      return;
   }
 }
+
+// Closed set of theme token namespaces (spec/style.md §4.2). The token name
+// itself (the path beneath the group) is intentionally NOT validated here:
+// themes can be slot-driven and swap at runtime, so the runtime resolver does
+// the lookup with a graceful fallback to the spec's built-in defaults.
+const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
+  "colors",
+  "spacing",
+  "radius",
+  "shadow",
+  "typography",
+  "breakpoints",
+]);
 
 // ===== Receiver type inference (ADR-002, #23) =====
 // A minimal, dispatch-directed inferencer: just enough to tell a record field

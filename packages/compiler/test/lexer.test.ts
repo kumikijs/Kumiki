@@ -79,4 +79,13 @@ describe("lexer", () => {
     expect(tokenSummary("TileName#id")).toEqual(["ident(TileName)", "op(#)", "ident(id)"]);
     expect(tokenSummary("a.b")).toEqual(["ident(a)", "op(.)", "ident(b)"]);
   });
+
+  it("emits `@` as a single-char op for theme-token references (style.md §4.3)", () => {
+    expect(tokenSummary("@colors.surface")).toEqual([
+      "op(@)",
+      "ident(colors)",
+      "op(.)",
+      "ident(surface)",
+    ]);
+  });
 });

@@ -286,7 +286,11 @@ export type Expr =
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
-  | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos }; // e.g., All, Some(x), Loaded(t)
+  | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
+  // Theme-token reference (spec/style.md §4.3): `@colors.surface`,
+  // `@spacing.md`, `@typography.size.lg`. `group` is the top-level theme
+  // namespace; `path` is the dotted path beneath it (always ≥ 1 segment).
+  | { kind: "TokenRef"; group: string; path: string[]; pos: Pos };
 
 export type MatchArm = {
   pattern: Pattern;

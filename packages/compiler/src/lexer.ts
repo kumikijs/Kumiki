@@ -166,6 +166,16 @@ export function lex(source: string): Token[] {
       continue;
     }
 
+    // Theme-token reference prefix (spec/style.md §4.3): `@colors.surface`.
+    // Only `@` itself is one op; the parser assembles `@ ident ( . ident )+`
+    // into a TokenRef. Keeping the lexer dumb lets ident/`.` reuse the
+    // existing token kinds.
+    if (c === "@") {
+      tokens.push({ kind: "op", value: "@", pos: startPos });
+      advance();
+      continue;
+    }
+
     // Positional binding: $identifier or $digits (e.g. $1, $el, $event, $route)
     if (c === "$") {
       let raw = "$";

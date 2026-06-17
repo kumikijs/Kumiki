@@ -208,6 +208,46 @@ reducer onErr on=route.error("/p") do= s := true`;
     ]);
   });
 
+  it("parses `@colors.surface` inside a style block as a TokenRef expression (§4.3)", () => {
+    const src = `tile Card = box() {style: {background: @colors.surface}}`;
+    const program = parse(lex(src));
+    const tile = program.defs[0] as TileDef;
+    const styleProp = tile.body.props.find((p) => p.name === "style");
+    if (!styleProp) throw new Error("expected a style prop");
+    if (styleProp.value.kind !== "RecordLit") throw new Error("expected a RecordLit");
+    const field = styleProp.value.fields[0];
+    expect(field?.name).toBe("background");
+    expect(field?.value).toMatchObject({
+      kind: "TokenRef",
+      group: "colors",
+      path: ["surface"],
+    });
+  });
+
+  it("parses nested token paths like `@typography.size.lg` (§4.3)", () => {
+    const src = `tile Card = box() {style: {font-size: @typography.size.lg}}`;
+    const program = parse(lex(src));
+    const tile = program.defs[0] as TileDef;
+    const styleProp = tile.body.props.find((p) => p.name === "style");
+    if (styleProp?.value.kind !== "RecordLit") throw new Error("expected style record");
+    expect(styleProp.value.fields[0]?.value).toMatchObject({
+      kind: "TokenRef",
+      group: "typography",
+      path: ["size", "lg"],
+    });
+  });
+
+  it("rejects a bare `@` with no identifier", () => {
+    expect(() => parse(lex(`tile Card = box() {style: {bg: @}}`))).toThrow(/token reference|@/i);
+  });
+
+  it("rejects an ungrouped `@name` token reference", () => {
+    // `@colors` alone is meaningless — a token always lives under a group
+    expect(() => parse(lex(`tile Card = box() {style: {bg: @colors}}`))).toThrow(
+      /token reference|@/i,
+    );
+  });
+
   it("rejects unknown lifecycle event names", () => {
     expect(() =>
       parse(

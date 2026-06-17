@@ -337,4 +337,37 @@ describe("codegen", () => {
     expect(result.js).toContain('pattern: "/settings/account"');
     expect(result.js).toContain('pattern: "/settings"');
   });
+
+  it("lowers `@token` refs in a style block to runtime `_s.token(...)` calls (§4.3)", () => {
+    const src = `
+      tile Card = box() {style: {background: @colors.surface, padding: @spacing.md, radius: @radius.md, shadow: @shadow.sm, font-size: @typography.size.lg}}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('_s.token("colors", ["surface"])');
+    expect(result.js).toContain('_s.token("spacing", ["md"])');
+    expect(result.js).toContain('_s.token("radius", ["md"])');
+    expect(result.js).toContain('_s.token("shadow", ["sm"])');
+    expect(result.js).toContain('_s.token("typography", ["size", "lg"])');
+  });
+
+  it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {
+    // Regression guard: shorthand props are still resolved at runtime by
+    // applyContainerProps/applyTextProps, NOT desugared at codegen time.
+    const src = `
+      tile Card = box(text("hi")) {bg: "surface", pad: "md"}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('bg: "surface"');
+    expect(result.js).toContain('pad: "md"');
+    expect(result.js).not.toContain('_s.token("colors"');
+    expect(result.js).not.toContain('_s.token("spacing"');
+  });
 });

@@ -1927,7 +1927,6 @@ function mapSize(s: string): string {
       if (typeof v === "number") return `${v}px`;
     }
   }
-  void resolveToken;
   switch (s) {
     case "sm":
       return "14px";
@@ -1942,4 +1941,35 @@ function mapSize(s: string): string {
     default:
       return s;
   }
+}
+
+/**
+ * Resolve a theme token reference written as `@<group>.<seg>(.<seg>)*` in source
+ * (spec/style.md §4.3). Walks the active theme's group/path; on miss, dispatches
+ * to the group-specific `map*` helpers so the spec's built-in defaults (e.g.
+ * `surface` → `#f7f7f7`) still apply when no theme defines the name.
+ */
+export function tokenRef(group: string, path: string[]): string {
+  const theme = currentTheme();
+  if (theme) {
+    let node: ThemeValue | undefined = theme[group];
+    for (const seg of path) {
+      if (node && typeof node === "object" && !Array.isArray(node) && seg in node) {
+        node = (node as Record<string, ThemeValue>)[seg];
+      } else {
+        node = undefined;
+        break;
+      }
+    }
+    if (typeof node === "string") return node;
+    if (typeof node === "number") return `${node}px`;
+  }
+  // Group-specific fallback to the built-in defaults baked into the runtime.
+  const last = path[path.length - 1] ?? "";
+  if (group === "colors") return mapColor(last);
+  if (group === "spacing") return mapToken(last);
+  if (group === "radius") return mapToken(last);
+  if (group === "shadow") return resolveToken("shadow", last);
+  if (group === "typography" && path[0] === "size") return mapSize(last);
+  return resolveToken(group, last);
 }

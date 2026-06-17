@@ -4,9 +4,17 @@
 // into the classic `_stdlib` export by `index.ts`, so `kumiki build` output
 // never ships the test runners.
 
-import { KumikiPanic } from "./core.ts";
+import { KumikiPanic, tokenRef } from "./core.ts";
 
 export const _stdlibCore = {
+  /**
+   * Resolve a theme-token reference `@<group>.<seg>(.<seg>)*` from a `style`
+   * block (spec/style.md §4.3). Codegen lowers `@colors.surface` to
+   * `_s.token("colors", ["surface"])`.
+   */
+  token(group: string, path: string[]): string {
+    return tokenRef(group, path);
+  },
   mapSize(m: unknown): number {
     if (m instanceof Map) return m.size;
     if (m && typeof m === "object") return Object.keys(m as object).length;

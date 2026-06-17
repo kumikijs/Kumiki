@@ -935,6 +935,37 @@ class Parser {
     if (t.kind === "op" && t.value === "[") {
       return this.parseListLit();
     }
+    // Theme-token reference (spec/style.md §4.3): `@<group>.<name>(.<sub>)*`.
+    // Requires at least one segment under the group (`@colors` alone is rejected).
+    if (t.kind === "op" && t.value === "@") {
+      this.next();
+      const head = this.peek();
+      if (head.kind !== "ident") {
+        throw new ParseError(
+          "Expected a theme group name after `@` (e.g. `@colors.surface`)",
+          head.pos,
+        );
+      }
+      this.next();
+      const group = head.value;
+      const path: string[] = [];
+      while (this.matchOp(".")) {
+        this.next();
+        const seg = this.peek();
+        if (seg.kind !== "ident") {
+          throw new ParseError("Expected an identifier in a `@` token reference path", seg.pos);
+        }
+        this.next();
+        path.push(seg.value);
+      }
+      if (path.length === 0) {
+        throw new ParseError(
+          `Token reference \`@${group}\` is missing a name (use \`@${group}.<name>\`)`,
+          t.pos,
+        );
+      }
+      return { kind: "TokenRef", group, path, pos: t.pos };
+    }
     // Test `expect` wildcards (spec/testing.md §8.2.2): `<any-id>` / `<slots.X>`.
     // A leading `<` can only begin a wildcard — a real expression never starts
     // with the comparison operator — so this stays unambiguous.

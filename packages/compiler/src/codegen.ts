@@ -1306,6 +1306,13 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "Variant":
       return variantJs(e.name, e.payload, ctx);
+    case "TokenRef": {
+      // Theme-token reference (spec/style.md §4.3): lowers to the unified
+      // runtime resolver which walks the active theme and falls back to the
+      // built-in defaults baked into mapColor/mapToken/mapSize.
+      const pathJs = `[${e.path.map((p) => JSON.stringify(p)).join(", ")}]`;
+      return `_s.token(${JSON.stringify(e.group)}, ${pathJs})`;
+    }
   }
 }
 
