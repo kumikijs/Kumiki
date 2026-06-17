@@ -352,6 +352,15 @@ describe("codegen", () => {
     expect(result.js).toContain('_s.token("radius", ["md"])');
     expect(result.js).toContain('_s.token("shadow", ["sm"])');
     expect(result.js).toContain('_s.token("typography", ["size", "lg"])');
+    // `style` is a CSS prop bag the runtime applies to el.style — it must NOT
+    // also ride the `el` reducer bag, where it would re-evaluate every
+    // `@token` ref for no consumer. The source has two routes pointing at the
+    // same App, so each `_s.token(...)` appears exactly once per route (2 ×).
+    const colorsHits = (result.js.match(/_s\.token\("colors"/g) ?? []).length;
+    expect(colorsHits).toBe(2);
+    // And the per-tile `el: { ... }` bag — built only when extra props exist —
+    // must not be present (style is the only prop and we drop it from el).
+    expect(result.js).not.toMatch(/el: \{ style:/);
   });
 
   it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {

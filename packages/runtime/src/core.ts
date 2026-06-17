@@ -1474,8 +1474,25 @@ export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
   if (mw !== undefined) el.style.maxWidth = typeof mw === "number" ? `${mw}px` : String(mw);
   if (typeof props.bg === "string") el.style.background = mapColor(props.bg as string);
   if (typeof props.radius === "string") el.style.borderRadius = mapToken(props.radius as string);
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
   applyTransition(el, props);
+}
+
+/**
+ * Apply a `style: { ... }` block (spec/style.md §4.3) — each key is set as a CSS
+ * property on the element verbatim. Keys are kebab-case CSS property names
+ * (`background`, `padding`, `border-radius`, `box-shadow`, …) and their values
+ * are resolved strings/numbers (`@token` references are already lowered by the
+ * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
+ */
+function applyStyleBlock(el: HTMLElement, raw: unknown): void {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === undefined || value === null) continue;
+    const v = typeof value === "number" ? `${value}px` : String(value);
+    el.style.setProperty(key, v);
+  }
 }
 
 /** Apply a value that may be a literal or a responsive `{base, sm, md, lg, xl}` map. */
@@ -1695,6 +1712,7 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   if (typeof props.color === "string") el.style.color = mapColor(props.color as string);
   if (typeof props.size === "string") el.style.fontSize = mapSize(props.size as string);
   if (props.weight === "bold") el.style.fontWeight = "700";
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
 }
 

@@ -2286,6 +2286,10 @@ function propsFor(
     // §3.8 link prefetch — these are runtime-side fields, not slot data; their
     // value space (reducer-name ident / argument record) doesn't belong in `el`.
     if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
+    // §4.3 style block — a CSS prop bag the runtime applies to el.style. It's
+    // not reducer data, and shipping it twice (top-level + el) re-evaluates
+    // every `@token` ref needlessly.
+    if (p.name === "style") continue;
     elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   if (elProps.length > 0) {

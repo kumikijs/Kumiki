@@ -163,6 +163,59 @@ describe("runtime", () => {
   });
 });
 
+// `style: {...}` (spec/style.md §4.3) — the runtime must walk the record and
+// apply each key as a CSS property. With a theme present, `@token` references
+// (lowered to `_s.token(...)` by codegen) resolve through `currentTheme()`.
+describe("style block application", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  function makeStyledApp(): AppShape {
+    return {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      themes: {
+        Light: {
+          colors: { surface: "rgb(240, 240, 240)" },
+          spacing: { md: "12px" },
+        },
+      },
+      themeName: "Light",
+      root: () => ({
+        kind: "box",
+        children: [],
+        props: {
+          style: {
+            background: _stdlib.token("colors", ["surface"]),
+            padding: _stdlib.token("spacing", ["md"]),
+            "border-radius": "4px",
+          },
+        },
+      }),
+    };
+  }
+
+  it("applies each style-block key as a CSS property on the rendered element", () => {
+    mount(makeStyledApp(), root);
+    const box = root.querySelector('[data-kumiki-tile="box"]') as HTMLElement | null;
+    expect(box).not.toBeNull();
+    expect(box?.style.background).toBe("rgb(240, 240, 240)");
+    expect(box?.style.padding).toBe("12px");
+    expect(box?.style.borderRadius).toBe("4px");
+  });
+});
+
 // A named timer (`timer(100ms, name=countdown)`) incrementing `count`, plus a
 // `stop` reducer that returns stopTimers: ["countdown"] (what codegen lowers
 // `stop-timer(countdown)` to).
