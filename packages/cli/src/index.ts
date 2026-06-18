@@ -8,7 +8,22 @@ export {
   planFixes,
   planTestPatch,
 } from "./fix.ts";
-export { addDef, removeDef, renameDef, replaceDef } from "./mutate.ts";
+export {
+  addDef,
+  editDef,
+  episodeLogPathFor,
+  lockDef,
+  type OpLogEntry,
+  patchApplyFile,
+  patchRevert,
+  readOpLog,
+  removeDef,
+  renameDef,
+  replaceDef,
+  unlockDef,
+  viewHash,
+  viewHistory,
+} from "./mutate.ts";
 export { runCmd, runScenarioSource, smokeCmd, smokeFile, smokeSource } from "./smoke.ts";
 export {
   directDeps,
