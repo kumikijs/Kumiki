@@ -42,6 +42,13 @@ export type CodegenOptions = {
    * monolith shape).
    */
   runtimeModulesDir?: string;
+  /**
+   * Resolve an `episode-test load = "<path>"` directive (spec §8.6) to its
+   * file contents — the compiler inlines the parsed log into codegen so the
+   * runtime test harness does not need filesystem access. Optional; emit a
+   * placeholder when omitted and no `episode-test` appears.
+   */
+  readEpisodeLog?: (relativePath: string) => string;
 };
 
 export type CodegenResult = {
@@ -247,7 +254,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (opts.includeTests && tests.length > 0) {
     lines.push("");
     lines.push("const __kumikiTests = [");
-    for (const t of tests) lines.push(genTest(t, ctx));
+    for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
     lines.push("globalThis.__kumikiTests = __kumikiTests;");
     // Static coverage for `kumiki test --coverage` (§8.7).
@@ -569,6 +576,20 @@ function coverageJs(
       if (t.target) usedTiles.add(t.target);
     } else if (t.testKind === "property-test") {
       scanRunReducers(t.invariant, markReducer);
+    } else if (t.testKind === "episode-test") {
+      // episode-test replays a log: every effect mocked is one the test exercises.
+      if (t.mocks?.kind === "RecordLit") {
+        for (const f of t.mocks.fields) {
+          usedEffects.add(f.name);
+          if (f.value.kind === "Ref" && f.value.name === "from-log") {
+            markEffectReducers(f.name, "ok");
+            markEffectReducers(f.name, "err");
+          } else {
+            const outcome = mockOutcome(f.value);
+            if (outcome) markEffectReducers(f.name, outcome);
+          }
+        }
+      }
     }
   }
   const cat = (all: string[], used: Set<string>): string =>
@@ -585,9 +606,34 @@ function coverageJs(
   )} }`;
 }
 
-function genTest(t: TestDef, gen: GenCtx): string {
+function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const ctx = makeEvalCtx(gen, new Set());
   const nameJs = JSON.stringify(t.name);
+  if (t.testKind === "episode-test") {
+    // §8.6: load the episode log at compile time so the runtime test harness
+    // never touches the filesystem. The reader is injected via CodegenOptions
+    // (Node-only callers pass `nodeEpisodeLogReader`); without it we emit a
+    // failing stub so a misconfigured CLI surfaces the gap loudly.
+    let episodesJs = "[]";
+    if (opts.readEpisodeLog && t.load) {
+      const raw = opts.readEpisodeLog(t.load);
+      const parsed = parseEpisodeLog(raw);
+      episodesJs = JSON.stringify(parsed);
+    }
+    const mocksJsStr = t.mocks ? episodeMockJs(t.mocks, ctx) : "{}";
+    const expectJs = t.expect ? episodeExpectJs(t.expect as Expr, ctx) : "{}";
+    return `  {
+    name: ${nameJs},
+    kind: "episode-test",
+    run: () => _s.runEpisodeTest({
+      name: ${nameJs},
+      app: App,
+      episodes: ${episodesJs},
+      mocks: ${mocksJsStr},
+      expect: ${expectJs},
+    }),
+  },`;
+  }
   if (t.testKind === "property-test") {
     const forAll = t.forAll ?? [];
     // forAll var names are local binds, so invariant/given refs lower to the
@@ -717,6 +763,74 @@ function effectListJs(e: Expr, ctx: EvalCtx): string {
  * Compile a reducer-test `given.mocks` record into a `{effect: {outcome, value, delayMs?}}`
  * map for the flow runner (§8.5). Each value is `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`.
  */
+/**
+ * Parse an episode log (one JSON Episode per line — JSONL — or a JSON array).
+ * Surfaces malformed lines as a compile-time throw rather than smuggling them
+ * into the generated test: a corrupted fixture means the test would lie.
+ */
+function parseEpisodeLog(raw: string): unknown[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
+    const arr = JSON.parse(trimmed);
+    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
+    return arr;
+  }
+  const out: unknown[] = [];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    out.push(JSON.parse(s));
+  }
+  return out;
+}
+
+/**
+ * Lower an `episode-test`'s `mocks = { effect: from-log | ignore | ok(v) | err(e) }`
+ * record into the runtime call shape. `from-log` and `ignore` arrive as bare
+ * identifiers (Ref nodes); `ok` / `err` carry a payload Expr that we evaluate
+ * in the test's binding context.
+ */
+function episodeMockJs(e: Expr, ctx: EvalCtx): string {
+  if (e.kind !== "RecordLit") return "{}";
+  const parts = e.fields.map((f) => {
+    const v = f.value;
+    const key = JSON.stringify(f.name);
+    if (v.kind === "Ref" && v.name === "from-log") return `${key}: { policy: "from-log" }`;
+    if (v.kind === "Ref" && v.name === "ignore") return `${key}: { policy: "ignore" }`;
+    if (v.kind === "Call" && (v.callee === "ok" || v.callee === "err")) {
+      const value = v.args[0] ? jsOfExpr(v.args[0], ctx) : "null";
+      return `${key}: { policy: "fixed", outcome: ${JSON.stringify(v.callee)}, value: ${value} }`;
+    }
+    return `${key}: { policy: "ignore" }`;
+  });
+  return `{ ${parts.join(", ")} }`;
+}
+
+/**
+ * Lower an `episode-test`'s `expect = { slots-equal, no-panics, no-errors }`.
+ * `slots-equal` accepts either the literal `from-log` (use the log's recorded
+ * final slot values) or a record of expected slot → value pairs.
+ */
+function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
+  if (e.kind !== "RecordLit") return "{}";
+  const parts: string[] = [];
+  for (const f of e.fields) {
+    if (f.name === "slots-equal" || f.name === "slotsEqual") {
+      if (f.value.kind === "Ref" && f.value.name === "from-log") {
+        parts.push(`slotsEqual: "from-log"`);
+      } else {
+        parts.push(`slotsEqual: ${jsOfExpr(f.value, ctx)}`);
+      }
+    } else if (f.name === "no-panics" || f.name === "noPanics") {
+      parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
+    } else if (f.name === "no-errors" || f.name === "noErrors") {
+      parts.push(`noErrors: ${jsOfExpr(f.value, ctx)}`);
+    }
+  }
+  return `{ ${parts.join(", ")} }`;
+}
+
 function mocksJs(e: Expr, ctx: EvalCtx): string {
   if (e.kind !== "RecordLit") return "{}";
   const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`);

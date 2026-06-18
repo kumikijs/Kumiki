@@ -8,6 +8,7 @@
 // (reducers), and effects are mocked at the capability boundary — so the oracle
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
+import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape } from "./index.ts";
 import { mount } from "./index.ts";
 
@@ -68,7 +69,12 @@ export async function runScenario(
   app: AppShape,
   root: HTMLElement,
   scenario: Scenario,
-  opts: { settleMs?: number; router?: "history" | "memory"; initialPath?: string } = {},
+  opts: {
+    settleMs?: number;
+    router?: "history" | "memory";
+    initialPath?: string;
+    episodeLogger?: EpisodeLogger | null;
+  } = {},
 ): Promise<ScenarioReport> {
   const settleMs = opts.settleMs ?? 25;
   const steps: StepResult[] = [];
@@ -113,9 +119,14 @@ export async function runScenario(
 
   const dispatchable = app as Dispatchable;
 
-  const mountOpts: { router?: "history" | "memory"; initialPath?: string } = {};
+  const mountOpts: {
+    router?: "history" | "memory";
+    initialPath?: string;
+    episodeLogger?: EpisodeLogger | null;
+  } = {};
   if (opts.router) mountOpts.router = opts.router;
   if (opts.initialPath !== undefined) mountOpts.initialPath = opts.initialPath;
+  if (opts.episodeLogger) mountOpts.episodeLogger = opts.episodeLogger;
 
   try {
     try {

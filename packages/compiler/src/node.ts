@@ -16,6 +16,17 @@ export function nodeRuntimeBundleReader(): string {
   return readFileSync(runtimeBundlePath, "utf8");
 }
 
+/**
+ * Build an `episode-test` reader rooted at the directory containing the
+ * source `.kumiki` file. Each `load = "<path>"` is resolved relative to that
+ * directory so fixtures live next to the test that uses them, matching how
+ * `load` is intuitively read.
+ */
+export function nodeEpisodeLogReader(kumikiFilePath: string): (relPath: string) => string {
+  const baseDir = dirname(kumikiFilePath);
+  return (relPath: string) => readFileSync(join(baseDir, relPath), "utf8");
+}
+
 /** Thrown when a `kumiki.caps.json` exists but is malformed. */
 export class CapabilityManifestError extends Error {}
 

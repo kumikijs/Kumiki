@@ -1834,9 +1834,12 @@ class Parser {
     if (kindTok.value === "property-test") {
       return this.parsePropertyTest(name, start.pos);
     }
+    if (kindTok.value === "episode-test") {
+      return this.parseEpisodeTest(name, start.pos);
+    }
     if (kindTok.value !== "reducer-test" && kindTok.value !== "tile-test") {
       throw new ParseError(
-        `Unknown test kind "${kindTok.value}" (expected reducer-test, tile-test, or property-test)`,
+        `Unknown test kind "${kindTok.value}" (expected reducer-test, tile-test, episode-test, or property-test)`,
         kindTok.pos,
       );
     }
@@ -1910,6 +1913,36 @@ class Parser {
       invariant,
       ...(count !== undefined ? { count } : {}),
       ...(shrink !== undefined ? { shrink } : {}),
+      pos,
+    };
+  }
+
+  /** `episode-test load="<path>" mocks={...} expect={...}` (spec §8.6). */
+  private parseEpisodeTest(name: string, pos: Pos): TestDef {
+    this.expectIdent("load", name);
+    this.eat("op", "=");
+    const strTok = this.eat("str");
+    const load = strTok.value;
+
+    this.expectIdent("mocks", name);
+    this.eat("op", "=");
+    const mocks = this.parseExpr();
+
+    this.expectIdent("expect", name);
+    this.eat("op", "=");
+    const expect = this.parseExpr();
+
+    return {
+      kind: "TestDef",
+      name,
+      testKind: "episode-test",
+      // `given` is unused for episode-test (the log IS the given) but the AST
+      // requires it; supply a synthetic empty record so downstream visitors
+      // that walk every TestDef.given do not have to special-case undefined.
+      given: { kind: "RecordLit", fields: [], pos },
+      load,
+      mocks,
+      expect,
       pos,
     };
   }

@@ -5,6 +5,8 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
+import type { EpisodeLogger, SlotDiff } from "./episode.ts";
+
 export type RefinementCheck = (v: unknown) => boolean;
 export type EventHandler = (el: Record<string, unknown>) => void;
 
@@ -301,6 +303,14 @@ export type MountOptions = {
   routing?: RoutingImpl;
   /** Built-in effect installers (e.g. `installToast`) this app can emit. */
   builtins?: BuiltinInstaller[];
+  /**
+   * Episode logger (docs/spec/runtime.md §10.5). When provided, every reducer
+   * / effect-start / effect-end / signal-update / panic that occurs during
+   * this mount is recorded into the logger; `kumiki run --episode-log` and the
+   * `episode-test` runner both read from this. Omit (or pass `null`) for
+   * production mounts that don't care about episode capture.
+   */
+  episodeLogger?: EpisodeLogger | null;
 };
 
 export type RouteEntry = {
@@ -420,7 +430,11 @@ export function mountCore(
   app: AppShape,
   target: HTMLElement,
   options: MountOptions = {},
-): { dispose: () => void } {
+): { dispose: () => void; episodes: () => ReturnType<EpisodeLogger["list"]> } {
+  // Episode logger (§10.5). Null when the host did not opt in — every record
+  // call below short-circuits via the `?.` optional chain, so the no-logger
+  // path stays zero-cost.
+  const episode: EpisodeLogger | null = options.episodeLogger ?? null;
   if (!app.live) {
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
@@ -458,9 +472,14 @@ export function mountCore(
   // fills the gap when the app declares an analytics sink directly.
   const providers = withAnalyticsDefault(app, options.providers);
   const caps = makeCapabilityRegistry(app.caps, providers);
-  const dispatcher = makeEffectDispatcher(app, caps, (effect, outcome, value, key) => {
-    handleEffectResult(effect, outcome, value, key);
-  });
+  const dispatcher = makeEffectDispatcher(
+    app,
+    caps,
+    (effect, outcome, value, key, token) => {
+      handleEffectResult(effect, outcome, value, key, token);
+    },
+    episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
+  );
 
   // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
   // when a route.leave reducer emits `confirm`, the runtime holds the
@@ -531,6 +550,7 @@ export function mountCore(
       // escape and leave the DOM stale. Logged via console.error so the smoke /
       // scenario tiers still flag it (#24).
       reportPanic("render", e);
+      episode?.recordPanic(panicInfo(e).message, "render");
       if (!fireRouteError(e)) {
         dom = renderPanicFallback(e);
       } else {
@@ -681,6 +701,7 @@ export function mountCore(
    */
   function handleLivePanic(location: string, e: unknown): void {
     reportPanic(location, e);
+    episode?.recordPanic(panicInfo(e).message, location);
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -695,8 +716,35 @@ export function mountCore(
     }
   }
 
+  /**
+   * §10.5 trigger kind for an auto-opened episode. The runtime auto-opens at
+   * the outermost `applyReducer` so every dispatch entry point (DOM event,
+   * lifecycle fire, timer tick, route.enter, init effect, ...) gets a trigger
+   * without each call site having to wrap itself.
+   */
+  function triggerOfReducer(r: ReducerSpec): { kind: string; target: string } {
+    if (r.event.kind === "ui") {
+      return { kind: `ui.${r.event.ev}`, target: r.selector?.tile ?? r.name };
+    }
+    if (r.event.kind === "effect") {
+      return { kind: `effect.${r.event.outcome}`, target: r.event.effect };
+    }
+    if (r.event.kind === "timer") {
+      return { kind: "timer", target: r.event.name ?? "anonymous" };
+    }
+    return { kind: "lifecycle", target: r.event.name };
+  }
+
   function applyReducer(r: ReducerSpec, payload: Record<string, unknown>): void {
     if (disposed) return;
+    // Auto-open an episode at the outermost reducer dispatch. Nested calls
+    // (e.g. effect-result → .ok reducer → emits → ...) join the existing one
+    // so the whole causal chain stays in a single Episode per §10.5.1.
+    const opened = episode && !episode.hasOpenEpisode();
+    if (opened) {
+      const t = triggerOfReducer(r);
+      episode.beginTrigger({ kind: t.kind, target: t.target, payload });
+    }
     let result: ReturnType<ReducerSpec["apply"]>;
     try {
       result = r.apply(slotValues, payload);
@@ -708,13 +756,29 @@ export function mountCore(
       // dispatch still runs); the `app.error` reducer (if any) is fired with
       // PanicInfo. The reducer-test harness catches panics separately (#24).
       handleLivePanic(`reducer "${r.name}"`, e);
+      if (opened) episode?.endTrigger();
       return;
     }
+    // Compute slot diffs (excluding `volatile` slots per language.md §175):
+    // capture each touched slot's value BEFORE we overwrite it so the episode
+    // step records the live transition, not just the destination.
+    const diffs: SlotDiff[] = [];
+    const dirty: string[] = [];
     for (const [k, v] of Object.entries(result.slots)) {
       const meta = app.slots[k];
       if (meta?.refine && !meta.refine(v)) continue;
+      const before = slotValues[k];
       slotValues[k] = v;
+      if (!meta?.volatile) {
+        diffs.push({ name: k, before, after: v });
+        dirty.push(k);
+      }
     }
+    episode?.recordReducer(
+      r.name,
+      diffs,
+      result.emits.map((e) => e.effect),
+    );
     for (const emit of result.emits) {
       if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;
       dispatcher.dispatch(emit);
@@ -727,6 +791,8 @@ export function mountCore(
       }
     }
     render();
+    if (dirty.length > 0) episode?.recordSignalUpdate(dirty);
+    if (opened) episode?.endTrigger();
   }
 
   function handleEffectResult(
@@ -734,43 +800,54 @@ export function mountCore(
     outcome: "ok" | "err",
     value: unknown,
     key: unknown,
+    token = "",
   ): void {
+    // §10.5: the matching effect-end step lands on the SAME Episode the
+    // effect-start was logged into (looked up by `token`). The returned exit
+    // pops that Episode off the focus stack and commits if no more inflight
+    // effects remain — so the .ok / .err reducer chain that runs in between
+    // attaches to the same Episode.
+    const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
     let matched = 0;
-    for (const r of app.reducers) {
-      if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
-        applyReducer(r, { $1: value, $2: key });
-        matched++;
+    try {
+      for (const r of app.reducers) {
+        if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
+          applyReducer(r, { $1: value, $2: key });
+          matched++;
+        }
       }
-    }
-    // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
-    // an err whose value carries a 401/403/5xx is forwarded to the global
-    // `app.http.on-*` reducer — independent of whether a per-effect `.err`
-    // reducer also matched.
-    if (outcome === "err" && app.http) {
-      const status = readStatus(value);
-      if (status !== null) {
-        const name =
-          status === 401
-            ? app.http.on401
-            : status === 403
-              ? app.http.on403
-              : status >= 500
-                ? app.http.on5xx
-                : undefined;
-        if (name) {
-          const r = app.reducers.find((r) => r.name === name);
-          if (r) {
-            applyReducer(r, { $1: value, $2: key });
-            matched++;
+      // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
+      // an err whose value carries a 401/403/5xx is forwarded to the global
+      // `app.http.on-*` reducer — independent of whether a per-effect `.err`
+      // reducer also matched.
+      if (outcome === "err" && app.http) {
+        const status = readStatus(value);
+        if (status !== null) {
+          const name =
+            status === 401
+              ? app.http.on401
+              : status === 403
+                ? app.http.on403
+                : status >= 500
+                  ? app.http.on5xx
+                  : undefined;
+          if (name) {
+            const r = app.reducers.find((r) => r.name === name);
+            if (r) {
+              applyReducer(r, { $1: value, $2: key });
+              matched++;
+            }
           }
         }
       }
+      // No-silent-failure contract (#37): an `err` result that no `.err` reducer
+      // consumes is a dropped error — surfaced (never swallowed) exactly like a
+      // live panic. An app that means to ignore an error opts in with an `.err`
+      // reducer (even an empty one).
+      if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
+    } finally {
+      exitScope?.();
     }
-    // No-silent-failure contract (#37): an `err` result that no `.err` reducer
-    // consumes is a dropped error — surfaced (never swallowed) exactly like a
-    // live panic. An app that means to ignore an error opts in with an `.err`
-    // reducer (even an empty one).
-    if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
   }
 
   function updateRoute(newPath: string, replace: boolean): void {
@@ -1035,6 +1112,8 @@ export function mountCore(
       target.replaceChildren();
       dispatcher.dispose();
     },
+    /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
+    episodes: () => episode?.list() ?? [],
   };
 }
 
@@ -1179,7 +1258,14 @@ type Dispatcher = {
 function makeEffectDispatcher(
   app: AppShape,
   caps: CapabilityRegistry,
-  onResult: (effect: string, outcome: "ok" | "err", value: unknown, key: unknown) => void,
+  onResult: (
+    effect: string,
+    outcome: "ok" | "err",
+    value: unknown,
+    key: unknown,
+    token: string,
+  ) => void,
+  onLaunch?: (effect: string, input: unknown) => string,
 ): Dispatcher {
   type RunState = {
     inflight: Map<string, AbortController>;
@@ -1194,11 +1280,16 @@ function makeEffectDispatcher(
       console.warn(`Capability "${eff.cap}" not declared in app.caps`);
       return;
     }
+    // Episode logger seam (§10.5): the moment the dispatcher commits to
+    // actually invoking the effect — policy filtering (debounce / once /
+    // queue) has already passed. Token threads through to onResult so the
+    // matching effect-end lands on the same Episode.
+    const token = onLaunch?.(eff.name, input) ?? "";
     try {
       const res = await runWithRetry(eff, input, caps);
-      onResult(eff.name, res.kind, res.value, input);
+      onResult(eff.name, res.kind, res.value, input, token);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input);
+      onResult(eff.name, "err", { message: String(e) }, input, token);
     } finally {
       const ic = state.inflight.get(`${eff.name}:${key}`);
       if (ic) state.inflight.delete(`${eff.name}:${key}`);

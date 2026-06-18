@@ -1227,6 +1227,25 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
       });
     }
   });
+  if (t.testKind === "episode-test") {
+    // §8.6: each `mocks` key must name a declared effect — same
+    // no-silent-typo guard as reducer-test mocks. The value (`from-log` /
+    // `ignore` / `ok(...)` / `err(...)`) is parsed as an Expr and validated
+    // at runtime by `runEpisodeTest`.
+    if (t.mocks?.kind === "RecordLit") {
+      for (const m of t.mocks.fields) {
+        if (!sym.effects.has(m.name)) {
+          errors.push({
+            code: "E0104",
+            kind: "undef-effect",
+            message: `Mock targets undefined effect "${m.name}"`,
+            pos: t.mocks.pos,
+          });
+        }
+      }
+    }
+    return;
+  }
   if (t.testKind === "property-test") {
     // The `for-all` types must resolve, and every `run-reducer(name)` in the
     // invariant must name a declared reducer.

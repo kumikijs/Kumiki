@@ -32,13 +32,13 @@ export type Def =
 export type TestDef = {
   kind: "TestDef";
   name: string;
-  /** `reducer-test` targets a reducer; `tile-test` a tile; `property-test` has no target. */
-  testKind: "reducer-test" | "tile-test" | "property-test";
-  /** Reducer / tile name. Absent for `property-test`. */
+  /** `reducer-test` targets a reducer; `tile-test` a tile; `episode-test` replays an episode log; `property-test` has no target. */
+  testKind: "reducer-test" | "tile-test" | "property-test" | "episode-test";
+  /** Reducer / tile name. Absent for `property-test` / `episode-test`. */
   target?: string;
   /** The `given = { ... }` record literal (interpreted, not codegen'd as-is). */
   given: Expr;
-  /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test. Absent for `property-test`. */
+  /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
   expect?: Expr | TileExpr;
   /** `property-test` only: the `for-all = { name: Type }` generators. */
   forAll?: { name: string; type: TypeExpr }[];
@@ -48,6 +48,10 @@ export type TestDef = {
   count?: number;
   /** `property-test` only: shrink on failure (default true). */
   shrink?: boolean;
+  /** `episode-test` only: path to the episode-log file relative to the .kumiki source. */
+  load?: string;
+  /** `episode-test` only: per-effect mock policy (`from-log` / `ignore` / `ok(v)` / `err(e)`). */
+  mocks?: Expr;
   pos: Pos;
 };
 
