@@ -363,6 +363,56 @@ describe("codegen", () => {
     expect(result.js).not.toMatch(/el: \{ style:/);
   });
 
+  // issue #91 — language.md §1.6.1 + §1.9.
+  it("emits onKeyDown for ui.key(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot k : Text = ""
+      reducer onKey on=ui.key(Box) do= k := "hit"
+      tile Box = input(bind=k)
+      tile App = column(Box)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onKeyDown: \(el\) => globalThis\.__kumikiApp\._dispatch\("onKey"/);
+  });
+
+  it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
+    const src = `
+      slot h : Bool = false
+      reducer onHover on=ui.hover(Card) do= h := true
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onMouseEnter: \(el\) => globalThis\.__kumikiApp\._dispatch\("onHover"/,
+    );
+  });
+
+  it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
+    const src = `
+      type Light = Red | Green
+      fn f(p: Tuple(Light, Light)) -> Text = match p with
+        | (Red, Green) -> "rg"
+        | (x, y) -> "other"
+      slot label : Text = ""
+      tile App = text(label)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("Array.isArray");
+    expect(result.js).toContain(".length === 2");
+    expect(result.js).toContain('_s.variantIs((_v)[0], "Red")');
+    expect(result.js).toContain('_s.variantIs((_v)[1], "Green")');
+  });
+
   it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {
     // Regression guard: shorthand props are still resolved at runtime by
     // applyContainerProps/applyTextProps, NOT desugared at codegen time.

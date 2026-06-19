@@ -147,6 +147,8 @@ export type TileProps = Record<string, unknown> & {
   onChange?: EventHandler;
   onInput?: EventHandler;
   onClose?: EventHandler;
+  onKeyDown?: EventHandler;
+  onMouseEnter?: EventHandler;
   el?: Record<string, unknown>;
 };
 
@@ -1533,10 +1535,31 @@ function makeTileCtx(tiles: TileRenderers): TileCtx {
       // A `motion` prop applies to any tile uniformly (M5). The keyframes/classes
       // are injected once at mount by ensureMotionStyles.
       applyMotion(el, node.props);
+      // ui.key / ui.hover handlers (§1.6.1) — codegen lifts these into
+      // onKeyDown / onMouseEnter props. Wiring them once on the universal
+      // render output keeps every tile uniform (no per-renderer plumbing).
+      applyKeyHoverHandlers(el, node.props);
       return el;
     },
   };
   return ctx;
+}
+
+function applyKeyHoverHandlers(el: HTMLElement, props?: TileProps): void {
+  if (!props) return;
+  if (props.onKeyDown) {
+    const handler = props.onKeyDown;
+    el.addEventListener("keydown", (e) => {
+      const ke = e as KeyboardEvent;
+      handler({ ...(props.el ?? {}), key: ke.key, code: ke.code });
+    });
+  }
+  if (props.onMouseEnter) {
+    const handler = props.onMouseEnter;
+    el.addEventListener("mouseenter", () => {
+      handler(props.el ?? {});
+    });
+  }
 }
 
 /**

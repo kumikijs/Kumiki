@@ -268,4 +268,51 @@ reducer bad on=route.bogus("/p") do= s := 1`),
       ),
     ).toThrow(/Unknown route lifecycle event/);
   });
+
+  // issue #91 — language.md §1.6.1 lists eight ui-kinds, but ui.key / ui.hover
+  // were never wired into the parser. These two cases lock the parser-side.
+  it("parses ui.key(Tile) event pattern (§1.6.1)", () => {
+    const src = `slot k : Text = ""
+reducer onKey on=ui.key(Box) do= k := "hit"
+tile Box = input(bind=k)`;
+    const program = parse(lex(src));
+    const r = program.defs.find((d) => d.kind === "ReducerDef") as ReducerDef;
+    if (r.on.kind !== "UiEvent") throw new Error("expected UiEvent");
+    expect(r.on.ev).toBe("key");
+    expect(r.on.selector.tile).toBe("Box");
+  });
+
+  it("parses ui.hover(Tile) event pattern (§1.6.1)", () => {
+    const src = `slot h : Bool = false
+reducer onHover on=ui.hover(Card) do= h := true
+tile Card = box() {}`;
+    const program = parse(lex(src));
+    const r = program.defs.find((d) => d.kind === "ReducerDef") as ReducerDef;
+    if (r.on.kind !== "UiEvent") throw new Error("expected UiEvent");
+    expect(r.on.ev).toBe("hover");
+    expect(r.on.selector.tile).toBe("Card");
+  });
+
+  // issue #91 — language.md §1.9 lists tuple patterns in the grammar.
+  // Tuple values are introduced by `List(T).zip(U)`, so a tuple pattern matches
+  // over a `Tuple(T, U)`-typed value (here, a fn parameter).
+  it("parses a tuple pattern `(x, y)` in a match arm (§1.9)", () => {
+    const src = `type Light = Red | Green
+fn f(p: Tuple(Light, Light)) -> Text = match p with
+  | (Red, Green) -> "rg"
+  | (x, y) -> "other"`;
+    const program = parse(lex(src));
+    const fn = program.defs.find((d) => d.kind === "FnDef") as { kind: "FnDef"; body: unknown };
+    const body = fn.body as { kind: string; arms: { pattern: { kind: string } }[] };
+    expect(body.kind).toBe("MatchExpr");
+    expect(body.arms[0]?.pattern.kind).toBe("PTuple");
+    expect(body.arms[1]?.pattern.kind).toBe("PTuple");
+  });
+
+  it("rejects a single-element parenthesized pattern (no grouping in patterns)", () => {
+    const src = `type Light = Red | Green
+fn f(p: Tuple(Light, Light)) -> Text = match p with
+  | (x) -> "n/a"`;
+    expect(() => parse(lex(src))).toThrow(/Tuple pattern requires at least 2 items/);
+  });
 });

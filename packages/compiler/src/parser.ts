@@ -504,7 +504,9 @@ class Parser {
           sub !== "change" &&
           sub !== "input" &&
           sub !== "focus" &&
-          sub !== "blur"
+          sub !== "blur" &&
+          sub !== "key" &&
+          sub !== "hover"
         ) {
           throw new ParseError(`Unknown ui event "${sub}"`, t.pos);
         }
@@ -771,6 +773,21 @@ class Parser {
       // Simple check: peek(2) must be `->` or `(`.
       const after = this.peek(2);
       if (after.kind === "op" && (after.value === "->" || after.value === "(")) return true;
+    }
+    // `| (p, q) ->` — tuple pattern arm (§1.9). Walk forward through balanced
+    // parens and accept the arm only when the closing `)` is followed by `->`.
+    if (next.kind === "op" && next.value === "(") {
+      let depth = 1;
+      let i = 2;
+      while (depth > 0) {
+        const tok = this.peek(i);
+        if (tok.kind === "eof") return false;
+        if (tok.kind === "op" && tok.value === "(") depth++;
+        else if (tok.kind === "op" && tok.value === ")") depth--;
+        i++;
+      }
+      const after = this.peek(i);
+      return after.kind === "op" && after.value === "->";
     }
     return false;
   }
@@ -1109,13 +1126,20 @@ class Parser {
       }
       return { kind: "PBind", name, pos: t.pos };
     }
-    if (t.kind === "num") {
+    if (this.matchOp("(")) {
+      // Tuple pattern: `(p1, p2, ...)` requires ≥ 2 items; a single parenthesized
+      // pattern would be plain grouping with no semantics, so reject it.
       this.next();
-      return { kind: "PLiteral", value: t.value, pos: t.pos };
-    }
-    if (t.kind === "str") {
-      this.next();
-      return { kind: "PLiteral", value: t.value, pos: t.pos };
+      const items: Pattern[] = [this.parsePattern()];
+      while (this.matchOp(",")) {
+        this.next();
+        items.push(this.parsePattern());
+      }
+      this.eat("op", ")");
+      if (items.length < 2) {
+        throw new ParseError("Tuple pattern requires at least 2 items", t.pos);
+      }
+      return { kind: "PTuple", items, pos: t.pos };
     }
     throw new ParseError("Expected pattern", t.pos);
   }

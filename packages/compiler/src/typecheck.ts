@@ -4,6 +4,7 @@ import type {
   Expr,
   FnDef,
   Lvalue,
+  Pattern,
   Pos,
   Program,
   ReducerDef,
@@ -442,9 +443,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        if (arm.pattern.kind === "PVariant")
-          for (const b of arm.pattern.binds) inner.localBinds.add(b);
-        if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+        addPatternBinds(arm.pattern, inner.localBinds);
         checkTileExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -634,9 +633,7 @@ function checkStmt(
         localBinds: new Set(ctx.localBinds),
         localTypes: new Map(ctx.localTypes ?? []),
       };
-      if (arm.pattern.kind === "PVariant")
-        for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
-      if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+      addPatternBinds(arm.pattern, inner.localBinds);
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
       armSets.push(armWrites);
@@ -881,9 +878,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        if (arm.pattern.kind === "PVariant")
-          for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
-        if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+        addPatternBinds(arm.pattern, inner.localBinds);
         checkExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -1149,6 +1144,25 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
 
 function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
+}
+
+// Collect every identifier introduced by a pattern (PBind name, PVariant binds,
+// and PTuple element binds recursively) so callers can add them to localBinds in
+// one pass without case-splitting at the call site.
+function addPatternBinds(p: Pattern, dst: Set<string>): void {
+  if (p.kind === "PBind") {
+    dst.add(p.name);
+    return;
+  }
+  if (p.kind === "PVariant") {
+    for (const b of p.binds) if (b !== "_") dst.add(b);
+    return;
+  }
+  if (p.kind === "PTuple") {
+    for (const it of p.items) addPatternBinds(it, dst);
+    return;
+  }
+  // PWildcard introduces no binds.
 }
 
 /**

@@ -1,0 +1,44 @@
+# Feature: §1.6.1 ui.key / ui.hover events + §1.9 tuple patterns.
+# A search input echoes the last key pressed; a hover counter ticks each time
+# the card is entered. A small helper destructures a `Tuple(Text, Int)` —
+# tuples appear in the language via `List(T).zip(U)` (which returns
+# `List(Tuple(T, U))`), so the example pairs two lists and labels each entry.
+
+slot lastKey   : Text       = ""
+slot hoverHits : Int        = 0
+slot names     : List(Text) = ["alpha", "beta", "gamma"]
+slot scores    : List(Int)  = [1, 2, 3]
+
+fn entryLabel(p: Tuple(Text, Int)) -> Text
+   = match p with
+       | (name, _) -> name
+
+reducer onSearchKey on=ui.key(SearchInput)
+    do= lastKey := $el.key
+
+reducer onCardHover on=ui.hover(HoverCard)
+    do= hoverHits := hoverHits + 1
+
+tile SearchInput = input(placeholder="type to log keys")
+
+tile HoverCard
+    = box(text("hover me"))
+      {pad: "md", bg: "surface"}
+
+tile EntryRow in=Tuple(Text, Int)
+    = text(entryLabel($1))
+
+tile App
+    = column(
+        heading("ui.key / ui.hover / tuple pattern"),
+        SearchInput,
+        text(lastKey),
+        HoverCard,
+        text(hoverHits),
+        for p in names.zip(scores) EntryRow(p)
+      )
+
+app KeyHoverTuple
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
