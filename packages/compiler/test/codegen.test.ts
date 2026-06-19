@@ -413,6 +413,30 @@ describe("codegen", () => {
     expect(result.js).toContain('_s.variantIs((_v)[1], "Green")');
   });
 
+  // issue #91 — tile-match must accept tuple patterns too (§1.4 grammar now
+  // mirrors §1.9). Covers the TileMatch lowering path that delegates to the
+  // shared `tupleArm` helper.
+  it("emits an Array.isArray guard for a tuple pattern in tile-match (§1.4)", () => {
+    const src = `
+      type Tag = A | B
+      tile Row in=Tuple(Tag, Text)
+        = match $1 with
+            | (A, _) -> text("a-row")
+            | (B, _) -> text("b-row")
+      slot rows : List(Text) = ["x", "y"]
+      slot tags : List(Tag)  = [A, B]
+      tile App = column(for p in tags.zip(rows) Row(p))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("Array.isArray");
+    expect(result.js).toContain(".length === 2");
+    expect(result.js).toContain('_s.variantIs((_v)[0], "A")');
+    expect(result.js).toContain('_s.variantIs((_v)[0], "B")');
+  });
+
   it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {
     // Regression guard: shorthand props are still resolved at runtime by
     // applyContainerProps/applyTextProps, NOT desugared at codegen time.

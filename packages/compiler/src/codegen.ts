@@ -1134,7 +1134,7 @@ function genStatement(s: Statement, ctx: EvalCtx): string {
           return `if (true) { const ${jsName(arm.pattern.name)} = _v;\n  ${body}\n}`;
         }
         if (arm.pattern.kind === "PTuple") {
-          const { guard, binds, inner } = tupleArmStmt(arm.pattern, ctx, "_v");
+          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (${guard}) { ${binds}\n  ${body}\n}`;
         }
@@ -1800,7 +1800,7 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     return `if (true) { const ${jsName(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
   if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
     return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
@@ -1819,27 +1819,19 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
 // Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
 // nested element guards) and a series of `const … = scVar[i]…;` bindings.
 // Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
-// the indexed access path.
+// the indexed access path. `inheritReducerScope` lets MatchStmt callers carry
+// the reducer's slot-write scope through; matchExpr / TileMatch leave it off.
 function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,
   scVar: string,
+  inheritReducerScope: boolean,
 ): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
-  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
-  const binds: string[] = [];
-  for (let i = 0; i < p.items.length; i++) {
-    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
-  }
-  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
-}
-
-function tupleArmStmt(
-  p: Pattern & { kind: "PTuple" },
-  ctx: EvalCtx,
-  scVar: string,
-): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+  const inner = makeEvalCtx(
+    ctx.gen,
+    ctx.localBinds,
+    inheritReducerScope ? ctx.reducerScope : undefined,
+  );
   const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
   const binds: string[] = [];
   for (let i = 0; i < p.items.length; i++) {
@@ -1855,26 +1847,32 @@ function walkPatternForTupleArm(
   guards: string[],
   binds: string[],
 ): void {
-  if (p.kind === "PWildcard") return;
-  if (p.kind === "PBind") {
-    inner.localBinds.add(p.name);
-    binds.push(`const ${jsName(p.name)} = ${accessor};`);
-    return;
-  }
-  if (p.kind === "PVariant") {
-    guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
-    for (let i = 0; i < p.binds.length; i++) {
-      const name = p.binds[i]!;
-      if (name === "_") continue;
-      inner.localBinds.add(name);
-      binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+  switch (p.kind) {
+    case "PWildcard":
+      return;
+    case "PBind":
+      inner.localBinds.add(p.name);
+      binds.push(`const ${jsName(p.name)} = ${accessor};`);
+      return;
+    case "PVariant":
+      guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
+      for (let i = 0; i < p.binds.length; i++) {
+        const name = p.binds[i]!;
+        if (name === "_") continue;
+        inner.localBinds.add(name);
+        binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+      }
+      return;
+    case "PTuple":
+      guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
+      for (let i = 0; i < p.items.length; i++) {
+        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+      }
+      return;
+    default: {
+      const _exhaustive: never = p;
+      throw new Error(`unreachable pattern kind: ${(_exhaustive as Pattern).kind}`);
     }
-    return;
-  }
-  // Nested tuple
-  guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
-  for (let i = 0; i < p.items.length; i++) {
-    walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
   }
 }
 
@@ -1921,18 +1919,12 @@ function tileExprJs(t: TileExpr, gen: GenCtx, ctx: EvalCtx, enclosingTile?: stri
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
           }
-          // PTuple
+          // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
+          // no reducerScope here (tile-match runs in pure render context), so the
+          // helper's `inheritReducerScope=false` path is what we want.
           {
-            const inner = makeEvalCtx(gen, ctx.localBinds);
-            const guards: string[] = [
-              `Array.isArray(_v)`,
-              `(_v).length === ${arm.pattern.items.length}`,
-            ];
-            const binds: string[] = [];
-            for (let i = 0; i < arm.pattern.items.length; i++) {
-              walkPatternForTupleArm(arm.pattern.items[i]!, `(_v)[${i}]`, inner, guards, binds);
-            }
-            return `if (${guards.join(" && ")}) { ${binds.join(" ")} return ${tileExprJs(arm.body, gen, inner, enclosingTile)}; }`;
+            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
+            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTile)}; }`;
           }
         })
         .join(" else ");
