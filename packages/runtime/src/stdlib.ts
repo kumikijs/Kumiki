@@ -362,4 +362,27 @@ export const _stdlibCore = {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
   },
+
+  // ----- Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
+  // Bytes is represented as Uint8Array at runtime. -----
+
+  /** `Bytes.from-text(text)` — UTF-8 encode. */
+  bytesFromText(text: unknown): Uint8Array {
+    return new TextEncoder().encode(String(text ?? ""));
+  },
+  /** `Bytes.from-base64(text)` — standard base64 decode. */
+  bytesFromBase64(b64: unknown): Uint8Array {
+    const s = String(b64 ?? "");
+    const bin = atob(s);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  },
+  /** `Bytes.from-bytes(list)` — from List(Int) of byte values; clamps to low 8 bits. */
+  bytesFromBytes(arr: unknown): Uint8Array {
+    const xs = Array.isArray(arr) ? (arr as number[]) : [];
+    const out = new Uint8Array(xs.length);
+    for (let i = 0; i < xs.length; i++) out[i] = Number(xs[i]) & 0xff;
+    return out;
+  },
 };

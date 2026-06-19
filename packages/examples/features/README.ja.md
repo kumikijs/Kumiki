@@ -47,5 +47,6 @@
 | [39-effect-session](https://github.com/kage1020/Kumiki/blob/main/examples/features/39-effect-session.kumiki) | sessionStorage 永続化（タブ単位・`storage-*` と同じ形） |
 | [21-timer](https://github.com/kage1020/Kumiki/blob/main/examples/features/21-timer.kumiki) | `timer(1s)` による定期実行 |
 | [23-lifecycle-route-enter](https://github.com/kage1020/Kumiki/blob/main/examples/features/23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
+| [40-stdlib-paren-methods](https://github.com/kage1020/Kumiki/blob/main/examples/features/40-stdlib-paren-methods.kumiki) | stdlib メソッドの括弧付き形（`is-ok()` / `values()` / `lower()` / `sort()` 等）と `Bytes.from-text/base64/bytes` 構築子 |
 
 新しい質問・バグには、まずここへ最小再現例を足すことで答える。

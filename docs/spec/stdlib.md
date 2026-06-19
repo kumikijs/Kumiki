@@ -13,7 +13,7 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Float` | 64-bit floating point | `3.14`, `-0.5` |
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
-| `Bytes` | byte sequence | no literal; created with `Bytes.from-text()` |
+| `Bytes` | byte sequence | no literal; `Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` (see §2.2.10) |
 | `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse()` |
 
 ### 2.1.2 Generic Types
@@ -226,6 +226,16 @@ Time / Duration are represented at runtime as a **raw number of milliseconds**. 
 ```kumiki
 fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
+```
+
+### 2.2.10 Bytes
+
+`Bytes` is a raw byte sequence (`Uint8Array` at runtime). It has no collection-style methods in v0.x; only constructors are provided.
+
+```
+Bytes.from-text(text)       : Bytes        ; UTF-8 encode
+Bytes.from-base64(text)     : Bytes        ; standard base64 decode
+Bytes.from-bytes(list)      : Bytes        ; from List(Int) (each value masked to its low 8 bits)
 ```
 
 ---
