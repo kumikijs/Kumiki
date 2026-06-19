@@ -30,6 +30,14 @@ export type ExtendedCodegenOptions = CodegenOptions & {
   readRuntimeBundle?: () => string;
   /** Project-registered capabilities (from `kumiki.caps.json`) accepted in `app.caps`. */
   capabilities?: string[];
+  /**
+   * Resolve and read an episode-log file for an `episode-test load = "<path>"`
+   * directive (spec §8.6). The compiler inlines the parsed log into the
+   * emitted test so the runtime doesn't need filesystem access. Node callers
+   * use `nodeEpisodeLogReader` from `@kumikijs/compiler/node`; passing
+   * `undefined` is fine when the source has no `episode-test`.
+   */
+  readEpisodeLog?: (relativePath: string) => string;
 };
 
 /** Inline a runtime bundle into generated module code, stripping the bridging import/export lines. */

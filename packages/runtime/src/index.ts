@@ -82,6 +82,17 @@ export {
   defineKumikiElement,
   type KumikiElementOptions,
 } from "./element.ts";
+export {
+  createEpisodeLogger,
+  type Episode,
+  type EpisodeLocalStorage,
+  type EpisodeLogger,
+  type EpisodeLoggerOptions,
+  type EpisodeStatus,
+  type EpisodeStep,
+  type EpisodeTrigger,
+  type SlotDiff,
+} from "./episode.ts";
 export { routing } from "./router.ts";
 export {
   type Action,
@@ -133,7 +144,7 @@ export function mount(
   app: AppShape,
   target: HTMLElement,
   options: MountOptions = {},
-): { dispose: () => void } {
+): ReturnType<typeof mountCore> {
   return mountCore(app, target, {
     ...options,
     tiles: options.tiles ? { ...allTiles, ...options.tiles } : allTiles,

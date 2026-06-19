@@ -330,4 +330,58 @@ describe("typecheck", () => {
       );
     });
   });
+
+  describe("episode-test mocks (issue #90)", () => {
+    const PREAMBLE = `
+      slot count : Int = 0
+      effect persist cap=storage.write in=Int out=Result(Unit, Text)
+      reducer inc on=ui.click(B) do=
+          count := count + 1
+          emit persist(count)
+      reducer persistFailed on=persist.err($e, _) do= count := 0
+      tile B = button(text="+")
+      tile App = column(B, heading(count.show))
+      app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("accepts from-log / ignore / ok(...) / err(...)", () => {
+      const src = `
+        ${PREAMBLE}
+        test t = episode-test
+          load   = "x.jsonl"
+          mocks  = {persist: from-log}
+          expect = {slots-equal: from-log}
+        test u = episode-test
+          load   = "x.jsonl"
+          mocks  = {persist: ignore}
+          expect = {slots-equal: from-log}
+        test v = episode-test
+          load   = "x.jsonl"
+          mocks  = {persist: ok(unit)}
+          expect = {slots-equal: from-log}
+        test w = episode-test
+          load   = "x.jsonl"
+          mocks  = {persist: err("nope")}
+          expect = {slots-equal: from-log}
+      `;
+      expect(checkSrc(src).some((e) => e.code === "E0712")).toBe(false);
+    });
+
+    it("rejects an unknown mock policy value (E0712)", () => {
+      // `from_log` (underscore) is the classic typo of `from-log`. Before
+      // typecheck caught it, codegen silently lowered to `{policy: "ignore"}`
+      // and the test would pass while skipping the very effect being replayed.
+      const src = `
+        ${PREAMBLE}
+        test t = episode-test
+          load   = "x.jsonl"
+          mocks  = {persist: from_log}
+          expect = {slots-equal: from-log}
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0712" && e.kind === "episode-mock-invalid")).toBe(
+        true,
+      );
+    });
+  });
 });
