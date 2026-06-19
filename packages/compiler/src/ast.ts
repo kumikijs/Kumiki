@@ -228,7 +228,15 @@ export type EventPattern =
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }
   | { kind: "LifecycleEvent"; name: string; pos: Pos };
 
-export type UiEventKind = "click" | "submit" | "change" | "input" | "focus" | "blur";
+export type UiEventKind =
+  | "click"
+  | "submit"
+  | "change"
+  | "input"
+  | "focus"
+  | "blur"
+  | "key"
+  | "hover";
 
 // ----- Statements (reducer body) -----
 
@@ -305,7 +313,7 @@ export type Pattern =
   | { kind: "PVariant"; name: string; binds: string[]; pos: Pos } // All, Some(x), Loaded(x), _ has special form
   | { kind: "PWildcard"; pos: Pos }
   | { kind: "PBind"; name: string; pos: Pos } // single identifier
-  | { kind: "PLiteral"; value: number | string | boolean; pos: Pos };
+  | { kind: "PTuple"; items: Pattern[]; pos: Pos }; // (p1, p2, ...) — destructures Tuple values
 
 export type BinOp = "+" | "-" | "*" | "/" | "%" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&" | "|"; // boolean and/or
 

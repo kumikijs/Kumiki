@@ -1676,3 +1676,75 @@ describe("standard capability override", () => {
     expect(location.pathname).toBe(before); // built-in history navigation was not run
   });
 });
+
+// issue #91 — ui.key / ui.hover are wired through the universal render hook on
+// every tile (not per-renderer), so the DOM-level dispatch must fire for an
+// input (keydown) and a generic box (mouseenter).
+describe("ui.key / ui.hover handlers (issue #91)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  it("keydown on an input invokes onKeyDown with el.key populated", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: { lastKey: { value: "" } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        type: "text",
+        placeholder: "",
+        props: {
+          el: {},
+          onKeyDown: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const inp = root.querySelector("input");
+    if (!inp) throw new Error("expected input");
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter" }));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.key).toBe("Enter");
+    expect(seen[0]?.code).toBe("Enter");
+  });
+
+  it("mouseenter on a box invokes onMouseEnter", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "box",
+        children: [],
+        props: {
+          el: { kind: "Card" },
+          onMouseEnter: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const box = root.querySelector('[data-kumiki-tile="box"]');
+    if (!box) throw new Error("expected box");
+    box.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.kind).toBe("Card");
+  });
+});

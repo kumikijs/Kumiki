@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "ui.key: dispatch onSearchKey with key=Enter",
+      "do": { "dispatch": "onSearchKey", "payload": { "key": "Enter" } },
+      "expect": { "noErrors": true, "state": { "lastKey": "Enter" } }
+    },
+    {
+      "label": "ui.hover: first hover increments to 1",
+      "do": { "dispatch": "onCardHover" },
+      "expect": { "noErrors": true, "state": { "hoverHits": 1 } }
+    },
+    {
+      "label": "ui.hover: second hover increments to 2",
+      "do": { "dispatch": "onCardHover" },
+      "expect": { "noErrors": true, "state": { "hoverHits": 2 } }
+    },
+    {
+      "label": "tuple pattern: zipped rows render the name half of each Tuple(Text, Int)",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["alpha", "beta", "gamma"]
+      }
+    }
+  ]
+}

@@ -1133,12 +1133,13 @@ function genStatement(s: Statement, ctx: EvalCtx): string {
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (true) { const ${jsName(arm.pattern.name)} = _v;\n  ${body}\n}`;
         }
-        if (arm.pattern.kind === "PWildcard") {
-          const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
-          return `if (true) {\n  ${body}\n}`;
+        if (arm.pattern.kind === "PTuple") {
+          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
+          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
+          return `if (${guard}) { ${binds}\n  ${body}\n}`;
         }
         const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
-        return `if (_v === ${JSON.stringify(arm.pattern.value)}) {\n  ${body}\n}`;
+        return `if (true) {\n  ${body}\n}`;
       })
       .join(" else ");
     return `{ const _v = ${sc};\n  ${arms}\n}`;
@@ -1798,8 +1799,9 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     inner.localBinds.add(p.name);
     return `if (true) { const ${jsName(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
-  if (p.kind === "PLiteral") {
-    return `if (${scVar} === ${JSON.stringify(p.value)}) { return ${jsOfExpr(body, ctx)}; }`;
+  if (p.kind === "PTuple") {
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
+    return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
   const tag = p.name;
@@ -1812,6 +1814,66 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     bindAssigns.push(`const ${jsName(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
   }
   return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
+}
+
+// Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
+// nested element guards) and a series of `const … = scVar[i]…;` bindings.
+// Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
+// the indexed access path. `inheritReducerScope` lets MatchStmt callers carry
+// the reducer's slot-write scope through; matchExpr / TileMatch leave it off.
+function tupleArm(
+  p: Pattern & { kind: "PTuple" },
+  ctx: EvalCtx,
+  scVar: string,
+  inheritReducerScope: boolean,
+): { guard: string; binds: string; inner: EvalCtx } {
+  const inner = makeEvalCtx(
+    ctx.gen,
+    ctx.localBinds,
+    inheritReducerScope ? ctx.reducerScope : undefined,
+  );
+  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
+  const binds: string[] = [];
+  for (let i = 0; i < p.items.length; i++) {
+    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
+  }
+  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
+}
+
+function walkPatternForTupleArm(
+  p: Pattern,
+  accessor: string,
+  inner: EvalCtx,
+  guards: string[],
+  binds: string[],
+): void {
+  switch (p.kind) {
+    case "PWildcard":
+      return;
+    case "PBind":
+      inner.localBinds.add(p.name);
+      binds.push(`const ${jsName(p.name)} = ${accessor};`);
+      return;
+    case "PVariant":
+      guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
+      for (let i = 0; i < p.binds.length; i++) {
+        const name = p.binds[i]!;
+        if (name === "_") continue;
+        inner.localBinds.add(name);
+        binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+      }
+      return;
+    case "PTuple":
+      guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
+      for (let i = 0; i < p.items.length; i++) {
+        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+      }
+      return;
+    default: {
+      const _exhaustive: never = p;
+      throw new Error(`unreachable pattern kind: ${(_exhaustive as Pattern).kind}`);
+    }
+  }
 }
 
 // ----- tiles -----
@@ -1857,7 +1919,13 @@ function tileExprJs(t: TileExpr, gen: GenCtx, ctx: EvalCtx, enclosingTile?: stri
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
           }
-          return `if (_v === ${JSON.stringify(arm.pattern.value)}) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
+          // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
+          // no reducerScope here (tile-match runs in pure render context), so the
+          // helper's `inheritReducerScope=false` path is what we want.
+          {
+            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
+            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTile)}; }`;
+          }
         })
         .join(" else ");
       // The no-match fallback renders an empty `text` tile, so the text family
@@ -2315,7 +2383,9 @@ function propsFor(
       p.name === "onSubmit" ||
       p.name === "onChange" ||
       p.name === "onInput" ||
-      p.name === "onClose"
+      p.name === "onClose" ||
+      p.name === "onKeyDown" ||
+      p.name === "onMouseEnter"
     ) {
       if ((p.value as Expr).kind === "Ref") {
         const reducerName = (p.value as Expr as Expr & { name: string }).name;
@@ -2391,6 +2461,33 @@ function propsFor(
       );
     }
   }
+  // Implicit onKeyDown for input / textarea / button when reducer subscribes to
+  // ui.key(EnclosingTile). The runtime exposes `el.key` (the KeyboardEvent.key
+  // value) so reducers can branch on which key was pressed.
+  if ((t.name === "input" || t.name === "textarea" || t.name === "button") && enclosingTile) {
+    const r = ctx.gen.reducers.find(
+      (rr) =>
+        rr.on.kind === "UiEvent" && rr.on.ev === "key" && rr.on.selector.tile === enclosingTile,
+    );
+    if (r && !entries.some((e) => e.startsWith("onKeyDown"))) {
+      entries.push(
+        `onKeyDown: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
+      );
+    }
+  }
+  // Implicit onMouseEnter for any tile when reducer subscribes to
+  // ui.hover(EnclosingTile). Hover is broadly applicable so no tile-name filter.
+  if (enclosingTile) {
+    const r = ctx.gen.reducers.find(
+      (rr) =>
+        rr.on.kind === "UiEvent" && rr.on.ev === "hover" && rr.on.selector.tile === enclosingTile,
+    );
+    if (r && !entries.some((e) => e.startsWith("onMouseEnter"))) {
+      entries.push(
+        `onMouseEnter: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
+      );
+    }
+  }
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
@@ -2399,7 +2496,9 @@ function propsFor(
       p.name === "onSubmit" ||
       p.name === "onChange" ||
       p.name === "onInput" ||
-      p.name === "onClose"
+      p.name === "onClose" ||
+      p.name === "onKeyDown" ||
+      p.name === "onMouseEnter"
     )
       continue;
     // §3.8 link prefetch — these are runtime-side fields, not slot data; their
