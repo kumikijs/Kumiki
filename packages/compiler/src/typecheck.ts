@@ -1229,9 +1229,11 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
   });
   if (t.testKind === "episode-test") {
     // §8.6: each `mocks` key must name a declared effect — same
-    // no-silent-typo guard as reducer-test mocks. The value (`from-log` /
-    // `ignore` / `ok(...)` / `err(...)`) is parsed as an Expr and validated
-    // at runtime by `runEpisodeTest`.
+    // no-silent-typo guard as reducer-test mocks. The value must be one of
+    // `from-log` / `ignore` / `ok(...)` / `err(...)`; codegen would otherwise
+    // silently fall back to `{ policy: "ignore" }` for a typo like
+    // `from_log`, which makes the test pass by skipping the very effect it
+    // was supposed to replay.
     if (t.mocks?.kind === "RecordLit") {
       for (const m of t.mocks.fields) {
         if (!sym.effects.has(m.name)) {
@@ -1240,6 +1242,18 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
             kind: "undef-effect",
             message: `Mock targets undefined effect "${m.name}"`,
             pos: t.mocks.pos,
+          });
+        }
+        const v = m.value;
+        const isFromLog = v.kind === "Ref" && v.name === "from-log";
+        const isIgnore = v.kind === "Ref" && v.name === "ignore";
+        const isOkErr = v.kind === "Call" && (v.callee === "ok" || v.callee === "err");
+        if (!isFromLog && !isIgnore && !isOkErr) {
+          errors.push({
+            code: "E0712",
+            kind: "episode-mock-invalid",
+            message: `Mock for "${m.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
+            pos: v.pos,
           });
         }
       }

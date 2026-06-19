@@ -802,7 +802,12 @@ function episodeMockJs(e: Expr, ctx: EvalCtx): string {
       const value = v.args[0] ? jsOfExpr(v.args[0], ctx) : "null";
       return `${key}: { policy: "fixed", outcome: ${JSON.stringify(v.callee)}, value: ${value} }`;
     }
-    return `${key}: { policy: "ignore" }`;
+    // Defense-in-depth: typecheck (E0712) rejects this before we get here.
+    // If a caller skips check() the loud throw beats silently treating a
+    // typo'd `from_log` as `ignore` and passing the test.
+    throw new Error(
+      `episode-test mock for "${f.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
+    );
   });
   return `{ ${parts.join(", ")} }`;
 }
