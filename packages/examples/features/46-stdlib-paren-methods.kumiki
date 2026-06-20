@@ -1,0 +1,38 @@
+# Feature: stdlib methods that have both a no-paren and a paren form (issue
+# #92). Before the fix the paren form (e.g. `r.is-ok()`) fell through to a
+# native-JS method call and silently misbehaved; now it lowers to the same
+# `_s.*` helper as the no-paren shortcut. Also exercises the three Bytes
+# constructors (`from-text`, `from-base64`, `from-bytes`) so the runtime
+# helpers are reached end-to-end.
+
+slot r  : Result(Int, Text) = Ok(7)
+slot m  : Map(Text, Int)    = {"a": 1, "b": 2}
+slot t  : Text              = "Hello"
+# Includes a two-digit element on purpose: JS's default sort is lexicographic
+# (`[10, 3, 1, 2].sort()` → `[1, 10, 2, 3]`), so when the example renders the
+# head as `1`, that proves the lowering uses the numeric `_s.listSort`.
+slot xs : List(Int)         = [10, 3, 1, 2]
+slot du : Duration          = Duration.h(1)
+
+slot bt : Bytes = Bytes.from-text("hi")
+slot bb : Bytes = Bytes.from-base64("aGk=")
+slot bx : Bytes = Bytes.from-bytes([1, 2, 3])
+
+tile App = column(
+    heading("is-ok():   " + r.is-ok().show),
+    heading("is-err():  " + r.is-err().show),
+    heading("values():  " + m.values().length.show),
+    heading("entries(): " + m.entries().length.show),
+    heading("lower():   " + t.lower()),
+    heading("upper():   " + t.upper()),
+    heading("sort()[0]: " + xs.sort().head().get-or(0).show),
+    heading("ms():      " + du.ms().show),
+    heading("from-text:    " + bt.length.show),
+    heading("from-base64:  " + bb.length.show),
+    heading("from-bytes:   " + bx.length.show)
+) {pad: "lg", gap: "sm"}
+
+app StdlibParenMethods
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -13,7 +13,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Float` | 64bit 浮動小数 | `3.14`, `-0.5` |
 | `Bool` | 真偽値 | `true`, `false` |
 | `Unit` | 単一値 | `()` |
-| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` で生成 |
+| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` で生成（§2.2.10 参照） |
 | `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse()` |
 
 ### 2.1.2 汎化型
@@ -226,6 +226,16 @@ Time / Duration はランタイム上では **raw ミリ秒数**として表現�
 ```kumiki
 fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
+```
+
+### 2.2.10 Bytes
+
+`Bytes` は生のバイト列で、ランタイム上は `Uint8Array` として表現される。v0.x ではコレクション系メソッドは持たず、構築子のみを提供する。
+
+```
+Bytes.from-text(text)       : Bytes        ; UTF-8 エンコード
+Bytes.from-base64(text)     : Bytes        ; 標準 base64 デコード
+Bytes.from-bytes(list)      : Bytes        ; List(Int) から（各値は下位 8bit にマスク）
 ```
 
 ---

@@ -1302,7 +1302,7 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // Zero-arg list / string method shorthands (callable without parens)
       if (e.field === "unique") return `[...new Set((${baseJs}) ?? [])]`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
-      if (e.field === "sort") return `[...((${baseJs}) ?? [])].sort()`;
+      if (e.field === "sort") return `_s.listSort(${baseJs})`;
       // Issue #7: argument-less spec stdlib methods in the parenthesis-free form
       // (docs/spec/stdlib.md §2.2.3 — the recommended shortcut). Kept in exact sync
       // with the MethodCall (paren) cases in methodCallJs + KNOWN_METHODS.
@@ -1359,6 +1359,14 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Duration.h") return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 3600000)`;
       if (cn === "Duration.d" || cn === "Duration.days")
         return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 86400000)`;
+      // Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
+      // Bytes is represented as Uint8Array at runtime.
+      if (cn === "Bytes.from-text")
+        return `_s.bytesFromText(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
+      if (cn === "Bytes.from-base64")
+        return `_s.bytesFromBase64(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
+      if (cn === "Bytes.from-bytes")
+        return `_s.bytesFromBytes(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "[]"})`;
       // Decoder.* — codegen treats decoders as a sentinel string; the builtin storage handler
       // ignores everything except "json".
       if (cn === "Decoder.Json") return `"json"`;
@@ -1512,10 +1520,10 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "neg", // Int/Float.neg
   "to-float", // Int.to-float → Float
   "to-int", // Float.to-int → Int (truncated)
-  // ADR-002 symmetry: these are emitted as no-paren FieldAccess shortcuts (see
-  // FIELD_ACCESS_SHORTCUTS / jsOfExpr) but were missing here, so their `.m()`
-  // form wrongly tripped E0801 while `.m` worked. Listing them makes both shapes
-  // agree (and keeps FIELD_ACCESS_SHORTCUTS ⊆ KNOWN_METHODS).
+  // Issue #92: stdlib methods that also have FieldAccess shortcuts (see
+  // FIELD_ACCESS_SHORTCUTS / jsOfExpr). Both shapes lower to the same `_s.*`
+  // helper via the matching cases in methodCallJs — keeps FIELD_ACCESS_SHORTCUTS
+  // ⊆ KNOWN_METHODS and stops the paren form from falling through to native JS.
   "is-ok", // Result(T,E).is-ok → Bool
   "is-err", // Result(T,E).is-err → Bool
   "values", // Map(K,V).values → List(V)
@@ -1739,6 +1747,26 @@ function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: EvalCtx): s
     case "clamp":
       // Int/Float.clamp(lo, hi)
       return `Math.min(Math.max((${recvJs}), (${argRaw(args[0]!)})), (${argRaw(args[1]!)}))`;
+    // ----- Issue #92: paren-form stdlib methods kept in sync with the
+    // FieldAccess (no-paren) cases in jsOfExpr. Without these the calls fall
+    // through to the generic `(recv).method(...)` fallback and delegate to
+    // native JS — silent failure for `.is-ok()` / `.values()` / `.lower()` etc. -----
+    case "is-ok":
+      return `(_s.variantIs(${recvJs}, "Ok"))`;
+    case "is-err":
+      return `(_s.variantIs(${recvJs}, "Err"))`;
+    case "values":
+      return `_s.mapValues(${recvJs})`;
+    case "entries":
+      return `_s.mapEntries(${recvJs})`;
+    case "lower":
+      return `(String((${recvJs}) ?? "")).toLowerCase()`;
+    case "upper":
+      return `(String((${recvJs}) ?? "")).toUpperCase()`;
+    case "sort":
+      return `_s.listSort(${recvJs})`;
+    case "ms":
+      return `(${recvJs})`;
     // ----- Issue #7: argument-less stdlib methods (parenthesized form). Kept in
     // sync with the FieldAccess (no-paren) cases in jsOfExpr + KNOWN_METHODS. -----
     case "head":

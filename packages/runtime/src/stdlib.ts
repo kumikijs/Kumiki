@@ -114,6 +114,23 @@ export const _stdlibCore = {
   listSortBy<T>(xs: T[], keyOf: (x: T) => number): T[] {
     return [...(xs ?? [])].sort((a, b) => keyOf(a) - keyOf(b));
   },
+  /**
+   * `List(T).sort` — polymorphic. Numeric elements sort numerically (so
+   * `[3,1,2,10].sort` → `[1,2,3,10]`, not the JS default `[1,10,2,3]`); any
+   * other element type falls back to a stable string comparison. Mixed lists
+   * are sorted as strings so the result stays well-defined.
+   */
+  listSort(xs: unknown[] | undefined | null): unknown[] {
+    const arr = [...(xs ?? [])];
+    if (arr.length === 0) return arr;
+    const allNumbers = arr.every((x) => typeof x === "number" && Number.isFinite(x));
+    if (allNumbers) return (arr as number[]).sort((a, b) => a - b);
+    return arr.sort((a, b) => {
+      const sa = String(a);
+      const sb = String(b);
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
+  },
   /** List(T).fold(init, expr): left fold with $1=acc, $2=elem. */
   listFold<T, A>(xs: T[], init: A, fn: (acc: A, x: T) => A): A {
     let acc = init;
@@ -403,6 +420,41 @@ export const _stdlibCore = {
     _fileUrlCache.set(handle, url);
     _fileUrlRegistry?.register(handle, url);
     return url;
+  },
+
+  // ----- Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
+  // Bytes is represented as Uint8Array at runtime. The constructors are
+  // lenient on nullish / malformed input and return an empty Uint8Array
+  // instead of throwing — same shape as the rest of stdlib (mapValues etc.). -----
+
+  /** `Bytes.from-text(text)` — UTF-8 encode. */
+  bytesFromText(text: unknown): Uint8Array {
+    return new TextEncoder().encode(String(text ?? ""));
+  },
+  /**
+   * `Bytes.from-base64(text)` — standard base64 decode. Returns an empty
+   * Uint8Array for nullish input and for malformed base64 (atob would throw
+   * a DOMException otherwise — inconsistent with the rest of stdlib).
+   */
+  bytesFromBase64(b64: unknown): Uint8Array {
+    if (b64 == null) return new Uint8Array();
+    const s = String(b64);
+    let bin: string;
+    try {
+      bin = atob(s);
+    } catch {
+      return new Uint8Array();
+    }
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  },
+  /** `Bytes.from-bytes(list)` — from List(Int) of byte values; clamps to low 8 bits. */
+  bytesFromBytes(arr: unknown): Uint8Array {
+    const xs = Array.isArray(arr) ? (arr as number[]) : [];
+    const out = new Uint8Array(xs.length);
+    for (let i = 0; i < xs.length; i++) out[i] = Number(xs[i]) & 0xff;
+    return out;
   },
 };
 
