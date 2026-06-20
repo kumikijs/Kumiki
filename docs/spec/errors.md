@@ -106,6 +106,14 @@ A `recv.member` access where the **inferred type** of `recv` is known, but `memb
 
 **Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [List(T)](./stdlib.md#_2-2-3-list-t).
 
+### E0110 `unknown-token-group`
+
+A `@<group>.<name>` theme-token reference ([Style §4.3](./style.md#_4-3-token-references)) names a `<group>` that is not one of the closed theme namespaces (`colors`, `spacing`, `radius`, `shadow`, `typography`, `breakpoints`).
+
+> `Unknown theme token group "@<group>" (allowed: …)`
+
+**Fix**: Use one of the listed groups (e.g. `@colors.surface`, `@spacing.md`), or — if you wanted a plain identifier — drop the `@` prefix.
+
 ### E0109 `test-wildcard-misuse`
 
 A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `expect` — in a reducer/tile/fn/app body, or in a test's `given`. Wildcards are a matching construct for the expected result only ([Wildcards](./testing.md#_8-2-2-wildcards)); they have no meaning as a value to compute or feed in.
@@ -113,6 +121,38 @@ A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `exp
 > `Test wildcard "<any-id>" is only valid inside a reducer-test \`expect\``
 
 **Fix**: Remove the wildcard, or move it into the `reducer-test` `expect`.
+
+### E0110 `sub-routes-without-wildcard-parent`
+
+A tile declares `sub-routes` but its parent route in `app.routes` is not a wildcard (`/*`) pattern. Without a wildcard parent the runtime never reaches the nested matcher, so the sub-routes can never apply. See [Nested Routes](./routing.md#_3-6-nested-routes).
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
+
+### E0111 `orphan-sub-routes`
+
+A tile declares `sub-routes` but no entry in `app.routes` targets that tile. The nested route table cannot be reached.
+
+> `Tile "<name>" declares sub-routes but is not the target of any route in app.routes`
+
+**Fix**: Add a route in `app.routes` that targets this tile with a `/*` pattern, or remove the `sub-routes` block.
+
+### E0112 `duplicate-sub-route`
+
+The same sub-route path is declared more than once on a single tile. Match order is positional, so duplicates are either dead code or a typo.
+
+> `Sub-route path "<path>" is declared more than once in tile "<name>"`
+
+**Fix**: Remove the duplicate entry, or rename one of the paths.
+
+### E0113 `sub-routes-without-outlet`
+
+A tile declares `sub-routes` but its body never calls `route-outlet`. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
+
+> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+
+**Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
 
 ## E02xx — Types
 

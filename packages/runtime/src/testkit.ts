@@ -6,6 +6,50 @@
 
 import type { ReducerSpec } from "./core.ts";
 
+/**
+ * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
+ * sufficient for replay. Inlined by codegen at compile time, so the runtime
+ * deals only with already-parsed objects — anything not matched falls back to
+ * an unrecognized step that replay just skips over.
+ */
+type EpisodeReducerStep = {
+  kind: "reducer";
+  name: string;
+  "slot-diffs"?: { name: string; before?: unknown; after: unknown }[];
+  emits?: string[];
+  ts?: number;
+};
+type EpisodeEffectEndStep = {
+  kind: "effect-end";
+  name: string;
+  result: "ok" | "err";
+  value: unknown;
+  ts?: number;
+};
+type EpisodeStepLite =
+  | EpisodeReducerStep
+  | { kind: "effect-start"; name: string; args?: unknown; ts?: number }
+  | EpisodeEffectEndStep
+  | { kind: "signal-update"; "dirty-slots"?: string[]; "binds-updated"?: string[]; ts?: number }
+  | { kind: "panic"; message: string; location?: string; ts?: number };
+
+export type EpisodeLogEntry = {
+  id: string;
+  trigger: { kind: string; target?: string; payload?: unknown; ts?: number };
+  steps: EpisodeStepLite[];
+  status: "completed" | "panic" | "cancelled" | "ongoing";
+};
+
+/**
+ * Mock resolution policy for an `episode-test` effect: replay the recorded
+ * effect-end (`from-log`), drop the effect entirely (`ignore`), or inject a
+ * fixed `{outcome, value}` deterministically.
+ */
+export type EpisodeMockPolicy =
+  | { policy: "from-log" }
+  | { policy: "ignore" }
+  | { policy: "fixed"; outcome: "ok" | "err"; value: unknown };
+
 export type TestResult = {
   name: string;
   pass: boolean;
@@ -606,6 +650,172 @@ export const _stdlibTest = {
       panic = e && (e as Error).message ? (e as Error).message : String(e);
     }
     return compareReducerExpect(name, { ...live }, residual, panic, expect, unhandledErr);
+  },
+  /**
+   * Replay a recorded episode log against the current app (spec/testing.md §8.6).
+   * For each Episode, dispatch the first `reducer` step's reducer with the
+   * trigger payload and let the recorded emit → effect-end → .ok/.err chain
+   * play out. Effect outcomes come from the caller's `mocks` map: `from-log`
+   * consumes the next recorded effect-end value in order; `ignore` skips
+   * delivery; `fixed` injects an explicit `{outcome, value}`. After every
+   * episode replays, compare the live slots against `expect.slotsEqual` —
+   * either a record literal or `"from-log"` (accumulated from each reducer
+   * step's `slot-diffs`).
+   */
+  runEpisodeTest(input: {
+    name: string;
+    app: {
+      live: Record<string, unknown>;
+      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      reducers: ReducerSpec[];
+    };
+    episodes: EpisodeLogEntry[];
+    mocks: Record<string, EpisodeMockPolicy>;
+    expect: {
+      slotsEqual?: "from-log" | Record<string, unknown>;
+      noPanics?: boolean;
+      noErrors?: boolean;
+    };
+  }): TestResult {
+    const { name, app, episodes, mocks, expect } = input;
+    // Start from slot defaults so each test is hermetic (spec §8.6 expects the
+    // log to be the sole driver of state).
+    for (const k of Object.keys(app.live)) delete app.live[k];
+    for (const [k, m] of Object.entries(app.slots)) app.live[k] = m.value;
+
+    const panics: { episodeId: string; message: string }[] = [];
+    const unhandledErrors: string[] = [];
+
+    const writeSlots = (resSlots: Record<string, unknown> | undefined): void => {
+      for (const [k, v] of Object.entries(resSlots ?? {})) {
+        const meta = app.slots[k];
+        if (meta?.refine && !meta.refine(v)) continue;
+        app.live[k] = v;
+      }
+    };
+
+    for (const ep of episodes) {
+      const firstRed = ep.steps.find((s): s is EpisodeReducerStep => s.kind === "reducer");
+      if (!firstRed) continue;
+      const entry = app.reducers.find((r) => r.name === firstRed.name);
+      if (!entry) continue;
+
+      // Build a per-effect FIFO of recorded effect-end values so a `from-log`
+      // mock can resolve in the order the production run produced them.
+      const recordedResults: Record<string, { result: "ok" | "err"; value: unknown }[]> = {};
+      for (const s of ep.steps) {
+        if (s.kind === "effect-end") {
+          const list = recordedResults[s.name] ?? [];
+          list.push({ result: s.result, value: s.value });
+          recordedResults[s.name] = list;
+        }
+      }
+      const cursors: Record<string, number> = {};
+
+      const triggerPayload = (ep.trigger.payload as Record<string, unknown> | undefined) ?? {};
+      const queue: { reducer: ReducerSpec; payload: Record<string, unknown> }[] = [
+        { reducer: entry, payload: { $el: triggerPayload, $event: triggerPayload } },
+      ];
+
+      let guard = 0;
+      while (queue.length > 0 && guard++ < 10000) {
+        const job = queue.shift();
+        if (!job) break;
+        let res: ReturnType<ReducerSpec["apply"]>;
+        try {
+          res = job.reducer.apply(app.live, job.payload);
+        } catch (e) {
+          const msg = e && (e as Error).message ? (e as Error).message : String(e);
+          panics.push({ episodeId: ep.id, message: msg });
+          continue;
+        }
+        writeSlots(res.slots);
+        for (const emit of res.emits ?? []) {
+          const mock = mocks[emit.effect];
+          if (!mock || mock.policy === "ignore") continue;
+          let outcome: "ok" | "err";
+          let value: unknown;
+          if (mock.policy === "from-log") {
+            const list = recordedResults[emit.effect] ?? [];
+            const idx = cursors[emit.effect] ?? 0;
+            const recorded = list[idx];
+            if (!recorded) continue;
+            cursors[emit.effect] = idx + 1;
+            outcome = recorded.result;
+            value = recorded.value;
+          } else {
+            outcome = mock.outcome;
+            value = mock.value;
+          }
+          let matched = 0;
+          for (const r of app.reducers) {
+            if (
+              r.event.kind === "effect" &&
+              r.event.effect === emit.effect &&
+              r.event.outcome === outcome
+            ) {
+              queue.push({
+                reducer: r,
+                payload: { $1: value, $2: emit.args?.[0] },
+              });
+              matched++;
+            }
+          }
+          if (outcome === "err" && matched === 0) unhandledErrors.push(emit.effect);
+        }
+      }
+    }
+
+    // Compute the from-log expectation from the recorded reducer slot-diffs.
+    let expectedSlots: Record<string, unknown> | null = null;
+    if (expect.slotsEqual === "from-log") {
+      expectedSlots = {};
+      for (const [k, m] of Object.entries(app.slots)) expectedSlots[k] = m.value;
+      for (const ep of episodes) {
+        for (const s of ep.steps) {
+          if (s.kind === "reducer") {
+            const diffs = (s as EpisodeReducerStep)["slot-diffs"] ?? [];
+            for (const d of diffs) expectedSlots[d.name] = d.after;
+          }
+        }
+      }
+    } else if (expect.slotsEqual && typeof expect.slotsEqual === "object") {
+      expectedSlots = expect.slotsEqual as Record<string, unknown>;
+    }
+
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!deepEqualValue(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
+    }
+    if (expect.noPanics && panics.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "no panics",
+        actual: panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
+        diffAt: "panics",
+      };
+    }
+    if (expect.noErrors && unhandledErrors.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "no unhandled effect errors",
+        actual: unhandledErrors.join(", "),
+        diffAt: "errors",
+      };
+    }
+    return { name, pass: true };
   },
   /** Structurally compare a rendered tile against the expected tile structure. */
   runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {

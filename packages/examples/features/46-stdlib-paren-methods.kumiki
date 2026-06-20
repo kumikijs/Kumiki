@@ -8,7 +8,10 @@
 slot r  : Result(Int, Text) = Ok(7)
 slot m  : Map(Text, Int)    = {"a": 1, "b": 2}
 slot t  : Text              = "Hello"
-slot xs : List(Int)         = [3, 1, 2]
+# Includes a two-digit element on purpose: JS's default sort is lexicographic
+# (`[10, 3, 1, 2].sort()` → `[1, 10, 2, 3]`), so when the example renders the
+# head as `1`, that proves the lowering uses the numeric `_s.listSort`.
+slot xs : List(Int)         = [10, 3, 1, 2]
 slot du : Duration          = Duration.h(1)
 
 slot bt : Bytes = Bytes.from-text("hi")
@@ -22,7 +25,7 @@ tile App = column(
     heading("entries(): " + m.entries().length.show),
     heading("lower():   " + t.lower()),
     heading("upper():   " + t.upper()),
-    heading("sort():    " + xs.sort().length.show),
+    heading("sort()[0]: " + xs.sort().head().get-or(0).show),
     heading("ms():      " + du.ms().show),
     heading("from-text:    " + bt.length.show),
     heading("from-base64:  " + bb.length.show),

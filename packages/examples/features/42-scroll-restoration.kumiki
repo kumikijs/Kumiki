@@ -1,0 +1,39 @@
+# Feature: scroll restoration — tile-level opt-out + scroll-to effect.
+# Spec: routing.md §3.9.
+#
+# The Chat tile opts out of automatic scrollTo on entry by declaring
+# `scroll-restoration = false`; the runtime keeps the current scroll position
+# instead of jumping to the top. The Top tile demonstrates the standard
+# `scroll-to` effect which any reducer can emit.
+
+slot pulses : Int = 0
+
+reducer top
+    on=route.enter("/")
+    do= pulses := pulses + 1
+        emit scroll-to({x: 0, y: 0})
+
+tile Home = page(
+    heading("Home"),
+    text("top pulses: " + pulses.show),
+    link(to="/chat") {text: "Go to chat"}
+)
+
+tile Chat
+    scroll-restoration = false
+    = page(
+        heading("Chat"),
+        text("scroll-restoration is disabled on this tile"),
+        link(to="/") {text: "Home"}
+    )
+
+tile NotFound = page(heading("404"), link(to="/") {text: "Home"})
+
+app ScrollRestoration
+    caps   = []
+    routes = {
+        "/"      -> Home,
+        "/chat"  -> Chat,
+        "/404"   -> NotFound
+    }
+    init   = []

@@ -310,4 +310,147 @@ describe("codegen", () => {
     expect(result.js).not.toContain("storageRead");
     expect(result.js).not.toContain("storageWrite");
   });
+
+  // Issue #85: a parent route whose tile declares `sub-routes` must emit a
+  // nested `subRoutes:` array on the route entry so the runtime can re-match.
+  it("emits sub-routes on the parent route entry", () => {
+    const src = `
+      tile NotFound = page(heading("404"))
+      tile Account = page(heading("a"))
+      tile Home = page(heading("home"))
+      tile Layout
+        sub-routes = {
+          "/settings/account" -> Account,
+          "/settings"         -> Home
+        }
+        = page(route-outlet())
+      app A caps=[nav.push] routes={
+        "/settings/*" -> Layout,
+        "/404"        -> NotFound
+      } init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('pattern: "/settings/*"');
+    expect(result.js).toContain("subRoutes:");
+    expect(result.js).toContain('pattern: "/settings/account"');
+    expect(result.js).toContain('pattern: "/settings"');
+  });
+
+  it("lowers `@token` refs in a style block to runtime `_s.token(...)` calls (§4.3)", () => {
+    const src = `
+      tile Card = box() {style: {background: @colors.surface, padding: @spacing.md, radius: @radius.md, shadow: @shadow.sm, font-size: @typography.size.lg}}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('_s.token("colors", ["surface"])');
+    expect(result.js).toContain('_s.token("spacing", ["md"])');
+    expect(result.js).toContain('_s.token("radius", ["md"])');
+    expect(result.js).toContain('_s.token("shadow", ["sm"])');
+    expect(result.js).toContain('_s.token("typography", ["size", "lg"])');
+    // `style` is a CSS prop bag the runtime applies to el.style — it must NOT
+    // also ride the `el` reducer bag, where it would re-evaluate every
+    // `@token` ref for no consumer. The source has two routes pointing at the
+    // same App, so each `_s.token(...)` appears exactly once per route (2 ×).
+    const colorsHits = (result.js.match(/_s\.token\("colors"/g) ?? []).length;
+    expect(colorsHits).toBe(2);
+    // And the per-tile `el: { ... }` bag — built only when extra props exist —
+    // must not be present (style is the only prop and we drop it from el).
+    expect(result.js).not.toMatch(/el: \{ style:/);
+  });
+
+  // issue #91 — language.md §1.6.1 + §1.9.
+  it("emits onKeyDown for ui.key(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot k : Text = ""
+      reducer onKey on=ui.key(Box) do= k := "hit"
+      tile Box = input(bind=k)
+      tile App = column(Box)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onKeyDown: \(el\) => globalThis\.__kumikiApp\._dispatch\("onKey"/);
+  });
+
+  it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
+    const src = `
+      slot h : Bool = false
+      reducer onHover on=ui.hover(Card) do= h := true
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onMouseEnter: \(el\) => globalThis\.__kumikiApp\._dispatch\("onHover"/,
+    );
+  });
+
+  it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
+    const src = `
+      type Light = Red | Green
+      fn f(p: Tuple(Light, Light)) -> Text = match p with
+        | (Red, Green) -> "rg"
+        | (x, y) -> "other"
+      slot label : Text = ""
+      tile App = text(label)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("Array.isArray");
+    expect(result.js).toContain(".length === 2");
+    expect(result.js).toContain('_s.variantIs((_v)[0], "Red")');
+    expect(result.js).toContain('_s.variantIs((_v)[1], "Green")');
+  });
+
+  // issue #91 — tile-match must accept tuple patterns too (§1.4 grammar now
+  // mirrors §1.9). Covers the TileMatch lowering path that delegates to the
+  // shared `tupleArm` helper.
+  it("emits an Array.isArray guard for a tuple pattern in tile-match (§1.4)", () => {
+    const src = `
+      type Tag = A | B
+      tile Row in=Tuple(Tag, Text)
+        = match $1 with
+            | (A, _) -> text("a-row")
+            | (B, _) -> text("b-row")
+      slot rows : List(Text) = ["x", "y"]
+      slot tags : List(Tag)  = [A, B]
+      tile App = column(for p in tags.zip(rows) Row(p))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("Array.isArray");
+    expect(result.js).toContain(".length === 2");
+    expect(result.js).toContain('_s.variantIs((_v)[0], "A")');
+    expect(result.js).toContain('_s.variantIs((_v)[0], "B")');
+  });
+
+  it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {
+    // Regression guard: shorthand props are still resolved at runtime by
+    // applyContainerProps/applyTextProps, NOT desugared at codegen time.
+    const src = `
+      tile Card = box(text("hi")) {bg: "surface", pad: "md"}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('bg: "surface"');
+    expect(result.js).toContain('pad: "md"');
+    expect(result.js).not.toContain('_s.token("colors"');
+    expect(result.js).not.toContain('_s.token("spacing"');
+  });
 });

@@ -4,6 +4,7 @@ import type {
   Expr,
   FnDef,
   Lvalue,
+  Pattern,
   Pos,
   Program,
   ReducerDef,
@@ -260,6 +261,104 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     ctx.localTypes?.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
+  if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
+}
+
+function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const subRoutes = tile.subRoutes;
+  if (!subRoutes) return;
+  // Each sub-route's target tile must exist (redirects skip).
+  for (const sr of subRoutes) {
+    if (sr.tile.startsWith(">>")) continue;
+    if (!sym.tiles.has(sr.tile)) {
+      errors.push({
+        code: "E0105",
+        kind: "undef-tile",
+        message: `Sub-route "${sr.path}" in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // Duplicate sub-route paths within the same tile.
+  const seen = new Set<string>();
+  for (const sr of subRoutes) {
+    if (seen.has(sr.path)) {
+      errors.push({
+        code: "E0112",
+        kind: "duplicate-sub-route",
+        message: `Sub-route path "${sr.path}" is declared more than once in tile "${tile.name}"`,
+        pos: tile.pos,
+      });
+    }
+    seen.add(sr.path);
+  }
+  // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
+  // never match because the runtime only looks them up after the parent
+  // wildcard matches the path. If the tile isn't a route target at all,
+  // emit `orphan-sub-routes` instead.
+  const app = sym.app;
+  if (!app) return;
+  const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
+  if (parents.length === 0) {
+    errors.push({
+      code: "E0111",
+      kind: "orphan-sub-routes",
+      message: `Tile "${tile.name}" declares sub-routes but is not the target of any route in app.routes`,
+      pos: tile.pos,
+    });
+    return;
+  }
+  for (const parent of parents) {
+    if (!parent.path.endsWith("/*")) {
+      errors.push({
+        code: "E0110",
+        kind: "sub-routes-without-wildcard-parent",
+        message: `Tile "${tile.name}" declares sub-routes but its parent route "${parent.path}" is not a wildcard pattern (must end with "/*")`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // The matched child can only render if the parent's body actually contains
+  // a `route-outlet`. Without one, sub-routes compile but silently render
+  // nothing — exactly the "compiles but does nothing" failure mode Kumiki
+  // refuses to ship. Catch it at the type check.
+  if (!tileBodyUsesRouteOutlet(tile.body)) {
+    errors.push({
+      code: "E0113",
+      kind: "sub-routes-without-outlet",
+      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      pos: tile.pos,
+    });
+  }
+}
+
+/** True if any sub-tree of the tile body is a `route-outlet` call. */
+function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
+  switch (t.kind) {
+    case "TileCall": {
+      if (t.name === "route-outlet") return true;
+      for (const arg of t.args) {
+        const v = arg.value as TileExpr;
+        if (
+          v.kind === "TileCall" ||
+          v.kind === "TileFor" ||
+          v.kind === "TileWhen" ||
+          v.kind === "TileIf" ||
+          v.kind === "TileMatch"
+        ) {
+          if (tileBodyUsesRouteOutlet(v)) return true;
+        }
+      }
+      return false;
+    }
+    case "TileFor":
+    case "TileWhen":
+      return tileBodyUsesRouteOutlet(t.body);
+    case "TileIf":
+      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
+    case "TileMatch":
+      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
+  }
 }
 
 type Ctx = {
@@ -344,9 +443,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        if (arm.pattern.kind === "PVariant")
-          for (const b of arm.pattern.binds) inner.localBinds.add(b);
-        if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+        addPatternBinds(arm.pattern, inner.localBinds);
         checkTileExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -442,6 +539,27 @@ function checkTileCall(
           pos: prop.value.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch") {
+      // §3.8 prefetch — value names a reducer (bare ident or string literal),
+      // not a value expression. Skip checkExpr (would flag the ident as undef)
+      // and instead verify the reducer exists.
+      const ref = prop.value;
+      const name = ref.kind === "Ref" ? ref.name : ref.kind === "Str" ? ref.value : null;
+      if (name === null) {
+        errors.push({
+          code: "E0201",
+          kind: "type-mismatch",
+          message: `link prefetch must be a reducer name`,
+          pos: ref.pos,
+        });
+      } else if (!sym.reducers.has(name)) {
+        errors.push({
+          code: "E0102",
+          kind: "undef-reducer",
+          message: `Reference to undefined reducer "${name}"`,
+          pos: ref.pos,
+        });
+      }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
@@ -515,9 +633,7 @@ function checkStmt(
         localBinds: new Set(ctx.localBinds),
         localTypes: new Map(ctx.localTypes ?? []),
       };
-      if (arm.pattern.kind === "PVariant")
-        for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
-      if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+      addPatternBinds(arm.pattern, inner.localBinds);
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
       armSets.push(armWrites);
@@ -542,6 +658,7 @@ function checkStmt(
       s.effect === "navigate" ||
       s.effect === "navigate-replace" ||
       s.effect === "navigate-back" ||
+      s.effect === "scroll-to" ||
       s.effect === "toast" ||
       s.effect === "confirm" ||
       s.effect === "log";
@@ -761,9 +878,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        if (arm.pattern.kind === "PVariant")
-          for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
-        if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+        addPatternBinds(arm.pattern, inner.localBinds);
         checkExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -786,8 +901,31 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.body, sym, errors, inner);
       return;
     }
+    case "TokenRef":
+      if (!KNOWN_TOKEN_GROUPS.has(e.group)) {
+        errors.push({
+          code: "E0110",
+          kind: "unknown-token-group",
+          message: `Unknown theme token group "@${e.group}" (allowed: ${[...KNOWN_TOKEN_GROUPS].join(", ")})`,
+          pos: e.pos,
+        });
+      }
+      return;
   }
 }
+
+// Closed set of theme token namespaces (spec/style.md §4.2). The token name
+// itself (the path beneath the group) is intentionally NOT validated here:
+// themes can be slot-driven and swap at runtime, so the runtime resolver does
+// the lookup with a graceful fallback to the spec's built-in defaults.
+const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
+  "colors",
+  "spacing",
+  "radius",
+  "shadow",
+  "typography",
+  "breakpoints",
+]);
 
 // ===== Receiver type inference (ADR-002, #23) =====
 // A minimal, dispatch-directed inferencer: just enough to tell a record field
@@ -796,8 +934,26 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
 // inference never guesses, so an untyped receiver keeps the historical
 // name-based shortcut dispatch with no diagnostic.
 
-const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes"]);
+const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes", "File"]);
 const STDLIB_CONTAINERS = new Set(["List", "Map", "Set", "Option", "Result"]);
+
+/**
+ * Structural fields exposed by built-in prim types. `File` is treated as a
+ * scalar at the type system level (its handle is opaque, never inspected by
+ * the compiler) but the runtime stores it as a record so Kumiki expressions
+ * can read its metadata — `f.name : Text`, `f.size : Int`, `f.type : Text`
+ * (docs/spec/stdlib.md §2.1). Without this table classifyFieldAccess would
+ * emit E0108 on every legitimate File field read.
+ */
+const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
+  File: { name: "Text", size: "Int", type: "Text" },
+};
+
+function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
+  const name = PRIM_FIELDS[primName]?.[field];
+  if (!name) return null;
+  return { kind: "TypePrim", name, pos };
+}
 
 /** Unwrap type aliases (`TypeRef` → its `TypeDef` body) and nominal/refinement wrappers. */
 function unaliasType(
@@ -842,6 +998,10 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
+      if (base.kind === "TypePrim") {
+        const t = primFieldType(base.name, e.field, e.pos);
+        if (t) return t;
+      }
       // `.get` unwraps Option(T) / Result(T,E) → T
       if (
         e.field === "get" &&
@@ -934,6 +1094,10 @@ function classifyFieldAccess(
     (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
     (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
   if (isKnownReceiver) {
+    if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[e.field]) {
+      e.accessKind = "field";
+      return;
+    }
     if (KNOWN_MEMBERS.has(e.field)) {
       e.accessKind = "shortcut";
       return;
@@ -980,6 +1144,25 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
 
 function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
+}
+
+// Collect every identifier introduced by a pattern (PBind name, PVariant binds,
+// and PTuple element binds recursively) so callers can add them to localBinds in
+// one pass without case-splitting at the call site.
+function addPatternBinds(p: Pattern, dst: Set<string>): void {
+  if (p.kind === "PBind") {
+    dst.add(p.name);
+    return;
+  }
+  if (p.kind === "PVariant") {
+    for (const b of p.binds) if (b !== "_") dst.add(b);
+    return;
+  }
+  if (p.kind === "PTuple") {
+    for (const it of p.items) addPatternBinds(it, dst);
+    return;
+  }
+  // PWildcard introduces no binds.
 }
 
 /**
@@ -1058,6 +1241,39 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
       });
     }
   });
+  if (t.testKind === "episode-test") {
+    // §8.6: each `mocks` key must name a declared effect — same
+    // no-silent-typo guard as reducer-test mocks. The value must be one of
+    // `from-log` / `ignore` / `ok(...)` / `err(...)`; codegen would otherwise
+    // silently fall back to `{ policy: "ignore" }` for a typo like
+    // `from_log`, which makes the test pass by skipping the very effect it
+    // was supposed to replay.
+    if (t.mocks?.kind === "RecordLit") {
+      for (const m of t.mocks.fields) {
+        if (!sym.effects.has(m.name)) {
+          errors.push({
+            code: "E0104",
+            kind: "undef-effect",
+            message: `Mock targets undefined effect "${m.name}"`,
+            pos: t.mocks.pos,
+          });
+        }
+        const v = m.value;
+        const isFromLog = v.kind === "Ref" && v.name === "from-log";
+        const isIgnore = v.kind === "Ref" && v.name === "ignore";
+        const isOkErr = v.kind === "Call" && (v.callee === "ok" || v.callee === "err");
+        if (!isFromLog && !isIgnore && !isOkErr) {
+          errors.push({
+            code: "E0712",
+            kind: "episode-mock-invalid",
+            message: `Mock for "${m.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
+            pos: v.pos,
+          });
+        }
+      }
+    }
+    return;
+  }
   if (t.testKind === "property-test") {
     // The `for-all` types must resolve, and every `run-reducer(name)` in the
     // invariant must name a declared reducer.

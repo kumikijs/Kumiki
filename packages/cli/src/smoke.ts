@@ -2,15 +2,17 @@
 // headless DOM (happy-dom), exercises its UI, and reports failures that check/build
 // cannot catch: runtime throws, empty renders, and unhandled rejections.
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { compile } from "@kumikijs/compiler";
-import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
+import { nodeEpisodeLogReader, nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
   type AppShape,
+  createEpisodeLogger,
+  type EpisodeLogger,
   runScenario,
   type Scenario,
   type ScenarioReport,
@@ -32,7 +34,7 @@ function ensureDom(): void {
 async function loadApp(
   source: string,
   capabilities: string[] = [],
-  opts: { includeTests?: boolean } = {},
+  opts: { includeTests?: boolean; sourcePath?: string } = {},
 ): Promise<AppShape> {
   const result = compile(source, {
     runtimeSpecifier: "ignored",
@@ -40,6 +42,7 @@ async function loadApp(
     readRuntimeBundle: nodeRuntimeBundleReader,
     capabilities,
     includeTests: opts.includeTests === true,
+    ...(opts.sourcePath ? { readEpisodeLog: nodeEpisodeLogReader(opts.sourcePath) } : {}),
   });
   if (result.kind !== "ok") {
     throw new Error(
@@ -98,6 +101,7 @@ export async function runScenarioSource(
   source: string,
   scenario: Scenario,
   capabilities: string[] = [],
+  opts: { episodeLogger?: EpisodeLogger | null } = {},
 ): Promise<ScenarioReport> {
   ensureDom();
   const app = await loadApp(source, capabilities);
@@ -105,7 +109,10 @@ export async function runScenarioSource(
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    return await runScenario(app, root, scenario, { settleMs: 20 });
+    return await runScenario(app, root, scenario, {
+      settleMs: 20,
+      episodeLogger: opts.episodeLogger ?? null,
+    });
   } finally {
     root.remove();
   }
@@ -116,9 +123,20 @@ export async function runCmd(
   kumikiPath: string,
   scenarioPath: string,
   capabilities: string[] = [],
+  opts: { episodeLog?: string } = {},
 ): Promise<void> {
   const scenario = JSON.parse(readFileSync(scenarioPath, "utf8")) as Scenario;
-  const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities);
+  // Episode log is opt-in: write only when the caller asked for it via the
+  // `--episode-log <file>` flag or the `KUMIKI_EPISODE_LOG` env var. This keeps
+  // example runs from littering sidecar JSONL next to every .kumiki file. When
+  // enabled, the §10.5 runtime episode logger records each trigger → reducer →
+  // effect-start → effect-end → signal-update chain into memory; we flush the
+  // entire ring to disk after the scenario completes.
+  const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
+  const episodeLogger = logFile ? createEpisodeLogger() : null;
+  const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
+    episodeLogger,
+  });
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
@@ -129,6 +147,11 @@ export async function runCmd(
     for (const f of s.failures) console.log(`    assert: ${f}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
+  if (episodeLogger && logFile) {
+    for (const ep of episodeLogger.list()) {
+      appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
+    }
+  }
   if (!report.ok) process.exit(1);
 }
 
@@ -140,9 +163,13 @@ type TestRunner = { name: string; kind: string; run: () => TestResult };
 export async function runTestsSource(
   source: string,
   capabilities: string[] = [],
+  opts: { sourcePath?: string } = {},
 ): Promise<TestResult[]> {
   ensureDom();
-  await loadApp(source, capabilities, { includeTests: true });
+  await loadApp(source, capabilities, {
+    includeTests: true,
+    ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
+  });
   const tests = (globalThis as unknown as { __kumikiTests?: TestRunner[] }).__kumikiTests ?? [];
   return tests.map((t) => {
     const t0 = performance.now();
@@ -152,7 +179,7 @@ export async function runTestsSource(
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
-  return runTestsSource(readFileSync(path, "utf8"), capabilities);
+  return runTestsSource(readFileSync(path, "utf8"), capabilities, { sourcePath: path });
 }
 
 /** Render a scalar leaf value for the §8.7.1 value arrow (strings get quoted). */

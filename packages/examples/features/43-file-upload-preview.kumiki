@@ -1,0 +1,23 @@
+# Feature: file upload via input(type="file") + $event.files.head + file-url().
+# The change event on a file input carries `files: List(File)`; head gives back
+# Option(File). file-url() is the URL.createObjectURL equivalent, used here to
+# preview the picked image without first uploading it.
+
+slot avatar : Option(File) = None
+
+tile AvatarPicker = input(type="file", accept="image/*")
+
+reducer pickFile
+    on=ui.change(AvatarPicker)
+    do= avatar := $event.files.head
+
+tile Preview
+    = when(avatar.is-some,
+        image(src=file-url(avatar.get)) {w: 100, h: 100})
+
+tile App = column(AvatarPicker, Preview) {pad: "lg", gap: "md"}
+
+app FileUploadPreview
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

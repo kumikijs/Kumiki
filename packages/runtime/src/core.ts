@@ -5,6 +5,8 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
+import type { EpisodeLogger, SlotDiff } from "./episode.ts";
+
 export type RefinementCheck = (v: unknown) => boolean;
 export type EventHandler = (el: Record<string, unknown>) => void;
 
@@ -51,6 +53,8 @@ export type TileNode =
       required?: boolean;
       autoFocus?: boolean;
       id?: string;
+      accept?: string;
+      multiple?: boolean;
     }
   | {
       kind: "textarea";
@@ -67,7 +71,16 @@ export type TileNode =
   | { kind: "skeleton"; props?: TileProps }
   | { kind: "form"; children: TileNode[]; props?: TileProps }
   | { kind: "label"; text: string; props?: TileProps }
-  | { kind: "link"; text: string; to: string; props?: TileProps }
+  | {
+      kind: "link";
+      text: string;
+      to: string;
+      /** §3.8 prefetch: name of the reducer to dispatch on viewport entry. */
+      prefetch?: string;
+      /** §3.8 prefetch-args: payload passed to the reducer's `$el` / `$event` binding. */
+      prefetchArgs?: Record<string, unknown>;
+      props?: TileProps;
+    }
   | { kind: "markdown"; text: string; props?: TileProps }
   | { kind: "image"; src: string; props?: TileProps }
   | { kind: "icon"; name: string; props?: TileProps }
@@ -134,6 +147,8 @@ export type TileProps = Record<string, unknown> & {
   onChange?: EventHandler;
   onInput?: EventHandler;
   onClose?: EventHandler;
+  onKeyDown?: EventHandler;
+  onMouseEnter?: EventHandler;
   el?: Record<string, unknown>;
 };
 
@@ -242,6 +257,14 @@ export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
   matchPattern(pattern: string, path: string): Record<string, string> | null;
+  /**
+   * Resolve any static redirect (`->>`) that applies to the current location —
+   * top-level entry, or one under a matched parent's `subRoutes`. Returns the
+   * redirect target path, or `null` if no redirect applies. The runtime then
+   * `router.replace`s before parsing so the URL bar stays in sync with what is
+   * rendered.
+   */
+  findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -282,12 +305,34 @@ export type MountOptions = {
   routing?: RoutingImpl;
   /** Built-in effect installers (e.g. `installToast`) this app can emit. */
   builtins?: BuiltinInstaller[];
+  /**
+   * Episode logger (docs/spec/runtime.md §10.5). When provided, every reducer
+   * / effect-start / effect-end / signal-update / panic that occurs during
+   * this mount is recorded into the logger; `kumiki run --episode-log` and the
+   * `episode-test` runner both read from this. Omit (or pass `null`) for
+   * production mounts that don't care about episode capture.
+   */
+  episodeLogger?: EpisodeLogger | null;
 };
 
 export type RouteEntry = {
   pattern: string;
   /** Returns the TileNode for this route given the current state. */
   tile: () => TileNode;
+  /**
+   * Nested route table for parent routes that delegate to a `route-outlet`
+   * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
+   * runtime re-matches the path against these entries and injects the matched
+   * child tile into the first `route-outlet` of the parent's render tree.
+   */
+  subRoutes?: Array<RouteEntry | RedirectEntry>;
+  /**
+   * §3.9 scroll-restoration. When `false`, the runtime skips both the
+   * forward-navigation scrollTo(0,0) and the back-navigation restore for this
+   * route. Tiles that own their own internal scroll surface (chats, virtual
+   * lists) set this to keep the chrome stable across transitions.
+   */
+  scrollRestoration?: false;
 };
 
 export type RedirectEntry = { pattern: string; redirectTo: string };
@@ -350,6 +395,8 @@ export type ParsedRoute = {
   params: Record<string, string>;
   query: Record<string, string>;
   hash: string | null;
+  /** Matched sub-route pattern when the parent route delegates to `route-outlet` (§3.6). */
+  childPattern?: string;
 };
 
 /** The slice of `Location` the routing path actually reads. */
@@ -385,7 +432,11 @@ export function mountCore(
   app: AppShape,
   target: HTMLElement,
   options: MountOptions = {},
-): { dispose: () => void } {
+): { dispose: () => void; episodes: () => ReturnType<EpisodeLogger["list"]> } {
+  // Episode logger (§10.5). Null when the host did not opt in — every record
+  // call below short-circuits via the `?.` optional chain, so the no-logger
+  // path stays zero-cost.
+  const episode: EpisodeLogger | null = options.episodeLogger ?? null;
   if (!app.live) {
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
@@ -423,9 +474,14 @@ export function mountCore(
   // fills the gap when the app declares an analytics sink directly.
   const providers = withAnalyticsDefault(app, options.providers);
   const caps = makeCapabilityRegistry(app.caps, providers);
-  const dispatcher = makeEffectDispatcher(app, caps, (effect, outcome, value, key) => {
-    handleEffectResult(effect, outcome, value, key);
-  });
+  const dispatcher = makeEffectDispatcher(
+    app,
+    caps,
+    (effect, outcome, value, key, token) => {
+      handleEffectResult(effect, outcome, value, key, token);
+    },
+    episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
+  );
 
   // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
   // when a route.leave reducer emits `confirm`, the runtime holds the
@@ -435,6 +491,13 @@ export function mountCore(
   let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
   let observeLeaveConfirm = false;
   let leaveAskedConfirm = false;
+
+  // §3.9 scroll restoration: track per-path scroll positions and the source of
+  // each navigation. push / replace forward → scroll to top (unless the matched
+  // tile opted out with `scroll-restoration = false`); popstate → restore the
+  // saved position for the destination path.
+  const scrollSaved = new Map<string, { x: number; y: number }>();
+  let lastNavSource: "push" | "replace" | "pop" = "push";
 
   let currentRoot: HTMLElement | null = null;
   let disposed = false;
@@ -489,6 +552,7 @@ export function mountCore(
       // escape and leave the DOM stale. Logged via console.error so the smoke /
       // scenario tiers still flag it (#24).
       reportPanic("render", e);
+      episode?.recordPanic(panicInfo(e).message, "render");
       if (!fireRouteError(e)) {
         dom = renderPanicFallback(e);
       } else {
@@ -580,7 +644,17 @@ export function mountCore(
     if (app.routes && app.routes.length > 0) {
       const cur = slotValues.route as ParsedRoute;
       for (const r of app.routes) {
-        if (r.pattern === cur.pattern && "tile" in r) return r.tile();
+        if (r.pattern === cur.pattern && "tile" in r) {
+          const root = r.tile();
+          // §3.6: parent route delegates child rendering to `route-outlet`.
+          if (cur.childPattern && r.subRoutes) {
+            const childEntry = r.subRoutes.find(
+              (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+            );
+            if (childEntry) injectRouteOutlet(root, childEntry.tile());
+          }
+          return root;
+        }
       }
       // 404 fallback tile
       for (const r of app.routes) {
@@ -588,6 +662,33 @@ export function mountCore(
       }
     }
     return app.root ? app.root() : { kind: "text", text: "(no root)" };
+  }
+
+  /**
+   * Walk the parent tile tree and inject the matched child as the children of
+   * the first `route-outlet` node we find (spec/routing.md §3.6). The render
+   * pass in tiles-layout.ts then mounts the child via the normal renderer.
+   * Spec leaves multi-outlet behavior unspecified, so we treat the first one
+   * as the active slot and leave any additional outlets empty.
+   *
+   * NOTE: this mutates `node` in place, so each call site MUST hand in a fresh
+   * tree — i.e. tile factories returned by codegen must produce a new object
+   * literal per invocation (they do today). A cached / shared tree would be
+   * corrupted across navigations.
+   */
+  function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
+    if (!node || typeof node !== "object") return false;
+    if ((node as { kind?: string }).kind === "route-outlet") {
+      (node as { children: TileNode[] }).children = [child];
+      return true;
+    }
+    const children = (node as { children?: TileNode[] }).children;
+    if (Array.isArray(children)) {
+      for (const c of children) {
+        if (injectRouteOutlet(c, child)) return true;
+      }
+    }
+    return false;
   }
 
   // Re-entrancy guard so a panic inside the `app.error` handler itself does not
@@ -602,6 +703,7 @@ export function mountCore(
    */
   function handleLivePanic(location: string, e: unknown): void {
     reportPanic(location, e);
+    episode?.recordPanic(panicInfo(e).message, location);
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -616,8 +718,35 @@ export function mountCore(
     }
   }
 
+  /**
+   * §10.5 trigger kind for an auto-opened episode. The runtime auto-opens at
+   * the outermost `applyReducer` so every dispatch entry point (DOM event,
+   * lifecycle fire, timer tick, route.enter, init effect, ...) gets a trigger
+   * without each call site having to wrap itself.
+   */
+  function triggerOfReducer(r: ReducerSpec): { kind: string; target: string } {
+    if (r.event.kind === "ui") {
+      return { kind: `ui.${r.event.ev}`, target: r.selector?.tile ?? r.name };
+    }
+    if (r.event.kind === "effect") {
+      return { kind: `effect.${r.event.outcome}`, target: r.event.effect };
+    }
+    if (r.event.kind === "timer") {
+      return { kind: "timer", target: r.event.name ?? "anonymous" };
+    }
+    return { kind: "lifecycle", target: r.event.name };
+  }
+
   function applyReducer(r: ReducerSpec, payload: Record<string, unknown>): void {
     if (disposed) return;
+    // Auto-open an episode at the outermost reducer dispatch. Nested calls
+    // (e.g. effect-result → .ok reducer → emits → ...) join the existing one
+    // so the whole causal chain stays in a single Episode per §10.5.1.
+    const opened = episode && !episode.hasOpenEpisode();
+    if (opened) {
+      const t = triggerOfReducer(r);
+      episode.beginTrigger({ kind: t.kind, target: t.target, payload });
+    }
     let result: ReturnType<ReducerSpec["apply"]>;
     try {
       result = r.apply(slotValues, payload);
@@ -629,13 +758,29 @@ export function mountCore(
       // dispatch still runs); the `app.error` reducer (if any) is fired with
       // PanicInfo. The reducer-test harness catches panics separately (#24).
       handleLivePanic(`reducer "${r.name}"`, e);
+      if (opened) episode?.endTrigger();
       return;
     }
+    // Compute slot diffs (excluding `volatile` slots per language.md §175):
+    // capture each touched slot's value BEFORE we overwrite it so the episode
+    // step records the live transition, not just the destination.
+    const diffs: SlotDiff[] = [];
+    const dirty: string[] = [];
     for (const [k, v] of Object.entries(result.slots)) {
       const meta = app.slots[k];
       if (meta?.refine && !meta.refine(v)) continue;
+      const before = slotValues[k];
       slotValues[k] = v;
+      if (!meta?.volatile) {
+        diffs.push({ name: k, before, after: v });
+        dirty.push(k);
+      }
     }
+    episode?.recordReducer(
+      r.name,
+      diffs,
+      result.emits.map((e) => e.effect),
+    );
     for (const emit of result.emits) {
       if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;
       dispatcher.dispatch(emit);
@@ -648,6 +793,8 @@ export function mountCore(
       }
     }
     render();
+    if (dirty.length > 0) episode?.recordSignalUpdate(dirty);
+    if (opened) episode?.endTrigger();
   }
 
   function handleEffectResult(
@@ -655,47 +802,59 @@ export function mountCore(
     outcome: "ok" | "err",
     value: unknown,
     key: unknown,
+    token = "",
   ): void {
+    // §10.5: the matching effect-end step lands on the SAME Episode the
+    // effect-start was logged into (looked up by `token`). The returned exit
+    // pops that Episode off the focus stack and commits if no more inflight
+    // effects remain — so the .ok / .err reducer chain that runs in between
+    // attaches to the same Episode.
+    const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
     let matched = 0;
-    for (const r of app.reducers) {
-      if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
-        applyReducer(r, { $1: value, $2: key });
-        matched++;
+    try {
+      for (const r of app.reducers) {
+        if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
+          applyReducer(r, { $1: value, $2: key });
+          matched++;
+        }
       }
-    }
-    // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
-    // an err whose value carries a 401/403/5xx is forwarded to the global
-    // `app.http.on-*` reducer — independent of whether a per-effect `.err`
-    // reducer also matched.
-    if (outcome === "err" && app.http) {
-      const status = readStatus(value);
-      if (status !== null) {
-        const name =
-          status === 401
-            ? app.http.on401
-            : status === 403
-              ? app.http.on403
-              : status >= 500
-                ? app.http.on5xx
-                : undefined;
-        if (name) {
-          const r = app.reducers.find((r) => r.name === name);
-          if (r) {
-            applyReducer(r, { $1: value, $2: key });
-            matched++;
+      // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
+      // an err whose value carries a 401/403/5xx is forwarded to the global
+      // `app.http.on-*` reducer — independent of whether a per-effect `.err`
+      // reducer also matched.
+      if (outcome === "err" && app.http) {
+        const status = readStatus(value);
+        if (status !== null) {
+          const name =
+            status === 401
+              ? app.http.on401
+              : status === 403
+                ? app.http.on403
+                : status >= 500
+                  ? app.http.on5xx
+                  : undefined;
+          if (name) {
+            const r = app.reducers.find((r) => r.name === name);
+            if (r) {
+              applyReducer(r, { $1: value, $2: key });
+              matched++;
+            }
           }
         }
       }
+      // No-silent-failure contract (#37): an `err` result that no `.err` reducer
+      // consumes is a dropped error — surfaced (never swallowed) exactly like a
+      // live panic. An app that means to ignore an error opts in with an `.err`
+      // reducer (even an empty one).
+      if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
+    } finally {
+      exitScope?.();
     }
-    // No-silent-failure contract (#37): an `err` result that no `.err` reducer
-    // consumes is a dropped error — surfaced (never swallowed) exactly like a
-    // live panic. An app that means to ignore an error opts in with an `.err`
-    // reducer (even an empty one).
-    if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
   }
 
   function updateRoute(newPath: string, replace: boolean): void {
     if (!router) return;
+    lastNavSource = replace ? "replace" : "push";
     if (replace) router.replace(newPath);
     else router.push(newPath);
     syncRouteFromLocation();
@@ -706,8 +865,20 @@ export function mountCore(
     // A pending leave guard is already gating the previous transition; ignore
     // re-entrant syncs (e.g. a router.replace from the No path would re-call us).
     if (pendingLeave) return;
+    // Resolve any static redirect for the current path BEFORE computing the
+    // new route — keeps the URL bar in sync with what gets rendered and
+    // covers both top-level and sub-route redirects.
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slotValues.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
+    // §3.9: save the OLD route's scroll position before any transition work, so
+    // it is available when the user lands here again via back / forward.
+    if (oldRoute && typeof window !== "undefined") {
+      const sx = typeof window.scrollX === "number" ? window.scrollX : 0;
+      const sy = typeof window.scrollY === "number" ? window.scrollY : 0;
+      scrollSaved.set(oldRoute.path, { x: sx, y: sy });
+    }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
     // gate the transition. We observe whether any leave reducer emitted
     // `confirm` — if so, we hold off updating slotValues.route and firing
@@ -744,7 +915,41 @@ export function mountCore(
         applyReducer(r, { $route: newRoute });
       }
     }
+    applyScrollFor(newRoute);
     render();
+  }
+
+  function findRouteEntry(route: ParsedRoute): RouteEntry | undefined {
+    if (!app.routes) return undefined;
+    for (const r of app.routes) {
+      if ("redirectTo" in r) continue;
+      if (r.pattern !== route.pattern) continue;
+      if (route.childPattern && r.subRoutes) {
+        for (const sr of r.subRoutes) {
+          if ("redirectTo" in sr) continue;
+          if (sr.pattern === route.childPattern) return sr;
+        }
+      }
+      return r;
+    }
+    return undefined;
+  }
+
+  function applyScrollFor(route: ParsedRoute): void {
+    if (typeof window === "undefined" || typeof window.scrollTo !== "function") return;
+    const entry = findRouteEntry(route);
+    if (entry?.scrollRestoration === false) return;
+    if (lastNavSource === "pop") {
+      // pop with no saved entry (e.g. first-visit hash deep-link or a path that
+      // bypassed our save hook) — fall through to (0,0) instead of leaving the
+      // viewport where the last route left it. Because we took manual control
+      // of `history.scrollRestoration`, the browser default won't kick in here.
+      const saved = scrollSaved.get(route.path);
+      if (saved) window.scrollTo(saved.x, saved.y);
+      else window.scrollTo(0, 0);
+    } else {
+      window.scrollTo(0, 0);
+    }
   }
 
   function resolveLeave(outcome: "yes" | "no"): void {
@@ -761,6 +966,7 @@ export function mountCore(
           applyReducer(r, { $route: p.newRoute });
         }
       }
+      applyScrollFor(p.newRoute);
       render();
     } else {
       // Revert: rewrite the URL back to the old path without re-firing the
@@ -789,16 +995,26 @@ export function mountCore(
   lastAppliedThemeName =
     (app.live?.[app.themeName ?? ""] as string | undefined) ?? app.themeName ?? null;
 
-  // Initial route sync — but first check for a static redirect on the current path.
+  // Initial route sync — but first resolve any static redirect (top-level
+  // `->>` or one declared inside a matched parent's sub-routes per §3.6).
   if (routing && router && app.routes && app.routes.length > 0) {
-    for (const r of app.routes) {
-      if ("redirectTo" in r && routing.matchPattern(r.pattern, router.read().pathname)) {
-        router.replace(r.redirectTo);
-        break;
+    // §3.9: take manual control so we can restore positions explicitly on pop
+    // and reset to top on push, without the browser's auto-restore racing us.
+    if (typeof history !== "undefined" && "scrollRestoration" in history) {
+      try {
+        (history as History & { scrollRestoration: ScrollRestoration }).scrollRestoration =
+          "manual";
+      } catch {
+        // Some embedded contexts (sandboxed iframes) forbid writes; ignore.
       }
     }
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     slotValues.route = routing.parseLocation(app.routes, router.read());
-    routerUnsub = router.subscribe(syncRouteFromLocation);
+    routerUnsub = router.subscribe(() => {
+      lastNavSource = "pop";
+      syncRouteFromLocation();
+    });
   }
 
   app._rerender = render;
@@ -808,6 +1024,27 @@ export function mountCore(
     const r = app.reducers.find((x) => x.name === reducerName);
     if (!r) return;
     applyReducer(r, { $el: el, $event: el });
+  };
+  // §3.8 prefetch — same argument binding as route.enter so the prefetch and
+  // the actual navigation share one reducer body. `prefetch-args` lowers to
+  // `$route.params`; `path` / `pattern` carry the link target verbatim (the
+  // matched pattern is unknowable at the link site, but `params` is what
+  // reducer bodies read).
+  (
+    app as AppShape & {
+      _prefetch?: (name: string, args: Record<string, string>, to: string) => void;
+    }
+  )._prefetch = (reducerName: string, args: Record<string, string>, to: string) => {
+    const r = app.reducers.find((x) => x.name === reducerName);
+    if (!r) return;
+    const syntheticRoute: ParsedRoute = {
+      path: to,
+      pattern: to,
+      params: args,
+      query: {},
+      hash: null,
+    };
+    applyReducer(r, { $route: syntheticRoute });
   };
   (app as AppShape & { _setSlot?: (name: string, value: unknown) => void })._setSlot = (
     name: string,
@@ -877,6 +1114,8 @@ export function mountCore(
       target.replaceChildren();
       dispatcher.dispose();
     },
+    /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
+    episodes: () => episode?.list() ?? [],
   };
 }
 
@@ -1021,7 +1260,14 @@ type Dispatcher = {
 function makeEffectDispatcher(
   app: AppShape,
   caps: CapabilityRegistry,
-  onResult: (effect: string, outcome: "ok" | "err", value: unknown, key: unknown) => void,
+  onResult: (
+    effect: string,
+    outcome: "ok" | "err",
+    value: unknown,
+    key: unknown,
+    token: string,
+  ) => void,
+  onLaunch?: (effect: string, input: unknown) => string,
 ): Dispatcher {
   type RunState = {
     inflight: Map<string, AbortController>;
@@ -1031,15 +1277,21 @@ function makeEffectDispatcher(
   const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
 
   const launch = async (eff: EffectSpec, input: unknown, key: string): Promise<void> => {
-    if (!caps.has(eff.cap)) {
+    // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
+    if (eff.cap !== "" && !caps.has(eff.cap)) {
       console.warn(`Capability "${eff.cap}" not declared in app.caps`);
       return;
     }
+    // Episode logger seam (§10.5): the moment the dispatcher commits to
+    // actually invoking the effect — policy filtering (debounce / once /
+    // queue) has already passed. Token threads through to onResult so the
+    // matching effect-end lands on the same Episode.
+    const token = onLaunch?.(eff.name, input) ?? "";
     try {
       const res = await runWithRetry(eff, input, caps);
-      onResult(eff.name, res.kind, res.value, input);
+      onResult(eff.name, res.kind, res.value, input, token);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input);
+      onResult(eff.name, "err", { message: String(e) }, input, token);
     } finally {
       const ic = state.inflight.get(`${eff.name}:${key}`);
       if (ic) state.inflight.delete(`${eff.name}:${key}`);
@@ -1283,10 +1535,31 @@ function makeTileCtx(tiles: TileRenderers): TileCtx {
       // A `motion` prop applies to any tile uniformly (M5). The keyframes/classes
       // are injected once at mount by ensureMotionStyles.
       applyMotion(el, node.props);
+      // ui.key / ui.hover handlers (§1.6.1) — codegen lifts these into
+      // onKeyDown / onMouseEnter props. Wiring them once on the universal
+      // render output keeps every tile uniform (no per-renderer plumbing).
+      applyKeyHoverHandlers(el, node.props);
       return el;
     },
   };
   return ctx;
+}
+
+function applyKeyHoverHandlers(el: HTMLElement, props?: TileProps): void {
+  if (!props) return;
+  if (props.onKeyDown) {
+    const handler = props.onKeyDown;
+    el.addEventListener("keydown", (e) => {
+      const ke = e as KeyboardEvent;
+      handler({ ...(props.el ?? {}), key: ke.key, code: ke.code });
+    });
+  }
+  if (props.onMouseEnter) {
+    const handler = props.onMouseEnter;
+    el.addEventListener("mouseenter", () => {
+      handler(props.el ?? {});
+    });
+  }
 }
 
 /**
@@ -1315,8 +1588,25 @@ export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
   if (mw !== undefined) el.style.maxWidth = typeof mw === "number" ? `${mw}px` : String(mw);
   if (typeof props.bg === "string") el.style.background = mapColor(props.bg as string);
   if (typeof props.radius === "string") el.style.borderRadius = mapToken(props.radius as string);
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
   applyTransition(el, props);
+}
+
+/**
+ * Apply a `style: { ... }` block (spec/style.md §4.3) — each key is set as a CSS
+ * property on the element verbatim. Keys are kebab-case CSS property names
+ * (`background`, `padding`, `border-radius`, `box-shadow`, …) and their values
+ * are resolved strings/numbers (`@token` references are already lowered by the
+ * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
+ */
+function applyStyleBlock(el: HTMLElement, raw: unknown): void {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === undefined || value === null) continue;
+    const v = typeof value === "number" ? `${value}px` : String(value);
+    el.style.setProperty(key, v);
+  }
 }
 
 /** Apply a value that may be a literal or a responsive `{base, sm, md, lg, xl}` map. */
@@ -1536,6 +1826,7 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   if (typeof props.color === "string") el.style.color = mapColor(props.color as string);
   if (typeof props.size === "string") el.style.fontSize = mapSize(props.size as string);
   if (props.weight === "bold") el.style.fontWeight = "700";
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
 }
 
@@ -1768,7 +2059,6 @@ function mapSize(s: string): string {
       if (typeof v === "number") return `${v}px`;
     }
   }
-  void resolveToken;
   switch (s) {
     case "sm":
       return "14px";
@@ -1783,4 +2073,35 @@ function mapSize(s: string): string {
     default:
       return s;
   }
+}
+
+/**
+ * Resolve a theme token reference written as `@<group>.<seg>(.<seg>)*` in source
+ * (spec/style.md §4.3). Walks the active theme's group/path; on miss, dispatches
+ * to the group-specific `map*` helpers so the spec's built-in defaults (e.g.
+ * `surface` → `#f7f7f7`) still apply when no theme defines the name.
+ */
+export function tokenRef(group: string, path: string[]): string {
+  const theme = currentTheme();
+  if (theme) {
+    let node: ThemeValue | undefined = theme[group];
+    for (const seg of path) {
+      if (node && typeof node === "object" && !Array.isArray(node) && seg in node) {
+        node = (node as Record<string, ThemeValue>)[seg];
+      } else {
+        node = undefined;
+        break;
+      }
+    }
+    if (typeof node === "string") return node;
+    if (typeof node === "number") return `${node}px`;
+  }
+  // Group-specific fallback to the built-in defaults baked into the runtime.
+  const last = path[path.length - 1] ?? "";
+  if (group === "colors") return mapColor(last);
+  if (group === "spacing") return mapToken(last);
+  if (group === "radius") return mapToken(last);
+  if (group === "shadow") return resolveToken("shadow", last);
+  if (group === "typography" && path[0] === "size") return mapSize(last);
+  return resolveToken(group, last);
 }

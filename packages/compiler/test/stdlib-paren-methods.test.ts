@@ -44,7 +44,7 @@ const METHODS: ReadonlyArray<{
   { recv: "m", no: ".entries", paren: ".entries()", expect: "_s.mapEntries(", spec: "§2.2.1" },
   { recv: "t", no: ".lower", paren: ".lower()", expect: ".toLowerCase()", spec: "§2.2.6" },
   { recv: "t", no: ".upper", paren: ".upper()", expect: ".toUpperCase()", spec: "§2.2.6" },
-  { recv: "xs", no: ".sort", paren: ".sort()", expect: "].sort()", spec: "§2.2.3" },
+  { recv: "xs", no: ".sort", paren: ".sort()", expect: "_s.listSort(", spec: "§2.2.3" },
 ];
 
 describe("Issue #92: paren-form stdlib methods do not fall through to native JS", () => {
@@ -64,19 +64,18 @@ describe("Issue #92: paren-form stdlib methods do not fall through to native JS"
   }
 
   // `.ms` / `.ms()` are identity passthrough (Duration is stored as raw ms),
-  // so there is no `_s.*` helper to look for. Verify symmetry by comparing the
-  // lowering of the two forms directly.
+  // so there is no `_s.*` helper to look for. Verify symmetry by isolating the
+  // single differing line — comparing whole files would also flip on any other
+  // change to the generated scaffolding (slot map, header, etc.).
   it("§2.2.9 du.ms and du.ms() lower identically (Duration → ms identity)", () => {
     const jsNoParen = compileOk(appWith(`heading((du.ms).show)`));
     const jsParen = compileOk(appWith(`heading((du.ms()).show)`));
-    // Take the relevant `_s.show(...)` expression around the receiver so we
-    // are comparing the lowered method, not the surrounding scaffolding.
-    const extract = (js: string): string => {
-      const m = js.match(/_s\.show\(\([^)]*"du"[^)]*\)\)/);
-      if (!m) throw new Error(`could not find du.ms lowering in:\n${js}`);
-      return m[0];
-    };
-    expect(extract(jsParen)).toBe(extract(jsNoParen));
+    const onlyDuLines = (js: string): string[] =>
+      js.split("\n").filter((line) => line.includes('"du"'));
+    expect(onlyDuLines(jsParen)).toEqual(onlyDuLines(jsNoParen));
+    // Belt-and-braces: neither form may fall through to native `).ms(`.
+    expect(jsParen).not.toMatch(/\)\.ms\(/);
+    expect(jsNoParen).not.toMatch(/\)\.ms\(/);
   });
 
   it("no listed method falls through to the native-JS fallback shape", () => {

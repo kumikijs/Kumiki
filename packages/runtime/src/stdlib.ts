@@ -4,9 +4,17 @@
 // into the classic `_stdlib` export by `index.ts`, so `kumiki build` output
 // never ships the test runners.
 
-import { KumikiPanic } from "./core.ts";
+import { KumikiPanic, tokenRef } from "./core.ts";
 
 export const _stdlibCore = {
+  /**
+   * Resolve a theme-token reference `@<group>.<seg>(.<seg>)*` from a `style`
+   * block (spec/style.md §4.3). Codegen lowers `@colors.surface` to
+   * `_s.token("colors", ["surface"])`.
+   */
+  token(group: string, path: string[]): string {
+    return tokenRef(group, path);
+  },
   mapSize(m: unknown): number {
     if (m instanceof Map) return m.size;
     if (m && typeof m === "object") return Object.keys(m as object).length;
@@ -105,6 +113,23 @@ export const _stdlibCore = {
   },
   listSortBy<T>(xs: T[], keyOf: (x: T) => number): T[] {
     return [...(xs ?? [])].sort((a, b) => keyOf(a) - keyOf(b));
+  },
+  /**
+   * `List(T).sort` — polymorphic. Numeric elements sort numerically (so
+   * `[3,1,2,10].sort` → `[1,2,3,10]`, not the JS default `[1,10,2,3]`); any
+   * other element type falls back to a stable string comparison. Mixed lists
+   * are sorted as strings so the result stays well-defined.
+   */
+  listSort(xs: unknown[] | undefined | null): unknown[] {
+    const arr = [...(xs ?? [])];
+    if (arr.length === 0) return arr;
+    const allNumbers = arr.every((x) => typeof x === "number" && Number.isFinite(x));
+    if (allNumbers) return (arr as number[]).sort((a, b) => a - b);
+    return arr.sort((a, b) => {
+      const sa = String(a);
+      const sb = String(b);
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
   },
   /** List(T).fold(init, expr): left fold with $1=acc, $2=elem. */
   listFold<T, A>(xs: T[], init: A, fn: (acc: A, x: T) => A): A {
@@ -362,18 +387,64 @@ export const _stdlibCore = {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
   },
+  /**
+   * `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10). The
+   * runtime stores picked files as `{name, size, type, _file: File}`; this
+   * helper unwraps `_file` and hands it to URL.createObjectURL.
+   *
+   * Memoised on the File handle and registered for revocation on GC so that
+   * (a) repeated renders of the same `image(src=file-url(...))` reuse one
+   * blob URL and (b) when the picker slot is replaced and the old File
+   * becomes unreachable, the URL is released without manual bookkeeping in
+   * user code. The spec calls this out as "automatic release".
+   *
+   * Passing undefined / None / a value with no `_file` returns "" so a
+   * render that races a slot clear cannot blow up.
+   */
+  fileUrl(file: unknown): string {
+    if (!file || typeof file !== "object") return "";
+    const tagged = file as { _tag?: string; _0?: unknown };
+    const inner = tagged._tag === "Some" ? tagged._0 : file;
+    if (!inner || typeof inner !== "object") return "";
+    const handle = (inner as { _file?: unknown })._file;
+    if (
+      typeof URL === "undefined" ||
+      typeof URL.createObjectURL !== "function" ||
+      !(handle instanceof Blob)
+    ) {
+      return "";
+    }
+    const cached = _fileUrlCache.get(handle);
+    if (cached) return cached;
+    const url = URL.createObjectURL(handle);
+    _fileUrlCache.set(handle, url);
+    _fileUrlRegistry?.register(handle, url);
+    return url;
+  },
 
   // ----- Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
-  // Bytes is represented as Uint8Array at runtime. -----
+  // Bytes is represented as Uint8Array at runtime. The constructors are
+  // lenient on nullish / malformed input and return an empty Uint8Array
+  // instead of throwing — same shape as the rest of stdlib (mapValues etc.). -----
 
   /** `Bytes.from-text(text)` — UTF-8 encode. */
   bytesFromText(text: unknown): Uint8Array {
     return new TextEncoder().encode(String(text ?? ""));
   },
-  /** `Bytes.from-base64(text)` — standard base64 decode. */
+  /**
+   * `Bytes.from-base64(text)` — standard base64 decode. Returns an empty
+   * Uint8Array for nullish input and for malformed base64 (atob would throw
+   * a DOMException otherwise — inconsistent with the rest of stdlib).
+   */
   bytesFromBase64(b64: unknown): Uint8Array {
-    const s = String(b64 ?? "");
-    const bin = atob(s);
+    if (b64 == null) return new Uint8Array();
+    const s = String(b64);
+    let bin: string;
+    try {
+      bin = atob(s);
+    } catch {
+      return new Uint8Array();
+    }
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
@@ -386,3 +457,20 @@ export const _stdlibCore = {
     return out;
   },
 };
+
+// File → blob URL memoisation. WeakMap so a File made unreachable (slot
+// overwritten, picker reset) can be collected; the FinalizationRegistry then
+// revokes the URL it was holding. The registry is environments-gated because
+// older runtimes / SSR shims may not expose it — the cache still works there,
+// only the explicit revoke degrades to "let the browser reclaim at page end".
+const _fileUrlCache: WeakMap<Blob, string> = new WeakMap();
+const _fileUrlRegistry: FinalizationRegistry<string> | null =
+  typeof FinalizationRegistry !== "undefined" && typeof URL !== "undefined"
+    ? new FinalizationRegistry((url: string) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Old URLs on a closed document throw; nothing to do.
+        }
+      })
+    : null;

@@ -25,6 +25,13 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
     expect(_stdlibCore.bytesFromBase64("")).toEqual(new Uint8Array([]));
   });
 
+  it("bytesFromBase64 returns an empty Uint8Array for malformed / nullish input (does not throw)", () => {
+    expect(_stdlibCore.bytesFromBase64(null)).toEqual(new Uint8Array([]));
+    expect(_stdlibCore.bytesFromBase64(undefined)).toEqual(new Uint8Array([]));
+    // `!` is not a valid base64 character; native atob would throw a DOMException.
+    expect(_stdlibCore.bytesFromBase64("!!!not base64!!!")).toEqual(new Uint8Array([]));
+  });
+
   it("bytesFromBytes accepts a List(Int) and clamps to the low 8 bits", () => {
     expect(_stdlibCore.bytesFromBytes([1, 2, 3])).toEqual(new Uint8Array([1, 2, 3]));
     // 256 wraps to 0, 257 to 1 — same as `& 0xff`.
@@ -35,5 +42,31 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
   it("bytesFromBytes falls back to an empty Uint8Array for non-list input", () => {
     expect(_stdlibCore.bytesFromBytes(null)).toEqual(new Uint8Array([]));
     expect(_stdlibCore.bytesFromBytes(undefined)).toEqual(new Uint8Array([]));
+  });
+});
+
+// Issue #92 review: previously `.sort()` lowered inline to JS's default
+// (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
+// `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
+// which sorts numerically when every element is a finite number.
+describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
+  it("sorts a numeric list numerically, not lexicographically", () => {
+    expect(_stdlibCore.listSort([3, 1, 2, 10])).toEqual([1, 2, 3, 10]);
+    expect(_stdlibCore.listSort([])).toEqual([]);
+    expect(_stdlibCore.listSort(null)).toEqual([]);
+  });
+
+  it("sorts a text list as strings", () => {
+    expect(_stdlibCore.listSort(["banana", "apple", "cherry"])).toEqual([
+      "apple",
+      "banana",
+      "cherry",
+    ]);
+  });
+
+  it("does not mutate the input list", () => {
+    const xs = [3, 1, 2];
+    _stdlibCore.listSort(xs);
+    expect(xs).toEqual([3, 1, 2]);
   });
 });

@@ -66,10 +66,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
 
     // Size acceptance (#71): the counter runtime payload is well below the
     // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).
+    // Bumped to 36KB with the §10.5 episode logger seams in core.ts (#90),
+    // then to 36.5KB with the Bytes constructors + polymorphic listSort (#92).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(35_000);
+    expect(total).toBeLessThan(36_500);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

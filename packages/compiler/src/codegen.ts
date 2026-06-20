@@ -42,6 +42,13 @@ export type CodegenOptions = {
    * monolith shape).
    */
   runtimeModulesDir?: string;
+  /**
+   * Resolve an `episode-test load = "<path>"` directive (spec §8.6) to its
+   * file contents — the compiler inlines the parsed log into codegen so the
+   * runtime test harness does not need filesystem access. Optional; emit a
+   * placeholder when omitted and no `episode-test` appears.
+   */
+  readEpisodeLog?: (relativePath: string) => string;
 };
 
 export type CodegenResult = {
@@ -143,6 +150,9 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // Routes table — each route entry produces either a tile factory or a redirect.
+  // If the parent tile declares `sub-routes`, attach a nested route table
+  // (spec/routing.md §3.6) so the runtime can re-match the path inside the
+  // parent's wildcard pattern and inject the matched child into `route-outlet`.
   lines.push("const _routes = [");
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) {
@@ -153,7 +163,34 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     } else {
       const tile = tiles.find((t) => t.name === r.tile);
       if (!tile) throw new Error(`Route ${r.path} targets undefined tile "${r.tile}"`);
-      lines.push(`  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)} },`);
+      const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
+      if (tile.subRoutes && tile.subRoutes.length > 0) {
+        lines.push(
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr}, subRoutes: [`,
+        );
+        for (const subR of tile.subRoutes) {
+          if (subR.tile.startsWith(">>")) {
+            lines.push(
+              `    { pattern: ${JSON.stringify(subR.path)}, redirectTo: ${JSON.stringify(subR.tile.slice(2))} },`,
+            );
+          } else {
+            const childTile = tiles.find((t) => t.name === subR.tile);
+            if (!childTile)
+              throw new Error(
+                `Sub-route ${subR.path} in tile "${tile.name}" targets undefined tile "${subR.tile}"`,
+              );
+            const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
+            lines.push(
+              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genTile(childTile, ctx)}${csr} },`,
+            );
+          }
+        }
+        lines.push(`  ] },`);
+      } else {
+        lines.push(
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr} },`,
+        );
+      }
     }
   }
   lines.push("];");
@@ -217,7 +254,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (opts.includeTests && tests.length > 0) {
     lines.push("");
     lines.push("const __kumikiTests = [");
-    for (const t of tests) lines.push(genTest(t, ctx));
+    for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
     lines.push("globalThis.__kumikiTests = __kumikiTests;");
     // Static coverage for `kumiki test --coverage` (§8.7).
@@ -375,6 +412,7 @@ function analyzeRuntimeUsage(
     emits.has("navigate") ||
     emits.has("navigate-replace") ||
     emits.has("navigate-back") ||
+    emits.has("scroll-to") ||
     usedTiles.has("link") ||
     usedTiles.has("route-outlet") ||
     app.routes.some((r) => r.tile.startsWith(">>") || (r.path !== "/" && r.path !== "/404"));
@@ -538,6 +576,20 @@ function coverageJs(
       if (t.target) usedTiles.add(t.target);
     } else if (t.testKind === "property-test") {
       scanRunReducers(t.invariant, markReducer);
+    } else if (t.testKind === "episode-test") {
+      // episode-test replays a log: every effect mocked is one the test exercises.
+      if (t.mocks?.kind === "RecordLit") {
+        for (const f of t.mocks.fields) {
+          usedEffects.add(f.name);
+          if (f.value.kind === "Ref" && f.value.name === "from-log") {
+            markEffectReducers(f.name, "ok");
+            markEffectReducers(f.name, "err");
+          } else {
+            const outcome = mockOutcome(f.value);
+            if (outcome) markEffectReducers(f.name, outcome);
+          }
+        }
+      }
     }
   }
   const cat = (all: string[], used: Set<string>): string =>
@@ -554,9 +606,34 @@ function coverageJs(
   )} }`;
 }
 
-function genTest(t: TestDef, gen: GenCtx): string {
+function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const ctx = makeEvalCtx(gen, new Set());
   const nameJs = JSON.stringify(t.name);
+  if (t.testKind === "episode-test") {
+    // §8.6: load the episode log at compile time so the runtime test harness
+    // never touches the filesystem. The reader is injected via CodegenOptions
+    // (Node-only callers pass `nodeEpisodeLogReader`); without it we emit a
+    // failing stub so a misconfigured CLI surfaces the gap loudly.
+    let episodesJs = "[]";
+    if (opts.readEpisodeLog && t.load) {
+      const raw = opts.readEpisodeLog(t.load);
+      const parsed = parseEpisodeLog(raw);
+      episodesJs = JSON.stringify(parsed);
+    }
+    const mocksJsStr = t.mocks ? episodeMockJs(t.mocks, ctx) : "{}";
+    const expectJs = t.expect ? episodeExpectJs(t.expect as Expr, ctx) : "{}";
+    return `  {
+    name: ${nameJs},
+    kind: "episode-test",
+    run: () => _s.runEpisodeTest({
+      name: ${nameJs},
+      app: App,
+      episodes: ${episodesJs},
+      mocks: ${mocksJsStr},
+      expect: ${expectJs},
+    }),
+  },`;
+  }
   if (t.testKind === "property-test") {
     const forAll = t.forAll ?? [];
     // forAll var names are local binds, so invariant/given refs lower to the
@@ -686,6 +763,79 @@ function effectListJs(e: Expr, ctx: EvalCtx): string {
  * Compile a reducer-test `given.mocks` record into a `{effect: {outcome, value, delayMs?}}`
  * map for the flow runner (§8.5). Each value is `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`.
  */
+/**
+ * Parse an episode log (one JSON Episode per line — JSONL — or a JSON array).
+ * Surfaces malformed lines as a compile-time throw rather than smuggling them
+ * into the generated test: a corrupted fixture means the test would lie.
+ */
+function parseEpisodeLog(raw: string): unknown[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
+    const arr = JSON.parse(trimmed);
+    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
+    return arr;
+  }
+  const out: unknown[] = [];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    out.push(JSON.parse(s));
+  }
+  return out;
+}
+
+/**
+ * Lower an `episode-test`'s `mocks = { effect: from-log | ignore | ok(v) | err(e) }`
+ * record into the runtime call shape. `from-log` and `ignore` arrive as bare
+ * identifiers (Ref nodes); `ok` / `err` carry a payload Expr that we evaluate
+ * in the test's binding context.
+ */
+function episodeMockJs(e: Expr, ctx: EvalCtx): string {
+  if (e.kind !== "RecordLit") return "{}";
+  const parts = e.fields.map((f) => {
+    const v = f.value;
+    const key = JSON.stringify(f.name);
+    if (v.kind === "Ref" && v.name === "from-log") return `${key}: { policy: "from-log" }`;
+    if (v.kind === "Ref" && v.name === "ignore") return `${key}: { policy: "ignore" }`;
+    if (v.kind === "Call" && (v.callee === "ok" || v.callee === "err")) {
+      const value = v.args[0] ? jsOfExpr(v.args[0], ctx) : "null";
+      return `${key}: { policy: "fixed", outcome: ${JSON.stringify(v.callee)}, value: ${value} }`;
+    }
+    // Defense-in-depth: typecheck (E0712) rejects this before we get here.
+    // If a caller skips check() the loud throw beats silently treating a
+    // typo'd `from_log` as `ignore` and passing the test.
+    throw new Error(
+      `episode-test mock for "${f.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
+    );
+  });
+  return `{ ${parts.join(", ")} }`;
+}
+
+/**
+ * Lower an `episode-test`'s `expect = { slots-equal, no-panics, no-errors }`.
+ * `slots-equal` accepts either the literal `from-log` (use the log's recorded
+ * final slot values) or a record of expected slot → value pairs.
+ */
+function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
+  if (e.kind !== "RecordLit") return "{}";
+  const parts: string[] = [];
+  for (const f of e.fields) {
+    if (f.name === "slots-equal" || f.name === "slotsEqual") {
+      if (f.value.kind === "Ref" && f.value.name === "from-log") {
+        parts.push(`slotsEqual: "from-log"`);
+      } else {
+        parts.push(`slotsEqual: ${jsOfExpr(f.value, ctx)}`);
+      }
+    } else if (f.name === "no-panics" || f.name === "noPanics") {
+      parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
+    } else if (f.name === "no-errors" || f.name === "noErrors") {
+      parts.push(`noErrors: ${jsOfExpr(f.value, ctx)}`);
+    }
+  }
+  return `{ ${parts.join(", ")} }`;
+}
+
 function mocksJs(e: Expr, ctx: EvalCtx): string {
   if (e.kind !== "RecordLit") return "{}";
   const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`);
@@ -983,12 +1133,13 @@ function genStatement(s: Statement, ctx: EvalCtx): string {
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (true) { const ${jsName(arm.pattern.name)} = _v;\n  ${body}\n}`;
         }
-        if (arm.pattern.kind === "PWildcard") {
-          const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
-          return `if (true) {\n  ${body}\n}`;
+        if (arm.pattern.kind === "PTuple") {
+          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
+          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
+          return `if (${guard}) { ${binds}\n  ${body}\n}`;
         }
         const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
-        return `if (_v === ${JSON.stringify(arm.pattern.value)}) {\n  ${body}\n}`;
+        return `if (true) {\n  ${body}\n}`;
       })
       .join(" else ");
     return `{ const _v = ${sc};\n  ${arms}\n}`;
@@ -1151,7 +1302,7 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // Zero-arg list / string method shorthands (callable without parens)
       if (e.field === "unique") return `[...new Set((${baseJs}) ?? [])]`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
-      if (e.field === "sort") return `[...((${baseJs}) ?? [])].sort()`;
+      if (e.field === "sort") return `_s.listSort(${baseJs})`;
       // Issue #7: argument-less spec stdlib methods in the parenthesis-free form
       // (docs/spec/stdlib.md §2.2.3 — the recommended shortcut). Kept in exact sync
       // with the MethodCall (paren) cases in methodCallJs + KNOWN_METHODS.
@@ -1234,6 +1385,13 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
         return `_s.panic(${a})`;
       }
+      // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
+      // The runtime helper is None-safe so `file-url(avatar.get)` does not
+      // throw before `is-some` guards inside `when(...)` short-circuit.
+      if (cn === "file-url") {
+        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : "undefined";
+        return `_s.fileUrl(${a})`;
+      }
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
       return `${jsName(cn)}(${args})`;
@@ -1276,6 +1434,13 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "Variant":
       return variantJs(e.name, e.payload, ctx);
+    case "TokenRef": {
+      // Theme-token reference (spec/style.md §4.3): lowers to the unified
+      // runtime resolver which walks the active theme and falls back to the
+      // built-in defaults baked into mapColor/mapToken/mapSize.
+      const pathJs = `[${e.path.map((p) => JSON.stringify(p)).join(", ")}]`;
+      return `_s.token(${JSON.stringify(e.group)}, ${pathJs})`;
+    }
   }
 }
 
@@ -1599,7 +1764,7 @@ function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: EvalCtx): s
     case "upper":
       return `(String((${recvJs}) ?? "")).toUpperCase()`;
     case "sort":
-      return `[...((${recvJs}) ?? [])].sort()`;
+      return `_s.listSort(${recvJs})`;
     case "ms":
       return `(${recvJs})`;
     // ----- Issue #7: argument-less stdlib methods (parenthesized form). Kept in
@@ -1662,8 +1827,9 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     inner.localBinds.add(p.name);
     return `if (true) { const ${jsName(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
-  if (p.kind === "PLiteral") {
-    return `if (${scVar} === ${JSON.stringify(p.value)}) { return ${jsOfExpr(body, ctx)}; }`;
+  if (p.kind === "PTuple") {
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
+    return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
   const tag = p.name;
@@ -1676,6 +1842,66 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     bindAssigns.push(`const ${jsName(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
   }
   return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
+}
+
+// Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
+// nested element guards) and a series of `const … = scVar[i]…;` bindings.
+// Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
+// the indexed access path. `inheritReducerScope` lets MatchStmt callers carry
+// the reducer's slot-write scope through; matchExpr / TileMatch leave it off.
+function tupleArm(
+  p: Pattern & { kind: "PTuple" },
+  ctx: EvalCtx,
+  scVar: string,
+  inheritReducerScope: boolean,
+): { guard: string; binds: string; inner: EvalCtx } {
+  const inner = makeEvalCtx(
+    ctx.gen,
+    ctx.localBinds,
+    inheritReducerScope ? ctx.reducerScope : undefined,
+  );
+  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
+  const binds: string[] = [];
+  for (let i = 0; i < p.items.length; i++) {
+    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
+  }
+  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
+}
+
+function walkPatternForTupleArm(
+  p: Pattern,
+  accessor: string,
+  inner: EvalCtx,
+  guards: string[],
+  binds: string[],
+): void {
+  switch (p.kind) {
+    case "PWildcard":
+      return;
+    case "PBind":
+      inner.localBinds.add(p.name);
+      binds.push(`const ${jsName(p.name)} = ${accessor};`);
+      return;
+    case "PVariant":
+      guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
+      for (let i = 0; i < p.binds.length; i++) {
+        const name = p.binds[i]!;
+        if (name === "_") continue;
+        inner.localBinds.add(name);
+        binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+      }
+      return;
+    case "PTuple":
+      guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
+      for (let i = 0; i < p.items.length; i++) {
+        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+      }
+      return;
+    default: {
+      const _exhaustive: never = p;
+      throw new Error(`unreachable pattern kind: ${(_exhaustive as Pattern).kind}`);
+    }
+  }
 }
 
 // ----- tiles -----
@@ -1721,7 +1947,13 @@ function tileExprJs(t: TileExpr, gen: GenCtx, ctx: EvalCtx, enclosingTile?: stri
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
           }
-          return `if (_v === ${JSON.stringify(arm.pattern.value)}) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
+          // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
+          // no reducerScope here (tile-match runs in pure render context), so the
+          // helper's `inheritReducerScope=false` path is what we want.
+          {
+            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
+            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTile)}; }`;
+          }
         })
         .join(" else ");
       // The no-match fallback renders an empty `text` tile, so the text family
@@ -1863,6 +2095,8 @@ function tileCallJs(
         else if (arg.name === "id") fields.push(`id: ${valJs}`);
         else if (arg.name === "auto-focus") fields.push(`autoFocus: ${valJs}`);
         else if (arg.name === "required") fields.push(`required: ${valJs}`);
+        else if (arg.name === "accept") fields.push(`accept: ${valJs}`);
+        else if (arg.name === "multiple") fields.push(`multiple: ${valJs}`);
       }
       if (bindInfo) {
         fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
@@ -1959,7 +2193,27 @@ function tileCallJs(
       const textProp = t.props.find((p) => p.name === "text");
       const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
       const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
-      return `({ kind: "link", text: _s.show(${text}), to: _s.show(${to}), props: ${propsObj} })`;
+      // §3.8 prefetch — the prop value is a bare reducer ident (Ref) or a
+      // string literal. We surface it as a literal string so the runtime can
+      // route it through `_dispatch` without re-resolving identifiers.
+      const fields = [`kind: "link"`, `text: _s.show(${text})`, `to: _s.show(${to})`];
+      const prefetchProp = t.props.find((p) => p.name === "prefetch");
+      if (prefetchProp) {
+        const v = prefetchProp.value as Expr;
+        if (v.kind === "Ref") {
+          fields.push(`prefetch: ${JSON.stringify((v as Expr & { name: string }).name)}`);
+        } else if (v.kind === "Str") {
+          fields.push(`prefetch: ${JSON.stringify((v as Expr & { value: string }).value)}`);
+        } else {
+          fields.push(`prefetch: ${jsOfExpr(v, ctx)}`);
+        }
+      }
+      const prefetchArgsProp = t.props.find((p) => p.name === "prefetch-args");
+      if (prefetchArgsProp) {
+        fields.push(`prefetchArgs: ${jsOfExpr(prefetchArgsProp.value, ctx)}`);
+      }
+      fields.push(`props: ${propsObj}`);
+      return `({ ${fields.join(", ")} })`;
     }
     case "markdown": {
       const text = t.args[0] ? jsOfExpr(asExpr(t.args[0].value), ctx) : '""';
@@ -2157,7 +2411,9 @@ function propsFor(
       p.name === "onSubmit" ||
       p.name === "onChange" ||
       p.name === "onInput" ||
-      p.name === "onClose"
+      p.name === "onClose" ||
+      p.name === "onKeyDown" ||
+      p.name === "onMouseEnter"
     ) {
       if ((p.value as Expr).kind === "Ref") {
         const reducerName = (p.value as Expr as Expr & { name: string }).name;
@@ -2167,6 +2423,10 @@ function propsFor(
       }
       continue;
     }
+    // §3.8 link prefetch — the link tile lifts these into top-level fields, so
+    // do not also echo them through `props` (the bare-ident `prefetch: foo`
+    // value would otherwise emit as a JS variable reference at codegen).
+    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
     // event handler from enclosing tile (e.g. ResetBtn has no onClick but reducer subscribes to ui.click(ResetBtn))
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
@@ -2229,6 +2489,33 @@ function propsFor(
       );
     }
   }
+  // Implicit onKeyDown for input / textarea / button when reducer subscribes to
+  // ui.key(EnclosingTile). The runtime exposes `el.key` (the KeyboardEvent.key
+  // value) so reducers can branch on which key was pressed.
+  if ((t.name === "input" || t.name === "textarea" || t.name === "button") && enclosingTile) {
+    const r = ctx.gen.reducers.find(
+      (rr) =>
+        rr.on.kind === "UiEvent" && rr.on.ev === "key" && rr.on.selector.tile === enclosingTile,
+    );
+    if (r && !entries.some((e) => e.startsWith("onKeyDown"))) {
+      entries.push(
+        `onKeyDown: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
+      );
+    }
+  }
+  // Implicit onMouseEnter for any tile when reducer subscribes to
+  // ui.hover(EnclosingTile). Hover is broadly applicable so no tile-name filter.
+  if (enclosingTile) {
+    const r = ctx.gen.reducers.find(
+      (rr) =>
+        rr.on.kind === "UiEvent" && rr.on.ev === "hover" && rr.on.selector.tile === enclosingTile,
+    );
+    if (r && !entries.some((e) => e.startsWith("onMouseEnter"))) {
+      entries.push(
+        `onMouseEnter: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
+      );
+    }
+  }
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
@@ -2237,9 +2524,18 @@ function propsFor(
       p.name === "onSubmit" ||
       p.name === "onChange" ||
       p.name === "onInput" ||
-      p.name === "onClose"
+      p.name === "onClose" ||
+      p.name === "onKeyDown" ||
+      p.name === "onMouseEnter"
     )
       continue;
+    // §3.8 link prefetch — these are runtime-side fields, not slot data; their
+    // value space (reducer-name ident / argument record) doesn't belong in `el`.
+    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
+    // §4.3 style block — a CSS prop bag the runtime applies to el.style. It's
+    // not reducer data, and shipping it twice (top-level + el) re-evaluates
+    // every `@token` ref needlessly.
+    if (p.name === "style") continue;
     elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   if (elProps.length > 0) {
