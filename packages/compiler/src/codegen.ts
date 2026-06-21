@@ -511,7 +511,6 @@ function collectEmits(stmts: Statement[]): string[] {
   const out: string[] = [];
   const visitExpr = (e: Expr | undefined): void => {
     if (!e) return;
-    if (e.kind === "EmitExpr") out.push(e.effect);
     switch (e.kind) {
       case "BinOp":
         visitExpr(e.lhs);
@@ -563,6 +562,7 @@ function collectEmits(stmts: Statement[]): string[] {
         for (const p of e.payload) visitExpr(p);
         return;
       case "EmitExpr":
+        out.push(e.effect);
         for (const a of e.args) visitExpr(a);
         return;
     }
@@ -1955,23 +1955,28 @@ function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
  * — push the same `{effect, args}` record the statement form pushes, then
  * yield the dispatched effect's `EffectId`. The id format mirrors the
  * runtime dispatcher (`packages/runtime/src/core.ts:1324-1329`): `name:_`
- * by default, `name:String(keyOf(input))` for `latest-per-key`. Both sides
- * lower from the same `PolLatestKey.key` expression so the strings match
- * by construction.
+ * by default, `name:String(keyOf(input))` for `latest-per-key`. Each arg is
+ * lowered ONCE into a local (`__a0` / `__a1` / …) so a side-effecting expr
+ * (`now()`, `T.fresh()`, …) cannot diverge between the value pushed onto
+ * `_emits` and the value the EffectId is computed from — otherwise the
+ * reducer's captured id wouldn't match the inflight key the launch path
+ * registers, and `emit cancel(id)` would silently no-op.
  */
 function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
   const effect = e.effect;
   const effectJson = JSON.stringify(effect);
-  const argsJs = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
+  const argBinds = e.args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
+  const argRefs = e.args.map((_, i) => `__a${i}`).join(", ");
+  const inputRef = e.args[0] ? "__a0" : "null";
   const eff = ctx.gen.effects.find((d) => d.name === effect);
   let keyJs: string;
   if (eff?.policy?.kind === "PolLatestKey") {
     const keyCtx: EvalCtx = { gen: ctx.gen, localBinds: new Set(["$1"]) };
-    keyJs = `String((((${jsName("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(__input)))`;
+    keyJs = `String((((${jsName("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
   } else {
     keyJs = `"_"`;
   }
-  return `((() => { const __input = ${e.args[0] ? jsOfExpr(e.args[0], ctx) : "null"}; _emits.push({ effect: ${effectJson}, args: [${argsJs}] }); return ${JSON.stringify(`${effect}:`)} + ${keyJs}; })())`;
+  return `((() => { ${argBinds} _emits.push({ effect: ${effectJson}, args: [${argRefs}] }); return ${JSON.stringify(`${effect}:`)} + ${keyJs}; })())`;
 }
 
 function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {

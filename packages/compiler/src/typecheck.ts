@@ -1224,6 +1224,9 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
   resolveType(eff.outType, sym, errors);
   // §6.4: an effect bound to `cap=http.cancel` cancels an in-flight effect by
   // EffectId and returns nothing. Any other shape is a misuse of the cap.
+  // `policy` / `retry` / `map-request` are silently ignored by the dispatcher
+  // (the cancel path returns before any of them apply), so declaring them is
+  // a user-intent mismatch that we reject up front rather than let it pass.
   if (eff.cap === "http.cancel") {
     const inOk = eff.inType.kind === "TypePrim" && eff.inType.name === "EffectId";
     const outOk = eff.outType.kind === "TypePrim" && eff.outType.name === "Unit";
@@ -1232,6 +1235,30 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
         code: "E0303",
         kind: "invalid-cancel-target",
         message: `effect "${eff.name}" with cap=http.cancel must declare in=EffectId out=Unit`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.policy) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare a policy`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.retry) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare retry`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.mapRequest) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare map-request`,
         pos: eff.pos,
       });
     }

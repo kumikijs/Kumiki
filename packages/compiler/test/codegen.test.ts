@@ -460,6 +460,38 @@ describe("codegen", () => {
     expect(result.js).toContain('"stored": { value: "" }');
   });
 
+  it("lowers EmitExpr args ONCE so a side-effectful arg matches the runtime id (#102 review)", () => {
+    // Before the fix, `let id = emit X(now())` lowered `now()` twice — once
+    // for `__input` (drives the EffectId codegen returns) and once for
+    // `_emits.push({args: [...]})` (drives the runtime keyOf). Two `now()`
+    // values → two different ids → `emit cancel(id)` would silently no-op.
+    const src = `
+      slot stored : EffectId = EffectId.none
+      effect search cap=http.get
+                    in=Time
+                    out=Result(Text, HttpError)
+                    policy=latest-per-key($1)
+      reducer go on=ui.click(Btn) do= let h = emit search(now)
+                                     stored := h
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn)
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Each arg is lowered into a __a<i> binding once; both the push and the
+    // EffectId expression reuse that local.
+    expect(result.js).toMatch(/const __a0 = _s\.now\(\);/);
+    expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0] })');
+    expect(result.js).toContain("(__a0)");
+    expect(result.js).toMatch(/"search:" \+ String/);
+    // _s.now() must appear exactly once in the generated reducer body —
+    // double-eval would surface as two occurrences.
+    const occurrences = (result.js.match(/_s\.now\(\)/g) ?? []).length;
+    expect(occurrences).toBe(1);
+  });
+
   it("includes effects-http when an effect uses cap=http.cancel (#102)", () => {
     const src = `
       slot stored : EffectId = EffectId.none

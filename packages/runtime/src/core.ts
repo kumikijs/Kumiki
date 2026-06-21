@@ -1289,9 +1289,17 @@ function makeEffectDispatcher(
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
 ): Dispatcher {
+  type TimerEntry = {
+    // §6.4.1: cancel clears `debounce` (a pending-but-not-yet-issued launch)
+    // and leaves `throttle` (the rate-limit window marker for an effect that
+    // already launched) intact, so cancel doesn't accidentally reset the
+    // throttle window and let an immediate next emit slip past.
+    kind: "debounce" | "throttle";
+    h: ReturnType<typeof setTimeout>;
+  };
   type RunState = {
     inflight: Map<string, AbortController>;
-    timers: Map<string, ReturnType<typeof setTimeout>>;
+    timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
   };
   const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
@@ -1344,8 +1352,12 @@ function makeEffectDispatcher(
             state.inflight.delete(target);
           }
           const t = state.timers.get(target);
-          if (t !== undefined) {
-            clearTimeout(t);
+          // Only debounce timers represent a pending launch we want to drop.
+          // A throttle timer is the open-window marker for an already-issued
+          // launch — clearing it would let the very next emit slip through
+          // ahead of the rate limit (spec §6.4.1).
+          if (t !== undefined && t.kind === "debounce") {
+            clearTimeout(t.h);
             state.timers.delete(target);
           }
           onCancel?.(target);
@@ -1371,22 +1383,18 @@ function makeEffectDispatcher(
       }
       if (policy.kind === "debounce") {
         const t = state.timers.get(id);
-        if (t) clearTimeout(t);
-        state.timers.set(
-          id,
-          setTimeout(() => {
-            state.timers.delete(id);
-            void launch(eff, input, key);
-          }, policy.ms),
-        );
+        if (t) clearTimeout(t.h);
+        const h = setTimeout(() => {
+          state.timers.delete(id);
+          void launch(eff, input, key);
+        }, policy.ms);
+        state.timers.set(id, { kind: "debounce", h });
         return;
       }
       if (policy.kind === "throttle") {
         if (state.timers.has(id)) return;
-        state.timers.set(
-          id,
-          setTimeout(() => state.timers.delete(id), policy.ms),
-        );
+        const h = setTimeout(() => state.timers.delete(id), policy.ms);
+        state.timers.set(id, { kind: "throttle", h });
         void launch(eff, input, key);
         return;
       }
@@ -1405,7 +1413,7 @@ function makeEffectDispatcher(
       void launch(eff, input, key);
     },
     dispose(): void {
-      for (const t of state.timers.values()) clearTimeout(t);
+      for (const t of state.timers.values()) clearTimeout(t.h);
       state.timers.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();

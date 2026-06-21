@@ -464,6 +464,63 @@ describe("typecheck", () => {
       expect(checkSrc(src)).toEqual([]);
     });
 
+    it("rejects cap=http.cancel with a policy (E0303)", () => {
+      const src = `
+        effect cancel cap=http.cancel
+                      in=EffectId out=Unit
+                      policy=debounce(200ms)
+        tile App = text("x")
+        app A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0303" &&
+            e.kind === "invalid-cancel-target" &&
+            /cannot declare a policy/.test(e.message),
+        ),
+      ).toBe(true);
+    });
+
+    it("rejects cap=http.cancel with retry (E0303)", () => {
+      const src = `
+        effect cancel cap=http.cancel
+                      in=EffectId out=Unit
+                      retry=linear(3, 100ms)
+        tile App = text("x")
+        app A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0303" &&
+            e.kind === "invalid-cancel-target" &&
+            /cannot declare retry/.test(e.message),
+        ),
+      ).toBe(true);
+    });
+
+    it("rejects cap=http.cancel with map-request (E0303)", () => {
+      const src = `
+        effect cancel cap=http.cancel
+                      in=EffectId out=Unit
+                      map-request={url: "/cancel"}
+        tile App = text("x")
+        app A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0303" &&
+            e.kind === "invalid-cancel-target" &&
+            /cannot declare map-request/.test(e.message),
+        ),
+      ).toBe(true);
+    });
+
     it("rejects emit X(...) used as an expression outside a reducer (E0305)", () => {
       const src = `
         effect search cap=http.get in=Text out=Result(Text, HttpError)

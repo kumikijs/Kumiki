@@ -25,7 +25,7 @@ reducer onCancel on=ui.click(CancelBtn)        do= emit cancelSearch(searchEffec
                                                   result := "cancelled"
 reducer onOk     on=search.ok($body, _)        do= result := $body
                                                   searchEffectId := EffectId.none
-reducer onErr    on=search.err($err, _)        do= result := "err: " + $err.message
+reducer onErr    on=search.err($err, _)        do= result := if $err.message == "aborted" then "cancelled" else "err: " + $err.message
                                                   searchEffectId := EffectId.none
 
 tile SearchBox = input(bind=query, placeholder="search…")

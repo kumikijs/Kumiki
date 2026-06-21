@@ -207,7 +207,8 @@ reducer cancelSearch
 
 - 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
 - キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。
-- 同 effect に対する `debounce` / `throttle` タイマーも cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
+- 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
+- `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 
 ---
 

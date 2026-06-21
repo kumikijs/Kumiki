@@ -192,11 +192,14 @@ An entry in `app.caps` is neither a standard capability ([Standard Capabilities]
 
 ### E0303 `invalid-cancel-target`
 
-An effect declared with `cap=http.cancel` does not have the required shape `in=EffectId out=Unit`. The cancel capability cancels by id and returns nothing — any other shape is a misuse of the capability.
+An effect declared with `cap=http.cancel` does not have the required shape `in=EffectId out=Unit`, or declares attributes the cancel path silently ignores (`policy`, `retry`, `map-request`). The cancel capability cancels by id and returns nothing; declaring per-request behaviour on it is a user-intent mismatch.
 
 > `effect "<name>" with cap=http.cancel must declare in=EffectId out=Unit`
+> `effect "<name>" with cap=http.cancel cannot declare a policy`
+> `effect "<name>" with cap=http.cancel cannot declare retry`
+> `effect "<name>" with cap=http.cancel cannot declare map-request`
 
-**Fix**: Change the `in=` and `out=` clauses to `in=EffectId out=Unit`, or remove the `cap=http.cancel` clause. See [HTTP Cancellation](./http.md#_6-4-cancellation).
+**Fix**: Change the `in=` and `out=` clauses to `in=EffectId out=Unit`, drop any `policy=` / `retry=` / `map-request=` clauses, or remove the `cap=http.cancel` clause. See [HTTP Cancellation](./http.md#_6-4-cancellation).
 
 ### E0305 `fn-impurity`
 

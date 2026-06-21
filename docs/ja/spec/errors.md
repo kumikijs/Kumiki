@@ -176,11 +176,14 @@ effect が要求するケイパビリティが `app.caps` で宣言されてい�
 
 ### E0303 `invalid-cancel-target`
 
-`cap=http.cancel` を持つ effect の宣言が必要な形（`in=EffectId out=Unit`）になっていない。cancel capability は id でキャンセルし何も返さないため、他の形は capability の誤用。
+`cap=http.cancel` を持つ effect の宣言が必要な形（`in=EffectId out=Unit`）になっていない、または cancel パスでサイレントに無視される属性（`policy` / `retry` / `map-request`）を宣言している。cancel capability は id でキャンセルし何も返さないため、リクエスト単位の挙動を宣言するのはユーザ意図と挙動の乖離になる。
 
 > `effect "<name>" with cap=http.cancel must declare in=EffectId out=Unit`
+> `effect "<name>" with cap=http.cancel cannot declare a policy`
+> `effect "<name>" with cap=http.cancel cannot declare retry`
+> `effect "<name>" with cap=http.cancel cannot declare map-request`
 
-**修正**: `in=` / `out=` を `in=EffectId out=Unit` に直すか、`cap=http.cancel` を外す。[HTTP Cancellation](./http.md#_6-4-cancellation) を参照。
+**修正**: `in=` / `out=` を `in=EffectId out=Unit` に直し、`policy=` / `retry=` / `map-request=` 句があれば削除する。あるいは `cap=http.cancel` を外す。[HTTP Cancellation](./http.md#_6-4-cancellation) を参照。
 
 ### E0305 `fn-impurity`
 

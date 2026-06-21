@@ -141,6 +141,74 @@ describe("dispatcher http.cancel (#102)", () => {
     }
   });
 
+  it("does NOT clear a throttle window on cancel (review fix)", async () => {
+    // spec §6.4.1: a throttle window marker stays put on cancel so a next
+    // emit within the window does not slip past the rate limit.
+    let calls = 0;
+    const app: AppShape = {
+      slots: { last: { value: "" } },
+      caps: ["http.get", "http.cancel"],
+      effects: {
+        ping: {
+          name: "ping",
+          cap: "http.get",
+          policy: { kind: "throttle", ms: 100 },
+          invoke: async () => {
+            calls++;
+            return { kind: "ok", value: "pong" };
+          },
+        },
+        cancel: {
+          name: "cancel",
+          cap: "http.cancel",
+          invoke: async () => ({ kind: "ok", value: null }),
+        },
+      },
+      init: [],
+      reducers: [
+        {
+          name: "fire",
+          event: { kind: "ui", ev: "click" },
+          selector: { tile: "Fire" },
+          apply: () => ({ slots: {}, emits: [{ effect: "ping", args: [{ url: "/p" }] }] }),
+        },
+        {
+          name: "kill",
+          event: { kind: "ui", ev: "click" },
+          selector: { tile: "Kill" },
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["ping:_"] }] }),
+        },
+        {
+          name: "onOk",
+          event: { kind: "effect", effect: "ping", outcome: "ok" },
+          apply: (_l, p) => ({ slots: { last: p.$1 }, emits: [] }),
+        },
+      ],
+    };
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const { dispose } = mount(app, root);
+      const dispatch = (
+        app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
+      )._dispatch;
+      dispatch("fire", {});
+      await tick(5);
+      // First call launches (throttle window opens).
+      expect(calls).toBe(1);
+      dispatch("kill", {});
+      await tick(5);
+      // Cancel does NOT reset the throttle marker, so a second emit inside the
+      // window is suppressed.
+      dispatch("fire", {});
+      await tick(10);
+      expect(calls).toBe(1);
+      dispose();
+    } finally {
+      root.remove();
+    }
+  });
+
   it("records an effect-cancel step in the episode logger", async () => {
     const { app } = makeCancelApp();
     const logger = createEpisodeLogger({ memoryMax: 10 });
