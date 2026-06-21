@@ -372,6 +372,14 @@ export type AppShape = {
    * CLI) from `@kumikijs/icons`, restricted to names actually referenced by
    * `icon(name="<literal>")` in the source. `theme.icons[name]` (when set)
    * overrides any entry here.
+   *
+   * The renderer reads `icons` off `globalThis.__kumikiApp`, which holds the
+   * most-recently-mounted instance. When several Kumiki apps share a page
+   * (Web Component, micro-frontend), the last mount wins for unrelated apps
+   * too. The compiled icon set is normally identical across mounts of the
+   * same source, so this is only a hazard when two distinct apps with
+   * different icon registries share the document — wrap one in a closed
+   * shadow root, or pre-merge their `theme.icons`, to avoid cross-talk.
    */
   icons?: Record<string, string>;
   /** reusable scoped animations by name (closed-grammar keyframes + timing). */

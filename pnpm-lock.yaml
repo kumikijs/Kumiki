@@ -168,9 +168,6 @@ importers:
 
   packages/icons:
     devDependencies:
-      tsdown:
-        specifier: ^0.22.1
-        version: 0.22.1(tsx@4.22.3)(typescript@6.0.3)(unrun@0.3.0)
       typescript:
         specifier: 'catalog:'
         version: 6.0.3

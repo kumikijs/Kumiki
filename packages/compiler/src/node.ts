@@ -59,6 +59,10 @@ export function resolveCapabilities(kumikiFilePath: string): string[] {
  * to whatever was set via `theme.icons`. Resolution is cached per project root
  * so repeated compiles in a long-lived process (Vite dev server, MCP) don't
  * pay the dynamic-import cost on every transform.
+ *
+ * Cache lifetime: process. Installing / removing `@kumikijs/icons` while a
+ * Vite dev server (or MCP) is running won't be picked up until restart — the
+ * trade-off for amortizing the dynamic import across every `.kumiki` save.
  */
 const ICON_REGISTRY_CACHE = new Map<string, Record<string, string> | null>();
 export async function resolveBuiltinIcons(

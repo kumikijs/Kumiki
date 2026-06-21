@@ -330,6 +330,8 @@ Names in the initial set, grouped by intent:
 - **File / link**: `file`, `file-text`, `folder`, `folder-open`, `download`, `upload`, `external-link`, `link`, `paperclip`, `image`
 - **Auth / device**: `lock`, `unlock`, `key`, `mail`, `phone`, `camera`, `microphone`, `wifi`
 
+Auto-bundling only triggers when `name` is a string literal — e.g. `icon(name="check")`. Dynamic forms (slot reference, `if`-expression, computed value) are kept as-is and resolved at render time via `theme.icons` only; the built-in registry is not consulted for them. Prefer literal names so the toolchain can prune unused paths from the bundle and surface typos as a compile-time signal.
+
 ### 4.8.2 Props
 
 | prop | Effect |

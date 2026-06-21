@@ -30,7 +30,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE-HEROICONS"
   ],
   "publishConfig": {
     "access": "public",
@@ -49,7 +50,6 @@
     "lint": "biome check src test"
   },
   "devDependencies": {
-    "tsdown": "^0.22.1",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
