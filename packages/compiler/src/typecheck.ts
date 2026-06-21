@@ -653,30 +653,7 @@ function checkStmt(
     return;
   }
   if (s.kind === "Emit") {
-    const eff = sym.effects.get(s.effect);
-    const isBuiltinNav =
-      s.effect === "navigate" ||
-      s.effect === "navigate-replace" ||
-      s.effect === "navigate-back" ||
-      s.effect === "scroll-to" ||
-      s.effect === "toast" ||
-      s.effect === "confirm" ||
-      s.effect === "log";
-    if (!eff && !isBuiltinNav) {
-      errors.push({
-        code: "E0104",
-        kind: "undef-effect",
-        message: `Reference to undefined effect "${s.effect}"`,
-        pos: s.pos,
-      });
-    } else if (eff && ctx.capsAvailable && !ctx.capsAvailable.has(eff.cap)) {
-      errors.push({
-        code: "E0301",
-        kind: "missing-capability",
-        message: `Effect "${s.effect}" requires capability "${eff.cap}" which is not declared in app.caps`,
-        pos: s.pos,
-      });
-    }
+    checkEmitTarget(s.effect, s.args, sym, errors, ctx, s.pos);
     // `emit confirm({onYes: <reducer>, onNo: <reducer>})` (lifecycle §7.6):
     // the onYes/onNo fields name reducers, not values. Skip the standard
     // checkExpr on those Refs (which would flag them as undefined names),
@@ -810,10 +787,30 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Variant":
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
-    case "BinOp":
+    case "BinOp": {
+      // EffectId is opaque (spec stdlib §2.1.1.1): only `==` / `!=` defined.
+      // Boolean `&` / `|` cannot meaningfully apply to it either, but we leave
+      // them to the general unknown-receiver path — the typical misuse is
+      // arithmetic (`+` / `-` / `*` / `/`) or ordering (`<` / `>` / `<=` /
+      // `>=`), which is what we flag here.
+      const isEffectId = (t: TypeExpr | null): boolean =>
+        !!t && t.kind === "TypePrim" && t.name === "EffectId";
+      if (e.op !== "==" && e.op !== "!=") {
+        const lt = inferType(e.lhs, sym, ctx);
+        const rt = inferType(e.rhs, sym, ctx);
+        if (isEffectId(lt) || isEffectId(rt)) {
+          errors.push({
+            code: "E0204",
+            kind: "effect-id-misuse",
+            message: `Operator "${e.op}" cannot be applied to EffectId — only "==" / "!=" are defined`,
+            pos: e.pos,
+          });
+        }
+      }
       checkExpr(e.lhs, sym, errors, ctx);
       checkExpr(e.rhs, sym, errors, ctx);
       return;
+    }
     case "UnaryOp":
       checkExpr(e.rhs, sym, errors, ctx);
       return;
@@ -911,6 +908,84 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
       }
       return;
+    case "EmitExpr":
+      // `emit X(...)` is a dispatch — it has side effects (the effect queue is
+      // populated). Allowed only in a reducer body, mirroring statement-form
+      // `emit` (parsed only inside `parseStatement`). A fn / slot-init / tile
+      // body that "yields an EffectId" would have nowhere meaningful to send
+      // the dispatch.
+      if (ctx.kind !== "reducer") {
+        errors.push({
+          code: "E0305",
+          kind: "fn-impurity",
+          message: `emit "${e.effect}" used as an expression is only allowed inside a reducer body`,
+          pos: e.pos,
+        });
+        return;
+      }
+      checkEmitTarget(e.effect, e.args, sym, errors, ctx, e.pos);
+      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      return;
+  }
+}
+
+/**
+ * Common emit-call validation shared by `Statement.Emit` (line ~655) and the
+ * `Expr.EmitExpr` form used in `let id = emit X(...)`. Checks the effect is
+ * defined, its capability is available, and — when both sides have a known
+ * type — that the first arg matches the effect's `in` type (the catch for
+ * `emit cancel(slotOfWrongType)`).
+ */
+function checkEmitTarget(
+  effect: string,
+  args: Expr[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  pos: Pos,
+): void {
+  const eff = sym.effects.get(effect);
+  const isBuiltinNav =
+    effect === "navigate" ||
+    effect === "navigate-replace" ||
+    effect === "navigate-back" ||
+    effect === "scroll-to" ||
+    effect === "toast" ||
+    effect === "confirm" ||
+    effect === "log";
+  if (!eff && !isBuiltinNav) {
+    errors.push({
+      code: "E0104",
+      kind: "undef-effect",
+      message: `Reference to undefined effect "${effect}"`,
+      pos,
+    });
+    return;
+  }
+  if (eff && ctx.capsAvailable && !ctx.capsAvailable.has(eff.cap)) {
+    errors.push({
+      code: "E0301",
+      kind: "missing-capability",
+      message: `Effect "${effect}" requires capability "${eff.cap}" which is not declared in app.caps`,
+      pos,
+    });
+  }
+  if (eff && args.length > 0) {
+    const declared = eff.inType;
+    const actual = inferType(args[0] as Expr, sym, ctx);
+    if (
+      declared.kind === "TypePrim" &&
+      declared.name === "EffectId" &&
+      actual &&
+      !(actual.kind === "TypePrim" && actual.name === "EffectId")
+    ) {
+      errors.push({
+        code: "E0202",
+        kind: "emit-arg-type-mismatch",
+        message: `emit "${effect}" expects an EffectId argument`,
+        pos,
+      });
+    }
   }
 }
 
@@ -1054,6 +1129,18 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // Err carries E, not T — can't infer the success type, so stay dynamic.
       return null;
     }
+    case "EmitExpr":
+      // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
+      // yields the dispatched effect's EffectId.
+      return { kind: "TypePrim", name: "EffectId", pos: e.pos };
+    case "Call":
+      // `EffectId.none` is the empty-handle sentinel for slot init / cancel
+      // no-op. Treated as a builtin call so it sits beside `Duration.ms` /
+      // `Decoder.Json` (same shape — uppercase qualifier + dot + member).
+      if (e.callee === "EffectId.none") {
+        return { kind: "TypePrim", name: "EffectId", pos: e.pos };
+      }
+      return null;
     default:
       return null;
   }
@@ -1135,6 +1222,47 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
 function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
   resolveType(eff.inType, sym, errors);
   resolveType(eff.outType, sym, errors);
+  // §6.4: an effect bound to `cap=http.cancel` cancels an in-flight effect by
+  // EffectId and returns nothing. Any other shape is a misuse of the cap.
+  // `policy` / `retry` / `map-request` are silently ignored by the dispatcher
+  // (the cancel path returns before any of them apply), so declaring them is
+  // a user-intent mismatch that we reject up front rather than let it pass.
+  if (eff.cap === "http.cancel") {
+    const inOk = eff.inType.kind === "TypePrim" && eff.inType.name === "EffectId";
+    const outOk = eff.outType.kind === "TypePrim" && eff.outType.name === "Unit";
+    if (!inOk || !outOk) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel must declare in=EffectId out=Unit`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.policy) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare a policy`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.retry) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare retry`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.mapRequest) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare map-request`,
+        pos: eff.pos,
+      });
+    }
+  }
   if (eff.mapRequest)
     checkExpr(eff.mapRequest, sym, errors, {
       kind: "slot-init", // treat as pure context (no slots, no fns)
@@ -1223,6 +1351,9 @@ function walkExpr(e: Expr | undefined, visit: (n: Expr) => void): void {
       return;
     case "Variant":
       for (const p of e.payload) walkExpr(p, visit);
+      return;
+    case "EmitExpr":
+      for (const a of e.args) walkExpr(a, visit);
       return;
   }
 }

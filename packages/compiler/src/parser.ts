@@ -44,7 +44,17 @@ export class ParseError extends Error {
   }
 }
 
-const PRIM_TYPES = new Set(["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes", "File"]);
+const PRIM_TYPES = new Set([
+  "Int",
+  "Text",
+  "Bool",
+  "Unit",
+  "Float",
+  "Time",
+  "Bytes",
+  "File",
+  "EffectId",
+]);
 // Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
 // lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
 // already treats `-` as ident-continuation, so they arrive as a single token.
@@ -743,6 +753,26 @@ class Parser {
   // ----- expressions -----
 
   parseExpr(): Expr {
+    // `emit X(args)` as an expression (spec http.md §6.4, stdlib §2.1.1.1) —
+    // yields the dispatched effect's `EffectId`. Statement-form `emit` is
+    // parsed earlier in `parseStatement` (with no capture), so we only reach
+    // this branch when `emit` appears in an expression position such as
+    // `let id = emit X(...)`.
+    if (this.matchKw("emit")) {
+      const start = this.next();
+      const effect = this.eat("ident").value;
+      this.eat("op", "(");
+      const args: Expr[] = [];
+      if (!this.matchOp(")")) {
+        args.push(this.parseExpr());
+        while (this.matchOp(",")) {
+          this.next();
+          args.push(this.parseExpr());
+        }
+      }
+      this.eat("op", ")");
+      return { kind: "EmitExpr", effect, args, pos: start.pos };
+    }
     return this.parseLogicOr();
   }
 
@@ -1011,6 +1041,21 @@ class Parser {
       // capital-cased identifier; otherwise this is a method call on a value and
       // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
+      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). Bare
+      // form (no parens) so slot init / cancel-no-op reads cleanly; treated
+      // as a 0-arg Call so typecheck/codegen handle it via the same
+      // builtin-call channel as `Decoder.Json` / `TodoId.fresh`.
+      if (
+        name === "EffectId" &&
+        this.matchOp(".") &&
+        this.matchTAt(1, "ident") &&
+        (this.peek(1) as { value: string }).value === "none" &&
+        !this.matchTAt(2, "op", "(")
+      ) {
+        this.next(); // .
+        this.next(); // none
+        return { kind: "Call", callee: "EffectId.none", args: [], pos: t.pos };
+      }
       if (
         isQualifierReceiver &&
         this.matchOp(".") &&

@@ -315,4 +315,37 @@ fn f(p: Tuple(Light, Light)) -> Text = match p with
   | (x) -> "n/a"`;
     expect(() => parse(lex(src))).toThrow(/Tuple pattern requires at least 2 items/);
   });
+
+  // issue #102 — http.cancel + EffectId.
+  it("parses `let id = emit X(...)` as a LetStmt with an EmitExpr rhs (#102)", () => {
+    const src = `slot id : EffectId = EffectId.none
+effect fetchQuote cap=http.get in=Unit out=Result(Text, HttpError)
+reducer load on=ui.click(Btn) do= let h = emit fetchQuote()
+                                  id := h
+tile Btn = button(text="go", onClick=load)
+tile App = column(Btn)
+app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]`;
+    const program = parse(lex(src));
+    const r = program.defs.find((d) => d.kind === "ReducerDef") as ReducerDef;
+    expect(r.do[0]).toMatchObject({
+      kind: "LetStmt",
+      name: "h",
+      rhs: { kind: "EmitExpr", effect: "fetchQuote" },
+    });
+    expect(r.do[1]).toMatchObject({
+      kind: "SlotAssign",
+      lvalue: { kind: "LSlot", name: "id" },
+      rhs: { kind: "Ref", name: "h" },
+    });
+  });
+
+  it("parses `EffectId` as a primitive type and `EffectId.none` as a Call (#102)", () => {
+    const src = `slot id : EffectId = EffectId.none
+tile App = text("x")
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+    const program = parse(lex(src));
+    const slot = program.defs.find((d) => d.kind === "SlotDef") as SlotDef;
+    expect(slot.type).toMatchObject({ kind: "TypePrim", name: "EffectId" });
+    expect(slot.init).toMatchObject({ kind: "Call", callee: "EffectId.none" });
+  });
 });

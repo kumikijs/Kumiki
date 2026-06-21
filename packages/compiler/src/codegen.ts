@@ -509,14 +509,82 @@ function recordField(e: Expr | TileExpr, name: string): Expr | undefined {
 /** All effect names emitted anywhere in a reducer body (descends into control flow). */
 function collectEmits(stmts: Statement[]): string[] {
   const out: string[] = [];
+  const visitExpr = (e: Expr | undefined): void => {
+    if (!e) return;
+    switch (e.kind) {
+      case "BinOp":
+        visitExpr(e.lhs);
+        visitExpr(e.rhs);
+        return;
+      case "UnaryOp":
+        visitExpr(e.rhs);
+        return;
+      case "FieldAccess":
+        visitExpr(e.base);
+        return;
+      case "Index":
+        visitExpr(e.base);
+        visitExpr(e.index);
+        return;
+      case "Call":
+        for (const a of e.args) visitExpr(a);
+        return;
+      case "MethodCall":
+        visitExpr(e.receiver);
+        for (const a of e.args) visitExpr(a);
+        return;
+      case "RecordLit":
+        for (const f of e.fields) visitExpr(f.value);
+        return;
+      case "ListLit":
+        for (const it of e.items) visitExpr(it);
+        return;
+      case "MapLit":
+        for (const en of e.entries) {
+          visitExpr(en.key);
+          visitExpr(en.value);
+        }
+        return;
+      case "MatchExpr":
+        visitExpr(e.scrutinee);
+        for (const a of e.arms) visitExpr(a.body);
+        return;
+      case "IfExpr":
+        visitExpr(e.cond);
+        visitExpr(e.consequent);
+        visitExpr(e.alternate);
+        return;
+      case "LetIn":
+        visitExpr(e.value);
+        visitExpr(e.body);
+        return;
+      case "Variant":
+        for (const p of e.payload) visitExpr(p);
+        return;
+      case "EmitExpr":
+        out.push(e.effect);
+        for (const a of e.args) visitExpr(a);
+        return;
+    }
+  };
   const walk = (ss: Statement[]): void => {
     for (const s of ss) {
-      if (s.kind === "Emit") out.push(s.effect);
-      else if (s.kind === "ForStmt") walk(s.body);
-      else if (s.kind === "IfStmt") {
+      if (s.kind === "Emit") {
+        out.push(s.effect);
+        for (const a of s.args) visitExpr(a);
+      } else if (s.kind === "LetStmt") visitExpr(s.rhs);
+      else if (s.kind === "SlotAssign") visitExpr(s.rhs);
+      else if (s.kind === "ForStmt") {
+        visitExpr(s.iter);
+        walk(s.body);
+      } else if (s.kind === "IfStmt") {
+        visitExpr(s.cond);
         walk(s.consequent);
         walk(s.alternate);
-      } else if (s.kind === "MatchStmt") for (const a of s.arms) walk(a.body);
+      } else if (s.kind === "MatchStmt") {
+        visitExpr(s.scrutinee);
+        for (const a of s.arms) walk(a.body);
+      }
     }
   };
   walk(stmts);
@@ -1039,9 +1107,16 @@ function builtinEffectCall(eff: EffectDef, reqVar: string): string | null {
   if (eff.cap === "indexed.read") return `indexedRead(${reqVar}, _idb)`;
   if (eff.cap === "indexed.write") return `indexedWrite(${reqVar}, _idb)`;
   if (eff.cap === "indexed.delete") return `indexedDelete(${reqVar}, _idb)`;
+  if (eff.cap === "http.cancel") {
+    // cap=http.cancel is a meta-effect — the dispatcher special-cases it and
+    // never reaches the invoke. Codegen still needs SOME `invoke` so the
+    // EffectSpec shape stays uniform; an immediate `ok` keeps a host
+    // provider's mocked behaviour honest if it's ever called through tests.
+    return `{ kind: "ok", value: null }`;
+  }
   if (eff.cap.startsWith("http.")) {
     const method = eff.cap.slice("http.".length).toUpperCase();
-    return `httpFetch(${JSON.stringify(method)}, ${reqVar}, _http)`;
+    return `httpFetch(${JSON.stringify(method)}, ${reqVar}, _http, signal)`;
   }
   return null;
 }
@@ -1059,14 +1134,14 @@ function genEffect(eff: EffectDef, gen: GenCtx): string {
   const fallback =
     builtin ??
     `{ kind: "err", value: { message: ${JSON.stringify(`Capability ${eff.cap} has no provider`)} } }`;
-  const tail = `const p = caps.provider(${capJs}); if (p) return p(${reqVar}, caps); return ${fallback};`;
+  const tail = `const p = caps.provider(${capJs}); if (p) return p(${reqVar}, caps, signal); return ${fallback};`;
 
   let invokeBody: string;
   if (eff.mapRequest) {
     const mapJs = jsOfExpr(eff.mapRequest, makeEvalCtx(gen, new Set(["$1"])));
-    invokeBody = `async (${jsName("$1")}, caps) => { const req = ${mapJs}; ${tail} }`;
+    invokeBody = `async (${jsName("$1")}, caps, signal) => { const req = ${mapJs}; ${tail} }`;
   } else {
-    invokeBody = `async (input, caps) => { ${tail} }`;
+    invokeBody = `async (input, caps, signal) => { ${tail} }`;
   }
 
   return `{
@@ -1424,6 +1499,11 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         return `_s.bytesFromBase64(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
       if (cn === "Bytes.from-bytes")
         return `_s.bytesFromBytes(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "[]"})`;
+      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). The
+      // runtime treats falsy / unknown ids as silent no-ops, so the empty
+      // string doubles as a valid slot-initial value AND a guaranteed-no-op
+      // cancel target.
+      if (cn === "EffectId.none") return `""`;
       // Decoder.* — codegen treats decoders as a sentinel string; the builtin storage handler
       // ignores everything except "json".
       if (cn === "Decoder.Json") return `"json"`;
@@ -1480,6 +1560,8 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return e.wild === "any-id"
         ? `_s.wild("any-id")`
         : `_s.wild("slot", ${JSON.stringify(e.slot)})`;
+    case "EmitExpr":
+      return emitExprJs(e, ctx);
     case "MatchExpr":
       return matchExprJs(e, ctx);
     case "IfExpr":
@@ -1866,6 +1948,35 @@ function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
   if (name === "Ok") return `_s.Ok(${jsOfExpr(payload[0]!, ctx)})`;
   if (name === "Err") return `_s.Err(${jsOfExpr(payload[0]!, ctx)})`;
   return `_s.variant(${JSON.stringify(name)}, ${payload.map((p) => jsOfExpr(p, ctx)).join(", ")})`;
+}
+
+/**
+ * `emit X(args)` used as an expression (spec http.md §6.4, stdlib §2.1.1.1)
+ * — push the same `{effect, args}` record the statement form pushes, then
+ * yield the dispatched effect's `EffectId`. The id format mirrors the
+ * runtime dispatcher (`packages/runtime/src/core.ts:1324-1329`): `name:_`
+ * by default, `name:String(keyOf(input))` for `latest-per-key`. Each arg is
+ * lowered ONCE into a local (`__a0` / `__a1` / …) so a side-effecting expr
+ * (`now()`, `T.fresh()`, …) cannot diverge between the value pushed onto
+ * `_emits` and the value the EffectId is computed from — otherwise the
+ * reducer's captured id wouldn't match the inflight key the launch path
+ * registers, and `emit cancel(id)` would silently no-op.
+ */
+function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
+  const effect = e.effect;
+  const effectJson = JSON.stringify(effect);
+  const argBinds = e.args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
+  const argRefs = e.args.map((_, i) => `__a${i}`).join(", ");
+  const inputRef = e.args[0] ? "__a0" : "null";
+  const eff = ctx.gen.effects.find((d) => d.name === effect);
+  let keyJs: string;
+  if (eff?.policy?.kind === "PolLatestKey") {
+    const keyCtx: EvalCtx = { gen: ctx.gen, localBinds: new Set(["$1"]) };
+    keyJs = `String((((${jsName("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
+  } else {
+    keyJs = `"_"`;
+  }
+  return `((() => { ${argBinds} _emits.push({ effect: ${effectJson}, args: [${argRefs}] }); return ${JSON.stringify(`${effect}:`)} + ${keyJs}; })())`;
 }
 
 function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {

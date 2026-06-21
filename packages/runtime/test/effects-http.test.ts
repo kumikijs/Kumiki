@@ -86,4 +86,50 @@ describe("httpFetch (#78)", () => {
     const v = res.value as { message: string };
     expect(v.message).toMatch(/aborted/i);
   });
+
+  // issue #102 — http.cancel + EffectId returned at emit time.
+  it("normalizes external-signal abort to {status:0, message:'aborted'} (#102)", async () => {
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    }) as unknown as typeof fetch;
+    const ctl = new AbortController();
+    // Abort right after the call so the awaiting fetch sees the external abort.
+    setTimeout(() => ctl.abort(), 0);
+    const res = await httpFetch(
+      "GET",
+      { url: "/q" },
+      { baseUrl: "https://x", timeout: 30_000 },
+      ctl.signal,
+    );
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string; body: string };
+    expect(v.status).toBe(0);
+    expect(v.message).toBe("aborted");
+    expect(v.body).toBe("");
+  });
+
+  it("returns immediately with aborted when external signal is already aborted (#102)", async () => {
+    // fetch is never called for an already-aborted signal — but if it is, it
+    // must still resolve to the aborted shape.
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        if (init?.signal?.aborted) reject(new Error("aborted"));
+      });
+    }) as unknown as typeof fetch;
+    const ctl = new AbortController();
+    ctl.abort();
+    const res = await httpFetch("GET", { url: "/q" }, undefined, ctl.signal);
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { message: string };
+    expect(v.message).toBe("aborted");
+  });
 });

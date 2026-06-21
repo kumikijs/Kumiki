@@ -163,6 +163,15 @@ An event handler argument / prop must be a reducer name, but was a different kin
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 
+### E0204 `effect-id-misuse`
+
+A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+
+> `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
+> `text(...) cannot render EffectId — it is an opaque handle`
+
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
@@ -180,6 +189,17 @@ An entry in `app.caps` is neither a standard capability ([Standard Capabilities]
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
 **Fix**: Use a standard capability, correct the spelling, or register the custom capability in a `kumiki.caps.json` next to the `.kumiki` file. See [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities).
+
+### E0303 `invalid-cancel-target`
+
+An effect declared with `cap=http.cancel` does not have the required shape `in=EffectId out=Unit`, or declares attributes the cancel path silently ignores (`policy`, `retry`, `map-request`). The cancel capability cancels by id and returns nothing; declaring per-request behaviour on it is a user-intent mismatch.
+
+> `effect "<name>" with cap=http.cancel must declare in=EffectId out=Unit`
+> `effect "<name>" with cap=http.cancel cannot declare a policy`
+> `effect "<name>" with cap=http.cancel cannot declare retry`
+> `effect "<name>" with cap=http.cancel cannot declare map-request`
+
+**Fix**: Change the `in=` and `out=` clauses to `in=EffectId out=Unit`, drop any `policy=` / `retry=` / `map-request=` clauses, or remove the `cap=http.cancel` clause. See [HTTP Cancellation](./http.md#_6-4-cancellation).
 
 ### E0305 `fn-impurity`
 

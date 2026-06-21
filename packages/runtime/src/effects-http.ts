@@ -24,6 +24,7 @@ export async function httpFetch(
   method: string,
   input: unknown,
   httpCfg?: HttpCfg,
+  externalSignal?: AbortSignal,
 ): Promise<EffectResult> {
   const x = input as {
     url?: string;
@@ -52,10 +53,23 @@ export async function httpFetch(
     }
   }
 
+  // Internal controller drives the timeout; an external `signal` (from the
+  // dispatcher / `http.cancel`) also aborts the in-flight fetch via the
+  // listener below. `AbortSignal.any` would be ideal but is not in every
+  // happy-dom / older browser target — manual fan-in is portable.
   const timeoutMs = httpCfg?.timeout ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   init.signal = controller.signal;
+  let externallyAborted = false;
+  const onExternalAbort = (): void => {
+    externallyAborted = true;
+    controller.abort();
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) onExternalAbort();
+    else externalSignal.addEventListener("abort", onExternalAbort);
+  }
 
   try {
     const res = await fetch(url, init);
@@ -87,10 +101,26 @@ export async function httpFetch(
     else value = await res.text();
     return { kind: "ok", value };
   } catch (e) {
+    // spec http.md §6.4.1: cancelled / aborted requests normalize to
+    // `{status:0, message:"aborted"}` so reducers see the same HttpError
+    // shape for manual cancel, `policy=latest` auto-cancel, and timeout.
+    const aborted = externallyAborted || isAbortError(e);
+    if (aborted) {
+      return { kind: "err", value: { status: 0, message: "aborted", body: "" } };
+    }
     return { kind: "err", value: { status: 0, message: String(e), body: "" } };
   } finally {
     clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
+}
+
+function isAbortError(e: unknown): boolean {
+  if (e instanceof Error) {
+    if (e.name === "AbortError") return true;
+    if (/aborted/i.test(e.message)) return true;
+  }
+  return false;
 }
 
 function safeCallHeaders(thunk: () => Record<string, string>): Record<string, string> {

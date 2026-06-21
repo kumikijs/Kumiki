@@ -15,6 +15,19 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Unit` | 単一値 | `()` |
 | `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` で生成（§2.2.10 参照） |
 | `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse()` |
+| `EffectId` | `emit` が返す不透明ハンドル（§2.1.1.1 参照） | リテラルなし、`EffectId.none` |
+
+#### 2.1.1.1 `EffectId`
+
+`EffectId` は dispatched effect を 1 件指す不透明ハンドル。`emit` を式として使うと返ってくる:
+
+```
+let id = emit fetchQuote()
+```
+
+`EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
+
+`EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP §6.4](./http.md#_6-4-cancellation) 参照）。
 
 ### 2.1.2 汎化型
 
@@ -410,6 +423,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 | capability | 用途 |
 |---|---|
 | `http.get`, `http.post`, `http.put`, `http.patch`, `http.delete` | HTTP リクエスト |
+| `http.cancel` | 進行中の HTTP リクエストを `EffectId` でキャンセル（[Cancellation](./http.md#_6-4-cancellation) 参照） |
 | `storage.read`, `storage.write` | localStorage |
 | `session.read`, `session.write` | sessionStorage |
 | `indexed.read`, `indexed.write` | IndexedDB |

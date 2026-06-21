@@ -37,6 +37,7 @@ export type EpisodeStep =
       value: unknown;
       ts: number;
     }
+  | { kind: "effect-cancel"; targetId: string; ts: number }
   | {
       kind: "signal-update";
       "dirty-slots": string[];
@@ -118,6 +119,14 @@ export type EpisodeLogger = {
    * was the last outstanding effect.
    */
   recordEffectEnd(token: string, name: string, result: "ok" | "err", value: unknown): () => void;
+  /**
+   * Append a `{kind: "effect-cancel", ...}` step to the open episode. Used by
+   * the dispatcher's `http.cancel` branch (spec http.md §6.4) so the trace
+   * carries both the cancel intent AND the cancelled effect's `.err`
+   * (`message: "aborted"`) — without the cancel step the `.err` looks like a
+   * generic network failure.
+   */
+  recordEffectCancel(targetId: string): void;
   /** Append a `{kind: "signal-update", ...}` step to the open episode. */
   recordSignalUpdate(dirtySlots: string[], bindsUpdated?: string[]): void;
   /** Record a panic; the episode commits with `status = "panic"`. */
@@ -282,6 +291,11 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         if (count > 0) pending.set(ep, count - 1);
         settle(ep);
       };
+    },
+    recordEffectCancel(targetId) {
+      const ep = topEpisode();
+      if (!ep) return;
+      ep.steps.push({ kind: "effect-cancel", targetId, ts: now() });
     },
     recordSignalUpdate(dirtySlots, bindsUpdated) {
       const ep = topEpisode();

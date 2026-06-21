@@ -1,0 +1,38 @@
+# Feature: `http.cancel` capability + `EffectId` captured at emit time (#102).
+# `searchEffectId` records the id returned by `emit search(...)`. A click on
+# Cancel emits `cancel(searchEffectId)`, which the runtime maps to abort of the
+# in-flight fetch — surfacing `{status:0, message:"aborted"}` to the .err
+# reducer per spec http.md §6.4.1. Storing `EffectId.none` after cancel keeps
+# a subsequent Cancel click a safe no-op.
+
+slot query           : Text     = ""
+slot result          : Text     = "idle"
+slot searchEffectId  : EffectId = EffectId.none
+
+effect search cap=http.get
+              in=Text
+              out=Result(Text, HttpError)
+              policy=latest
+              map-request={url: "/api/search?q=" + $1, decode: Decoder.Text()}
+
+effect cancelSearch cap=http.cancel in=EffectId out=Unit
+
+reducer onInput  on=ui.input(SearchBox)        do= query := $event.value
+                                                  let h = emit search(query)
+                                                  searchEffectId := h
+reducer onCancel on=ui.click(CancelBtn)        do= emit cancelSearch(searchEffectId)
+                                                  searchEffectId := EffectId.none
+                                                  result := "cancelled"
+reducer onOk     on=search.ok($body, _)        do= result := $body
+                                                  searchEffectId := EffectId.none
+reducer onErr    on=search.err($err, _)        do= result := if $err.message == "aborted" then "cancelled" else "err: " + $err.message
+                                                  searchEffectId := EffectId.none
+
+tile SearchBox = input(bind=query, placeholder="search…")
+tile CancelBtn = button(text="Cancel", onClick=onCancel)
+tile App = column(SearchBox, CancelBtn, text(result)) {pad: "lg", gap: "md"}
+
+app EffectCancel
+    caps   = [http.get, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

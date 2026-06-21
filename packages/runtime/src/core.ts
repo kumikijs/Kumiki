@@ -195,7 +195,7 @@ export type EffectSpec = {
   retry?:
     | { kind: "linear"; n: number; ms: number }
     | { kind: "exponential"; n: number; ms: number; factor: number };
-  invoke: (input: unknown, caps: CapabilityRegistry) => Promise<EffectResult>;
+  invoke: (input: unknown, caps: CapabilityRegistry, signal?: AbortSignal) => Promise<EffectResult>;
 };
 
 export type EffectResult = { kind: "ok"; value: unknown } | { kind: "err"; value: unknown };
@@ -210,6 +210,7 @@ export type EffectResult = { kind: "ok"; value: unknown } | { kind: "err"; value
 export type CapabilityProvider = (
   input: unknown,
   caps: CapabilityRegistry,
+  signal?: AbortSignal,
 ) => Promise<EffectResult> | EffectResult;
 
 export type CapabilityRegistry = {
@@ -498,6 +499,7 @@ export function mountCore(
       handleEffectResult(effect, outcome, value, key, token);
     },
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
+    episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
   );
 
   // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
@@ -1285,10 +1287,19 @@ function makeEffectDispatcher(
     token: string,
   ) => void,
   onLaunch?: (effect: string, input: unknown) => string,
+  onCancel?: (targetId: string) => void,
 ): Dispatcher {
+  type TimerEntry = {
+    // §6.4.1: cancel clears `debounce` (a pending-but-not-yet-issued launch)
+    // and leaves `throttle` (the rate-limit window marker for an effect that
+    // already launched) intact, so cancel doesn't accidentally reset the
+    // throttle window and let an immediate next emit slip past.
+    kind: "debounce" | "throttle";
+    h: ReturnType<typeof setTimeout>;
+  };
   type RunState = {
     inflight: Map<string, AbortController>;
-    timers: Map<string, ReturnType<typeof setTimeout>>;
+    timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
   };
   const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
@@ -1304,14 +1315,20 @@ function makeEffectDispatcher(
     // queue) has already passed. Token threads through to onResult so the
     // matching effect-end lands on the same Episode.
     const token = onLaunch?.(eff.name, input) ?? "";
+    const id = `${eff.name}:${key}`;
+    // Every in-flight effect gets its own AbortController so `http.cancel`
+    // (spec http.md §6.4) — and the existing `policy=latest`/`latest-per-key`
+    // paths — can abort the actual `fetch`, not just delete a map entry. The
+    // signal threads through `runWithRetry` → `eff.invoke` → `httpFetch`.
+    const ctl = new AbortController();
+    state.inflight.set(id, ctl);
     try {
-      const res = await runWithRetry(eff, input, caps);
+      const res = await runWithRetry(eff, input, caps, ctl.signal);
       onResult(eff.name, res.kind, res.value, input, token);
     } catch (e) {
       onResult(eff.name, "err", { message: String(e) }, input, token);
     } finally {
-      const ic = state.inflight.get(`${eff.name}:${key}`);
-      if (ic) state.inflight.delete(`${eff.name}:${key}`);
+      if (state.inflight.get(id) === ctl) state.inflight.delete(id);
     }
   };
 
@@ -1319,6 +1336,34 @@ function makeEffectDispatcher(
     dispatch(emit: EmitSpec): void {
       const eff = app.effects[emit.effect];
       if (!eff) return;
+      // §6.4: `cap=http.cancel` is a meta-effect — its `input` IS an
+      // `EffectId` (the `${name}:${key}` string produced by codegen and the
+      // launch path). Abort the matching in-flight controller AND clear any
+      // pending debounce/throttle timer, then surface the cancel intent to
+      // the episode log. Unknown / already-completed ids are a silent no-op
+      // (cancellation is an idempotent intent, not a contract violation —
+      // user code shouldn't have to guard a rapidly-clicked Cancel button).
+      if (eff.cap === "http.cancel") {
+        const target = String(emit.args[0] ?? "");
+        if (target.length > 0) {
+          const ic = state.inflight.get(target);
+          if (ic) {
+            ic.abort();
+            state.inflight.delete(target);
+          }
+          const t = state.timers.get(target);
+          // Only debounce timers represent a pending launch we want to drop.
+          // A throttle timer is the open-window marker for an already-issued
+          // launch — clearing it would let the very next emit slip through
+          // ahead of the rate limit (spec §6.4.1).
+          if (t !== undefined && t.kind === "debounce") {
+            clearTimeout(t.h);
+            state.timers.delete(target);
+          }
+          onCancel?.(target);
+        }
+        return;
+      }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
       const keyOf = (input: unknown): string => {
@@ -1338,37 +1383,37 @@ function makeEffectDispatcher(
       }
       if (policy.kind === "debounce") {
         const t = state.timers.get(id);
-        if (t) clearTimeout(t);
-        state.timers.set(
-          id,
-          setTimeout(() => {
-            state.timers.delete(id);
-            void launch(eff, input, key);
-          }, policy.ms),
-        );
+        if (t) clearTimeout(t.h);
+        const h = setTimeout(() => {
+          state.timers.delete(id);
+          void launch(eff, input, key);
+        }, policy.ms);
+        state.timers.set(id, { kind: "debounce", h });
         return;
       }
       if (policy.kind === "throttle") {
         if (state.timers.has(id)) return;
-        state.timers.set(
-          id,
-          setTimeout(() => state.timers.delete(id), policy.ms),
-        );
+        const h = setTimeout(() => state.timers.delete(id), policy.ms);
+        state.timers.set(id, { kind: "throttle", h });
         void launch(eff, input, key);
         return;
       }
       if (policy.kind === "latest" || policy.kind === "latest-per-key") {
+        // Abort the previous in-flight invocation under the same id, then
+        // launch a fresh one. `launch` itself installs the new controller —
+        // the dispatcher only has to evict the old.
         const ic = state.inflight.get(id);
-        if (ic) ic.abort();
-        const ctl = new AbortController();
-        state.inflight.set(id, ctl);
+        if (ic) {
+          ic.abort();
+          state.inflight.delete(id);
+        }
         void launch(eff, input, key);
         return;
       }
       void launch(eff, input, key);
     },
     dispose(): void {
-      for (const t of state.timers.values()) clearTimeout(t);
+      for (const t of state.timers.values()) clearTimeout(t.h);
       state.timers.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
@@ -1383,12 +1428,12 @@ function makeEffectDispatcher(
  */
 export function overridableInvoke(
   cap: string,
-  fn: (input: unknown) => Promise<EffectResult>,
+  fn: (input: unknown, signal?: AbortSignal) => Promise<EffectResult>,
 ): EffectSpec["invoke"] {
-  return async (input, caps) => {
+  return async (input, caps, signal) => {
     const p = caps.provider(cap);
-    if (p) return p(input, caps);
-    return fn(input);
+    if (p) return p(input, caps, signal);
+    return fn(input, signal);
   };
 }
 
@@ -1501,18 +1546,22 @@ async function runWithRetry(
   eff: EffectSpec,
   input: unknown,
   caps: CapabilityRegistry,
+  signal?: AbortSignal,
 ): Promise<EffectResult> {
   const policy = eff.retry;
-  if (!policy) return eff.invoke(input, caps);
-  let last: EffectResult = await eff.invoke(input, caps);
+  if (!policy) return eff.invoke(input, caps, signal);
+  let last: EffectResult = await eff.invoke(input, caps, signal);
   for (let attempt = 1; attempt < policy.n; attempt++) {
     if (last.kind !== "err") return last;
+    // §6.4.1: abort short-circuits retries — re-issuing a cancelled request
+    // would defeat the cancel intent.
+    if (signal?.aborted) return last;
     const status = readStatus(last.value);
     const retriable = status === null || status === 0 || status >= 500;
     if (!retriable) return last;
     const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
     await sleep(delay);
-    last = await eff.invoke(input, caps);
+    last = await eff.invoke(input, caps, signal);
   }
   return last;
 }
