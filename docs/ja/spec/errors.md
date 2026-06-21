@@ -147,6 +147,15 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 
+### E0204 `effect-id-misuse`
+
+`EffectId` 型の値が定義されていない操作に使われている。`EffectId` で定義された操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・`text(...)` での描画は拒否する — `EffectId` は不透明型なのでランタイムが表現を変えてもアプリが壊れないようにするため。
+
+> `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
+> `text(...) cannot render EffectId — it is an opaque handle`
+
+**修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`
@@ -164,6 +173,14 @@ effect が要求するケイパビリティが `app.caps` で宣言されてい�
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
 **修正**：標準ケイパビリティを使うか、綴りを直すか、`.kumiki` ファイルと同じディレクトリの `kumiki.caps.json` にカスタムケイパビリティを登録する。詳細は [標準ケイパビリティ](./stdlib.md#_2-5-standard-capabilities)。
+
+### E0303 `invalid-cancel-target`
+
+`cap=http.cancel` を持つ effect の宣言が必要な形（`in=EffectId out=Unit`）になっていない。cancel capability は id でキャンセルし何も返さないため、他の形は capability の誤用。
+
+> `effect "<name>" with cap=http.cancel must declare in=EffectId out=Unit`
+
+**修正**: `in=` / `out=` を `in=EffectId out=Unit` に直すか、`cap=http.cancel` を外す。[HTTP Cancellation](./http.md#_6-4-cancellation) を参照。
 
 ### E0305 `fn-impurity`
 

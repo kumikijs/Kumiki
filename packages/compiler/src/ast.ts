@@ -203,7 +203,7 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File";
+      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File" | "EffectId";
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
@@ -298,6 +298,11 @@ export type Expr =
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
+  // `emit X(args)` used as an expression — yields the dispatched effect's
+  // `EffectId` (spec §2.1.1.1, http.md §6.4). Statement-form `emit` keeps the
+  // separate `Statement.Emit` so existing reducers without a capture stay
+  // unchanged.
+  | { kind: "EmitExpr"; effect: string; args: Expr[]; pos: Pos }
   | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
   // Theme-token reference (spec/style.md §4.3): `@colors.surface`,
   // `@spacing.md`, `@typography.size.lg`. `group` is the top-level theme

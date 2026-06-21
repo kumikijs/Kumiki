@@ -437,6 +437,47 @@ describe("codegen", () => {
     expect(result.js).toContain('_s.variantIs((_v)[0], "B")');
   });
 
+  // issue #102 — http.cancel + EffectId returned at emit time.
+  it("lowers `let id = emit X()` to push + EffectId expression (#102)", () => {
+    const src = `
+      slot stored : EffectId = EffectId.none
+      effect search cap=http.get
+                    in=Text
+                    out=Result(Text, HttpError)
+      reducer go on=ui.click(Btn) do= let h = emit search("q")
+                                     stored := h
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn)
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // The let rhs is an IIFE that pushes the emit AND yields `"search:" + key`.
+    expect(result.js).toContain('_emits.push({ effect: "search"');
+    expect(result.js).toContain('"search:"');
+    // EffectId.none lowers to the empty-string sentinel.
+    expect(result.js).toContain('"stored": { value: "" }');
+  });
+
+  it("includes effects-http when an effect uses cap=http.cancel (#102)", () => {
+    const src = `
+      slot stored : EffectId = EffectId.none
+      effect cancel cap=http.cancel in=EffectId out=Unit
+      reducer go on=ui.click(Btn) do= emit cancel(stored)
+      tile Btn = button(text="cancel", onClick=go)
+      tile App = column(Btn)
+      app A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // The dispatcher special-cases cap=http.cancel — we just need the
+    // capability to be wired into the registry and the emit to be present.
+    expect(result.js).toContain('"http.cancel"');
+    expect(result.js).toContain('_emits.push({ effect: "cancel"');
+  });
+
   it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {
     // Regression guard: shorthand props are still resolved at runtime by
     // applyContainerProps/applyTextProps, NOT desugared at codegen time.

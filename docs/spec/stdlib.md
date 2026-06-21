@@ -15,6 +15,19 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Unit` | single value | `()` |
 | `Bytes` | byte sequence | no literal; `Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` (see §2.2.10) |
 | `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse()` |
+| `EffectId` | opaque handle returned by `emit` (see §2.1.1.1) | no literal; `EffectId.none` |
+
+#### 2.1.1.1 `EffectId`
+
+`EffectId` is an opaque handle that identifies a single dispatched effect. It is returned by `emit` when used as an expression:
+
+```
+let id = emit fetchQuote()
+```
+
+The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
+
+`EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
 ### 2.1.2 Generic Types
 
@@ -410,6 +423,7 @@ The standard set of capabilities that can be declared in `app.caps`:
 | capability | Use |
 |---|---|
 | `http.get`, `http.post`, `http.put`, `http.patch`, `http.delete` | HTTP requests |
+| `http.cancel` | Cancel an in-flight HTTP request by `EffectId` (see [Cancellation](./http.md#_6-4-cancellation)) |
 | `storage.read`, `storage.write` | localStorage |
 | `session.read`, `session.write` | sessionStorage |
 | `indexed.read`, `indexed.write` | IndexedDB |
