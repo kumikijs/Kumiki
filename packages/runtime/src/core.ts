@@ -365,6 +365,23 @@ export type AppShape = {
   themes?: Record<string, Theme>;
   /** selected theme name. */
   themeName?: string | null;
+  /**
+   * Compile-time-baked built-in icon registry (#101). Maps spec-form names
+   * (`"check"`, `"chevron-down"`, …) to single-path SVG `d` data inside a
+   * 24×24 viewBox. Populated by the toolchain (`@kumikijs/vite` / `kumiki`
+   * CLI) from `@kumikijs/icons`, restricted to names actually referenced by
+   * `icon(name="<literal>")` in the source. `theme.icons[name]` (when set)
+   * overrides any entry here.
+   *
+   * The renderer reads `icons` off `globalThis.__kumikiApp`, which holds the
+   * most-recently-mounted instance. When several Kumiki apps share a page
+   * (Web Component, micro-frontend), the last mount wins for unrelated apps
+   * too. The compiled icon set is normally identical across mounts of the
+   * same source, so this is only a hazard when two distinct apps with
+   * different icon registries share the document — wrap one in a closed
+   * shadow root, or pre-merge their `theme.icons`, to avoid cross-talk.
+   */
+  icons?: Record<string, string>;
   /** reusable scoped animations by name (closed-grammar keyframes + timing). */
   motions?: Record<string, unknown>;
   /** §4.10: document-level metadata applied to <head> at mount. */

@@ -8,7 +8,11 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { compile } from "@kumikijs/compiler";
-import { nodeEpisodeLogReader, nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
+import {
+  nodeEpisodeLogReader,
+  nodeRuntimeBundleReader,
+  resolveBuiltinIcons,
+} from "@kumikijs/compiler/node";
 import {
   type AppShape,
   createEpisodeLogger,
@@ -36,19 +40,40 @@ async function loadApp(
   capabilities: string[] = [],
   opts: { includeTests?: boolean; sourcePath?: string } = {},
 ): Promise<AppShape> {
-  const result = compile(source, {
+  const baseOpts = {
     runtimeSpecifier: "ignored",
     bundle: true,
     readRuntimeBundle: nodeRuntimeBundleReader,
     capabilities,
     includeTests: opts.includeTests === true,
     ...(opts.sourcePath ? { readEpisodeLog: nodeEpisodeLogReader(opts.sourcePath) } : {}),
-  });
-  if (result.kind !== "ok") {
+  } as const;
+  const first = compile(source, baseOpts);
+  if (first.kind !== "ok") {
     throw new Error(
-      `compile failed:\n${result.errors.map((e) => `${e.code} ${e.message}`).join("\n")}`,
+      `compile failed:\n${first.errors.map((e) => `${e.code} ${e.message}`).join("\n")}`,
     );
   }
+
+  // Two-pass when the source uses `icon(name="...")` literals AND we have a
+  // sourcePath to resolve `@kumikijs/icons` from. Falls through silently if
+  // the package isn't installed.
+  let result = first;
+  if (opts.sourcePath && first.usedIcons.length > 0) {
+    const registry = await resolveBuiltinIcons(opts.sourcePath);
+    if (registry) {
+      const subset: Record<string, string> = {};
+      for (const name of first.usedIcons) {
+        const path = registry[name];
+        if (typeof path === "string") subset[name] = path;
+      }
+      if (Object.keys(subset).length > 0) {
+        const second = compile(source, { ...baseOpts, icons: subset });
+        if (second.kind === "ok") result = second;
+      }
+    }
+  }
+
   const patched = result.js.replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "");
   const dir = mkdtempSync(join(tmpdir(), "kumiki-smoke-"));
   const file = join(dir, "app.mjs");
@@ -63,9 +88,10 @@ async function loadApp(
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
+  opts: { sourcePath?: string } = {},
 ): Promise<SmokeReport> {
   ensureDom();
-  const app = await loadApp(source, capabilities);
+  const app = await loadApp(source, capabilities, opts);
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
@@ -77,7 +103,7 @@ export async function smokeSource(
 }
 
 export async function smokeFile(path: string, capabilities: string[] = []): Promise<SmokeReport> {
-  return smokeSource(readFileSync(path, "utf8"), capabilities);
+  return smokeSource(readFileSync(path, "utf8"), capabilities, { sourcePath: path });
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
@@ -101,10 +127,12 @@ export async function runScenarioSource(
   source: string,
   scenario: Scenario,
   capabilities: string[] = [],
-  opts: { episodeLogger?: EpisodeLogger | null } = {},
+  opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
   ensureDom();
-  const app = await loadApp(source, capabilities);
+  const app = await loadApp(source, capabilities, {
+    ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
+  });
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
@@ -136,6 +164,7 @@ export async function runCmd(
   const episodeLogger = logFile ? createEpisodeLogger() : null;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
     episodeLogger,
+    sourcePath: kumikiPath,
   });
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];

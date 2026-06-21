@@ -14,6 +14,13 @@ export type CompileOk = {
    * ships exactly these from `@kumikijs/runtime/modules/`.
    */
   runtimeModules: string[];
+  /**
+   * Icon names referenced by `icon(name="<literal>")` calls in the source
+   * (#101). The Vite plugin / CLI use this to look up matching SVG path data
+   * in `@kumikijs/icons` and re-compile with the `icons` option so only used
+   * paths reach the bundle.
+   */
+  usedIcons: string[];
 };
 export type CompileFail = { kind: "fail"; errors: KumikiError[] };
 export type CompileResult = CompileOk | CompileFail;
@@ -72,5 +79,11 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
     js = inlineRuntime(js, opts.readRuntimeBundle());
   }
 
-  return { kind: "ok", js, program, runtimeModules: generated.runtimeModules };
+  return {
+    kind: "ok",
+    js,
+    program,
+    runtimeModules: generated.runtimeModules,
+    usedIcons: generated.usedIcons,
+  };
 }

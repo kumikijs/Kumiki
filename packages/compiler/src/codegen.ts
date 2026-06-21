@@ -49,6 +49,16 @@ export type CodegenOptions = {
    * placeholder when omitted and no `episode-test` appears.
    */
   readEpisodeLog?: (relativePath: string) => string;
+  /**
+   * Optional built-in icon registry (#101). Maps spec-form icon names
+   * (e.g. `"check"`, `"chevron-down"`) to single-path SVG `d` data. When
+   * provided, only entries whose name appears in `usedIcons` (literal
+   * `icon(name="<name>")` references) are baked into the emitted
+   * `App.icons`. Apps that don't reference icons pay zero bundle cost.
+   * `@kumikijs/vite` and the `kumiki` CLI thread `@kumikijs/icons` through
+   * automatically when it is resolvable from the project.
+   */
+  icons?: Record<string, string>;
 };
 
 export type CodegenResult = {
@@ -60,6 +70,13 @@ export type CodegenResult = {
    * modular one.
    */
   runtimeModules: string[];
+  /**
+   * Icon names referenced by `icon(name="<literal>")` somewhere in the program
+   * (#101). The toolchain (`@kumikijs/vite`, `kumiki` CLI) reads this to look
+   * up the matching SVG path data in `@kumikijs/icons` and re-run codegen with
+   * the `icons` option so only used paths reach the bundle.
+   */
+  usedIcons: string[];
 };
 
 export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
@@ -82,7 +99,16 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   const app = apps[0];
   if (!app) throw new Error("No app definition found");
 
-  const ctx: GenCtx = { slots, fns, tiles, reducers, effects, types, usedTiles: new Set() };
+  const ctx: GenCtx = {
+    slots,
+    fns,
+    tiles,
+    reducers,
+    effects,
+    types,
+    usedTiles: new Set(),
+    usedIcons: new Set(),
+  };
 
   // The import header is emitted AFTER the body below — generating the body
   // fills `ctx.usedTiles`, which (with caps/emits) decides the modular imports.
@@ -232,6 +258,26 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (app.analytics) lines.push(`  analytics: ${JSON.stringify(appAnalyticsJson(app.analytics))},`);
   lines.push("};");
 
+  // Bake-only-what's-used built-in icon registry (#101). The toolchain passes
+  // `opts.icons` (from @kumikijs/icons) on the second codegen pass; we emit
+  // only the entries whose name appears in a literal `icon(name=...)` call.
+  // The runtime renderer (`tiles-text.ts#icon`) falls back through this map
+  // when `theme.icons[name]` is unset.
+  if (opts.icons && ctx.usedIcons.size > 0) {
+    const entries: string[] = [];
+    for (const name of [...ctx.usedIcons].sort()) {
+      const path = opts.icons[name];
+      if (typeof path === "string") {
+        entries.push(`  ${JSON.stringify(name)}: ${JSON.stringify(path)},`);
+      }
+    }
+    if (entries.length > 0) {
+      lines.push("App.icons = {");
+      for (const e of entries) lines.push(e);
+      lines.push("};");
+    }
+  }
+
   // In-language test tile factories close over this instance's live state, so
   // they are built inside the factory and attached to the app.
   if (opts.includeTests && tests.length > 0) {
@@ -343,7 +389,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     );
   }
 
-  return { js: [...header, ...lines].join("\n"), runtimeModules: usage.modules };
+  return {
+    js: [...header, ...lines].join("\n"),
+    runtimeModules: usage.modules,
+    usedIcons: [...ctx.usedIcons].sort(),
+  };
 }
 
 /** The generated identifier holding one tile family's renderer map. */
@@ -882,6 +932,13 @@ type GenCtx = {
   types: Map<string, TypeDef>;
   /** Built-in tile kinds the generated code emits (filled during generation, #71). */
   usedTiles: Set<string>;
+  /**
+   * Icon names referenced by `icon(name="<literal>")` (#101). Collected during
+   * tile-body generation and used to bake only the referenced entries from
+   * `opts.icons` into the emitted `App.icons` map. Dynamic `name=<expr>` calls
+   * are not captured — they resolve via `theme.icons` at runtime.
+   */
+  usedIcons: Set<string>;
 };
 
 type EvalCtx = {
@@ -2228,7 +2285,16 @@ function tileCallJs(
     }
     case "icon": {
       const name = t.args.find((a) => a.name === "name");
-      const nameJs = name ? jsOfExpr(asExpr(name.value), ctx) : '""';
+      const nameExpr = name ? asExpr(name.value) : null;
+      // String-literal names get captured so the toolchain can bake matching
+      // entries from the project's icon registry into `App.icons` (#101). Other
+      // forms (Ref, expression) resolve dynamically through `theme.icons` at
+      // runtime — no compile-time bundling.
+      if (nameExpr && nameExpr.kind === "Str") {
+        const literal = (nameExpr as Expr & { value: string }).value;
+        if (literal) ctx.gen.usedIcons.add(literal);
+      }
+      const nameJs = nameExpr ? jsOfExpr(nameExpr, ctx) : '""';
       return `({ kind: "icon", name: _s.show(${nameJs}), props: ${propsObj} })`;
     }
     case "code": {

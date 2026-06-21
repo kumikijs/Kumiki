@@ -3,7 +3,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { check, compile, type KumikiError } from "@kumikijs/compiler";
-import { CapabilityManifestError, resolveCapabilities } from "@kumikijs/compiler/node";
+import {
+  CapabilityManifestError,
+  resolveBuiltinIcons,
+  resolveCapabilities,
+} from "@kumikijs/compiler/node";
 import { fixCmd, fixFromTest } from "./fix.ts";
 import {
   addDef,
@@ -56,20 +60,40 @@ function capsFor(inputPath: string): string[] {
   }
 }
 
-function buildCmd(inputArg: string, outdirArg: string): void {
+async function buildCmd(inputArg: string, outdirArg: string): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const outdir = resolve(process.cwd(), outdirArg);
   const source = readFileSync(inputPath, "utf8");
-  const result = compile(source, {
+  const baseOpts = {
     runtimeSpecifier: "./runtime/core.js",
     runtimeModulesDir: "./runtime",
     capabilities: capsFor(inputPath),
-  });
-  if (result.kind === "fail") {
-    for (const err of result.errors) {
+  };
+  const first = compile(source, baseOpts);
+  if (first.kind === "fail") {
+    for (const err of first.errors) {
       console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
     }
     process.exit(1);
+  }
+  // Bake referenced icons into App.icons (#101). When @kumikijs/icons is
+  // installed in the project, look up each used name and re-codegen with the
+  // resolved subset so the output ships only the paths the app actually
+  // references. Falls through silently when the package is absent.
+  let result = first;
+  if (first.usedIcons.length > 0) {
+    const registry = await resolveBuiltinIcons(inputPath);
+    if (registry) {
+      const subset: Record<string, string> = {};
+      for (const name of first.usedIcons) {
+        const path = registry[name];
+        if (typeof path === "string") subset[name] = path;
+      }
+      if (Object.keys(subset).length > 0) {
+        const second = compile(source, { ...baseOpts, icons: subset });
+        if (second.kind === "ok") result = second;
+      }
+    }
   }
   mkdirSync(outdir, { recursive: true });
   writeFileSync(resolve(outdir, "app.js"), result.js);
@@ -185,7 +209,7 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       const out = argv[4];
       if (!input || !out) usage();
-      buildCmd(input, out);
+      await buildCmd(input, out);
       return;
     }
     case "list": {
