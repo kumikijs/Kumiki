@@ -10,7 +10,11 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { compile, generateDts } from "@kumikijs/compiler";
-import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
+import {
+  nodeRuntimeBundleReader,
+  resolveBuiltinIcons,
+  resolveCapabilities,
+} from "@kumikijs/compiler/node";
 import type { Plugin } from "vite";
 
 export type KumikiPluginOptions = {
@@ -47,21 +51,43 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
   return {
     name: "vite-plugin-kumiki",
     enforce: "pre",
-    transform(code, id) {
+    async transform(code, id) {
       const file = cleanId(id);
       if (!KUMIKI_RE.test(file)) return null;
 
-      const result = compile(code, {
+      const baseOpts = {
         runtimeSpecifier: "@kumikijs/runtime",
         exportApp: true,
         bundle,
         ...(bundle ? { readRuntimeBundle: nodeRuntimeBundleReader } : {}),
         capabilities: resolveCapabilities(file),
-      });
+      } as const;
 
-      if (result.kind !== "ok") {
-        const detail = result.errors.map((e) => `  ${e.code} ${e.message}`).join("\n");
+      const first = compile(code, baseOpts);
+      if (first.kind !== "ok") {
+        const detail = first.errors.map((e) => `  ${e.code} ${e.message}`).join("\n");
         this.error(`Kumiki compile failed (${file}):\n${detail}`);
+      }
+
+      // Auto-bundle referenced icons (#101). When the project has
+      // @kumikijs/icons installed, look up each name surfaced by the first
+      // pass and re-codegen with `icons` populated so only used paths reach
+      // the output. When the package is absent we fall through; theme.icons
+      // remains the manual escape hatch.
+      let result = first;
+      if (first.usedIcons.length > 0) {
+        const registry = await resolveBuiltinIcons(file);
+        if (registry) {
+          const subset: Record<string, string> = {};
+          for (const name of first.usedIcons) {
+            const path = registry[name];
+            if (typeof path === "string") subset[name] = path;
+          }
+          if (Object.keys(subset).length > 0) {
+            const second = compile(code, { ...baseOpts, icons: subset });
+            if (second.kind === "ok") result = second;
+          }
+        }
       }
 
       if (options.types) writeIfChanged(`${file}.gen.ts`, generateDts(result.program));

@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseCapabilityManifest } from "./capabilities.ts";
 
 /**
@@ -49,4 +50,47 @@ export function resolveCapabilities(kumikiFilePath: string): string[] {
   const result = parseCapabilityManifest(raw);
   if (!result.ok) throw new CapabilityManifestError(`${manifestPath}: ${result.error}`);
   return result.manifest.capabilities;
+}
+
+/**
+ * Resolve `@kumikijs/icons` from the project containing `kumikiFilePath` and
+ * return its full `ALL_ICONS` registry (#101). When the package is not
+ * installed (or its shape is unexpected) returns `null` — callers fall back
+ * to whatever was set via `theme.icons`. Resolution is cached per project root
+ * so repeated compiles in a long-lived process (Vite dev server, MCP) don't
+ * pay the dynamic-import cost on every transform.
+ */
+const ICON_REGISTRY_CACHE = new Map<string, Record<string, string> | null>();
+export async function resolveBuiltinIcons(
+  kumikiFilePath: string,
+): Promise<Record<string, string> | null> {
+  const baseDir = dirname(kumikiFilePath);
+  if (ICON_REGISTRY_CACHE.has(baseDir)) return ICON_REGISTRY_CACHE.get(baseDir) ?? null;
+  let resolved: string;
+  try {
+    const require = createRequire(join(baseDir, "_"));
+    resolved = require.resolve("@kumikijs/icons");
+  } catch {
+    ICON_REGISTRY_CACHE.set(baseDir, null);
+    return null;
+  }
+  try {
+    const mod = (await import(pathToFileURL(resolved).href)) as {
+      ALL_ICONS?: Record<string, unknown>;
+    };
+    const all = mod.ALL_ICONS;
+    if (!all || typeof all !== "object") {
+      ICON_REGISTRY_CACHE.set(baseDir, null);
+      return null;
+    }
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(all)) {
+      if (typeof v === "string") filtered[k] = v;
+    }
+    ICON_REGISTRY_CACHE.set(baseDir, filtered);
+    return filtered;
+  } catch {
+    ICON_REGISTRY_CACHE.set(baseDir, null);
+    return null;
+  }
 }

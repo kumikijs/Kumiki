@@ -365,6 +365,15 @@ export type AppShape = {
   themes?: Record<string, Theme>;
   /** selected theme name. */
   themeName?: string | null;
+  /**
+   * Compile-time-baked built-in icon registry (#101). Maps spec-form names
+   * (`"check"`, `"chevron-down"`, …) to single-path SVG `d` data inside a
+   * 24×24 viewBox. Populated by the toolchain (`@kumikijs/vite` / `kumiki`
+   * CLI) from `@kumikijs/icons`, restricted to names actually referenced by
+   * `icon(name="<literal>")` in the source. `theme.icons[name]` (when set)
+   * overrides any entry here.
+   */
+  icons?: Record<string, string>;
   /** reusable scoped animations by name (closed-grammar keyframes + timing). */
   motions?: Record<string, unknown>;
   /** §4.10: document-level metadata applied to <head> at mount. */

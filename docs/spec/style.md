@@ -317,16 +317,43 @@ The `icon` element is referenced by name:
 icon(name="check") {size: "md", color: "success"}
 ```
 
-A built-in icon set is planned (the list comes later). Custom icons are registered by path in `theme.icons`:
+### 4.8.1 Built-in set
+
+A closed set of names ships in `@kumikijs/icons` (Heroicons v2 Solid, 24×24 single-path, fill-based). The toolchain — `@kumikijs/vite` and the `kumiki` CLI — scans compiled tiles for `icon(name=<literal>)` calls and bakes only the referenced path data into the generated `App.icons`, so apps that don't use icons pay zero bundle cost.
+
+Names in the initial set, grouped by intent:
+
+- **Status**: `check`, `check-circle`, `x`, `x-circle`, `info`, `alert-triangle`, `alert-circle`, `help-circle`, `shield-check`, `shield-exclamation`
+- **Navigation**: `chevron-up`, `chevron-down`, `chevron-left`, `chevron-right`, `chevrons-left`, `chevrons-right`, `arrow-up`, `arrow-down`, `arrow-left`, `arrow-right`, `arrow-up-right`, `arrow-down-left`, `caret-up`, `caret-down`
+- **Actions**: `plus`, `minus`, `edit`, `pencil`, `trash`, `save`, `copy`, `clipboard`, `search`, `filter`, `refresh`, `settings`, `more-horizontal`, `more-vertical`, `share`, `print`
+- **Common**: `home`, `user`, `users`, `bell`, `calendar`, `clock`, `star`, `heart`, `bookmark`, `eye`, `eye-off`, `menu`, `sun`, `moon`
+- **File / link**: `file`, `file-text`, `folder`, `folder-open`, `download`, `upload`, `external-link`, `link`, `paperclip`, `image`
+- **Auth / device**: `lock`, `unlock`, `key`, `mail`, `phone`, `camera`, `microphone`, `wifi`
+
+### 4.8.2 Props
+
+| prop | Effect |
+|---|---|
+| `size: "sm" \| "md" \| "lg" \| "xl"` | 16 / 24 / 32 / 48 px box. Number is taken as px. Any other string passes through (`"1.5em"`). Defaults to `1em` so icons inherit the surrounding font size. |
+| `color: <theme-color> \| <css color>` | Resolved against `theme.colors`; the SVG fills with `currentColor`. |
+
+### 4.8.3 Custom icons & overrides — `theme.icons`
+
+Register custom names, or override any built-in, through `theme.icons`. Each value is the `d` attribute of a single `<path>` inside a 24×24 viewBox — the same convention as the built-in set.
 
 ```kumiki
 theme MyTheme = {
     ...,
     icons: {
-        logo: "M3 3h18v18H3z..."     ; SVG path
+        logo:  "M3 3h18v18H3z..."     ; custom name
+        check: "M4 12l5 5L20 6"        ; overrides the built-in
     }
 }
 ```
+
+Resolution order at render time: `theme.icons[name]` → compile-baked built-in (`App.icons[name]`) → fallback to a `[name]` placeholder. The placeholder keeps unknown names visible without crashing the render, which surfaces typos during smoke runs.
+
+Standalone apps (no `@kumikijs/icons` installed) can still use `icon(name=…)` — just register every name they need through `theme.icons`.
 
 ---
 

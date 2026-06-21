@@ -1,0 +1,56 @@
+{
+  "name": "@kumikijs/icons",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Kumiki built-in icon set — Heroicons solid SVG path data, keyed by name. Auto-bundled by @kumikijs/vite and the kumiki CLI.",
+  "license": "Apache-2.0",
+  "author": "kage1020",
+  "homepage": "https://github.com/kage1020/Kumiki/tree/main/packages/icons#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kage1020/Kumiki.git",
+    "directory": "packages/icons"
+  },
+  "bugs": "https://github.com/kage1020/Kumiki/issues",
+  "keywords": [
+    "kumiki",
+    "icons",
+    "svg",
+    "heroicons",
+    "ai-first"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "biome check src test"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
