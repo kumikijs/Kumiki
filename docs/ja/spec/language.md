@@ -322,8 +322,6 @@ tile NewForm = form(...) {id: "new"}
 reducer add on=ui.submit(NewForm) do= ...
 ```
 
-`NewForm#some-instance` はリスト中の特定インスタンスを指す用途に予約。
-
 ### 1.6.3 lvalue の意味論
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
