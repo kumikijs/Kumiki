@@ -326,8 +326,6 @@ tile NewForm = form(...) {id: "new"}
 reducer add on=ui.submit(NewForm) do= ...
 ```
 
-`NewForm#some-instance` is reserved for referring to a specific instance within a list.
-
 ### 1.6.3 lvalue Semantics
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
