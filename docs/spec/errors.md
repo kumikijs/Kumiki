@@ -163,6 +163,20 @@ An event handler argument / prop must be a reducer name, but was a different kin
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 
+### E0202 `bind-on-file-input`
+
+`input(type="file")` cannot bind a slot via `bind=`. The `bind=` two-way binding table ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) has no acceptable type for files — files are surfaced through the change event payload instead ([Forms §5.10](./forms.md#_5-10-file-upload)).
+
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+
+**Fix**: Remove `bind=`, and add a reducer that picks the file from the event:
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*")
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
 ### E0204 `effect-id-misuse`
 
 A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
