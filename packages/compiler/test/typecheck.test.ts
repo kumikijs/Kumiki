@@ -534,7 +534,7 @@ describe("typecheck", () => {
   });
 
   describe('forms — input(type="file") bind=', () => {
-    it("reports bind= on a file input (E0202)", () => {
+    it("reports bind= on a file input (E0205)", () => {
       const src = `
         slot avatar : Option(File) = None
         tile AvatarPicker = input(type="file", bind=avatar, accept="image/*")
@@ -545,7 +545,7 @@ describe("typecheck", () => {
       expect(
         errors.some(
           (e) =>
-            e.code === "E0202" &&
+            e.code === "E0205" &&
             e.kind === "bind-on-file-input" &&
             e.message.includes("avatar") &&
             e.message.includes("$event.files.head"),
@@ -561,8 +561,7 @@ describe("typecheck", () => {
         tile App = column(AvatarPicker)
         app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       `;
-      const errors = checkSrc(src);
-      expect(errors.some((e) => e.code === "E0202")).toBe(false);
+      expect(checkSrc(src)).toEqual([]);
     });
 
     it("does not flag bind= on a non-file input", () => {
@@ -572,8 +571,7 @@ describe("typecheck", () => {
         tile App = column(In)
         app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       `;
-      const errors = checkSrc(src);
-      expect(errors.some((e) => e.code === "E0202")).toBe(false);
+      expect(checkSrc(src)).toEqual([]);
     });
   });
 });

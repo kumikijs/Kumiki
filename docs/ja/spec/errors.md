@@ -156,6 +156,20 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。
 
+### E0205 `bind-on-file-input`
+
+`input(type="file")` には `bind=` でスロットを束ねられない。`bind=` の双方向束縛の互換型テーブル（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）にファイルを受け入れる型が無く、ファイルは change イベントの payload 経由でのみ受け取れる（[Forms §5.10](./forms.md#_5-10-file-upload)）。
+
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+
+**修正**: `bind=` を外し、change イベントからファイルを取り出す reducer を追加する：
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*")
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`

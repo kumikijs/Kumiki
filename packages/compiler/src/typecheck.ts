@@ -477,7 +477,7 @@ function checkTileCall(
       const bindVal = bindArg.value as Expr;
       const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
       errors.push({
-        code: "E0202",
+        code: "E0205",
         kind: "bind-on-file-input",
         message: `input(type="file") does not support bind="${slotName}"; receive files via a ui.change reducer with $event.files.head (see docs/spec/forms.md §5.10, §5.1.1)`,
         pos: bindVal.pos,
