@@ -293,10 +293,6 @@ path          ::= identifier
 
 In other words, you can mix one-line layout and block layout. When writing in newline-based style, you only need to insert newlines so that the following statements stop at the right position before the next keyword (such as `else`).
 
-**Notes on `ui-kind`**:
-- `ui.key(T)` fires on `keydown` over tile `T`. The reducer's `$el` carries `key` (the `KeyboardEvent.key` value) and `code` so the reducer can branch on which key was pressed.
-- `ui.hover(T)` fires on `mouseenter` for tile `T`. If `T` is a *container* tile (e.g. `column`, `row`, `card`), the event fires over the container's full bounding box — including the regions occupied by its child tiles. To restrict hover to a leaf, wrap the leaf as its own named tile and subscribe to that.
-
 ### 1.6.2 Selectors
 
 A selector is **`TileName`** or **`TileName#id`** only (CSS attribute selectors have been removed).
@@ -316,14 +312,6 @@ tile LoginForm = form(...) {id: "main"}
 reducer doLogin
     on=ui.submit(LoginForm)         ; reference by tile name
     do= emit login({...})
-```
-
-Or, when identifying with `tile-ref#id`, this is the case where a tile is displayed multiple times:
-
-```kumiki
-tile NewForm = form(...) {id: "new"}
-
-reducer add on=ui.submit(NewForm) do= ...
 ```
 
 ### 1.6.3 lvalue Semantics
@@ -433,15 +421,10 @@ if-expr      ::= 'if' expr 'then' tile-expr 'else' tile-expr
 
 match-expr   ::= 'match' expr 'with' match-arm+
 match-arm    ::= '|' pattern '->' tile-expr
-pattern      ::= identifier                            ; union variant, or a binding name
-               | identifier '(' bind (',' bind)* ')'   ; variant with payload binds
-               | '(' pattern (',' pattern)* ')'        ; tuple (≥ 2 items)
-               | '_'                                   ; wildcard
+pattern      ::= identifier
+               | identifier '(' bind (',' bind)* ')'
+               | '_'
 ```
-
-(Tile-match patterns share the same grammar as `match` patterns in expression
-context — see §1.9. Tuples in tile-match destructure `Tuple(T, U, …)` scrutinees
-just as they do in fn / reducer bodies.)
 
 **`( … )` vs `{ … }` — arguments/children vs props**:
 - `( … )` is the **argument & children list**: positional child tiles (`column(A, B)`), value arguments (`heading("Hi")`), and named arguments (`button(text="Save", onClick=r)`, `input(bind=draft)`). A child tile or another tile call goes **here**.

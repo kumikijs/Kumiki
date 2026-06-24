@@ -314,14 +314,6 @@ reducer doLogin
     do= emit login({...})
 ```
 
-または `tile-ref#id` で識別する場合は、tile が複数表示されるケース：
-
-```kumiki
-tile NewForm = form(...) {id: "new"}
-
-reducer add on=ui.submit(NewForm) do= ...
-```
-
 ### 1.6.3 lvalue の意味論
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。

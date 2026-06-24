@@ -468,6 +468,22 @@ function checkTileCall(
     });
   }
   checkA11y(t, errors);
+  if (t.name === "input") {
+    const bindArg = t.args.find((a) => a.name === "bind");
+    const typeArg = t.args.find((a) => a.name === "type");
+    const typeVal = typeArg?.value as Expr | undefined;
+    const isFileType = typeVal?.kind === "Str" && typeVal.value === "file";
+    if (bindArg && isFileType) {
+      const bindVal = bindArg.value as Expr;
+      const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
+      errors.push({
+        code: "E0205",
+        kind: "bind-on-file-input",
+        message: `input(type="file") does not support bind="${slotName}"; receive files via a ui.change reducer with $event.files.head (see docs/spec/forms.md §5.10, §5.1.1)`,
+        pos: bindVal.pos,
+      });
+    }
+  }
   const HANDLER_NAMES = new Set([
     "onClick",
     "onSubmit",

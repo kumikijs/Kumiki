@@ -532,4 +532,46 @@ describe("typecheck", () => {
       expect(errors.some((e) => e.code === "E0305")).toBe(true);
     });
   });
+
+  describe('forms — input(type="file") bind=', () => {
+    it("reports bind= on a file input (E0205)", () => {
+      const src = `
+        slot avatar : Option(File) = None
+        tile AvatarPicker = input(type="file", bind=avatar, accept="image/*")
+        tile App = column(AvatarPicker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0205" &&
+            e.kind === "bind-on-file-input" &&
+            e.message.includes("avatar") &&
+            e.message.includes("$event.files.head"),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts a file input that uses ui.change instead of bind=", () => {
+      const src = `
+        slot avatar : Option(File) = None
+        tile AvatarPicker = input(type="file", accept="image/*")
+        reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+        tile App = column(AvatarPicker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkSrc(src)).toEqual([]);
+    });
+
+    it("does not flag bind= on a non-file input", () => {
+      const src = `
+        slot draft : Text = ""
+        tile In = input(type="text", bind=draft)
+        tile App = column(In)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkSrc(src)).toEqual([]);
+    });
+  });
 });

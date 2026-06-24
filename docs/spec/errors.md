@@ -172,6 +172,20 @@ A value of type `EffectId` is used in an operation that is not defined on it. Th
 
 **Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
 
+### E0205 `bind-on-file-input`
+
+`input(type="file")` cannot bind a slot via `bind=`. The `bind=` two-way binding table ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) has no acceptable type for files — files are surfaced through the change event payload instead ([Forms §5.10](./forms.md#_5-10-file-upload)).
+
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+
+**Fix**: Remove `bind=`, and add a reducer that picks the file from the event:
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*")
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
