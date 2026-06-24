@@ -483,6 +483,24 @@ function checkTileCall(
         pos: bindVal.pos,
       });
     }
+    const isKnownNonFile =
+      typeVal === undefined || (typeVal.kind === "Str" && typeVal.value !== "file");
+    if (isKnownNonFile) {
+      const observedType =
+        typeVal === undefined
+          ? `no type, defaults to "text"`
+          : `type="${(typeVal as Expr & { kind: "Str" }).value}"`;
+      for (const arg of t.args) {
+        if (arg.name !== "accept" && arg.name !== "multiple") continue;
+        const argVal = arg.value as Expr;
+        errors.push({
+          code: "E0206",
+          kind: "file-only-prop",
+          message: `input prop "${arg.name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md §5.10)`,
+          pos: argVal.pos,
+        });
+      }
+    }
   }
   const HANDLER_NAMES = new Set([
     "onClick",
