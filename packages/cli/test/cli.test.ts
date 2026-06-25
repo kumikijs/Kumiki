@@ -396,13 +396,18 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
   });
 
   it("--mock 'effect: ok(value)' replaces a recorded effect outcome", { timeout: 30000 }, () => {
+    // `shell: true` (used by `runCli` for parity with the surrounding test
+    // file's style) treats `(...)` as a subshell on POSIX, so the `ok(...)`
+    // value has to be wrapped in extra double quotes so bash hands the
+    // literal through to npx. The follow-up issue #136 tracks moving the
+    // whole file to `shell: false`, after which this can shed the quotes.
     const { out, code } = runCli([
       "replay",
       REPLAY_PERSIST,
       "--from-log",
       REPLAY_PERSIST_LOG,
       "--mock",
-      "persist:ok(null)",
+      '"persist:ok(null)"',
     ]);
     expect(code).toBe(0);
     // The .ok branch fires: status becomes "saved".
