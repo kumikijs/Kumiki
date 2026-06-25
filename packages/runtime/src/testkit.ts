@@ -530,7 +530,12 @@ export type ReplayObserver = (event: ReplayEvent) => "continue" | "stop";
 
 export type ReplayReport = {
   panics: { episodeId: string; message: string }[];
-  unhandledErrors: string[];
+  /**
+   * Effect emits whose `.err` outcome had no `.err` reducer to catch. Carries
+   * the source `episodeId` so multi-episode replays can pinpoint which one
+   * leaked — the symmetric shape to `panics` keeps consumers uniform.
+   */
+  unhandledErrors: { episodeId: string; effect: string }[];
   /** Step index at which `--until-step` interrupted the run, or `null` if all episodes finished. */
   stoppedAt: number | null;
   finalSlots: Record<string, unknown>;
@@ -549,13 +554,16 @@ function executeEpisode(
   observer: ReplayObserver,
   stepCounter: { n: number },
   untilStep: number | undefined,
-): { panics: { message: string }[]; unhandledErrors: string[]; stopped: boolean } {
+): { panics: { message: string }[]; unhandledErrors: { effect: string }[]; stopped: boolean } {
   const panics: { message: string }[] = [];
-  const unhandledErrors: string[] = [];
+  const unhandledErrors: { effect: string }[] = [];
 
-  // Apply a reducer's slot writes, honouring §6.4 refine() gates (any reject
-  // skips that slot — mirrors the production runtime's behaviour so a refine
-  // mismatch surfaces here too).
+  // Apply a reducer's slot writes, honouring §6.4 refine() gates: a reject is
+  // silently dropped (mirrors the production runtime), so the slot keeps its
+  // prior value and that slot is NOT reported as a diff. Replay still emits
+  // the surrounding `reducer` event; a refine veto is invisible from the
+  // outside today — we surface it through an explicit observer kind only when
+  // a future debug pass needs it.
   const writeSlots = (
     resSlots: Record<string, unknown> | undefined,
   ): { name: string; before: unknown; after: unknown }[] => {
@@ -742,7 +750,7 @@ function executeEpisode(
           matched++;
         }
       }
-      if (outcome === "err" && matched === 0) unhandledErrors.push(eEmit.effect);
+      if (outcome === "err" && matched === 0) unhandledErrors.push({ effect: eEmit.effect });
     }
   }
 
@@ -781,13 +789,13 @@ export function replayEpisodes(input: {
   const { app, episodes, mocks, observer, untilStep } = input;
   resetLiveFromSlots(app);
   const panics: { episodeId: string; message: string }[] = [];
-  const unhandledErrors: string[] = [];
+  const unhandledErrors: { episodeId: string; effect: string }[] = [];
   const stepCounter = { n: 0 };
   let stopped = false;
   for (const ep of episodes) {
     const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep);
     for (const p of r.panics) panics.push({ episodeId: ep.id, message: p.message });
-    for (const u of r.unhandledErrors) unhandledErrors.push(u);
+    for (const u of r.unhandledErrors) unhandledErrors.push({ episodeId: ep.id, effect: u.effect });
     if (r.stopped) {
       stopped = true;
       break;
@@ -1031,7 +1039,7 @@ export const _stdlibTest = {
     for (const ep of episodes) {
       const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined);
       for (const p of r.panics) panics.push({ episodeId: ep.id, message: p.message });
-      for (const u of r.unhandledErrors) unhandledErrors.push(u);
+      for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
     }
 
     // Compute the from-log expectation from the recorded reducer slot-diffs.

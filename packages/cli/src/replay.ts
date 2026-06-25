@@ -6,7 +6,6 @@
 import { readFileSync } from "node:fs";
 import { parseEpisodeLogText } from "@kumikijs/compiler/node";
 import {
-  type AppShape,
   type EpisodeLogEntry,
   type EpisodeMockPolicy,
   type ReplayEvent,
@@ -114,9 +113,7 @@ export async function replayCmd(
 ): Promise<void> {
   ensureDom();
   const source = readFileSync(kumikiPath, "utf8");
-  const app = (await loadApp(source, capabilities, { sourcePath: kumikiPath })) as AppShape & {
-    live: Record<string, unknown>;
-  };
+  const app = await loadApp(source, capabilities, { sourcePath: kumikiPath });
 
   const raw = readFileSync(opts.fromLog, "utf8");
   let parsed: EpisodeLogEntry[];
@@ -136,24 +133,20 @@ export async function replayCmd(
     }
   }
 
-  const lines: string[] = [];
+  // Stream each step as the executor emits it — keeps `--until-step` output
+  // useful as a live trace and matches spec §10.5.3's "streams" wording.
   const report = replayEpisodes({
-    app: {
-      live: app.live,
-      slots: app.slots,
-      reducers: app.reducers,
-    },
+    app: { live: app.live, slots: app.slots, reducers: app.reducers },
     episodes,
     mocks: opts.mocks,
     ...(opts.untilStep !== undefined ? { untilStep: opts.untilStep } : {}),
     observer: (ev) => {
       const formatted = formatEvent(ev);
-      if (formatted !== null) lines.push(formatted);
+      if (formatted !== null) console.log(formatted);
       return "continue";
     },
   });
 
-  for (const line of lines) console.log(line);
   console.log(`final slots: ${jsonOrNull(report.finalSlots)}`);
   if (report.stoppedAt !== null) {
     console.log(`(stopped at step ${report.stoppedAt})`);
@@ -163,7 +156,8 @@ export async function replayCmd(
     console.error(`panics: ${report.panics.map((p) => `${p.episodeId}: ${p.message}`).join("; ")}`);
   }
   if (report.unhandledErrors.length > 0) {
-    console.error(`unhandled effect errors: ${report.unhandledErrors.join(", ")}`);
+    const formatted = report.unhandledErrors.map((u) => `${u.episodeId}: ${u.effect}`).join(", ");
+    console.error(`unhandled effect errors: ${formatted}`);
   }
   if (report.panics.length > 0 || report.unhandledErrors.length > 0) process.exit(1);
 }

@@ -1,7 +1,7 @@
 ---
 "@kumikijs/cli": minor
 "@kumikijs/runtime": minor
-"@kumikijs/compiler": patch
+"@kumikijs/compiler": minor
 ---
 
 feat(cli,runtime): `kumiki replay` — interactive episode replay (§10.5.3) (#117).

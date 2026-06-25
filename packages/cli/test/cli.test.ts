@@ -518,4 +518,32 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
     expect(code).toBe(2);
     expect(out).toMatch(/--from-log/);
   });
+
+  it("rejects more than one positional <episode-id> with exit 2", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_0001",
+      "ep_0002",
+    ]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/unexpected positional/);
+  });
+
+  // Spec §10.5.3 step counter is 1-indexed; `--until-step 0` is a misuse.
+  it("--until-step 0 is rejected with exit 2", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "--until-step",
+      "0",
+    ]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/--until-step/);
+    expect(out).toMatch(/positive integer/);
+  });
 });

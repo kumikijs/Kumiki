@@ -26,7 +26,13 @@ describe("parseEpisodeLogText", () => {
     expect((parsed[0] as { id: string }).id).toBe("ep_a");
   });
 
-  it("propagates malformed JSON on any line", () => {
-    expect(() => parseEpisodeLogText("{not json}")).toThrow();
+  it("propagates malformed JSON with the offending line number", () => {
+    // Line 1 = the bad token.
+    expect(() => parseEpisodeLogText("{not json}")).toThrow(/at line 1/);
+    // Line 3 = the bad token after a good line + a blank line.
+    const mixed = `{"id":"ok","trigger":{"kind":"init","ts":0},"steps":[],"status":"completed"}
+
+{still bad}`;
+    expect(() => parseEpisodeLogText(mixed)).toThrow(/at line 3/);
   });
 });

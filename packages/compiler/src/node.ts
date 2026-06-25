@@ -46,10 +46,18 @@ export function parseEpisodeLogText(raw: string): unknown[] {
     return arr;
   }
   const out: unknown[] = [];
-  for (const line of trimmed.split(/\r?\n/)) {
-    const s = line.trim();
+  // Walk the original (non-trimmed) text so the line number we report tracks
+  // the position in the file the user actually opened — leading blank lines
+  // would otherwise shift the count.
+  const lines = raw.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i]?.trim() ?? "";
     if (!s) continue;
-    out.push(JSON.parse(s));
+    try {
+      out.push(JSON.parse(s));
+    } catch (e) {
+      throw new Error(`episode log: invalid JSON at line ${i + 1}: ${(e as Error).message}`);
+    }
   }
   return out;
 }

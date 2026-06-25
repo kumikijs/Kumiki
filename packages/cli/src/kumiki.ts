@@ -302,9 +302,13 @@ async function main(argv: string[]): Promise<void> {
       let untilStep: number | undefined;
       if (untilIdx !== -1) {
         const v = Number(argv[untilIdx + 1]);
-        if (!Number.isInteger(v) || v < 0) {
+        // Spec §10.5.3: step counter is 1-indexed (the Nth observed step).
+        // `0` would carry no useful meaning — every step would satisfy
+        // `n >= 0`, so the first step's emit triggers stop. Reject it loudly
+        // instead of silently treating it like `--until-step 1`.
+        if (!Number.isInteger(v) || v < 1) {
           console.error(
-            `invalid --until-step '${argv[untilIdx + 1]}': expected non-negative integer`,
+            `invalid --until-step '${argv[untilIdx + 1]}': expected positive integer (1-indexed)`,
           );
           process.exit(2);
         }
@@ -339,7 +343,18 @@ async function main(argv: string[]): Promise<void> {
           consumedIdxs.add(i + 1);
         }
       }
-      const episodeId = argv.find((a, i) => i > 3 && !consumedIdxs.has(i) && !a.startsWith("--"));
+      const positional = argv.filter(
+        (a, i) => i > 3 && !consumedIdxs.has(i) && !a.startsWith("--"),
+      );
+      if (positional.length > 1) {
+        // §10.5.3 only accepts one `<episode-id>` positional. Silently ignoring
+        // the extras would mask `kumiki replay <file> ep_0001 ep_0002` typos.
+        console.error(
+          `kumiki replay: unexpected positional arguments after <episode-id>: ${positional.slice(1).join(", ")}`,
+        );
+        process.exit(2);
+      }
+      const episodeId = positional[0];
 
       await replayCmd(inputPath, capsFor(inputPath), {
         fromLog: resolve(process.cwd(), fromLog),
