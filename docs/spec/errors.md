@@ -186,6 +186,21 @@ tile AvatarPicker = input(type="file", accept="image/*")
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 ```
 
+### E0206 `file-only-prop`
+
+The `accept` and `multiple` props on `input` apply only when `type="file"`. They are rendered onto the underlying `<input>` element, where they are valid HTML only for a file picker ([Forms §5.10](./forms.md#_5-10-file-upload)). Used on any other input type — or when `type` is omitted (it defaults to `"text"`) — they are invalid HTML and a latent bug. The diagnostic fires only when the type is statically known to not be `"file"`; a non-literal `type=` expression is left alone.
+
+> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
+> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
+
+**Fix**: Either add `type="file"` to opt into a file picker, or remove the `accept` / `multiple` prop:
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`

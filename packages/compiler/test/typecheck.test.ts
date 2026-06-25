@@ -574,4 +574,77 @@ describe("typecheck", () => {
       expect(checkSrc(src)).toEqual([]);
     });
   });
+
+  describe("forms — accept/multiple gated to file inputs (E0206)", () => {
+    it("flags accept on a text input (E0206)", () => {
+      const src = `
+        tile Picker = input(type="text", accept="image/*")
+        tile App = column(Picker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0206" &&
+            e.kind === "file-only-prop" &&
+            e.message.includes("accept") &&
+            e.message.includes(`type="file"`),
+        ),
+      ).toBe(true);
+    });
+
+    it("flags accept when type is omitted (defaults to text)", () => {
+      const src = `
+        tile Picker = input(accept="image/*")
+        tile App = column(Picker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) => e.code === "E0206" && e.kind === "file-only-prop" && e.message.includes("accept"),
+        ),
+      ).toBe(true);
+    });
+
+    it("flags multiple on a text input (E0206)", () => {
+      const src = `
+        tile Picker = input(type="text", multiple=true)
+        tile App = column(Picker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0206" && e.kind === "file-only-prop" && e.message.includes("multiple"),
+        ),
+      ).toBe(true);
+    });
+
+    it("flags both accept and multiple independently on a text input", () => {
+      const src = `
+        tile Picker = input(type="text", accept="image/*", multiple=true)
+        tile App = column(Picker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const codes = errors.filter((e) => e.code === "E0206");
+      expect(codes.length).toBe(2);
+      expect(codes.some((e) => e.message.includes("accept"))).toBe(true);
+      expect(codes.some((e) => e.message.includes("multiple"))).toBe(true);
+    });
+
+    it("does not flag accept/multiple on a file input", () => {
+      const src = `
+        slot avatar : Option(File) = None
+        tile Picker = input(type="file", accept="image/*", multiple=true)
+        reducer pickFile on=ui.change(Picker) do= avatar := $event.files.head
+        tile App = column(Picker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkSrc(src)).toEqual([]);
+    });
+  });
 });
