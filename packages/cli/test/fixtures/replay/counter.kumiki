@@ -1,0 +1,11 @@
+slot count : Int = 0
+
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+
+app ReplayCounter
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

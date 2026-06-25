@@ -10,6 +10,10 @@ const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const ROUTING_PATH = resolve(here, "../../examples/features/18-routing.kumiki");
 const STORAGE_PATH = resolve(here, "../../examples/features/20-effect-storage.kumiki");
 const CLI_PATH = resolve(here, "../src/kumiki.ts");
+const REPLAY_COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
+const REPLAY_COUNTER_LOG = resolve(here, "fixtures/replay/counter.log.jsonl");
+const REPLAY_PERSIST = resolve(here, "fixtures/replay/persist.kumiki");
+const REPLAY_PERSIST_LOG = resolve(here, "fixtures/replay/persist.log.jsonl");
 
 describe("kumiki build CLI (per-app DCE, #71)", () => {
   let outDir: string;
@@ -338,5 +342,180 @@ test msg-text =
     expect(out).toContain("no auto-patch available");
     // The fixture's "Helo" must be left intact — no self-mutating PASS.
     expect(readFileSync(file, "utf8")).toBe(source);
+  });
+});
+
+// Spec runtime.md §10.5.3 — `kumiki replay` replays a recorded episode log
+// against the compiled app: prints the per-step trace, applies effect mocks,
+// and (optionally) stops partway with `--until-step N`.
+describe("kumiki replay (episode log replay, §10.5.3)", () => {
+  function runCli(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+        stdio: "pipe",
+        shell: true,
+        encoding: "utf8",
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
+  it("replays a single episode and prints its steps + final slots", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_0001",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain("episode ep_0001");
+    expect(out).toContain("[reducer] inc");
+    expect(out).toContain("count: 0 -> 1");
+    expect(out).toContain("final slots:");
+    expect(out).toMatch(/"count":\s*1/);
+    expect(out).toContain("1 episode(s) replayed");
+  });
+
+  it("replays multiple episodes from a JSONL log in order", { timeout: 30000 }, () => {
+    const { out, code } = runCli(["replay", REPLAY_COUNTER, "--from-log", REPLAY_COUNTER_LOG]);
+    expect(code).toBe(0);
+    // Episodes appear in log order.
+    const i1 = out.indexOf("episode ep_0001");
+    const i2 = out.indexOf("episode ep_0002");
+    const i3 = out.indexOf("episode ep_0003");
+    expect(i1).toBeGreaterThanOrEqual(0);
+    expect(i2).toBeGreaterThan(i1);
+    expect(i3).toBeGreaterThan(i2);
+    // Cumulative slot state: starts at 0, ends at 3.
+    expect(out).toMatch(/"count":\s*3/);
+    expect(out).toContain("3 episode(s) replayed");
+  });
+
+  it("--mock 'effect: ok(value)' replaces a recorded effect outcome", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:ok(null)",
+    ]);
+    expect(code).toBe(0);
+    // The .ok branch fires: status becomes "saved".
+    expect(out).toMatch(/"status":\s*"saved"/);
+    // And NOT the .err branch's value.
+    expect(out).not.toMatch(/"status":\s*"disk full"/);
+  });
+
+  it("--mock 'effect: from-log' resolves to the recorded effect-end", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:from-log",
+    ]);
+    expect(code).toBe(0);
+    // The recorded effect-end is err("disk full") → drives persistFailed.
+    expect(out).toMatch(/"status":\s*"disk full"/);
+  });
+
+  it("--mock 'effect: ignore' drops the effect entirely", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:ignore",
+    ]);
+    expect(code).toBe(0);
+    // Neither .ok nor .err fired → status stays at its default "".
+    expect(out).toMatch(/"status":\s*""/);
+    expect(out).not.toMatch(/"status":\s*"disk full"/);
+    expect(out).not.toMatch(/"status":\s*"saved"/);
+  });
+
+  it("--mock can be specified multiple times", { timeout: 30000 }, () => {
+    // Pass two mocks; the persist one takes effect, the other is harmless.
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:ignore",
+      "--mock",
+      "noop:from-log",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toMatch(/"status":\s*""/);
+  });
+
+  it("--until-step N stops replay at step N and reports stop", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "--until-step",
+      "1",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain("stopped at step 1");
+    // Only the first reducer step ran → count == 1, not 3.
+    expect(out).toMatch(/"count":\s*1/);
+    expect(out).not.toMatch(/"count":\s*3/);
+  });
+
+  it("<episode-id> argument filters to a single episode", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_0002",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain("episode ep_0002");
+    expect(out).not.toContain("episode ep_0001");
+    expect(out).not.toContain("episode ep_0003");
+    expect(out).toContain("1 episode(s) replayed");
+  });
+
+  it("unknown episode-id exits 1 with 'episode <id> not found'", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_nope",
+    ]);
+    expect(code).toBe(1);
+    expect(out).toContain("episode ep_nope not found");
+  });
+
+  it("invalid --mock syntax exits 2 with parse error message", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "--mock",
+      "garbage",
+    ]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/invalid --mock/);
+  });
+
+  it("missing --from-log shows usage and exits 2", { timeout: 30000 }, () => {
+    const { out, code } = runCli(["replay", REPLAY_COUNTER]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/--from-log/);
   });
 });

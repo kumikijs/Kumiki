@@ -28,6 +28,32 @@ export function nodeEpisodeLogReader(kumikiFilePath: string): (relPath: string) 
   return (relPath: string) => readFileSync(join(baseDir, relPath), "utf8");
 }
 
+/**
+ * Parse an episode log file's contents — either a JSON array `[...]` or
+ * newline-delimited JSON (one Episode per line, the format `kumiki run
+ * --episode-log` writes). Surfaces malformed input as a thrown error so
+ * a corrupted fixture can't silently truncate replay.
+ *
+ * Mirrors the compile-time `parseEpisodeLog` helper in codegen so `kumiki
+ * replay` (§10.5.3) and `episode-test` (§8.6) consume logs identically.
+ */
+export function parseEpisodeLogText(raw: string): unknown[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
+    const arr = JSON.parse(trimmed);
+    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
+    return arr;
+  }
+  const out: unknown[] = [];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    out.push(JSON.parse(s));
+  }
+  return out;
+}
+
 /** Thrown when a `kumiki.caps.json` exists but is malformed. */
 export class CapabilityManifestError extends Error {}
 

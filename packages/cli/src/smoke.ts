@@ -26,7 +26,7 @@ import {
 } from "@kumikijs/runtime";
 
 let domReady = false;
-function ensureDom(): void {
+export function ensureDom(): void {
   if (domReady) return;
   // Registers window/document/Event/… onto globalThis, overwriting Node's own
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
@@ -35,7 +35,7 @@ function ensureDom(): void {
   domReady = true;
 }
 
-async function loadApp(
+export async function loadApp(
   source: string,
   capabilities: string[] = [],
   opts: { includeTests?: boolean; sourcePath?: string } = {},

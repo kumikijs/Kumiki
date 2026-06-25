@@ -1,0 +1,22 @@
+slot count  : Int  = 0
+slot status : Text = ""
+
+effect persist cap=storage.write
+               in=Int
+               out=Result(Unit, Text)
+               map-request={key: "count", value: $1}
+
+reducer inc on=ui.click(IncBtn)
+    do= count := count + 1
+        emit persist(count)
+
+reducer persistOk     on=persist.ok(_, _)  do= status := "saved"
+reducer persistFailed on=persist.err($e, _) do= status := $e
+
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), heading(status), IncBtn)
+
+app ReplayPersist
+    caps   = [storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

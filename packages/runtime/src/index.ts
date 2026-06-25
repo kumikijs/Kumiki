@@ -112,7 +112,18 @@ export {
   smoke,
 } from "./smoke.ts";
 export { _stdlibCore } from "./stdlib.ts";
-export { _stdlibTest, type GenDesc, type TestResult } from "./testkit.ts";
+export {
+  _stdlibTest,
+  type EpisodeLogEntry,
+  type EpisodeMockPolicy,
+  type GenDesc,
+  type ReplayApp,
+  type ReplayEvent,
+  type ReplayObserver,
+  type ReplayReport,
+  replayEpisodes,
+  type TestResult,
+} from "./testkit.ts";
 export { collectionTiles } from "./tiles-collection.ts";
 export { inputTiles } from "./tiles-input.ts";
 export { layoutTiles } from "./tiles-layout.ts";
