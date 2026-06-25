@@ -26,7 +26,7 @@ import {
 } from "@kumikijs/runtime";
 
 let domReady = false;
-function ensureDom(): void {
+export function ensureDom(): void {
   if (domReady) return;
   // Registers window/document/Event/… onto globalThis, overwriting Node's own
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
@@ -35,11 +35,18 @@ function ensureDom(): void {
   domReady = true;
 }
 
-async function loadApp(
+/**
+ * Compiled-app shape as returned by codegen — adds the mutable signal slot
+ * map (`live`) that the runtime keeps but `AppShape` (the public type) does
+ * not expose. Replay reads/resets `live` directly, so callers need to see it.
+ */
+export type LoadedApp = AppShape & { live: Record<string, unknown> };
+
+export async function loadApp(
   source: string,
   capabilities: string[] = [],
   opts: { includeTests?: boolean; sourcePath?: string } = {},
-): Promise<AppShape> {
+): Promise<LoadedApp> {
   const baseOpts = {
     runtimeSpecifier: "ignored",
     bundle: true,
@@ -79,7 +86,7 @@ async function loadApp(
   const file = join(dir, "app.mjs");
   writeFileSync(file, patched);
   await import(pathToFileURL(file).href);
-  const app = (globalThis as unknown as { __kumikiApp?: AppShape }).__kumikiApp;
+  const app = (globalThis as unknown as { __kumikiApp?: LoadedApp }).__kumikiApp;
   if (!app) throw new Error("compiled module did not expose __kumikiApp");
   return app;
 }

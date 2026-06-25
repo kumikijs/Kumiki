@@ -276,11 +276,19 @@ The causal sequence derived from a single trigger is recorded as one **episode**
 ### 10.5.3 replay
 
 ```bash
-kumiki replay <episode-id>                  # replay the signal graph from the initial state
-kumiki replay --from-log <file>             # load from a file and replay
-kumiki replay --mock 'loadUser: from-log'   # specify an effect mock
-kumiki replay --until-step 5                # partway through
+kumiki replay <input.kumiki> --from-log <log.jsonl>           # replay every episode in the log
+kumiki replay <input.kumiki> --from-log <log> <episode-id>    # replay one episode by id
+kumiki replay <input.kumiki> --from-log <log> \               # repeatable; each entry follows
+  --mock 'loadUser: from-log' --mock 'persist: ignore'        # §8.6's mock grammar
+kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5th observed step
 ```
+
+- `--from-log` is currently required. The bare `kumiki replay <episode-id>` form (against the runtime's in-memory store, §10.5.2) needs a long-lived dev-server context and is out of scope for the CLI verb.
+- `--mock '<effect>: <spec>'` is repeatable. `<spec>` follows the same grammar as `episode-test.mocks` (§8.6): `from-log` | `ignore` | `ok(<json>)` | `err(<json>)`. The payload is parsed as JSON, so `ok({"id":"u1"})` works on the command line as-is.
+- An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
+- `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
+- Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
+- Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
 ---
 

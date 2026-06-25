@@ -8,6 +8,7 @@ import {
   resolveBuiltinIcons,
   resolveCapabilities,
 } from "@kumikijs/compiler/node";
+import type { EpisodeMockPolicy } from "@kumikijs/runtime";
 import { fixCmd, fixFromTest } from "./fix.ts";
 import {
   addDef,
@@ -22,6 +23,7 @@ import {
   viewHash,
   viewHistory,
 } from "./mutate.ts";
+import { parseMockArg, replayCmd } from "./replay.ts";
 import { runCmd, smokeCmd, testCmd } from "./smoke.ts";
 import { findReferences, listDefs, load, viewDef, viewWithDeps } from "./store.ts";
 
@@ -36,6 +38,9 @@ function usage(): never {
   console.error("  kumiki check <input.kumiki> [--strict-a11y|--types|--refs|--effects]");
   console.error("  kumiki smoke <input.kumiki>");
   console.error("  kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
+  console.error(
+    "  kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]",
+  );
   console.error("  kumiki test <input.kumiki> [name|prefix*]");
   console.error("  kumiki fix <input.kumiki> [--apply] [<code>]");
   console.error("  kumiki fix <input.kumiki> --auto-patch <test-name> [--apply]");
@@ -273,6 +278,90 @@ async function main(argv: string[]): Promise<void> {
         runOpts = { episodeLog: resolve(process.cwd(), value) };
       }
       await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath), runOpts);
+      return;
+    }
+    case "replay": {
+      const input = argv[3];
+      if (!input) usage();
+      const inputPath = resolve(process.cwd(), input);
+
+      // --from-log <path> is required in this implementation (#117). The
+      // <episode-id>-only form against the in-memory dev-server store is out
+      // of scope here.
+      const fromLogIdx = argv.indexOf("--from-log");
+      if (fromLogIdx === -1) {
+        console.error(
+          "Usage: kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]",
+        );
+        process.exit(2);
+      }
+      const fromLog = argv[fromLogIdx + 1];
+      if (!fromLog || fromLog.startsWith("--")) usage();
+
+      const untilIdx = argv.indexOf("--until-step");
+      let untilStep: number | undefined;
+      if (untilIdx !== -1) {
+        const v = Number(argv[untilIdx + 1]);
+        // Spec §10.5.3: step counter is 1-indexed (the Nth observed step).
+        // `0` would carry no useful meaning — every step would satisfy
+        // `n >= 0`, so the first step's emit triggers stop. Reject it loudly
+        // instead of silently treating it like `--until-step 1`.
+        if (!Number.isInteger(v) || v < 1) {
+          console.error(
+            `invalid --until-step '${argv[untilIdx + 1]}': expected positive integer (1-indexed)`,
+          );
+          process.exit(2);
+        }
+        untilStep = v;
+      }
+
+      const mocks: Record<string, EpisodeMockPolicy> = {};
+      for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === "--mock") {
+          const value = argv[i + 1];
+          if (!value || value.startsWith("--")) {
+            console.error("invalid --mock: missing value");
+            process.exit(2);
+          }
+          try {
+            const m = parseMockArg(value);
+            mocks[m.effect] = m.policy;
+          } catch (e) {
+            console.error((e as Error).message);
+            process.exit(2);
+          }
+        }
+      }
+
+      // Collect indexes of flag-value tokens so the positional <episode-id>
+      // scan skips them. Without this, the value after `--mock` would be
+      // mistaken for an episode id.
+      const consumedIdxs = new Set<number>();
+      for (let i = 4; i < argv.length; i++) {
+        if (argv[i] === "--from-log" || argv[i] === "--mock" || argv[i] === "--until-step") {
+          consumedIdxs.add(i);
+          consumedIdxs.add(i + 1);
+        }
+      }
+      const positional = argv.filter(
+        (a, i) => i > 3 && !consumedIdxs.has(i) && !a.startsWith("--"),
+      );
+      if (positional.length > 1) {
+        // §10.5.3 only accepts one `<episode-id>` positional. Silently ignoring
+        // the extras would mask `kumiki replay <file> ep_0001 ep_0002` typos.
+        console.error(
+          `kumiki replay: unexpected positional arguments after <episode-id>: ${positional.slice(1).join(", ")}`,
+        );
+        process.exit(2);
+      }
+      const episodeId = positional[0];
+
+      await replayCmd(inputPath, capsFor(inputPath), {
+        fromLog: resolve(process.cwd(), fromLog),
+        ...(episodeId !== undefined ? { episodeId } : {}),
+        mocks,
+        ...(untilStep !== undefined ? { untilStep } : {}),
+      });
       return;
     }
     case "add": {
