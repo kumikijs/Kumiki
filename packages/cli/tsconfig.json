@@ -6,6 +6,6 @@
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "//exclude": "src/dev/ is browser code served verbatim by the dev plugin — it uses the `__KUMIKI_TARGET__` placeholder which only resolves at runtime, so tsc can't resolve it. Linted by Biome via its own browser-targeted ignore pattern.",
-  "exclude": ["src/dev/**"]
+  "//exclude": "client.ts has a placeholder import the dev plugin only substitutes at runtime, so tsc can't resolve it. panel.ts has no such placeholder and stays in the program.",
+  "exclude": ["src/dev/client.ts"]
 }

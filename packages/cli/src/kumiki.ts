@@ -281,7 +281,7 @@ async function main(argv: string[]): Promise<void> {
         episodeLog = resolve(process.cwd(), value);
       }
       const strictA11y = argv.includes("--strict-a11y");
-      await devCmd(inputPath, capsFor(inputPath), {
+      await devCmd(inputPath, {
         ...(port !== undefined ? { port } : {}),
         ...(episodeLog !== undefined ? { episodeLog } : {}),
         ...(strictA11y ? { strictA11y: true } : {}),

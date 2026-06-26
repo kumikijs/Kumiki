@@ -10,12 +10,29 @@
 //   - POST /__kumiki/episode with --episode-log appends one JSONL line per
 //     posted body, matching the `kumiki run --episode-log` format.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDevServer } from "../src/dev.ts";
+
+const CLI_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "kumiki.ts");
+
+function runCli(args: string[]): { out: string; code: number } {
+  try {
+    const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return { out, code: 0 };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; status?: number };
+    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+  }
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
@@ -33,8 +50,8 @@ describe("kumiki dev", () => {
     if (close) await close();
   });
 
-  async function start(opts: Parameters<typeof startDevServer>[2] = {}) {
-    const { server, url } = await startDevServer(COUNTER, [], { port: 0, ...opts });
+  async function start(opts: Parameters<typeof startDevServer>[1] = {}) {
+    const { server, url } = await startDevServer(COUNTER, { port: 0, ...opts });
     baseUrl = url;
     close = () => server.close();
     return server;
@@ -115,6 +132,38 @@ describe("kumiki dev", () => {
     expect(res.status).toBe(405);
   });
 
+  it("returns 400 with an error body on /__kumiki/episode POSTs that are not valid JSON", async () => {
+    const logFile = join(tmpRoot, "episodes.jsonl");
+    await start({ episodeLog: logFile });
+    const res = await fetch(new URL("/__kumiki/episode", baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not valid json",
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toMatch(/invalid episode JSON/);
+    // The corrupted body must NOT have polluted the JSONL — `kumiki replay`
+    // would choke on it. Either no file, or an empty one is acceptable.
+    if (existsSync(logFile)) {
+      expect(readFileSync(logFile, "utf8")).toBe("");
+    }
+  });
+
+  it("returns 500 when --episode-log points at a path that cannot be written", async () => {
+    // Point at the tmp directory itself — appendFileSync to a directory
+    // errors with EISDIR on every platform we ship for.
+    await start({ episodeLog: tmpRoot });
+    const res = await fetch(new URL("/__kumiki/episode", baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "ep_zzz" }),
+    });
+    expect(res.status).toBe(500);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toMatch(/failed to append episode log/);
+  });
+
   it("propagates --strict-a11y to the kumiki vite plugin so a11y violations fail compile", async () => {
     // Write a throwaway .kumiki with an unlabeled button, point the dev server
     // at it with --strict-a11y, request the file's URL, and expect a 500 with
@@ -128,7 +177,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
     );
     try {
-      const { server, url } = await startDevServer(file, [], {
+      const { server, url } = await startDevServer(file, {
         port: 0,
         strictA11y: true,
       });
@@ -145,5 +194,37 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         /* best-effort */
       }
     }
+  });
+});
+
+describe("kumiki dev — CLI dispatch argument parsing", () => {
+  it("exits 2 with a usage message when no input file is given", () => {
+    const { code, out } = runCli(["dev"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/kumiki dev <input\.kumiki>/);
+  });
+
+  it("rejects --port with a non-numeric value", () => {
+    const { code, out } = runCli(["dev", "fake.kumiki", "--port", "abc"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/invalid --port 'abc'/);
+  });
+
+  it("rejects --port outside the valid range", () => {
+    const { code, out } = runCli(["dev", "fake.kumiki", "--port", "70000"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/invalid --port '70000'/);
+  });
+
+  it("rejects --episode-log when its value is missing (next token starts with --)", () => {
+    const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log", "--strict-a11y"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/Usage: kumiki dev/);
+  });
+
+  it("rejects --episode-log when it is the last argument", () => {
+    const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/Usage: kumiki dev/);
   });
 });

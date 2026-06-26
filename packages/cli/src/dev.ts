@@ -30,10 +30,13 @@ const EPISODE_ENDPOINT = "/__kumiki/episode";
 /**
  * Programmatic entry — used by tests. Returns the running server plus the
  * resolved URL so the test can probe it without parsing stdout.
+ *
+ * Capability resolution lives in `@kumikijs/vite` (it reads the target's
+ * sibling `kumiki.caps.json`), so the dev server doesn't take a capabilities
+ * parameter — passing one would duplicate the work the plugin already does.
  */
 export async function startDevServer(
   kumikiPath: string,
-  _capabilities: string[],
   opts: DevCmdOptions = {},
 ): Promise<{ server: ViteDevServer; url: string }> {
   const targetAbs = resolvePath(process.cwd(), kumikiPath);
@@ -81,15 +84,10 @@ export async function startDevServer(
 
 /**
  * CLI verb entry. Starts the dev server, prints its URL, and stays alive until
- * SIGINT closes it. Capabilities are passed through to the kumiki plugin's
- * compile so `app caps=[…]` is enforced exactly like build / smoke / run.
+ * SIGINT closes it.
  */
-export async function devCmd(
-  kumikiPath: string,
-  capabilities: string[],
-  opts: DevCmdOptions = {},
-): Promise<void> {
-  const { server, url } = await startDevServer(kumikiPath, capabilities, opts);
+export async function devCmd(kumikiPath: string, opts: DevCmdOptions = {}): Promise<void> {
+  const { server, url } = await startDevServer(kumikiPath, opts);
   console.log(`kumiki dev — ${url}`);
   if (opts.episodeLog) console.log(`  recording episodes to ${opts.episodeLog}`);
   if (opts.strictA11y) console.log("  strict a11y on");
@@ -148,18 +146,39 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
           return;
         }
         const chunks: Buffer[] = [];
+        const fail = (status: number, message: string) => {
+          server.config.logger.error(`[kumiki dev] ${message}`);
+          res.statusCode = status;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: message }));
+        };
+        // Without this, a client abort (page reload, browser close mid-flight)
+        // throws an unhandled 'error' event that crashes the Node process.
+        req.on("error", (e) => fail(400, `request stream error: ${e.message}`));
         req.on("data", (c: Buffer) => chunks.push(c));
         req.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8").trim();
+          if (body.length === 0) {
+            res.statusCode = 204;
+            res.end();
+            return;
+          }
+          // Validate as JSON BEFORE appending — a garbled POST would corrupt
+          // the JSONL file and break `kumiki replay --from-log` downstream.
+          try {
+            JSON.parse(body);
+          } catch (e) {
+            fail(400, `invalid episode JSON: ${(e as Error).message}`);
+            return;
+          }
           if (opts.episodeLog) {
-            const body = Buffer.concat(chunks).toString("utf8").trim();
-            if (body.length > 0) {
-              try {
-                appendFileSync(opts.episodeLog, `${body}\n`);
-              } catch (e) {
-                server.config.logger.warn(
-                  `[kumiki dev] failed to append episode log: ${(e as Error).message}`,
-                );
-              }
+            try {
+              appendFileSync(opts.episodeLog, `${body}\n`);
+            } catch (e) {
+              // EACCES / ENOSPC / etc. — the user asked us to record episodes
+              // and we couldn't. Surface this loudly instead of swallowing.
+              fail(500, `failed to append episode log: ${(e as Error).message}`);
+              return;
             }
           }
           res.statusCode = 204;

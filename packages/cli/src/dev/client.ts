@@ -25,7 +25,7 @@ let currentApp: AppShape = InitialApp;
 
 const logger = createEpisodeLogger({
   onEpisode(ep: Episode) {
-    panel.push(ep);
+    panel.push();
     void fetch("/__kumiki/episode", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -47,10 +47,19 @@ if (import.meta.hot) {
     // Preserve runtime slot values (and route) across the reload so editing
     // a tile body doesn't reset state — §10.7 "slots are retained".
     const savedLive = currentApp.live;
-    handle.dispose();
-    currentApp = next;
-    if (savedLive) currentApp.live = savedLive;
-    handle = mount(currentApp, root, { episodeLogger: logger });
-    panel.onRemount(currentApp);
+    try {
+      handle.dispose();
+      currentApp = next;
+      if (savedLive) currentApp.live = savedLive;
+      handle = mount(currentApp, root, { episodeLogger: logger });
+      panel.onRemount();
+    } catch (e) {
+      // mount() can throw on programs whose top tile blows up at construction
+      // time. Without this catch the page goes blank because the runtime's
+      // render-time panic boundary never gets installed — and the panel's
+      // Episode-driven overlay never sees it. Surface it directly.
+      const err = e as Error;
+      panel.showError(err.message ?? String(e), err.stack ?? "");
+    }
   });
 }

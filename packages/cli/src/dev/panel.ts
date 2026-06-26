@@ -6,16 +6,21 @@
 //   - full-screen modal overlay when the most recent episode ended in `panic`
 //
 // Public API: `installDevPanel({ logger, getApp })` returns:
-//   - `push(ep)`: called by the client's `onEpisode` to insert a new episode
-//   - `onRemount(newApp)`: called after an HMR re-mount to refresh inspector
-//     state against the new AppShape
+//   - `push()`: called by the client's `onEpisode` to refresh the timeline and
+//     possibly raise the panic overlay. The episode itself is read from the
+//     logger, not the call site.
+//   - `onRemount()`: called after an HMR re-mount to refresh the inspector
+//     (it pulls the new AppShape via `getApp`).
+//   - `showError(message, location?)`: surface a non-Episode error (e.g. an
+//     HMR-time mount() throw) through the same overlay.
 //
 // XSS posture: every piece of data that originates outside this file
-// (episode fields, slot values, tile names, panic messages) is inserted via
-// `.textContent` or constructed with `document.createElement`. innerHTML is
-// only used for fully static template strings inside this module.
+// (episode fields, slot values, tile names, panic messages, hand-off error
+// strings) is inserted via `.textContent` or `document.createElement`. No
+// `innerHTML` writes happen anywhere in this module — see the helper
+// functions below.
 
-import type { AppShape, Episode, EpisodeLogger, EpisodeStep } from "@kumikijs/runtime";
+import type { AppShape, EpisodeLogger, EpisodeStep } from "@kumikijs/runtime";
 
 type Options = {
   logger: EpisodeLogger;
@@ -61,8 +66,9 @@ const STYLE = `
 `;
 
 export function installDevPanel(opts: Options): {
-  push(ep: Episode): void;
-  onRemount(app: AppShape): void;
+  push(): void;
+  onRemount(): void;
+  showError(message: string, location?: string): void;
 } {
   const host = document.getElementById("kumiki-dev-panel");
   if (!host) throw new Error("kumiki dev: #kumiki-dev-panel container missing");
@@ -79,7 +85,9 @@ export function installDevPanel(opts: Options): {
   inspectorTab.dataset.tab = "inspector";
   tabsBar.append(timelineTab, inspectorTab);
   const timelineBody = el("div", "kdp-body");
+  timelineBody.dataset.pane = "timeline";
   const inspectorBody = el("div", "kdp-body");
+  inspectorBody.dataset.pane = "inspector";
   inspectorBody.hidden = true;
   root.append(tabsBar, timelineBody, inspectorBody);
   host.appendChild(root);
@@ -153,60 +161,55 @@ export function installDevPanel(opts: Options): {
     treePre.textContent = formatTileTree(app);
     treeSection.appendChild(treePre);
     inspectorBody.appendChild(treeSection);
-
-    const inflight = computeInflight(opts.logger.list());
-    const inflightSection = section("Inflight effects");
-    if (inflight.length === 0) {
-      const empty = el("div", "kdp-empty");
-      empty.textContent = "none";
-      inflightSection.appendChild(empty);
-    } else {
-      for (const e of inflight) {
-        const row = el("div");
-        row.textContent = e;
-        inflightSection.appendChild(row);
-      }
-    }
-    inspectorBody.appendChild(inflightSection);
   }
 
   let overlay: HTMLElement | null = null;
+  let overlayKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  function dismissOverlay(): void {
+    if (overlay) {
+      overlay.remove();
+      overlay = null;
+    }
+    if (overlayKeyHandler) {
+      // Without this the listener leaks every time the overlay opens — Esc
+      // works once and then dangles for the life of the page.
+      window.removeEventListener("keydown", overlayKeyHandler);
+      overlayKeyHandler = null;
+    }
+  }
+
+  function showOverlay(title: string, message: string, location: string): void {
+    dismissOverlay();
+    overlay = el("div", "kdp-overlay");
+    const card = el("div", "kdp-overlay-card");
+    const titleEl = el("h3", "kdp-overlay-title");
+    titleEl.textContent = title;
+    const loc = el("p", "kdp-overlay-loc");
+    loc.textContent = location;
+    const msg = el("pre", "kdp-json");
+    msg.textContent = message;
+    const hint = el("p", "kdp-overlay-hint");
+    hint.textContent = "press Esc to dismiss (a successful next episode also clears this)";
+    card.append(titleEl, loc, msg, hint);
+    overlay.appendChild(card);
+    overlay.addEventListener("click", dismissOverlay);
+    overlayKeyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismissOverlay();
+    };
+    window.addEventListener("keydown", overlayKeyHandler);
+    document.body.appendChild(overlay);
+  }
+
   function maybeShowOverlay(): void {
     const all = opts.logger.list();
     const latest = all.length > 0 ? all[all.length - 1] : undefined;
     const lastStep = latest?.steps[latest.steps.length - 1];
     if (latest && latest.status === "panic" && lastStep && lastStep.kind === "panic") {
       if (overlay) return;
-      overlay = el("div", "kdp-overlay");
-      const card = el("div", "kdp-overlay-card");
-      const title = el("h3", "kdp-overlay-title");
-      title.textContent = "Kumiki panic";
-      const loc = el("p", "kdp-overlay-loc");
-      loc.textContent = lastStep.location ?? "";
-      const msg = el("pre", "kdp-json");
-      msg.textContent = lastStep.message;
-      const hint = el("p", "kdp-overlay-hint");
-      hint.textContent = "press Esc to dismiss (a successful next episode also clears this)";
-      card.append(title, loc, msg, hint);
-      overlay.appendChild(card);
-      const dismiss = () => {
-        if (overlay) {
-          overlay.remove();
-          overlay = null;
-        }
-      };
-      overlay.addEventListener("click", dismiss);
-      const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-          dismiss();
-          window.removeEventListener("keydown", onKey);
-        }
-      };
-      window.addEventListener("keydown", onKey);
-      document.body.appendChild(overlay);
+      showOverlay("Kumiki panic", lastStep.message, lastStep.location ?? "");
     } else if (overlay && latest && latest.status === "completed") {
-      overlay.remove();
-      overlay = null;
+      dismissOverlay();
     }
   }
 
@@ -214,17 +217,17 @@ export function installDevPanel(opts: Options): {
   renderInspector();
 
   return {
-    push(_ep) {
+    push() {
       renderTimeline();
       if (!inspectorBody.hidden) renderInspector();
       maybeShowOverlay();
     },
-    onRemount(_app) {
+    onRemount() {
       renderInspector();
-      if (overlay) {
-        overlay.remove();
-        overlay = null;
-      }
+      dismissOverlay();
+    },
+    showError(message, location) {
+      showOverlay("Kumiki error", message, location ?? "");
     },
   };
 }
@@ -289,20 +292,6 @@ function formatStep(step: EpisodeStep): string {
     case "panic":
       return `[panic] ${step.message}${step.location ? `  @ ${step.location}` : ""}`;
   }
-}
-
-function computeInflight(episodes: Episode[]): string[] {
-  const starts = new Map<string, string>();
-  for (const ep of episodes) {
-    for (const step of ep.steps) {
-      if (step.kind === "effect-start") {
-        starts.set(`${ep.id}:${step.name}`, `${step.name}(${safeStringify(step.args, 0)})`);
-      } else if (step.kind === "effect-end") {
-        starts.delete(`${ep.id}:${step.name}`);
-      }
-    }
-  }
-  return Array.from(starts.values());
 }
 
 function formatTileTree(app: AppShape): string {

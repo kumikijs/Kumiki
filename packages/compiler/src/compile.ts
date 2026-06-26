@@ -46,9 +46,10 @@ export type ExtendedCodegenOptions = CodegenOptions & {
    */
   readEpisodeLog?: (relativePath: string) => string;
   /**
-   * Promote a11y warnings (E07xx) to compilation errors. Mirrors
+   * Surface a11y findings (E07xx) as compilation errors. Mirrors
    * `kumiki check --strict-a11y` (spec §10.7 dev server flag). When false or
-   * unset, a11y findings stay at the warning level and never block compile.
+   * unset, `check()` filters E07xx codes out entirely so they never block
+   * compile and never reach the caller — there is no "warning" tier here.
    */
   strictA11y?: boolean;
 };
