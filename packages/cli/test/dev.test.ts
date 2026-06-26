@@ -197,34 +197,60 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
+// CLI dispatch tests spawn `npx tsx kumiki.ts ...` so the first run pays the
+// tsx cold-start cost. Local runs were ~1s/test; CI cold start pushed the
+// first invocation past vitest's 5s default. Give the whole suite a 30s
+// per-test budget so cold-start drift doesn't flake builds.
+const DISPATCH_TIMEOUT_MS = 30_000;
+
 describe("kumiki dev — CLI dispatch argument parsing", () => {
-  it("exits 2 with a usage message when no input file is given", () => {
-    const { code, out } = runCli(["dev"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/kumiki dev <input\.kumiki>/);
-  });
+  it(
+    "exits 2 with a usage message when no input file is given",
+    () => {
+      const { code, out } = runCli(["dev"]);
+      expect(code).toBe(2);
+      expect(out).toMatch(/kumiki dev <input\.kumiki>/);
+    },
+    DISPATCH_TIMEOUT_MS,
+  );
 
-  it("rejects --port with a non-numeric value", () => {
-    const { code, out } = runCli(["dev", "fake.kumiki", "--port", "abc"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/invalid --port 'abc'/);
-  });
+  it(
+    "rejects --port with a non-numeric value",
+    () => {
+      const { code, out } = runCli(["dev", "fake.kumiki", "--port", "abc"]);
+      expect(code).toBe(2);
+      expect(out).toMatch(/invalid --port 'abc'/);
+    },
+    DISPATCH_TIMEOUT_MS,
+  );
 
-  it("rejects --port outside the valid range", () => {
-    const { code, out } = runCli(["dev", "fake.kumiki", "--port", "70000"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/invalid --port '70000'/);
-  });
+  it(
+    "rejects --port outside the valid range",
+    () => {
+      const { code, out } = runCli(["dev", "fake.kumiki", "--port", "70000"]);
+      expect(code).toBe(2);
+      expect(out).toMatch(/invalid --port '70000'/);
+    },
+    DISPATCH_TIMEOUT_MS,
+  );
 
-  it("rejects --episode-log when its value is missing (next token starts with --)", () => {
-    const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log", "--strict-a11y"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/Usage: kumiki dev/);
-  });
+  it(
+    "rejects --episode-log when its value is missing (next token starts with --)",
+    () => {
+      const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log", "--strict-a11y"]);
+      expect(code).toBe(2);
+      expect(out).toMatch(/Usage: kumiki dev/);
+    },
+    DISPATCH_TIMEOUT_MS,
+  );
 
-  it("rejects --episode-log when it is the last argument", () => {
-    const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/Usage: kumiki dev/);
-  });
+  it(
+    "rejects --episode-log when it is the last argument",
+    () => {
+      const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log"]);
+      expect(code).toBe(2);
+      expect(out).toMatch(/Usage: kumiki dev/);
+    },
+    DISPATCH_TIMEOUT_MS,
+  );
 });
