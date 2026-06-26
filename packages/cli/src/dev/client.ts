@@ -1,9 +1,9 @@
 // Browser entry served by `kumiki dev` (spec §10.7). Loaded as a virtual
 // module via /@kumiki-dev/client.ts. The dev plugin substitutes the
-// `__KUMIKI_TARGET__` placeholder with the absolute path of the target
-// .kumiki file BEFORE serving this file, so the static `import App` line
-// and the `import.meta.hot.accept` boundary share the same specifier (a
-// requirement for Vite's HMR matcher).
+// target-path placeholder (see InitialApp import below) with the absolute
+// path of the target .kumiki file BEFORE serving this file, so the static
+// `import App` line and the `import.meta.hot.accept` boundary share the
+// same specifier (a requirement for Vite's HMR matcher).
 //
 // Lifecycle:
 //   1. Create an EpisodeLogger that mirrors every committed Episode into the
