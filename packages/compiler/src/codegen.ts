@@ -159,6 +159,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
       meta.push(`refineKind: ${JSON.stringify(r.pred)}`);
       meta.push(`refineArgs: ${JSON.stringify(r.args)}`);
     }
+    // `volatile` (language.md §175): excludes the slot from SlotDiff records
+    // and from SSR snapshots (runtime.md §10.6.1). The runtime reads this off
+    // SlotMeta.volatile — emit it so the live mount and `renderToString`
+    // agree on the exact set of persisted slots.
+    if (s.modifier === "volatile") meta.push("volatile: true");
     lines.push(`  ${JSON.stringify(s.name)}: { ${meta.join(", ")} },`);
   }
   lines.push("};");
