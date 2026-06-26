@@ -30,6 +30,12 @@ export type KumikiPluginOptions = {
    * its contents change. Default: false.
    */
   types?: boolean;
+  /**
+   * Promote a11y warnings (E07xx) to compile errors. Mirrors the dev-server
+   * `--strict-a11y` flag (spec §10.7) so violations surface in Vite's error
+   * overlay during development. Default: false.
+   */
+  strictA11y?: boolean;
 };
 
 /** Write `path` only if its current contents differ — avoids spurious watch churn. */
@@ -61,6 +67,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         bundle,
         ...(bundle ? { readRuntimeBundle: nodeRuntimeBundleReader } : {}),
         capabilities: resolveCapabilities(file),
+        ...(options.strictA11y ? { strictA11y: true as const } : {}),
       } as const;
 
       const first = compile(code, baseOpts);

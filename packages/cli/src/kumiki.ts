@@ -9,6 +9,7 @@ import {
   resolveCapabilities,
 } from "@kumikijs/compiler/node";
 import type { EpisodeMockPolicy } from "@kumikijs/runtime";
+import { devCmd } from "./dev.ts";
 import { fixCmd, fixFromTest } from "./fix.ts";
 import {
   addDef,
@@ -36,6 +37,7 @@ function usage(): never {
   console.error("  kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]");
   console.error("  kumiki refs <input.kumiki> <qname>");
   console.error("  kumiki check <input.kumiki> [--strict-a11y|--types|--refs|--effects]");
+  console.error("  kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]");
   console.error("  kumiki smoke <input.kumiki>");
   console.error("  kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
   console.error(
@@ -249,6 +251,41 @@ async function main(argv: string[]): Promise<void> {
       if (!input) usage();
       const inputPath = resolve(process.cwd(), input);
       await smokeCmd(inputPath, capsFor(inputPath));
+      return;
+    }
+    case "dev": {
+      const input = argv[3];
+      if (!input) usage();
+      const inputPath = resolve(process.cwd(), input);
+      const portIdx = argv.indexOf("--port");
+      let port: number | undefined;
+      if (portIdx !== -1) {
+        const raw = argv[portIdx + 1];
+        const n = Number(raw);
+        if (!raw || raw.startsWith("--") || !Number.isInteger(n) || n < 0 || n > 65535) {
+          console.error(`invalid --port '${raw}': expected integer 0..65535`);
+          process.exit(2);
+        }
+        port = n;
+      }
+      const epIdx = argv.indexOf("--episode-log");
+      let episodeLog: string | undefined;
+      if (epIdx !== -1) {
+        const value = argv[epIdx + 1];
+        if (!value || value.startsWith("--")) {
+          console.error(
+            "Usage: kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]",
+          );
+          process.exit(2);
+        }
+        episodeLog = resolve(process.cwd(), value);
+      }
+      const strictA11y = argv.includes("--strict-a11y");
+      await devCmd(inputPath, capsFor(inputPath), {
+        ...(port !== undefined ? { port } : {}),
+        ...(episodeLog !== undefined ? { episodeLog } : {}),
+        ...(strictA11y ? { strictA11y: true } : {}),
+      });
       return;
     }
     case "test": {

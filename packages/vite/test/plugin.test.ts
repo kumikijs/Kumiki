@@ -107,6 +107,21 @@ describe("vite-plugin-kumiki", () => {
     );
   });
 
+  it("threads strictA11y into compile so a11y warnings become transform errors (§10.7)", async () => {
+    const bad = `
+      tile App = button()
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const file = "/abs/a11y.kumiki";
+    // Lax: a11y warning is filtered, transform succeeds.
+    const lax = (await transformOf().call(ctx as never, bad, file)) as { code: string };
+    expect(lax.code).toContain("export default App;");
+    // Strict: same source is rejected with the E0701 message.
+    await expect(transformOf({ strictA11y: true }).call(ctx as never, bad, file)).rejects.toThrow(
+      /E0701/,
+    );
+  });
+
   it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", async () => {
     const dir = mkdtempSync(join(TMP, "types-"));
     const file = join(dir, "app.kumiki");
