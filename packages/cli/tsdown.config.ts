@@ -9,4 +9,8 @@ export default defineConfig({
   dts: true,
   // Emit .js/.d.ts (honors "type": "module") instead of tsdown's node-default .mjs.
   fixedExtension: false,
+  // dev-server client/panel sources are served verbatim to the browser via the
+  // internal dev plugin (resolveId / load). They aren't imported by Node code,
+  // so tsdown's tree-shaker would otherwise drop them — copy them as-is.
+  copy: [{ from: "src/dev/", to: "dist/dev/" }],
 });

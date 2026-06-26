@@ -45,6 +45,13 @@ export type ExtendedCodegenOptions = CodegenOptions & {
    * `undefined` is fine when the source has no `episode-test`.
    */
   readEpisodeLog?: (relativePath: string) => string;
+  /**
+   * Surface a11y findings (E07xx) as compilation errors. Mirrors
+   * `kumiki check --strict-a11y` (spec §10.7 dev server flag). When false or
+   * unset, `check()` filters E07xx codes out entirely so they never block
+   * compile and never reach the caller — there is no "warning" tier here.
+   */
+  strictA11y?: boolean;
 };
 
 /** Inline a runtime bundle into generated module code, stripping the bridging import/export lines. */
@@ -64,7 +71,10 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
   }
   const tokens = lex(source);
   const program = parse(tokens);
-  const errors = check(program, { capabilities: opts.capabilities ?? [] });
+  const errors = check(program, {
+    capabilities: opts.capabilities ?? [],
+    ...(opts.strictA11y ? { strictA11y: true } : {}),
+  });
   if (errors.length > 0) return { kind: "fail", errors };
 
   const generated = codegen(program, opts);

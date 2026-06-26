@@ -5,5 +5,7 @@
     "rootDir": "src",
     "types": ["node"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "//exclude": "client.ts has a placeholder import the dev plugin only substitutes at runtime, so tsc can't resolve it. panel.ts has no such placeholder and stays in the program.",
+  "exclude": ["src/dev/client.ts"]
 }

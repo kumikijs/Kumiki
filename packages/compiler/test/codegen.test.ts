@@ -526,4 +526,17 @@ describe("codegen", () => {
     expect(result.js).not.toContain('_s.token("colors"');
     expect(result.js).not.toContain('_s.token("spacing"');
   });
+
+  it("promotes a11y warnings to compile errors when strictA11y is set (§10.7)", () => {
+    const src = `
+      tile App = button()
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const lax = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(lax.kind).toBe("ok");
+    const strict = compile(src, { runtimeSpecifier: "./runtime.js", strictA11y: true });
+    expect(strict.kind).toBe("fail");
+    if (strict.kind !== "fail") return;
+    expect(strict.errors.some((e) => e.code === "E0701")).toBe(true);
+  });
 });
