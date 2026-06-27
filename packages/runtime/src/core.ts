@@ -5,7 +5,16 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
-import type { EpisodeLogger, SlotDiff } from "./episode.ts";
+import type { Episode, EpisodeLogger, SlotDiff } from "./episode.ts";
+
+/**
+ * SSR slot snapshot — the non-`volatile` slot values an SSR pass produces.
+ * Hydration overlays this on `app.live` BEFORE wiring effect dispatchers or
+ * firing `app.start`, so the very first render reflects the server's final
+ * state without re-running the `app.init` effects (§10.6.1 keeps init "not
+ * re-executed at hydration").
+ */
+export type SsrSnapshot = Record<string, unknown>;
 
 export type RefinementCheck = (v: unknown) => boolean;
 export type EventHandler = (el: Record<string, unknown>) => void;
@@ -314,6 +323,28 @@ export type MountOptions = {
    * production mounts that don't care about episode capture.
    */
   episodeLogger?: EpisodeLogger | null;
+  /**
+   * SSR slot snapshot to overlay on `app.live` before the first render
+   * (docs/spec/runtime.md §10.6.2). Keyed by slot name; values come straight
+   * from `renderToString().snapshot.slots`. `volatile` slots are already
+   * absent on the server side, so the host can pass the snapshot through
+   * verbatim — the runtime never re-imports volatile values here.
+   */
+  ssrSnapshot?: SsrSnapshot;
+  /**
+   * Bootstrap episode (`trigger.kind = "ssr.hydrate"`) produced by
+   * `renderToString()`. When present, the runtime injects it into the
+   * `episodeLogger` BEFORE firing `app.start`, so `app.episodes()[0]` is the
+   * SSR-side causal chain that filled the snapshot (§10.5.1 + §10.6.2).
+   */
+  bootstrapEpisode?: Episode;
+  /**
+   * When true, the mount treats `app.live` as already-initialised by a server
+   * render: the `app.init` effects are NOT re-dispatched and the bootstrap
+   * episode replaces the local init causal chain. Lifecycle reducers
+   * (`app.start`, `route.enter`) still fire as usual (§10.6.2 step 5).
+   */
+  hydrate?: boolean;
 };
 
 export type RouteEntry = {
@@ -441,6 +472,91 @@ function emptyRoute(): ParsedRoute {
 }
 
 /**
+ * Walk the parent tile tree and inject the matched child as the children of
+ * the first `route-outlet` node we find (spec/routing.md §3.6). The render
+ * pass in tiles-layout.ts then mounts the child via the normal renderer.
+ * Spec leaves multi-outlet behavior unspecified, so we treat the first one
+ * as the active slot and leave any additional outlets empty.
+ *
+ * NOTE: this mutates `node` in place, so each call site MUST hand in a fresh
+ * tree — i.e. tile factories returned by codegen must produce a new object
+ * literal per invocation (they do today). A cached / shared tree would be
+ * corrupted across navigations.
+ */
+function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
+  if (!node || typeof node !== "object") return false;
+  if ((node as { kind?: string }).kind === "route-outlet") {
+    (node as { children: TileNode[] }).children = [child];
+    return true;
+  }
+  const children = (node as { children?: TileNode[] }).children;
+  if (Array.isArray(children)) {
+    for (const c of children) {
+      if (injectRouteOutlet(c, child)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve the root TileNode for the current route (or the app's static root
+ * when no routes are declared). Exported so SSR (`ssr.ts`) can pick the same
+ * tree the live mount would render, without re-implementing the route /
+ * sub-route matching logic.
+ */
+export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>): TileNode {
+  if (app.routes && app.routes.length > 0) {
+    const cur = slotValues.route as ParsedRoute;
+    for (const r of app.routes) {
+      if (r.pattern === cur.pattern && "tile" in r) {
+        const root = r.tile();
+        // §3.6: parent route delegates child rendering to `route-outlet`.
+        if (cur.childPattern && r.subRoutes) {
+          const childEntry = r.subRoutes.find(
+            (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+          );
+          if (childEntry) injectRouteOutlet(root, childEntry.tile());
+        }
+        return root;
+      }
+    }
+    // 404 fallback tile
+    for (const r of app.routes) {
+      if (r.pattern === "/404" && "tile" in r) return r.tile();
+    }
+  }
+  return app.root ? app.root() : { kind: "text", text: "(no root)" };
+}
+
+/**
+ * Apply a reducer's returned slot map and compute the `slot-diffs` an episode
+ * step needs (docs/spec/language.md §175 — `volatile` slots get the new value
+ * but are excluded from diffs / dirty signal-update). Pure: it mutates the
+ * `prev` record (the live `app.live`) in place but otherwise has no side
+ * effects, so both `applyReducer` (mount) and the SSR pseudo-reducer pipeline
+ * can share the exact same volatile/refine semantics.
+ */
+export function computeSlotDiffs(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+  slotMetas: Record<string, SlotMeta>,
+): { diffs: SlotDiff[]; dirty: string[] } {
+  const diffs: SlotDiff[] = [];
+  const dirty: string[] = [];
+  for (const [k, v] of Object.entries(next)) {
+    const meta = slotMetas[k];
+    if (meta?.refine && !meta.refine(v)) continue;
+    const before = prev[k];
+    prev[k] = v;
+    if (!meta?.volatile) {
+      diffs.push({ name: k, before, after: v });
+      dirty.push(k);
+    }
+  }
+  return { diffs, dirty };
+}
+
+/**
  * The granular mount (#71): renders with exactly the tile renderers / routing /
  * builtin effects passed via options. Generated apps from `kumiki build` call
  * this with just the modules they import; the package-entry `mount` wraps it
@@ -458,6 +574,16 @@ export function mountCore(
   if (!app.live) {
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
+  }
+  // SSR hydration overlay (§10.6.2 step 2): drop the server snapshot onto
+  // `app.live` BEFORE wiring the route / effect dispatcher, so the first
+  // render already reflects the SSR-final values. `volatile` slots are not in
+  // the snapshot by construction (see `renderToString`), so this loop never
+  // smuggles a volatile value across the hydration boundary.
+  if (options.ssrSnapshot) {
+    for (const [k, v] of Object.entries(options.ssrSnapshot)) {
+      if (k in app.slots) app.live[k] = v;
+    }
   }
   // Ensure `route` slot exists (auto-managed by runtime when routes are declared).
   if (!("route" in app.live)) {
@@ -561,7 +687,7 @@ export function mountCore(
     let dom: HTMLElement;
     let renderedTree: TileNode | null = null;
     try {
-      renderedTree = pickRootTile(app);
+      renderedTree = pickRootTile(app, slotValues);
       dom = tileCtx.render(renderedTree);
     } catch (e) {
       // A render panic NOT caught by a per-tile `error-boundary` (e.g. one under
@@ -579,7 +705,7 @@ export function mountCore(
         // (without retrying the broken tile) and use whatever the next pick
         // produces. If the re-render still throws, fall back to the panic UI.
         try {
-          renderedTree = pickRootTile(app);
+          renderedTree = pickRootTile(app, slotValues);
           dom = tileCtx.render(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
@@ -588,8 +714,19 @@ export function mountCore(
         }
       }
     }
-    if (currentRoot) target.replaceChild(dom, currentRoot);
-    else target.appendChild(dom);
+    if (currentRoot) {
+      target.replaceChild(dom, currentRoot);
+    } else if (options.hydrate && target.firstChild) {
+      // §10.6.2: the SSR HTML is already in `target` (the host injected it
+      // before calling `hydrate`). Replace it with the CSR-rendered tree
+      // wholesale so we never end up with SSR + CSR DOM as siblings. True
+      // identity-preserving hydration (re-using SSR nodes in place) is out
+      // of scope for v1 — the SSR pass exists for first-paint/SEO, not for
+      // DOM stability across the boundary.
+      target.replaceChildren(dom);
+    } else {
+      target.appendChild(dom);
+    }
     currentRoot = dom;
 
     if (snap) {
@@ -657,57 +794,6 @@ export function mountCore(
       }
     }
     return true;
-  }
-
-  function pickRootTile(app: AppShape): TileNode {
-    if (app.routes && app.routes.length > 0) {
-      const cur = slotValues.route as ParsedRoute;
-      for (const r of app.routes) {
-        if (r.pattern === cur.pattern && "tile" in r) {
-          const root = r.tile();
-          // §3.6: parent route delegates child rendering to `route-outlet`.
-          if (cur.childPattern && r.subRoutes) {
-            const childEntry = r.subRoutes.find(
-              (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
-            );
-            if (childEntry) injectRouteOutlet(root, childEntry.tile());
-          }
-          return root;
-        }
-      }
-      // 404 fallback tile
-      for (const r of app.routes) {
-        if (r.pattern === "/404" && "tile" in r) return r.tile();
-      }
-    }
-    return app.root ? app.root() : { kind: "text", text: "(no root)" };
-  }
-
-  /**
-   * Walk the parent tile tree and inject the matched child as the children of
-   * the first `route-outlet` node we find (spec/routing.md §3.6). The render
-   * pass in tiles-layout.ts then mounts the child via the normal renderer.
-   * Spec leaves multi-outlet behavior unspecified, so we treat the first one
-   * as the active slot and leave any additional outlets empty.
-   *
-   * NOTE: this mutates `node` in place, so each call site MUST hand in a fresh
-   * tree — i.e. tile factories returned by codegen must produce a new object
-   * literal per invocation (they do today). A cached / shared tree would be
-   * corrupted across navigations.
-   */
-  function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
-    if (!node || typeof node !== "object") return false;
-    if ((node as { kind?: string }).kind === "route-outlet") {
-      (node as { children: TileNode[] }).children = [child];
-      return true;
-    }
-    const children = (node as { children?: TileNode[] }).children;
-    if (Array.isArray(children)) {
-      for (const c of children) {
-        if (injectRouteOutlet(c, child)) return true;
-      }
-    }
-    return false;
   }
 
   // Re-entrancy guard so a panic inside the `app.error` handler itself does not
@@ -781,20 +867,9 @@ export function mountCore(
       return;
     }
     // Compute slot diffs (excluding `volatile` slots per language.md §175):
-    // capture each touched slot's value BEFORE we overwrite it so the episode
-    // step records the live transition, not just the destination.
-    const diffs: SlotDiff[] = [];
-    const dirty: string[] = [];
-    for (const [k, v] of Object.entries(result.slots)) {
-      const meta = app.slots[k];
-      if (meta?.refine && !meta.refine(v)) continue;
-      const before = slotValues[k];
-      slotValues[k] = v;
-      if (!meta?.volatile) {
-        diffs.push({ name: k, before, after: v });
-        dirty.push(k);
-      }
-    }
+    // shared with the SSR pseudo-reducer pipeline so volatile semantics never
+    // drift across the hydration boundary.
+    const { diffs, dirty } = computeSlotDiffs(slotValues, result.slots, app.slots);
     episode?.recordReducer(
       r.name,
       diffs,
@@ -1083,8 +1158,28 @@ export function mountCore(
   (app as AppShape & { _resolveLeave?: (outcome: "yes" | "no") => void })._resolveLeave =
     resolveLeave;
 
-  // Fire app.start lifecycle + init effects.
-  for (const emit of app.init) dispatcher.dispatch(emit);
+  // SSR hydration (§10.6.2 step 3): inject the server-side bootstrap episode
+  // into the logger BEFORE any client-side episode is opened, so
+  // `app.episodes()[0]` is the `ssr.hydrate` causal chain. The client must
+  // NOT re-execute `app.init` (step 5 in spec: "not re-executed at
+  // hydration"); the snapshot already carries those effects' results.
+  //
+  // Fail-fast on `hydrate: true` without a bootstrap episode: silently
+  // skipping `app.init` AND skipping the ingest would leave the logger
+  // incoherent — and the app stuck on default slot values with no record
+  // of why. Spec §10.6.2 step 1 expects the host to drop to CSR before
+  // calling `hydrate`, so reaching this code path is a contract violation.
+  if (options.hydrate) {
+    if (!options.bootstrapEpisode) {
+      throw new Error(
+        "mountCore: `hydrate: true` requires `bootstrapEpisode` (runtime.md §10.6.2 step 3). Fall back to a fresh `mount` if the snapshot is missing or version-mismatched.",
+      );
+    }
+    episode?.ingestBootstrap(options.bootstrapEpisode);
+  } else {
+    for (const emit of app.init) dispatcher.dispatch(emit);
+  }
+  // Fire app.start lifecycle reducer — always, whether SSR-hydrated or fresh.
   for (const r of app.reducers) {
     if (r.event.kind === "lifecycle" && r.event.name === "app.start") {
       applyReducer(r, {});
@@ -1482,7 +1577,7 @@ export function _setPathHelper(obj: unknown, path: string[], value: unknown): un
 }
 
 /** Message + optional source location for a caught throw (panic or otherwise). */
-function panicInfo(e: unknown): { message: string; location: string | undefined } {
+export function panicInfo(e: unknown): { message: string; location: string | undefined } {
   if (isPanic(e)) return { message: e.message, location: e.location };
   if (e instanceof Error) return { message: e.message, location: undefined };
   return { message: String(e), location: undefined };
@@ -1530,7 +1625,7 @@ function collectMountedTiles(root: TileNode): Set<string> {
 }
 
 /** Pull `status` off an HttpError-shaped err value; returns null otherwise. */
-function readStatus(value: unknown): number | null {
+export function readStatus(value: unknown): number | null {
   if (!value || typeof value !== "object") return null;
   const s = (value as { status?: unknown }).status;
   return typeof s === "number" ? s : null;
@@ -1570,7 +1665,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function reportUnhandledEffectError(effect: string, value: unknown): void {
+export function reportUnhandledEffectError(effect: string, value: unknown): void {
   const message =
     value && typeof value === "object" && "message" in value
       ? String((value as { message: unknown }).message)

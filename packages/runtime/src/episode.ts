@@ -11,7 +11,13 @@
 // max 20, 5 MB byte cap).
 
 export type EpisodeTrigger = {
-  /** "ui.click" / "ui.submit" / "lifecycle" / "route.enter" / "timer" / "effect.end" / "init" etc. */
+  /**
+   * "ui.click" / "ui.submit" / "lifecycle" / "route.enter" / "timer" /
+   * "effect.end" / "init" / "ssr.hydrate" (server-generated bootstrap, see
+   * docs/spec/runtime.md §10.5.1 + §10.6.2 — the client side never opens
+   * episodes with this kind via `beginTrigger`; only `ingestBootstrap`
+   * injects them).
+   */
   kind: string;
   /** Tile name, lifecycle name, route pattern — interpretation depends on `kind`. */
   target?: string;
@@ -131,6 +137,15 @@ export type EpisodeLogger = {
   recordSignalUpdate(dirtySlots: string[], bindsUpdated?: string[]): void;
   /** Record a panic; the episode commits with `status = "panic"`. */
   recordPanic(message: string, location?: string): void;
+  /**
+   * Inject an already-completed episode at the tail of the memory ring (and
+   * the localStorage mirror, when enabled). Used by SSR hydration to seat
+   * the server-side bootstrap episode (`trigger.kind = "ssr.hydrate"`) on
+   * the client logger BEFORE any client-opened episode runs, so
+   * `list()[0]` reflects the SSR causal chain (§10.5.1 + §10.6.2). Does not
+   * touch the trigger stack — bootstrap episodes are externally finalised.
+   */
+  ingestBootstrap(ep: Episode): void;
   /** Snapshot of currently retained episodes (oldest first). */
   list(): Episode[];
   /**
@@ -306,6 +321,12 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         "binds-updated": bindsUpdated ?? [],
         ts: now(),
       });
+    },
+    ingestBootstrap(ep) {
+      memory.push(ep);
+      while (memory.length > memoryMax) memory.shift();
+      persistLocalStorage();
+      opts.onEpisode?.(ep);
     },
     recordPanic(message, location) {
       const ep = topEpisode();

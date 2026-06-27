@@ -74,10 +74,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // then to 36.5KB with the Bytes constructors + polymorphic listSort (#92),
     // then to 37.5KB with the icon SVG resolver in tiles-text (#101 — the
     // counter doesn't use icons, but the resolver code rides on tiles-text).
+    // Bumped to 38KB with the SSR/hydration seams in core.ts (#119 —
+    // `computeSlotDiffs` + `pickRootTile` exports + MountOptions overlay).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(37_500);
+    expect(total).toBeLessThan(38_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
