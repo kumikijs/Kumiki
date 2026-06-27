@@ -269,6 +269,8 @@ The causal sequence derived from a single trigger is recorded as one **episode**
 
 Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see §10.6.2). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
+**Deferred-policy effect attribution.** Effects emitted under `policy=debounce(d)` complete their `setTimeout` AFTER the triggering reducer's episode has nominally ended. The dispatcher therefore claims the `effect-start` step (and its episode-token) at *dispatch* time, not at the eventual `launch`, so the deferred `effect-end` and its `.ok` / `.err` reducer chain stay on the originating episode — the causal chain stays whole. A `debounce` timer that is replaced before it fires records an `effect-cancel` step (with `targetId = <effect-name>`) on its originating episode, which then commits as `status="completed"` with no `effect-end`. `policy=throttle(d)` launches synchronously on the leading edge (so the standard sync path attaches `effect-start`); subsequent dispatches within the window are silently suppressed — the originating reducer's `emits` list shows the suppressed effect name, but no `effect-start` follows.
+
 #### 10.5.1.1 Bootstrap episode (SSR hydration)
 
 The server-side `renderToString` pass collapses the entire `app.init` causal chain into a single bootstrap episode and ships it inside the SSR snapshot (§10.6.1). Its shape is just an Episode (above) with two additional contracts:

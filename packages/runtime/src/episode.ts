@@ -133,6 +133,19 @@ export type EpisodeLogger = {
    * generic network failure.
    */
   recordEffectCancel(targetId: string): void;
+  /**
+   * Cancel a pending effect-start that was claimed (token + step) at dispatch
+   * time but whose `launch` never actually fired — currently only the
+   * debounce-replace path (spec §10.4.3): a fresh `dispatch` of the same
+   * effect cleared the prior `setTimeout` before it could run. We resolve the
+   * token to its originating episode, append an `effect-cancel` step there,
+   * decrement that episode's `pending` counter, and `settle` it so a
+   * `closedAwaiting` episode commits. Unknown tokens are a silent no-op.
+   * Distinct from `recordEffectCancel` (which annotates the CURRENT top
+   * episode for user-initiated `http.cancel`, leaves `inflight` intact, and
+   * relies on the subsequent AbortError to commit the cancelled episode).
+   */
+  cancelPendingEffect(token: string, name: string): void;
   /** Append a `{kind: "signal-update", ...}` step to the open episode. */
   recordSignalUpdate(dirtySlots: string[], bindsUpdated?: string[]): void;
   /** Record a panic; the episode commits with `status = "panic"`. */
@@ -311,6 +324,15 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       const ep = topEpisode();
       if (!ep) return;
       ep.steps.push({ kind: "effect-cancel", targetId, ts: now() });
+    },
+    cancelPendingEffect(token, name) {
+      const ep = inflight.get(token);
+      if (!ep) return;
+      inflight.delete(token);
+      ep.steps.push({ kind: "effect-cancel", targetId: name, ts: now() });
+      const count = pending.get(ep) ?? 0;
+      if (count > 0) pending.set(ep, count - 1);
+      settle(ep);
     },
     recordSignalUpdate(dirtySlots, bindsUpdated) {
       const ep = topEpisode();
