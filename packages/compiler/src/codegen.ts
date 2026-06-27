@@ -19,6 +19,7 @@ import type {
   TileExpr,
   TypeDef,
   TypeExpr,
+  UiEventKind,
 } from "./ast.ts";
 import { BUILTIN_TILES, TILE_FAMILY, type TileFamily } from "./builtins.ts";
 
@@ -2616,124 +2617,38 @@ function propsFor(
     // event handler from enclosing tile (e.g. ResetBtn has no onClick but reducer subscribes to ui.click(ResetBtn))
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
-  // Implicit onClick from reducers subscribing to this enclosing tile name
-  if (t.name === "button" && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "click" && rr.on.selector.tile === enclosingTile,
+  // Implicit handlers from reducers subscribing to (enclosingTile, ui-event).
+  // Per spec §1.6.4: "Multiple reducers matching the same event run in
+  // definition order" — emit one handler that dispatches every match in source
+  // order. If an explicit `<handler>:` entry already exists (set by the user
+  // via `onClick=...` etc.), the implicit binding stays out of the way.
+  const pushImplicit = (ev: UiEventKind, handlerName: string) => {
+    if (!enclosingTile) return;
+    if (entries.some((e) => e.startsWith(`${handlerName}:`))) return;
+    const matches = ctx.gen.reducers.filter(
+      (rr) => rr.on.kind === "UiEvent" && rr.on.ev === ev && rr.on.selector.tile === enclosingTile,
     );
-    if (r && !entries.some((e) => e.startsWith("onClick"))) {
-      entries.push(
-        `onClick: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onClick for `check` / `switch` when reducer subscribes via enclosing tile
-  if ((t.name === "check" || t.name === "switch") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "click" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onClick"))) {
-      entries.push(
-        `onClick: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onSubmit for form when reducer subscribes to enclosing user tile
-  if (t.name === "form" && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "submit" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r)
-      entries.push(
-        `onSubmit: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-  }
-  // Implicit onChange for select / input / textarea when reducer subscribes to ui.change(EnclosingTile)
-  if ((t.name === "select" || t.name === "input" || t.name === "textarea") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "change" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onChange"))) {
-      entries.push(
-        `onChange: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onInput for input / textarea when reducer subscribes to ui.input(EnclosingTile)
-  if ((t.name === "input" || t.name === "textarea") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "input" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onInput"))) {
-      entries.push(
-        `onInput: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onKeyDown for input / textarea / button when reducer subscribes to
-  // ui.key(EnclosingTile). The runtime exposes `el.key` (the KeyboardEvent.key
-  // value) so reducers can branch on which key was pressed.
-  if ((t.name === "input" || t.name === "textarea" || t.name === "button") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "key" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onKeyDown"))) {
-      entries.push(
-        `onKeyDown: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onMouseEnter for any tile when reducer subscribes to
-  // ui.hover(EnclosingTile). Hover is broadly applicable so no tile-name filter.
-  if (enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "hover" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onMouseEnter"))) {
-      entries.push(
-        `onMouseEnter: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onFocus for focusable tiles when reducer subscribes to
-  // ui.focus(EnclosingTile). DOM focus only fires on focusable elements, so
-  // restrict to input / textarea / button / select (same gate as ui.key).
-  if (
-    (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") &&
-    enclosingTile
-  ) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "focus" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onFocus"))) {
-      entries.push(
-        `onFocus: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onBlur for focusable tiles when reducer subscribes to
-  // ui.blur(EnclosingTile). Same tile gate as ui.focus.
-  if (
-    (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") &&
-    enclosingTile
-  ) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "blur" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onBlur"))) {
-      entries.push(
-        `onBlur: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
+    if (matches.length === 0) return;
+    const body = matches
+      .map((r) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`)
+      .join("; ");
+    entries.push(`${handlerName}: (el) => { ${body} }`);
+  };
+  if (t.name === "button") pushImplicit("click", "onClick");
+  if (t.name === "check" || t.name === "switch") pushImplicit("click", "onClick");
+  if (t.name === "form") pushImplicit("submit", "onSubmit");
+  if (t.name === "select" || t.name === "input" || t.name === "textarea")
+    pushImplicit("change", "onChange");
+  if (t.name === "input" || t.name === "textarea") pushImplicit("input", "onInput");
+  if (t.name === "input" || t.name === "textarea" || t.name === "button")
+    // ui.key — runtime exposes `el.key` (KeyboardEvent.key) so reducers branch on it.
+    pushImplicit("key", "onKeyDown");
+  // ui.hover is broadly applicable, so no tile-name filter.
+  pushImplicit("hover", "onMouseEnter");
+  if (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") {
+    // DOM focus/blur only fire on focusable elements (same gate as ui.key).
+    pushImplicit("focus", "onFocus");
+    pushImplicit("blur", "onBlur");
   }
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];

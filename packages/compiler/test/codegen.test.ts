@@ -375,7 +375,9 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onKeyDown: \(el\) => globalThis\.__kumikiApp\._dispatch\("onKey"/);
+    expect(result.js).toMatch(
+      /onKeyDown: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onKey"/,
+    );
   });
 
   it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
@@ -390,7 +392,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onMouseEnter: \(el\) => globalThis\.__kumikiApp\._dispatch\("onHover"/,
+      /onMouseEnter: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onHover"/,
     );
   });
 
@@ -414,7 +416,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
     );
   });
 
@@ -429,7 +431,9 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => globalThis\.__kumikiApp\._dispatch\("markBlur"/);
+    expect(result.js).toMatch(
+      /onBlur: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("markBlur"/,
+    );
   });
 
   it("emits onFocus on a textarea (one of the focusable tile gates) (§1.6.1)", () => {
@@ -444,7 +448,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
     );
   });
 
@@ -661,5 +665,52 @@ describe("codegen", () => {
     expect(strict.kind).toBe("fail");
     if (strict.kind !== "fail") return;
     expect(strict.errors.some((e) => e.code === "E0701")).toBe(true);
+  });
+
+  it("dispatches every reducer subscribing to the same (tile, ui-event) in definition order (#124)", () => {
+    // Spec §1.6.4 invariant: "Multiple reducers matching the same event run in
+    // definition order". Before the fix, codegen used `.find()` and silently
+    // dropped every reducer past the first.
+    const src = `
+      slot hits  : Int = 0
+      slot saves : Int = 0
+      slot logs  : Int = 0
+      reducer logHit on=ui.click(SubmitBtn) do= hits  := hits  + 1
+      reducer save   on=ui.click(SubmitBtn) do= saves := saves + 1
+      reducer audit  on=ui.click(SubmitBtn) do= logs  := logs  + 1
+      tile SubmitBtn = button(text="go")
+      tile App = column(SubmitBtn, text(hits.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // All three dispatches must appear, in source order, inside a single onClick.
+    const onClick = result.js.match(/onClick: \(el\) => \{[^}]*\}/);
+    expect(onClick).not.toBeNull();
+    const body = onClick?.[0] ?? "";
+    const iLog = body.indexOf('_dispatch("logHit"');
+    const iSave = body.indexOf('_dispatch("save"');
+    const iAudit = body.indexOf('_dispatch("audit"');
+    expect(iLog).toBeGreaterThanOrEqual(0);
+    expect(iSave).toBeGreaterThan(iLog);
+    expect(iAudit).toBeGreaterThan(iSave);
+  });
+
+  it("preserves single-reducer onClick shape (no behavior change for the 1-match case)", () => {
+    const src = `
+      slot x : Int = 0
+      reducer inc on=ui.click(B) do= x := x + 1
+      tile B = button(text="+")
+      tile App = column(B, text(x.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('_dispatch("inc", el)');
+    // The 1-match handler may be wrapped in `{ ... }` after the fix; that's
+    // fine. What matters is that the single dispatch is emitted.
+    expect(result.js).toMatch(/onClick: \(el\) =>/);
   });
 });

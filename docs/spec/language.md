@@ -293,6 +293,10 @@ path          ::= identifier
 
 In other words, you can mix one-line layout and block layout. When writing in newline-based style, you only need to insert newlines so that the following statements stop at the right position before the next keyword (such as `else`).
 
+**Multiple subscriptions to the same event are allowed.** When two or more reducers
+declare the same `on=` pattern (e.g. both subscribe to `ui.click(SubmitBtn)`), all
+of them fire in source-definition order — see §1.6.4 Invariant 3.
+
 ### 1.6.2 Selectors
 
 A selector is **`TileName`** or **`TileName#id`** only (CSS attribute selectors have been removed).
