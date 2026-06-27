@@ -435,18 +435,27 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       checkTileExpr(t.consequent, sym, errors, ctx);
       checkTileExpr(t.alternate, sym, errors, ctx);
       return;
-    case "TileMatch":
+    case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
+      const scrutType = inferType(t.scrutinee, sym, ctx);
       for (const arm of t.arms) {
         const inner: Ctx = {
           ...ctx,
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        addPatternBinds(arm.pattern, inner.localBinds);
+        checkPatternAgainstType(
+          arm.pattern,
+          scrutType,
+          sym,
+          errors,
+          inner.localBinds,
+          inner.localTypes,
+        );
         checkTileExpr(arm.body, sym, errors, inner);
       }
       return;
+    }
     case "TileCall":
       checkTileCall(t, sym, errors, ctx);
       return;
@@ -659,6 +668,7 @@ function checkStmt(
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
+    const scrutType = inferType(s.scrutinee, sym, ctx);
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
@@ -667,7 +677,14 @@ function checkStmt(
         localBinds: new Set(ctx.localBinds),
         localTypes: new Map(ctx.localTypes ?? []),
       };
-      addPatternBinds(arm.pattern, inner.localBinds);
+      checkPatternAgainstType(
+        arm.pattern,
+        scrutType,
+        sym,
+        errors,
+        inner.localBinds,
+        inner.localTypes,
+      );
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
       armSets.push(armWrites);
@@ -903,13 +920,21 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
+      const scrutType = inferType(e.scrutinee, sym, ctx);
       for (const arm of e.arms) {
         const inner: Ctx = {
           ...ctx,
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        addPatternBinds(arm.pattern, inner.localBinds);
+        checkPatternAgainstType(
+          arm.pattern,
+          scrutType,
+          sym,
+          errors,
+          inner.localBinds,
+          inner.localTypes,
+        );
         checkExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -1308,23 +1333,284 @@ function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
 }
 
-// Collect every identifier introduced by a pattern (PBind name, PVariant binds,
-// and PTuple element binds recursively) so callers can add them to localBinds in
-// one pass without case-splitting at the call site.
-function addPatternBinds(p: Pattern, dst: Set<string>): void {
-  if (p.kind === "PBind") {
-    dst.add(p.name);
+/**
+ * Validate that `pat` is structurally compatible with `scrutType`, push
+ * diagnostics for any mismatch, and register every bind name into `binds` /
+ * (when its type is known) `localTypes` so the arm body resolves names and
+ * sees the right inner type.
+ *
+ * When `scrutType` is null (undecidable), we still collect bind names — the
+ * arm body must remain usable — but skip the structural checks (consistent
+ * with the rest of the type checker's "dynamic ⇒ no diagnostic" stance).
+ *
+ * Issue #123: prior to this helper, the three match-sites called a
+ * name-collecting `addPatternBinds` and never verified that `(a, b, c)`
+ * actually matched a `Tuple(_, _, _)` or that `Some(x, y)` had the right
+ * arity. Mismatches lowered to `Array.isArray(_v) && _v.length === N` /
+ * `variantIs(...)` guards that silently evaluated to false — a true silent
+ * failure where the arm just got skipped.
+ */
+function checkPatternAgainstType(
+  pat: Pattern,
+  scrutType: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  binds: Set<string>,
+  localTypes: Map<string, TypeExpr> | undefined,
+): void {
+  const t = unaliasType(scrutType, sym);
+
+  if (pat.kind === "PWildcard") return;
+
+  if (pat.kind === "PBind") {
+    binds.add(pat.name);
+    if (t && localTypes) localTypes.set(pat.name, t);
     return;
   }
-  if (p.kind === "PVariant") {
-    for (const b of p.binds) if (b !== "_") dst.add(b);
+
+  if (pat.kind === "PTuple") {
+    const tupleT = resolveToTuple(t, sym);
+    if (tupleT === null) {
+      // Undecidable scrutinee — still walk the items so nested binds land in
+      // scope; just skip the per-element type check.
+      for (const it of pat.items) {
+        checkPatternAgainstType(it, null, sym, errors, binds, localTypes);
+      }
+      return;
+    }
+    if (tupleT === "not-a-tuple") {
+      errors.push({
+        code: "E0208",
+        kind: "pat-type-mismatch",
+        message: `Tuple pattern cannot match scrutinee of type "${typeToString(t!)}"`,
+        pos: pat.pos,
+      });
+      for (const it of pat.items) {
+        checkPatternAgainstType(it, null, sym, errors, binds, localTypes);
+      }
+      return;
+    }
+    if (tupleT.args.length !== pat.items.length) {
+      errors.push({
+        code: "E0207",
+        kind: "pat-arity-mismatch",
+        message: `Tuple pattern has ${pat.items.length} item(s) but scrutinee type "${typeToString(tupleT)}" has ${tupleT.args.length}`,
+        pos: pat.pos,
+      });
+    }
+    for (let i = 0; i < pat.items.length; i++) {
+      const item = pat.items[i];
+      if (!item) continue;
+      const elemType = tupleT.args[i] ?? null;
+      checkPatternAgainstType(item, elemType, sym, errors, binds, localTypes);
+    }
     return;
   }
-  if (p.kind === "PTuple") {
-    for (const it of p.items) addPatternBinds(it, dst);
+
+  // PVariant
+  if (!t) {
+    // Undecidable scrutinee — register binds without types and stop.
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
     return;
   }
-  // PWildcard introduces no binds.
+  const payloads = lookupVariantPayloads(pat.name, t, sym);
+  if (payloads === null) {
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  if (payloads === "unknown-tag") {
+    errors.push({
+      code: "E0209",
+      kind: "pat-unknown-variant",
+      message: `Variant "${pat.name}" is not a member of scrutinee type "${typeToString(t)}"`,
+      pos: pat.pos,
+    });
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  if (payloads === "not-a-union") {
+    errors.push({
+      code: "E0208",
+      kind: "pat-type-mismatch",
+      message: `Variant pattern "${pat.name}" cannot match scrutinee of type "${typeToString(t)}"`,
+      pos: pat.pos,
+    });
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  if (pat.binds.length !== payloads.length) {
+    errors.push({
+      code: "E0207",
+      kind: "pat-arity-mismatch",
+      message: `Variant "${pat.name}" pattern has ${pat.binds.length} bind(s) but the variant carries ${payloads.length} payload(s)`,
+      pos: pat.pos,
+    });
+  }
+  for (let i = 0; i < pat.binds.length; i++) {
+    const name = pat.binds[i];
+    if (!name || name === "_") continue;
+    binds.add(name);
+    const ty = payloads[i] ?? null;
+    if (ty && localTypes) localTypes.set(name, ty);
+  }
+}
+
+/**
+ * Resolve the expected payload type list for a variant tag against a
+ * scrutinee type. Return values:
+ *   - `TypeExpr[]` — the variant exists; one entry per payload (may be empty).
+ *   - `"unknown-tag"` — scrutinee IS a union shape but has no such tag.
+ *   - `"not-a-union"` — scrutinee is a concrete non-union type (e.g. Int).
+ *   - `null` — scrutinee type is undecidable; caller skips diagnostics.
+ *
+ * Built-in `Option(T)` and `Result(T,E)` are handled here so they don't need
+ * to be desugared into a user TypeUnion first.
+ */
+function lookupVariantPayloads(
+  tag: string,
+  scrut: TypeExpr | null,
+  sym: SymbolTable,
+): TypeExpr[] | "unknown-tag" | "not-a-union" | null {
+  if (!scrut) return null;
+  if (scrut.kind === "TypeApp") {
+    if (scrut.name === "Option") {
+      const inner = scrut.args[0];
+      if (tag === "Some") return inner ? [inner] : [];
+      if (tag === "None") return [];
+      return "unknown-tag";
+    }
+    if (scrut.name === "Result") {
+      const okT = scrut.args[0];
+      const errT = scrut.args[1];
+      if (tag === "Ok") return okT ? [okT] : [];
+      if (tag === "Err") return errT ? [errT] : [];
+      return "unknown-tag";
+    }
+    // User-defined generic union, e.g. `type LoadResult(T) = Idle | …`.
+    // Substitute the type params in the variant's payloads before returning.
+    const def = sym.types.get(scrut.name);
+    if (def) {
+      const sub = paramSubstitution(def.params, scrut.args);
+      return lookupVariantPayloads(tag, substituteType(def.body, sub), sym);
+    }
+    // Stdlib containers (List, Map, Set, Tuple) and unknown names — no union shape.
+    return "not-a-union";
+  }
+  if (scrut.kind === "TypeUnion") {
+    const v = scrut.variants.find((x) => x.name === tag);
+    if (!v) return "unknown-tag";
+    return v.payloads;
+  }
+  if (scrut.kind === "TypeRef") {
+    const def = sym.types.get(scrut.name);
+    if (!def) return null; // unknown name / type param — opaque
+    return lookupVariantPayloads(tag, def.body, sym);
+  }
+  if (scrut.kind === "TypeNominal" || scrut.kind === "TypeRefinement") {
+    return lookupVariantPayloads(tag, scrut.inner, sym);
+  }
+  // TypePrim / TypeRecord — variants can't live on these.
+  return "not-a-union";
+}
+
+/**
+ * Reduce a scrutinee type to a `Tuple(...)` shape if it is one (transitively
+ * through user generic aliases). Mirrors `lookupVariantPayloads` for symmetry
+ * — a `type Pair(A, B) = Tuple(A, B)` should accept a `(a, b)` pattern.
+ */
+function resolveToTuple(
+  scrut: TypeExpr | null,
+  sym: SymbolTable,
+): (TypeExpr & { kind: "TypeApp"; name: "Tuple" }) | "not-a-tuple" | null {
+  if (!scrut) return null;
+  if (scrut.kind === "TypeApp") {
+    if (scrut.name === "Tuple") {
+      return scrut as TypeExpr & { kind: "TypeApp"; name: "Tuple" };
+    }
+    const def = sym.types.get(scrut.name);
+    if (def) {
+      const sub = paramSubstitution(def.params, scrut.args);
+      return resolveToTuple(substituteType(def.body, sub), sym);
+    }
+    return "not-a-tuple";
+  }
+  if (scrut.kind === "TypeRef") {
+    const def = sym.types.get(scrut.name);
+    if (!def) return null;
+    return resolveToTuple(def.body, sym);
+  }
+  if (scrut.kind === "TypeNominal" || scrut.kind === "TypeRefinement") {
+    return resolveToTuple(scrut.inner, sym);
+  }
+  return "not-a-tuple";
+}
+
+function paramSubstitution(params: string[], args: TypeExpr[]): Map<string, TypeExpr> {
+  const m = new Map<string, TypeExpr>();
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    const a = args[i];
+    if (p && a) m.set(p, a);
+  }
+  return m;
+}
+
+/** Substitute type-param names (carried as `TypeRef`) inside `t` using `sub`. */
+function substituteType(t: TypeExpr, sub: Map<string, TypeExpr>): TypeExpr {
+  if (sub.size === 0) return t;
+  switch (t.kind) {
+    case "TypePrim":
+      return t;
+    case "TypeRef": {
+      const r = sub.get(t.name);
+      return r ?? t;
+    }
+    case "TypeApp":
+      return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
+    case "TypeRecord":
+      return {
+        ...t,
+        fields: t.fields.map((f) => ({ name: f.name, type: substituteType(f.type, sub) })),
+      };
+    case "TypeUnion":
+      return {
+        ...t,
+        variants: t.variants.map((v) => ({
+          name: v.name,
+          payloads: v.payloads.map((p) => substituteType(p, sub)),
+        })),
+      };
+    case "TypeNominal":
+      return { ...t, inner: substituteType(t.inner, sub) };
+    case "TypeRefinement":
+      return { ...t, inner: substituteType(t.inner, sub) };
+  }
+}
+
+/** Best-effort textual rendering of a type for diagnostic messages. */
+function typeToString(t: TypeExpr): string {
+  switch (t.kind) {
+    case "TypePrim":
+      return t.name;
+    case "TypeRef":
+      return t.name;
+    case "TypeApp":
+      return t.args.length === 0 ? t.name : `${t.name}(${t.args.map(typeToString).join(", ")})`;
+    case "TypeRecord":
+      return `{${t.fields.map((f) => `${f.name}: ${typeToString(f.type)}`).join(", ")}}`;
+    case "TypeUnion":
+      return t.variants
+        .map((v) =>
+          v.payloads.length === 0
+            ? v.name
+            : `${v.name}(${v.payloads.map(typeToString).join(", ")})`,
+        )
+        .join(" | ");
+    case "TypeNominal":
+      return `nominal ${typeToString(t.inner)}`;
+    case "TypeRefinement":
+      return typeToString(t.inner);
+  }
 }
 
 /**
