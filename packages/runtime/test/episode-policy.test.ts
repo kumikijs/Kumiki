@@ -1,16 +1,12 @@
-// Coverage for issue #120 — debounce-deferred effects must still land their
-// effect-start + effect-end + .ok/.err reducer chain on the SAME episode that
-// the triggering reducer opened (spec §10.5.1). Before the fix, the
-// `setTimeout`-deferred `launch` inside the dispatcher's debounce branch fired
-// AFTER `applyReducer` already closed the episode, so:
-//   1. `effect-start` dropped (topEpisode() was null)
-//   2. `effect-end` opened a fresh episode via the auto-open path → causal
-//      chain split across two episodes.
-// The fix claims the episode token at dispatch time and propagates it through
-// the timer closure into `launch`, so the deferred effect-end + .ok reducer
-// reattach to the originating episode. A debounce timer that gets replaced
-// before it fires records an `effect-cancel` step on its originating episode
-// (the launch never happened, so it cannot be `effect-end "err"`).
+// Invariant (spec §10.5.1): the causal chain from a single trigger lives on
+// one episode. A `policy=debounce(d)` effect emits inside the triggering
+// reducer but its `launch` is deferred via `setTimeout`, so the dispatcher
+// claims the episode token at *dispatch* time and threads it into `launch`
+// via a preset-token handle. The eventual `effect-start` / `effect-end` /
+// `.ok` reducer chain reattach to the originating episode. A debounce timer
+// dropped before it fires (replace, `http.cancel`, `dispose`) records an
+// `effect-cancel` step on its originating episode and settles it; the
+// launch never happened, so it cannot be `effect-end "err"`.
 
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
@@ -73,7 +69,7 @@ function makeDebounceApp(debounceMs: number): DebounceApp {
   } as DebounceApp;
 }
 
-describe("issue #120 — debounce / throttle episode fidelity", () => {
+describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
   it("debounce: deferred launch records effect-start + effect-end + .ok on the originating episode", async () => {
     const ctx = makeDebounceApp(20);
     const logger = createEpisodeLogger({ memoryMax: 10 });
@@ -173,10 +169,10 @@ describe("issue #120 — debounce / throttle episode fidelity", () => {
   });
 
   it("latest: an aborted old launch commits its originating episode rather than hanging in closedAwaiting", async () => {
-    // Issue #120 AC #4 — verify the existing closedAwaiting machinery does not
-    // strand an episode forever when `latest` aborts the prior launch. The
-    // AbortError travels through the catch → onResult → recordEffectEnd path
-    // and decrements the pending counter, settling the episode.
+    // Verify the existing closedAwaiting machinery does not strand an episode
+    // forever when `latest` aborts the prior launch. The AbortError travels
+    // through the catch → onResult → recordEffectEnd path and decrements the
+    // pending counter, settling the episode.
     let resolveOld: (r: EffectResult) => void = () => {};
     let resolveNew: (r: EffectResult) => void = () => {};
     let call = 0;
@@ -244,6 +240,173 @@ describe("issue #120 — debounce / throttle episode fidelity", () => {
       expect(eps).toHaveLength(2);
       dispose();
     } finally {
+      root.remove();
+    }
+  });
+
+  it("debounce: dispose() during the pending window drains the timer and commits the originating episode", async () => {
+    const ctx = makeDebounceApp(50);
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const { dispose } = mount(ctx.app, root, { episodeLogger: logger });
+      const dispatch = (
+        ctx.app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void }
+      )._dispatch;
+      dispatch("onInput", { value: "kumiki" });
+      // Episode is still open (debounce timer pending).
+      expect(logger.list()).toEqual([]);
+      // Tear the runtime down BEFORE the debounce window elapses.
+      dispose();
+
+      const eps = logger.list();
+      expect(eps).toHaveLength(1);
+      expect(eps[0]!.status).toBe("completed");
+      const cancels = eps[0]!.steps.filter((s) => s.kind === "effect-cancel");
+      expect(cancels).toHaveLength(1);
+      expect(cancels[0]).toMatchObject({ kind: "effect-cancel", targetId: "search" });
+      // No effect-end — the launch never fired.
+      expect(eps[0]!.steps.some((s) => s.kind === "effect-end")).toBe(false);
+      // Subsequent ticks must not produce a phantom second launch.
+      expect(ctx.searchCalls).toBe(0);
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("debounce: http.cancel during the pending window clears the timer and commits the originating episode", async () => {
+    // User-initiated `http.cancel` of a pending debounce: the timer is cleared
+    // and the originating episode must release its claimed effect-start so it
+    // can commit instead of stranding in `closedAwaiting`.
+    const app: AppShape = {
+      slots: { q: { value: "" }, status: { value: "idle" } },
+      caps: ["http.get", "http.cancel"],
+      effects: {
+        search: {
+          name: "search",
+          cap: "http.get",
+          policy: { kind: "debounce", ms: 50 },
+          invoke: async () => ({ kind: "ok", value: { hits: [] } }),
+        },
+        cancel: {
+          name: "cancel",
+          cap: "http.cancel",
+          invoke: async () => ({ kind: "ok", value: null }),
+        },
+      },
+      init: [],
+      reducers: [
+        {
+          name: "onInput",
+          event: { kind: "ui", ev: "input" },
+          selector: { tile: "Q" },
+          apply: (_l, p) => ({
+            slots: { q: p.value as string },
+            emits: [{ effect: "search", args: [{ q: p.value }] }],
+          }),
+        },
+        {
+          name: "kill",
+          event: { kind: "ui", ev: "click" },
+          selector: { tile: "Kill" },
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search:_"] }] }),
+        },
+      ],
+    };
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const { dispose } = mount(app, root, { episodeLogger: logger });
+      const dispatch = (
+        app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void }
+      )._dispatch;
+      dispatch("onInput", { value: "kumiki" });
+      // Episode for the ui.input is held open by the pending debounce.
+      expect(logger.list()).toEqual([]);
+      dispatch("kill", {});
+      // After http.cancel, both the ui.input episode AND the ui.click episode
+      // commit. Wait a tick past the original debounce window to catch a
+      // phantom late launch if one slipped through.
+      await tick(70);
+
+      const eps = logger.list();
+      expect(eps.length).toBeGreaterThanOrEqual(2);
+      const inputEp = eps.find((ep) => ep.trigger.kind === "ui.input");
+      expect(inputEp).toBeDefined();
+      expect(inputEp!.status).toBe("completed");
+      // The originating ui.input episode carries the policy-cancel step
+      // (targetId = effect name), not the user-cancel intent.
+      const inputCancels = inputEp!.steps.filter((s) => s.kind === "effect-cancel");
+      expect(inputCancels).toHaveLength(1);
+      expect(inputCancels[0]).toMatchObject({ kind: "effect-cancel", targetId: "search" });
+      // The ui.click cancel episode separately records the user-cancel intent
+      // (targetId = full effect-id).
+      const clickEp = eps.find((ep) => ep.trigger.kind === "ui.click");
+      expect(clickEp).toBeDefined();
+      const clickCancels = clickEp!.steps.filter((s) => s.kind === "effect-cancel");
+      expect(clickCancels).toHaveLength(1);
+      expect(clickCancels[0]).toMatchObject({ kind: "effect-cancel", targetId: "search:_" });
+      dispose();
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("debounce: a missing capability at launch releases the claimed token instead of stranding the episode", async () => {
+    // `caps.has(eff.cap)` is checked inside `launch`, so for a debounced
+    // effect the cap might already be missing by the time the timer fires.
+    // The early-return must release the dispatch-time token so the
+    // originating episode commits with an effect-cancel.
+    const app: AppShape = {
+      slots: { q: { value: "" } },
+      // Note: omit "http.get" so the dispatcher's launch path warns + bails.
+      caps: [],
+      effects: {
+        search: {
+          name: "search",
+          cap: "http.get",
+          policy: { kind: "debounce", ms: 20 },
+          invoke: async () => ({ kind: "ok", value: { hits: [] } }),
+        },
+      },
+      init: [],
+      reducers: [
+        {
+          name: "onInput",
+          event: { kind: "ui", ev: "input" },
+          selector: { tile: "Q" },
+          apply: (_l, p) => ({
+            slots: { q: p.value as string },
+            emits: [{ effect: "search", args: [{ q: p.value }] }],
+          }),
+        },
+      ],
+    };
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const { dispose } = mount(app, root, { episodeLogger: logger });
+      const dispatch = (
+        app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void }
+      )._dispatch;
+      dispatch("onInput", { value: "kumiki" });
+      // Wait past the debounce window so launch() fires and bails on the cap.
+      await tick(40);
+
+      const eps = logger.list();
+      expect(eps).toHaveLength(1);
+      expect(eps[0]!.status).toBe("completed");
+      expect(eps[0]!.steps.some((s) => s.kind === "effect-cancel")).toBe(true);
+      // No effect-end — the cap gate stopped the launch before invoke().
+      expect(eps[0]!.steps.some((s) => s.kind === "effect-end")).toBe(false);
+      dispose();
+    } finally {
+      console.warn = origWarn;
       root.remove();
     }
   });

@@ -344,14 +344,11 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // Issue #120: debounce-deferred effects must stay on the originating episode
-  // (spec §10.5.1). Before the fix, typing into the debounce-backed autosave
-  // textarea split the causal chain — the first episode held only the `edit`
-  // reducer and `signal-update`, then a fresh `effect.ok`-triggered episode
-  // owned `saveText.ok`. With the fix, the originating ui.input episode
-  // carries the WHOLE chain: edit → effect-start(saveText) → signal-update →
-  // effect-end → saved reducer → signal-update.
-  it("debounce-deferred effects ride the originating episode (#120, 20-effect-storage)", async () => {
+  // Spec §10.5.1: a debounce-deferred effect stays on the originating ui.input
+  // episode — the whole causal chain `edit → effect-start(saveText) →
+  // signal-update → effect-end → saved reducer → signal-update` lives on one
+  // episode rather than splitting onto a fresh `effect.ok`-triggered one.
+  it("debounce-deferred effects ride the originating episode (20-effect-storage)", async () => {
     const app = await loadApp(join(examples, "features", "20-effect-storage.kumiki"));
     const logger = createEpisodeLogger({ memoryMax: 20 });
     const report = await runScenario(
@@ -390,8 +387,11 @@ describe("scenario runner", () => {
     expect(reducers).toContain("edit");
     expect(reducers).toContain("saved");
     expect(editEp!.status).toBe("completed");
+    // Exactly one ui.input episode — no duplicate originating episode opened
+    // by a fallback path.
+    expect(eps.filter((ep) => ep.trigger.kind === "ui.input")).toHaveLength(1);
     // And the saveText effect-end is NOT split onto its own auto-opened
-    // `effect.ok`-triggered episode (the pre-fix symptom).
+    // `effect.ok`-triggered episode.
     const saveOrphan = eps.find(
       (ep) =>
         ep.trigger.kind.startsWith("effect.") &&

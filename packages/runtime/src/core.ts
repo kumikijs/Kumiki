@@ -1385,9 +1385,12 @@ function makeEffectDispatcher(
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   // Policy-induced cancel of a pending effect-start that was already claimed
-  // on its originating episode (currently: a debounce timer replaced before
-  // it fires — spec §10.5.1 + §10.4.3). The logger reattaches the cancel to
-  // the episode that owns the token, NOT the current top.
+  // on its originating episode (spec §10.5.1). The seam fires for: a debounce
+  // timer replaced before it fires, `dispose()` draining still-pending
+  // debounces at unmount, the `http.cancel` branch clearing a debounce timer,
+  // and `launch`'s capability early-return for a debounced effect whose cap
+  // is undeclared. The logger reattaches the cancel to the episode that owns
+  // the token, NOT the current top.
   onPolicyCancel?: (token: string, effectName: string) => void,
 ): Dispatcher {
   type TimerEntry = {
@@ -1398,9 +1401,10 @@ function makeEffectDispatcher(
     kind: "debounce" | "throttle";
     h: ReturnType<typeof setTimeout>;
     // debounce only: token + name claimed at dispatch time so the eventual
-    // `launch` lands `effect-start`/`effect-end` on the originating episode,
-    // and a replaced timer can mark that episode's pending start as cancelled
-    // (issue #120).
+    // `launch` lands `effect-start`/`effect-end` on the originating episode
+    // (spec §10.5.1), and any path that drops the pending launch (timer
+    // replace, `http.cancel` clearing the timer, `dispose()` drain) can mark
+    // that episode's pending start as cancelled via `onPolicyCancel`.
     token?: string;
     effectName?: string;
   };
@@ -1420,6 +1424,12 @@ function makeEffectDispatcher(
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
       console.warn(`Capability "${eff.cap}" not declared in app.caps`);
+      // Deferred-policy dispatch (debounce) already recorded an effect-start
+      // on the originating episode before the timer fired. Bailing out here
+      // without releasing the token would strand that episode in
+      // `closedAwaiting` forever — drain it via the cancel seam so the
+      // trace shows WHY no effect-end ever lands.
+      if (presetToken) onPolicyCancel?.(presetToken, eff.name);
       return;
     }
     // Episode logger seam (§10.5): the moment the dispatcher commits to
@@ -1428,7 +1438,7 @@ function makeEffectDispatcher(
     // matching effect-end lands on the same Episode. For deferred policies
     // (debounce) the dispatch site already claimed the token + recorded the
     // effect-start; reusing it keeps the causal chain on the originating
-    // episode (issue #120).
+    // episode (spec §10.5.1).
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const id = `${eff.name}:${key}`;
     // Every in-flight effect gets its own AbortController so `http.cancel`
@@ -1474,6 +1484,13 @@ function makeEffectDispatcher(
           if (t !== undefined && t.kind === "debounce") {
             clearTimeout(t.h);
             state.timers.delete(target);
+            // The pending debounce already claimed an effect-start on its
+            // originating episode. Without releasing the token here, that
+            // episode stays in `closedAwaiting` forever — symmetric with the
+            // debounce-replace and `dispose()` drain paths (spec §10.5.1).
+            if (t.token && t.effectName) {
+              onPolicyCancel?.(t.token, t.effectName);
+            }
           }
           onCancel?.(target);
         }
@@ -1500,17 +1517,19 @@ function makeEffectDispatcher(
         const prev = state.timers.get(id);
         if (prev) {
           clearTimeout(prev.h);
-          // The prior dispatch already claimed an episode token + recorded an
-          // effect-start (issue #120). Replacing the timer drops that launch,
-          // so the originating episode must see an effect-cancel + decrement
-          // its pending counter so it can commit.
-          if (prev.token !== undefined && prev.effectName !== undefined) {
+          // The prior dispatch already claimed an episode token + recorded
+          // an effect-start (spec §10.5.1). Replacing the timer drops that
+          // launch, so the originating episode must see an effect-cancel +
+          // decrement its pending counter so it can commit. The truthy
+          // guard skips the empty-string token a no-logger mount yields
+          // (would otherwise be a noisy silent no-op in the logger seam).
+          if (prev.token && prev.effectName) {
             onPolicyCancel?.(prev.token, prev.effectName);
           }
         }
         // Claim the episode token NOW so effect-start lands on the episode
         // that emitted us, not on whatever happens to be on top of the stack
-        // 300 ms later when the timer fires.
+        // when the timer fires later.
         const token = onLaunch?.(eff.name, input) ?? "";
         const h = setTimeout(() => {
           state.timers.delete(id);
@@ -1541,16 +1560,19 @@ function makeEffectDispatcher(
       void launch(eff, input, key);
     },
     dispose(): void {
-      // Pending debounce timers hold a claimed effect-start on an episode that
-      // already endTrigger'd — without notifying the logger, those episodes
-      // stay forever in `closedAwaiting` and never commit (issue #120).
-      for (const t of state.timers.values()) {
+      // Pending debounce timers hold a claimed effect-start on an episode
+      // that already endTrigger'd — without notifying the logger, those
+      // episodes stay forever in `closedAwaiting` and never commit
+      // (spec §10.5.1). Snapshot the values first so the iteration is
+      // immune to reentrancy via `onPolicyCancel`.
+      const pendingTimers = [...state.timers.values()];
+      state.timers.clear();
+      for (const t of pendingTimers) {
         clearTimeout(t.h);
-        if (t.kind === "debounce" && t.token !== undefined && t.effectName !== undefined) {
+        if (t.kind === "debounce" && t.token && t.effectName) {
           onPolicyCancel?.(t.token, t.effectName);
         }
       }
-      state.timers.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
     },

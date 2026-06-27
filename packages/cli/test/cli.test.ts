@@ -76,8 +76,8 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // counter doesn't use icons, but the resolver code rides on tiles-text).
     // Bumped to 38KB with the SSR/hydration seams in core.ts (#119 —
     // `computeSlotDiffs` + `pickRootTile` exports + MountOptions overlay).
-    // Bumped to 39KB with the debounce-episode fidelity fix (#120 —
-    // `cancelPendingEffect`, TimerEntry token plumbing, dispose drain).
+    // Bumped to 39KB with the debounce-episode fidelity additions —
+    // `cancelPendingEffect`, `TimerEntry` token plumbing, dispose drain.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
