@@ -1765,14 +1765,14 @@ function makeTileCtx(tiles: TileRenderers): TileCtx {
       // lifts these into onKeyDown / onMouseEnter / onFocus / onBlur props.
       // Wiring them once on the universal render output keeps every tile
       // uniform (no per-renderer plumbing).
-      applyKeyHoverHandlers(el, node.props);
+      applyUiEventHandlers(el, node.props);
       return el;
     },
   };
   return ctx;
 }
 
-function applyKeyHoverHandlers(el: HTMLElement, props?: TileProps): void {
+function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
   if (props.onKeyDown) {
     const handler = props.onKeyDown;

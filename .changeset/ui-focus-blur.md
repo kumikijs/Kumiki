@@ -9,4 +9,4 @@ The parser and AST already accepted these two `ui-kind`s alongside `ui.key` / `u
 
 - compiler: `propsFor` now lifts `ui.focus(EnclosingTile)` / `ui.blur(EnclosingTile)` into `onFocus` / `onBlur` on focusable tiles (`input` / `textarea` / `button` / `select`). Non-focusable tiles are deliberately skipped so the runtime never installs a listener the DOM cannot fire. The explicit-prop passthrough lists (`{onFocus: someReducer}` etc.) also gain `onFocus` / `onBlur`.
 - runtime: `TileProps` gains `onFocus` / `onBlur`; the same universal render hook that handles `onKeyDown` / `onMouseEnter` now wires `focus` / `blur` on every tile, passing the tile's `el` payload.
-- examples: new `packages/examples/features/46-ui-focus-blur.kumiki` + scenario covers both events.
+- examples: new `packages/examples/features/49-ui-focus-blur.kumiki` + scenario covers both events.

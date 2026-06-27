@@ -398,10 +398,14 @@ describe("codegen", () => {
   // these; codegen now lifts them into onFocus / onBlur on focusable tiles
   // (input / textarea / button / select) and skips non-focusable tiles so the
   // runtime never wires a listener that the DOM cannot fire.
+  //
+  // Reducer names are deliberately NOT `onFocus` / `onBlur` here — those are
+  // the emitted prop names, so collision-naming would mask a take-the-wrong-
+  // string bug in either the matcher or the dispatch.
   it("emits onFocus for ui.focus(EnclosingTile) on an input (§1.6.1)", () => {
     const src = `
       slot f : Text = ""
-      reducer onFocus on=ui.focus(InputX) do= f := "focused"
+      reducer recordFocus on=ui.focus(InputX) do= f := "focused"
       tile InputX = input(bind=f)
       tile App = column(InputX)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -409,13 +413,15 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("onFocus"/);
+    expect(result.js).toMatch(
+      /onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+    );
   });
 
   it("emits onBlur for ui.blur(EnclosingTile) on an input (§1.6.1)", () => {
     const src = `
       slot b : Text = ""
-      reducer onBlur on=ui.blur(InputX) do= b := "blurred"
+      reducer markBlur on=ui.blur(InputX) do= b := "blurred"
       tile InputX = input(bind=b)
       tile App = column(InputX)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -423,13 +429,34 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => globalThis\.__kumikiApp\._dispatch\("onBlur"/);
+    expect(result.js).toMatch(/onBlur: \(el\) => globalThis\.__kumikiApp\._dispatch\("markBlur"/);
   });
 
+  it("emits onFocus on a textarea (one of the focusable tile gates) (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(NoteArea) do= f := "focused"
+      tile NoteArea = textarea(bind=f)
+      tile App = column(NoteArea)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+    );
+  });
+
+  // The "non-focusable" guard is a deliberate design choice, not a typecheck
+  // shortcut: a `ui.focus(Card)` subscription targeting a `box` is silently
+  // dropped by codegen because DOM `focus` would never fire on a non-focusable
+  // element anyway. Lifting the subscription into a warning belongs in a
+  // future typecheck pass (covers ui.key / hover / focus / blur uniformly).
   it("does not emit onFocus on a non-focusable tile (box) — guards against listeners that never fire (§1.6.1)", () => {
     const src = `
       slot f : Text = ""
-      reducer onFocus on=ui.focus(Card) do= f := "focused"
+      reducer recordFocus on=ui.focus(Card) do= f := "focused"
       tile Card = box(text("hi"))
       tile App = column(Card)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -438,6 +465,56 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).not.toMatch(/onFocus:/);
+  });
+
+  it("does not emit onBlur on a non-focusable tile (box) — same guard, separate codepath (§1.6.1)", () => {
+    const src = `
+      slot b : Text = ""
+      reducer markBlur on=ui.blur(Card) do= b := "blurred"
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).not.toMatch(/onBlur:/);
+  });
+
+  // Explicit-prop passthrough: `input(onFocus=recordFocus)` is a hand-authored
+  // wiring that bypasses the implicit-lift block, so the args / props
+  // passthrough lists must include onFocus / onBlur. This covers the
+  // codegen.ts `for (const a of t.args)` and `for (const p of t.props)` paths.
+  it("emits onFocus from explicit `tile = input(onFocus=Reducer)` arg syntax (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(Other) do= f := "focused"
+      tile Other = button("noop")
+      tile MyInput = input(onFocus=recordFocus)
+      tile App = column(MyInput, Other)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+    );
+  });
+
+  it("emits onBlur from explicit `tile = input(){onBlur: Reducer}` props syntax (§1.6.1)", () => {
+    const src = `
+      slot b : Text = ""
+      reducer markBlur on=ui.blur(Other) do= b := "blurred"
+      tile Other = button("noop")
+      tile MyInput = input() {onBlur: markBlur}
+      tile App = column(MyInput, Other)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onBlur: \(el\) => globalThis\.__kumikiApp\._dispatch\("markBlur"/);
   });
 
   it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
