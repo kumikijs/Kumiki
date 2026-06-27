@@ -130,9 +130,28 @@ export type EpisodeLogger = {
    * the dispatcher's `http.cancel` branch (spec http.md §6.4) so the trace
    * carries both the cancel intent AND the cancelled effect's `.err`
    * (`message: "aborted"`) — without the cancel step the `.err` looks like a
-   * generic network failure.
+   * generic network failure. For a deferred-policy launch (debounce) that
+   * was claimed at dispatch time but never actually fired, see the sibling
+   * `cancelPendingEffect` — that one resolves the originating episode by
+   * `token` and settles its `pending` counter, which `recordEffectCancel`
+   * deliberately does not do.
    */
   recordEffectCancel(targetId: string): void;
+  /**
+   * Cancel a pending effect-start that was claimed (token + step) at dispatch
+   * time but whose `launch` never actually fired. Used by the dispatcher
+   * (spec §10.5.1) for debounce timers that were replaced before firing, by
+   * `dispose()` draining still-pending debounces at unmount, by the
+   * `http.cancel` branch when it clears a pending debounce timer, and by
+   * `launch`'s capability early-return so a missing `cap` doesn't strand the
+   * originating episode. We resolve the token to its originating episode,
+   * append an `effect-cancel` step there, decrement that episode's `pending`
+   * counter, and `settle` it so a `closedAwaiting` episode commits. Unknown
+   * tokens are a silent no-op. Distinct from `recordEffectCancel` (which
+   * annotates the CURRENT top episode, leaves `inflight` intact, and relies
+   * on the subsequent AbortError to commit the cancelled episode).
+   */
+  cancelPendingEffect(token: string, name: string): void;
   /** Append a `{kind: "signal-update", ...}` step to the open episode. */
   recordSignalUpdate(dirtySlots: string[], bindsUpdated?: string[]): void;
   /** Record a panic; the episode commits with `status = "panic"`. */
@@ -283,8 +302,16 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
     },
     recordEffectStart(name, args) {
       const ep = topEpisode();
+      // No open episode = no causal home for this start. Returning a fresh
+      // `idGen()` here would hand the caller a phantom token that is never
+      // resolvable via `inflight`, so the matching `recordEffectEnd` /
+      // `cancelPendingEffect` would silently no-op and the invariant
+      // violation (dispatcher fired a `recordEffectStart` from outside any
+      // open episode) would be unobservable. Empty string makes that case
+      // explicit at the dispatcher seam, which treats `""` as "no episode
+      // attribution".
+      if (!ep) return "";
       const token = idGen();
-      if (!ep) return token;
       ep.steps.push({ kind: "effect-start", name, args, ts: now() });
       inflight.set(token, ep);
       pending.set(ep, (pending.get(ep) ?? 0) + 1);
@@ -311,6 +338,15 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       const ep = topEpisode();
       if (!ep) return;
       ep.steps.push({ kind: "effect-cancel", targetId, ts: now() });
+    },
+    cancelPendingEffect(token, name) {
+      const ep = inflight.get(token);
+      if (!ep) return;
+      inflight.delete(token);
+      ep.steps.push({ kind: "effect-cancel", targetId: name, ts: now() });
+      const count = pending.get(ep) ?? 0;
+      if (count > 0) pending.set(ep, count - 1);
+      settle(ep);
     },
     recordSignalUpdate(dirtySlots, bindsUpdated) {
       const ep = topEpisode();

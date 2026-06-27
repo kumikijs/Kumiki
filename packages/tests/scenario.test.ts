@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runScenario, type Scenario } from "@kumikijs/runtime";
+import { createEpisodeLogger, runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp } from "./helpers/load.ts";
 
@@ -342,6 +342,62 @@ describe("scenario runner", () => {
       throw new Error(`nested-routes scenario failed:\n${detail}`);
     }
     expect(report.ok).toBe(true);
+  });
+
+  // Spec §10.5.1: a debounce-deferred effect stays on the originating ui.input
+  // episode — the whole causal chain `edit → effect-start(saveText) →
+  // signal-update → effect-end → saved reducer → signal-update` lives on one
+  // episode rather than splitting onto a fresh `effect.ok`-triggered one.
+  it("debounce-deferred effects ride the originating episode (20-effect-storage)", async () => {
+    const app = await loadApp(join(examples, "features", "20-effect-storage.kumiki"));
+    const logger = createEpisodeLogger({ memoryMax: 20 });
+    const report = await runScenario(
+      app,
+      freshRoot(),
+      {
+        steps: [
+          { expect: { noErrors: true, state: { ready: true } } },
+          {
+            do: { fill: "textarea", value: "buy milk" },
+            expect: { noErrors: true, state: { text: "buy milk", status: "saved" } },
+          },
+        ],
+        effects: {
+          loadText: [{ outcome: "err", value: { message: "SecurityError" } }],
+          saveText: [{ outcome: "ok" }],
+        },
+      },
+      { settleMs: 400, episodeLogger: logger },
+    );
+    expect(report.ok).toBe(true);
+
+    // Locate the ui.input episode (the `edit` reducer that emitted saveText).
+    const eps = logger.list();
+    const editEp = eps.find((ep) =>
+      ep.steps.some((s) => s.kind === "reducer" && (s as { name: string }).name === "edit"),
+    );
+    expect(editEp).toBeDefined();
+    const stepKinds = editEp!.steps.map((s) => s.kind);
+    // Same episode owns the full causal chain — no split onto a fresh episode.
+    expect(stepKinds).toContain("effect-start");
+    expect(stepKinds).toContain("effect-end");
+    const reducers = editEp!.steps
+      .filter((s) => s.kind === "reducer")
+      .map((s) => (s as { name: string }).name);
+    expect(reducers).toContain("edit");
+    expect(reducers).toContain("saved");
+    expect(editEp!.status).toBe("completed");
+    // Exactly one ui.input episode — no duplicate originating episode opened
+    // by a fallback path.
+    expect(eps.filter((ep) => ep.trigger.kind === "ui.input")).toHaveLength(1);
+    // And the saveText effect-end is NOT split onto its own auto-opened
+    // `effect.ok`-triggered episode.
+    const saveOrphan = eps.find(
+      (ep) =>
+        ep.trigger.kind.startsWith("effect.") &&
+        ep.steps.some((s) => s.kind === "reducer" && (s as { name: string }).name === "saved"),
+    );
+    expect(saveOrphan).toBeUndefined();
   });
 
   // Regression: this app's scenario guards two framework fixes found via the
