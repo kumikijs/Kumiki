@@ -236,21 +236,68 @@ describe("hydrate §10.6.2", () => {
     handle.dispose();
   });
 
-  it("when a host wants to drop a version-mismatched snapshot, plain mount runs a normal CSR boot", () => {
-    // We model the CSR-fallback path by simply NOT calling hydrate when the
-    // version check fails. `mount` then runs app.init exactly like a fresh
-    // session: provider invoked, no ssr.hydrate episode in the log.
+  it("falls back to a cold CSR boot when snapshot.kumiki version mismatches", async () => {
     const provider = vi.fn<CapabilityProvider>(async () => ({
       kind: "ok",
       value: { id: "u_1", name: "Yui" },
     }));
     const app = makeApp(provider);
+    const rendered = await renderToString(app, { providers: { "http.get": provider } });
+    // Sabotage the snapshot version so hydrate() is forced to fall back.
+    const mismatched = {
+      ...rendered,
+      snapshot: { ...rendered.snapshot, kumiki: 2 as unknown as 1 },
+    };
+
+    app.live = undefined;
     const logger = createEpisodeLogger();
-    const handle = mount(app, target, { episodeLogger: logger });
+    const handle = hydrate(app, target, mismatched, {
+      episodeLogger: logger,
+      providers: { "http.get": provider },
+    });
 
     const eps = handle.episodes();
-    // The first episode is app.start (lifecycle), not ssr.hydrate.
+    // The first episode is NOT ssr.hydrate — the snapshot was dropped.
     expect(eps[0]?.trigger.kind).not.toBe("ssr.hydrate");
+    // CSR ran app.init normally, so the provider fired a SECOND time
+    // (once for SSR, once for the fallback boot).
+    expect(provider).toHaveBeenCalledTimes(2);
+    handle.dispose();
+  });
+
+  it("throws when `hydrate: true` is passed without a bootstrap episode", () => {
+    const provider = vi.fn<CapabilityProvider>(async () => ({
+      kind: "ok",
+      value: { id: "u_1", name: "Yui" },
+    }));
+    const app = makeApp(provider);
+    expect(() =>
+      mount(app, target, {
+        // The shape that previously slipped through: hydrate flag on, but no
+        // bootstrap. Now a hard error so the silent state machine can't form.
+        hydrate: true,
+      }),
+    ).toThrow(/bootstrapEpisode/);
+  });
+
+  it("replaces an SSR-prefilled DOM root instead of appending a second tree", async () => {
+    const provider = vi.fn<CapabilityProvider>(async () => ({
+      kind: "ok",
+      value: { id: "u_1", name: "Yui" },
+    }));
+    const app = makeApp(provider);
+    const rendered = await renderToString(app, { providers: { "http.get": provider } });
+
+    // Inject SSR HTML the way a real host would (a `target.innerHTML = html`
+    // happens before hydrate). Without the §10.6.2 replaceChildren guard,
+    // the runtime appends a SECOND root — leaving two sibling trees.
+    target.innerHTML = rendered.html;
+    expect(target.children.length).toBeGreaterThanOrEqual(1);
+
+    app.live = undefined;
+    const handle = hydrate(app, target, rendered);
+    // Exactly one root after hydration — the SSR tree was replaced wholesale.
+    expect(target.children.length).toBe(1);
     handle.dispose();
   });
 });

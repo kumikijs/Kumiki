@@ -34,13 +34,16 @@ describe("SSR hydration integration (issue#119)", () => {
 
     expect(rendered.html).toContain("Hi Yui");
 
-    // Reset live state so the client side starts from defaults like a real boot.
-    // We intentionally hydrate onto an empty target — the SSR HTML is asserted
-    // above as a string. Injecting it here would double-render (the runtime
-    // currently appends rather than replaces existing children on first mount).
+    // Real host pattern: inject the SSR HTML into the mount root, then call
+    // `hydrate`. The runtime's §10.6.2 step 2 guard replaces the SSR tree
+    // wholesale on the first CSR render so we don't end up with sibling
+    // SSR + CSR trees. Without that fix, `target.children.length` would be
+    // 2 after hydration.
     app.live = undefined;
     const target = document.createElement("div");
+    target.innerHTML = rendered.html;
     document.body.appendChild(target);
+    expect(target.children.length).toBeGreaterThanOrEqual(1);
 
     const logger = createEpisodeLogger();
     const handle = hydrate(app, target, rendered, {
@@ -71,6 +74,9 @@ describe("SSR hydration integration (issue#119)", () => {
     // so a synthetic click goes through the compiled handler. We invoke the
     // native `.click()` method so happy-dom routes the event through the
     // standard listener path instead of a manual bubbling dispatch.
+    // After hydration there's exactly one root in `target` — the SSR
+    // tree was replaced by the CSR render.
+    expect(target.children.length).toBe(1);
     const button = target.querySelector("button");
     expect(button).not.toBeNull();
     (button as HTMLButtonElement).click();

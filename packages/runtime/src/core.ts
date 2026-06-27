@@ -714,8 +714,19 @@ export function mountCore(
         }
       }
     }
-    if (currentRoot) target.replaceChild(dom, currentRoot);
-    else target.appendChild(dom);
+    if (currentRoot) {
+      target.replaceChild(dom, currentRoot);
+    } else if (options.hydrate && target.firstChild) {
+      // §10.6.2: the SSR HTML is already in `target` (the host injected it
+      // before calling `hydrate`). Replace it with the CSR-rendered tree
+      // wholesale so we never end up with SSR + CSR DOM as siblings. True
+      // identity-preserving hydration (re-using SSR nodes in place) is out
+      // of scope for v1 — the SSR pass exists for first-paint/SEO, not for
+      // DOM stability across the boundary.
+      target.replaceChildren(dom);
+    } else {
+      target.appendChild(dom);
+    }
     currentRoot = dom;
 
     if (snap) {
@@ -1152,10 +1163,20 @@ export function mountCore(
   // `app.episodes()[0]` is the `ssr.hydrate` causal chain. The client must
   // NOT re-execute `app.init` (step 5 in spec: "not re-executed at
   // hydration"); the snapshot already carries those effects' results.
-  if (options.hydrate && options.bootstrapEpisode) {
+  //
+  // Fail-fast on `hydrate: true` without a bootstrap episode: silently
+  // skipping `app.init` AND skipping the ingest would leave the logger
+  // incoherent — and the app stuck on default slot values with no record
+  // of why. Spec §10.6.2 step 1 expects the host to drop to CSR before
+  // calling `hydrate`, so reaching this code path is a contract violation.
+  if (options.hydrate) {
+    if (!options.bootstrapEpisode) {
+      throw new Error(
+        "mountCore: `hydrate: true` requires `bootstrapEpisode` (runtime.md §10.6.2 step 3). Fall back to a fresh `mount` if the snapshot is missing or version-mismatched.",
+      );
+    }
     episode?.ingestBootstrap(options.bootstrapEpisode);
-  }
-  if (!options.hydrate) {
+  } else {
     for (const emit of app.init) dispatcher.dispatch(emit);
   }
   // Fire app.start lifecycle reducer — always, whether SSR-hydrated or fresh.
@@ -1556,7 +1577,7 @@ export function _setPathHelper(obj: unknown, path: string[], value: unknown): un
 }
 
 /** Message + optional source location for a caught throw (panic or otherwise). */
-function panicInfo(e: unknown): { message: string; location: string | undefined } {
+export function panicInfo(e: unknown): { message: string; location: string | undefined } {
   if (isPanic(e)) return { message: e.message, location: e.location };
   if (e instanceof Error) return { message: e.message, location: undefined };
   return { message: String(e), location: undefined };
@@ -1604,7 +1625,7 @@ function collectMountedTiles(root: TileNode): Set<string> {
 }
 
 /** Pull `status` off an HttpError-shaped err value; returns null otherwise. */
-function readStatus(value: unknown): number | null {
+export function readStatus(value: unknown): number | null {
   if (!value || typeof value !== "object") return null;
   const s = (value as { status?: unknown }).status;
   return typeof s === "number" ? s : null;
@@ -1644,7 +1665,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function reportUnhandledEffectError(effect: string, value: unknown): void {
+export function reportUnhandledEffectError(effect: string, value: unknown): void {
   const message =
     value && typeof value === "object" && "message" in value
       ? String((value as { message: unknown }).message)

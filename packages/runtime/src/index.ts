@@ -180,6 +180,12 @@ export function mount(
  * with `hydrate: true`: the runtime overlays the snapshot on `app.live`,
  * ingests the bootstrap episode into the logger BEFORE `app.start`, and
  * skips `app.init` (whose effects already ran on the server).
+ *
+ * §10.6.2 step 1 contract: if the snapshot envelope's `kumiki` version does
+ * not match what this runtime expects, drop the snapshot and run a cold CSR
+ * boot. This protects deploy-time skew (server emits v2, client cache still
+ * on v1) — a mismatched overlay would otherwise feed type-incoherent slots
+ * to the live reducers.
  */
 export function hydrate(
   app: AppShape,
@@ -187,6 +193,9 @@ export function hydrate(
   rendered: Pick<RenderToStringResult, "snapshot" | "bootstrapEpisode">,
   options: MountOptions = {},
 ): ReturnType<typeof mountCore> {
+  if (rendered?.snapshot?.kumiki !== 1) {
+    return mount(app, target, options);
+  }
   return mount(app, target, {
     ...options,
     ssrSnapshot: rendered.snapshot.slots,
