@@ -2569,86 +2569,107 @@ function propsFor(
   enclosingTile?: string,
 ): string {
   const entries: string[] = [];
+  // Capture explicit event-handler wirings (`onClick=foo`, `{onClick: foo}`)
+  // by handler name. They are flushed below alongside implicit (tile, ui-event)
+  // subscribers as one chained dispatch handler, so spec §1.6.4 (every matching
+  // reducer fires in definition order) holds even when explicit and implicit
+  // both target the same handler.
+  const HANDLER_NAMES = new Set([
+    "onClick",
+    "onSubmit",
+    "onChange",
+    "onInput",
+    "onClose",
+    "onKeyDown",
+    "onMouseEnter",
+    "onFocus",
+    "onBlur",
+  ]);
+  const explicitByHandler = new Map<string, string[]>();
+  const recordExplicit = (handlerName: string, value: Expr): void => {
+    if (value.kind !== "Ref") return;
+    const reducerName = (value as Expr & { name: string }).name;
+    const list = explicitByHandler.get(handlerName) ?? [];
+    list.push(reducerName);
+    explicitByHandler.set(handlerName, list);
+  };
+
   // event handler args (onClick=remove etc) attach as props for that tile.
   for (const a of t.args) {
     if (!a.name) continue;
-    if (
-      a.name === "onClick" ||
-      a.name === "onSubmit" ||
-      a.name === "onChange" ||
-      a.name === "onInput" ||
-      a.name === "onClose" ||
-      a.name === "onFocus" ||
-      a.name === "onBlur"
-    ) {
-      if ((a.value as Expr).kind === "Ref") {
-        const reducerName = (a.value as Expr & { name: string }).name;
-        entries.push(
-          `${a.name}: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(reducerName)}, el)`,
-        );
-      }
-    }
+    if (HANDLER_NAMES.has(a.name)) recordExplicit(a.name, a.value as Expr);
   }
   // props block
   for (const p of t.props) {
-    if (
-      p.name === "onClick" ||
-      p.name === "onSubmit" ||
-      p.name === "onChange" ||
-      p.name === "onInput" ||
-      p.name === "onClose" ||
-      p.name === "onKeyDown" ||
-      p.name === "onMouseEnter" ||
-      p.name === "onFocus" ||
-      p.name === "onBlur"
-    ) {
-      if ((p.value as Expr).kind === "Ref") {
-        const reducerName = (p.value as Expr as Expr & { name: string }).name;
-        entries.push(
-          `${p.name}: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(reducerName)}, el)`,
-        );
-      }
+    if (HANDLER_NAMES.has(p.name)) {
+      recordExplicit(p.name, p.value as Expr);
       continue;
     }
     // §3.8 link prefetch — the link tile lifts these into top-level fields, so
     // do not also echo them through `props` (the bare-ident `prefetch: foo`
     // value would otherwise emit as a JS variable reference at codegen).
     if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
-    // event handler from enclosing tile (e.g. ResetBtn has no onClick but reducer subscribes to ui.click(ResetBtn))
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
-  // Implicit handlers from reducers subscribing to (enclosingTile, ui-event).
-  // Per spec §1.6.4: "Multiple reducers matching the same event run in
-  // definition order" — emit one handler that dispatches every match in source
-  // order. If an explicit `<handler>:` entry already exists (set by the user
-  // via `onClick=...` etc.), the implicit binding stays out of the way.
-  const pushImplicit = (ev: UiEventKind, handlerName: string) => {
-    if (!enclosingTile) return;
-    if (entries.some((e) => e.startsWith(`${handlerName}:`))) return;
-    const matches = ctx.gen.reducers.filter(
-      (rr) => rr.on.kind === "UiEvent" && rr.on.ev === ev && rr.on.selector.tile === enclosingTile,
-    );
-    if (matches.length === 0) return;
-    const body = matches
-      .map((r) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`)
+
+  // Combine explicit wirings with reducers subscribing to (enclosingTile, ev)
+  // into a single chained handler. Explicit first (declared on the tile that
+  // mounts the element), then implicit subscribers in their source order — so
+  // adding a `reducer foo on=ui.click(B)` never silently shadows an existing
+  // `onClick=bar` on `B`, and vice versa. Same-reducer overlap (e.g. both
+  // `onClick=inc` and `reducer inc on=ui.click(B)` naming `inc`) deduplicates
+  // by reducer name so the user's `inc` doesn't fire twice per click.
+  const emittedHandlers = new Set<string>();
+  const pushHandler = (ev: UiEventKind | null, handlerName: string): void => {
+    const explicit = explicitByHandler.get(handlerName) ?? [];
+    const implicit: string[] =
+      ev !== null && enclosingTile
+        ? ctx.gen.reducers
+            .filter(
+              (rr) =>
+                rr.on.kind === "UiEvent" &&
+                rr.on.ev === ev &&
+                rr.on.selector.tile === enclosingTile,
+            )
+            .map((r) => r.name)
+        : [];
+    const seen = new Set<string>();
+    const names = [...explicit, ...implicit].filter((n) => {
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+    if (names.length === 0) return;
+    const body = names
+      .map((n) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(n)}, el)`)
       .join("; ");
     entries.push(`${handlerName}: (el) => { ${body} }`);
+    emittedHandlers.add(handlerName);
   };
-  if (t.name === "button") pushImplicit("click", "onClick");
-  if (t.name === "check" || t.name === "switch") pushImplicit("click", "onClick");
-  if (t.name === "form") pushImplicit("submit", "onSubmit");
+  if (t.name === "button") pushHandler("click", "onClick");
+  if (t.name === "check" || t.name === "switch") pushHandler("click", "onClick");
+  if (t.name === "form") pushHandler("submit", "onSubmit");
   if (t.name === "select" || t.name === "input" || t.name === "textarea")
-    pushImplicit("change", "onChange");
-  if (t.name === "input" || t.name === "textarea") pushImplicit("input", "onInput");
+    pushHandler("change", "onChange");
+  if (t.name === "input" || t.name === "textarea") pushHandler("input", "onInput");
   if (t.name === "input" || t.name === "textarea" || t.name === "button")
     // ui.key — runtime exposes `el.key` (KeyboardEvent.key) so reducers branch on it.
-    pushImplicit("key", "onKeyDown");
+    pushHandler("key", "onKeyDown");
   // ui.hover is broadly applicable, so no tile-name filter.
-  pushImplicit("hover", "onMouseEnter");
+  pushHandler("hover", "onMouseEnter");
   if (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") {
     // DOM focus/blur only fire on focusable elements (same gate as ui.key).
-    pushImplicit("focus", "onFocus");
-    pushImplicit("blur", "onBlur");
+    pushHandler("focus", "onFocus");
+    pushHandler("blur", "onBlur");
+  }
+  // Flush explicit handlers that have no implicit codepath on this tile —
+  // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
+  for (const [handlerName, names] of explicitByHandler) {
+    if (emittedHandlers.has(handlerName)) continue;
+    const body = names
+      .map((n) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(n)}, el)`)
+      .join("; ");
+    entries.push(`${handlerName}: (el) => { ${body} }`);
   }
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];

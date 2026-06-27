@@ -502,7 +502,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
     );
   });
 
@@ -518,7 +518,9 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => globalThis\.__kumikiApp\._dispatch\("markBlur"/);
+    expect(result.js).toMatch(
+      /onBlur: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("markBlur"/,
+    );
   });
 
   it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
@@ -667,10 +669,9 @@ describe("codegen", () => {
     expect(strict.errors.some((e) => e.code === "E0701")).toBe(true);
   });
 
-  it("dispatches every reducer subscribing to the same (tile, ui-event) in definition order (#124)", () => {
-    // Spec §1.6.4 invariant: "Multiple reducers matching the same event run in
-    // definition order". Before the fix, codegen used `.find()` and silently
-    // dropped every reducer past the first.
+  it("dispatches every reducer subscribing to the same (tile, ui.click) in source order (§1.6.4)", () => {
+    // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
+    // definition order". A handler must dispatch every match, not just one.
     const src = `
       slot hits  : Int = 0
       slot saves : Int = 0
@@ -685,19 +686,18 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // All three dispatches must appear, in source order, inside a single onClick.
-    const onClick = result.js.match(/onClick: \(el\) => \{[^}]*\}/);
-    expect(onClick).not.toBeNull();
-    const body = onClick?.[0] ?? "";
-    const iLog = body.indexOf('_dispatch("logHit"');
-    const iSave = body.indexOf('_dispatch("save"');
-    const iAudit = body.indexOf('_dispatch("audit"');
+    // Anchor on dispatch occurrences in the full emitted module (not a regex
+    // slice — a `}` inside a future dispatch payload would cut the slice early
+    // and silently pass even after a regression).
+    const iLog = result.js.indexOf('_dispatch("logHit"');
+    const iSave = result.js.indexOf('_dispatch("save"');
+    const iAudit = result.js.indexOf('_dispatch("audit"');
     expect(iLog).toBeGreaterThanOrEqual(0);
     expect(iSave).toBeGreaterThan(iLog);
     expect(iAudit).toBeGreaterThan(iSave);
   });
 
-  it("preserves single-reducer onClick shape (no behavior change for the 1-match case)", () => {
+  it("emits a single onClick that wraps the one dispatch when only one reducer matches", () => {
     const src = `
       slot x : Int = 0
       reducer inc on=ui.click(B) do= x := x + 1
@@ -709,8 +709,104 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toContain('_dispatch("inc", el)');
-    // The 1-match handler may be wrapped in `{ ... }` after the fix; that's
-    // fine. What matters is that the single dispatch is emitted.
-    expect(result.js).toMatch(/onClick: \(el\) =>/);
+    expect(result.js).toMatch(/onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("inc"/);
+  });
+
+  it("chains explicit `onClick=fn` and a separate ui.click reducer on the same tile (§1.6.4)", () => {
+    // Explicit-then-implicit on the same handler: spec §1.6.4 says both fire.
+    // Explicit goes first (it's declared on the tile that mounts the element),
+    // then the implicit subscriber. A skipping carve-out — emitting only the
+    // explicit and silently dropping the reducer — would be a spec violation.
+    const src = `
+      slot x : Int = 0
+      slot y : Int = 0
+      reducer onExplicit on=app.start do= x := 0
+      reducer onImplicit on=ui.click(B) do= y := y + 1
+      tile B = button(text="go", onClick=onExplicit)
+      tile App = column(B, text(x.show), text(y.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Both dispatches present, explicit before implicit.
+    const iExplicit = result.js.indexOf('_dispatch("onExplicit"');
+    const iImplicit = result.js.indexOf('_dispatch("onImplicit"');
+    expect(iExplicit).toBeGreaterThanOrEqual(0);
+    expect(iImplicit).toBeGreaterThan(iExplicit);
+    // Per element they collapse into one chained handler. Guards against a
+    // duplicate-key object literal (`{ onClick: a, onClick: b }`) by checking
+    // the explicit dispatch and the implicit dispatch land in the same body.
+    expect(result.js).toMatch(
+      /onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onExplicit", el\); globalThis\.__kumikiApp\._dispatch\("onImplicit", el\) \}/,
+    );
+  });
+
+  it("dedupes overlapping explicit + implicit wiring of the same reducer (no double-fire)", () => {
+    // `onClick=inc` and `reducer inc on=ui.click(B)` both target the SAME
+    // reducer. Without dedup the chain would dispatch `inc` twice per click
+    // — the counter would tick by 2 instead of 1. (Counter example
+    // 01-slot-and-reducer.kumiki uses exactly this overlap.)
+    const src = `
+      slot count : Int = 0
+      reducer inc on=ui.click(B) do= count := count + 1
+      tile B = button(text="+", onClick=inc)
+      tile App = column(B, text(count.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Exactly one dispatch of `inc` in the onClick body.
+    const matches = result.js.match(/_dispatch\("inc"/g) ?? [];
+    // One per route (/, /404) — both renderings emit the same chain.
+    expect(matches.length).toBe(2);
+  });
+
+  it("dispatches every reducer subscribing to the same (tile, ui.submit) in source order (§1.6.4)", () => {
+    const src = `
+      slot saved : Int = 0
+      slot logged : Int = 0
+      reducer save  on=ui.submit(LoginForm) do= saved  := saved  + 1
+      reducer audit on=ui.submit(LoginForm) do= logged := logged + 1
+      tile LoginForm = form(text="login")
+      tile App = column(LoginForm, text(saved.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const iSave = result.js.indexOf('_dispatch("save"');
+    const iAudit = result.js.indexOf('_dispatch("audit"');
+    expect(iSave).toBeGreaterThanOrEqual(0);
+    expect(iAudit).toBeGreaterThan(iSave);
+    // Both dispatches share a single chained handler body.
+    expect(result.js).toMatch(
+      /onSubmit: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("save", el\); globalThis\.__kumikiApp\._dispatch\("audit", el\) \}/,
+    );
+  });
+
+  it("dispatches every reducer subscribing to the same (tile, ui.hover) in source order (§1.6.4)", () => {
+    // ui.hover lifts onto any tile (no tile-name filter), so this also guards
+    // against regressing the broad-applicability rule for the hover path.
+    const src = `
+      slot warm : Int = 0
+      slot logs : Int = 0
+      reducer wake on=ui.hover(Card) do= warm := warm + 1
+      reducer note on=ui.hover(Card) do= logs := logs + 1
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const iWake = result.js.indexOf('_dispatch("wake"');
+    const iNote = result.js.indexOf('_dispatch("note"');
+    expect(iWake).toBeGreaterThanOrEqual(0);
+    expect(iNote).toBeGreaterThan(iWake);
+    expect(result.js).toMatch(
+      /onMouseEnter: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("wake", el\); globalThis\.__kumikiApp\._dispatch\("note", el\) \}/,
+    );
   });
 });

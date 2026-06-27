@@ -295,7 +295,7 @@ In other words, you can mix one-line layout and block layout. When writing in ne
 
 **Multiple subscriptions to the same event are allowed.** When two or more reducers
 declare the same `on=` pattern (e.g. both subscribe to `ui.click(SubmitBtn)`), all
-of them fire in source-definition order — see §1.6.4 Invariant 3.
+of them fire in definition order — see §1.6.4 Invariant 3.
 
 ### 1.6.2 Selectors
 
