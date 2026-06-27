@@ -293,6 +293,31 @@ tile Card = box() {}`;
     expect(r.on.selector.tile).toBe("Card");
   });
 
+  // issue #122 — §1.6.1 ui.focus / ui.blur were accepted by the parser
+  // alongside ui.key / ui.hover, but never lifted by codegen / runtime.
+  // These cases lock the parser-side so a regression on either kind fails fast.
+  it("parses ui.focus(Tile) event pattern (§1.6.1)", () => {
+    const src = `slot f : Text = ""
+reducer onFocus on=ui.focus(InputX) do= f := "focused"
+tile InputX = input(bind=f)`;
+    const program = parse(lex(src));
+    const r = program.defs.find((d) => d.kind === "ReducerDef") as ReducerDef;
+    if (r.on.kind !== "UiEvent") throw new Error("expected UiEvent");
+    expect(r.on.ev).toBe("focus");
+    expect(r.on.selector.tile).toBe("InputX");
+  });
+
+  it("parses ui.blur(Tile) event pattern (§1.6.1)", () => {
+    const src = `slot b : Int = 0
+reducer onBlur on=ui.blur(InputX) do= b := b + 1
+tile InputX = input(bind=b)`;
+    const program = parse(lex(src));
+    const r = program.defs.find((d) => d.kind === "ReducerDef") as ReducerDef;
+    if (r.on.kind !== "UiEvent") throw new Error("expected UiEvent");
+    expect(r.on.ev).toBe("blur");
+    expect(r.on.selector.tile).toBe("InputX");
+  });
+
   // issue #91 — language.md §1.9 lists tuple patterns in the grammar.
   // Tuple values are introduced by `List(T).zip(U)`, so a tuple pattern matches
   // over a `Tuple(T, U)`-typed value (here, a fn parameter).

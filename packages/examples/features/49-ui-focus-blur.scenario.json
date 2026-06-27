@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "label": "ui.focus: dispatch onFocus records the focused field name",
+      "do": { "dispatch": "onFocus" },
+      "expect": { "noErrors": true, "state": { "focusedField": "name" } }
+    },
+    {
+      "label": "ui.blur: first blur increments to 1",
+      "do": { "dispatch": "onBlur" },
+      "expect": { "noErrors": true, "state": { "blurCount": 1 } }
+    },
+    {
+      "label": "ui.blur: second blur increments to 2",
+      "do": { "dispatch": "onBlur" },
+      "expect": { "noErrors": true, "state": { "blurCount": 2 } }
+    }
+  ]
+}
