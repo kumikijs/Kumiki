@@ -201,6 +201,40 @@ tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 ```
 
+### E0207 `pat-arity-mismatch`
+
+A `match` arm pattern's element count does not agree with the scrutinee's static type. Tuple patterns must have the same arity as their `Tuple(...)` scrutinee; variant patterns must have the same bind count as the variant's payload arity. Without this check, codegen would emit a guard that is always false at runtime — the arm would silently never fire ("compiles but the wrong branch runs").
+
+> `Tuple pattern has <m> item(s) but scrutinee type "Tuple(<…>)" has <n>`
+> `Variant "<tag>" pattern has <m> bind(s) but the variant carries <n> payload(s)`
+
+**Fix**: Add or drop pattern elements to match the type. For `Tuple(Int, Int)`, write `(a, b)`. For `Some(T)`, write `Some(x)` (one bind) rather than `Some(x, y)`.
+
+### E0208 `pat-type-mismatch`
+
+A `match` arm pattern's shape does not agree with the scrutinee's static type — for example, a tuple pattern `(a, b)` is used against a scrutinee of type `Int`, or a variant pattern `Some(x)` is used against a record type. The pattern can never structurally match, so the arm is dead at compile time.
+
+> `Tuple pattern cannot match scrutinee of type "<T>"`
+> `Variant pattern "<tag>" cannot match scrutinee of type "<T>"`
+
+**Fix**: Use a pattern whose shape matches the scrutinee. If the scrutinee really should be a union or a tuple, fix its declared type instead.
+
+### E0209 `pat-unknown-variant`
+
+A `match` arm names a variant tag that is not declared by the scrutinee's union type. Built-in unions (`Option(T)` admits `Some` / `None`; `Result(T, E)` admits `Ok` / `Err`) and user-declared `type X = A | B(…) | …` definitions are both checked.
+
+> `Variant "<tag>" is not a member of scrutinee type "<T>"`
+
+**Fix**: Correct the tag spelling, or add the variant to the union definition. `kumiki fix` can suggest a close name (→ [AI Editing](./ai-edit.md)).
+
+### E0210 `type-arity-mismatch`
+
+A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
+
+> `Type "<name>" expects <m> type argument(s) but got <n>`
+
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
