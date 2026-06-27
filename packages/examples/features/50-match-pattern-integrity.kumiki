@@ -1,0 +1,60 @@
+# Feature: match-pattern type integrity.
+#
+# The typechecker verifies, for every `match` arm, that the pattern is
+# structurally compatible with the scrutinee's static type — tuple arity,
+# variant payload arity, and the tag's membership in the scrutinee union.
+# This example exercises the positive paths: user generic union, built-in
+# Option / Result, and tuple destructuring at fn / reducer / tile sites.
+# Together they cover the three match call-sites the checker walks.
+
+type Post          = {id: Text, body: Text}
+type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(Text)
+
+slot status  : LoadResult(Post)  = Idle
+slot picked  : Option(Int)       = None
+slot names   : List(Text)        = ["alpha", "beta"]
+slot scores  : List(Int)         = [1, 2]
+slot counter : Int               = 0
+
+fn statusLabel(r: LoadResult(Post)) -> Text
+   = match r with
+       | Idle       -> "idle"
+       | Loading    -> "loading…"
+       | Loaded(p)  -> p.body
+       | Failed(e)  -> e
+
+fn pairLabel(p: Tuple(Text, Int)) -> Text
+   = match p with
+       | (name, score) -> name + ":" + score.show
+
+reducer markLoaded on=ui.click(LoadBtn)
+    do= status := Loaded({id: "p1", body: "hello"})
+
+reducer bumpFromOption on=ui.click(BumpBtn)
+    do= match picked with
+          | None    -> counter := counter + 1
+          | Some(n) -> counter := counter + n
+
+tile LoadBtn = button(text="load",  onClick=markLoaded)
+tile BumpBtn = button(text="bump",  onClick=bumpFromOption)
+
+tile StatusRow in=LoadResult(Post)
+    = match $1 with
+        | Idle       -> text("(idle)")
+        | Loading    -> text("loading")
+        | Loaded(p)  -> text(p.body)
+        | Failed(e)  -> text("error: " + e)
+
+tile App
+    = column(
+        heading(statusLabel(status)),
+        StatusRow(status),
+        for p in names.zip(scores) text(pairLabel(p)),
+        text(counter.show),
+        row(LoadBtn, BumpBtn) {gap: "sm"}
+      )
+
+app MatchPatternIntegrity
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

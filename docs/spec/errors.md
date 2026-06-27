@@ -227,6 +227,14 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 
 **Fix**: Correct the tag spelling, or add the variant to the union definition. `kumiki fix` can suggest a close name (→ [AI Editing](./ai-edit.md)).
 
+### E0210 `type-arity-mismatch`
+
+A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
+
+> `Type "<name>" expects <m> type argument(s) but got <n>`
+
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`

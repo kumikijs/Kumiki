@@ -1343,12 +1343,8 @@ function wildcardText(e: Expr & { kind: "Wildcard" }): string {
  * arm body must remain usable — but skip the structural checks (consistent
  * with the rest of the type checker's "dynamic ⇒ no diagnostic" stance).
  *
- * Issue #123: prior to this helper, the three match-sites called a
- * name-collecting `addPatternBinds` and never verified that `(a, b, c)`
- * actually matched a `Tuple(_, _, _)` or that `Some(x, y)` had the right
- * arity. Mismatches lowered to `Array.isArray(_v) && _v.length === N` /
- * `variantIs(...)` guards that silently evaluated to false — a true silent
- * failure where the arm just got skipped.
+ * Without this structural check, a mismatched arm lowers to a guard that
+ * always fails at runtime — the arm silently never fires.
  */
 function checkPatternAgainstType(
   pat: Pattern,
@@ -1359,6 +1355,10 @@ function checkPatternAgainstType(
   localTypes: Map<string, TypeExpr> | undefined,
 ): void {
   const t = unaliasType(scrutType, sym);
+  // Diagnostics prefer the user-written name (`Light`) over its expanded body
+  // (`Red | Green`). Fall back to the unaliased shape when no original was
+  // passed (e.g. when recursing into an inferred element type).
+  const display = scrutType ?? t;
 
   if (pat.kind === "PWildcard") return;
 
@@ -1382,7 +1382,7 @@ function checkPatternAgainstType(
       errors.push({
         code: "E0208",
         kind: "pat-type-mismatch",
-        message: `Tuple pattern cannot match scrutinee of type "${typeToString(t!)}"`,
+        message: `Tuple pattern cannot match scrutinee of type "${typeToString(display as TypeExpr)}"`,
         pos: pat.pos,
       });
       for (const it of pat.items) {
@@ -1398,6 +1398,10 @@ function checkPatternAgainstType(
         pos: pat.pos,
       });
     }
+    // Even on an arity mismatch, walk every item so nested binds land in the
+    // arm body's scope. Extra items get a null element type, which silences
+    // further structural diagnostics under them — the outer E0207 already
+    // names the root cause.
     for (let i = 0; i < pat.items.length; i++) {
       const item = pat.items[i];
       if (!item) continue;
@@ -1422,7 +1426,7 @@ function checkPatternAgainstType(
     errors.push({
       code: "E0209",
       kind: "pat-unknown-variant",
-      message: `Variant "${pat.name}" is not a member of scrutinee type "${typeToString(t)}"`,
+      message: `Variant "${pat.name}" is not a member of scrutinee type "${typeToString(display as TypeExpr)}"`,
       pos: pat.pos,
     });
     for (const b of pat.binds) if (b !== "_") binds.add(b);
@@ -1432,7 +1436,7 @@ function checkPatternAgainstType(
     errors.push({
       code: "E0208",
       kind: "pat-type-mismatch",
-      message: `Variant pattern "${pat.name}" cannot match scrutinee of type "${typeToString(t)}"`,
+      message: `Variant pattern "${pat.name}" cannot match scrutinee of type "${typeToString(display as TypeExpr)}"`,
       pos: pat.pos,
     });
     for (const b of pat.binds) if (b !== "_") binds.add(b);
@@ -1470,6 +1474,7 @@ function lookupVariantPayloads(
   tag: string,
   scrut: TypeExpr | null,
   sym: SymbolTable,
+  seen: Set<string> = new Set(),
 ): TypeExpr[] | "unknown-tag" | "not-a-union" | null {
   if (!scrut) return null;
   if (scrut.kind === "TypeApp") {
@@ -1490,8 +1495,11 @@ function lookupVariantPayloads(
     // Substitute the type params in the variant's payloads before returning.
     const def = sym.types.get(scrut.name);
     if (def) {
+      if (seen.has(scrut.name)) return null;
       const sub = paramSubstitution(def.params, scrut.args);
-      return lookupVariantPayloads(tag, substituteType(def.body, sub), sym);
+      const next = new Set(seen);
+      next.add(scrut.name);
+      return lookupVariantPayloads(tag, substituteType(def.body, sub), sym, next);
     }
     // Stdlib containers (List, Map, Set, Tuple) and unknown names — no union shape.
     return "not-a-union";
@@ -1502,12 +1510,15 @@ function lookupVariantPayloads(
     return v.payloads;
   }
   if (scrut.kind === "TypeRef") {
+    if (seen.has(scrut.name)) return null;
     const def = sym.types.get(scrut.name);
     if (!def) return null; // unknown name / type param — opaque
-    return lookupVariantPayloads(tag, def.body, sym);
+    const next = new Set(seen);
+    next.add(scrut.name);
+    return lookupVariantPayloads(tag, def.body, sym, next);
   }
   if (scrut.kind === "TypeNominal" || scrut.kind === "TypeRefinement") {
-    return lookupVariantPayloads(tag, scrut.inner, sym);
+    return lookupVariantPayloads(tag, scrut.inner, sym, seen);
   }
   // TypePrim / TypeRecord — variants can't live on these.
   return "not-a-union";
@@ -1521,6 +1532,7 @@ function lookupVariantPayloads(
 function resolveToTuple(
   scrut: TypeExpr | null,
   sym: SymbolTable,
+  seen: Set<string> = new Set(),
 ): (TypeExpr & { kind: "TypeApp"; name: "Tuple" }) | "not-a-tuple" | null {
   if (!scrut) return null;
   if (scrut.kind === "TypeApp") {
@@ -1529,18 +1541,24 @@ function resolveToTuple(
     }
     const def = sym.types.get(scrut.name);
     if (def) {
+      if (seen.has(scrut.name)) return null;
       const sub = paramSubstitution(def.params, scrut.args);
-      return resolveToTuple(substituteType(def.body, sub), sym);
+      const next = new Set(seen);
+      next.add(scrut.name);
+      return resolveToTuple(substituteType(def.body, sub), sym, next);
     }
     return "not-a-tuple";
   }
   if (scrut.kind === "TypeRef") {
+    if (seen.has(scrut.name)) return null;
     const def = sym.types.get(scrut.name);
     if (!def) return null;
-    return resolveToTuple(def.body, sym);
+    const next = new Set(seen);
+    next.add(scrut.name);
+    return resolveToTuple(def.body, sym, next);
   }
   if (scrut.kind === "TypeNominal" || scrut.kind === "TypeRefinement") {
-    return resolveToTuple(scrut.inner, sym);
+    return resolveToTuple(scrut.inner, sym, seen);
   }
   return "not-a-tuple";
 }
@@ -1857,9 +1875,19 @@ function resolveType(t: TypeExpr, sym: SymbolTable, errors: KumikiError[]): void
         return;
       }
       return;
-    case "TypeApp":
+    case "TypeApp": {
+      const def = sym.types.get(t.name);
+      if (def && def.params.length !== t.args.length) {
+        errors.push({
+          code: "E0210",
+          kind: "type-arity-mismatch",
+          message: `Type "${t.name}" expects ${def.params.length} type argument(s) but got ${t.args.length}`,
+          pos: t.pos,
+        });
+      }
       for (const a of t.args) resolveType(a, sym, errors);
       return;
+    }
     case "TypeRecord":
       for (const f of t.fields) resolveType(f.type, sym, errors);
       return;

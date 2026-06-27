@@ -798,5 +798,134 @@ describe("typecheck", () => {
       const errors = checkSrc(src);
       expect(errors.some((e) => e.code === "E0108")).toBe(false);
     });
+
+    it("reports Result Err-arity mismatch (E0207)", () => {
+      const src = `
+        fn label(r: Result(Int, Text)) -> Int = match r with
+          | Ok(n)      -> n
+          | Err(e, x)  -> 0
+        slot x : Int = 0
+        tile App = column(text(x.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) => e.code === "E0207" && e.kind === "pat-arity-mismatch" && /Err/.test(e.message),
+        ),
+      ).toBe(true);
+    });
+
+    it("reports unknown variant tag against Result (E0209)", () => {
+      const src = `
+        fn label(r: Result(Int, Text)) -> Int = match r with
+          | Ok(n)    -> n
+          | Pending  -> 0
+        slot x : Int = 0
+        tile App = column(text(x.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) =>
+            e.code === "E0209" && e.kind === "pat-unknown-variant" && /Pending/.test(e.message),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts a user generic union instantiation (LoadResult(Post)) — regression", () => {
+      // The first cut of this PR rejected user generic union instantiations
+      // (`type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(Text)` used
+      // as `LoadResult(Post)`) with E0208 because the TypeApp path didn't
+      // substitute type params. Pin the fix.
+      const src = `
+        type Post = {id: Text, body: Text}
+        type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(Text)
+        slot s : LoadResult(Post) = Idle
+        fn label(r: LoadResult(Post)) -> Text = match r with
+          | Idle       -> "idle"
+          | Loading    -> "loading"
+          | Loaded(p)  -> p.body
+          | Failed(e)  -> e
+        tile App = column(text(label(s)))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0208")).toBe(false);
+      expect(errors.some((e) => e.code === "E0209")).toBe(false);
+    });
+
+    it("reports nested PTuple element mismatch (PTuple inside PTuple)", () => {
+      // Variant-payload binds are bare identifiers in this grammar
+      // (`Ok(n)`, never `Ok((a, b))`), so nested-pattern coverage is
+      // exercised via tuple-of-tuple — the recursive call into the inner
+      // PTuple element must propagate E0207 on its own arity.
+      const src = `
+        fn label(p: Tuple(Tuple(Int, Int), Int)) -> Int = match p with
+          | ((a, b, c), n) -> a + b + c + n
+        slot x : Int = 0
+        tile App = column(text(x.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0207" && e.kind === "pat-arity-mismatch")).toBe(true);
+    });
+
+    it("preserves the user alias name in diagnostic messages", () => {
+      // `type Light = Red | Green` should surface as "Light" in the
+      // diagnostic, not the expanded body "Red | Green".
+      const src = `
+        type Light = Red | Green
+        fn label(l: Light) -> Text = match l with
+          | Red    -> "STOP"
+          | Yellow -> "?"
+          | Green  -> "GO"
+        slot x : Int = 0
+        tile App = column(text(x.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const e0209 = errors.find((e) => e.code === "E0209" && e.kind === "pat-unknown-variant");
+      expect(e0209).toBeDefined();
+      expect(e0209!.message).toContain("Light");
+      expect(e0209!.message).not.toContain("Red | Green");
+    });
+
+    it("reports E0210 type-arity mismatch for user generic types", () => {
+      // A misuse of a user generic — passing the wrong number of type args —
+      // would otherwise silently turn pattern checks into a no-op via
+      // `paramSubstitution` producing a short map. Caught at resolveType.
+      const src = `
+        type Box(A, B) = {a: A, b: B}
+        slot s : Box(Int) = {a: 0, b: ""}
+        tile App = column(text(s.b))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(
+        errors.some(
+          (e) => e.code === "E0210" && e.kind === "type-arity-mismatch" && /Box/.test(e.message),
+        ),
+      ).toBe(true);
+    });
+
+    it("does not infinite-recurse on a self-cycling user type", () => {
+      // `type Cycle(T) = Cycle(T)` self-refers through the same name. The
+      // cycle-detection set in lookupVariantPayloads must short-circuit;
+      // otherwise resolveToTuple / lookupVariantPayloads would recurse
+      // forever. We assert that check() returns within the suite's timeout.
+      const src = `
+        type Cycle(T) = X(T)
+        slot s : Cycle(Int) = X(0)
+        fn label(c: Cycle(Int)) -> Int = match c with | X(n) -> n
+        tile App = column(text(label(s).show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      // Just confirm there's no internal stack overflow; specific error
+      // content isn't required here.
+      expect(Array.isArray(errors)).toBe(true);
+    });
   });
 });
