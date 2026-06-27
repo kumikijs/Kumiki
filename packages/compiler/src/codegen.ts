@@ -2576,7 +2576,9 @@ function propsFor(
       a.name === "onSubmit" ||
       a.name === "onChange" ||
       a.name === "onInput" ||
-      a.name === "onClose"
+      a.name === "onClose" ||
+      a.name === "onFocus" ||
+      a.name === "onBlur"
     ) {
       if ((a.value as Expr).kind === "Ref") {
         const reducerName = (a.value as Expr & { name: string }).name;
@@ -2595,7 +2597,9 @@ function propsFor(
       p.name === "onInput" ||
       p.name === "onClose" ||
       p.name === "onKeyDown" ||
-      p.name === "onMouseEnter"
+      p.name === "onMouseEnter" ||
+      p.name === "onFocus" ||
+      p.name === "onBlur"
     ) {
       if ((p.value as Expr).kind === "Ref") {
         const reducerName = (p.value as Expr as Expr & { name: string }).name;
@@ -2698,6 +2702,39 @@ function propsFor(
       );
     }
   }
+  // Implicit onFocus for focusable tiles when reducer subscribes to
+  // ui.focus(EnclosingTile). DOM focus only fires on focusable elements, so
+  // restrict to input / textarea / button / select (same gate as ui.key).
+  if (
+    (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") &&
+    enclosingTile
+  ) {
+    const r = ctx.gen.reducers.find(
+      (rr) =>
+        rr.on.kind === "UiEvent" && rr.on.ev === "focus" && rr.on.selector.tile === enclosingTile,
+    );
+    if (r && !entries.some((e) => e.startsWith("onFocus"))) {
+      entries.push(
+        `onFocus: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
+      );
+    }
+  }
+  // Implicit onBlur for focusable tiles when reducer subscribes to
+  // ui.blur(EnclosingTile). Same tile gate as ui.focus.
+  if (
+    (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") &&
+    enclosingTile
+  ) {
+    const r = ctx.gen.reducers.find(
+      (rr) =>
+        rr.on.kind === "UiEvent" && rr.on.ev === "blur" && rr.on.selector.tile === enclosingTile,
+    );
+    if (r && !entries.some((e) => e.startsWith("onBlur"))) {
+      entries.push(
+        `onBlur: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
+      );
+    }
+  }
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
@@ -2708,7 +2745,9 @@ function propsFor(
       p.name === "onInput" ||
       p.name === "onClose" ||
       p.name === "onKeyDown" ||
-      p.name === "onMouseEnter"
+      p.name === "onMouseEnter" ||
+      p.name === "onFocus" ||
+      p.name === "onBlur"
     )
       continue;
     // §3.8 link prefetch — these are runtime-side fields, not slot data; their

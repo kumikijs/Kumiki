@@ -1748,3 +1748,75 @@ describe("ui.key / ui.hover handlers (issue #91)", () => {
     expect(seen[0]?.kind).toBe("Card");
   });
 });
+
+// issue #122 — ui.focus / ui.blur ride the same universal render hook as
+// ui.key / ui.hover. The DOM-level focus / blur events must reach the
+// codegen-installed onFocus / onBlur props with the tile's `el` payload.
+describe("ui.focus / ui.blur handlers (issue #122)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  it("focus on an input invokes onFocus with the tile's el payload", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        type: "text",
+        placeholder: "",
+        props: {
+          el: { kind: "InputX" },
+          onFocus: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const inp = root.querySelector("input");
+    if (!inp) throw new Error("expected input");
+    inp.dispatchEvent(new FocusEvent("focus"));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.kind).toBe("InputX");
+  });
+
+  it("blur on an input invokes onBlur with the tile's el payload", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        type: "text",
+        placeholder: "",
+        props: {
+          el: { kind: "InputX" },
+          onBlur: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const inp = root.querySelector("input");
+    if (!inp) throw new Error("expected input");
+    inp.dispatchEvent(new FocusEvent("blur"));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.kind).toBe("InputX");
+  });
+});

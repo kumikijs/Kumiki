@@ -394,6 +394,52 @@ describe("codegen", () => {
     );
   });
 
+  // issue #122 — §1.6.1 ui.focus / ui.blur. Parser/AST already accepted
+  // these; codegen now lifts them into onFocus / onBlur on focusable tiles
+  // (input / textarea / button / select) and skips non-focusable tiles so the
+  // runtime never wires a listener that the DOM cannot fire.
+  it("emits onFocus for ui.focus(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer onFocus on=ui.focus(InputX) do= f := "focused"
+      tile InputX = input(bind=f)
+      tile App = column(InputX)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onFocus: \(el\) => globalThis\.__kumikiApp\._dispatch\("onFocus"/);
+  });
+
+  it("emits onBlur for ui.blur(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot b : Text = ""
+      reducer onBlur on=ui.blur(InputX) do= b := "blurred"
+      tile InputX = input(bind=b)
+      tile App = column(InputX)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onBlur: \(el\) => globalThis\.__kumikiApp\._dispatch\("onBlur"/);
+  });
+
+  it("does not emit onFocus on a non-focusable tile (box) — guards against listeners that never fire (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer onFocus on=ui.focus(Card) do= f := "focused"
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).not.toMatch(/onFocus:/);
+  });
+
   it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
     const src = `
       type Light = Red | Green
