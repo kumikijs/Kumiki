@@ -1121,13 +1121,13 @@ export function mountCore(
     const r = app.reducers.find((x) => x.name === reducerName);
     if (!r) return;
     // §1.6.2 — `on=ui.event(Tile#id)` matches only when the dispatched
-    // element's `{id}` prop equals the selector's id. Codegen still chains
-    // every same-tile reducer onto the implicit handler (so source-order
-    // dispatch from #124 stays correct); we filter the id-scoped ones here.
-    // `el.id` is undefined for tiles without an `{id}` prop, which is also
-    // a mismatch against any non-empty selector id — exactly what we want.
+    // element's `{id}` prop equals the selector's id. Codegen chains every
+    // same-tile reducer onto the implicit handler so §1.6.4 invariant 3
+    // (definition-order multi-dispatch) holds; this is where the id-scoped
+    // ones drop out. `el.id` is undefined when the tile has no `{id}`, which
+    // also fails the equality and skips an id-scoped reducer — as intended.
     const wantId = r.selector?.id;
-    if (wantId != null && (el as { id?: unknown })?.id !== wantId) return;
+    if (wantId != null && el.id !== wantId) return;
     applyReducer(r, { $el: el, $event: el });
   };
   // §3.8 prefetch — same argument binding as route.enter so the prefetch and

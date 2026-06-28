@@ -37,12 +37,11 @@ function bindDataset(el: HTMLElement, bind: string, bindPath: string[] | undefin
 }
 
 // §1.6.2 — `{id: "..."}` on any tile maps to the element's native HTML `id`.
-// Codegen routes the arg-style `input(id="..")` to `node.id` and the block-style
-// `tile T = X(...) {id: "..."}` to `node.props.id`; we accept either, so the
-// `el.id` payload that drives selector matching stays consistent across both
-// authoring forms. Returns undefined when no id is set, letting callers skip.
-// TileProps is an open record per tile kind, so the cast just lets us read
-// `props.id` without restating each tile's prop type.
+// Read from both `node.id` (top-level field; populated for tiles that lift
+// `id` from positional args, e.g. `input(id="..")`) and `node.props.id`
+// (block-style `{id: "..."}` for any tile kind). Used only by tile rendering;
+// the `el.id` payload that feeds selector matching is built separately in
+// codegen's `propsFor` so the two paths stay decoupled.
 function tileId(node: { id?: unknown; props?: unknown }): string | undefined {
   const fromProps = (node.props as { id?: unknown } | undefined)?.id;
   const raw = node.id ?? fromProps;

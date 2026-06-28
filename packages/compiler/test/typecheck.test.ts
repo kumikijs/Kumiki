@@ -960,5 +960,20 @@ describe("typecheck", () => {
       const errors = checkSrc(src);
       expect(errors.some((e) => e.code === "E0211")).toBe(false);
     });
+
+    it("accepts the _ wildcard selector for indirectly-dispatched reducers", () => {
+      // The `_` sentinel marks a reducer that has no UI subscription of its
+      // own — it is invoked through an effect callback such as
+      // `emit confirm({onYes: r, onNo: r})`. Treating it as an undeclared
+      // tile would falsely diagnose every confirm/leave-guard pattern.
+      const src = `
+        slot x : Int = 0
+        reducer cb on=ui.click(_) do= x := x + 1
+        tile App = column()
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0211")).toBe(false);
+    });
   });
 });

@@ -2695,6 +2695,17 @@ function propsFor(
     if (p.name === "style") continue;
     elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
+  // §1.6.2 — the `id` prop drives `TileName#id` selector matching at dispatch
+  // time via the `el.id` payload. Tiles that lift `id` from positional args
+  // (input, textarea) bury it inside the tile node, so without this fold a
+  // reducer scoped to `Foo#bar` would never fire for `input(id="bar")` even
+  // though the DOM element has `id="bar"`. Block-style `{id: "..."}` already
+  // lands in `elProps` via the loop above; we only fill the gap for args.
+  const hasIdAlready = elProps.some((s) => s.startsWith("id:"));
+  if (!hasIdAlready) {
+    const idArg = t.args.find((a) => a.name === "id");
+    if (idArg) elProps.push(`id: ${jsOfExpr(idArg.value as Expr, ctx)}`);
+  }
   if (elProps.length > 0) {
     entries.push(`el: { ${elProps.join(", ")} }`);
   }

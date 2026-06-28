@@ -1,0 +1,25 @@
+# Feature: §1.6.2 — `TileName#id` selector also matches tiles whose `id` is
+# supplied via positional args (`input(id="...")` / `textarea(id="...")`),
+# not just block-style `{id: "..."}`. Codegen folds the arg-style id into
+# the dispatch payload `el.id` so runtime filtering treats both forms the
+# same — otherwise a reducer scoped to `NewIn#new` would silently fail to
+# fire against `input(id="new")`.
+
+slot draft : Text = ""
+slot hits  : Int  = 0
+
+reducer typed on=ui.input(NewIn#new) do= hits := hits + 1
+
+tile NewIn = input(id="new", value=draft)
+
+tile App
+    = column(
+        heading("Arg-style id"),
+        NewIn,
+        text(hits.show)
+      )
+
+app SelectorIdArg
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -235,6 +235,14 @@ A type-level application `T(...)` of a user-declared generic type passes a diffe
 
 **Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
 
+### E0211 `undef-tile-in-selector`
+
+A reducer's `ui.*` selector names a tile that has not been declared. Without this check a typo (`ui.click(SaveBtn)` vs `ui.click(SaveBtnn)`) compiles silently and binds nothing — indistinguishable from a deliberately unused reducer.
+
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
+
+**Fix**: Add a `tile <Tile> = …` declaration, or correct the selector's tile name to match an existing one. The `_` wildcard (for reducers dispatched indirectly via `emit confirm({onYes: r, …})` callbacks, see [Lifecycle §7](./lifecycle.md)) is accepted and has no tile to resolve.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
