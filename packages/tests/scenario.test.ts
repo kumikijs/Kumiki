@@ -416,4 +416,54 @@ describe("scenario runner", () => {
     }
     expect(report.ok).toBe(true);
   });
+
+  // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
+  // definition order". The 11-multi-subscribe app puts two reducers on
+  // ui.click(SaveBtn) — clicking the button must advance BOTH slots, not just
+  // the first one defined. A regression to single-dispatch would leave `log`
+  // stuck at 0 and trip the assertion below.
+  it("fires every ui.click reducer on the same tile (11-multi-subscribe)", async () => {
+    const app = await loadApp(join(examples, "apps", "11-multi-subscribe", "app.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [
+        { do: { clickText: "Save" }, expect: { noErrors: true, state: { version: 1, log: 1 } } },
+        { do: { clickText: "Save" }, expect: { state: { version: 2, log: 2 } } },
+      ],
+    });
+    expect(report.ok).toBe(true);
+  });
+
+  // §1.6.4 Invariant 3 is enforced as independent dispatches, not a single
+  // composite apply: if reducer N panics, reducers N+1..M still run. The
+  // runtime catches panics in applyReducer and rolls back that one dispatch,
+  // so the chain doesn't blow up if any link throws. The panic itself is
+  // expected here, so report.ok will be false — assert on slot state directly.
+  it("keeps running later reducers in the chain when an earlier one panics", async () => {
+    const src = `
+      slot first : Int = 0
+      slot last  : Int = 0
+      reducer runFirst on=ui.click(B) do= first := first + 1
+      reducer boom     on=ui.click(B) do= last  := panic("nope")
+      reducer runLast  on=ui.click(B) do= last  := last + 1
+      tile B = button(text="go")
+      tile App = column(B, text(first.show), text(last.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const here = dirname(fileURLToPath(import.meta.url));
+    const tmp = join(here, ".smoke-tmp", "panic-chain.kumiki");
+    const fs = await import("node:fs");
+    fs.mkdirSync(dirname(tmp), { recursive: true });
+    fs.writeFileSync(tmp, src);
+    const app = await loadApp(tmp);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { clickText: "go" } }],
+    });
+    const step0 = report.steps[0];
+    expect(step0).toBeDefined();
+    // `boom` panicked between `runFirst` and `runLast` and the panic was logged.
+    expect(step0?.errors.some((e) => e.includes('panic in reducer "boom"'))).toBe(true);
+    // Both neighbors still advanced their slots — the chain did not abort.
+    expect(step0?.state.first).toBe(1);
+    expect(step0?.state.last).toBe(1);
+  });
 });
