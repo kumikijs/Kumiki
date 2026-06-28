@@ -8,14 +8,15 @@ Kumiki のコンパイラ（`@kumikijs/compiler`）が報告する診断は、**
 
 ```ts
 type KumikiError = {
-  code: string;   // "E0103" のような安定識別子
-  kind: string;   // "undef-slot" のような機械可読な分類
-  message: string; // 人間向けメッセージ（対象名を含む）
-  pos: Pos;        // { line, col }
+  code: string;     // "E0103" のような安定識別子
+  kind: string;     // "undef-slot" のような機械可読な分類
+  message: string;  // 人間向けメッセージ（対象名を含む）
+  pos: Pos;          // { line, col }
+  severity?: "error" | "warning"; // 省略時は "error"
 };
 ```
 
-`code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。
+`code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
 パースエラーは `ParseError`（`message` + `pos`）として `throw` される。パース段は最初のエラーで停止するため、コードは付与されない。
 
@@ -31,6 +32,7 @@ type KumikiError = {
 | `E06xx` | reducer の書き込み規則 |
 | `E07xx` | アクセシビリティ（a11y）／strict-icons |
 | `E08xx` | ランタイムハザード（コンパイルは通るが実行で壊れる書き方） |
+| `W02xx` | 非致命的な警告（ビルドは成功する） |
 
 ## E00xx — 構造
 
@@ -192,6 +194,29 @@ reducer の `ui.*` セレクタが宣言されていない tile を指してい�
 > `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
 
 **修正**: `tile <Tile> = …` を宣言するか、セレクタの tile 名を既存のものに直す。`emit confirm({onYes: r, …})` 等のコールバックとして間接的に dispatch される reducer 用のワイルドカード `_`（[Lifecycle §7](./lifecycle.md) 参照）はこの検査の対象外。
+
+### W0212 `ui-event-tile-mismatch`（warning）
+
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DOM 上で発火し得る要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage — `codegen.ts` および `packages/runtime/src/tiles-input.ts` の射影）:
+
+| `ui.<ev>` | 許容される root tile |
+|---|---|
+| `click`  | `button`, `check`, `switch`, `radio` |
+| `submit` | `form` |
+| `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
+| `input`  | `input`, `textarea` |
+| `key`    | `input`, `textarea`, `button` |
+| `focus`  | `input`, `textarea`, `button`, `select` |
+| `blur`   | `input`, `textarea`, `button`, `select` |
+| `hover`  | 任意の tile |
+
+**修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。`for` / `when` / `if` / `match` を root とする動的・複合 tile body は実効 root が実行時状態に依存するため、保守的に検査をスキップする。
+
+**`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。
 
 ## E03xx — ケイパビリティと純粋性
 

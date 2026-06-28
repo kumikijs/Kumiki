@@ -122,6 +122,33 @@ describe("vite-plugin-kumiki", () => {
     );
   });
 
+  it("surfaces W0212 ui-event-tile-mismatch through this.warn (#143)", async () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(Card) do= f := "x"
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const warnings: unknown[] = [];
+    const warnCtx = {
+      error(e: unknown): never {
+        throw new Error(typeof e === "string" ? e : (e as Error).message);
+      },
+      warn(w: unknown): void {
+        warnings.push(w);
+      },
+    };
+    const out = (await transformOf().call(warnCtx as never, src, "/abs/warn.kumiki")) as {
+      code: string;
+    };
+    expect(out.code).toContain("export default App;");
+    expect(warnings).toHaveLength(1);
+    const w = warnings[0] as { message: string };
+    expect(w.message).toContain("W0212");
+    expect(w.message).toContain("ui-event-tile-mismatch");
+  });
+
   it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", async () => {
     const dir = mkdtempSync(join(TMP, "types-"));
     const file = join(dir, "app.kumiki");

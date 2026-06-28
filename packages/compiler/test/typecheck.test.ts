@@ -976,4 +976,129 @@ describe("typecheck", () => {
       expect(errors.some((e) => e.code === "E0211")).toBe(false);
     });
   });
+
+  // #143 — typecheck-time guard that a `ui.<ev>(Tile)` reducer subscription
+  // can actually fire on the target tile. Codegen drops the handler silently
+  // for mismatches (e.g. `ui.focus(box)`), so without this warning the
+  // reducer is dead code that compiles cleanly.
+  describe("W0212 ui-event-tile-mismatch", () => {
+    it("flags a direct builtin mismatch (ui.focus on a box)", () => {
+      const src = `
+        slot f : Text = ""
+        reducer rf on=ui.focus(Card) do= f := "x"
+        tile Card = box(text("hi"))
+        tile App = column(Card)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const w = errors.find((e) => e.code === "W0212");
+      expect(w).toBeDefined();
+      expect(w?.severity).toBe("warning");
+      expect(w?.message).toContain("observed in body");
+      expect(w?.message).toContain("box");
+    });
+
+    it("suppresses the warning when a focusable descendant is in the cascade body", () => {
+      // `ui.click(Outer)` cascades down to `check` which IS in click's
+      // allowed set — codegen wires the handler on the descendant, so the
+      // subscription is live and W0212 should not fire.
+      const src = `
+        slot x : Int = 0
+        reducer rc on=ui.click(Outer) do= x := x + 1
+        tile Outer = row(text("hi"), check(checked=false))
+        tile App = column(Outer)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("accepts a direct builtin match (ui.focus on an input)", () => {
+      const src = `
+        slot f : Text = ""
+        reducer rf on=ui.focus(In) do= f := "x"
+        tile In = input(bind=f)
+        tile App = column(In)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("walks an alias chain to find the builtin root (accepts Outer = Inner = input)", () => {
+      const src = `
+        slot f : Text = ""
+        reducer rf on=ui.focus(Outer) do= f := "x"
+        tile Inner = input(bind=f)
+        tile Outer = Inner
+        tile App = column(Outer)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("walks an alias chain to flag a mismatch (ui.click on Wrap → Box2 → box)", () => {
+      const src = `
+        slot x : Int = 0
+        reducer rc on=ui.click(Wrap) do= x := x + 1
+        tile Box2 = box(text("hi"))
+        tile Wrap = Box2
+        tile App = column(Wrap)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const w = errors.find((e) => e.code === "W0212");
+      expect(w).toBeDefined();
+      expect(w?.message).toContain("box");
+    });
+
+    it("never warns for ui.hover (any tile is allowed)", () => {
+      const src = `
+        slot x : Int = 0
+        reducer rh on=ui.hover(Card) do= x := x + 1
+        tile Card = box(text("hi"))
+        tile App = column(Card)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("never warns for the wildcard selector ui.click(_)", () => {
+      const src = `
+        slot x : Int = 0
+        reducer rc on=ui.click(_) do= x := x + 1
+        tile App = column()
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("emits only E0211 (no W0212) when the selector tile is undeclared", () => {
+      const src = `
+        slot x : Int = 0
+        reducer rc on=ui.click(Missing) do= x := x + 1
+        tile App = column()
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0211")).toBe(true);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("does not warn on dynamic/composite tile bodies (TileFor root)", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2]
+        slot s : Text = ""
+        reducer rc on=ui.click(Dyn) do= s := "x"
+        tile Dyn = for n in xs button(text="n")
+        tile App = column(Dyn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+  });
 });

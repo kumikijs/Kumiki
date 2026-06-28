@@ -2646,10 +2646,18 @@ function propsFor(
     entries.push(`${handlerName}: (el) => { ${body} }`);
     emittedHandlers.add(handlerName);
   };
-  if (t.name === "button") pushHandler("click", "onClick");
-  if (t.name === "check" || t.name === "switch") pushHandler("click", "onClick");
+  if (t.name === "button" || t.name === "check" || t.name === "switch" || t.name === "radio")
+    pushHandler("click", "onClick");
   if (t.name === "form") pushHandler("submit", "onSubmit");
-  if (t.name === "select" || t.name === "input" || t.name === "textarea")
+  if (
+    t.name === "select" ||
+    t.name === "input" ||
+    t.name === "textarea" ||
+    t.name === "check" ||
+    t.name === "radio" ||
+    t.name === "switch" ||
+    t.name === "slider"
+  )
     pushHandler("change", "onChange");
   if (t.name === "input" || t.name === "textarea") pushHandler("input", "onInput");
   if (t.name === "input" || t.name === "textarea" || t.name === "button")

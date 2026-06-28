@@ -116,6 +116,14 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
           this.error(message);
         }
       }
+      // Surface non-fatal warnings (W02xx) through Rollup's plugin context so
+      // they show in Vite's overlay/build log without breaking the import.
+      for (const w of first.warnings) {
+        this.warn({
+          message: `${w.code} ${w.kind}: ${w.message}`,
+          loc: { file, line: w.pos.line, column: w.pos.col },
+        });
+      }
 
       // Auto-bundle referenced icons (#101). When the project has
       // @kumikijs/icons installed, look up each name surfaced by the first

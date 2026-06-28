@@ -25,9 +25,39 @@ export type KumikiError = {
   kind: string;
   message: string;
   pos: Pos;
+  /**
+   * Diagnostic severity. Omitted → "error" (default), failing `compile()` and
+   * `kumiki check`. `"warning"` is non-fatal: still surfaced to stderr (CLI) /
+   * Rollup `this.warn` (Vite), but does not change the exit code. See
+   * `docs/spec/errors.md` for the W02xx band.
+   */
+  severity?: "error" | "warning";
 };
 
 const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
+
+/**
+ * Allowed root-builtin tile kinds per `ui.<ev>` reducer selector. Mirrors
+ * the handler-emission gate in `codegen.ts` (§1.6.1) and the runtime DOM
+ * event surfaces (`packages/runtime/src/tiles-input.ts`, `core.ts`'s
+ * `applyUiEventHandlers`). `null` = "any tile is allowed" (hover, wired by
+ * the universal `applyUiEventHandlers` path on every rendered element).
+ *
+ * `link` is intentionally not listed under `click` even though `<a>` fires
+ * click natively: the runtime's link renderer reserves the click event for
+ * navigation interception and does not invoke user `onClick` reducers
+ * (`tiles-text.ts`). Lifting that requires a separate runtime change.
+ */
+const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = {
+  click: new Set(["button", "check", "switch", "radio"]),
+  submit: new Set(["form"]),
+  change: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
+  input: new Set(["input", "textarea"]),
+  key: new Set(["input", "textarea", "button"]),
+  focus: new Set(["input", "textarea", "button", "select"]),
+  blur: new Set(["input", "textarea", "button", "select"]),
+  hover: null,
+};
 
 /**
  * Diagnostic codes filtered out of `check()`'s output unless `strictIcons` is
@@ -677,6 +707,78 @@ function checkTileCall(
   }
 }
 
+/**
+ * Collect every BUILTIN_TILES kind that may appear as a (descendant) part of
+ * a named tile's render tree. Returns an empty set when nothing can be
+ * statically inferred (cycle, undeclared name, or only dynamic bodies
+ * without resolvable children). Used by the `W0212` check to suppress
+ * cascade false positives — codegen propagates `ui.click(TodoRow)` down to
+ * the `check` descendant of `TodoRow = row(check(...), …)`, so finding any
+ * descendant in the allowed kind set means the subscription is wired.
+ */
+function collectTileBuiltinKinds(
+  tileName: string,
+  sym: SymbolTable,
+  visited: Set<string> = new Set(),
+): Set<string> {
+  if (visited.has(tileName)) return new Set();
+  visited.add(tileName);
+  if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
+  const def = sym.tiles.get(tileName);
+  if (!def) return new Set();
+  return walkTileExprForBuiltinKinds(def.body, sym, visited);
+}
+
+function walkTileExprForBuiltinKinds(
+  expr: TileExpr,
+  sym: SymbolTable,
+  visited: Set<string>,
+): Set<string> {
+  if (expr.kind === "TileFor" || expr.kind === "TileWhen") {
+    return walkTileExprForBuiltinKinds(expr.body, sym, visited);
+  }
+  if (expr.kind === "TileIf") {
+    const a = walkTileExprForBuiltinKinds(expr.consequent, sym, visited);
+    const b = walkTileExprForBuiltinKinds(expr.alternate, sym, visited);
+    return new Set([...a, ...b]);
+  }
+  if (expr.kind === "TileMatch") {
+    const out = new Set<string>();
+    for (const arm of expr.arms) {
+      for (const k of walkTileExprForBuiltinKinds(arm.body, sym, visited)) out.add(k);
+    }
+    return out;
+  }
+  // TileCall: include the call itself, then recurse into positional TileExpr-
+  // typed args (children) and into `Ref` args that name another tile.
+  const out = new Set<string>();
+  if (BUILTIN_TILES.has(expr.name)) {
+    out.add(expr.name);
+  } else {
+    for (const k of collectTileBuiltinKinds(expr.name, sym, visited)) out.add(k);
+  }
+  for (const a of expr.args) {
+    if (a.name) continue; // skip named args — they're props, not children
+    const v = a.value as { kind?: string };
+    if (!v || typeof v !== "object" || !("kind" in v)) continue;
+    if (
+      v.kind === "TileCall" ||
+      v.kind === "TileFor" ||
+      v.kind === "TileWhen" ||
+      v.kind === "TileIf" ||
+      v.kind === "TileMatch"
+    ) {
+      for (const k of walkTileExprForBuiltinKinds(v as TileExpr, sym, visited)) out.add(k);
+    } else if (v.kind === "Ref") {
+      const refName = (v as Expr & { name: string }).name;
+      if (sym.tiles.has(refName) || BUILTIN_TILES.has(refName)) {
+        for (const k of collectTileBuiltinKinds(refName, sym, visited)) out.add(k);
+      }
+    }
+  }
+  return out;
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -704,6 +806,37 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       message: `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) but tile "${r.on.selector.tile}" is not declared`,
       pos: r.on.pos,
     });
+  }
+  // §1.6.1 — flag `ui.<ev>(Tile)` subscriptions whose target tile has no
+  // descendant that can fire `<ev>` in the DOM (e.g. `ui.focus(Card)` where
+  // `Card = box(...)`). Codegen drops the handler silently for that case,
+  // so the reducer is dead code. Surfacing it as a warning matches the
+  // issue's "warn first, promote to error later" plan. The descendant walk
+  // suppresses false positives for the cascade pattern where a focusable
+  // child IS in the body (e.g. `TodoRow = row(check(...))` + `ui.click`).
+  // Wildcard `_` selectors are skipped (no tile to resolve); undeclared
+  // selectors are already covered by E0211.
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
+    const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
+    if (allowed != null) {
+      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const hasMatch = [...descendants].some((k) => allowed.has(k));
+      // Empty set = unresolvable (cycle / undeclared / dynamic-only body) →
+      // conservative skip, no warning.
+      if (descendants.size > 0 && !hasMatch) {
+        errors.push({
+          code: "W0212",
+          kind: "ui-event-tile-mismatch",
+          severity: "warning",
+          message:
+            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) ` +
+            `but tile "${r.on.selector.tile}" has no descendant that fires "${r.on.ev}" ` +
+            `(DOM-allowed: ${[...allowed].join(", ")}; observed in body: ${[...descendants].sort().join(", ")}). ` +
+            `The handler is silently dropped.`,
+          pos: r.on.pos,
+        });
+      }
+    }
   }
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");

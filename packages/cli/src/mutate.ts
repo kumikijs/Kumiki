@@ -163,7 +163,10 @@ function validate(path: string): { ok: true } | { ok: false; message: string } {
   try {
     const src = readFileSync(path, "utf8");
     const program = parse(lex(src));
-    const errors = check(program);
+    // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
+    // warnings (W02xx) describe pre-existing dead code patterns and would
+    // wedge legitimate edits to unrelated layers.
+    const errors = check(program).filter((d) => d.severity !== "warning");
     if (errors.length > 0) {
       const summary = errors
         .slice(0, 3)
