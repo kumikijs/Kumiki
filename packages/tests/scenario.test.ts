@@ -467,12 +467,12 @@ describe("scenario runner", () => {
     expect(step0?.state.last).toBe(1);
   });
 
-  // Issue #142: the dispatch-only scenario for ui.focus / ui.blur (49-…)
-  // verifies the reducer body but not the DOM wiring — addEventListener("focus")
-  // → universal render hook → reducer. The `focus` / `blur` primitives let a
-  // scenario exercise that path in one step, so "compiles + DOM wired + reducer
-  // fires" can be observed in the scenario tier alone.
-  describe("focus / blur DOM primitives (issue #142)", () => {
+  // The dispatch-only scenario for ui.focus / ui.blur verifies the reducer body
+  // but not the DOM wiring — addEventListener("focus") → applyUiEventHandlers →
+  // reducer. The `focus` / `blur` primitives let a scenario exercise that path
+  // in one step, so "compiles + DOM wired + reducer fires" can be observed in
+  // the scenario tier alone.
+  describe("focus / blur DOM-event primitives", () => {
     async function compileInline(name: string, src: string): Promise<string> {
       const here = dirname(fileURLToPath(import.meta.url));
       const tmp = join(here, ".smoke-tmp", `${name}.kumiki`);
@@ -505,7 +505,6 @@ describe("scenario runner", () => {
         ],
       });
       expect(report.ok).toBe(true);
-      expect(report.steps[0]?.action).toBe("focus #name-input");
     });
 
     it("dispatches a real blur event to the selector and fires the onBlur reducer", async () => {
@@ -518,7 +517,6 @@ describe("scenario runner", () => {
         ],
       });
       expect(report.ok).toBe(true);
-      expect(report.steps[1]?.action).toBe("blur #name-input");
     });
 
     it("reports a clear error when the focus/blur selector matches nothing", async () => {

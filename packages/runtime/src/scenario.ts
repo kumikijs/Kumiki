@@ -234,19 +234,20 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("focus" in a) {
-    // Verify the DOM-wiring path (addEventListener("focus") → universal render
-    // hook → reducer). focus/blur do not bubble per DOM spec, but the runtime
+    // Verify the DOM-wiring path: addEventListener("focus") → applyUiEventHandlers
+    // (core.ts) → reducer. focus/blur do not bubble per DOM spec, but the runtime
     // attaches the listener directly on the tile element so a non-bubbling
-    // dispatch reaches it.
-    const el =
-      root.querySelector<HTMLElement>(a.focus) ?? document.querySelector<HTMLElement>(a.focus);
+    // dispatch reaches it. Scope the query to `root`: focus/blur targets render
+    // inside the mount tree (unlike confirm/toast overlays that justify `click`'s
+    // document fallback), and a document-wide lookup would silently hit a leaked
+    // element from a prior test.
+    const el = root.querySelector<HTMLElement>(a.focus);
     if (!el) throw new Error(`no element matching selector ${a.focus}`);
     el.dispatchEvent(new FocusEvent("focus"));
     return;
   }
   if ("blur" in a) {
-    const el =
-      root.querySelector<HTMLElement>(a.blur) ?? document.querySelector<HTMLElement>(a.blur);
+    const el = root.querySelector<HTMLElement>(a.blur);
     if (!el) throw new Error(`no element matching selector ${a.blur}`);
     el.dispatchEvent(new FocusEvent("blur"));
     return;
