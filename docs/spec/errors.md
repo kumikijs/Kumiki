@@ -29,7 +29,7 @@ A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the par
 | `E03xx` | Capabilities and purity |
 | `E04xx` | Motion |
 | `E06xx` | reducer write rules |
-| `E07xx` | Accessibility (a11y) |
+| `E07xx` | Accessibility (a11y), strict-icons |
 | `E08xx` | Runtime hazards (code that compiles but breaks at runtime) |
 
 ## E00xx — Structure
@@ -310,7 +310,9 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 **Note**: The granularity is **path shape**. `issues[id].status` and `issues[id].updatedAt` are considered different shapes and can coexist, but double assignment to `count` is forbidden.
 
-## E07xx — Accessibility (a11y)
+## E07xx — Accessibility (a11y) and strict-icons
+
+A band for checks that ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in. `check()` filters these codes out unless the matching flag is set.
 
 a11y checking is enabled via `check(program, { strictA11y: true })`.
 
@@ -327,6 +329,16 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 > `link must have inner text or aria-label`
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
+
+Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNames })`.
+
+### E0704 `unknown-icon`
+
+> `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
+
+A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
+
+**Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
 ## E08xx — Runtime Hazards
 

@@ -29,7 +29,7 @@ type KumikiError = {
 | `E03xx` | ケイパビリティと純粋性 |
 | `E04xx` | モーション |
 | `E06xx` | reducer の書き込み規則 |
-| `E07xx` | アクセシビリティ（a11y） |
+| `E07xx` | アクセシビリティ（a11y）／strict-icons |
 | `E08xx` | ランタイムハザード（コンパイルは通るが実行で壊れる書き方） |
 
 ## E00xx — 構造
@@ -260,7 +260,9 @@ keyframe ストップが閉じたアニメ可能集合（`opacity`, `translate-x
 
 **補足**：粒度は**パス形状**である。`issues[id].status` と `issues[id].updatedAt` は別形状とみなされ共存できるが、`count` への二重代入は禁止される。
 
-## E07xx — アクセシビリティ（a11y）
+## E07xx — アクセシビリティ（a11y）／strict-icons
+
+既定では警告として扱われ、明示的な `strict*` オプトインで初めてエラーに昇格する検査の帯。対応するフラグが立っていない限り `check()` がこれらのコードを出力から除去する。
 
 a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
@@ -277,6 +279,16 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 > `link must have inner text or aria-label`
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
+
+strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有効化される。
+
+### E0704 `unknown-icon`
+
+> `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
+
+リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
+
+**修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
 
 ## E08xx — ランタイムハザード
 

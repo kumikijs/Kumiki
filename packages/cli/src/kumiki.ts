@@ -36,7 +36,9 @@ function usage(): never {
   console.error("  kumiki list <input.kumiki> [layer]");
   console.error("  kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]");
   console.error("  kumiki refs <input.kumiki> <qname>");
-  console.error("  kumiki check <input.kumiki> [--strict-a11y|--types|--refs|--effects]");
+  console.error(
+    "  kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--types|--refs|--effects]",
+  );
   console.error("  kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]");
   console.error("  kumiki smoke <input.kumiki>");
   console.error("  kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
@@ -167,10 +169,19 @@ function refsCmd(inputArg: string, qname: string): void {
 
 type CheckScope = "all" | "types" | "refs" | "effects";
 
+/**
+ * Diagnostics gated by an explicit `--strict-*` opt-in upstream (a11y E0701-
+ * E0703, strict-icons E0704). They survive any `--types/--refs/--effects`
+ * scope filter so combining `--strict-icons --types` does not silently drop
+ * the strict findings the user asked for.
+ */
+const STRICT_GATE_CODES = new Set(["E0701", "E0702", "E0703", "E0704"]);
+
 function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
   if (scope === "all") return errors;
   return errors.filter((e) => {
     const code = e.code;
+    if (STRICT_GATE_CODES.has(code)) return true;
     if (scope === "types")
       return code.startsWith("E02") || code.startsWith("E04") || code.startsWith("E06");
     if (scope === "refs") return code.startsWith("E01") || code.startsWith("E05");
@@ -179,10 +190,36 @@ function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] 
   });
 }
 
-function checkCmd(inputArg: string, strictA11y: boolean, scope: CheckScope): void {
+async function checkCmd(
+  inputArg: string,
+  strictA11y: boolean,
+  strictIcons: boolean,
+  scope: CheckScope,
+): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const store = load(inputPath);
-  const all = check(store.program, { strictA11y, capabilities: capsFor(inputPath) });
+  // When --strict-icons is on, resolve @kumikijs/icons up front so its closed
+  // name set extends the per-source `theme.icons` domain. When the package
+  // isn't installed, fall through with an empty list — `theme.icons` alone
+  // then defines the domain, matching standalone apps; the call is logged so
+  // the user can tell the degraded mode apart from a real typo.
+  let iconNames: string[] = [];
+  if (strictIcons) {
+    const registry = await resolveBuiltinIcons(inputPath);
+    if (registry) {
+      iconNames = Object.keys(registry);
+    } else {
+      console.error(
+        "note: --strict-icons: @kumikijs/icons not resolved; checking against theme.icons only",
+      );
+    }
+  }
+  const all = check(store.program, {
+    strictA11y,
+    strictIcons,
+    iconNames,
+    capabilities: capsFor(inputPath),
+  });
   const errors = filterByScope(all, scope);
   if (errors.length === 0) {
     console.log("ok");
@@ -243,7 +280,8 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       if (!input) usage();
       const strictA11y = argv.includes("--strict-a11y");
-      checkCmd(input, strictA11y, checkScopeFrom(argv));
+      const strictIcons = argv.includes("--strict-icons");
+      await checkCmd(input, strictA11y, strictIcons, checkScopeFrom(argv));
       return;
     }
     case "smoke": {

@@ -357,6 +357,10 @@ Resolution order at render time: `theme.icons[name]` → compile-baked built-in 
 
 Standalone apps (no `@kumikijs/icons` installed) can still use `icon(name=…)` — just register every name they need through `theme.icons`.
 
+### 4.8.4 Strict mode
+
+The fail-soft `[name]` placeholder is the right default for AI-first authoring, but strict pipelines can opt in to a fail-fast check. `kumiki check --strict-icons` (and the Vite plugin's `{ strictIcons: true }`) turn every literal `icon(name="<x>")` whose name is in neither `@kumikijs/icons` nor any `theme.icons` block in the source into an `E0704 unknown-icon` diagnostic at check time. Dynamic `icon(name=<expr>)` calls remain unchecked — the name is unresolvable at check time and falls through to the runtime placeholder.
+
 ---
 
 ## 4.9 Animation

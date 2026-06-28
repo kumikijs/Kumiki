@@ -30,18 +30,45 @@ export type KumikiError = {
 const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
 
 /**
- * Returns errors with a11y warnings filtered out (unless strict).
- * `capabilities` lists project-registered capabilities (from a
- * `kumiki.caps.json` manifest) that are accepted in `app.caps` in addition to
- * the standard set.
+ * Diagnostic codes filtered out of `check()`'s output unless `strictIcons` is
+ * on. The runtime placeholder (spec §4.8.3) stays fail-soft for smoke-driven
+ * authoring; opt in via `kumiki check --strict-icons` or
+ * `compile({ strictIcons: true })` to surface them.
+ */
+const STRICT_ICONS_CODES = new Set(["E0704"]);
+
+/**
+ * Returns errors with a11y / strict-icons warnings filtered out (unless their
+ * respective `strict*` opt-ins are on). `capabilities` lists project-registered
+ * capabilities (from a `kumiki.caps.json` manifest) that are accepted in
+ * `app.caps` in addition to the standard set. `iconNames` is the closed name
+ * set from `@kumikijs/icons` (Vite plugin / CLI passes `Object.keys(ALL_ICONS)`);
+ * with `strictIcons: true`, any literal `icon(name="<x>")` whose name is in
+ * neither `iconNames` nor a `theme.icons` block becomes an `E0704`.
  */
 export function check(
   program: Program,
-  opts?: { strictA11y?: boolean; capabilities?: string[] },
+  opts?: {
+    strictA11y?: boolean;
+    strictIcons?: boolean;
+    iconNames?: Iterable<string>;
+    capabilities?: string[];
+  },
 ): KumikiError[] {
-  const errors = checkAll(program, new Set(opts?.capabilities ?? []));
-  if (opts?.strictA11y) return errors;
-  return errors.filter((e) => !A11Y_CODES.has(e.code));
+  const iconDomain = new Set<string>(opts?.iconNames ?? []);
+  for (const def of program.defs) {
+    if (def.kind !== "ThemeDef") continue;
+    const icons = def.body.icons;
+    if (icons && typeof icons === "object" && !Array.isArray(icons)) {
+      for (const key of Object.keys(icons)) iconDomain.add(key);
+    }
+  }
+  const errors = checkAll(program, new Set(opts?.capabilities ?? []), iconDomain);
+  return errors.filter((e) => {
+    if (A11Y_CODES.has(e.code) && !opts?.strictA11y) return false;
+    if (STRICT_ICONS_CODES.has(e.code) && !opts?.strictIcons) return false;
+    return true;
+  });
 }
 
 type SymbolTable = {
@@ -55,10 +82,21 @@ type SymbolTable = {
   timerNames: Set<string>;
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
   motions: Set<string>;
+  /**
+   * Closed icon-name domain for `--strict-icons`: union of the
+   * `@kumikijs/icons` registry passed by the toolchain and every key seen
+   * in any `theme.icons` block in the program. Always populated; `E0704`
+   * emission is gated by the strictIcons opt-in in `check()`.
+   */
+  iconDomain: Set<string>;
   app?: AppDef;
 };
 
-function checkAll(program: Program, registeredCaps: Set<string>): KumikiError[] {
+function checkAll(
+  program: Program,
+  registeredCaps: Set<string>,
+  iconDomain: Set<string>,
+): KumikiError[] {
   const errors: KumikiError[] = [];
   const sym: SymbolTable = {
     types: new Map(),
@@ -69,6 +107,7 @@ function checkAll(program: Program, registeredCaps: Set<string>): KumikiError[] 
     effects: new Map(),
     timerNames: new Set(),
     motions: new Set(),
+    iconDomain,
   };
 
   for (const def of program.defs) {
@@ -375,6 +414,34 @@ type Ctx = {
   localTypes?: Map<string, TypeExpr>;
 };
 
+/**
+ * Validate `icon(name="<literal>")` against the strict-icons domain. Only
+ * literal string names are checked — dynamic forms (`icon(name=slot)`,
+ * computed expressions) are unresolvable at check time, matching the codegen
+ * gate in `packages/compiler/src/codegen.ts` (icon case). E0704 is gated by
+ * the `strictIcons` opt-in in `check()` so default callers never see it.
+ */
+function checkIconName(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (t.name !== "icon") return;
+  const nameArg = t.args.find((a) => a.name === "name");
+  if (!nameArg) return;
+  const v = nameArg.value as Expr;
+  if (v.kind !== "Str") return;
+  const literal = v.value;
+  if (!literal) return;
+  if (sym.iconDomain.has(literal)) return;
+  errors.push({
+    code: "E0704",
+    kind: "unknown-icon",
+    message: `Unknown icon name "${literal}" — not in @kumikijs/icons or any theme.icons block`,
+    pos: v.pos,
+  });
+}
+
 function checkA11y(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
@@ -477,6 +544,7 @@ function checkTileCall(
     });
   }
   checkA11y(t, errors);
+  checkIconName(t, sym, errors);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");

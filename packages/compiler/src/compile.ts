@@ -52,6 +52,21 @@ export type ExtendedCodegenOptions = CodegenOptions & {
    * compile and never reach the caller — there is no "warning" tier here.
    */
   strictA11y?: boolean;
+  /**
+   * Promote literal `icon(name="<x>")` calls whose name is in neither
+   * `iconNames` nor any `theme.icons` block to `E0704 unknown-icon`.
+   * Mirrors `kumiki check --strict-icons`; default-off so the runtime
+   * placeholder (spec §4.8.3) stays fail-soft. Dynamic `icon(name=expr)`
+   * calls are never checked.
+   */
+  strictIcons?: boolean;
+  /**
+   * The closed icon-name set from `@kumikijs/icons` (typically
+   * `Object.keys(ALL_ICONS)`). When omitted, only names declared in the
+   * source's `theme.icons` blocks satisfy the strict-icons check, matching
+   * standalone apps that do not depend on the registry package.
+   */
+  iconNames?: Iterable<string>;
 };
 
 /** Inline a runtime bundle into generated module code, stripping the bridging import/export lines. */
@@ -74,6 +89,8 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
   const errors = check(program, {
     capabilities: opts.capabilities ?? [],
     ...(opts.strictA11y ? { strictA11y: true } : {}),
+    ...(opts.strictIcons ? { strictIcons: true } : {}),
+    ...(opts.iconNames ? { iconNames: opts.iconNames } : {}),
   });
   if (errors.length > 0) return { kind: "fail", errors };
 

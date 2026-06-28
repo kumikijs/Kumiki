@@ -108,7 +108,16 @@ export async function resolveBuiltinIcons(
   try {
     const require = createRequire(join(baseDir, "_"));
     resolved = require.resolve("@kumikijs/icons");
-  } catch {
+  } catch (e) {
+    // MODULE_NOT_FOUND is the only signal we treat as "genuinely not installed"
+    // — that path is the documented standalone mode (style.md §4.8.3). Any
+    // other resolve failure (broken install, permission, mid-install) gets
+    // reported so a strict-icons run can't masquerade a broken package as a
+    // theme.icons-only domain.
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== "MODULE_NOT_FOUND") {
+      console.error(`@kumikijs/icons resolution failed: ${(e as Error).message}`);
+    }
     ICON_REGISTRY_CACHE.set(baseDir, null);
     return null;
   }
@@ -118,6 +127,7 @@ export async function resolveBuiltinIcons(
     };
     const all = mod.ALL_ICONS;
     if (!all || typeof all !== "object") {
+      console.error(`@kumikijs/icons at ${resolved}: missing or invalid ALL_ICONS export`);
       ICON_REGISTRY_CACHE.set(baseDir, null);
       return null;
     }
@@ -127,7 +137,11 @@ export async function resolveBuiltinIcons(
     }
     ICON_REGISTRY_CACHE.set(baseDir, filtered);
     return filtered;
-  } catch {
+  } catch (e) {
+    // The package resolved but importing it threw (SyntaxError, missing
+    // transitive dep, ESM/CJS mismatch). Surface to stderr; caching null
+    // prevents repeat retries within the same process.
+    console.error(`@kumikijs/icons import failed: ${(e as Error).message}`);
     ICON_REGISTRY_CACHE.set(baseDir, null);
     return null;
   }
