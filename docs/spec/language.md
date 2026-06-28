@@ -304,7 +304,6 @@ A selector is **`TileName`** or **`TileName#id`** only (CSS attribute selectors 
 ```kumiki
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer submit  on=ui.submit(LoginForm#new) do= ...
 reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' is a built-in element, not a tile name
 ```
 
@@ -317,6 +316,18 @@ reducer doLogin
     on=ui.submit(LoginForm)         ; reference by tile name
     do= emit login({...})
 ```
+
+**`TileName#id`** narrows a subscription to dispatched elements whose `{id}` prop equals `id`. A bare `TileName` reducer still fires for every instance; an `#id`-scoped reducer fires **only** when the runtime sees a matching id. Use it to make intent explicit when several tiles wrap the same built-in element, so the wrong one cannot quietly trigger the wrong reducer:
+
+```kumiki
+tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
+tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
+
+reducer add  on=ui.submit(NewForm#new)   do= ...   ; only the "new" form
+reducer save on=ui.submit(EditForm#edit) do= ...   ; only the "edit" form
+```
+
+The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from §1.6.4 Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
 ### 1.6.3 lvalue Semantics
 

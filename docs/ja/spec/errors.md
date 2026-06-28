@@ -185,6 +185,14 @@ tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 ```
 
+### E0211 `undef-tile-in-selector`
+
+reducer の `ui.*` セレクタが宣言されていない tile を指している。この検査がないと、`ui.click(SaveBtn)` を `ui.click(SaveBtnn)` と打ち間違えてもコンパイルが通り、どこにも bind されない reducer（= 意図的に未使用の reducer）と区別がつかない。
+
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
+
+**修正**: `tile <Tile> = …` を宣言するか、セレクタの tile 名を既存のものに直す。`emit confirm({onYes: r, …})` 等のコールバックとして間接的に dispatch される reducer 用のワイルドカード `_`（[Lifecycle §7](./lifecycle.md) 参照）はこの検査の対象外。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`
