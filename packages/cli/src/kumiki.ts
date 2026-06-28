@@ -36,7 +36,9 @@ function usage(): never {
   console.error("  kumiki list <input.kumiki> [layer]");
   console.error("  kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]");
   console.error("  kumiki refs <input.kumiki> <qname>");
-  console.error("  kumiki check <input.kumiki> [--strict-a11y|--types|--refs|--effects]");
+  console.error(
+    "  kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--types|--refs|--effects]",
+  );
   console.error("  kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]");
   console.error("  kumiki smoke <input.kumiki>");
   console.error("  kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
@@ -179,10 +181,29 @@ function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] 
   });
 }
 
-function checkCmd(inputArg: string, strictA11y: boolean, scope: CheckScope): void {
+async function checkCmd(
+  inputArg: string,
+  strictA11y: boolean,
+  strictIcons: boolean,
+  scope: CheckScope,
+): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const store = load(inputPath);
-  const all = check(store.program, { strictA11y, capabilities: capsFor(inputPath) });
+  // When --strict-icons is on, resolve @kumikijs/icons up front so its closed
+  // name set extends the per-source `theme.icons` domain (#127). When the
+  // package isn't installed, fall through with an empty list — `theme.icons`
+  // alone then defines the domain, matching standalone apps.
+  let iconNames: string[] = [];
+  if (strictIcons) {
+    const registry = await resolveBuiltinIcons(inputPath);
+    if (registry) iconNames = Object.keys(registry);
+  }
+  const all = check(store.program, {
+    strictA11y,
+    strictIcons,
+    iconNames,
+    capabilities: capsFor(inputPath),
+  });
   const errors = filterByScope(all, scope);
   if (errors.length === 0) {
     console.log("ok");
@@ -243,7 +264,8 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       if (!input) usage();
       const strictA11y = argv.includes("--strict-a11y");
-      checkCmd(input, strictA11y, checkScopeFrom(argv));
+      const strictIcons = argv.includes("--strict-icons");
+      await checkCmd(input, strictA11y, strictIcons, checkScopeFrom(argv));
       return;
     }
     case "smoke": {

@@ -134,6 +134,61 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
   });
 });
 
+// `kumiki check --strict-icons` (#127) opts into the strict-mode E0704
+// diagnostic: literal `icon(name="<x>")` whose name is in neither
+// @kumikijs/icons nor any `theme.icons` block in the source.
+describe("kumiki check --strict-icons", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-strict-icons-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+        stdio: "pipe",
+        shell: true,
+        encoding: "utf8",
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
+  // `cheque` is a deliberate typo for `check`; not in @kumikijs/icons.
+  const UNKNOWN = `slot _ : Text = ""
+tile Bad = icon(name="cheque")
+tile App = column(Bad)
+app StrictIcons
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("default check (no flag) lets the unknown literal name pass", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const { out, code } = runCli(["check", file]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  it("--strict-icons surfaces E0704 and exits 1", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const { out, code } = runCli(["check", file, "--strict-icons"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0704");
+    expect(out).toContain("unknown-icon");
+    expect(out).toContain("cheque");
+  });
+});
+
 // Regression (PR #15 review): `smoke`/`run` go through their own loadApp in
 // src/smoke.ts, which must also thread the kumiki.caps.json capabilities.
 // Otherwise a file using a manifest capability passes `check`/`build` but fails

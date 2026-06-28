@@ -18,8 +18,8 @@ const ctx = {
   },
 };
 
-function transformFn() {
-  const plugin = kumiki();
+function transformFn(opts: Parameters<typeof kumiki>[0] = {}) {
+  const plugin = kumiki(opts);
   const t = plugin.transform;
   const fn = typeof t === "function" ? t : t?.handler;
   if (!fn) throw new Error("plugin has no transform hook");
@@ -51,5 +51,38 @@ describe("vite-plugin-kumiki icon registry", () => {
     // Unreferenced names are not baked.
     expect(out.code).not.toContain("x-circle");
     expect(out.code).not.toContain("paperclip");
+  });
+});
+
+// `{ strictIcons: true }` (#127) opts the plugin into the E0704 diagnostic so
+// unknown literal icon names surface in Vite's error overlay at dev time.
+describe("vite-plugin-kumiki strict-icons", () => {
+  const UNKNOWN = `
+slot _ : Text = ""
+tile Bad = icon(name="cheque")
+tile Root = column(Bad)
+app StrictIcons
+    caps   = []
+    routes = {"/" -> Root, "/404" -> Root}
+    init   = []
+`;
+
+  it("passes silently without strictIcons (default behavior)", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-icons-off-"));
+    const file = join(dir, "app.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const out = (await transformFn().call(ctx as never, UNKNOWN, file)) as { code: string };
+    // The unknown literal makes it through codegen — the runtime renders the
+    // `[cheque]` placeholder rather than blocking compile.
+    expect(out.code).toContain("cheque");
+  });
+
+  it("raises an E0704 error when strictIcons is on", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-icons-on-"));
+    const file = join(dir, "app.kumiki");
+    writeFileSync(file, UNKNOWN);
+    await expect(
+      transformFn({ strictIcons: true }).call(ctx as never, UNKNOWN, file),
+    ).rejects.toThrow(/E0704/);
   });
 });

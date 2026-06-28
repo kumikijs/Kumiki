@@ -36,6 +36,14 @@ export type KumikiPluginOptions = {
    * overlay during development. Default: false.
    */
   strictA11y?: boolean;
+  /**
+   * Promote unknown literal `icon(name="<x>")` (#127) to compile errors as
+   * `E0704 unknown-icon`. Mirrors `kumiki check --strict-icons`. The domain
+   * is `@kumikijs/icons` ∪ every `theme.icons` block in the source; dynamic
+   * `icon(name=expr)` calls stay unchecked. Default: false (the runtime
+   * `[name]` placeholder is the fail-soft default, spec §4.8.3).
+   */
+  strictIcons?: boolean;
 };
 
 /** Write `path` only if its current contents differ — avoids spurious watch churn. */
@@ -61,6 +69,17 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       const file = cleanId(id);
       if (!KUMIKI_RE.test(file)) return null;
 
+      // When --strict-icons is on, resolve @kumikijs/icons up front so the
+      // closed name set reaches `check()` on the first pass (#127). The
+      // resolver is cached per project root, so this is a one-time cost.
+      // When the registry is absent or strictIcons is off, `iconNames` stays
+      // empty — `theme.icons` then defines the domain.
+      let iconNames: string[] = [];
+      if (options.strictIcons) {
+        const registry = await resolveBuiltinIcons(file);
+        if (registry) iconNames = Object.keys(registry);
+      }
+
       const baseOpts = {
         runtimeSpecifier: "@kumikijs/runtime",
         exportApp: true,
@@ -68,6 +87,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         ...(bundle ? { readRuntimeBundle: nodeRuntimeBundleReader } : {}),
         capabilities: resolveCapabilities(file),
         ...(options.strictA11y ? { strictA11y: true as const } : {}),
+        ...(options.strictIcons ? { strictIcons: true as const, iconNames } : {}),
       } as const;
 
       const first = compile(code, baseOpts);
