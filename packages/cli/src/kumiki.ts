@@ -169,10 +169,19 @@ function refsCmd(inputArg: string, qname: string): void {
 
 type CheckScope = "all" | "types" | "refs" | "effects";
 
+/**
+ * Diagnostics gated by an explicit `--strict-*` opt-in upstream (a11y E0701-
+ * E0703, strict-icons E0704). They survive any `--types/--refs/--effects`
+ * scope filter so combining `--strict-icons --types` does not silently drop
+ * the strict findings the user asked for.
+ */
+const STRICT_GATE_CODES = new Set(["E0701", "E0702", "E0703", "E0704"]);
+
 function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
   if (scope === "all") return errors;
   return errors.filter((e) => {
     const code = e.code;
+    if (STRICT_GATE_CODES.has(code)) return true;
     if (scope === "types")
       return code.startsWith("E02") || code.startsWith("E04") || code.startsWith("E06");
     if (scope === "refs") return code.startsWith("E01") || code.startsWith("E05");
@@ -190,13 +199,20 @@ async function checkCmd(
   const inputPath = resolve(process.cwd(), inputArg);
   const store = load(inputPath);
   // When --strict-icons is on, resolve @kumikijs/icons up front so its closed
-  // name set extends the per-source `theme.icons` domain (#127). When the
-  // package isn't installed, fall through with an empty list — `theme.icons`
-  // alone then defines the domain, matching standalone apps.
+  // name set extends the per-source `theme.icons` domain. When the package
+  // isn't installed, fall through with an empty list — `theme.icons` alone
+  // then defines the domain, matching standalone apps; the call is logged so
+  // the user can tell the degraded mode apart from a real typo.
   let iconNames: string[] = [];
   if (strictIcons) {
     const registry = await resolveBuiltinIcons(inputPath);
-    if (registry) iconNames = Object.keys(registry);
+    if (registry) {
+      iconNames = Object.keys(registry);
+    } else {
+      console.error(
+        "note: --strict-icons: @kumikijs/icons not resolved; checking against theme.icons only",
+      );
+    }
   }
   const all = check(store.program, {
     strictA11y,

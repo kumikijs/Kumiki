@@ -30,9 +30,9 @@ export type KumikiError = {
 const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
 
 /**
- * Diagnostic codes only emitted when `strictIcons` is on (#127). Filtered out
- * by default so the runtime placeholder (spec §4.8.3) stays fail-soft for
- * smoke-driven authoring; opt in via `kumiki check --strict-icons` or
+ * Diagnostic codes filtered out of `check()`'s output unless `strictIcons` is
+ * on. The runtime placeholder (spec §4.8.3) stays fail-soft for smoke-driven
+ * authoring; opt in via `kumiki check --strict-icons` or
  * `compile({ strictIcons: true })` to surface them.
  */
 const STRICT_ICONS_CODES = new Set(["E0704"]);
@@ -83,7 +83,7 @@ type SymbolTable = {
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
   motions: Set<string>;
   /**
-   * Closed icon-name domain for `--strict-icons` (#127): union of the
+   * Closed icon-name domain for `--strict-icons`: union of the
    * `@kumikijs/icons` registry passed by the toolchain and every key seen
    * in any `theme.icons` block in the program. Always populated; `E0704`
    * emission is gated by the strictIcons opt-in in `check()`.
@@ -415,8 +415,8 @@ type Ctx = {
 };
 
 /**
- * Validate `icon(name="<literal>")` against the strict-icons domain (#127).
- * Only literal string names are checked — dynamic forms (`icon(name=slot)`,
+ * Validate `icon(name="<literal>")` against the strict-icons domain. Only
+ * literal string names are checked — dynamic forms (`icon(name=slot)`,
  * computed expressions) are unresolvable at check time, matching the codegen
  * gate in `packages/compiler/src/codegen.ts` (icon case). E0704 is gated by
  * the `strictIcons` opt-in in `check()` so default callers never see it.
@@ -431,7 +431,7 @@ function checkIconName(
   if (!nameArg) return;
   const v = nameArg.value as Expr;
   if (v.kind !== "Str") return;
-  const literal = (v as Expr & { kind: "Str"; value: string }).value;
+  const literal = v.value;
   if (!literal) return;
   if (sym.iconDomain.has(literal)) return;
   errors.push({

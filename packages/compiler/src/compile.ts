@@ -54,7 +54,7 @@ export type ExtendedCodegenOptions = CodegenOptions & {
   strictA11y?: boolean;
   /**
    * Promote literal `icon(name="<x>")` calls whose name is in neither
-   * `iconNames` nor any `theme.icons` block to `E0704 unknown-icon` (#127).
+   * `iconNames` nor any `theme.icons` block to `E0704 unknown-icon`.
    * Mirrors `kumiki check --strict-icons`; default-off so the runtime
    * placeholder (spec §4.8.3) stays fail-soft. Dynamic `icon(name=expr)`
    * calls are never checked.

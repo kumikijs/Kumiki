@@ -80,7 +80,7 @@ describe("icon registry codegen", () => {
   });
 });
 
-// `--strict-icons` / `{ strictIcons: true }` (#127): flag literal
+// `--strict-icons` / `{ strictIcons: true }`: flag literal
 // `icon(name="<x>")` whose name is in neither the supplied registry
 // nor any `theme.icons` block in the source. Default-off so the
 // fail-soft `[name]` placeholder (spec §4.8.3) still ships.
@@ -109,6 +109,10 @@ describe("icon registry strict mode", () => {
     expect(result.errors[0].code).toBe("E0704");
     expect(result.errors[0].kind).toBe("unknown-icon");
     expect(result.errors[0].message).toContain("cheque");
+    // The position must point at the string literal so IDE / overlay can
+    // navigate directly to it. Source line 3, column where `"cheque"` opens.
+    expect(result.errors[0].pos.line).toBe(3);
+    expect(result.errors[0].pos.col).toBeGreaterThan(0);
   });
 
   it("strictIcons=true accepts a name in the supplied registry", () => {
@@ -119,6 +123,25 @@ describe("icon registry strict mode", () => {
       app A caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
     `;
     const result = compile(ok, {
+      runtimeSpecifier: "./runtime.js",
+      strictIcons: true,
+      iconNames: ["check"],
+    });
+    expect(result.kind).toBe("ok");
+  });
+
+  it("strictIcons=true accepts names from the iconNames ∪ theme.icons union", () => {
+    // `check` only in iconNames, `logo` only in theme.icons — both must
+    // satisfy the domain in a single check pass.
+    const union = `
+      slot _ : Text = ""
+      tile A = icon(name="check")
+      tile B = icon(name="logo")
+      tile Root = column(A, B)
+      theme Light = { icons: { logo: "M3 3h18v18H3z" } }
+      app A2 caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
+    `;
+    const result = compile(union, {
       runtimeSpecifier: "./runtime.js",
       strictIcons: true,
       iconNames: ["check"],

@@ -54,7 +54,7 @@ describe("vite-plugin-kumiki icon registry", () => {
   });
 });
 
-// `{ strictIcons: true }` (#127) opts the plugin into the E0704 diagnostic so
+// `{ strictIcons: true }` opts the plugin into the E0704 diagnostic so
 // unknown literal icon names surface in Vite's error overlay at dev time.
 describe("vite-plugin-kumiki strict-icons", () => {
   const UNKNOWN = `
@@ -84,5 +84,41 @@ app StrictIcons
     await expect(
       transformFn({ strictIcons: true }).call(ctx as never, UNKNOWN, file),
     ).rejects.toThrow(/E0704/);
+  });
+
+  it("accepts a built-in name from @kumikijs/icons when strictIcons is on", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-icons-builtin-"));
+    const file = join(dir, "app.kumiki");
+    const src = `
+slot _ : Text = ""
+tile Good = icon(name="check")
+tile Root = column(Good)
+app StrictOK caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
+`;
+    writeFileSync(file, src);
+    const out = (await transformFn({ strictIcons: true }).call(ctx as never, src, file)) as {
+      code: string;
+    };
+    // First pass passed check + codegen, second pass baked the registry entry.
+    expect(out.code).toMatch(/"check":\s*"[mM][^"]+"/);
+  });
+
+  it("accepts a custom name declared in theme.icons when strictIcons is on", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-icons-themed-"));
+    const file = join(dir, "app.kumiki");
+    const src = `
+slot _ : Text = ""
+tile Good = icon(name="logo")
+tile Root = column(Good)
+theme Light = { icons: { logo: "M3 3h18v18H3z" } }
+app StrictThemed caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
+`;
+    writeFileSync(file, src);
+    const out = (await transformFn({ strictIcons: true }).call(ctx as never, src, file)) as {
+      code: string;
+    };
+    // `logo` isn't in @kumikijs/icons but is in theme.icons — accepted, and
+    // the runtime renders via the theme override.
+    expect(out.code).toContain("logo");
   });
 });

@@ -134,9 +134,9 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
   });
 });
 
-// `kumiki check --strict-icons` (#127) opts into the strict-mode E0704
-// diagnostic: literal `icon(name="<x>")` whose name is in neither
-// @kumikijs/icons nor any `theme.icons` block in the source.
+// `kumiki check --strict-icons` opts into the strict-mode E0704 diagnostic:
+// literal `icon(name="<x>")` whose name is in neither @kumikijs/icons nor any
+// `theme.icons` block in the source.
 describe("kumiki check --strict-icons", () => {
   let dir: string;
   beforeEach(() => {
@@ -186,6 +186,35 @@ app StrictIcons
     expect(out).toContain("E0704");
     expect(out).toContain("unknown-icon");
     expect(out).toContain("cheque");
+  });
+
+  it("--strict-icons accepts a custom name declared in theme.icons", { timeout: 30000 }, () => {
+    const file = join(dir, "themed.kumiki");
+    writeFileSync(
+      file,
+      `slot _ : Text = ""
+tile Good = icon(name="logo")
+tile App = column(Good)
+theme Light = { icons: { logo: "M3 3h18v18H3z" } }
+app StrictThemed
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const { out, code } = runCli(["check", file, "--strict-icons"]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  // Critical fix: --strict-icons combined with a scope filter must NOT drop
+  // E0704 silently — the strict opt-in is an additive axis, not a sub-band.
+  it("--strict-icons + --types still surfaces E0704", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const { out, code } = runCli(["check", file, "--strict-icons", "--types"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0704");
   });
 });
 
