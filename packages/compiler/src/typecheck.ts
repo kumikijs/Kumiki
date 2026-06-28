@@ -690,6 +690,21 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   if (r.on.kind === "LifecycleEvent") {
     if (r.on.name.startsWith("route.")) ctx.localBinds.add("$route");
   }
+  // §1.6.2 — the selector's tile name must refer to a declared `tile`. A typo
+  // here used to bind nothing silently, which made `ui.click(Foo)` indistin-
+  // guishable from `ui.click(Fooo)`. Fires before the reducer body is checked
+  // so the diagnostic carries the actual selector position. The `_` wildcard
+  // selector is a parser-accepted sentinel for reducers dispatched indirectly
+  // (e.g. as `emit confirm({onYes: r})` callbacks), so it has no tile to
+  // resolve — see docs/spec/lifecycle.md.
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && !sym.tiles.has(r.on.selector.tile)) {
+    errors.push({
+      code: "E0211",
+      kind: "undef-tile-in-selector",
+      message: `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) but tile "${r.on.selector.tile}" is not declared`,
+      pos: r.on.pos,
+    });
+  }
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");
   ctx.localBinds.add("$route");

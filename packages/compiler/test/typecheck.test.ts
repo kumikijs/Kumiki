@@ -928,4 +928,37 @@ describe("typecheck", () => {
       expect(Array.isArray(errors)).toBe(true);
     });
   });
+
+  // Issue #131: previously `on=ui.click(NonExistent)` passed silently and
+  // bound to nothing — a typo in a selector was indistinguishable from a
+  // genuinely-unused reducer. The checker now requires the selector's tile
+  // name to refer to a declared tile.
+  describe("undefined tile in ui.* selector (E0211)", () => {
+    it("reports a reducer that targets an undeclared tile", () => {
+      const src = `
+        slot x : Int = 0
+        reducer r on=ui.click(NonExistent) do= x := x + 1
+        tile B = button(text="b")
+        tile App = column(B)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0211" && e.message.includes("NonExistent"))).toBe(
+        true,
+      );
+    });
+
+    it("accepts a reducer that targets a declared tile (with or without #id)", () => {
+      const src = `
+        slot x : Int = 0
+        reducer rA on=ui.click(B)      do= x := x + 1
+        reducer rB on=ui.click(B#main) do= x := x + 1
+        tile B = button(text="b") {id: "main"}
+        tile App = column(B)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "E0211")).toBe(false);
+    });
+  });
 });

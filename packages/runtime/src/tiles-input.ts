@@ -36,12 +36,27 @@ function bindDataset(el: HTMLElement, bind: string, bindPath: string[] | undefin
   el.dataset.kumikiBind = fullPath;
 }
 
+// §1.6.2 — `{id: "..."}` on any tile maps to the element's native HTML `id`.
+// Codegen routes the arg-style `input(id="..")` to `node.id` and the block-style
+// `tile T = X(...) {id: "..."}` to `node.props.id`; we accept either, so the
+// `el.id` payload that drives selector matching stays consistent across both
+// authoring forms. Returns undefined when no id is set, letting callers skip.
+// TileProps is an open record per tile kind, so the cast just lets us read
+// `props.id` without restating each tile's prop type.
+function tileId(node: { id?: unknown; props?: unknown }): string | undefined {
+  const fromProps = (node.props as { id?: unknown } | undefined)?.id;
+  const raw = node.id ?? fromProps;
+  return raw == null ? undefined : String(raw);
+}
+
 export const inputTiles: TileRenderers = {
   button(node) {
     const b = document.createElement("button");
     b.dataset.kumikiTile = "button";
     b.textContent = node.text;
     if (node.disabled) b.disabled = true;
+    const id = tileId(node);
+    if (id) b.id = id;
     if (node.props?.onClick) {
       b.addEventListener("click", (e) => {
         e.preventDefault();
@@ -57,7 +72,8 @@ export const inputTiles: TileRenderers = {
     if (node.placeholder) inp.placeholder = node.placeholder;
     if (node.required) inp.required = true;
     if (node.autoFocus) inp.autofocus = true;
-    if (node.id) inp.id = node.id;
+    const id = tileId(node);
+    if (id) inp.id = id;
     if (node.accept) inp.accept = String(node.accept);
     if (node.multiple) inp.multiple = true;
     const isFile = inp.type === "file";
@@ -110,7 +126,8 @@ export const inputTiles: TileRenderers = {
     ta.dataset.kumikiTile = "textarea";
     if (node.rows) ta.rows = node.rows;
     if (node.placeholder) ta.placeholder = node.placeholder;
-    if (node.id) ta.id = node.id;
+    const id = tileId(node);
+    if (id) ta.id = id;
     if (node.bind) bindDataset(ta, node.bind, node.bindPath);
     ta.value = node.value ?? "";
     if (node.bind) {
@@ -141,6 +158,8 @@ export const inputTiles: TileRenderers = {
   check(node) {
     const wrap = document.createElement("label");
     wrap.dataset.kumikiTile = "check";
+    const id = tileId(node);
+    if (id) wrap.id = id;
     const inp = document.createElement("input");
     inp.type = "checkbox";
     inp.checked = node.checked;
@@ -155,6 +174,8 @@ export const inputTiles: TileRenderers = {
   radio(node) {
     const wrap = document.createElement("label");
     wrap.dataset.kumikiTile = "radio";
+    const id = tileId(node);
+    if (id) wrap.id = id;
     const inp = document.createElement("input");
     inp.type = "radio";
     if (node.group) inp.name = String(node.group);
@@ -176,6 +197,8 @@ export const inputTiles: TileRenderers = {
   select(node) {
     const sel = document.createElement("select");
     sel.dataset.kumikiTile = "select";
+    const id = tileId(node);
+    if (id) sel.id = id;
     const options = (node.options ?? []) as Array<{ label: unknown; value: unknown }>;
     const currentValue = node.value;
     // Serialize a value to a stable key. Must recurse into variant payloads
@@ -227,6 +250,8 @@ export const inputTiles: TileRenderers = {
     const inp = document.createElement("input");
     inp.dataset.kumikiTile = "slider";
     inp.type = "range";
+    const id = tileId(node);
+    if (id) inp.id = id;
     if (typeof node.min === "number") inp.min = String(node.min);
     if (typeof node.max === "number") inp.max = String(node.max);
     if (typeof node.step === "number") inp.step = String(node.step);
@@ -252,6 +277,8 @@ export const inputTiles: TileRenderers = {
     const wrap = document.createElement("label");
     wrap.dataset.kumikiTile = "switch";
     wrap.setAttribute("role", "switch");
+    const id = tileId(node);
+    if (id) wrap.id = id;
     const inp = document.createElement("input");
     inp.type = "checkbox";
     inp.checked = node.checked;
@@ -266,6 +293,8 @@ export const inputTiles: TileRenderers = {
   form(node, ctx: TileCtx) {
     const form = document.createElement("form");
     form.dataset.kumikiTile = "form";
+    const id = tileId(node);
+    if (id) form.id = id;
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       if (node.props?.onSubmit) node.props.onSubmit(node.props.el ?? {});
