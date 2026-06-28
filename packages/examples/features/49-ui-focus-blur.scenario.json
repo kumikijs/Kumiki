@@ -1,18 +1,18 @@
 {
   "steps": [
     {
-      "label": "ui.focus: dispatch onFocus records the focused field name",
-      "do": { "dispatch": "onFocus" },
+      "label": "ui.focus: DOM focus event on NameInput fires onFocus reducer",
+      "do": { "focus": "#name-input" },
       "expect": { "noErrors": true, "state": { "focusedField": "name" } }
     },
     {
-      "label": "ui.blur: first blur increments to 1",
-      "do": { "dispatch": "onBlur" },
+      "label": "ui.blur: first DOM blur event increments blurCount to 1",
+      "do": { "blur": "#name-input" },
       "expect": { "noErrors": true, "state": { "blurCount": 1 } }
     },
     {
-      "label": "ui.blur: second blur increments to 2",
-      "do": { "dispatch": "onBlur" },
+      "label": "ui.blur: second DOM blur event increments to 2",
+      "do": { "blur": "#name-input" },
       "expect": { "noErrors": true, "state": { "blurCount": 2 } }
     }
   ]

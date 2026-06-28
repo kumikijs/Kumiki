@@ -466,4 +466,69 @@ describe("scenario runner", () => {
     expect(step0?.state.first).toBe(1);
     expect(step0?.state.last).toBe(1);
   });
+
+  // The dispatch-only scenario for ui.focus / ui.blur verifies the reducer body
+  // but not the DOM wiring — addEventListener("focus") → applyUiEventHandlers →
+  // reducer. The `focus` / `blur` primitives let a scenario exercise that path
+  // in one step, so "compiles + DOM wired + reducer fires" can be observed in
+  // the scenario tier alone.
+  describe("focus / blur DOM-event primitives", () => {
+    async function compileInline(name: string, src: string): Promise<string> {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const tmp = join(here, ".smoke-tmp", `${name}.kumiki`);
+      const fs = await import("node:fs");
+      fs.mkdirSync(dirname(tmp), { recursive: true });
+      fs.writeFileSync(tmp, src);
+      return tmp;
+    }
+
+    const focusApp = `
+      slot focusedField : Text = ""
+      slot blurCount    : Int  = 0
+      slot draft        : Text = ""
+      reducer onFocus on=ui.focus(NameInput) do= focusedField := "name"
+      reducer onBlur  on=ui.blur(NameInput)  do= blurCount := blurCount + 1
+      tile NameInput = input(bind=draft, placeholder="x") {id: "name-input"}
+      tile App = column(NameInput, text(focusedField), text(blurCount.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("dispatches a real focus event to the selector and fires the onFocus reducer", async () => {
+      const path = await compileInline("focus-primitive", focusApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          {
+            do: { focus: "#name-input" },
+            expect: { noErrors: true, state: { focusedField: "name" } },
+          },
+        ],
+      });
+      expect(report.ok).toBe(true);
+    });
+
+    it("dispatches a real blur event to the selector and fires the onBlur reducer", async () => {
+      const path = await compileInline("blur-primitive", focusApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          { do: { blur: "#name-input" }, expect: { noErrors: true, state: { blurCount: 1 } } },
+          { do: { blur: "#name-input" }, expect: { state: { blurCount: 2 } } },
+        ],
+      });
+      expect(report.ok).toBe(true);
+    });
+
+    it("reports a clear error when the focus/blur selector matches nothing", async () => {
+      const path = await compileInline("focus-missing", focusApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: { focus: "#does-not-exist" }, expect: { noErrors: true } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.errors.some((e) => e.includes("no element matching selector"))).toBe(
+        true,
+      );
+    });
+  });
 });
