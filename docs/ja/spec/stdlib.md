@@ -298,11 +298,11 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `button` | ボタン | `text`, `onClick`, `variant`, `disabled`, `loading` |
 | `input` | テキスト入力 | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | 複数行入力 | `bind`, `rows`, `placeholder` |
-| `check` | チェックボックス | `value`, `onClick`, `label` |
-| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick` |
-| `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder` |
-| `slider` | スライダー | `bind`, `min`, `max`, `step` |
-| `switch` | トグル | `value`, `onClick` |
+| `check` | チェックボックス | `value`, `onClick`, `onChange`, `label` |
+| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
+| `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
+| `switch` | トグル | `value`, `onClick`, `onChange` |
 
 ### 2.3.5 フォーム
 

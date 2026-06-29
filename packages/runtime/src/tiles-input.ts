@@ -167,6 +167,11 @@ export const inputTiles: TileRenderers = {
         node.props?.onClick?.(node.props?.el ?? {});
       });
     }
+    if (node.props?.onChange) {
+      inp.addEventListener("change", () => {
+        node.props?.onChange?.({ ...(node.props?.el ?? {}), checked: inp.checked });
+      });
+    }
     wrap.appendChild(inp);
     return wrap;
   },
@@ -189,6 +194,11 @@ export const inputTiles: TileRenderers = {
     if (node.props?.onClick) {
       inp.addEventListener("change", () => {
         node.props?.onClick?.(node.props?.el ?? {});
+      });
+    }
+    if (node.props?.onChange) {
+      inp.addEventListener("change", () => {
+        node.props?.onChange?.({ ...(node.props?.el ?? {}), checked: inp.checked });
       });
     }
     return wrap;
@@ -284,6 +294,11 @@ export const inputTiles: TileRenderers = {
     if (node.props?.onClick) {
       inp.addEventListener("change", () => {
         node.props?.onClick?.(node.props?.el ?? {});
+      });
+    }
+    if (node.props?.onChange) {
+      inp.addEventListener("change", () => {
+        node.props?.onChange?.({ ...(node.props?.el ?? {}), checked: inp.checked });
       });
     }
     wrap.appendChild(inp);

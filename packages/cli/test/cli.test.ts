@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -78,10 +78,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `computeSlotDiffs` + `pickRootTile` exports + MountOptions overlay).
     // Bumped to 39KB with the debounce-episode fidelity additions —
     // `cancelPendingEffect`, `TimerEntry` token plumbing, dispose drain.
+    // Bumped to 39.5KB with the per-tile onChange wirings on check/radio/
+    // switch in tiles-input (#143 — needed so `ui.change(<Toggle>)` reducers
+    // fire; the counter rides on tiles-input via `button`).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(39_000);
+    expect(total).toBeLessThan(39_500);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
@@ -215,6 +218,62 @@ app StrictThemed
     const { out, code } = runCli(["check", file, "--strict-icons", "--types"]);
     expect(code).toBe(1);
     expect(out).toContain("E0704");
+  });
+});
+
+// #143 — `kumiki check` surfaces W0212 ui-event-tile-mismatch as a non-fatal
+// warning: the line appears in stderr, the `ok (N warning(s))` summary lands
+// on stdout, and the process exits 0 so build pipelines don't break.
+describe("kumiki check (W0212 ui-event-tile-mismatch)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-w0212-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
+    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return {
+      stdout: res.stdout ?? "",
+      stderr: res.stderr ?? "",
+      code: res.status ?? (res.error ? 1 : 0),
+    };
+  }
+
+  const W0212_SRC = `slot f : Text = ""
+reducer recordFocus on=ui.focus(Card) do= f := "focused"
+tile Card = box(text("hi"))
+tile App = column(Card)
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  it("emits W0212 to stderr and exits 0 with an `ok (1 warning)` summary", {
+    timeout: 30000,
+  }, () => {
+    const file = join(dir, "warn.kumiki");
+    writeFileSync(file, W0212_SRC);
+    const { stdout, stderr, code } = runCli(["check", file]);
+    expect(code).toBe(0);
+    expect(stderr).toContain("W0212");
+    expect(stderr).toContain("ui-event-tile-mismatch");
+    expect(stdout).toContain("ok (1 warning)");
+  });
+
+  it("--refs still surfaces W0212 (scope filtering does not silence warnings)", {
+    timeout: 30000,
+  }, () => {
+    const file = join(dir, "warn.kumiki");
+    writeFileSync(file, W0212_SRC);
+    const { stdout, stderr, code } = runCli(["check", file, "--refs"]);
+    expect(code).toBe(0);
+    expect(stderr).toContain("W0212");
+    expect(stdout).toContain("ok (1 warning)");
   });
 });
 

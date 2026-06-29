@@ -8,14 +8,15 @@ A type-check error is represented as a `KumikiError`:
 
 ```ts
 type KumikiError = {
-  code: string;   // a stable identifier such as "E0103"
-  kind: string;   // a machine-readable classification such as "undef-slot"
-  message: string; // a human-facing message (includes the target name)
-  pos: Pos;        // { line, col }
+  code: string;     // a stable identifier such as "E0103"
+  kind: string;     // a machine-readable classification such as "undef-slot"
+  message: string;  // a human-facing message (includes the target name)
+  pos: Pos;         // { line, col }
+  severity?: "error" | "warning"; // omitted ⇒ "error"
 };
 ```
 
-`code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic.
+`code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
 A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
 
@@ -31,6 +32,7 @@ A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the par
 | `E06xx` | reducer write rules |
 | `E07xx` | Accessibility (a11y), strict-icons |
 | `E08xx` | Runtime hazards (code that compiles but breaks at runtime) |
+| `W02xx` | Non-fatal warnings (build still succeeds) |
 
 ## E00xx — Structure
 
@@ -242,6 +244,31 @@ A reducer's `ui.*` selector names a tile that has not been declared. Without thi
 > `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
 
 **Fix**: Add a `tile <Tile> = …` declaration, or correct the selector's tile name to match an existing one. The `_` wildcard (for reducers dispatched indirectly via `emit confirm({onYes: r, …})` callbacks, see [Lifecycle §7](./lifecycle.md)) is accepted and has no tile to resolve.
+
+### W0212 `ui-event-tile-mismatch` (warning)
+
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant.
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+The allowed root builtins per event are (current toolchain coverage; mirrors `codegen.ts` and `packages/runtime/src/tiles-input.ts`):
+
+| `ui.<ev>` | allowed root tile kinds |
+|---|---|
+| `click`  | `button`, `check`, `switch`, `radio` |
+| `submit` | `form` |
+| `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
+| `input`  | `input`, `textarea` |
+| `key`    | `input`, `textarea`, `button` |
+| `focus`  | `input`, `textarea`, `button`, `select` |
+| `blur`   | `input`, `textarea`, `button`, `select` |
+| `hover`  | any tile |
+
+**Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
+
+The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
+
+**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
 
 ## E03xx — Capabilities and Purity
 

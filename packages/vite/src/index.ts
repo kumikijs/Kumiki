@@ -97,6 +97,16 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       } as const;
 
       const first = compile(code, baseOpts);
+      // Surface non-fatal warnings (W02xx) through Rollup's plugin context so
+      // they show in Vite's overlay/build log without breaking the import.
+      // Emit BEFORE the error-bail path so warnings detected alongside a
+      // fatal error aren't silently lost when `this.error` throws.
+      for (const w of first.warnings) {
+        this.warn({
+          message: `${w.code} ${w.kind}: ${w.message}`,
+          loc: { file, line: w.pos.line, column: w.pos.col },
+        });
+      }
       if (first.kind !== "ok") {
         const detail = first.errors.map((e) => `  ${e.code} ${e.message}`).join("\n");
         const message = `Kumiki compile failed (${file}):\n${detail}`;

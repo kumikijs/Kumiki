@@ -80,10 +80,22 @@ async function buildCmd(inputArg: string, outdirArg: string): Promise<void> {
   };
   const first = compile(source, baseOpts);
   if (first.kind === "fail") {
+    // Surface any warnings observed alongside the fatal errors so they
+    // aren't silently dropped — a `W0212` detected in the same pass is
+    // still useful diagnostic context even when the build fails.
+    for (const w of first.warnings) {
+      console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
+    }
     for (const err of first.errors) {
       console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
     }
     process.exit(1);
+  }
+  // Surface non-fatal warnings (W02xx ui-event/tile-mismatch, etc.) to stderr
+  // without blocking the bundle. The build still produces output — the warning
+  // says "this subscription is dead", not "the program is broken".
+  for (const w of first.warnings) {
+    console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
   }
   // Bake referenced icons into App.icons (#101). When @kumikijs/icons is
   // installed in the project, look up each used name and re-codegen with the
@@ -182,6 +194,10 @@ function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] 
   return errors.filter((e) => {
     const code = e.code;
     if (STRICT_GATE_CODES.has(code)) return true;
+    // Non-fatal warnings (W02xx ui-event/tile-mismatch, etc.) bypass scope
+    // filtering — they are surfaced by default and the user-facing intent of
+    // a scope flag is to narrow the *error* set, not to silence warnings.
+    if (e.severity === "warning") return true;
     if (scope === "types")
       return code.startsWith("E02") || code.startsWith("E04") || code.startsWith("E06");
     if (scope === "refs") return code.startsWith("E01") || code.startsWith("E05");
@@ -220,15 +236,18 @@ async function checkCmd(
     iconNames,
     capabilities: capsFor(inputPath),
   });
-  const errors = filterByScope(all, scope);
-  if (errors.length === 0) {
-    console.log("ok");
-    return;
+  const filtered = filterByScope(all, scope);
+  const warnings = filtered.filter((d) => d.severity === "warning");
+  const errors = filtered.filter((d) => d.severity !== "warning");
+  for (const d of [...warnings, ...errors]) {
+    console.error(`${d.code} ${d.kind} at ${d.pos.line}:${d.pos.col}: ${d.message}`);
   }
-  for (const err of errors) {
-    console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
-  }
-  process.exit(1);
+  if (errors.length > 0) process.exit(1);
+  console.log(
+    warnings.length > 0
+      ? `ok (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`
+      : "ok",
+  );
 }
 
 function viewModeFrom(argv: string[]): ViewMode {

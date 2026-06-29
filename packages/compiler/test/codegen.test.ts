@@ -452,12 +452,13 @@ describe("codegen", () => {
     );
   });
 
-  // The "non-focusable" guard is a deliberate design choice, not a typecheck
-  // shortcut: a `ui.focus(Card)` subscription targeting a `box` is silently
-  // dropped by codegen because DOM `focus` would never fire on a non-focusable
-  // element anyway. Lifting the subscription into a warning belongs in a
-  // future typecheck pass (covers ui.key / hover / focus / blur uniformly).
-  it("does not emit onFocus on a non-focusable tile (box) — guards against listeners that never fire (§1.6.1)", () => {
+  // The "non-focusable" guard is a deliberate codegen design choice: a
+  // `ui.focus(Card)` subscription targeting a `box` is silently dropped
+  // because DOM `focus` would never fire on a non-focusable element anyway.
+  // The typecheck pass now also surfaces the same condition as `W0212`
+  // (issue #143), so both layers — silent codegen drop AND typecheck
+  // warning — are asserted here in lock-step.
+  it("does not emit onFocus on a non-focusable tile (box) and surfaces W0212 (§1.6.1)", () => {
     const src = `
       slot f : Text = ""
       reducer recordFocus on=ui.focus(Card) do= f := "focused"
@@ -469,9 +470,14 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).not.toMatch(/onFocus:/);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "W0212", kind: "ui-event-tile-mismatch" }),
+      ]),
+    );
   });
 
-  it("does not emit onBlur on a non-focusable tile (box) — same guard, separate codepath (§1.6.1)", () => {
+  it("does not emit onBlur on a non-focusable tile (box) and surfaces W0212 (§1.6.1)", () => {
     const src = `
       slot b : Text = ""
       reducer markBlur on=ui.blur(Card) do= b := "blurred"
@@ -483,6 +489,11 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).not.toMatch(/onBlur:/);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "W0212", kind: "ui-event-tile-mismatch" }),
+      ]),
+    );
   });
 
   // Explicit-prop passthrough: `input(onFocus=recordFocus)` is a hand-authored
@@ -504,6 +515,44 @@ describe("codegen", () => {
     expect(result.js).toMatch(
       /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
     );
+  });
+
+  it("emits onClick on a radio tile so `ui.click(Radio)` reducers fire (§1.6.1)", () => {
+    const src = `
+      slot picked : Text = ""
+      reducer pick on=ui.click(R) do= picked := "red"
+      tile R = radio(group="color")
+      tile App = column(R)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("pick"/);
+  });
+
+  it("emits onChange on form-control tiles (check / radio / switch / slider) — `ui.change(Tile)` reducers fire (§1.6.1)", () => {
+    const cases = [
+      { tile: `check(checked=false)`, reducer: "tc" },
+      { tile: `radio(group="g")`, reducer: "tr" },
+      { tile: `switch(checked=false)`, reducer: "ts" },
+      { tile: `slider(min=0, max=10)`, reducer: "tl" },
+    ];
+    for (const { tile, reducer } of cases) {
+      const src = `
+        slot v : Text = ""
+        reducer ${reducer} on=ui.change(T) do= v := "x"
+        tile T = ${tile}
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") continue;
+      expect(result.js).toMatch(
+        new RegExp(`onChange: \\(el\\) => \\{ globalThis\\.__kumikiApp\\._dispatch\\("${reducer}"`),
+      );
+    }
   });
 
   it("emits onBlur from explicit `tile = input(){onBlur: Reducer}` props syntax (§1.6.1)", () => {

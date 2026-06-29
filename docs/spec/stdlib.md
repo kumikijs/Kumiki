@@ -298,11 +298,11 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `button` | button | `text`, `onClick`, `variant`, `disabled`, `loading` |
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
-| `check` | checkbox | `value`, `onClick`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick` |
-| `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder` |
-| `slider` | slider | `bind`, `min`, `max`, `step` |
-| `switch` | toggle | `value`, `onClick` |
+| `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
+| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
+| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `switch` | toggle | `value`, `onClick`, `onChange` |
 
 ### 2.3.5 Forms
 
