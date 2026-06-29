@@ -122,7 +122,7 @@ describe("vite-plugin-kumiki", () => {
     );
   });
 
-  it("surfaces W0212 ui-event-tile-mismatch through this.warn (#143)", async () => {
+  it("surfaces W0212 ui-event-tile-mismatch through this.warn with source loc (#143)", async () => {
     const src = `
       slot f : Text = ""
       reducer recordFocus on=ui.focus(Card) do= f := "x"
@@ -139,14 +139,58 @@ describe("vite-plugin-kumiki", () => {
         warnings.push(w);
       },
     };
-    const out = (await transformOf().call(warnCtx as never, src, "/abs/warn.kumiki")) as {
+    const file = "/abs/warn.kumiki";
+    const out = (await transformOf().call(warnCtx as never, src, file)) as {
       code: string;
     };
     expect(out.code).toContain("export default App;");
     expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      message: expect.stringContaining("W0212") as string,
+      loc: {
+        file,
+        // The selector `ui.focus(Card)` sits on the `reducer recordFocus`
+        // line — 3rd source line counting the leading newline in the
+        // template literal. Pin both fields so a regression in `pos`
+        // threading (e.g. dropping `loc.column`) is caught.
+        line: expect.any(Number) as number,
+        column: expect.any(Number) as number,
+      },
+    });
+    const loc = (warnings[0] as { loc?: { file: string; line: number; column: number } }).loc;
+    expect(loc?.file).toBe(file);
+    expect(loc?.line).toBeGreaterThan(0);
+    expect(loc?.column).toBeGreaterThan(0);
+  });
+
+  it("emits W0212 via this.warn BEFORE this.error when a compile fail co-occurs (#143)", async () => {
+    // The same source carries a W0212 (ui.focus on box) AND a fatal error
+    // (undefined effect in `emit`). The warning must reach `this.warn`
+    // even though `this.error` then throws — otherwise diagnostics
+    // detected in the same check pass would be silently dropped on the
+    // error path.
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(Card) do= emit nope({})
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const warnings: unknown[] = [];
+    const failCtx = {
+      error(e: unknown): never {
+        throw new Error(typeof e === "string" ? e : (e as Error).message);
+      },
+      warn(w: unknown): void {
+        warnings.push(w);
+      },
+    };
+    await expect(
+      transformOf().call(failCtx as never, src, "/abs/fail-warn.kumiki"),
+    ).rejects.toThrow(/Kumiki compile failed/);
+    expect(warnings).toHaveLength(1);
     const w = warnings[0] as { message: string };
     expect(w.message).toContain("W0212");
-    expect(w.message).toContain("ui-event-tile-mismatch");
   });
 
   it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", async () => {

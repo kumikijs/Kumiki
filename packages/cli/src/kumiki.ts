@@ -80,6 +80,12 @@ async function buildCmd(inputArg: string, outdirArg: string): Promise<void> {
   };
   const first = compile(source, baseOpts);
   if (first.kind === "fail") {
+    // Surface any warnings observed alongside the fatal errors so they
+    // aren't silently dropped — a `W0212` detected in the same pass is
+    // still useful diagnostic context even when the build fails.
+    for (const w of first.warnings) {
+      console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
+    }
     for (const err of first.errors) {
       console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
     }

@@ -1088,7 +1088,27 @@ describe("typecheck", () => {
       expect(errors.some((e) => e.code === "W0212")).toBe(false);
     });
 
-    it("does not warn on dynamic/composite tile bodies (TileFor root)", () => {
+    it("descends into a TileFor body — `for ... box(...)` warns because box never fires click", () => {
+      // Pins the actual descend behavior, not just "is the root statically
+      // resolvable". A previous version of this test used `button` inside
+      // the `for` body and the warning was suppressed by the accidental
+      // overlap with click's allowed set — which would pass even if the
+      // descent into TileFor never happened.
+      const src = `
+        slot xs : List(Int) = [1, 2]
+        slot s : Text = ""
+        reducer rc on=ui.click(Dyn) do= s := "x"
+        tile Dyn = for n in xs box(text("n"))
+        tile App = column(Dyn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const w = errors.find((e) => e.code === "W0212");
+      expect(w).toBeDefined();
+      expect(w?.message).toContain("box");
+    });
+
+    it("suppresses the warning when a TileFor body resolves to an allowed root", () => {
       const src = `
         slot xs : List(Int) = [1, 2]
         slot s : Text = ""
@@ -1099,6 +1119,106 @@ describe("typecheck", () => {
       `;
       const errors = checkSrc(src);
       expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("descends into a TileWhen body — `when(...) box(...)` warns for ui.click", () => {
+      const src = `
+        slot c : Bool = true
+        slot s : Text = ""
+        reducer rc on=ui.click(Dyn) do= s := "x"
+        tile Dyn = when(c, box(text("hi")))
+        tile App = column(Dyn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(true);
+    });
+
+    it("descends into BOTH branches of a TileIf — accepts when either branch is allowed", () => {
+      // `if then input(...) else button(...)` — both branches contribute an
+      // allowed root, so W0212 must NOT fire. Catches a regression where the
+      // walker only descended into `consequent`.
+      const src = `
+        slot c : Bool = true
+        slot v : Text = ""
+        reducer rf on=ui.focus(T) do= v := "x"
+        tile T = if c then input(bind=v) else button(text="b")
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("warns when BOTH branches of a TileIf are disallowed", () => {
+      const src = `
+        slot c : Bool = true
+        slot s : Text = ""
+        reducer rc on=ui.click(T) do= s := "x"
+        tile T = if c then box(text("a")) else row(text("b"))
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const w = errors.find((e) => e.code === "W0212");
+      expect(w).toBeDefined();
+      expect(w?.message).toContain("box");
+      expect(w?.message).toContain("row");
+    });
+
+    it("descends into all arms of a TileMatch — accepts when any arm is allowed", () => {
+      // Arm 1: button (allowed for click). Arm 2: box (disallowed). Mixed.
+      // The aggregate observed set includes button, so warn must be silent.
+      const src = `
+        type Mode = A | B
+        slot m : Mode = A
+        slot s : Text = ""
+        reducer rc on=ui.click(T) do= s := "x"
+        tile T = match m with
+                   | A -> button(text="ok")
+                   | B -> box(text("x"))
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((e) => e.code === "W0212")).toBe(false);
+    });
+
+    it("warns when EVERY arm of a TileMatch is disallowed", () => {
+      const src = `
+        type Mode = A | B
+        slot m : Mode = A
+        slot s : Text = ""
+        reducer rc on=ui.click(T) do= s := "x"
+        tile T = match m with
+                   | A -> box(text("a"))
+                   | B -> row(text("b"))
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const w = errors.find((e) => e.code === "W0212");
+      expect(w).toBeDefined();
+    });
+
+    it("warns on ui.click(<link tile>) — runtime reserves link click for nav", () => {
+      // Pins the design choice in `UI_EVENT_TILE_KINDS`: `link` is intentionally
+      // NOT in click's allowed set even though `<a>` fires click natively,
+      // because the runtime intercepts click on links for navigation and does
+      // not invoke user `onClick` reducers. Any future change that adds `link`
+      // to the click allowed set without a matching runtime change must trip
+      // this test.
+      const src = `
+        slot s : Text = ""
+        reducer rc on=ui.click(L) do= s := "x"
+        tile L = link(to="/x", text="x")
+        tile App = column(L)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      const w = errors.find((e) => e.code === "W0212");
+      expect(w).toBeDefined();
+      expect(w?.message).toContain("link");
     });
   });
 });

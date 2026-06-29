@@ -28,7 +28,17 @@ export type CompileOk = {
    */
   warnings: KumikiError[];
 };
-export type CompileFail = { kind: "fail"; errors: KumikiError[] };
+export type CompileFail = {
+  kind: "fail";
+  errors: KumikiError[];
+  /**
+   * Warnings observed in the same check pass that produced the errors. Kept
+   * alongside `errors` so CLI/Vite can render them even when the compile
+   * fails — without this field a warning detected before the fatal error
+   * would be silently dropped together with the (never-reached) `CompileOk`.
+   */
+  warnings: KumikiError[];
+};
 export type CompileResult = CompileOk | CompileFail;
 
 export type ExtendedCodegenOptions = CodegenOptions & {
@@ -100,7 +110,7 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
   });
   const errors = diags.filter((d) => d.severity !== "warning");
   const warnings = diags.filter((d) => d.severity === "warning");
-  if (errors.length > 0) return { kind: "fail", errors };
+  if (errors.length > 0) return { kind: "fail", errors, warnings };
 
   const generated = codegen(program, opts);
   let js = `${RUNTIME_HELPERS}\n${generated.js}`;
