@@ -41,11 +41,8 @@ const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
 // `UI_LIFTS` table in `ui-lifts.ts` so codegen's handler-emission gate and
 // the typecheck-time warning stay in lockstep. `null` = "any tile is
 // allowed" (hover, wired by the universal `applyUiEventHandlers`).
-//
-// `link` is intentionally not listed under `click` even though `<a>` fires
-// click natively: the runtime's link renderer reserves the click event for
-// navigation interception and does not invoke user `onClick` reducers
-// (`tiles-text.ts`). Lifting that requires a separate runtime change.
+// The per-row rationale (including why `link` is omitted from `click`)
+// lives next to the table itself in `ui-lifts.ts`.
 
 /**
  * Diagnostic codes filtered out of `check()`'s output unless `strictIcons` is

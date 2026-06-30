@@ -35,6 +35,11 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",
     handler: "onClick",
+    // `link` is intentionally omitted even though `<a>` fires click natively:
+    // the runtime's link renderer reserves the click event for navigation
+    // interception and does not invoke user `onClick` reducers
+    // (`packages/runtime/src/tiles-text.ts`). Lifting that requires a separate
+    // runtime change.
     tiles: new Set(["button", "check", "switch", "radio"]),
   },
   { ev: "submit", handler: "onSubmit", tiles: new Set(["form"]) },
