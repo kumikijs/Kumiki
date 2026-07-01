@@ -221,6 +221,95 @@ app StrictThemed
   });
 });
 
+// #149 — `kumiki check --strict-selector-id` opts into the E0212 diagnostic:
+// a `ui.<ev>(Tile#id)` selector whose `#id` cannot match any literal `{id}`
+// the target tile declares. Default-off because the PR #148 runtime-filter
+// regression test intentionally uses a literal mismatch to prove the runtime
+// filter fires; a default-on E0212 would break that test at check time.
+describe("kumiki check --strict-selector-id", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-strict-selid-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+        stdio: "pipe",
+        shell: true,
+        encoding: "utf8",
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
+  // `#nw` is a deliberate typo for `#new`. Runtime `_dispatch` drops the event
+  // (el.id === "new" !== "nw"), so without E0212 the `add` reducer never fires.
+  const MISMATCH = `slot x : Int = 0
+reducer add on=ui.submit(NewForm#nw) do= x := x + 1
+tile NewForm = form(text="a") {id: "new"}
+tile App = column(NewForm)
+app SelIdApp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("default check (no flag) lets a literal id mismatch pass", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, MISMATCH);
+    const { out, code } = runCli(["check", file]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  it("--strict-selector-id surfaces E0212 and exits 1", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, MISMATCH);
+    const { out, code } = runCli(["check", file, "--strict-selector-id"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0212");
+    expect(out).toContain("selector-id-mismatch");
+    expect(out).toContain("NewForm#nw");
+    expect(out).toContain('"new"');
+  });
+
+  it("--strict-selector-id accepts a matching literal id", { timeout: 30000 }, () => {
+    const file = join(dir, "good.kumiki");
+    writeFileSync(
+      file,
+      `slot x : Int = 0
+reducer add on=ui.submit(NewForm#new) do= x := x + 1
+tile NewForm = form(text="a") {id: "new"}
+tile App = column(NewForm)
+app OkApp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const { out, code } = runCli(["check", file, "--strict-selector-id"]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  // Critical: --strict-selector-id combined with a scope filter must NOT drop
+  // E0212 silently — the strict opt-in is an additive axis, not a sub-band.
+  it("--strict-selector-id + --types still surfaces E0212", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, MISMATCH);
+    const { out, code } = runCli(["check", file, "--strict-selector-id", "--types"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0212");
+  });
+});
+
 // #143 — `kumiki check` surfaces W0212 ui-event-tile-mismatch as a non-fatal
 // warning: the line appears in stderr, the `ok (N warning(s))` summary lands
 // on stdout, and the process exits 0 so build pipelines don't break.

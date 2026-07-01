@@ -122,3 +122,56 @@ app StrictThemed caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
     expect(out.code).toContain("logo");
   });
 });
+
+// #149 — `{ strictSelectorId: true }` opts the plugin into the E0212
+// diagnostic so a `Tile#id` selector whose id cannot match the tile's literal
+// `{id: "..."}` prop surfaces in Vite's error overlay at dev time. Parity
+// with strict-icons / strict-a11y (#127, §10.7).
+describe("vite-plugin-kumiki strict-selector-id", () => {
+  const MISMATCH = `
+slot x : Int = 0
+reducer add on=ui.submit(NewForm#nw) do= x := x + 1
+tile NewForm = form(text="a") {id: "new"}
+tile Root = column(NewForm)
+app StrictSelId
+    caps   = []
+    routes = {"/" -> Root, "/404" -> Root}
+    init   = []
+`;
+
+  it("passes silently without strictSelectorId (default behavior)", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-selid-off-"));
+    const file = join(dir, "app.kumiki");
+    writeFileSync(file, MISMATCH);
+    // The runtime `_dispatch` filter is authoritative by default; codegen
+    // succeeds and ships the reducer even though `#nw` never matches.
+    const out = (await transformFn().call(ctx as never, MISMATCH, file)) as { code: string };
+    expect(out.code).toContain("NewForm");
+  });
+
+  it("raises an E0212 error when strictSelectorId is on", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-selid-on-"));
+    const file = join(dir, "app.kumiki");
+    writeFileSync(file, MISMATCH);
+    await expect(
+      transformFn({ strictSelectorId: true }).call(ctx as never, MISMATCH, file),
+    ).rejects.toThrow(/E0212/);
+  });
+
+  it("accepts a matching literal id when strictSelectorId is on", async () => {
+    const dir = mkdtempSync(join(TMP, "strict-selid-ok-"));
+    const file = join(dir, "app.kumiki");
+    const src = `
+slot x : Int = 0
+reducer add on=ui.submit(NewForm#new) do= x := x + 1
+tile NewForm = form(text="a") {id: "new"}
+tile Root = column(NewForm)
+app StrictSelIdOk caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
+`;
+    writeFileSync(file, src);
+    const out = (await transformFn({ strictSelectorId: true }).call(ctx as never, src, file)) as {
+      code: string;
+    };
+    expect(out.code).toContain("NewForm");
+  });
+});

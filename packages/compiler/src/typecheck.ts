@@ -53,6 +53,19 @@ const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
 const STRICT_ICONS_CODES = new Set(["E0704"]);
 
 /**
+ * Diagnostic codes filtered out of `check()`'s output unless `strictSelectorId`
+ * is on. The runtime `_dispatch` filter (packages/runtime/src/core.ts) is the
+ * authority for id-scoped selectors and defensively drops mismatches; E0212
+ * lifts a subset of those silent drops — the ones provably unreachable at
+ * compile time — into a check-time diagnostic. Opt in via
+ * `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
+ * Kept off by default so the PR #148 runtime-filter regression test
+ * (`packages/tests/selector-id.test.ts`, which uses a deliberate literal
+ * mismatch to prove the filter fires) still compiles cleanly.
+ */
+const STRICT_SELECTOR_ID_CODES = new Set(["E0212"]);
+
+/**
  * Returns errors with a11y / strict-icons warnings filtered out (unless their
  * respective `strict*` opt-ins are on). `capabilities` lists project-registered
  * capabilities (from a `kumiki.caps.json` manifest) that are accepted in
@@ -66,6 +79,7 @@ export function check(
   opts?: {
     strictA11y?: boolean;
     strictIcons?: boolean;
+    strictSelectorId?: boolean;
     iconNames?: Iterable<string>;
     capabilities?: string[];
   },
@@ -82,6 +96,7 @@ export function check(
   return errors.filter((e) => {
     if (A11Y_CODES.has(e.code) && !opts?.strictA11y) return false;
     if (STRICT_ICONS_CODES.has(e.code) && !opts?.strictIcons) return false;
+    if (STRICT_SELECTOR_ID_CODES.has(e.code) && !opts?.strictSelectorId) return false;
     return true;
   });
 }
@@ -764,6 +779,82 @@ function walkTileExprForBuiltinKinds(
   return out;
 }
 
+/**
+ * Result of walking a tile body to collect the literal `{id: "..."}` values
+ * its `TileCall`s can produce. `known: true` means every `TileCall` reachable
+ * through the body's control-flow branches carries a literal `Str` id, so the
+ * `ids` set fully enumerates the DOM ids the tile can render. `known: false`
+ * means at least one reachable `TileCall` has no `{id}` prop or its `{id}`
+ * value is a non-`Str` expression (a `Ref` etc.) — the runtime filter is the
+ * authority for those cases and E0212 stays silent.
+ */
+type TileIdCollection =
+  | { readonly known: true; readonly ids: ReadonlySet<string> }
+  | { readonly known: false };
+
+const ID_COLL_UNKNOWN: TileIdCollection = Object.freeze({ known: false });
+
+function mergeIdCollections(a: TileIdCollection, b: TileIdCollection): TileIdCollection {
+  if (!a.known || !b.known) return ID_COLL_UNKNOWN;
+  const out = new Set(a.ids);
+  for (const v of b.ids) out.add(v);
+  return { known: true, ids: out };
+}
+
+/**
+ * §1.6.2 / issue #149 — collect the literal `{id}` values a tile's `TileCall`
+ * roots can produce. Only walks THIS tile's body — referenced user tiles are
+ * intentionally not descended so a future per-instance id-override at the use
+ * site isn't foreclosed at compile time. Cycle-safe by construction: the
+ * walker never crosses tile boundaries, so recursion is bounded by this
+ * tile's own AST depth. Takes the `TileDef` directly (rather than looking up
+ * by name) so a caller that forgets the existence guard fails loudly instead
+ * of getting a silent `known: false` — the exact silent-failure mode this
+ * whole diagnostic exists to prevent.
+ */
+function collectTileDeclaredIds(def: TileDef): TileIdCollection {
+  return walkTileExprForDeclaredIds(def.body);
+}
+
+function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
+  // Exhaustive switch: a future 6th `TileExpr` variant would otherwise
+  // silently fall through to the `TileCall`-shaped `props` read below and
+  // either return a wrong-looking id set or crash at runtime with no code /
+  // position. The `never` fallthrough turns that into a compile-time error.
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      return walkTileExprForDeclaredIds(expr.body);
+    case "TileIf":
+      return mergeIdCollections(
+        walkTileExprForDeclaredIds(expr.consequent),
+        walkTileExprForDeclaredIds(expr.alternate),
+      );
+    case "TileMatch": {
+      // Seed with UNKNOWN so a hypothetical 0-arm match (no branches to
+      // vouch for the id set) yields `known: false` and E0212 stays silent
+      // instead of emitting a message with an empty `actual` — the parser
+      // rejects 0-arm matches today, but this keeps the diagnostic honest
+      // if that ever changes.
+      let acc: TileIdCollection = ID_COLL_UNKNOWN;
+      for (let i = 0; i < expr.arms.length; i++) {
+        const armIds = walkTileExprForDeclaredIds(expr.arms[i]!.body);
+        acc = i === 0 ? armIds : mergeIdCollections(acc, armIds);
+      }
+      return acc;
+    }
+    case "TileCall": {
+      const idProp = expr.props.find((p) => p.name === "id");
+      if (!idProp || idProp.value.kind !== "Str") return ID_COLL_UNKNOWN;
+      return { known: true, ids: new Set([idProp.value.value]) };
+    }
+    default: {
+      const _exhaustive: never = expr;
+      return _exhaustive;
+    }
+  }
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -791,6 +882,33 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       message: `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) but tile "${r.on.selector.tile}" is not declared`,
       pos: r.on.pos,
     });
+  }
+  // §1.6.2 / issue #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)`
+  // selector previously survived all four compile stages and was silently
+  // filtered by the runtime `_dispatch`. When the target tile's every reachable
+  // TileCall carries a literal `{id: "..."}` prop and none of those literals
+  // matches the selector's id, the subscription can never fire — surface it as
+  // a compile-time error, gated by `strictSelectorId` (the runtime filter stays
+  // the authority for tiles with computed or missing `{id}`, and for the PR
+  // #148 regression test that intentionally constructs a literal mismatch).
+  // Skipped when E0211 already fires (undeclared tile) so users see one root
+  // cause, not two overlapping ones.
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
+    const def = sym.tiles.get(r.on.selector.tile);
+    if (def !== undefined) {
+      const decl = collectTileDeclaredIds(def);
+      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
+        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+        errors.push({
+          code: "E0212",
+          kind: "selector-id-mismatch",
+          message:
+            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
+            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+          pos: r.on.pos,
+        });
+      }
+    }
   }
   // §1.6.1 — flag `ui.<ev>(Tile)` subscriptions whose target tile has no
   // descendant that can fire `<ev>` in the DOM (e.g. `ui.focus(Card)` where

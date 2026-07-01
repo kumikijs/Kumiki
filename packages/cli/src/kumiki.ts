@@ -37,7 +37,7 @@ function usage(): never {
   console.error("  kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]");
   console.error("  kumiki refs <input.kumiki> <qname>");
   console.error(
-    "  kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--types|--refs|--effects]",
+    "  kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]",
   );
   console.error("  kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]");
   console.error("  kumiki smoke <input.kumiki>");
@@ -183,11 +183,11 @@ type CheckScope = "all" | "types" | "refs" | "effects";
 
 /**
  * Diagnostics gated by an explicit `--strict-*` opt-in upstream (a11y E0701-
- * E0703, strict-icons E0704). They survive any `--types/--refs/--effects`
- * scope filter so combining `--strict-icons --types` does not silently drop
- * the strict findings the user asked for.
+ * E0703, strict-icons E0704, strict-selector-id E0212). They survive any
+ * `--types/--refs/--effects` scope filter so combining `--strict-icons --types`
+ * does not silently drop the strict findings the user asked for.
  */
-const STRICT_GATE_CODES = new Set(["E0701", "E0702", "E0703", "E0704"]);
+const STRICT_GATE_CODES = new Set(["E0212", "E0701", "E0702", "E0703", "E0704"]);
 
 function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
   if (scope === "all") return errors;
@@ -210,6 +210,7 @@ async function checkCmd(
   inputArg: string,
   strictA11y: boolean,
   strictIcons: boolean,
+  strictSelectorId: boolean,
   scope: CheckScope,
 ): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
@@ -233,6 +234,7 @@ async function checkCmd(
   const all = check(store.program, {
     strictA11y,
     strictIcons,
+    strictSelectorId,
     iconNames,
     capabilities: capsFor(inputPath),
   });
@@ -300,7 +302,8 @@ async function main(argv: string[]): Promise<void> {
       if (!input) usage();
       const strictA11y = argv.includes("--strict-a11y");
       const strictIcons = argv.includes("--strict-icons");
-      await checkCmd(input, strictA11y, strictIcons, checkScopeFrom(argv));
+      const strictSelectorId = argv.includes("--strict-selector-id");
+      await checkCmd(input, strictA11y, strictIcons, strictSelectorId, checkScopeFrom(argv));
       return;
     }
     case "smoke": {
