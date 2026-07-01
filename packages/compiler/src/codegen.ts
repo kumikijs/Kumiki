@@ -22,6 +22,7 @@ import type {
   UiEventKind,
 } from "./ast.ts";
 import { BUILTIN_TILES, TILE_FAMILY, type TileFamily } from "./builtins.ts";
+import { HANDLER_NAMES, UI_LIFTS } from "./ui-lifts.ts";
 
 export type CodegenOptions = {
   runtimeSpecifier: string;
@@ -2574,17 +2575,6 @@ function propsFor(
   // subscribers as one chained dispatch handler, so spec §1.6.4 (every matching
   // reducer fires in definition order) holds even when explicit and implicit
   // both target the same handler.
-  const HANDLER_NAMES = new Set([
-    "onClick",
-    "onSubmit",
-    "onChange",
-    "onInput",
-    "onClose",
-    "onKeyDown",
-    "onMouseEnter",
-    "onFocus",
-    "onBlur",
-  ]);
   const explicitByHandler = new Map<string, string[]>();
   const recordExplicit = (handlerName: string, value: Expr): void => {
     if (value.kind !== "Ref") return;
@@ -2646,29 +2636,14 @@ function propsFor(
     entries.push(`${handlerName}: (el) => { ${body} }`);
     emittedHandlers.add(handlerName);
   };
-  if (t.name === "button" || t.name === "check" || t.name === "switch" || t.name === "radio")
-    pushHandler("click", "onClick");
-  if (t.name === "form") pushHandler("submit", "onSubmit");
-  if (
-    t.name === "select" ||
-    t.name === "input" ||
-    t.name === "textarea" ||
-    t.name === "check" ||
-    t.name === "radio" ||
-    t.name === "switch" ||
-    t.name === "slider"
-  )
-    pushHandler("change", "onChange");
-  if (t.name === "input" || t.name === "textarea") pushHandler("input", "onInput");
-  if (t.name === "input" || t.name === "textarea" || t.name === "button")
-    // ui.key — runtime exposes `el.key` (KeyboardEvent.key) so reducers branch on it.
-    pushHandler("key", "onKeyDown");
-  // ui.hover is broadly applicable, so no tile-name filter.
-  pushHandler("hover", "onMouseEnter");
-  if (t.name === "input" || t.name === "textarea" || t.name === "button" || t.name === "select") {
-    // DOM focus/blur only fire on focusable elements (same gate as ui.key).
-    pushHandler("focus", "onFocus");
-    pushHandler("blur", "onBlur");
+  // Implicit-lift: every ui-event whose tile-kind gate matches `t.name` lifts
+  // a chained handler. `tiles === null` (currently only `hover`) means "any
+  // tile" — the runtime's universal `applyUiEventHandlers` wires it. The full
+  // table — including the runtime-event ≠ emit-prop divergence for
+  // check/radio/switch — lives in `ui-lifts.ts`.
+  for (const lift of UI_LIFTS) {
+    if (lift.tiles !== null && !lift.tiles.has(t.name)) continue;
+    pushHandler(lift.ev, lift.handler);
   }
   // Flush explicit handlers that have no implicit codepath on this tile —
   // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
@@ -2682,18 +2657,7 @@ function propsFor(
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
-    if (
-      p.name === "onClick" ||
-      p.name === "onSubmit" ||
-      p.name === "onChange" ||
-      p.name === "onInput" ||
-      p.name === "onClose" ||
-      p.name === "onKeyDown" ||
-      p.name === "onMouseEnter" ||
-      p.name === "onFocus" ||
-      p.name === "onBlur"
-    )
-      continue;
+    if (HANDLER_NAMES.has(p.name)) continue;
     // §3.8 link prefetch — these are runtime-side fields, not slot data; their
     // value space (reducer-name ident / argument record) doesn't belong in `el`.
     if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;

@@ -19,6 +19,7 @@ import type {
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
+import { UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
 
 export type KumikiError = {
   code: string;
@@ -36,28 +37,12 @@ export type KumikiError = {
 
 const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
 
-/**
- * Allowed root-builtin tile kinds per `ui.<ev>` reducer selector. Mirrors
- * the handler-emission gate in `codegen.ts` (§1.6.1) and the runtime DOM
- * event surfaces (`packages/runtime/src/tiles-input.ts`, `core.ts`'s
- * `applyUiEventHandlers`). `null` = "any tile is allowed" (hover, wired by
- * the universal `applyUiEventHandlers` path on every rendered element).
- *
- * `link` is intentionally not listed under `click` even though `<a>` fires
- * click natively: the runtime's link renderer reserves the click event for
- * navigation interception and does not invoke user `onClick` reducers
- * (`tiles-text.ts`). Lifting that requires a separate runtime change.
- */
-const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = {
-  click: new Set(["button", "check", "switch", "radio"]),
-  submit: new Set(["form"]),
-  change: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
-  input: new Set(["input", "textarea"]),
-  key: new Set(["input", "textarea", "button"]),
-  focus: new Set(["input", "textarea", "button", "select"]),
-  blur: new Set(["input", "textarea", "button", "select"]),
-  hover: null,
-};
+// `UI_EVENT_TILE_KINDS` is the W0212 gate, derived from the shared
+// `UI_LIFTS` table in `ui-lifts.ts` so codegen's handler-emission gate and
+// the typecheck-time warning stay in lockstep. `null` = "any tile is
+// allowed" (hover, wired by the universal `applyUiEventHandlers`).
+// The per-row rationale (including why `link` is omitted from `click`)
+// lives next to the table itself in `ui-lifts.ts`.
 
 /**
  * Diagnostic codes filtered out of `check()`'s output unless `strictIcons` is
