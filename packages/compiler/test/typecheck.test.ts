@@ -1368,5 +1368,94 @@ describe("typecheck", () => {
       `;
       expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
     });
+
+    // TileMatch differs from TileIf: it folds N arms (potentially 1..N),
+    // seeded with UNKNOWN so a hypothetical 0-arm match cannot emit an
+    // empty-`actual` message. Every arm must contribute a literal id for the
+    // fold to stay `known: true`.
+    it("flags a TileMatch where every arm's literal id mismatches", () => {
+      const src = `
+        type Mode = A | B
+        slot m : Mode = A
+        slot x : Int = 0
+        reducer add on=ui.click(T#nope) do= x := x + 1
+        tile T = match m with
+                   | A -> button(text="a") {id: "one"}
+                   | B -> button(text="b") {id: "two"}
+        tile App = column(T)
+        app App caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkStrict(src);
+      const e = errors.find((d) => d.code === "E0212");
+      expect(e).toBeDefined();
+      expect(e?.message).toContain("one");
+      expect(e?.message).toContain("two");
+    });
+
+    it("accepts a TileMatch where any arm's literal id matches", () => {
+      const src = `
+        type Mode = A | B
+        slot m : Mode = A
+        slot x : Int = 0
+        reducer add on=ui.click(T#two) do= x := x + 1
+        tile T = match m with
+                   | A -> button(text="a") {id: "one"}
+                   | B -> button(text="b") {id: "two"}
+        tile App = column(T)
+        app App caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("stays silent when any TileMatch arm has no {id} prop", () => {
+      // Pin the fold semantics: one arm without {id} makes the whole tile's
+      // id set unknown, matching the TileIf partial-dynamic case.
+      const src = `
+        type Mode = A | B
+        slot m : Mode = A
+        slot x : Int = 0
+        reducer add on=ui.click(T#nope) do= x := x + 1
+        tile T = match m with
+                   | A -> button(text="a") {id: "one"}
+                   | B -> button(text="b")
+        tile App = column(T)
+        app App caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    // TileFor / TileWhen are pass-through wrappers around a single body. Pin
+    // that a mismatched literal id inside the body still surfaces E0212, so
+    // a future refactor that accidentally drops the descent regresses loudly.
+    it("descends into TileFor body — a literal id mismatch under `for` still fires E0212", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2]
+        slot x : Int = 0
+        reducer add on=ui.click(T#nope) do= x := x + 1
+        tile T = for n in xs
+                   button(text=n.show) {id: "row"}
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkStrict(src);
+      const e = errors.find((d) => d.code === "E0212");
+      expect(e).toBeDefined();
+      expect(e?.message).toContain("row");
+    });
+
+    it("descends into TileWhen body — a literal id mismatch under `when` still fires E0212", () => {
+      const src = `
+        slot visible : Bool = true
+        slot x : Int = 0
+        reducer add on=ui.click(T#nope) do= x := x + 1
+        tile T = when(visible, button(text="hi") {id: "gate"})
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkStrict(src);
+      const e = errors.find((d) => d.code === "E0212");
+      expect(e).toBeDefined();
+      expect(e?.message).toContain("gate");
+    });
   });
 });

@@ -788,9 +788,11 @@ function walkTileExprForBuiltinKinds(
  * value is a non-`Str` expression (a `Ref` etc.) — the runtime filter is the
  * authority for those cases and E0212 stays silent.
  */
-type TileIdCollection = { known: true; ids: Set<string> } | { known: false };
+type TileIdCollection =
+  | { readonly known: true; readonly ids: ReadonlySet<string> }
+  | { readonly known: false };
 
-const ID_COLL_UNKNOWN: TileIdCollection = { known: false };
+const ID_COLL_UNKNOWN: TileIdCollection = Object.freeze({ known: false });
 
 function mergeIdCollections(a: TileIdCollection, b: TileIdCollection): TileIdCollection {
   if (!a.known || !b.known) return ID_COLL_UNKNOWN;
@@ -803,36 +805,54 @@ function mergeIdCollections(a: TileIdCollection, b: TileIdCollection): TileIdCol
  * §1.6.2 / issue #149 — collect the literal `{id}` values a tile's `TileCall`
  * roots can produce. Only walks THIS tile's body — referenced user tiles are
  * intentionally not descended so a future per-instance id-override at the use
- * site isn't foreclosed at compile time. Cycle-safe via `visited`.
+ * site isn't foreclosed at compile time. Cycle-safe by construction: the
+ * walker never crosses tile boundaries, so recursion is bounded by this
+ * tile's own AST depth. Takes the `TileDef` directly (rather than looking up
+ * by name) so a caller that forgets the existence guard fails loudly instead
+ * of getting a silent `known: false` — the exact silent-failure mode this
+ * whole diagnostic exists to prevent.
  */
-function collectTileDeclaredIds(tileName: string, sym: SymbolTable): TileIdCollection {
-  const def = sym.tiles.get(tileName);
-  if (!def) return ID_COLL_UNKNOWN;
+function collectTileDeclaredIds(def: TileDef): TileIdCollection {
   return walkTileExprForDeclaredIds(def.body);
 }
 
 function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
-  if (expr.kind === "TileFor" || expr.kind === "TileWhen") {
-    return walkTileExprForDeclaredIds(expr.body);
-  }
-  if (expr.kind === "TileIf") {
-    return mergeIdCollections(
-      walkTileExprForDeclaredIds(expr.consequent),
-      walkTileExprForDeclaredIds(expr.alternate),
-    );
-  }
-  if (expr.kind === "TileMatch") {
-    let acc: TileIdCollection = { known: true, ids: new Set() };
-    for (const arm of expr.arms) {
-      acc = mergeIdCollections(acc, walkTileExprForDeclaredIds(arm.body));
+  // Exhaustive switch: a future 6th `TileExpr` variant would otherwise
+  // silently fall through to the `TileCall`-shaped `props` read below and
+  // either return a wrong-looking id set or crash at runtime with no code /
+  // position. The `never` fallthrough turns that into a compile-time error.
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      return walkTileExprForDeclaredIds(expr.body);
+    case "TileIf":
+      return mergeIdCollections(
+        walkTileExprForDeclaredIds(expr.consequent),
+        walkTileExprForDeclaredIds(expr.alternate),
+      );
+    case "TileMatch": {
+      // Seed with UNKNOWN so a hypothetical 0-arm match (no branches to
+      // vouch for the id set) yields `known: false` and E0212 stays silent
+      // instead of emitting a message with an empty `actual` — the parser
+      // rejects 0-arm matches today, but this keeps the diagnostic honest
+      // if that ever changes.
+      let acc: TileIdCollection = ID_COLL_UNKNOWN;
+      for (let i = 0; i < expr.arms.length; i++) {
+        const armIds = walkTileExprForDeclaredIds(expr.arms[i]!.body);
+        acc = i === 0 ? armIds : mergeIdCollections(acc, armIds);
+      }
+      return acc;
     }
-    return acc;
+    case "TileCall": {
+      const idProp = expr.props.find((p) => p.name === "id");
+      if (!idProp || idProp.value.kind !== "Str") return ID_COLL_UNKNOWN;
+      return { known: true, ids: new Set([idProp.value.value]) };
+    }
+    default: {
+      const _exhaustive: never = expr;
+      return _exhaustive;
+    }
   }
-  // TileCall — the `{id}` prop lives on the outermost call.
-  const idProp = expr.props.find((p) => p.name === "id");
-  if (!idProp) return ID_COLL_UNKNOWN;
-  if (idProp.value.kind !== "Str") return ID_COLL_UNKNOWN;
-  return { known: true, ids: new Set([idProp.value.value]) };
 }
 
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -873,23 +893,21 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   // #148 regression test that intentionally constructs a literal mismatch).
   // Skipped when E0211 already fires (undeclared tile) so users see one root
   // cause, not two overlapping ones.
-  if (
-    r.on.kind === "UiEvent" &&
-    r.on.selector.tile !== "_" &&
-    r.on.selector.id !== undefined &&
-    sym.tiles.has(r.on.selector.tile)
-  ) {
-    const decl = collectTileDeclaredIds(r.on.selector.tile, sym);
-    if (decl.known && !decl.ids.has(r.on.selector.id)) {
-      const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
-      errors.push({
-        code: "E0212",
-        kind: "selector-id-mismatch",
-        message:
-          `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-          `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
-        pos: r.on.pos,
-      });
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
+    const def = sym.tiles.get(r.on.selector.tile);
+    if (def !== undefined) {
+      const decl = collectTileDeclaredIds(def);
+      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
+        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+        errors.push({
+          code: "E0212",
+          kind: "selector-id-mismatch",
+          message:
+            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
+            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+          pos: r.on.pos,
+        });
+      }
     }
   }
   // §1.6.1 — flag `ui.<ev>(Tile)` subscriptions whose target tile has no
