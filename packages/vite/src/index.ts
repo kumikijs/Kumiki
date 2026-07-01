@@ -44,6 +44,14 @@ export type KumikiPluginOptions = {
    * `[name]` placeholder is the fail-soft default, spec §4.8.3).
    */
   strictIcons?: boolean;
+  /**
+   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` cannot match any of the
+   * target tile's literal `{id: "..."}` props to `E0212 selector-id-mismatch`.
+   * Mirrors `kumiki check --strict-selector-id`. Tiles with computed or
+   * missing `{id}` (where the runtime `_dispatch` filter is authoritative)
+   * stay unblocked. Default: false.
+   */
+  strictSelectorId?: boolean;
 };
 
 /** Write `path` only if its current contents differ — avoids spurious watch churn. */
@@ -94,6 +102,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         capabilities: resolveCapabilities(file),
         ...(options.strictA11y ? { strictA11y: true as const } : {}),
         ...(options.strictIcons ? { strictIcons: true as const, iconNames } : {}),
+        ...(options.strictSelectorId ? { strictSelectorId: true as const } : {}),
       } as const;
 
       const first = compile(code, baseOpts);

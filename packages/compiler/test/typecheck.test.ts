@@ -1221,4 +1221,152 @@ describe("typecheck", () => {
       expect(w?.message).toContain("link");
     });
   });
+
+  // #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)` selector was
+  // silent: parser/checker/codegen accept it and runtime `_dispatch` drops the
+  // event because `el.id !== selector.id`. E0212 is opt-in via
+  // `strictSelectorId` so the PR #148 runtime-filter regression (which uses a
+  // deliberate literal mismatch) still compiles by default.
+  describe("selector id mismatch (E0212, strictSelectorId)", () => {
+    const checkStrict = (src: string) => check(parse(lex(src)), { strictSelectorId: true });
+
+    it("flags a literal id mismatch under strictSelectorId", () => {
+      const src = `
+        slot x : Int = 0
+        reducer add on=ui.submit(NewForm#nw) do= x := x + 1
+        tile NewForm = form(text="a") {id: "new"}
+        tile App = column(NewForm)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkStrict(src);
+      const e = errors.find((d) => d.code === "E0212");
+      expect(e).toBeDefined();
+      expect(e?.kind).toBe("selector-id-mismatch");
+      expect(e?.message).toContain("NewForm#nw");
+      expect(e?.message).toContain('"new"');
+      expect(e?.message).toContain("can never match");
+    });
+
+    it("does NOT emit E0212 by default (default-off)", () => {
+      const src = `
+        slot x : Int = 0
+        reducer add on=ui.submit(NewForm#nw) do= x := x + 1
+        tile NewForm = form(text="a") {id: "new"}
+        tile App = column(NewForm)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkSrc(src);
+      expect(errors.some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("accepts a literal id that matches", () => {
+      const src = `
+        slot x : Int = 0
+        reducer add on=ui.submit(NewForm#new) do= x := x + 1
+        tile NewForm = form(text="a") {id: "new"}
+        tile App = column(NewForm)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("silently passes when the tile has no {id} prop (runtime filter is authoritative)", () => {
+      const src = `
+        slot x : Int = 0
+        reducer add on=ui.submit(NewForm#any) do= x := x + 1
+        tile NewForm = form(text="a")
+        tile App = column(NewForm)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("silently passes when the tile's {id} value is a non-Str expression", () => {
+      // A `Ref` id could resolve to anything at runtime — the runtime filter
+      // is authoritative, so we do not flag it at compile time.
+      const src = `
+        slot x : Int = 0
+        slot dynId : Text = "new"
+        reducer add on=ui.submit(NewForm#anything) do= x := x + 1
+        tile NewForm = form(text="a") {id: dynId}
+        tile App = column(NewForm)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("silently passes when the selector has no #id", () => {
+      const src = `
+        slot x : Int = 0
+        reducer add on=ui.click(NewBtn) do= x := x + 1
+        tile NewBtn = button(text="a") {id: "new"}
+        tile App = column(NewBtn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("silently passes for the _ wildcard selector", () => {
+      const src = `
+        slot x : Int = 0
+        reducer cb on=ui.click(_) do= x := x + 1
+        tile App = column()
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("prefers E0211 over E0212 when the tile itself is undeclared", () => {
+      const src = `
+        slot x : Int = 0
+        reducer add on=ui.submit(Missing#nw) do= x := x + 1
+        tile App = column()
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkStrict(src);
+      expect(errors.some((d) => d.code === "E0211")).toBe(true);
+      expect(errors.some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("accepts a match with any literal id present in a TileIf branch", () => {
+      const src = `
+        slot mode : Bool = true
+        slot x : Int = 0
+        reducer add on=ui.click(NewBtn#alt) do= x := x + 1
+        tile NewBtn = if mode then button(text="a") {id: "main"} else button(text="b") {id: "alt"}
+        tile App = column(NewBtn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+
+    it("flags a TileIf where NEITHER branch's literal id matches", () => {
+      const src = `
+        slot mode : Bool = true
+        slot x : Int = 0
+        reducer add on=ui.click(NewBtn#nope) do= x := x + 1
+        tile NewBtn = if mode then button(text="a") {id: "main"} else button(text="b") {id: "alt"}
+        tile App = column(NewBtn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const errors = checkStrict(src);
+      const e = errors.find((d) => d.code === "E0212");
+      expect(e).toBeDefined();
+      expect(e?.message).toContain("main");
+      expect(e?.message).toContain("alt");
+    });
+
+    it("stays silent when a TileIf branch has a computed {id} (dynamic-anywhere → skip)", () => {
+      const src = `
+        slot mode : Bool = true
+        slot dynId : Text = "x"
+        slot x : Int = 0
+        reducer add on=ui.click(NewBtn#nope) do= x := x + 1
+        tile NewBtn = if mode then button(text="a") {id: "main"} else button(text="b") {id: dynId}
+        tile App = column(NewBtn)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
+    });
+  });
 });

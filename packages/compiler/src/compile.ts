@@ -77,6 +77,15 @@ export type ExtendedCodegenOptions = CodegenOptions & {
    */
   strictIcons?: boolean;
   /**
+   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` cannot match any of the
+   * target tile's literal `{id: "..."}` props to `E0212 selector-id-mismatch`.
+   * Mirrors `kumiki check --strict-selector-id`; default-off so tiles with
+   * computed or missing `{id}` (where the runtime `_dispatch` filter is the
+   * authority) stay unblocked, and so the PR #148 regression test's
+   * deliberate literal mismatch still compiles cleanly.
+   */
+  strictSelectorId?: boolean;
+  /**
    * The closed icon-name set from `@kumikijs/icons` (typically
    * `Object.keys(ALL_ICONS)`). When omitted, only names declared in the
    * source's `theme.icons` blocks satisfy the strict-icons check, matching
@@ -106,6 +115,7 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
     capabilities: opts.capabilities ?? [],
     ...(opts.strictA11y ? { strictA11y: true } : {}),
     ...(opts.strictIcons ? { strictIcons: true } : {}),
+    ...(opts.strictSelectorId ? { strictSelectorId: true } : {}),
     ...(opts.iconNames ? { iconNames: opts.iconNames } : {}),
   });
   const errors = diags.filter((d) => d.severity !== "warning");
