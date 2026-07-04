@@ -1,0 +1,54 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "packages/compiler/**"
+      - "packages/runtime/**"
+      - "packages/syntax/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Cache Turborepo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-deploy-site-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-deploy-site-
+            ${{ runner.os }}-turbo-
+
+      - run: pnpm install --frozen-lockfile
+
+      # Turborepo's `dependsOn: ^build` pulls the runtime bundle and compiler
+      # so `docs/.vitepress/theme/preview.ts`'s `@kumikijs/runtime/bundle?raw`
+      # import resolves during VitePress build.
+      - run: pnpm exec turbo run build --filter=@kumikijs/docs
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy docs/.vitepress/dist --project-name=kumiki --branch=main
