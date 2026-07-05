@@ -1,0 +1,29 @@
+# Feature: §1.6.1 ui.focus / ui.blur events.
+# A single text input drives two reducers: focusing it records the field name,
+# blurring it bumps a counter. Both events are wired by codegen onto the
+# focusable tile (input) and dispatched by the runtime universal render hook.
+
+slot focusedField : Text = ""
+slot blurCount    : Int  = 0
+slot draft        : Text = ""
+
+reducer onFocus on=ui.focus(NameInput)
+    do= focusedField := "name"
+
+reducer onBlur on=ui.blur(NameInput)
+    do= blurCount := blurCount + 1
+
+tile NameInput = input(bind=draft, placeholder="type your name") {id: "name-input"}
+
+tile App
+    = column(
+        heading("ui.focus / ui.blur"),
+        NameInput,
+        text(focusedField),
+        text(blurCount)
+      )
+
+app FocusBlur
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

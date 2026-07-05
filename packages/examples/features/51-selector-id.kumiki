@@ -1,0 +1,29 @@
+# Feature: §1.6.2 static TileName#id selector.
+# A reducer with `on=ui.click(NewBtn#new)` fires only when the dispatched
+# element's tile is `NewBtn` AND its `{id}` prop equals "new". A reducer with
+# no `#id` (here `plain`) still fires for every NewBtn click. A reducer with a
+# non-matching `#id` (`scopedMiss`) is skipped at dispatch time.
+# Per §1.6.4 invariant 3, multiple reducers matching the same event run in
+# source order — so clicking NewBtn appends "hit;plain;" to log.
+
+slot log : Text = ""
+
+reducer scopedHit  on=ui.click(NewBtn#new)  do= log := log + "hit;"
+reducer scopedMiss on=ui.click(NewBtn#edit) do= log := log + "miss;"
+reducer plain      on=ui.click(NewBtn)      do= log := log + "plain;"
+
+tile NewBtn  = button(text="New")  {id: "new"}
+tile EditBtn = button(text="Edit") {id: "edit"}
+
+tile App
+    = column(
+        heading("Selector#id demo"),
+        NewBtn,
+        EditBtn,
+        text(log)
+      )
+
+app SelectorId
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

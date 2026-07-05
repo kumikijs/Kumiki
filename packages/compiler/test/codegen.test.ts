@@ -310,4 +310,552 @@ describe("codegen", () => {
     expect(result.js).not.toContain("storageRead");
     expect(result.js).not.toContain("storageWrite");
   });
+
+  // Issue #85: a parent route whose tile declares `sub-routes` must emit a
+  // nested `subRoutes:` array on the route entry so the runtime can re-match.
+  it("emits sub-routes on the parent route entry", () => {
+    const src = `
+      tile NotFound = page(heading("404"))
+      tile Account = page(heading("a"))
+      tile Home = page(heading("home"))
+      tile Layout
+        sub-routes = {
+          "/settings/account" -> Account,
+          "/settings"         -> Home
+        }
+        = page(route-outlet())
+      app A caps=[nav.push] routes={
+        "/settings/*" -> Layout,
+        "/404"        -> NotFound
+      } init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('pattern: "/settings/*"');
+    expect(result.js).toContain("subRoutes:");
+    expect(result.js).toContain('pattern: "/settings/account"');
+    expect(result.js).toContain('pattern: "/settings"');
+  });
+
+  it("lowers `@token` refs in a style block to runtime `_s.token(...)` calls (§4.3)", () => {
+    const src = `
+      tile Card = box() {style: {background: @colors.surface, padding: @spacing.md, radius: @radius.md, shadow: @shadow.sm, font-size: @typography.size.lg}}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('_s.token("colors", ["surface"])');
+    expect(result.js).toContain('_s.token("spacing", ["md"])');
+    expect(result.js).toContain('_s.token("radius", ["md"])');
+    expect(result.js).toContain('_s.token("shadow", ["sm"])');
+    expect(result.js).toContain('_s.token("typography", ["size", "lg"])');
+    // `style` is a CSS prop bag the runtime applies to el.style — it must NOT
+    // also ride the `el` reducer bag, where it would re-evaluate every
+    // `@token` ref for no consumer. The source has two routes pointing at the
+    // same App, so each `_s.token(...)` appears exactly once per route (2 ×).
+    const colorsHits = (result.js.match(/_s\.token\("colors"/g) ?? []).length;
+    expect(colorsHits).toBe(2);
+    // And the per-tile `el: { ... }` bag — built only when extra props exist —
+    // must not be present (style is the only prop and we drop it from el).
+    expect(result.js).not.toMatch(/el: \{ style:/);
+  });
+
+  // issue #91 — language.md §1.6.1 + §1.9.
+  it("emits onKeyDown for ui.key(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot k : Text = ""
+      reducer onKey on=ui.key(Box) do= k := "hit"
+      tile Box = input(bind=k)
+      tile App = column(Box)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onKeyDown: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onKey"/,
+    );
+  });
+
+  it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
+    const src = `
+      slot h : Bool = false
+      reducer onHover on=ui.hover(Card) do= h := true
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onMouseEnter: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onHover"/,
+    );
+  });
+
+  // issue #122 — §1.6.1 ui.focus / ui.blur. Parser/AST already accepted
+  // these; codegen now lifts them into onFocus / onBlur on focusable tiles
+  // (input / textarea / button / select) and skips non-focusable tiles so the
+  // runtime never wires a listener that the DOM cannot fire.
+  //
+  // Reducer names are deliberately NOT `onFocus` / `onBlur` here — those are
+  // the emitted prop names, so collision-naming would mask a take-the-wrong-
+  // string bug in either the matcher or the dispatch.
+  it("emits onFocus for ui.focus(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(InputX) do= f := "focused"
+      tile InputX = input(bind=f)
+      tile App = column(InputX)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+    );
+  });
+
+  it("emits onBlur for ui.blur(EnclosingTile) on an input (§1.6.1)", () => {
+    const src = `
+      slot b : Text = ""
+      reducer markBlur on=ui.blur(InputX) do= b := "blurred"
+      tile InputX = input(bind=b)
+      tile App = column(InputX)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onBlur: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("markBlur"/,
+    );
+  });
+
+  it("emits onFocus on a textarea (one of the focusable tile gates) (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(NoteArea) do= f := "focused"
+      tile NoteArea = textarea(bind=f)
+      tile App = column(NoteArea)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+    );
+  });
+
+  // The "non-focusable" guard is a deliberate codegen design choice: a
+  // `ui.focus(Card)` subscription targeting a `box` is silently dropped
+  // because DOM `focus` would never fire on a non-focusable element anyway.
+  // The typecheck pass now also surfaces the same condition as `W0212`
+  // (issue #143), so both layers — silent codegen drop AND typecheck
+  // warning — are asserted here in lock-step.
+  it("does not emit onFocus on a non-focusable tile (box) and surfaces W0212 (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(Card) do= f := "focused"
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).not.toMatch(/onFocus:/);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "W0212", kind: "ui-event-tile-mismatch" }),
+      ]),
+    );
+  });
+
+  it("does not emit onBlur on a non-focusable tile (box) and surfaces W0212 (§1.6.1)", () => {
+    const src = `
+      slot b : Text = ""
+      reducer markBlur on=ui.blur(Card) do= b := "blurred"
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).not.toMatch(/onBlur:/);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "W0212", kind: "ui-event-tile-mismatch" }),
+      ]),
+    );
+  });
+
+  // Explicit-prop passthrough: `input(onFocus=recordFocus)` is a hand-authored
+  // wiring that bypasses the implicit-lift block, so the args / props
+  // passthrough lists must include onFocus / onBlur. This covers the
+  // codegen.ts `for (const a of t.args)` and `for (const p of t.props)` paths.
+  it("emits onFocus from explicit `tile = input(onFocus=Reducer)` arg syntax (§1.6.1)", () => {
+    const src = `
+      slot f : Text = ""
+      reducer recordFocus on=ui.focus(Other) do= f := "focused"
+      tile Other = button("noop")
+      tile MyInput = input(onFocus=recordFocus)
+      tile App = column(MyInput, Other)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+    );
+  });
+
+  it("emits onClick on a radio tile so `ui.click(Radio)` reducers fire (§1.6.1)", () => {
+    const src = `
+      slot picked : Text = ""
+      reducer pick on=ui.click(R) do= picked := "red"
+      tile R = radio(group="color")
+      tile App = column(R)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(/onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("pick"/);
+  });
+
+  it("emits onChange on form-control tiles (check / radio / switch / slider) — `ui.change(Tile)` reducers fire (§1.6.1)", () => {
+    const cases = [
+      { tile: `check(checked=false)`, reducer: "tc" },
+      { tile: `radio(group="g")`, reducer: "tr" },
+      { tile: `switch(checked=false)`, reducer: "ts" },
+      { tile: `slider(min=0, max=10)`, reducer: "tl" },
+    ];
+    for (const { tile, reducer } of cases) {
+      const src = `
+        slot v : Text = ""
+        reducer ${reducer} on=ui.change(T) do= v := "x"
+        tile T = ${tile}
+        tile App = column(T)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") continue;
+      expect(result.js).toMatch(
+        new RegExp(`onChange: \\(el\\) => \\{ globalThis\\.__kumikiApp\\._dispatch\\("${reducer}"`),
+      );
+    }
+  });
+
+  it("emits onBlur from explicit `tile = input(){onBlur: Reducer}` props syntax (§1.6.1)", () => {
+    const src = `
+      slot b : Text = ""
+      reducer markBlur on=ui.blur(Other) do= b := "blurred"
+      tile Other = button("noop")
+      tile MyInput = input() {onBlur: markBlur}
+      tile App = column(MyInput, Other)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toMatch(
+      /onBlur: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("markBlur"/,
+    );
+  });
+
+  it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
+    const src = `
+      type Light = Red | Green
+      fn f(p: Tuple(Light, Light)) -> Text = match p with
+        | (Red, Green) -> "rg"
+        | (x, y) -> "other"
+      slot label : Text = ""
+      tile App = text(label)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("Array.isArray");
+    expect(result.js).toContain(".length === 2");
+    expect(result.js).toContain('_s.variantIs((_v)[0], "Red")');
+    expect(result.js).toContain('_s.variantIs((_v)[1], "Green")');
+  });
+
+  // issue #91 — tile-match must accept tuple patterns too (§1.4 grammar now
+  // mirrors §1.9). Covers the TileMatch lowering path that delegates to the
+  // shared `tupleArm` helper.
+  it("emits an Array.isArray guard for a tuple pattern in tile-match (§1.4)", () => {
+    const src = `
+      type Tag = A | B
+      tile Row in=Tuple(Tag, Text)
+        = match $1 with
+            | (A, _) -> text("a-row")
+            | (B, _) -> text("b-row")
+      slot rows : List(Text) = ["x", "y"]
+      slot tags : List(Tag)  = [A, B]
+      tile App = column(for p in tags.zip(rows) Row(p))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain("Array.isArray");
+    expect(result.js).toContain(".length === 2");
+    expect(result.js).toContain('_s.variantIs((_v)[0], "A")');
+    expect(result.js).toContain('_s.variantIs((_v)[0], "B")');
+  });
+
+  // issue #102 — http.cancel + EffectId returned at emit time.
+  it("lowers `let id = emit X()` to push + EffectId expression (#102)", () => {
+    const src = `
+      slot stored : EffectId = EffectId.none
+      effect search cap=http.get
+                    in=Text
+                    out=Result(Text, HttpError)
+      reducer go on=ui.click(Btn) do= let h = emit search("q")
+                                     stored := h
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn)
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // The let rhs is an IIFE that pushes the emit AND yields `"search:" + key`.
+    expect(result.js).toContain('_emits.push({ effect: "search"');
+    expect(result.js).toContain('"search:"');
+    // EffectId.none lowers to the empty-string sentinel.
+    expect(result.js).toContain('"stored": { value: "" }');
+  });
+
+  it("lowers EmitExpr args ONCE so a side-effectful arg matches the runtime id (#102 review)", () => {
+    // Before the fix, `let id = emit X(now())` lowered `now()` twice — once
+    // for `__input` (drives the EffectId codegen returns) and once for
+    // `_emits.push({args: [...]})` (drives the runtime keyOf). Two `now()`
+    // values → two different ids → `emit cancel(id)` would silently no-op.
+    const src = `
+      slot stored : EffectId = EffectId.none
+      effect search cap=http.get
+                    in=Time
+                    out=Result(Text, HttpError)
+                    policy=latest-per-key($1)
+      reducer go on=ui.click(Btn) do= let h = emit search(now)
+                                     stored := h
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn)
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Each arg is lowered into a __a<i> binding once; both the push and the
+    // EffectId expression reuse that local.
+    expect(result.js).toMatch(/const __a0 = _s\.now\(\);/);
+    expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0] })');
+    expect(result.js).toContain("(__a0)");
+    expect(result.js).toMatch(/"search:" \+ String/);
+    // _s.now() must appear exactly once in the generated reducer body —
+    // double-eval would surface as two occurrences.
+    const occurrences = (result.js.match(/_s\.now\(\)/g) ?? []).length;
+    expect(occurrences).toBe(1);
+  });
+
+  it("includes effects-http when an effect uses cap=http.cancel (#102)", () => {
+    const src = `
+      slot stored : EffectId = EffectId.none
+      effect cancel cap=http.cancel in=EffectId out=Unit
+      reducer go on=ui.click(Btn) do= emit cancel(stored)
+      tile Btn = button(text="cancel", onClick=go)
+      tile App = column(Btn)
+      app A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // The dispatcher special-cases cap=http.cancel — we just need the
+    // capability to be wired into the registry and the emit to be present.
+    expect(result.js).toContain('"http.cancel"');
+    expect(result.js).toContain('_emits.push({ effect: "cancel"');
+  });
+
+  it("does not change shorthand-prop codegen — `bg`/`pad` stay as plain string fields (§4.3.1)", () => {
+    // Regression guard: shorthand props are still resolved at runtime by
+    // applyContainerProps/applyTextProps, NOT desugared at codegen time.
+    const src = `
+      tile Card = box(text("hi")) {bg: "surface", pad: "md"}
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('bg: "surface"');
+    expect(result.js).toContain('pad: "md"');
+    expect(result.js).not.toContain('_s.token("colors"');
+    expect(result.js).not.toContain('_s.token("spacing"');
+  });
+
+  it("promotes a11y warnings to compile errors when strictA11y is set (§10.7)", () => {
+    const src = `
+      tile App = button()
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const lax = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(lax.kind).toBe("ok");
+    const strict = compile(src, { runtimeSpecifier: "./runtime.js", strictA11y: true });
+    expect(strict.kind).toBe("fail");
+    if (strict.kind !== "fail") return;
+    expect(strict.errors.some((e) => e.code === "E0701")).toBe(true);
+  });
+
+  it("dispatches every reducer subscribing to the same (tile, ui.click) in source order (§1.6.4)", () => {
+    // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
+    // definition order". A handler must dispatch every match, not just one.
+    const src = `
+      slot hits  : Int = 0
+      slot saves : Int = 0
+      slot logs  : Int = 0
+      reducer logHit on=ui.click(SubmitBtn) do= hits  := hits  + 1
+      reducer save   on=ui.click(SubmitBtn) do= saves := saves + 1
+      reducer audit  on=ui.click(SubmitBtn) do= logs  := logs  + 1
+      tile SubmitBtn = button(text="go")
+      tile App = column(SubmitBtn, text(hits.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Anchor on dispatch occurrences in the full emitted module (not a regex
+    // slice — a `}` inside a future dispatch payload would cut the slice early
+    // and silently pass even after a regression).
+    const iLog = result.js.indexOf('_dispatch("logHit"');
+    const iSave = result.js.indexOf('_dispatch("save"');
+    const iAudit = result.js.indexOf('_dispatch("audit"');
+    expect(iLog).toBeGreaterThanOrEqual(0);
+    expect(iSave).toBeGreaterThan(iLog);
+    expect(iAudit).toBeGreaterThan(iSave);
+  });
+
+  it("emits a single onClick that wraps the one dispatch when only one reducer matches", () => {
+    const src = `
+      slot x : Int = 0
+      reducer inc on=ui.click(B) do= x := x + 1
+      tile B = button(text="+")
+      tile App = column(B, text(x.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain('_dispatch("inc", el)');
+    expect(result.js).toMatch(/onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("inc"/);
+  });
+
+  it("chains explicit `onClick=fn` and a separate ui.click reducer on the same tile (§1.6.4)", () => {
+    // Explicit-then-implicit on the same handler: spec §1.6.4 says both fire.
+    // Explicit goes first (it's declared on the tile that mounts the element),
+    // then the implicit subscriber. A skipping carve-out — emitting only the
+    // explicit and silently dropping the reducer — would be a spec violation.
+    const src = `
+      slot x : Int = 0
+      slot y : Int = 0
+      reducer onExplicit on=app.start do= x := 0
+      reducer onImplicit on=ui.click(B) do= y := y + 1
+      tile B = button(text="go", onClick=onExplicit)
+      tile App = column(B, text(x.show), text(y.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Both dispatches present, explicit before implicit.
+    const iExplicit = result.js.indexOf('_dispatch("onExplicit"');
+    const iImplicit = result.js.indexOf('_dispatch("onImplicit"');
+    expect(iExplicit).toBeGreaterThanOrEqual(0);
+    expect(iImplicit).toBeGreaterThan(iExplicit);
+    // Per element they collapse into one chained handler. Guards against a
+    // duplicate-key object literal (`{ onClick: a, onClick: b }`) by checking
+    // the explicit dispatch and the implicit dispatch land in the same body.
+    expect(result.js).toMatch(
+      /onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onExplicit", el\); globalThis\.__kumikiApp\._dispatch\("onImplicit", el\) \}/,
+    );
+  });
+
+  it("dedupes overlapping explicit + implicit wiring of the same reducer (no double-fire)", () => {
+    // `onClick=inc` and `reducer inc on=ui.click(B)` both target the SAME
+    // reducer. Without dedup the chain would dispatch `inc` twice per click
+    // — the counter would tick by 2 instead of 1. (Counter example
+    // 01-slot-and-reducer.kumiki uses exactly this overlap.)
+    const src = `
+      slot count : Int = 0
+      reducer inc on=ui.click(B) do= count := count + 1
+      tile B = button(text="+", onClick=inc)
+      tile App = column(B, text(count.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    // Exactly one dispatch of `inc` in the onClick body.
+    const matches = result.js.match(/_dispatch\("inc"/g) ?? [];
+    // One per route (/, /404) — both renderings emit the same chain.
+    expect(matches.length).toBe(2);
+  });
+
+  it("dispatches every reducer subscribing to the same (tile, ui.submit) in source order (§1.6.4)", () => {
+    const src = `
+      slot saved : Int = 0
+      slot logged : Int = 0
+      reducer save  on=ui.submit(LoginForm) do= saved  := saved  + 1
+      reducer audit on=ui.submit(LoginForm) do= logged := logged + 1
+      tile LoginForm = form(text="login")
+      tile App = column(LoginForm, text(saved.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const iSave = result.js.indexOf('_dispatch("save"');
+    const iAudit = result.js.indexOf('_dispatch("audit"');
+    expect(iSave).toBeGreaterThanOrEqual(0);
+    expect(iAudit).toBeGreaterThan(iSave);
+    // Both dispatches share a single chained handler body.
+    expect(result.js).toMatch(
+      /onSubmit: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("save", el\); globalThis\.__kumikiApp\._dispatch\("audit", el\) \}/,
+    );
+  });
+
+  it("dispatches every reducer subscribing to the same (tile, ui.hover) in source order (§1.6.4)", () => {
+    // ui.hover lifts onto any tile (no tile-name filter), so this also guards
+    // against regressing the broad-applicability rule for the hover path.
+    const src = `
+      slot warm : Int = 0
+      slot logs : Int = 0
+      reducer wake on=ui.hover(Card) do= warm := warm + 1
+      reducer note on=ui.hover(Card) do= logs := logs + 1
+      tile Card = box(text("hi"))
+      tile App = column(Card)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const iWake = result.js.indexOf('_dispatch("wake"');
+    const iNote = result.js.indexOf('_dispatch("note"');
+    expect(iWake).toBeGreaterThanOrEqual(0);
+    expect(iNote).toBeGreaterThan(iWake);
+    expect(result.js).toMatch(
+      /onMouseEnter: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("wake", el\); globalThis\.__kumikiApp\._dispatch\("note", el\) \}/,
+    );
+  });
 });

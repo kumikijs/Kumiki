@@ -82,9 +82,13 @@ export const layoutTiles: TileRenderers = {
     hr.dataset.kumikiTile = "divider";
     return hr;
   },
-  "route-outlet"() {
+  "route-outlet"(node, ctx) {
+    // §3.6: `pickRootTile` injects the matched child tile into `node.children`
+    // before render. Without a sub-route match, children stay empty and the
+    // outlet renders as an empty placeholder.
     const div = document.createElement("div");
     div.dataset.kumikiTile = "route-outlet";
+    appendChildren(div, node.children, ctx);
     return div;
   },
 };

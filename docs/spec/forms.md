@@ -396,6 +396,8 @@ effect uploadFile  cap=http.post
 
 `file-url(file)` is a built-in equivalent to `URL.createObjectURL` (with automatic release).
 
+`accept` and `multiple` are only valid when `type="file"`. Used on any other `type` — or with `type` omitted (which defaults to `"text"`) — the typecheck rejects them with [E0206](./errors.md#e0206-file-only-prop).
+
 ---
 
 ## 5.11 Design Decision Record

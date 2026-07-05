@@ -19,8 +19,10 @@ import type {
   TileExpr,
   TypeDef,
   TypeExpr,
+  UiEventKind,
 } from "./ast.ts";
 import { BUILTIN_TILES, TILE_FAMILY, type TileFamily } from "./builtins.ts";
+import { HANDLER_NAMES, UI_LIFTS } from "./ui-lifts.ts";
 
 export type CodegenOptions = {
   runtimeSpecifier: string;
@@ -42,6 +44,23 @@ export type CodegenOptions = {
    * monolith shape).
    */
   runtimeModulesDir?: string;
+  /**
+   * Resolve an `episode-test load = "<path>"` directive (spec §8.6) to its
+   * file contents — the compiler inlines the parsed log into codegen so the
+   * runtime test harness does not need filesystem access. Optional; emit a
+   * placeholder when omitted and no `episode-test` appears.
+   */
+  readEpisodeLog?: (relativePath: string) => string;
+  /**
+   * Optional built-in icon registry (#101). Maps spec-form icon names
+   * (e.g. `"check"`, `"chevron-down"`) to single-path SVG `d` data. When
+   * provided, only entries whose name appears in `usedIcons` (literal
+   * `icon(name="<name>")` references) are baked into the emitted
+   * `App.icons`. Apps that don't reference icons pay zero bundle cost.
+   * `@kumikijs/vite` and the `kumiki` CLI thread `@kumikijs/icons` through
+   * automatically when it is resolvable from the project.
+   */
+  icons?: Record<string, string>;
 };
 
 export type CodegenResult = {
@@ -53,6 +72,13 @@ export type CodegenResult = {
    * modular one.
    */
   runtimeModules: string[];
+  /**
+   * Icon names referenced by `icon(name="<literal>")` somewhere in the program
+   * (#101). The toolchain (`@kumikijs/vite`, `kumiki` CLI) reads this to look
+   * up the matching SVG path data in `@kumikijs/icons` and re-run codegen with
+   * the `icons` option so only used paths reach the bundle.
+   */
+  usedIcons: string[];
 };
 
 export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
@@ -75,7 +101,16 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   const app = apps[0];
   if (!app) throw new Error("No app definition found");
 
-  const ctx: GenCtx = { slots, fns, tiles, reducers, effects, types, usedTiles: new Set() };
+  const ctx: GenCtx = {
+    slots,
+    fns,
+    tiles,
+    reducers,
+    effects,
+    types,
+    usedTiles: new Set(),
+    usedIcons: new Set(),
+  };
 
   // The import header is emitted AFTER the body below — generating the body
   // fills `ctx.usedTiles`, which (with caps/emits) decides the modular imports.
@@ -126,6 +161,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
       meta.push(`refineKind: ${JSON.stringify(r.pred)}`);
       meta.push(`refineArgs: ${JSON.stringify(r.args)}`);
     }
+    // `volatile` (language.md §175): excludes the slot from SlotDiff records
+    // and from SSR snapshots (runtime.md §10.6.1). The runtime reads this off
+    // SlotMeta.volatile — emit it so the live mount and `renderToString`
+    // agree on the exact set of persisted slots.
+    if (s.modifier === "volatile") meta.push("volatile: true");
     lines.push(`  ${JSON.stringify(s.name)}: { ${meta.join(", ")} },`);
   }
   lines.push("};");
@@ -143,6 +183,9 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // Routes table — each route entry produces either a tile factory or a redirect.
+  // If the parent tile declares `sub-routes`, attach a nested route table
+  // (spec/routing.md §3.6) so the runtime can re-match the path inside the
+  // parent's wildcard pattern and inject the matched child into `route-outlet`.
   lines.push("const _routes = [");
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) {
@@ -153,7 +196,34 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     } else {
       const tile = tiles.find((t) => t.name === r.tile);
       if (!tile) throw new Error(`Route ${r.path} targets undefined tile "${r.tile}"`);
-      lines.push(`  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)} },`);
+      const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
+      if (tile.subRoutes && tile.subRoutes.length > 0) {
+        lines.push(
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr}, subRoutes: [`,
+        );
+        for (const subR of tile.subRoutes) {
+          if (subR.tile.startsWith(">>")) {
+            lines.push(
+              `    { pattern: ${JSON.stringify(subR.path)}, redirectTo: ${JSON.stringify(subR.tile.slice(2))} },`,
+            );
+          } else {
+            const childTile = tiles.find((t) => t.name === subR.tile);
+            if (!childTile)
+              throw new Error(
+                `Sub-route ${subR.path} in tile "${tile.name}" targets undefined tile "${subR.tile}"`,
+              );
+            const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
+            lines.push(
+              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genTile(childTile, ctx)}${csr} },`,
+            );
+          }
+        }
+        lines.push(`  ] },`);
+      } else {
+        lines.push(
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr} },`,
+        );
+      }
     }
   }
   lines.push("];");
@@ -195,6 +265,26 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (app.analytics) lines.push(`  analytics: ${JSON.stringify(appAnalyticsJson(app.analytics))},`);
   lines.push("};");
 
+  // Bake-only-what's-used built-in icon registry (#101). The toolchain passes
+  // `opts.icons` (from @kumikijs/icons) on the second codegen pass; we emit
+  // only the entries whose name appears in a literal `icon(name=...)` call.
+  // The runtime renderer (`tiles-text.ts#icon`) falls back through this map
+  // when `theme.icons[name]` is unset.
+  if (opts.icons && ctx.usedIcons.size > 0) {
+    const entries: string[] = [];
+    for (const name of [...ctx.usedIcons].sort()) {
+      const path = opts.icons[name];
+      if (typeof path === "string") {
+        entries.push(`  ${JSON.stringify(name)}: ${JSON.stringify(path)},`);
+      }
+    }
+    if (entries.length > 0) {
+      lines.push("App.icons = {");
+      for (const e of entries) lines.push(e);
+      lines.push("};");
+    }
+  }
+
   // In-language test tile factories close over this instance's live state, so
   // they are built inside the factory and attached to the app.
   if (opts.includeTests && tests.length > 0) {
@@ -217,7 +307,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (opts.includeTests && tests.length > 0) {
     lines.push("");
     lines.push("const __kumikiTests = [");
-    for (const t of tests) lines.push(genTest(t, ctx));
+    for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
     lines.push("globalThis.__kumikiTests = __kumikiTests;");
     // Static coverage for `kumiki test --coverage` (§8.7).
@@ -306,7 +396,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     );
   }
 
-  return { js: [...header, ...lines].join("\n"), runtimeModules: usage.modules };
+  return {
+    js: [...header, ...lines].join("\n"),
+    runtimeModules: usage.modules,
+    usedIcons: [...ctx.usedIcons].sort(),
+  };
 }
 
 /** The generated identifier holding one tile family's renderer map. */
@@ -375,6 +469,7 @@ function analyzeRuntimeUsage(
     emits.has("navigate") ||
     emits.has("navigate-replace") ||
     emits.has("navigate-back") ||
+    emits.has("scroll-to") ||
     usedTiles.has("link") ||
     usedTiles.has("route-outlet") ||
     app.routes.some((r) => r.tile.startsWith(">>") || (r.path !== "/" && r.path !== "/404"));
@@ -421,14 +516,82 @@ function recordField(e: Expr | TileExpr, name: string): Expr | undefined {
 /** All effect names emitted anywhere in a reducer body (descends into control flow). */
 function collectEmits(stmts: Statement[]): string[] {
   const out: string[] = [];
+  const visitExpr = (e: Expr | undefined): void => {
+    if (!e) return;
+    switch (e.kind) {
+      case "BinOp":
+        visitExpr(e.lhs);
+        visitExpr(e.rhs);
+        return;
+      case "UnaryOp":
+        visitExpr(e.rhs);
+        return;
+      case "FieldAccess":
+        visitExpr(e.base);
+        return;
+      case "Index":
+        visitExpr(e.base);
+        visitExpr(e.index);
+        return;
+      case "Call":
+        for (const a of e.args) visitExpr(a);
+        return;
+      case "MethodCall":
+        visitExpr(e.receiver);
+        for (const a of e.args) visitExpr(a);
+        return;
+      case "RecordLit":
+        for (const f of e.fields) visitExpr(f.value);
+        return;
+      case "ListLit":
+        for (const it of e.items) visitExpr(it);
+        return;
+      case "MapLit":
+        for (const en of e.entries) {
+          visitExpr(en.key);
+          visitExpr(en.value);
+        }
+        return;
+      case "MatchExpr":
+        visitExpr(e.scrutinee);
+        for (const a of e.arms) visitExpr(a.body);
+        return;
+      case "IfExpr":
+        visitExpr(e.cond);
+        visitExpr(e.consequent);
+        visitExpr(e.alternate);
+        return;
+      case "LetIn":
+        visitExpr(e.value);
+        visitExpr(e.body);
+        return;
+      case "Variant":
+        for (const p of e.payload) visitExpr(p);
+        return;
+      case "EmitExpr":
+        out.push(e.effect);
+        for (const a of e.args) visitExpr(a);
+        return;
+    }
+  };
   const walk = (ss: Statement[]): void => {
     for (const s of ss) {
-      if (s.kind === "Emit") out.push(s.effect);
-      else if (s.kind === "ForStmt") walk(s.body);
-      else if (s.kind === "IfStmt") {
+      if (s.kind === "Emit") {
+        out.push(s.effect);
+        for (const a of s.args) visitExpr(a);
+      } else if (s.kind === "LetStmt") visitExpr(s.rhs);
+      else if (s.kind === "SlotAssign") visitExpr(s.rhs);
+      else if (s.kind === "ForStmt") {
+        visitExpr(s.iter);
+        walk(s.body);
+      } else if (s.kind === "IfStmt") {
+        visitExpr(s.cond);
         walk(s.consequent);
         walk(s.alternate);
-      } else if (s.kind === "MatchStmt") for (const a of s.arms) walk(a.body);
+      } else if (s.kind === "MatchStmt") {
+        visitExpr(s.scrutinee);
+        for (const a of s.arms) walk(a.body);
+      }
     }
   };
   walk(stmts);
@@ -538,6 +701,20 @@ function coverageJs(
       if (t.target) usedTiles.add(t.target);
     } else if (t.testKind === "property-test") {
       scanRunReducers(t.invariant, markReducer);
+    } else if (t.testKind === "episode-test") {
+      // episode-test replays a log: every effect mocked is one the test exercises.
+      if (t.mocks?.kind === "RecordLit") {
+        for (const f of t.mocks.fields) {
+          usedEffects.add(f.name);
+          if (f.value.kind === "Ref" && f.value.name === "from-log") {
+            markEffectReducers(f.name, "ok");
+            markEffectReducers(f.name, "err");
+          } else {
+            const outcome = mockOutcome(f.value);
+            if (outcome) markEffectReducers(f.name, outcome);
+          }
+        }
+      }
     }
   }
   const cat = (all: string[], used: Set<string>): string =>
@@ -554,9 +731,34 @@ function coverageJs(
   )} }`;
 }
 
-function genTest(t: TestDef, gen: GenCtx): string {
+function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const ctx = makeEvalCtx(gen, new Set());
   const nameJs = JSON.stringify(t.name);
+  if (t.testKind === "episode-test") {
+    // §8.6: load the episode log at compile time so the runtime test harness
+    // never touches the filesystem. The reader is injected via CodegenOptions
+    // (Node-only callers pass `nodeEpisodeLogReader`); without it we emit a
+    // failing stub so a misconfigured CLI surfaces the gap loudly.
+    let episodesJs = "[]";
+    if (opts.readEpisodeLog && t.load) {
+      const raw = opts.readEpisodeLog(t.load);
+      const parsed = parseEpisodeLog(raw);
+      episodesJs = JSON.stringify(parsed);
+    }
+    const mocksJsStr = t.mocks ? episodeMockJs(t.mocks, ctx) : "{}";
+    const expectJs = t.expect ? episodeExpectJs(t.expect as Expr, ctx) : "{}";
+    return `  {
+    name: ${nameJs},
+    kind: "episode-test",
+    run: () => _s.runEpisodeTest({
+      name: ${nameJs},
+      app: App,
+      episodes: ${episodesJs},
+      mocks: ${mocksJsStr},
+      expect: ${expectJs},
+    }),
+  },`;
+  }
   if (t.testKind === "property-test") {
     const forAll = t.forAll ?? [];
     // forAll var names are local binds, so invariant/given refs lower to the
@@ -686,6 +888,79 @@ function effectListJs(e: Expr, ctx: EvalCtx): string {
  * Compile a reducer-test `given.mocks` record into a `{effect: {outcome, value, delayMs?}}`
  * map for the flow runner (§8.5). Each value is `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`.
  */
+/**
+ * Parse an episode log (one JSON Episode per line — JSONL — or a JSON array).
+ * Surfaces malformed lines as a compile-time throw rather than smuggling them
+ * into the generated test: a corrupted fixture means the test would lie.
+ */
+function parseEpisodeLog(raw: string): unknown[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
+    const arr = JSON.parse(trimmed);
+    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
+    return arr;
+  }
+  const out: unknown[] = [];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    out.push(JSON.parse(s));
+  }
+  return out;
+}
+
+/**
+ * Lower an `episode-test`'s `mocks = { effect: from-log | ignore | ok(v) | err(e) }`
+ * record into the runtime call shape. `from-log` and `ignore` arrive as bare
+ * identifiers (Ref nodes); `ok` / `err` carry a payload Expr that we evaluate
+ * in the test's binding context.
+ */
+function episodeMockJs(e: Expr, ctx: EvalCtx): string {
+  if (e.kind !== "RecordLit") return "{}";
+  const parts = e.fields.map((f) => {
+    const v = f.value;
+    const key = JSON.stringify(f.name);
+    if (v.kind === "Ref" && v.name === "from-log") return `${key}: { policy: "from-log" }`;
+    if (v.kind === "Ref" && v.name === "ignore") return `${key}: { policy: "ignore" }`;
+    if (v.kind === "Call" && (v.callee === "ok" || v.callee === "err")) {
+      const value = v.args[0] ? jsOfExpr(v.args[0], ctx) : "null";
+      return `${key}: { policy: "fixed", outcome: ${JSON.stringify(v.callee)}, value: ${value} }`;
+    }
+    // Defense-in-depth: typecheck (E0712) rejects this before we get here.
+    // If a caller skips check() the loud throw beats silently treating a
+    // typo'd `from_log` as `ignore` and passing the test.
+    throw new Error(
+      `episode-test mock for "${f.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
+    );
+  });
+  return `{ ${parts.join(", ")} }`;
+}
+
+/**
+ * Lower an `episode-test`'s `expect = { slots-equal, no-panics, no-errors }`.
+ * `slots-equal` accepts either the literal `from-log` (use the log's recorded
+ * final slot values) or a record of expected slot → value pairs.
+ */
+function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
+  if (e.kind !== "RecordLit") return "{}";
+  const parts: string[] = [];
+  for (const f of e.fields) {
+    if (f.name === "slots-equal" || f.name === "slotsEqual") {
+      if (f.value.kind === "Ref" && f.value.name === "from-log") {
+        parts.push(`slotsEqual: "from-log"`);
+      } else {
+        parts.push(`slotsEqual: ${jsOfExpr(f.value, ctx)}`);
+      }
+    } else if (f.name === "no-panics" || f.name === "noPanics") {
+      parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
+    } else if (f.name === "no-errors" || f.name === "noErrors") {
+      parts.push(`noErrors: ${jsOfExpr(f.value, ctx)}`);
+    }
+  }
+  return `{ ${parts.join(", ")} }`;
+}
+
 function mocksJs(e: Expr, ctx: EvalCtx): string {
   if (e.kind !== "RecordLit") return "{}";
   const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`);
@@ -732,6 +1007,13 @@ type GenCtx = {
   types: Map<string, TypeDef>;
   /** Built-in tile kinds the generated code emits (filled during generation, #71). */
   usedTiles: Set<string>;
+  /**
+   * Icon names referenced by `icon(name="<literal>")` (#101). Collected during
+   * tile-body generation and used to bake only the referenced entries from
+   * `opts.icons` into the emitted `App.icons` map. Dynamic `name=<expr>` calls
+   * are not captured — they resolve via `theme.icons` at runtime.
+   */
+  usedIcons: Set<string>;
 };
 
 type EvalCtx = {
@@ -832,9 +1114,16 @@ function builtinEffectCall(eff: EffectDef, reqVar: string): string | null {
   if (eff.cap === "indexed.read") return `indexedRead(${reqVar}, _idb)`;
   if (eff.cap === "indexed.write") return `indexedWrite(${reqVar}, _idb)`;
   if (eff.cap === "indexed.delete") return `indexedDelete(${reqVar}, _idb)`;
+  if (eff.cap === "http.cancel") {
+    // cap=http.cancel is a meta-effect — the dispatcher special-cases it and
+    // never reaches the invoke. Codegen still needs SOME `invoke` so the
+    // EffectSpec shape stays uniform; an immediate `ok` keeps a host
+    // provider's mocked behaviour honest if it's ever called through tests.
+    return `{ kind: "ok", value: null }`;
+  }
   if (eff.cap.startsWith("http.")) {
     const method = eff.cap.slice("http.".length).toUpperCase();
-    return `httpFetch(${JSON.stringify(method)}, ${reqVar}, _http)`;
+    return `httpFetch(${JSON.stringify(method)}, ${reqVar}, _http, signal)`;
   }
   return null;
 }
@@ -852,14 +1141,14 @@ function genEffect(eff: EffectDef, gen: GenCtx): string {
   const fallback =
     builtin ??
     `{ kind: "err", value: { message: ${JSON.stringify(`Capability ${eff.cap} has no provider`)} } }`;
-  const tail = `const p = caps.provider(${capJs}); if (p) return p(${reqVar}, caps); return ${fallback};`;
+  const tail = `const p = caps.provider(${capJs}); if (p) return p(${reqVar}, caps, signal); return ${fallback};`;
 
   let invokeBody: string;
   if (eff.mapRequest) {
     const mapJs = jsOfExpr(eff.mapRequest, makeEvalCtx(gen, new Set(["$1"])));
-    invokeBody = `async (${jsName("$1")}, caps) => { const req = ${mapJs}; ${tail} }`;
+    invokeBody = `async (${jsName("$1")}, caps, signal) => { const req = ${mapJs}; ${tail} }`;
   } else {
-    invokeBody = `async (input, caps) => { ${tail} }`;
+    invokeBody = `async (input, caps, signal) => { ${tail} }`;
   }
 
   return `{
@@ -983,12 +1272,13 @@ function genStatement(s: Statement, ctx: EvalCtx): string {
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (true) { const ${jsName(arm.pattern.name)} = _v;\n  ${body}\n}`;
         }
-        if (arm.pattern.kind === "PWildcard") {
-          const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
-          return `if (true) {\n  ${body}\n}`;
+        if (arm.pattern.kind === "PTuple") {
+          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
+          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
+          return `if (${guard}) { ${binds}\n  ${body}\n}`;
         }
         const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
-        return `if (_v === ${JSON.stringify(arm.pattern.value)}) {\n  ${body}\n}`;
+        return `if (true) {\n  ${body}\n}`;
       })
       .join(" else ");
     return `{ const _v = ${sc};\n  ${arms}\n}`;
@@ -1151,7 +1441,7 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // Zero-arg list / string method shorthands (callable without parens)
       if (e.field === "unique") return `[...new Set((${baseJs}) ?? [])]`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
-      if (e.field === "sort") return `[...((${baseJs}) ?? [])].sort()`;
+      if (e.field === "sort") return `_s.listSort(${baseJs})`;
       // Issue #7: argument-less spec stdlib methods in the parenthesis-free form
       // (docs/spec/stdlib.md §2.2.3 — the recommended shortcut). Kept in exact sync
       // with the MethodCall (paren) cases in methodCallJs + KNOWN_METHODS.
@@ -1208,6 +1498,19 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Duration.h") return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 3600000)`;
       if (cn === "Duration.d" || cn === "Duration.days")
         return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 86400000)`;
+      // Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
+      // Bytes is represented as Uint8Array at runtime.
+      if (cn === "Bytes.from-text")
+        return `_s.bytesFromText(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
+      if (cn === "Bytes.from-base64")
+        return `_s.bytesFromBase64(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
+      if (cn === "Bytes.from-bytes")
+        return `_s.bytesFromBytes(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "[]"})`;
+      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). The
+      // runtime treats falsy / unknown ids as silent no-ops, so the empty
+      // string doubles as a valid slot-initial value AND a guaranteed-no-op
+      // cancel target.
+      if (cn === "EffectId.none") return `""`;
       // Decoder.* — codegen treats decoders as a sentinel string; the builtin storage handler
       // ignores everything except "json".
       if (cn === "Decoder.Json") return `"json"`;
@@ -1225,6 +1528,13 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "panic") {
         const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
         return `_s.panic(${a})`;
+      }
+      // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
+      // The runtime helper is None-safe so `file-url(avatar.get)` does not
+      // throw before `is-some` guards inside `when(...)` short-circuit.
+      if (cn === "file-url") {
+        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : "undefined";
+        return `_s.fileUrl(${a})`;
       }
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
@@ -1257,6 +1567,8 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return e.wild === "any-id"
         ? `_s.wild("any-id")`
         : `_s.wild("slot", ${JSON.stringify(e.slot)})`;
+    case "EmitExpr":
+      return emitExprJs(e, ctx);
     case "MatchExpr":
       return matchExprJs(e, ctx);
     case "IfExpr":
@@ -1268,6 +1580,13 @@ function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "Variant":
       return variantJs(e.name, e.payload, ctx);
+    case "TokenRef": {
+      // Theme-token reference (spec/style.md §4.3): lowers to the unified
+      // runtime resolver which walks the active theme and falls back to the
+      // built-in defaults baked into mapColor/mapToken/mapSize.
+      const pathJs = `[${e.path.map((p) => JSON.stringify(p)).join(", ")}]`;
+      return `_s.token(${JSON.stringify(e.group)}, ${pathJs})`;
+    }
   }
 }
 
@@ -1347,10 +1666,10 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "neg", // Int/Float.neg
   "to-float", // Int.to-float → Float
   "to-int", // Float.to-int → Int (truncated)
-  // ADR-002 symmetry: these are emitted as no-paren FieldAccess shortcuts (see
-  // FIELD_ACCESS_SHORTCUTS / jsOfExpr) but were missing here, so their `.m()`
-  // form wrongly tripped E0801 while `.m` worked. Listing them makes both shapes
-  // agree (and keeps FIELD_ACCESS_SHORTCUTS ⊆ KNOWN_METHODS).
+  // Issue #92: stdlib methods that also have FieldAccess shortcuts (see
+  // FIELD_ACCESS_SHORTCUTS / jsOfExpr). Both shapes lower to the same `_s.*`
+  // helper via the matching cases in methodCallJs — keeps FIELD_ACCESS_SHORTCUTS
+  // ⊆ KNOWN_METHODS and stops the paren form from falling through to native JS.
   "is-ok", // Result(T,E).is-ok → Bool
   "is-err", // Result(T,E).is-err → Bool
   "values", // Map(K,V).values → List(V)
@@ -1574,6 +1893,26 @@ function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: EvalCtx): s
     case "clamp":
       // Int/Float.clamp(lo, hi)
       return `Math.min(Math.max((${recvJs}), (${argRaw(args[0]!)})), (${argRaw(args[1]!)}))`;
+    // ----- Issue #92: paren-form stdlib methods kept in sync with the
+    // FieldAccess (no-paren) cases in jsOfExpr. Without these the calls fall
+    // through to the generic `(recv).method(...)` fallback and delegate to
+    // native JS — silent failure for `.is-ok()` / `.values()` / `.lower()` etc. -----
+    case "is-ok":
+      return `(_s.variantIs(${recvJs}, "Ok"))`;
+    case "is-err":
+      return `(_s.variantIs(${recvJs}, "Err"))`;
+    case "values":
+      return `_s.mapValues(${recvJs})`;
+    case "entries":
+      return `_s.mapEntries(${recvJs})`;
+    case "lower":
+      return `(String((${recvJs}) ?? "")).toLowerCase()`;
+    case "upper":
+      return `(String((${recvJs}) ?? "")).toUpperCase()`;
+    case "sort":
+      return `_s.listSort(${recvJs})`;
+    case "ms":
+      return `(${recvJs})`;
     // ----- Issue #7: argument-less stdlib methods (parenthesized form). Kept in
     // sync with the FieldAccess (no-paren) cases in jsOfExpr + KNOWN_METHODS. -----
     case "head":
@@ -1618,6 +1957,35 @@ function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
   return `_s.variant(${JSON.stringify(name)}, ${payload.map((p) => jsOfExpr(p, ctx)).join(", ")})`;
 }
 
+/**
+ * `emit X(args)` used as an expression (spec http.md §6.4, stdlib §2.1.1.1)
+ * — push the same `{effect, args}` record the statement form pushes, then
+ * yield the dispatched effect's `EffectId`. The id format mirrors the
+ * runtime dispatcher (`packages/runtime/src/core.ts:1324-1329`): `name:_`
+ * by default, `name:String(keyOf(input))` for `latest-per-key`. Each arg is
+ * lowered ONCE into a local (`__a0` / `__a1` / …) so a side-effecting expr
+ * (`now()`, `T.fresh()`, …) cannot diverge between the value pushed onto
+ * `_emits` and the value the EffectId is computed from — otherwise the
+ * reducer's captured id wouldn't match the inflight key the launch path
+ * registers, and `emit cancel(id)` would silently no-op.
+ */
+function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
+  const effect = e.effect;
+  const effectJson = JSON.stringify(effect);
+  const argBinds = e.args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
+  const argRefs = e.args.map((_, i) => `__a${i}`).join(", ");
+  const inputRef = e.args[0] ? "__a0" : "null";
+  const eff = ctx.gen.effects.find((d) => d.name === effect);
+  let keyJs: string;
+  if (eff?.policy?.kind === "PolLatestKey") {
+    const keyCtx: EvalCtx = { gen: ctx.gen, localBinds: new Set(["$1"]) };
+    keyJs = `String((((${jsName("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
+  } else {
+    keyJs = `"_"`;
+  }
+  return `((() => { ${argBinds} _emits.push({ effect: ${effectJson}, args: [${argRefs}] }); return ${JSON.stringify(`${effect}:`)} + ${keyJs}; })())`;
+}
+
 function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
   // Generate an IIFE that destructures the scrutinee and matches each arm.
@@ -1634,8 +2002,9 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     inner.localBinds.add(p.name);
     return `if (true) { const ${jsName(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
-  if (p.kind === "PLiteral") {
-    return `if (${scVar} === ${JSON.stringify(p.value)}) { return ${jsOfExpr(body, ctx)}; }`;
+  if (p.kind === "PTuple") {
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
+    return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
   const tag = p.name;
@@ -1648,6 +2017,66 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     bindAssigns.push(`const ${jsName(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
   }
   return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
+}
+
+// Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
+// nested element guards) and a series of `const … = scVar[i]…;` bindings.
+// Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
+// the indexed access path. `inheritReducerScope` lets MatchStmt callers carry
+// the reducer's slot-write scope through; matchExpr / TileMatch leave it off.
+function tupleArm(
+  p: Pattern & { kind: "PTuple" },
+  ctx: EvalCtx,
+  scVar: string,
+  inheritReducerScope: boolean,
+): { guard: string; binds: string; inner: EvalCtx } {
+  const inner = makeEvalCtx(
+    ctx.gen,
+    ctx.localBinds,
+    inheritReducerScope ? ctx.reducerScope : undefined,
+  );
+  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
+  const binds: string[] = [];
+  for (let i = 0; i < p.items.length; i++) {
+    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
+  }
+  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
+}
+
+function walkPatternForTupleArm(
+  p: Pattern,
+  accessor: string,
+  inner: EvalCtx,
+  guards: string[],
+  binds: string[],
+): void {
+  switch (p.kind) {
+    case "PWildcard":
+      return;
+    case "PBind":
+      inner.localBinds.add(p.name);
+      binds.push(`const ${jsName(p.name)} = ${accessor};`);
+      return;
+    case "PVariant":
+      guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
+      for (let i = 0; i < p.binds.length; i++) {
+        const name = p.binds[i]!;
+        if (name === "_") continue;
+        inner.localBinds.add(name);
+        binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+      }
+      return;
+    case "PTuple":
+      guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
+      for (let i = 0; i < p.items.length; i++) {
+        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+      }
+      return;
+    default: {
+      const _exhaustive: never = p;
+      throw new Error(`unreachable pattern kind: ${(_exhaustive as Pattern).kind}`);
+    }
+  }
 }
 
 // ----- tiles -----
@@ -1693,7 +2122,13 @@ function tileExprJs(t: TileExpr, gen: GenCtx, ctx: EvalCtx, enclosingTile?: stri
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
           }
-          return `if (_v === ${JSON.stringify(arm.pattern.value)}) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile)}; }`;
+          // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
+          // no reducerScope here (tile-match runs in pure render context), so the
+          // helper's `inheritReducerScope=false` path is what we want.
+          {
+            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
+            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTile)}; }`;
+          }
         })
         .join(" else ");
       // The no-match fallback renders an empty `text` tile, so the text family
@@ -1835,6 +2270,8 @@ function tileCallJs(
         else if (arg.name === "id") fields.push(`id: ${valJs}`);
         else if (arg.name === "auto-focus") fields.push(`autoFocus: ${valJs}`);
         else if (arg.name === "required") fields.push(`required: ${valJs}`);
+        else if (arg.name === "accept") fields.push(`accept: ${valJs}`);
+        else if (arg.name === "multiple") fields.push(`multiple: ${valJs}`);
       }
       if (bindInfo) {
         fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
@@ -1931,7 +2368,27 @@ function tileCallJs(
       const textProp = t.props.find((p) => p.name === "text");
       const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
       const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
-      return `({ kind: "link", text: _s.show(${text}), to: _s.show(${to}), props: ${propsObj} })`;
+      // §3.8 prefetch — the prop value is a bare reducer ident (Ref) or a
+      // string literal. We surface it as a literal string so the runtime can
+      // route it through `_dispatch` without re-resolving identifiers.
+      const fields = [`kind: "link"`, `text: _s.show(${text})`, `to: _s.show(${to})`];
+      const prefetchProp = t.props.find((p) => p.name === "prefetch");
+      if (prefetchProp) {
+        const v = prefetchProp.value as Expr;
+        if (v.kind === "Ref") {
+          fields.push(`prefetch: ${JSON.stringify((v as Expr & { name: string }).name)}`);
+        } else if (v.kind === "Str") {
+          fields.push(`prefetch: ${JSON.stringify((v as Expr & { value: string }).value)}`);
+        } else {
+          fields.push(`prefetch: ${jsOfExpr(v, ctx)}`);
+        }
+      }
+      const prefetchArgsProp = t.props.find((p) => p.name === "prefetch-args");
+      if (prefetchArgsProp) {
+        fields.push(`prefetchArgs: ${jsOfExpr(prefetchArgsProp.value, ctx)}`);
+      }
+      fields.push(`props: ${propsObj}`);
+      return `({ ${fields.join(", ")} })`;
     }
     case "markdown": {
       const text = t.args[0] ? jsOfExpr(asExpr(t.args[0].value), ctx) : '""';
@@ -1946,7 +2403,16 @@ function tileCallJs(
     }
     case "icon": {
       const name = t.args.find((a) => a.name === "name");
-      const nameJs = name ? jsOfExpr(asExpr(name.value), ctx) : '""';
+      const nameExpr = name ? asExpr(name.value) : null;
+      // String-literal names get captured so the toolchain can bake matching
+      // entries from the project's icon registry into `App.icons` (#101). Other
+      // forms (Ref, expression) resolve dynamically through `theme.icons` at
+      // runtime — no compile-time bundling.
+      if (nameExpr && nameExpr.kind === "Str") {
+        const literal = (nameExpr as Expr & { value: string }).value;
+        if (literal) ctx.gen.usedIcons.add(literal);
+      }
+      const nameJs = nameExpr ? jsOfExpr(nameExpr, ctx) : '""';
       return `({ kind: "icon", name: _s.show(${nameJs}), props: ${propsObj} })`;
     }
     case "code": {
@@ -2104,115 +2570,113 @@ function propsFor(
   enclosingTile?: string,
 ): string {
   const entries: string[] = [];
+  // Capture explicit event-handler wirings (`onClick=foo`, `{onClick: foo}`)
+  // by handler name. They are flushed below alongside implicit (tile, ui-event)
+  // subscribers as one chained dispatch handler, so spec §1.6.4 (every matching
+  // reducer fires in definition order) holds even when explicit and implicit
+  // both target the same handler.
+  const explicitByHandler = new Map<string, string[]>();
+  const recordExplicit = (handlerName: string, value: Expr): void => {
+    if (value.kind !== "Ref") return;
+    const reducerName = (value as Expr & { name: string }).name;
+    const list = explicitByHandler.get(handlerName) ?? [];
+    list.push(reducerName);
+    explicitByHandler.set(handlerName, list);
+  };
+
   // event handler args (onClick=remove etc) attach as props for that tile.
   for (const a of t.args) {
     if (!a.name) continue;
-    if (
-      a.name === "onClick" ||
-      a.name === "onSubmit" ||
-      a.name === "onChange" ||
-      a.name === "onInput" ||
-      a.name === "onClose"
-    ) {
-      if ((a.value as Expr).kind === "Ref") {
-        const reducerName = (a.value as Expr & { name: string }).name;
-        entries.push(
-          `${a.name}: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(reducerName)}, el)`,
-        );
-      }
-    }
+    if (HANDLER_NAMES.has(a.name)) recordExplicit(a.name, a.value as Expr);
   }
   // props block
   for (const p of t.props) {
-    if (
-      p.name === "onClick" ||
-      p.name === "onSubmit" ||
-      p.name === "onChange" ||
-      p.name === "onInput" ||
-      p.name === "onClose"
-    ) {
-      if ((p.value as Expr).kind === "Ref") {
-        const reducerName = (p.value as Expr as Expr & { name: string }).name;
-        entries.push(
-          `${p.name}: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(reducerName)}, el)`,
-        );
-      }
+    if (HANDLER_NAMES.has(p.name)) {
+      recordExplicit(p.name, p.value as Expr);
       continue;
     }
-    // event handler from enclosing tile (e.g. ResetBtn has no onClick but reducer subscribes to ui.click(ResetBtn))
+    // §3.8 link prefetch — the link tile lifts these into top-level fields, so
+    // do not also echo them through `props` (the bare-ident `prefetch: foo`
+    // value would otherwise emit as a JS variable reference at codegen).
+    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
-  // Implicit onClick from reducers subscribing to this enclosing tile name
-  if (t.name === "button" && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "click" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onClick"))) {
-      entries.push(
-        `onClick: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
+
+  // Combine explicit wirings with reducers subscribing to (enclosingTile, ev)
+  // into a single chained handler. Explicit first (declared on the tile that
+  // mounts the element), then implicit subscribers in their source order — so
+  // adding a `reducer foo on=ui.click(B)` never silently shadows an existing
+  // `onClick=bar` on `B`, and vice versa. Same-reducer overlap (e.g. both
+  // `onClick=inc` and `reducer inc on=ui.click(B)` naming `inc`) deduplicates
+  // by reducer name so the user's `inc` doesn't fire twice per click.
+  const emittedHandlers = new Set<string>();
+  const pushHandler = (ev: UiEventKind | null, handlerName: string): void => {
+    const explicit = explicitByHandler.get(handlerName) ?? [];
+    const implicit: string[] =
+      ev !== null && enclosingTile
+        ? ctx.gen.reducers
+            .filter(
+              (rr) =>
+                rr.on.kind === "UiEvent" &&
+                rr.on.ev === ev &&
+                rr.on.selector.tile === enclosingTile,
+            )
+            .map((r) => r.name)
+        : [];
+    const seen = new Set<string>();
+    const names = [...explicit, ...implicit].filter((n) => {
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+    if (names.length === 0) return;
+    const body = names
+      .map((n) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(n)}, el)`)
+      .join("; ");
+    entries.push(`${handlerName}: (el) => { ${body} }`);
+    emittedHandlers.add(handlerName);
+  };
+  // Implicit-lift: every ui-event whose tile-kind gate matches `t.name` lifts
+  // a chained handler. `tiles === null` (currently only `hover`) means "any
+  // tile" — the runtime's universal `applyUiEventHandlers` wires it. The full
+  // table — including the runtime-event ≠ emit-prop divergence for
+  // check/radio/switch — lives in `ui-lifts.ts`.
+  for (const lift of UI_LIFTS) {
+    if (lift.tiles !== null && !lift.tiles.has(t.name)) continue;
+    pushHandler(lift.ev, lift.handler);
   }
-  // Implicit onClick for `check` / `switch` when reducer subscribes via enclosing tile
-  if ((t.name === "check" || t.name === "switch") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "click" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onClick"))) {
-      entries.push(
-        `onClick: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onSubmit for form when reducer subscribes to enclosing user tile
-  if (t.name === "form" && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "submit" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r)
-      entries.push(
-        `onSubmit: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-  }
-  // Implicit onChange for select / input / textarea when reducer subscribes to ui.change(EnclosingTile)
-  if ((t.name === "select" || t.name === "input" || t.name === "textarea") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "change" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onChange"))) {
-      entries.push(
-        `onChange: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
-  }
-  // Implicit onInput for input / textarea when reducer subscribes to ui.input(EnclosingTile)
-  if ((t.name === "input" || t.name === "textarea") && enclosingTile) {
-    const r = ctx.gen.reducers.find(
-      (rr) =>
-        rr.on.kind === "UiEvent" && rr.on.ev === "input" && rr.on.selector.tile === enclosingTile,
-    );
-    if (r && !entries.some((e) => e.startsWith("onInput"))) {
-      entries.push(
-        `onInput: (el) => globalThis.__kumikiApp._dispatch(${JSON.stringify(r.name)}, el)`,
-      );
-    }
+  // Flush explicit handlers that have no implicit codepath on this tile —
+  // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
+  for (const [handlerName, names] of explicitByHandler) {
+    if (emittedHandlers.has(handlerName)) continue;
+    const body = names
+      .map((n) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(n)}, el)`)
+      .join("; ");
+    entries.push(`${handlerName}: (el) => { ${body} }`);
   }
   // Build `el` from explicit {key: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
-    if (
-      p.name === "onClick" ||
-      p.name === "onSubmit" ||
-      p.name === "onChange" ||
-      p.name === "onInput" ||
-      p.name === "onClose"
-    )
-      continue;
+    if (HANDLER_NAMES.has(p.name)) continue;
+    // §3.8 link prefetch — these are runtime-side fields, not slot data; their
+    // value space (reducer-name ident / argument record) doesn't belong in `el`.
+    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
+    // §4.3 style block — a CSS prop bag the runtime applies to el.style. It's
+    // not reducer data, and shipping it twice (top-level + el) re-evaluates
+    // every `@token` ref needlessly.
+    if (p.name === "style") continue;
     elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+  }
+  // §1.6.2 — the `id` prop drives `TileName#id` selector matching at dispatch
+  // time via the `el.id` payload. Tiles that lift `id` from positional args
+  // (input, textarea) bury it inside the tile node, so without this fold a
+  // reducer scoped to `Foo#bar` would never fire for `input(id="bar")` even
+  // though the DOM element has `id="bar"`. Block-style `{id: "..."}` already
+  // lands in `elProps` via the loop above; we only fill the gap for args.
+  const hasIdAlready = elProps.some((s) => s.startsWith("id:"));
+  if (!hasIdAlready) {
+    const idArg = t.args.find((a) => a.name === "id");
+    if (idArg) elProps.push(`id: ${jsOfExpr(idArg.value as Expr, ctx)}`);
   }
   if (elProps.length > 0) {
     entries.push(`el: { ${elProps.join(", ")} }`);

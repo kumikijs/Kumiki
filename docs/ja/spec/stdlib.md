@@ -13,8 +13,21 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Float` | 64bit 浮動小数 | `3.14`, `-0.5` |
 | `Bool` | 真偽値 | `true`, `false` |
 | `Unit` | 単一値 | `()` |
-| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` で生成 |
+| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` で生成（§2.2.10 参照） |
 | `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse()` |
+| `EffectId` | `emit` が返す不透明ハンドル（§2.1.1.1 参照） | リテラルなし、`EffectId.none` |
+
+#### 2.1.1.1 `EffectId`
+
+`EffectId` は dispatched effect を 1 件指す不透明ハンドル。`emit` を式として使うと返ってくる:
+
+```
+let id = emit fetchQuote()
+```
+
+`EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
+
+`EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP §6.4](./http.md#_6-4-cancellation) 参照）。
 
 ### 2.1.2 汎化型
 
@@ -228,6 +241,16 @@ fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
 ```
 
+### 2.2.10 Bytes
+
+`Bytes` は生のバイト列で、ランタイム上は `Uint8Array` として表現される。v0.x ではコレクション系メソッドは持たず、構築子のみを提供する。
+
+```
+Bytes.from-text(text)       : Bytes        ; UTF-8 エンコード
+Bytes.from-base64(text)     : Bytes        ; 標準 base64 デコード
+Bytes.from-bytes(list)      : Bytes        ; List(Int) から（各値は下位 8bit にマスク）
+```
+
 ---
 
 ## 2.3 tile プリミティブ要素
@@ -275,11 +298,11 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `button` | ボタン | `text`, `onClick`, `variant`, `disabled`, `loading` |
 | `input` | テキスト入力 | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | 複数行入力 | `bind`, `rows`, `placeholder` |
-| `check` | チェックボックス | `value`, `onClick`, `label` |
-| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick` |
-| `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder` |
-| `slider` | スライダー | `bind`, `min`, `max`, `step` |
-| `switch` | トグル | `value`, `onClick` |
+| `check` | チェックボックス | `value`, `onClick`, `onChange`, `label` |
+| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
+| `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
+| `switch` | トグル | `value`, `onClick`, `onChange` |
 
 ### 2.3.5 フォーム
 
@@ -400,6 +423,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 | capability | 用途 |
 |---|---|
 | `http.get`, `http.post`, `http.put`, `http.patch`, `http.delete` | HTTP リクエスト |
+| `http.cancel` | 進行中の HTTP リクエストを `EffectId` でキャンセル（[Cancellation](./http.md#_6-4-cancellation) 参照） |
 | `storage.read`, `storage.write` | localStorage |
 | `session.read`, `session.write` | sessionStorage |
 | `indexed.read`, `indexed.write` | IndexedDB |

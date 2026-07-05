@@ -10,6 +10,7 @@ export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
   "http.put",
   "http.patch",
   "http.delete",
+  "http.cancel",
   "storage.read",
   "storage.write",
   "session.read",

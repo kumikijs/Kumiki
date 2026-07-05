@@ -184,14 +184,31 @@ reducer handleUnauthorized
 It is automatically canceled by `policy=latest` or `policy=latest-per-key(...)`. Manual cancellation is:
 
 ```kumiki
+slot searchEffectId : EffectId = EffectId.none
+
 effect cancel cap=http.cancel in=EffectId out=Unit
+
+reducer startSearch
+    on=ui.input(SearchBox)
+    do= let id = emit fetchResults(query)
+        searchEffectId := id
 
 reducer cancelSearch
     on=ui.click(CancelBtn)
     do= emit cancel(searchEffectId)
+        searchEffectId := EffectId.none
 ```
 
-`EffectId` is returned at `emit` time.
+`emit` used as an expression returns the dispatched effect's `EffectId` (see [stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid)). The `EffectId.none` sentinel makes `emit cancel(EffectId.none)` a safe no-op.
+
+An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other shape is rejected at compile time ([E0303](./errors.md#e0303-invalid-cancel-target)).
+
+### 6.4.1 Behavior
+
+- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation).
+- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`.
+- A `debounce` timer scheduled for the same effect is cleared by cancel, so a pending-but-not-yet-issued request never lands.
+- A `throttle` window marker is **left intact** by cancel — the original effect has already launched (cancel aborts that in-flight request), and clearing the marker would let an immediate next emit slip past the rate limit before the window closes.
 
 ---
 

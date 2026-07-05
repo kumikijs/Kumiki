@@ -300,7 +300,6 @@ path          ::= identifier
 ```kumiki
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer submit  on=ui.submit(LoginForm#new) do= ...
 reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' は組み込み要素、tile 名ではない
 ```
 
@@ -313,6 +312,18 @@ reducer doLogin
     on=ui.submit(LoginForm)         ; tile 名で参照
     do= emit login({...})
 ```
+
+**`TileName#id`** は、dispatch された要素の `{id}` プロップが `id` と一致する場合だけ subscription を発火させる。`TileName` だけの reducer は全インスタンスに対して発火するが、`#id` 付き reducer はランタイムが id 一致を確認した時のみ発火する。同じ組み込み要素をラップする tile が複数ある状況で意図を明示し、別の tile が誤って同じ reducer を起動するのを防ぐために使う:
+
+```kumiki
+tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
+tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
+
+reducer add  on=ui.submit(NewForm#new)   do= ...   ; "new" form のみ
+reducer save on=ui.submit(EditForm#edit) do= ...   ; "edit" form のみ
+```
+
+`{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。§1.6.4 Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
 
 ### 1.6.3 lvalue の意味論
 

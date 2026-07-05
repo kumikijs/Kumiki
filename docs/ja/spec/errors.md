@@ -8,14 +8,15 @@ Kumiki のコンパイラ（`@kumikijs/compiler`）が報告する診断は、**
 
 ```ts
 type KumikiError = {
-  code: string;   // "E0103" のような安定識別子
-  kind: string;   // "undef-slot" のような機械可読な分類
-  message: string; // 人間向けメッセージ（対象名を含む）
-  pos: Pos;        // { line, col }
+  code: string;     // "E0103" のような安定識別子
+  kind: string;     // "undef-slot" のような機械可読な分類
+  message: string;  // 人間向けメッセージ（対象名を含む）
+  pos: Pos;          // { line, col }
+  severity?: "error" | "warning"; // 省略時は "error"
 };
 ```
 
-`code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。
+`code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
 パースエラーは `ParseError`（`message` + `pos`）として `throw` される。パース段は最初のエラーで停止するため、コードは付与されない。
 
@@ -29,8 +30,9 @@ type KumikiError = {
 | `E03xx` | ケイパビリティと純粋性 |
 | `E04xx` | モーション |
 | `E06xx` | reducer の書き込み規則 |
-| `E07xx` | アクセシビリティ（a11y） |
+| `E07xx` | アクセシビリティ（a11y）／strict-icons |
 | `E08xx` | ランタイムハザード（コンパイルは通るが実行で壊れる書き方） |
+| `W02xx` | 非致命的な警告（ビルドは成功する） |
 
 ## E00xx — 構造
 
@@ -106,6 +108,38 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 
+### E0110 `sub-routes-without-wildcard-parent`
+
+`sub-routes` を宣言した tile を `app.routes` から指している親エントリの pattern が wildcard（`/*`）で終わっていない。親が wildcard でないと runtime はネストマッチャに到達せず、sub-routes は永遠に発火しない。詳細は [Nested Routes](./routing.md#_3-6-nested-routes)。
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**修正**：親 pattern を `/*` で終わるように変える（`/settings` → `/settings/*`）か、`sub-routes` ブロックを外す。
+
+### E0111 `orphan-sub-routes`
+
+`sub-routes` を持つ tile が `app.routes` のどのエントリからも参照されていない。ネストルートテーブルに到達経路が無い。
+
+> `Tile "<name>" declares sub-routes but is not the target of any route in app.routes`
+
+**修正**：その tile を target とする `/*` 付きルートを `app.routes` に追加するか、`sub-routes` を削除する。
+
+### E0112 `duplicate-sub-route`
+
+同じ tile の `sub-routes` 内で同一 path が複数回出現している。マッチは定義順なので、重複はデッドコードかタイポ。
+
+> `Sub-route path "<path>" is declared more than once in tile "<name>"`
+
+**修正**：重複を削除する。別パスを表現したいなら綴りを直す。
+
+### E0113 `sub-routes-without-outlet`
+
+`sub-routes` を宣言した tile の body に `route-outlet` 呼び出しが存在しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
+
+> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+
+**修正**：子を表示したい場所に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -114,6 +148,95 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+
+### E0204 `effect-id-misuse`
+
+`EffectId` 型の値が定義されていない操作に使われている。`EffectId` で定義された操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・`text(...)` での描画は拒否する — `EffectId` は不透明型なのでランタイムが表現を変えてもアプリが壊れないようにするため。
+
+> `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
+> `text(...) cannot render EffectId — it is an opaque handle`
+
+**修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。
+
+### E0205 `bind-on-file-input`
+
+`input(type="file")` には `bind=` でスロットを束ねられない。`bind=` の双方向束縛の互換型テーブル（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）にファイルを受け入れる型が無く、ファイルは change イベントの payload 経由でのみ受け取れる（[Forms §5.10](./forms.md#_5-10-file-upload)）。
+
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+
+**修正**: `bind=` を外し、change イベントからファイルを取り出す reducer を追加する：
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*")
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
+### E0206 `file-only-prop`
+
+`input` の `accept` / `multiple` prop は `type="file"` のときのみ有効。これらは下層の `<input>` 要素にそのまま流し込まれるため、HTML 仕様としてファイルピッカーに対してのみ意味を持つ（[Forms §5.10](./forms.md#_5-10-file-upload)）。他の `type` で使う場合 — あるいは `type` を省略した場合（デフォルトは `"text"`）— は無効な HTML となり、潜在バグになる。診断は `type` が静的に `"file"` でないと確定できる場合のみ発火し、非リテラルの `type=` 式には触らない。
+
+> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
+> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
+
+**修正**: `type="file"` を付けてファイルピッカーにするか、`accept` / `multiple` prop を取り除く：
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
+### E0211 `undef-tile-in-selector`
+
+reducer の `ui.*` セレクタが宣言されていない tile を指している。この検査がないと、`ui.click(SaveBtn)` を `ui.click(SaveBtnn)` と打ち間違えてもコンパイルが通り、どこにも bind されない reducer（= 意図的に未使用の reducer）と区別がつかない。
+
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
+
+**修正**: `tile <Tile> = …` を宣言するか、セレクタの tile 名を既存のものに直す。`emit confirm({onYes: r, …})` 等のコールバックとして間接的に dispatch される reducer 用のワイルドカード `_`（[Lifecycle §7](./lifecycle.md) 参照）はこの検査の対象外。
+
+### E0212 `selector-id-mismatch`（`--strict-selector-id` で opt-in）
+
+reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、対象 tile のリテラル `{id: "..."}` prop がどう転んでも生成できない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec §1.6.2）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
+
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but tile "<Tile>" is declared with id "<actual>" — this selector can never match`
+
+検査は `for` / `when` / `if` / `match` の 4 種すべての制御フロー body を descend する: `for` / `when` は単一 body へパススルー、`if` は両分岐を merge、`match` は全 arm が観測 id 集合に寄与する。`tile T = if c then button(...) {id: "a"} else button(...) {id: "b"}` は `"a" | "b"` を持ち、`--strict-selector-id` の下では `T#c` セレクタが E0212 を発火する。参照先の user tile は descend しない — 別 tile への `Ref` を含む body は id 集合が unknown になるため、将来 use-site での per-instance id-override 構文を導入する余地を check 時に潰さない。
+
+**E0212 が沈黙する場合（runtime フィルタが権威となる）**:
+
+- tile が `{id}` prop をそもそも持たない。
+- tile の `{id}` の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
+- セレクタに `#id` がない。
+- セレクタがワイルドカード `_`。
+- 対象 tile 自体が未宣言（E0211 が既に発火するので、E0212 は抑制して単一の根本原因を提示する）。
+
+**修正**: セレクタの `#id` を tile の `{id}` リテラルに合わせるか、tile の `{id}` リテラルをセレクタに合わせる。
+
+### W0212 `ui-event-tile-mismatch`（warning）
+
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DOM 上で発火し得る要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage — `codegen.ts` および `packages/runtime/src/tiles-input.ts` の射影）:
+
+| `ui.<ev>` | 許容される root tile |
+|---|---|
+| `click`  | `button`, `check`, `switch`, `radio` |
+| `submit` | `form` |
+| `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
+| `input`  | `input`, `textarea` |
+| `key`    | `input`, `textarea`, `button` |
+| `focus`  | `input`, `textarea`, `button`, `select` |
+| `blur`   | `input`, `textarea`, `button`, `select` |
+| `hover`  | 任意の tile |
+
+**修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
+
+検査は `for` / `when` / `if` / `match` の body も descend する: `if` の then/else 両分岐、`match` の全 arm が観測 root 集合に寄与する。したがって `tile Dyn = for n in xs box(...)` は W0212 を発火（到達可能な root は `box` のみ）、一方 `tile T = if c then input(...) else button(...)` は警告しない（両分岐とも allowed root を寄与）。tile body 全体が解決不能（循環、未定義名）の場合は観測集合が空になり、警告は抑制される — 偽陽性より「警告しない」を優先する。
+
+**`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。
 
 ## E03xx — ケイパビリティと純粋性
 
@@ -132,6 +255,17 @@ effect が要求するケイパビリティが `app.caps` で宣言されてい�
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
 **修正**：標準ケイパビリティを使うか、綴りを直すか、`.kumiki` ファイルと同じディレクトリの `kumiki.caps.json` にカスタムケイパビリティを登録する。詳細は [標準ケイパビリティ](./stdlib.md#_2-5-standard-capabilities)。
+
+### E0303 `invalid-cancel-target`
+
+`cap=http.cancel` を持つ effect の宣言が必要な形（`in=EffectId out=Unit`）になっていない、または cancel パスでサイレントに無視される属性（`policy` / `retry` / `map-request`）を宣言している。cancel capability は id でキャンセルし何も返さないため、リクエスト単位の挙動を宣言するのはユーザ意図と挙動の乖離になる。
+
+> `effect "<name>" with cap=http.cancel must declare in=EffectId out=Unit`
+> `effect "<name>" with cap=http.cancel cannot declare a policy`
+> `effect "<name>" with cap=http.cancel cannot declare retry`
+> `effect "<name>" with cap=http.cancel cannot declare map-request`
+
+**修正**: `in=` / `out=` を `in=EffectId out=Unit` に直し、`policy=` / `retry=` / `map-request=` 句があれば削除する。あるいは `cap=http.cancel` を外す。[HTTP Cancellation](./http.md#_6-4-cancellation) を参照。
 
 ### E0305 `fn-impurity`
 
@@ -179,7 +313,9 @@ keyframe ストップが閉じたアニメ可能集合（`opacity`, `translate-x
 
 **補足**：粒度は**パス形状**である。`issues[id].status` と `issues[id].updatedAt` は別形状とみなされ共存できるが、`count` への二重代入は禁止される。
 
-## E07xx — アクセシビリティ（a11y）
+## E07xx — アクセシビリティ（a11y）／strict-icons
+
+既定では警告として扱われ、明示的な `strict*` オプトインで初めてエラーに昇格する検査の帯。対応するフラグが立っていない限り `check()` がこれらのコードを出力から除去する。
 
 a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
@@ -196,6 +332,16 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 > `link must have inner text or aria-label`
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
+
+strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有効化される。
+
+### E0704 `unknown-icon`
+
+> `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
+
+リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
+
+**修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
 
 ## E08xx — ランタイムハザード
 

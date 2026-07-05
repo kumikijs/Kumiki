@@ -44,7 +44,17 @@ export class ParseError extends Error {
   }
 }
 
-const PRIM_TYPES = new Set(["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes"]);
+const PRIM_TYPES = new Set([
+  "Int",
+  "Text",
+  "Bool",
+  "Unit",
+  "Float",
+  "Time",
+  "Bytes",
+  "File",
+  "EffectId",
+]);
 // Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
 // lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
 // already treats `-` as ident-continuation, so they arrive as a single token.
@@ -504,7 +514,9 @@ class Parser {
           sub !== "change" &&
           sub !== "input" &&
           sub !== "focus" &&
-          sub !== "blur"
+          sub !== "blur" &&
+          sub !== "key" &&
+          sub !== "hover"
         ) {
           throw new ParseError(`Unknown ui event "${sub}"`, t.pos);
         }
@@ -741,6 +753,26 @@ class Parser {
   // ----- expressions -----
 
   parseExpr(): Expr {
+    // `emit X(args)` as an expression (spec http.md §6.4, stdlib §2.1.1.1) —
+    // yields the dispatched effect's `EffectId`. Statement-form `emit` is
+    // parsed earlier in `parseStatement` (with no capture), so we only reach
+    // this branch when `emit` appears in an expression position such as
+    // `let id = emit X(...)`.
+    if (this.matchKw("emit")) {
+      const start = this.next();
+      const effect = this.eat("ident").value;
+      this.eat("op", "(");
+      const args: Expr[] = [];
+      if (!this.matchOp(")")) {
+        args.push(this.parseExpr());
+        while (this.matchOp(",")) {
+          this.next();
+          args.push(this.parseExpr());
+        }
+      }
+      this.eat("op", ")");
+      return { kind: "EmitExpr", effect, args, pos: start.pos };
+    }
     return this.parseLogicOr();
   }
 
@@ -771,6 +803,21 @@ class Parser {
       // Simple check: peek(2) must be `->` or `(`.
       const after = this.peek(2);
       if (after.kind === "op" && (after.value === "->" || after.value === "(")) return true;
+    }
+    // `| (p, q) ->` — tuple pattern arm (§1.9). Walk forward through balanced
+    // parens and accept the arm only when the closing `)` is followed by `->`.
+    if (next.kind === "op" && next.value === "(") {
+      let depth = 1;
+      let i = 2;
+      while (depth > 0) {
+        const tok = this.peek(i);
+        if (tok.kind === "eof") return false;
+        if (tok.kind === "op" && tok.value === "(") depth++;
+        else if (tok.kind === "op" && tok.value === ")") depth--;
+        i++;
+      }
+      const after = this.peek(i);
+      return after.kind === "op" && after.value === "->";
     }
     return false;
   }
@@ -935,6 +982,37 @@ class Parser {
     if (t.kind === "op" && t.value === "[") {
       return this.parseListLit();
     }
+    // Theme-token reference (spec/style.md §4.3): `@<group>.<name>(.<sub>)*`.
+    // Requires at least one segment under the group (`@colors` alone is rejected).
+    if (t.kind === "op" && t.value === "@") {
+      this.next();
+      const head = this.peek();
+      if (head.kind !== "ident") {
+        throw new ParseError(
+          "Expected a theme group name after `@` (e.g. `@colors.surface`)",
+          head.pos,
+        );
+      }
+      this.next();
+      const group = head.value;
+      const path: string[] = [];
+      while (this.matchOp(".")) {
+        this.next();
+        const seg = this.peek();
+        if (seg.kind !== "ident") {
+          throw new ParseError("Expected an identifier in a `@` token reference path", seg.pos);
+        }
+        this.next();
+        path.push(seg.value);
+      }
+      if (path.length === 0) {
+        throw new ParseError(
+          `Token reference \`@${group}\` is missing a name (use \`@${group}.<name>\`)`,
+          t.pos,
+        );
+      }
+      return { kind: "TokenRef", group, path, pos: t.pos };
+    }
     // Test `expect` wildcards (spec/testing.md §8.2.2): `<any-id>` / `<slots.X>`.
     // A leading `<` can only begin a wildcard — a real expression never starts
     // with the comparison operator — so this stays unambiguous.
@@ -963,6 +1041,21 @@ class Parser {
       // capital-cased identifier; otherwise this is a method call on a value and
       // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
+      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). Bare
+      // form (no parens) so slot init / cancel-no-op reads cleanly; treated
+      // as a 0-arg Call so typecheck/codegen handle it via the same
+      // builtin-call channel as `Decoder.Json` / `TodoId.fresh`.
+      if (
+        name === "EffectId" &&
+        this.matchOp(".") &&
+        this.matchTAt(1, "ident") &&
+        (this.peek(1) as { value: string }).value === "none" &&
+        !this.matchTAt(2, "op", "(")
+      ) {
+        this.next(); // .
+        this.next(); // none
+        return { kind: "Call", callee: "EffectId.none", args: [], pos: t.pos };
+      }
       if (
         isQualifierReceiver &&
         this.matchOp(".") &&
@@ -1078,13 +1171,20 @@ class Parser {
       }
       return { kind: "PBind", name, pos: t.pos };
     }
-    if (t.kind === "num") {
+    if (this.matchOp("(")) {
+      // Tuple pattern: `(p1, p2, ...)` requires ≥ 2 items; a single parenthesized
+      // pattern would be plain grouping with no semantics, so reject it.
       this.next();
-      return { kind: "PLiteral", value: t.value, pos: t.pos };
-    }
-    if (t.kind === "str") {
-      this.next();
-      return { kind: "PLiteral", value: t.value, pos: t.pos };
+      const items: Pattern[] = [this.parsePattern()];
+      while (this.matchOp(",")) {
+        this.next();
+        items.push(this.parsePattern());
+      }
+      this.eat("op", ")");
+      if (items.length < 2) {
+        throw new ParseError("Tuple pattern requires at least 2 items", t.pos);
+      }
+      return { kind: "PTuple", items, pos: t.pos };
     }
     throw new ParseError("Expected pattern", t.pos);
   }
@@ -1188,6 +1288,8 @@ class Parser {
     const name = this.eat("ident").value;
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
+    let subRoutes: { path: string; tile: string }[] | undefined;
+    let scrollRestoration: boolean | undefined;
     while (!this.matchOp("=")) {
       if (this.matchKw("in")) {
         this.next();
@@ -1202,19 +1304,24 @@ class Parser {
         continue;
       }
       if (this.matchT("ident", "scroll-restoration")) {
-        this.next();
+        const head = this.next();
         this.eat("op", "=");
-        // accept boolean
         const t = this.peek();
-        if (t.kind === "kw" && (t.value === "true" || t.value === "false")) this.next();
-        else this.parseExpr();
+        if (t.kind === "kw" && (t.value === "true" || t.value === "false")) {
+          scrollRestoration = t.value === "true";
+          this.next();
+        } else {
+          throw new ParseError(
+            `scroll-restoration expects a boolean literal (true or false)`,
+            head.pos,
+          );
+        }
         continue;
       }
       if (this.matchT("ident", "sub-routes")) {
         this.next();
         this.eat("op", "=");
-        // accept and discard a route-map literal
-        this.parseRouteMap();
+        subRoutes = this.parseRouteMap();
         continue;
       }
       const t = this.peek();
@@ -1225,6 +1332,8 @@ class Parser {
     const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
+    if (subRoutes) def.subRoutes = subRoutes;
+    if (scrollRestoration === false) def.scrollRestoration = false;
     return def;
   }
 
@@ -1794,9 +1903,12 @@ class Parser {
     if (kindTok.value === "property-test") {
       return this.parsePropertyTest(name, start.pos);
     }
+    if (kindTok.value === "episode-test") {
+      return this.parseEpisodeTest(name, start.pos);
+    }
     if (kindTok.value !== "reducer-test" && kindTok.value !== "tile-test") {
       throw new ParseError(
-        `Unknown test kind "${kindTok.value}" (expected reducer-test, tile-test, or property-test)`,
+        `Unknown test kind "${kindTok.value}" (expected reducer-test, tile-test, episode-test, or property-test)`,
         kindTok.pos,
       );
     }
@@ -1870,6 +1982,36 @@ class Parser {
       invariant,
       ...(count !== undefined ? { count } : {}),
       ...(shrink !== undefined ? { shrink } : {}),
+      pos,
+    };
+  }
+
+  /** `episode-test load="<path>" mocks={...} expect={...}` (spec §8.6). */
+  private parseEpisodeTest(name: string, pos: Pos): TestDef {
+    this.expectIdent("load", name);
+    this.eat("op", "=");
+    const strTok = this.eat("str");
+    const load = strTok.value;
+
+    this.expectIdent("mocks", name);
+    this.eat("op", "=");
+    const mocks = this.parseExpr();
+
+    this.expectIdent("expect", name);
+    this.eat("op", "=");
+    const expect = this.parseExpr();
+
+    return {
+      kind: "TestDef",
+      name,
+      testKind: "episode-test",
+      // `given` is unused for episode-test (the log IS the given) but the AST
+      // requires it; supply a synthetic empty record so downstream visitors
+      // that walk every TestDef.given do not have to special-case undefined.
+      given: { kind: "RecordLit", fields: [], pos },
+      load,
+      mocks,
+      expect,
       pos,
     };
   }

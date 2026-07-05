@@ -1,0 +1,28 @@
+# Feature: `episode-test` (docs/spec/testing.md §8.6). Replay a recorded
+# runtime episode log against the current code and assert the result matches.
+# The fixture next to this file is the kind of log `kumiki run --episode-log`
+# (§10.5) emits in production — turning a real bug report into a regression
+# test is just "save the log, add an episode-test that loads it".
+
+type N = nominal Int where between(0, 999)
+slot count : N = 0
+
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+
+tile IncBtn = button(text="+")
+tile App    = column(heading("Count: " + count.show), IncBtn) {pad: "md"}
+
+app EpisodeCounter
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+# The fixture records three `inc` clicks (count 0 → 1 → 2 → 3). Replay should
+# fire `inc` three times and land on count = 3. `slots-equal = from-log`
+# derives the expected slot values from the log's slot-diffs, so a regression
+# that changed `inc` to subtract instead of add would diverge here.
+test replay-three-increments =
+    episode-test
+        load   = "44-episode-test.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: from-log, no-panics: true}

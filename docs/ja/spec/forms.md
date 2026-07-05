@@ -396,6 +396,8 @@ effect uploadFile  cap=http.post
 
 `file-url(file)` は `URL.createObjectURL` 相当の組み込み（自動解放）。
 
+`accept` / `multiple` は `type="file"` のときのみ有効。他の `type` で使う場合 — あるいは `type` を省略した場合（デフォルトは `"text"`）— typecheck が [E0206](./errors.md#e0206-file-only-prop) で拒否する。
+
 ---
 
 ## 5.11 設計上の判断記録

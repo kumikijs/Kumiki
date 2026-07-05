@@ -184,14 +184,31 @@ reducer handleUnauthorized
 `policy=latest` または `policy=latest-per-key(...)` で自動キャンセルされる。手動キャンセルは：
 
 ```kumiki
+slot searchEffectId : EffectId = EffectId.none
+
 effect cancel cap=http.cancel in=EffectId out=Unit
+
+reducer startSearch
+    on=ui.input(SearchBox)
+    do= let id = emit fetchResults(query)
+        searchEffectId := id
 
 reducer cancelSearch
     on=ui.click(CancelBtn)
     do= emit cancel(searchEffectId)
+        searchEffectId := EffectId.none
 ```
 
-`EffectId` は `emit` 時に返される。
+`emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
+
+`cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
+
+### 6.4.1 挙動
+
+- 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
+- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。
+- 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
+- `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 
 ---
 

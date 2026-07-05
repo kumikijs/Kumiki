@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runScenario, type Scenario } from "@kumikijs/runtime";
+import { createEpisodeLogger, runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp } from "./helpers/load.ts";
 
@@ -262,6 +262,144 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
+  // Issue #85: nested routes — a parent's `/settings/*` wildcard delegates to
+  // a `route-outlet`, and the runtime re-matches the path against the parent's
+  // sub-routes. Verifies the default child (§3.6.3), sibling switching,
+  // sub-route redirects (`->>`), and the global /404 fallthrough.
+  it("nested routes select the right child via route-outlet (40-nested-routes)", async () => {
+    const app = await loadApp(join(examples, "features", "40-nested-routes.kumiki"));
+    const report = await runScenario(
+      app,
+      freshRoot(),
+      {
+        steps: [
+          {
+            label: "the landing tile mounts at /",
+            expect: { noErrors: true, domIncludes: ["Landing"], domExcludes: ["Settings home"] },
+          },
+          {
+            label: "/settings renders the parent and the default sub-route home",
+            do: { navigate: "/settings" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Settings home", "Account", "Billing"],
+              domExcludes: ["Account settings", "Billing settings"],
+            },
+          },
+          {
+            label: "/settings/account swaps the outlet to the account child",
+            do: { navigate: "/settings/account" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Account settings"],
+              domExcludes: ["Settings home", "Billing settings"],
+            },
+          },
+          {
+            label: "/settings/billing swaps the outlet to the billing child",
+            do: { navigate: "/settings/billing" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Billing settings"],
+              domExcludes: ["Settings home", "Account settings"],
+            },
+          },
+          {
+            label: "§3.6.3: unmatched child falls back to the parent's default sub-route",
+            do: { navigate: "/settings/unknown-child" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Settings home"],
+              domExcludes: ["Account settings", "Billing settings", "404"],
+            },
+          },
+          {
+            label: "§3.10: a sub-route redirect lands the user on the redirect target",
+            do: { navigate: "/settings/legacy" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["Settings", "Billing settings"],
+              domExcludes: ["Settings home", "Account settings"],
+            },
+          },
+          {
+            label: "a path with no matching parent still hits the global /404",
+            do: { navigate: "/totally-unrelated" },
+            expect: {
+              noErrors: true,
+              domIncludes: ["404 — not found"],
+              domExcludes: ["Settings home", "Account settings", "Billing settings"],
+            },
+          },
+        ],
+      },
+      { router: "memory" },
+    );
+    if (!report.ok) {
+      const detail = report.steps
+        .flatMap((s, i) => [...s.errors, ...s.failures].map((m) => `step ${i}: ${m}`))
+        .join("\n");
+      throw new Error(`nested-routes scenario failed:\n${detail}`);
+    }
+    expect(report.ok).toBe(true);
+  });
+
+  // Spec §10.5.1: a debounce-deferred effect stays on the originating ui.input
+  // episode — the whole causal chain `edit → effect-start(saveText) →
+  // signal-update → effect-end → saved reducer → signal-update` lives on one
+  // episode rather than splitting onto a fresh `effect.ok`-triggered one.
+  it("debounce-deferred effects ride the originating episode (20-effect-storage)", async () => {
+    const app = await loadApp(join(examples, "features", "20-effect-storage.kumiki"));
+    const logger = createEpisodeLogger({ memoryMax: 20 });
+    const report = await runScenario(
+      app,
+      freshRoot(),
+      {
+        steps: [
+          { expect: { noErrors: true, state: { ready: true } } },
+          {
+            do: { fill: "textarea", value: "buy milk" },
+            expect: { noErrors: true, state: { text: "buy milk", status: "saved" } },
+          },
+        ],
+        effects: {
+          loadText: [{ outcome: "err", value: { message: "SecurityError" } }],
+          saveText: [{ outcome: "ok" }],
+        },
+      },
+      { settleMs: 400, episodeLogger: logger },
+    );
+    expect(report.ok).toBe(true);
+
+    // Locate the ui.input episode (the `edit` reducer that emitted saveText).
+    const eps = logger.list();
+    const editEp = eps.find((ep) =>
+      ep.steps.some((s) => s.kind === "reducer" && (s as { name: string }).name === "edit"),
+    );
+    expect(editEp).toBeDefined();
+    const stepKinds = editEp!.steps.map((s) => s.kind);
+    // Same episode owns the full causal chain — no split onto a fresh episode.
+    expect(stepKinds).toContain("effect-start");
+    expect(stepKinds).toContain("effect-end");
+    const reducers = editEp!.steps
+      .filter((s) => s.kind === "reducer")
+      .map((s) => (s as { name: string }).name);
+    expect(reducers).toContain("edit");
+    expect(reducers).toContain("saved");
+    expect(editEp!.status).toBe("completed");
+    // Exactly one ui.input episode — no duplicate originating episode opened
+    // by a fallback path.
+    expect(eps.filter((ep) => ep.trigger.kind === "ui.input")).toHaveLength(1);
+    // And the saveText effect-end is NOT split onto its own auto-opened
+    // `effect.ok`-triggered episode.
+    const saveOrphan = eps.find(
+      (ep) =>
+        ep.trigger.kind.startsWith("effect.") &&
+        ep.steps.some((s) => s.kind === "reducer" && (s as { name: string }).name === "saved"),
+    );
+    expect(saveOrphan).toBeUndefined();
+  });
+
   // Regression: this app's scenario guards two framework fixes found via the
   // iterate loop — List.fold codegen, and Int.parse numeric coercion (a total
   // that was silently wrong via string concatenation).
@@ -277,5 +415,120 @@ describe("scenario runner", () => {
       throw new Error(`expense scenario failed:\n${detail}`);
     }
     expect(report.ok).toBe(true);
+  });
+
+  // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
+  // definition order". The 11-multi-subscribe app puts two reducers on
+  // ui.click(SaveBtn) — clicking the button must advance BOTH slots, not just
+  // the first one defined. A regression to single-dispatch would leave `log`
+  // stuck at 0 and trip the assertion below.
+  it("fires every ui.click reducer on the same tile (11-multi-subscribe)", async () => {
+    const app = await loadApp(join(examples, "apps", "11-multi-subscribe", "app.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [
+        { do: { clickText: "Save" }, expect: { noErrors: true, state: { version: 1, log: 1 } } },
+        { do: { clickText: "Save" }, expect: { state: { version: 2, log: 2 } } },
+      ],
+    });
+    expect(report.ok).toBe(true);
+  });
+
+  // §1.6.4 Invariant 3 is enforced as independent dispatches, not a single
+  // composite apply: if reducer N panics, reducers N+1..M still run. The
+  // runtime catches panics in applyReducer and rolls back that one dispatch,
+  // so the chain doesn't blow up if any link throws. The panic itself is
+  // expected here, so report.ok will be false — assert on slot state directly.
+  it("keeps running later reducers in the chain when an earlier one panics", async () => {
+    const src = `
+      slot first : Int = 0
+      slot last  : Int = 0
+      reducer runFirst on=ui.click(B) do= first := first + 1
+      reducer boom     on=ui.click(B) do= last  := panic("nope")
+      reducer runLast  on=ui.click(B) do= last  := last + 1
+      tile B = button(text="go")
+      tile App = column(B, text(first.show), text(last.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const here = dirname(fileURLToPath(import.meta.url));
+    const tmp = join(here, ".smoke-tmp", "panic-chain.kumiki");
+    const fs = await import("node:fs");
+    fs.mkdirSync(dirname(tmp), { recursive: true });
+    fs.writeFileSync(tmp, src);
+    const app = await loadApp(tmp);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { clickText: "go" } }],
+    });
+    const step0 = report.steps[0];
+    expect(step0).toBeDefined();
+    // `boom` panicked between `runFirst` and `runLast` and the panic was logged.
+    expect(step0?.errors.some((e) => e.includes('panic in reducer "boom"'))).toBe(true);
+    // Both neighbors still advanced their slots — the chain did not abort.
+    expect(step0?.state.first).toBe(1);
+    expect(step0?.state.last).toBe(1);
+  });
+
+  // The dispatch-only scenario for ui.focus / ui.blur verifies the reducer body
+  // but not the DOM wiring — addEventListener("focus") → applyUiEventHandlers →
+  // reducer. The `focus` / `blur` primitives let a scenario exercise that path
+  // in one step, so "compiles + DOM wired + reducer fires" can be observed in
+  // the scenario tier alone.
+  describe("focus / blur DOM-event primitives", () => {
+    async function compileInline(name: string, src: string): Promise<string> {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const tmp = join(here, ".smoke-tmp", `${name}.kumiki`);
+      const fs = await import("node:fs");
+      fs.mkdirSync(dirname(tmp), { recursive: true });
+      fs.writeFileSync(tmp, src);
+      return tmp;
+    }
+
+    const focusApp = `
+      slot focusedField : Text = ""
+      slot blurCount    : Int  = 0
+      slot draft        : Text = ""
+      reducer onFocus on=ui.focus(NameInput) do= focusedField := "name"
+      reducer onBlur  on=ui.blur(NameInput)  do= blurCount := blurCount + 1
+      tile NameInput = input(bind=draft, placeholder="x") {id: "name-input"}
+      tile App = column(NameInput, text(focusedField), text(blurCount.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("dispatches a real focus event to the selector and fires the onFocus reducer", async () => {
+      const path = await compileInline("focus-primitive", focusApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          {
+            do: { focus: "#name-input" },
+            expect: { noErrors: true, state: { focusedField: "name" } },
+          },
+        ],
+      });
+      expect(report.ok).toBe(true);
+    });
+
+    it("dispatches a real blur event to the selector and fires the onBlur reducer", async () => {
+      const path = await compileInline("blur-primitive", focusApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          { do: { blur: "#name-input" }, expect: { noErrors: true, state: { blurCount: 1 } } },
+          { do: { blur: "#name-input" }, expect: { state: { blurCount: 2 } } },
+        ],
+      });
+      expect(report.ok).toBe(true);
+    });
+
+    it("reports a clear error when the focus/blur selector matches nothing", async () => {
+      const path = await compileInline("focus-missing", focusApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: { focus: "#does-not-exist" }, expect: { noErrors: true } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.errors.some((e) => e.includes("no element matching selector"))).toBe(
+        true,
+      );
+    });
   });
 });

@@ -2,10 +2,29 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { check, compile } from "@kumikijs/compiler";
-import { CapabilityManifestError, resolveCapabilities } from "@kumikijs/compiler/node";
+import { check, compile, type KumikiError } from "@kumikijs/compiler";
+import {
+  CapabilityManifestError,
+  resolveBuiltinIcons,
+  resolveCapabilities,
+} from "@kumikijs/compiler/node";
+import type { EpisodeMockPolicy } from "@kumikijs/runtime";
+import { devCmd } from "./dev.ts";
 import { fixCmd, fixFromTest } from "./fix.ts";
-import { addDef, removeDef, renameDef, replaceDef } from "./mutate.ts";
+import {
+  addDef,
+  editDef,
+  lockDef,
+  patchApplyFile,
+  patchRevert,
+  removeDef,
+  renameDef,
+  replaceDef,
+  unlockDef,
+  viewHash,
+  viewHistory,
+} from "./mutate.ts";
+import { parseMockArg, replayCmd } from "./replay.ts";
 import { runCmd, smokeCmd, testCmd } from "./smoke.ts";
 import { findReferences, listDefs, load, viewDef, viewWithDeps } from "./store.ts";
 
@@ -15,14 +34,25 @@ function usage(): never {
   console.error("Usage:");
   console.error("  kumiki build <input.kumiki> <outdir>");
   console.error("  kumiki list <input.kumiki> [layer]");
-  console.error("  kumiki view <input.kumiki> <qname> [--with-deps]");
+  console.error("  kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]");
   console.error("  kumiki refs <input.kumiki> <qname>");
-  console.error("  kumiki check <input.kumiki> [--strict-a11y]");
+  console.error(
+    "  kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]",
+  );
+  console.error("  kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]");
   console.error("  kumiki smoke <input.kumiki>");
-  console.error("  kumiki run <input.kumiki> <scenario.json>");
+  console.error("  kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
+  console.error(
+    "  kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]",
+  );
   console.error("  kumiki test <input.kumiki> [name|prefix*]");
   console.error("  kumiki fix <input.kumiki> [--apply] [<code>]");
   console.error("  kumiki fix <input.kumiki> --auto-patch <test-name> [--apply]");
+  console.error("  kumiki edit <input.kumiki> <qname> <patch-json>");
+  console.error("  kumiki patch apply <input.kumiki> <ops.jsonl>");
+  console.error("  kumiki patch revert <input.kumiki> <op-id>");
+  console.error("  kumiki lock <input.kumiki> <agent-id> <pattern>");
+  console.error("  kumiki unlock <input.kumiki> <agent-id>");
   process.exit(2);
 }
 
@@ -39,20 +69,52 @@ function capsFor(inputPath: string): string[] {
   }
 }
 
-function buildCmd(inputArg: string, outdirArg: string): void {
+async function buildCmd(inputArg: string, outdirArg: string): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const outdir = resolve(process.cwd(), outdirArg);
   const source = readFileSync(inputPath, "utf8");
-  const result = compile(source, {
+  const baseOpts = {
     runtimeSpecifier: "./runtime/core.js",
     runtimeModulesDir: "./runtime",
     capabilities: capsFor(inputPath),
-  });
-  if (result.kind === "fail") {
-    for (const err of result.errors) {
+  };
+  const first = compile(source, baseOpts);
+  if (first.kind === "fail") {
+    // Surface any warnings observed alongside the fatal errors so they
+    // aren't silently dropped — a `W0212` detected in the same pass is
+    // still useful diagnostic context even when the build fails.
+    for (const w of first.warnings) {
+      console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
+    }
+    for (const err of first.errors) {
       console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
     }
     process.exit(1);
+  }
+  // Surface non-fatal warnings (W02xx ui-event/tile-mismatch, etc.) to stderr
+  // without blocking the bundle. The build still produces output — the warning
+  // says "this subscription is dead", not "the program is broken".
+  for (const w of first.warnings) {
+    console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
+  }
+  // Bake referenced icons into App.icons (#101). When @kumikijs/icons is
+  // installed in the project, look up each used name and re-codegen with the
+  // resolved subset so the output ships only the paths the app actually
+  // references. Falls through silently when the package is absent.
+  let result = first;
+  if (first.usedIcons.length > 0) {
+    const registry = await resolveBuiltinIcons(inputPath);
+    if (registry) {
+      const subset: Record<string, string> = {};
+      for (const name of first.usedIcons) {
+        const path = registry[name];
+        if (typeof path === "string") subset[name] = path;
+      }
+      if (Object.keys(subset).length > 0) {
+        const second = compile(source, { ...baseOpts, icons: subset });
+        if (second.kind === "ok") result = second;
+      }
+    }
   }
   mkdirSync(outdir, { recursive: true });
   writeFileSync(resolve(outdir, "app.js"), result.js);
@@ -75,9 +137,31 @@ function listCmd(inputArg: string, layer?: string): void {
   }
 }
 
-function viewCmd(inputArg: string, qname: string, withDeps: boolean): void {
-  const store = load(resolve(process.cwd(), inputArg));
-  const out = withDeps ? viewWithDeps(store, qname) : viewDef(store, qname);
+type ViewMode = "text" | "with-deps" | "hash" | "history";
+
+function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
+  const path = resolve(process.cwd(), inputArg);
+  if (mode === "history") {
+    const log = viewHistory(path, qname);
+    if (log.length === 0) {
+      console.log(`(no history for ${qname})`);
+      return;
+    }
+    for (const e of log) {
+      console.log(`${e["op-id"]}  ${new Date(e.ts).toISOString()}  ${e.op}  by ${e.author}`);
+    }
+    return;
+  }
+  const store = load(path);
+  if (mode === "hash") {
+    if (!store.byQName.has(qname)) {
+      console.error(`Definition "${qname}" not found`);
+      process.exit(1);
+    }
+    console.log(viewHash(store, qname));
+    return;
+  }
+  const out = mode === "with-deps" ? viewWithDeps(store, qname) : viewDef(store, qname);
   if (out === null) {
     console.error(`Definition "${qname}" not found`);
     process.exit(1);
@@ -95,18 +179,91 @@ function refsCmd(inputArg: string, qname: string): void {
   for (const r of refs) console.log(`${r.qname}  ${inputArg}:${r.line}`);
 }
 
-function checkCmd(inputArg: string, strictA11y: boolean): void {
+type CheckScope = "all" | "types" | "refs" | "effects";
+
+/**
+ * Diagnostics gated by an explicit `--strict-*` opt-in upstream (a11y E0701-
+ * E0703, strict-icons E0704, strict-selector-id E0212). They survive any
+ * `--types/--refs/--effects` scope filter so combining `--strict-icons --types`
+ * does not silently drop the strict findings the user asked for.
+ */
+const STRICT_GATE_CODES = new Set(["E0212", "E0701", "E0702", "E0703", "E0704"]);
+
+function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
+  if (scope === "all") return errors;
+  return errors.filter((e) => {
+    const code = e.code;
+    if (STRICT_GATE_CODES.has(code)) return true;
+    // Non-fatal warnings (W02xx ui-event/tile-mismatch, etc.) bypass scope
+    // filtering — they are surfaced by default and the user-facing intent of
+    // a scope flag is to narrow the *error* set, not to silence warnings.
+    if (e.severity === "warning") return true;
+    if (scope === "types")
+      return code.startsWith("E02") || code.startsWith("E04") || code.startsWith("E06");
+    if (scope === "refs") return code.startsWith("E01") || code.startsWith("E05");
+    if (scope === "effects") return code.startsWith("E03");
+    return true;
+  });
+}
+
+async function checkCmd(
+  inputArg: string,
+  strictA11y: boolean,
+  strictIcons: boolean,
+  strictSelectorId: boolean,
+  scope: CheckScope,
+): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const store = load(inputPath);
-  const errors = check(store.program, { strictA11y, capabilities: capsFor(inputPath) });
-  if (errors.length === 0) {
-    console.log("ok");
-    return;
+  // When --strict-icons is on, resolve @kumikijs/icons up front so its closed
+  // name set extends the per-source `theme.icons` domain. When the package
+  // isn't installed, fall through with an empty list — `theme.icons` alone
+  // then defines the domain, matching standalone apps; the call is logged so
+  // the user can tell the degraded mode apart from a real typo.
+  let iconNames: string[] = [];
+  if (strictIcons) {
+    const registry = await resolveBuiltinIcons(inputPath);
+    if (registry) {
+      iconNames = Object.keys(registry);
+    } else {
+      console.error(
+        "note: --strict-icons: @kumikijs/icons not resolved; checking against theme.icons only",
+      );
+    }
   }
-  for (const err of errors) {
-    console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
+  const all = check(store.program, {
+    strictA11y,
+    strictIcons,
+    strictSelectorId,
+    iconNames,
+    capabilities: capsFor(inputPath),
+  });
+  const filtered = filterByScope(all, scope);
+  const warnings = filtered.filter((d) => d.severity === "warning");
+  const errors = filtered.filter((d) => d.severity !== "warning");
+  for (const d of [...warnings, ...errors]) {
+    console.error(`${d.code} ${d.kind} at ${d.pos.line}:${d.pos.col}: ${d.message}`);
   }
-  process.exit(1);
+  if (errors.length > 0) process.exit(1);
+  console.log(
+    warnings.length > 0
+      ? `ok (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`
+      : "ok",
+  );
+}
+
+function viewModeFrom(argv: string[]): ViewMode {
+  if (argv.includes("--history")) return "history";
+  if (argv.includes("--hash")) return "hash";
+  if (argv.includes("--with-deps")) return "with-deps";
+  return "text";
+}
+
+function checkScopeFrom(argv: string[]): CheckScope {
+  if (argv.includes("--types")) return "types";
+  if (argv.includes("--refs")) return "refs";
+  if (argv.includes("--effects")) return "effects";
+  return "all";
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -117,7 +274,7 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       const out = argv[4];
       if (!input || !out) usage();
-      buildCmd(input, out);
+      await buildCmd(input, out);
       return;
     }
     case "list": {
@@ -130,8 +287,7 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       const qname = argv[4];
       if (!input || !qname) usage();
-      const withDeps = argv.includes("--with-deps");
-      viewCmd(input, qname, withDeps);
+      viewCmd(input, qname, viewModeFrom(argv));
       return;
     }
     case "refs": {
@@ -145,7 +301,9 @@ async function main(argv: string[]): Promise<void> {
       const input = argv[3];
       if (!input) usage();
       const strictA11y = argv.includes("--strict-a11y");
-      checkCmd(input, strictA11y);
+      const strictIcons = argv.includes("--strict-icons");
+      const strictSelectorId = argv.includes("--strict-selector-id");
+      await checkCmd(input, strictA11y, strictIcons, strictSelectorId, checkScopeFrom(argv));
       return;
     }
     case "smoke": {
@@ -153,6 +311,41 @@ async function main(argv: string[]): Promise<void> {
       if (!input) usage();
       const inputPath = resolve(process.cwd(), input);
       await smokeCmd(inputPath, capsFor(inputPath));
+      return;
+    }
+    case "dev": {
+      const input = argv[3];
+      if (!input) usage();
+      const inputPath = resolve(process.cwd(), input);
+      const portIdx = argv.indexOf("--port");
+      let port: number | undefined;
+      if (portIdx !== -1) {
+        const raw = argv[portIdx + 1];
+        const n = Number(raw);
+        if (!raw || raw.startsWith("--") || !Number.isInteger(n) || n < 0 || n > 65535) {
+          console.error(`invalid --port '${raw}': expected integer 0..65535`);
+          process.exit(2);
+        }
+        port = n;
+      }
+      const epIdx = argv.indexOf("--episode-log");
+      let episodeLog: string | undefined;
+      if (epIdx !== -1) {
+        const value = argv[epIdx + 1];
+        if (!value || value.startsWith("--")) {
+          console.error(
+            "Usage: kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]",
+          );
+          process.exit(2);
+        }
+        episodeLog = resolve(process.cwd(), value);
+      }
+      const strictA11y = argv.includes("--strict-a11y");
+      await devCmd(inputPath, {
+        ...(port !== undefined ? { port } : {}),
+        ...(episodeLog !== undefined ? { episodeLog } : {}),
+        ...(strictA11y ? { strictA11y: true } : {}),
+      });
       return;
     }
     case "test": {
@@ -171,7 +364,101 @@ async function main(argv: string[]): Promise<void> {
       const scenario = argv[4];
       if (!input || !scenario) usage();
       const inputPath = resolve(process.cwd(), input);
-      await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath));
+      const epIdx = argv.indexOf("--episode-log");
+      let runOpts: { episodeLog?: string } = {};
+      if (epIdx !== -1) {
+        const value = argv[epIdx + 1];
+        if (!value || value.startsWith("--")) {
+          console.error("Usage: kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]");
+          process.exit(2);
+        }
+        runOpts = { episodeLog: resolve(process.cwd(), value) };
+      }
+      await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath), runOpts);
+      return;
+    }
+    case "replay": {
+      const input = argv[3];
+      if (!input) usage();
+      const inputPath = resolve(process.cwd(), input);
+
+      // --from-log <path> is required in this implementation (#117). The
+      // <episode-id>-only form against the in-memory dev-server store is out
+      // of scope here.
+      const fromLogIdx = argv.indexOf("--from-log");
+      if (fromLogIdx === -1) {
+        console.error(
+          "Usage: kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]",
+        );
+        process.exit(2);
+      }
+      const fromLog = argv[fromLogIdx + 1];
+      if (!fromLog || fromLog.startsWith("--")) usage();
+
+      const untilIdx = argv.indexOf("--until-step");
+      let untilStep: number | undefined;
+      if (untilIdx !== -1) {
+        const v = Number(argv[untilIdx + 1]);
+        // Spec §10.5.3: step counter is 1-indexed (the Nth observed step).
+        // `0` would carry no useful meaning — every step would satisfy
+        // `n >= 0`, so the first step's emit triggers stop. Reject it loudly
+        // instead of silently treating it like `--until-step 1`.
+        if (!Number.isInteger(v) || v < 1) {
+          console.error(
+            `invalid --until-step '${argv[untilIdx + 1]}': expected positive integer (1-indexed)`,
+          );
+          process.exit(2);
+        }
+        untilStep = v;
+      }
+
+      const mocks: Record<string, EpisodeMockPolicy> = {};
+      for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === "--mock") {
+          const value = argv[i + 1];
+          if (!value || value.startsWith("--")) {
+            console.error("invalid --mock: missing value");
+            process.exit(2);
+          }
+          try {
+            const m = parseMockArg(value);
+            mocks[m.effect] = m.policy;
+          } catch (e) {
+            console.error((e as Error).message);
+            process.exit(2);
+          }
+        }
+      }
+
+      // Collect indexes of flag-value tokens so the positional <episode-id>
+      // scan skips them. Without this, the value after `--mock` would be
+      // mistaken for an episode id.
+      const consumedIdxs = new Set<number>();
+      for (let i = 4; i < argv.length; i++) {
+        if (argv[i] === "--from-log" || argv[i] === "--mock" || argv[i] === "--until-step") {
+          consumedIdxs.add(i);
+          consumedIdxs.add(i + 1);
+        }
+      }
+      const positional = argv.filter(
+        (a, i) => i > 3 && !consumedIdxs.has(i) && !a.startsWith("--"),
+      );
+      if (positional.length > 1) {
+        // §10.5.3 only accepts one `<episode-id>` positional. Silently ignoring
+        // the extras would mask `kumiki replay <file> ep_0001 ep_0002` typos.
+        console.error(
+          `kumiki replay: unexpected positional arguments after <episode-id>: ${positional.slice(1).join(", ")}`,
+        );
+        process.exit(2);
+      }
+      const episodeId = positional[0];
+
+      await replayCmd(inputPath, capsFor(inputPath), {
+        fromLog: resolve(process.cwd(), fromLog),
+        ...(episodeId !== undefined ? { episodeId } : {}),
+        mocks,
+        ...(untilStep !== undefined ? { untilStep } : {}),
+      });
       return;
     }
     case "add": {
@@ -183,8 +470,8 @@ async function main(argv: string[]): Promise<void> {
       }
       const body = rest.join(" ");
       try {
-        addDef(resolve(process.cwd(), file), layer, name, body);
-        console.log(`added ${layer}.${name}`);
+        const opId = addDef(resolve(process.cwd(), file), layer, name, body);
+        console.log(`added ${layer}.${name}  (${opId})`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);
@@ -200,8 +487,8 @@ async function main(argv: string[]): Promise<void> {
       }
       const body = rest.join(" ");
       try {
-        replaceDef(resolve(process.cwd(), file), qname, body);
-        console.log(`replaced ${qname}`);
+        const opId = replaceDef(resolve(process.cwd(), file), qname, body);
+        console.log(`replaced ${qname}  (${opId})`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);
@@ -215,8 +502,8 @@ async function main(argv: string[]): Promise<void> {
         process.exit(2);
       }
       try {
-        removeDef(resolve(process.cwd(), file), qname, argv.includes("--cascade"));
-        console.log(`removed ${qname}`);
+        const opId = removeDef(resolve(process.cwd(), file), qname, argv.includes("--cascade"));
+        console.log(`removed ${qname}  (${opId})`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);
@@ -230,8 +517,91 @@ async function main(argv: string[]): Promise<void> {
         process.exit(2);
       }
       try {
-        renameDef(resolve(process.cwd(), file), qname, newName);
-        console.log(`renamed ${qname} -> ${newName}`);
+        const opId = renameDef(resolve(process.cwd(), file), qname, newName);
+        console.log(`renamed ${qname} -> ${newName}  (${opId})`);
+      } catch (e) {
+        console.error(String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    case "edit": {
+      const [, , , file, qname, patchJson] = argv;
+      if (!file || !qname || !patchJson) {
+        console.error("Usage: kumiki edit <file> <qname> <patch-json>");
+        process.exit(2);
+      }
+      try {
+        const patch = JSON.parse(patchJson) as unknown;
+        const opId = editDef(resolve(process.cwd(), file), qname, patch);
+        console.log(`edited ${qname}  (${opId})`);
+      } catch (e) {
+        console.error(String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    case "patch": {
+      const sub = argv[3];
+      if (sub === "apply") {
+        const [, , , , file, opsFile] = argv;
+        if (!file || !opsFile) {
+          console.error("Usage: kumiki patch apply <file> <ops.jsonl>");
+          process.exit(2);
+        }
+        try {
+          const ids = patchApplyFile(resolve(process.cwd(), file), resolve(process.cwd(), opsFile));
+          console.log(`applied ${ids.length} ops: ${ids.join(", ")}`);
+        } catch (e) {
+          console.error(String(e));
+          process.exit(1);
+        }
+        return;
+      }
+      if (sub === "revert") {
+        const [, , , , file, opId] = argv;
+        if (!file || !opId) {
+          console.error("Usage: kumiki patch revert <file> <op-id>");
+          process.exit(2);
+        }
+        try {
+          const newId = patchRevert(resolve(process.cwd(), file), opId);
+          console.log(`reverted ${opId}  (${newId})`);
+        } catch (e) {
+          console.error(String(e));
+          process.exit(1);
+        }
+        return;
+      }
+      console.error("Usage: kumiki patch apply <file> <ops.jsonl>");
+      console.error("       kumiki patch revert <file> <op-id>");
+      process.exit(2);
+      return;
+    }
+    case "lock": {
+      const [, , , file, agentId, pattern] = argv;
+      if (!file || !agentId || !pattern) {
+        console.error("Usage: kumiki lock <file> <agent-id> <pattern>");
+        process.exit(2);
+      }
+      try {
+        lockDef(resolve(process.cwd(), file), agentId, pattern);
+        console.log(`locked ${pattern} for ${agentId}`);
+      } catch (e) {
+        console.error(String(e));
+        process.exit(1);
+      }
+      return;
+    }
+    case "unlock": {
+      const [, , , file, agentId] = argv;
+      if (!file || !agentId) {
+        console.error("Usage: kumiki unlock <file> <agent-id>");
+        process.exit(2);
+      }
+      try {
+        unlockDef(resolve(process.cwd(), file), agentId);
+        console.log(`unlocked ${agentId}`);
       } catch (e) {
         console.error(String(e));
         process.exit(1);

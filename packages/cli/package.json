@@ -56,7 +56,9 @@
   "dependencies": {
     "@happy-dom/global-registrator": "catalog:",
     "@kumikijs/compiler": "workspace:*",
-    "@kumikijs/runtime": "workspace:*"
+    "@kumikijs/runtime": "workspace:*",
+    "@kumikijs/vite": "workspace:*",
+    "vite": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

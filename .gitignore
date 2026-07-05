@@ -13,6 +13,8 @@ out/
 coverage/
 test-tmp/
 *.kumiki-ops.jsonl
+*.kumiki-episodes.jsonl
+*.kumiki-locks.json
 
 # Docs site build
 .vitepress/cache/

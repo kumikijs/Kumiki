@@ -6,6 +6,50 @@
 
 import type { ReducerSpec } from "./core.ts";
 
+/**
+ * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
+ * sufficient for replay. Inlined by codegen at compile time, so the runtime
+ * deals only with already-parsed objects — anything not matched falls back to
+ * an unrecognized step that replay just skips over.
+ */
+type EpisodeReducerStep = {
+  kind: "reducer";
+  name: string;
+  "slot-diffs"?: { name: string; before?: unknown; after: unknown }[];
+  emits?: string[];
+  ts?: number;
+};
+type EpisodeEffectEndStep = {
+  kind: "effect-end";
+  name: string;
+  result: "ok" | "err";
+  value: unknown;
+  ts?: number;
+};
+type EpisodeStepLite =
+  | EpisodeReducerStep
+  | { kind: "effect-start"; name: string; args?: unknown; ts?: number }
+  | EpisodeEffectEndStep
+  | { kind: "signal-update"; "dirty-slots"?: string[]; "binds-updated"?: string[]; ts?: number }
+  | { kind: "panic"; message: string; location?: string; ts?: number };
+
+export type EpisodeLogEntry = {
+  id: string;
+  trigger: { kind: string; target?: string; payload?: unknown; ts?: number };
+  steps: EpisodeStepLite[];
+  status: "completed" | "panic" | "cancelled" | "ongoing";
+};
+
+/**
+ * Mock resolution policy for an `episode-test` effect: replay the recorded
+ * effect-end (`from-log`), drop the effect entirely (`ignore`), or inject a
+ * fixed `{outcome, value}` deterministically.
+ */
+export type EpisodeMockPolicy =
+  | { policy: "from-log" }
+  | { policy: "ignore" }
+  | { policy: "fixed"; outcome: "ok" | "err"; value: unknown };
+
 export type TestResult = {
   name: string;
   pass: boolean;
@@ -423,6 +467,350 @@ function shrinkCounterexample(
   return cur;
 }
 
+// ----- shared per-episode executor (spec/testing.md §8.6 + runtime.md §10.5.3) -----
+// Drives the reducer queue, applies effect mocks, and emits observer events.
+// Both `runEpisodeTest` (assert) and `replayEpisodes` (trace) call this — a
+// single implementation keeps `from-log` cursor / refine ward / unhandled-err
+// accounting from drifting between the test runner and the CLI replay verb.
+
+/** The minimum app shape `executeEpisode` / `replayEpisodes` consume. */
+export type ReplayApp = {
+  live: Record<string, unknown>;
+  slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+  reducers: ReducerSpec[];
+};
+
+/**
+ * Observer event for a single replay step (spec/runtime.md §10.5.1 step kinds,
+ * plus the `episode-start` / `episode-end` brackets the executor adds so the
+ * formatter can frame each episode). Step indices are 1-based and increment
+ * across episodes — the `--until-step N` flag stops the executor after the Nth
+ * such event fires.
+ */
+export type ReplayEvent =
+  | {
+      kind: "episode-start";
+      episodeId: string;
+      trigger: { kind: string; target?: string; payload?: unknown };
+    }
+  | {
+      kind: "reducer";
+      episodeId: string;
+      stepIndex: number;
+      name: string;
+      slotDiffs: { name: string; before: unknown; after: unknown }[];
+    }
+  | {
+      kind: "effect-start";
+      episodeId: string;
+      stepIndex: number;
+      name: string;
+      args: unknown;
+    }
+  | {
+      kind: "effect-end";
+      episodeId: string;
+      stepIndex: number;
+      name: string;
+      outcome: "ok" | "err" | null;
+      value: unknown;
+      source: "from-log" | "fixed" | "ignored";
+    }
+  | { kind: "signal-update"; episodeId: string; stepIndex: number; dirty: string[] }
+  | { kind: "panic"; episodeId: string; stepIndex: number; message: string }
+  | { kind: "episode-end"; episodeId: string };
+
+/**
+ * Returns `"stop"` to halt the executor immediately after this event (the event
+ * itself still landed — the caller has already seen the corresponding step run).
+ * Used by `--until-step N` to short-circuit replay; the test runner passes a
+ * `() => "continue"` no-op.
+ */
+export type ReplayObserver = (event: ReplayEvent) => "continue" | "stop";
+
+export type ReplayReport = {
+  panics: { episodeId: string; message: string }[];
+  /**
+   * Effect emits whose `.err` outcome had no `.err` reducer to catch. Carries
+   * the source `episodeId` so multi-episode replays can pinpoint which one
+   * leaked — the symmetric shape to `panics` keeps consumers uniform.
+   */
+  unhandledErrors: { episodeId: string; effect: string }[];
+  /** Step index at which `--until-step` interrupted the run, or `null` if all episodes finished. */
+  stoppedAt: number | null;
+  finalSlots: Record<string, unknown>;
+};
+
+/** Reset `app.live` to the slot defaults (hermetic start, §8.6). */
+function resetLiveFromSlots(app: ReplayApp): void {
+  for (const k of Object.keys(app.live)) delete app.live[k];
+  for (const [k, m] of Object.entries(app.slots)) app.live[k] = m.value;
+}
+
+function executeEpisode(
+  app: ReplayApp,
+  ep: EpisodeLogEntry,
+  mocks: Record<string, EpisodeMockPolicy>,
+  observer: ReplayObserver,
+  stepCounter: { n: number },
+  untilStep: number | undefined,
+): { panics: { message: string }[]; unhandledErrors: { effect: string }[]; stopped: boolean } {
+  const panics: { message: string }[] = [];
+  const unhandledErrors: { effect: string }[] = [];
+
+  // Apply a reducer's slot writes, honouring §6.4 refine() gates: a reject is
+  // silently dropped (mirrors the production runtime), so the slot keeps its
+  // prior value and that slot is NOT reported as a diff. Replay still emits
+  // the surrounding `reducer` event; a refine veto is invisible from the
+  // outside today — we surface it through an explicit observer kind only when
+  // a future debug pass needs it.
+  const writeSlots = (
+    resSlots: Record<string, unknown> | undefined,
+  ): { name: string; before: unknown; after: unknown }[] => {
+    const diffs: { name: string; before: unknown; after: unknown }[] = [];
+    for (const [k, v] of Object.entries(resSlots ?? {})) {
+      const meta = app.slots[k];
+      if (meta?.refine && !meta.refine(v)) continue;
+      const before = app.live[k];
+      app.live[k] = v;
+      if (!deepEqualValue(before, v)) diffs.push({ name: k, before, after: v });
+    }
+    return diffs;
+  };
+
+  // Stop signal is shared with the caller (untilStep) AND the observer return.
+  const emit = (ev: ReplayEvent): boolean => {
+    // `episode-start` / `episode-end` are bracket markers — not counted as
+    // steps so `--until-step N` lines up with the printable trace lines.
+    if (ev.kind !== "episode-start" && ev.kind !== "episode-end") {
+      stepCounter.n += 1;
+      (ev as { stepIndex: number }).stepIndex = stepCounter.n;
+    }
+    const verdict = observer(ev);
+    if (verdict === "stop") return true;
+    if (
+      ev.kind !== "episode-start" &&
+      ev.kind !== "episode-end" &&
+      untilStep !== undefined &&
+      stepCounter.n >= untilStep
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  if (emit({ kind: "episode-start", episodeId: ep.id, trigger: ep.trigger })) {
+    return { panics, unhandledErrors, stopped: true };
+  }
+
+  const firstRed = ep.steps.find((s): s is EpisodeReducerStep => s.kind === "reducer");
+  if (!firstRed) {
+    emit({ kind: "episode-end", episodeId: ep.id });
+    return { panics, unhandledErrors, stopped: false };
+  }
+  const entry = app.reducers.find((r) => r.name === firstRed.name);
+  if (!entry) {
+    emit({ kind: "episode-end", episodeId: ep.id });
+    return { panics, unhandledErrors, stopped: false };
+  }
+
+  // Per-effect FIFO of recorded effect-end values for `from-log` mocks.
+  const recordedResults: Record<string, { result: "ok" | "err"; value: unknown }[]> = {};
+  for (const s of ep.steps) {
+    if (s.kind === "effect-end") {
+      const list = recordedResults[s.name] ?? [];
+      list.push({ result: s.result, value: s.value });
+      recordedResults[s.name] = list;
+    }
+  }
+  const cursors: Record<string, number> = {};
+
+  const triggerPayload = (ep.trigger.payload as Record<string, unknown> | undefined) ?? {};
+  const queue: { reducer: ReducerSpec; payload: Record<string, unknown> }[] = [
+    { reducer: entry, payload: { $el: triggerPayload, $event: triggerPayload } },
+  ];
+
+  let guard = 0;
+  const dirtyForEpisode = new Set<string>();
+
+  while (queue.length > 0 && guard++ < 10000) {
+    const job = queue.shift();
+    if (!job) break;
+    let res: ReturnType<ReducerSpec["apply"]>;
+    try {
+      res = job.reducer.apply(app.live, job.payload);
+    } catch (e) {
+      const msg = e && (e as Error).message ? (e as Error).message : String(e);
+      panics.push({ message: msg });
+      if (emit({ kind: "panic", episodeId: ep.id, stepIndex: 0, message: msg })) {
+        return { panics, unhandledErrors, stopped: true };
+      }
+      continue;
+    }
+    const diffs = writeSlots(res.slots);
+    for (const d of diffs) dirtyForEpisode.add(d.name);
+    if (
+      emit({
+        kind: "reducer",
+        episodeId: ep.id,
+        stepIndex: 0,
+        name: job.reducer.name,
+        slotDiffs: diffs,
+      })
+    ) {
+      return { panics, unhandledErrors, stopped: true };
+    }
+    for (const eEmit of res.emits ?? []) {
+      const mock = mocks[eEmit.effect];
+      if (
+        emit({
+          kind: "effect-start",
+          episodeId: ep.id,
+          stepIndex: 0,
+          name: eEmit.effect,
+          args: eEmit.args ?? [],
+        })
+      ) {
+        return { panics, unhandledErrors, stopped: true };
+      }
+      if (!mock || mock.policy === "ignore") {
+        if (
+          emit({
+            kind: "effect-end",
+            episodeId: ep.id,
+            stepIndex: 0,
+            name: eEmit.effect,
+            outcome: null,
+            value: null,
+            source: "ignored",
+          })
+        ) {
+          return { panics, unhandledErrors, stopped: true };
+        }
+        continue;
+      }
+      let outcome: "ok" | "err";
+      let value: unknown;
+      let source: "from-log" | "fixed";
+      if (mock.policy === "from-log") {
+        const list = recordedResults[eEmit.effect] ?? [];
+        const idx = cursors[eEmit.effect] ?? 0;
+        const recorded = list[idx];
+        if (!recorded) {
+          // Recorded log doesn't have an effect-end for this slot — drop the
+          // emit (testkit behaviour) but still surface a trace marker.
+          if (
+            emit({
+              kind: "effect-end",
+              episodeId: ep.id,
+              stepIndex: 0,
+              name: eEmit.effect,
+              outcome: null,
+              value: null,
+              source: "ignored",
+            })
+          ) {
+            return { panics, unhandledErrors, stopped: true };
+          }
+          continue;
+        }
+        cursors[eEmit.effect] = idx + 1;
+        outcome = recorded.result;
+        value = recorded.value;
+        source = "from-log";
+      } else {
+        outcome = mock.outcome;
+        value = mock.value;
+        source = "fixed";
+      }
+      if (
+        emit({
+          kind: "effect-end",
+          episodeId: ep.id,
+          stepIndex: 0,
+          name: eEmit.effect,
+          outcome,
+          value,
+          source,
+        })
+      ) {
+        return { panics, unhandledErrors, stopped: true };
+      }
+      let matched = 0;
+      for (const r of app.reducers) {
+        if (
+          r.event.kind === "effect" &&
+          r.event.effect === eEmit.effect &&
+          r.event.outcome === outcome
+        ) {
+          queue.push({
+            reducer: r,
+            payload: { $1: value, $2: eEmit.args?.[0] },
+          });
+          matched++;
+        }
+      }
+      if (outcome === "err" && matched === 0) unhandledErrors.push({ effect: eEmit.effect });
+    }
+  }
+
+  if (dirtyForEpisode.size > 0) {
+    if (
+      emit({
+        kind: "signal-update",
+        episodeId: ep.id,
+        stepIndex: 0,
+        dirty: [...dirtyForEpisode],
+      })
+    ) {
+      return { panics, unhandledErrors, stopped: true };
+    }
+  }
+  emit({ kind: "episode-end", episodeId: ep.id });
+  return { panics, unhandledErrors, stopped: false };
+}
+
+/**
+ * Replay an episode log against a compiled app, streaming each observed step
+ * through `observer`. Powers `kumiki replay` (§10.5.3): mocks resolve effect
+ * outcomes the same way `episode-test` does, `--until-step N` short-circuits
+ * the run when the observer (or the executor's own counter) reports `"stop"`.
+ *
+ * The app's `live` state is reset to slot defaults at the start of replay; the
+ * caller can read `finalSlots` afterwards (also written into `app.live`).
+ */
+export function replayEpisodes(input: {
+  app: ReplayApp;
+  episodes: EpisodeLogEntry[];
+  mocks: Record<string, EpisodeMockPolicy>;
+  observer: ReplayObserver;
+  untilStep?: number;
+}): ReplayReport {
+  const { app, episodes, mocks, observer, untilStep } = input;
+  resetLiveFromSlots(app);
+  const panics: { episodeId: string; message: string }[] = [];
+  const unhandledErrors: { episodeId: string; effect: string }[] = [];
+  const stepCounter = { n: 0 };
+  let stopped = false;
+  for (const ep of episodes) {
+    const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep);
+    for (const p of r.panics) panics.push({ episodeId: ep.id, message: p.message });
+    for (const u of r.unhandledErrors) unhandledErrors.push({ episodeId: ep.id, effect: u.effect });
+    if (r.stopped) {
+      stopped = true;
+      break;
+    }
+  }
+  const finalSlots: Record<string, unknown> = {};
+  for (const k of Object.keys(app.slots)) finalSlots[k] = app.live[k];
+  return {
+    panics,
+    unhandledErrors,
+    stoppedAt: stopped ? stepCounter.n : null,
+    finalSlots,
+  };
+}
+
 export const _stdlibTest = {
   // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
@@ -606,6 +994,104 @@ export const _stdlibTest = {
       panic = e && (e as Error).message ? (e as Error).message : String(e);
     }
     return compareReducerExpect(name, { ...live }, residual, panic, expect, unhandledErr);
+  },
+  /**
+   * Replay a recorded episode log against the current app (spec/testing.md §8.6).
+   * For each Episode, dispatch the first `reducer` step's reducer with the
+   * trigger payload and let the recorded emit → effect-end → .ok/.err chain
+   * play out. Effect outcomes come from the caller's `mocks` map: `from-log`
+   * consumes the next recorded effect-end value in order; `ignore` skips
+   * delivery; `fixed` injects an explicit `{outcome, value}`. After every
+   * episode replays, compare the live slots against `expect.slotsEqual` —
+   * either a record literal or `"from-log"` (accumulated from each reducer
+   * step's `slot-diffs`).
+   *
+   * Reuses {@link executeEpisode} (and `replayEpisodes`) — the same per-episode
+   * executor drives both the assert-based `kumiki test` runner and the trace
+   * formatter behind `kumiki replay` (spec/runtime.md §10.5.3), so a divergence
+   * between the two is impossible.
+   */
+  runEpisodeTest(input: {
+    name: string;
+    app: {
+      live: Record<string, unknown>;
+      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      reducers: ReducerSpec[];
+    };
+    episodes: EpisodeLogEntry[];
+    mocks: Record<string, EpisodeMockPolicy>;
+    expect: {
+      slotsEqual?: "from-log" | Record<string, unknown>;
+      noPanics?: boolean;
+      noErrors?: boolean;
+    };
+  }): TestResult {
+    const { name, app, episodes, mocks, expect } = input;
+    // Start from slot defaults so each test is hermetic (spec §8.6 expects the
+    // log to be the sole driver of state).
+    resetLiveFromSlots(app);
+
+    const panics: { episodeId: string; message: string }[] = [];
+    const unhandledErrors: string[] = [];
+    const stepCounter = { n: 0 };
+    const observer: ReplayObserver = () => "continue";
+
+    for (const ep of episodes) {
+      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined);
+      for (const p of r.panics) panics.push({ episodeId: ep.id, message: p.message });
+      for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    }
+
+    // Compute the from-log expectation from the recorded reducer slot-diffs.
+    let expectedSlots: Record<string, unknown> | null = null;
+    if (expect.slotsEqual === "from-log") {
+      expectedSlots = {};
+      for (const [k, m] of Object.entries(app.slots)) expectedSlots[k] = m.value;
+      for (const ep of episodes) {
+        for (const s of ep.steps) {
+          if (s.kind === "reducer") {
+            const diffs = (s as EpisodeReducerStep)["slot-diffs"] ?? [];
+            for (const d of diffs) expectedSlots[d.name] = d.after;
+          }
+        }
+      }
+    } else if (expect.slotsEqual && typeof expect.slotsEqual === "object") {
+      expectedSlots = expect.slotsEqual as Record<string, unknown>;
+    }
+
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!deepEqualValue(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
+    }
+    if (expect.noPanics && panics.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "no panics",
+        actual: panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
+        diffAt: "panics",
+      };
+    }
+    if (expect.noErrors && unhandledErrors.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "no unhandled effect errors",
+        actual: unhandledErrors.join(", "),
+        diffAt: "errors",
+      };
+    }
+    return { name, pass: true };
   },
   /** Structurally compare a rendered tile against the expected tile structure. */
   runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {

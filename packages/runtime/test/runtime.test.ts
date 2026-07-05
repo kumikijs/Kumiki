@@ -163,6 +163,59 @@ describe("runtime", () => {
   });
 });
 
+// `style: {...}` (spec/style.md §4.3) — the runtime must walk the record and
+// apply each key as a CSS property. With a theme present, `@token` references
+// (lowered to `_s.token(...)` by codegen) resolve through `currentTheme()`.
+describe("style block application", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  function makeStyledApp(): AppShape {
+    return {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      themes: {
+        Light: {
+          colors: { surface: "rgb(240, 240, 240)" },
+          spacing: { md: "12px" },
+        },
+      },
+      themeName: "Light",
+      root: () => ({
+        kind: "box",
+        children: [],
+        props: {
+          style: {
+            background: _stdlib.token("colors", ["surface"]),
+            padding: _stdlib.token("spacing", ["md"]),
+            "border-radius": "4px",
+          },
+        },
+      }),
+    };
+  }
+
+  it("applies each style-block key as a CSS property on the rendered element", () => {
+    mount(makeStyledApp(), root);
+    const box = root.querySelector('[data-kumiki-tile="box"]') as HTMLElement | null;
+    expect(box).not.toBeNull();
+    expect(box?.style.background).toBe("rgb(240, 240, 240)");
+    expect(box?.style.padding).toBe("12px");
+    expect(box?.style.borderRadius).toBe("4px");
+  });
+});
+
 // A named timer (`timer(100ms, name=countdown)`) incrementing `count`, plus a
 // `stop` reducer that returns stopTimers: ["countdown"] (what codegen lowers
 // `stop-timer(countdown)` to).
@@ -1621,5 +1674,149 @@ describe("standard capability override", () => {
     await tick();
     expect(seen).toEqual([{ path: "/elsewhere" }]);
     expect(location.pathname).toBe(before); // built-in history navigation was not run
+  });
+});
+
+// issue #91 — ui.key / ui.hover are wired through the universal render hook on
+// every tile (not per-renderer), so the DOM-level dispatch must fire for an
+// input (keydown) and a generic box (mouseenter).
+describe("ui.key / ui.hover handlers (issue #91)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  it("keydown on an input invokes onKeyDown with el.key populated", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: { lastKey: { value: "" } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        type: "text",
+        placeholder: "",
+        props: {
+          el: {},
+          onKeyDown: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const inp = root.querySelector("input");
+    if (!inp) throw new Error("expected input");
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter" }));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.key).toBe("Enter");
+    expect(seen[0]?.code).toBe("Enter");
+  });
+
+  it("mouseenter on a box invokes onMouseEnter", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "box",
+        children: [],
+        props: {
+          el: { kind: "Card" },
+          onMouseEnter: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const box = root.querySelector('[data-kumiki-tile="box"]');
+    if (!box) throw new Error("expected box");
+    box.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.kind).toBe("Card");
+  });
+});
+
+// issue #122 — ui.focus / ui.blur ride the same universal render hook as
+// ui.key / ui.hover. The DOM-level focus / blur events must reach the
+// codegen-installed onFocus / onBlur props with the tile's `el` payload.
+describe("ui.focus / ui.blur handlers (issue #122)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  it("focus on an input invokes onFocus with the tile's el payload", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        type: "text",
+        placeholder: "",
+        props: {
+          el: { kind: "InputX" },
+          onFocus: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const inp = root.querySelector("input");
+    if (!inp) throw new Error("expected input");
+    inp.dispatchEvent(new FocusEvent("focus"));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.kind).toBe("InputX");
+  });
+
+  it("blur on an input invokes onBlur with the tile's el payload", () => {
+    const seen: Record<string, unknown>[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        type: "text",
+        placeholder: "",
+        props: {
+          el: { kind: "InputX" },
+          onBlur: (el) => {
+            seen.push(el);
+          },
+        },
+      }),
+    };
+    mount(app, root);
+    const inp = root.querySelector("input");
+    if (!inp) throw new Error("expected input");
+    inp.dispatchEvent(new FocusEvent("blur"));
+    expect(seen.length).toBe(1);
+    expect(seen[0]?.kind).toBe("InputX");
   });
 });

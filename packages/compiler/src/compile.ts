@@ -14,8 +14,31 @@ export type CompileOk = {
    * ships exactly these from `@kumikijs/runtime/modules/`.
    */
   runtimeModules: string[];
+  /**
+   * Icon names referenced by `icon(name="<literal>")` calls in the source
+   * (#101). The Vite plugin / CLI use this to look up matching SVG path data
+   * in `@kumikijs/icons` and re-compile with the `icons` option so only used
+   * paths reach the bundle.
+   */
+  usedIcons: string[];
+  /**
+   * Non-fatal diagnostics surfaced by `check()` (severity `"warning"`).
+   * Always defined; `[]` when there are none. CLI/Vite render these to
+   * stderr / Rollup `this.warn` without blocking the build.
+   */
+  warnings: KumikiError[];
 };
-export type CompileFail = { kind: "fail"; errors: KumikiError[] };
+export type CompileFail = {
+  kind: "fail";
+  errors: KumikiError[];
+  /**
+   * Warnings observed in the same check pass that produced the errors. Kept
+   * alongside `errors` so CLI/Vite can render them even when the compile
+   * fails — without this field a warning detected before the fatal error
+   * would be silently dropped together with the (never-reached) `CompileOk`.
+   */
+  warnings: KumikiError[];
+};
 export type CompileResult = CompileOk | CompileFail;
 
 export type ExtendedCodegenOptions = CodegenOptions & {
@@ -30,6 +53,45 @@ export type ExtendedCodegenOptions = CodegenOptions & {
   readRuntimeBundle?: () => string;
   /** Project-registered capabilities (from `kumiki.caps.json`) accepted in `app.caps`. */
   capabilities?: string[];
+  /**
+   * Resolve and read an episode-log file for an `episode-test load = "<path>"`
+   * directive (spec §8.6). The compiler inlines the parsed log into the
+   * emitted test so the runtime doesn't need filesystem access. Node callers
+   * use `nodeEpisodeLogReader` from `@kumikijs/compiler/node`; passing
+   * `undefined` is fine when the source has no `episode-test`.
+   */
+  readEpisodeLog?: (relativePath: string) => string;
+  /**
+   * Surface a11y findings (E07xx) as compilation errors. Mirrors
+   * `kumiki check --strict-a11y` (spec §10.7 dev server flag). When false or
+   * unset, `check()` filters E07xx codes out entirely so they never block
+   * compile and never reach the caller — there is no "warning" tier here.
+   */
+  strictA11y?: boolean;
+  /**
+   * Promote literal `icon(name="<x>")` calls whose name is in neither
+   * `iconNames` nor any `theme.icons` block to `E0704 unknown-icon`.
+   * Mirrors `kumiki check --strict-icons`; default-off so the runtime
+   * placeholder (spec §4.8.3) stays fail-soft. Dynamic `icon(name=expr)`
+   * calls are never checked.
+   */
+  strictIcons?: boolean;
+  /**
+   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` cannot match any of the
+   * target tile's literal `{id: "..."}` props to `E0212 selector-id-mismatch`.
+   * Mirrors `kumiki check --strict-selector-id`; default-off so tiles with
+   * computed or missing `{id}` (where the runtime `_dispatch` filter is the
+   * authority) stay unblocked, and so the PR #148 regression test's
+   * deliberate literal mismatch still compiles cleanly.
+   */
+  strictSelectorId?: boolean;
+  /**
+   * The closed icon-name set from `@kumikijs/icons` (typically
+   * `Object.keys(ALL_ICONS)`). When omitted, only names declared in the
+   * source's `theme.icons` blocks satisfy the strict-icons check, matching
+   * standalone apps that do not depend on the registry package.
+   */
+  iconNames?: Iterable<string>;
 };
 
 /** Inline a runtime bundle into generated module code, stripping the bridging import/export lines. */
@@ -49,8 +111,16 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
   }
   const tokens = lex(source);
   const program = parse(tokens);
-  const errors = check(program, { capabilities: opts.capabilities ?? [] });
-  if (errors.length > 0) return { kind: "fail", errors };
+  const diags = check(program, {
+    capabilities: opts.capabilities ?? [],
+    ...(opts.strictA11y ? { strictA11y: true } : {}),
+    ...(opts.strictIcons ? { strictIcons: true } : {}),
+    ...(opts.strictSelectorId ? { strictSelectorId: true } : {}),
+    ...(opts.iconNames ? { iconNames: opts.iconNames } : {}),
+  });
+  const errors = diags.filter((d) => d.severity !== "warning");
+  const warnings = diags.filter((d) => d.severity === "warning");
+  if (errors.length > 0) return { kind: "fail", errors, warnings };
 
   const generated = codegen(program, opts);
   let js = `${RUNTIME_HELPERS}\n${generated.js}`;
@@ -64,5 +134,12 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
     js = inlineRuntime(js, opts.readRuntimeBundle());
   }
 
-  return { kind: "ok", js, program, runtimeModules: generated.runtimeModules };
+  return {
+    kind: "ok",
+    js,
+    program,
+    runtimeModules: generated.runtimeModules,
+    usedIcons: generated.usedIcons,
+    warnings,
+  };
 }

@@ -8,7 +8,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile, type KumikiError } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
+import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { loadApp } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, "..", "examples");
@@ -76,6 +78,59 @@ describe("app examples", () => {
     const label = file.split(/[\\/]/).slice(-2).join("/");
     it(`compiles ${label}`, () => {
       expectCompiles(file);
+    });
+  }
+});
+
+// Compile is necessary but not sufficient — a feature with a co-located
+// `.scenario.json` ships an executable acceptance criterion. Run it through
+// the same scenario runner the CLI uses so codegen or runtime regressions that
+// only surface at run time fail this suite instead of slipping past as
+// compile-green. Aligned with the operating model: every new example must pass
+// check + build + smoke; the scenario tier extends that to "DOM wired + reducer
+// fires" for examples that opt in by providing a scenario.
+function listFeatureScenarios(): { kumiki: string; scenario: string; label: string }[] {
+  const dir = join(examplesDir, "features");
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".scenario.json"))
+    .map((f) => {
+      const base = f.replace(/\.scenario\.json$/, "");
+      return {
+        kumiki: join(dir, `${base}.kumiki`),
+        scenario: join(dir, f),
+        label: base,
+      };
+    })
+    .filter((s) => statSync(s.kumiki).isFile());
+}
+
+describe("feature scenarios", () => {
+  const scenarios = listFeatureScenarios();
+  it("there are feature scenarios to run", () => {
+    expect(scenarios.length).toBeGreaterThan(0);
+  });
+  for (const s of scenarios) {
+    it(`runs ${s.label}.scenario.json`, async () => {
+      const app = await loadApp(s.kumiki);
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      try {
+        const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Scenario;
+        const report = await runScenario(app, root, scenario);
+        if (!report.ok) {
+          const detail = report.steps
+            .map((st, i) => {
+              const errs = st.errors.length ? ` errors=${st.errors.join("|")}` : "";
+              const fails = st.failures.length ? ` failures=${st.failures.join("|")}` : "";
+              return `step ${i} (${st.label ?? st.action ?? "-"}):${errs}${fails}`;
+            })
+            .filter((l) => l.includes("errors=") || l.includes("failures="))
+            .join("\n");
+          throw new Error(`${s.label}.scenario.json did not pass:\n${detail}`);
+        }
+      } finally {
+        root.remove();
+      }
     });
   }
 });

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +10,10 @@ const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const ROUTING_PATH = resolve(here, "../../examples/features/18-routing.kumiki");
 const STORAGE_PATH = resolve(here, "../../examples/features/20-effect-storage.kumiki");
 const CLI_PATH = resolve(here, "../src/kumiki.ts");
+const REPLAY_COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
+const REPLAY_COUNTER_LOG = resolve(here, "fixtures/replay/counter.log.jsonl");
+const REPLAY_PERSIST = resolve(here, "fixtures/replay/persist.kumiki");
+const REPLAY_PERSIST_LOG = resolve(here, "fixtures/replay/persist.log.jsonl");
 
 describe("kumiki build CLI (per-app DCE, #71)", () => {
   let outDir: string;
@@ -66,10 +70,21 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
 
     // Size acceptance (#71): the counter runtime payload is well below the
     // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).
+    // Bumped to 36KB with the §10.5 episode logger seams in core.ts (#90),
+    // then to 36.5KB with the Bytes constructors + polymorphic listSort (#92),
+    // then to 37.5KB with the icon SVG resolver in tiles-text (#101 — the
+    // counter doesn't use icons, but the resolver code rides on tiles-text).
+    // Bumped to 38KB with the SSR/hydration seams in core.ts (#119 —
+    // `computeSlotDiffs` + `pickRootTile` exports + MountOptions overlay).
+    // Bumped to 39KB with the debounce-episode fidelity additions —
+    // `cancelPendingEffect`, `TimerEntry` token plumbing, dispose drain.
+    // Bumped to 39.5KB with the per-tile onChange wirings on check/radio/
+    // switch in tiles-input (#143 — needed so `ui.change(<Toggle>)` reducers
+    // fire; the counter rides on tiles-input via `button`).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(35_000);
+    expect(total).toBeLessThan(39_500);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
@@ -119,6 +134,235 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     expect(existsSync(join(outDir, "runtime", "effects-http.js"))).toBe(false);
     const app = readFileSync(join(outDir, "app.js"), "utf8");
     expect(app).toContain('from "./runtime/effects-storage.js"');
+  });
+});
+
+// `kumiki check --strict-icons` opts into the strict-mode E0704 diagnostic:
+// literal `icon(name="<x>")` whose name is in neither @kumikijs/icons nor any
+// `theme.icons` block in the source.
+describe("kumiki check --strict-icons", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-strict-icons-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+        stdio: "pipe",
+        shell: true,
+        encoding: "utf8",
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
+  // `cheque` is a deliberate typo for `check`; not in @kumikijs/icons.
+  const UNKNOWN = `slot _ : Text = ""
+tile Bad = icon(name="cheque")
+tile App = column(Bad)
+app StrictIcons
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("default check (no flag) lets the unknown literal name pass", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const { out, code } = runCli(["check", file]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  it("--strict-icons surfaces E0704 and exits 1", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const { out, code } = runCli(["check", file, "--strict-icons"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0704");
+    expect(out).toContain("unknown-icon");
+    expect(out).toContain("cheque");
+  });
+
+  it("--strict-icons accepts a custom name declared in theme.icons", { timeout: 30000 }, () => {
+    const file = join(dir, "themed.kumiki");
+    writeFileSync(
+      file,
+      `slot _ : Text = ""
+tile Good = icon(name="logo")
+tile App = column(Good)
+theme Light = { icons: { logo: "M3 3h18v18H3z" } }
+app StrictThemed
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const { out, code } = runCli(["check", file, "--strict-icons"]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  // Critical fix: --strict-icons combined with a scope filter must NOT drop
+  // E0704 silently — the strict opt-in is an additive axis, not a sub-band.
+  it("--strict-icons + --types still surfaces E0704", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, UNKNOWN);
+    const { out, code } = runCli(["check", file, "--strict-icons", "--types"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0704");
+  });
+});
+
+// #149 — `kumiki check --strict-selector-id` opts into the E0212 diagnostic:
+// a `ui.<ev>(Tile#id)` selector whose `#id` cannot match any literal `{id}`
+// the target tile declares. Default-off because the PR #148 runtime-filter
+// regression test intentionally uses a literal mismatch to prove the runtime
+// filter fires; a default-on E0212 would break that test at check time.
+describe("kumiki check --strict-selector-id", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-strict-selid-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+        stdio: "pipe",
+        shell: true,
+        encoding: "utf8",
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
+  // `#nw` is a deliberate typo for `#new`. Runtime `_dispatch` drops the event
+  // (el.id === "new" !== "nw"), so without E0212 the `add` reducer never fires.
+  const MISMATCH = `slot x : Int = 0
+reducer add on=ui.submit(NewForm#nw) do= x := x + 1
+tile NewForm = form(text="a") {id: "new"}
+tile App = column(NewForm)
+app SelIdApp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("default check (no flag) lets a literal id mismatch pass", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, MISMATCH);
+    const { out, code } = runCli(["check", file]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  it("--strict-selector-id surfaces E0212 and exits 1", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, MISMATCH);
+    const { out, code } = runCli(["check", file, "--strict-selector-id"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0212");
+    expect(out).toContain("selector-id-mismatch");
+    expect(out).toContain("NewForm#nw");
+    expect(out).toContain('"new"');
+  });
+
+  it("--strict-selector-id accepts a matching literal id", { timeout: 30000 }, () => {
+    const file = join(dir, "good.kumiki");
+    writeFileSync(
+      file,
+      `slot x : Int = 0
+reducer add on=ui.submit(NewForm#new) do= x := x + 1
+tile NewForm = form(text="a") {id: "new"}
+tile App = column(NewForm)
+app OkApp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const { out, code } = runCli(["check", file, "--strict-selector-id"]);
+    expect(code).toBe(0);
+    expect(out).toContain("ok");
+  });
+
+  // Critical: --strict-selector-id combined with a scope filter must NOT drop
+  // E0212 silently — the strict opt-in is an additive axis, not a sub-band.
+  it("--strict-selector-id + --types still surfaces E0212", { timeout: 30000 }, () => {
+    const file = join(dir, "bad.kumiki");
+    writeFileSync(file, MISMATCH);
+    const { out, code } = runCli(["check", file, "--strict-selector-id", "--types"]);
+    expect(code).toBe(1);
+    expect(out).toContain("E0212");
+  });
+});
+
+// #143 — `kumiki check` surfaces W0212 ui-event-tile-mismatch as a non-fatal
+// warning: the line appears in stderr, the `ok (N warning(s))` summary lands
+// on stdout, and the process exits 0 so build pipelines don't break.
+describe("kumiki check (W0212 ui-event-tile-mismatch)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-w0212-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
+    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return {
+      stdout: res.stdout ?? "",
+      stderr: res.stderr ?? "",
+      code: res.status ?? (res.error ? 1 : 0),
+    };
+  }
+
+  const W0212_SRC = `slot f : Text = ""
+reducer recordFocus on=ui.focus(Card) do= f := "focused"
+tile Card = box(text("hi"))
+tile App = column(Card)
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  it("emits W0212 to stderr and exits 0 with an `ok (1 warning)` summary", {
+    timeout: 30000,
+  }, () => {
+    const file = join(dir, "warn.kumiki");
+    writeFileSync(file, W0212_SRC);
+    const { stdout, stderr, code } = runCli(["check", file]);
+    expect(code).toBe(0);
+    expect(stderr).toContain("W0212");
+    expect(stderr).toContain("ui-event-tile-mismatch");
+    expect(stdout).toContain("ok (1 warning)");
+  });
+
+  it("--refs still surfaces W0212 (scope filtering does not silence warnings)", {
+    timeout: 30000,
+  }, () => {
+    const file = join(dir, "warn.kumiki");
+    writeFileSync(file, W0212_SRC);
+    const { stdout, stderr, code } = runCli(["check", file, "--refs"]);
+    expect(code).toBe(0);
+    expect(stderr).toContain("W0212");
+    expect(stdout).toContain("ok (1 warning)");
   });
 });
 
@@ -334,5 +578,213 @@ test msg-text =
     expect(out).toContain("no auto-patch available");
     // The fixture's "Helo" must be left intact — no self-mutating PASS.
     expect(readFileSync(file, "utf8")).toBe(source);
+  });
+});
+
+// Spec runtime.md §10.5.3 — `kumiki replay` replays a recorded episode log
+// against the compiled app: prints the per-step trace, applies effect mocks,
+// and (optionally) stops partway with `--until-step N`.
+describe("kumiki replay (episode log replay, §10.5.3)", () => {
+  function runCli(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+        stdio: "pipe",
+        shell: true,
+        encoding: "utf8",
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
+  it("replays a single episode and prints its steps + final slots", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_0001",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain("episode ep_0001");
+    expect(out).toContain("[reducer] inc");
+    expect(out).toContain("count: 0 -> 1");
+    expect(out).toContain("final slots:");
+    expect(out).toMatch(/"count":\s*1/);
+    expect(out).toContain("1 episode(s) replayed");
+  });
+
+  it("replays multiple episodes from a JSONL log in order", { timeout: 30000 }, () => {
+    const { out, code } = runCli(["replay", REPLAY_COUNTER, "--from-log", REPLAY_COUNTER_LOG]);
+    expect(code).toBe(0);
+    // Episodes appear in log order.
+    const i1 = out.indexOf("episode ep_0001");
+    const i2 = out.indexOf("episode ep_0002");
+    const i3 = out.indexOf("episode ep_0003");
+    expect(i1).toBeGreaterThanOrEqual(0);
+    expect(i2).toBeGreaterThan(i1);
+    expect(i3).toBeGreaterThan(i2);
+    // Cumulative slot state: starts at 0, ends at 3.
+    expect(out).toMatch(/"count":\s*3/);
+    expect(out).toContain("3 episode(s) replayed");
+  });
+
+  it("--mock 'effect: ok(value)' replaces a recorded effect outcome", { timeout: 30000 }, () => {
+    // `shell: true` (used by `runCli` for parity with the surrounding test
+    // file's style) treats `(...)` as a subshell on POSIX, so the `ok(...)`
+    // value has to be wrapped in extra double quotes so bash hands the
+    // literal through to npx. The follow-up issue #136 tracks moving the
+    // whole file to `shell: false`, after which this can shed the quotes.
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      '"persist:ok(null)"',
+    ]);
+    expect(code).toBe(0);
+    // The .ok branch fires: status becomes "saved".
+    expect(out).toMatch(/"status":\s*"saved"/);
+    // And NOT the .err branch's value.
+    expect(out).not.toMatch(/"status":\s*"disk full"/);
+  });
+
+  it("--mock 'effect: from-log' resolves to the recorded effect-end", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:from-log",
+    ]);
+    expect(code).toBe(0);
+    // The recorded effect-end is err("disk full") → drives persistFailed.
+    expect(out).toMatch(/"status":\s*"disk full"/);
+  });
+
+  it("--mock 'effect: ignore' drops the effect entirely", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:ignore",
+    ]);
+    expect(code).toBe(0);
+    // Neither .ok nor .err fired → status stays at its default "".
+    expect(out).toMatch(/"status":\s*""/);
+    expect(out).not.toMatch(/"status":\s*"disk full"/);
+    expect(out).not.toMatch(/"status":\s*"saved"/);
+  });
+
+  it("--mock can be specified multiple times", { timeout: 30000 }, () => {
+    // Pass two mocks; the persist one takes effect, the other is harmless.
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      "persist:ignore",
+      "--mock",
+      "noop:from-log",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toMatch(/"status":\s*""/);
+  });
+
+  it("--until-step N stops replay at step N and reports stop", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "--until-step",
+      "1",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain("stopped at step 1");
+    // Only the first reducer step ran → count == 1, not 3.
+    expect(out).toMatch(/"count":\s*1/);
+    expect(out).not.toMatch(/"count":\s*3/);
+  });
+
+  it("<episode-id> argument filters to a single episode", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_0002",
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain("episode ep_0002");
+    expect(out).not.toContain("episode ep_0001");
+    expect(out).not.toContain("episode ep_0003");
+    expect(out).toContain("1 episode(s) replayed");
+  });
+
+  it("unknown episode-id exits 1 with 'episode <id> not found'", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_nope",
+    ]);
+    expect(code).toBe(1);
+    expect(out).toContain("episode ep_nope not found");
+  });
+
+  it("invalid --mock syntax exits 2 with parse error message", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "--mock",
+      "garbage",
+    ]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/invalid --mock/);
+  });
+
+  it("missing --from-log shows usage and exits 2", { timeout: 30000 }, () => {
+    const { out, code } = runCli(["replay", REPLAY_COUNTER]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/--from-log/);
+  });
+
+  it("rejects more than one positional <episode-id> with exit 2", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "ep_0001",
+      "ep_0002",
+    ]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/unexpected positional/);
+  });
+
+  // Spec §10.5.3 step counter is 1-indexed; `--until-step 0` is a misuse.
+  it("--until-step 0 is rejected with exit 2", { timeout: 30000 }, () => {
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_COUNTER,
+      "--from-log",
+      REPLAY_COUNTER_LOG,
+      "--until-step",
+      "0",
+    ]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/--until-step/);
+    expect(out).toMatch(/positive integer/);
   });
 });

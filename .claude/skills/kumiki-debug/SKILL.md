@@ -1,6 +1,6 @@
 ---
 name: kumiki-debug
-description: Diagnose and fix Kumiki compiler errors. Use when `kumiki check`/`build` reports a diagnostic (E0001..E07xx) or a parse error, or when a built Kumiki app misbehaves in the browser. Covers the error catalog, common root causes, and the auto-fix tool.
+description: Diagnose and fix Kumiki compiler errors. Use when `kumiki check`/`build` reports a diagnostic (E0001..E08xx, W02xx) or a parse error, or when a built Kumiki app misbehaves in the browser. Covers the error/warning catalog, common root causes, and the auto-fix tool.
 ---
 
 # Debugging Kumiki
@@ -29,6 +29,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
 | `E0801` | `obj.method(...)` calls a method the runtime doesn't implement (typo, or unimplemented/wrong-type method like `Option.to-result`) | fix the name or rewrite with an implemented op (`match`, `fold`, …); see `KNOWN_METHODS` / docs/spec/stdlib.md |
 | `E0000` | parse error (from the lexer/parser) | check the position; look for a missing `)` / wrong keyword |
+| `W0212` | `ui.<ev>(Tile)` reducer subscribes to a tile whose root builtin never fires `<ev>` — silent no-op | re-target the selector at a focusable/event-capable tile, or wire the handler explicitly (`input(onFocus=r)`). See docs/spec/errors.md for the per-event allowed-kinds table. |
 
 ## Auto-fix
 
@@ -40,6 +41,10 @@ pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file> --apply  # apply the
 ```
 
 Or `kumiki_fix` via `@kumiki/mcp`.
+
+## Warnings (W-codes)
+
+`Wxxxx` diagnostics are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs — the warning catalog (currently just `W0212`) flags subscriptions whose handler is silently dropped, meaning the reducer never fires. If `smoke` reports "interaction did nothing," scan the warning lines first.
 
 ## "It checks but misbehaves at runtime"
 

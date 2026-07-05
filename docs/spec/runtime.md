@@ -267,20 +267,57 @@ The causal sequence derived from a single trigger is recorded as one **episode**
 }
 ```
 
+Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see §10.6.2). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
+
+**Deferred-policy effect attribution.** Effects emitted under `policy=debounce(d)` complete their `setTimeout` AFTER the triggering reducer's episode has nominally ended. The dispatcher therefore claims the `effect-start` step (and its episode-token) at *dispatch* time, not at the eventual `launch`, so the deferred `effect-end` and its `.ok` / `.err` reducer chain stay on the originating episode — the causal chain stays whole. A `debounce` timer that is replaced before it fires records an `effect-cancel` step (with `targetId = <effect-name>`) on its originating episode, which then commits as `status="completed"` with no `effect-end`. `policy=throttle(d)` launches synchronously on the leading edge (so the standard sync path attaches `effect-start`); subsequent dispatches within the window are silently suppressed — the originating reducer's `emits` list shows the suppressed effect name, but no `effect-start` follows.
+
+#### 10.5.1.1 Bootstrap episode (SSR hydration)
+
+The server-side `renderToString` pass collapses the entire `app.init` causal chain into a single bootstrap episode and ships it inside the SSR snapshot (§10.6.1). Its shape is just an Episode (above) with two additional contracts:
+
+- `trigger.kind = "ssr.hydrate"`, `trigger.target = <initial-route-path>`.
+- `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
+
+Example:
+
+```json
+{
+  "id": "ep_01JC...",
+  "trigger": {"kind": "ssr.hydrate", "target": "/", "ts": 1717900000000},
+  "steps": [
+    {"kind": "effect-start", "name": "loadUser", "args": {"url": "/api/me"}, "ts": 1717900000001},
+    {"kind": "effect-end", "name": "loadUser", "result": "ok", "value": {"id": "u_1"}, "ts": 1717900000045},
+    {"kind": "reducer", "name": "loadUser.ok", "slot-diffs": [{"name": "user", "before": null, "after": {"id": "u_1"}}], "emits": [], "ts": 1717900000046},
+    {"kind": "signal-update", "dirty-slots": ["user"], "binds-updated": [], "ts": 1717900000047}
+  ],
+  "status": "completed"
+}
+```
+
 ### 10.5.2 episode store
 
 - The most recent N in memory (default 100)
 - The most recent M in localStorage (default 20, size limit 5MB)
 - During development, write to a file with `--episode-log /path/to/log.jsonl`
 
+The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for §10.6.2 verification).
+
 ### 10.5.3 replay
 
 ```bash
-kumiki replay <episode-id>                  # replay the signal graph from the initial state
-kumiki replay --from-log <file>             # load from a file and replay
-kumiki replay --mock 'loadUser: from-log'   # specify an effect mock
-kumiki replay --until-step 5                # partway through
+kumiki replay <input.kumiki> --from-log <log.jsonl>           # replay every episode in the log
+kumiki replay <input.kumiki> --from-log <log> <episode-id>    # replay one episode by id
+kumiki replay <input.kumiki> --from-log <log> \               # repeatable; each entry follows
+  --mock 'loadUser: from-log' --mock 'persist: ignore'        # §8.6's mock grammar
+kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5th observed step
 ```
+
+- `--from-log` is currently required. The bare `kumiki replay <episode-id>` form (against the runtime's in-memory store, §10.5.2) needs a long-lived dev-server context and is out of scope for the CLI verb.
+- `--mock '<effect>: <spec>'` is repeatable. `<spec>` follows the same grammar as `episode-test.mocks` (§8.6): `from-log` | `ignore` | `ok(<json>)` | `err(<json>)`. The payload is parsed as JSON, so `ok({"id":"u1"})` works on the command line as-is.
+- An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
+- `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
+- Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
+- Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
 ---
 
@@ -288,19 +325,41 @@ kumiki replay --until-step 5                # partway through
 
 ### 10.6.1 SSR
 
-- HTML generation renders the tile of the initial route once on the **server-side**
-- The slot initial values may include the results of the effects emitted in `app.init` (not re-executed at hydration)
+- HTML generation renders the tile of the initial route once on the **server-side** via `renderToString(app, options)` from `@kumikijs/runtime`.
+- The slot initial values may include the results of the effects emitted in `app.init` (not re-executed at hydration).
 - Response bundle composition:
   - HTML (the result of initial tile rendering)
-  - JSON (the initial slot snapshot)
+  - JSON (the snapshot envelope, structured as below)
   - JS (signal graph + effect dispatcher)
+
+The snapshot envelope is versioned and self-describing:
+
+```json
+{
+  "kumiki": 1,
+  "route": "/posts/abc",
+  "slots": { "<slot-name>": <value>, ... },
+  "bootstrap": { /* Episode (§10.5.1), trigger.kind = "ssr.hydrate" */ },
+  "renderedAt": 1717900000000
+}
+```
+
+- `kumiki` is the snapshot schema version (current = `1`). A client whose runtime expects a different version MUST discard the snapshot and fall back to a full CSR boot — this keeps server / client out-of-sync deploys safe.
+- `slots` excludes every slot whose declaration carries the `volatile` modifier (§5 modifiers table): the runtime treats SSR snapshotting as the same serialisation boundary as persistence, so `volatile` slots are never written to the wire.
+- `bootstrap.steps[].slot-diffs` use the same `volatile` filter, so a volatile slot never appears in either the `slots` map or the bootstrap diff.
+- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
 
 ### 10.6.2 Hydration
 
-- The client JS starts
-- Loads the initial slot snapshot and reflects it in the signal graph
-- Attaches event handlers to the DOM
-- Fires the `app.start` reducer (note: not executed during SSR, only after hydration)
+Hydration runs in a strict, synchronous order. If any step throws, the client discards the snapshot and falls back to a full CSR boot:
+
+1. **Snapshot load + version check.** Parse the snapshot envelope (e.g. from a `<script type="application/json" id="kumiki-state">` block). If `kumiki !== 1`, skip steps 2–4 and run a cold CSR boot.
+2. **Slot overlay.** Write each entry of `snapshot.slots` into `app.live` BEFORE wiring routing, effects, or `app.start`. Volatile slots stay at their declared default — they were never in the snapshot.
+3. **Bootstrap ingest.** Inject `snapshot.bootstrap` into the episode logger via the dedicated `ingestBootstrap` path. This is the only legal way for a client to surface an `ssr.hydrate` episode; `beginTrigger` is forbidden for that kind. After this step, `app.episodes()[0]` is the SSR causal chain.
+4. **Event handler attach.** Attach the runtime's event delegation to the SSR HTML so user input starts dispatching client-side reducers.
+5. **`app.start` fires.** The lifecycle reducer fires normally (it never ran on the server). `app.init` does NOT re-fire — the snapshot already carries its results. `route.enter` for the current pattern fires after `app.start`, exactly as in a CSR boot.
+
+The observed order on the client is therefore `app.episodes() = [bootstrap, app.start episode, route.enter episode?, user-driven episodes...]`. The hydration boundary preserves episode continuity — no `ssr.hydrate`-to-`app.start` gap and no duplicate init effects.
 
 ### 10.6.3 Edge
 

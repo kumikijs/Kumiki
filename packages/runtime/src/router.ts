@@ -82,10 +82,81 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
   for (const r of routes) {
     if ("redirectTo" in r) continue;
     const m = matchPattern(r.pattern, path);
-    if (m) return { path, pattern: r.pattern, params: m, query, hash };
+    if (m) {
+      // §3.6: when the parent declares sub-routes, re-match within them.
+      if (r.subRoutes && r.subRoutes.length > 0) {
+        for (const sr of r.subRoutes) {
+          if ("redirectTo" in sr) continue;
+          const cm = matchPattern(sr.pattern, path);
+          if (cm)
+            return {
+              path,
+              pattern: r.pattern,
+              params: { ...m, ...cm },
+              query,
+              hash,
+              childPattern: sr.pattern,
+            };
+        }
+        // §3.6.3: no child matched — fall back to the parent's bare-path
+        // sub-route (the default, e.g. `/settings` under `/settings/*`) if one
+        // is declared. Otherwise fall through to the global /404.
+        const bare = parentBare(r.pattern);
+        if (bare !== null) {
+          for (const sr of r.subRoutes) {
+            if ("redirectTo" in sr) continue;
+            if (sr.pattern === bare) {
+              return {
+                path,
+                pattern: r.pattern,
+                params: m,
+                query,
+                hash,
+                childPattern: sr.pattern,
+              };
+            }
+          }
+        }
+        return { path, pattern: "/404", params: {}, query, hash };
+      }
+      return { path, pattern: r.pattern, params: m, query, hash };
+    }
   }
   // 404 fallback
   return { path, pattern: "/404", params: {}, query, hash };
+}
+
+/** Strip the trailing `/*` from a wildcard pattern; returns null if absent. */
+function parentBare(pattern: string): string | null {
+  return pattern.endsWith("/*") ? pattern.slice(0, -2) || "/" : null;
+}
+
+/**
+ * Walk the routes table and return the redirect target for the given location,
+ * or `null` if nothing redirects. Top-level `->>` entries take precedence; if
+ * none apply, the first parent whose wildcard pattern matches the path is
+ * scanned for sub-route redirects (spec §3.6 + §3.10).
+ */
+function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
+  if (!routes) return null;
+  const path = loc.pathname || "/";
+  for (const r of routes) {
+    if ("redirectTo" in r) {
+      if (matchPattern(r.pattern, path)) return r.redirectTo;
+    }
+  }
+  for (const r of routes) {
+    if ("redirectTo" in r) continue;
+    if (!r.subRoutes) continue;
+    if (matchPattern(r.pattern, path)) {
+      for (const sr of r.subRoutes) {
+        if ("redirectTo" in sr && matchPattern(sr.pattern, path)) return sr.redirectTo;
+      }
+      // Only the FIRST matching parent owns the path — stop scanning here.
+      return null;
+    }
+  }
+  return null;
 }
 
 function matchPattern(pattern: string, path: string): Record<string, string> | null {
@@ -163,6 +234,22 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
+  // §3.9 scroll-to — standard presentation effect. No capability gate (parity
+  // with confirm / toast on the presentation side); `window.scrollTo` is a
+  // no-op in headless DOMs, so it stays safe under smoke / scenario runs.
+  app.effects["scroll-to"] = {
+    name: "scroll-to",
+    cap: "",
+    invoke: overridableInvoke("", async (input) => {
+      const xy = input as { x?: number; y?: number };
+      const x = typeof xy?.x === "number" ? xy.x : 0;
+      const y = typeof xy?.y === "number" ? xy.y : 0;
+      if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+        window.scrollTo(x, y);
+      }
+      return { kind: "ok", value: null };
+    }),
+  };
 }
 
 /** The routing module surface consumed by `mountCore` (see core `RoutingImpl`). */
@@ -172,5 +259,6 @@ export const routing: RoutingImpl = {
   },
   parseLocation,
   matchPattern,
+  findRedirect,
   installNavEffects,
 };

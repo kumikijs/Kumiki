@@ -8,14 +8,15 @@ A type-check error is represented as a `KumikiError`:
 
 ```ts
 type KumikiError = {
-  code: string;   // a stable identifier such as "E0103"
-  kind: string;   // a machine-readable classification such as "undef-slot"
-  message: string; // a human-facing message (includes the target name)
-  pos: Pos;        // { line, col }
+  code: string;     // a stable identifier such as "E0103"
+  kind: string;     // a machine-readable classification such as "undef-slot"
+  message: string;  // a human-facing message (includes the target name)
+  pos: Pos;         // { line, col }
+  severity?: "error" | "warning"; // omitted ⇒ "error"
 };
 ```
 
-`code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic.
+`code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
 A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
 
@@ -29,8 +30,9 @@ A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the par
 | `E03xx` | Capabilities and purity |
 | `E04xx` | Motion |
 | `E06xx` | reducer write rules |
-| `E07xx` | Accessibility (a11y) |
+| `E07xx` | Accessibility (a11y), strict-icons |
 | `E08xx` | Runtime hazards (code that compiles but breaks at runtime) |
+| `W02xx` | Non-fatal warnings (build still succeeds) |
 
 ## E00xx — Structure
 
@@ -106,6 +108,14 @@ A `recv.member` access where the **inferred type** of `recv` is known, but `memb
 
 **Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [List(T)](./stdlib.md#_2-2-3-list-t).
 
+### E0110 `unknown-token-group`
+
+A `@<group>.<name>` theme-token reference ([Style §4.3](./style.md#_4-3-token-references)) names a `<group>` that is not one of the closed theme namespaces (`colors`, `spacing`, `radius`, `shadow`, `typography`, `breakpoints`).
+
+> `Unknown theme token group "@<group>" (allowed: …)`
+
+**Fix**: Use one of the listed groups (e.g. `@colors.surface`, `@spacing.md`), or — if you wanted a plain identifier — drop the `@` prefix.
+
 ### E0109 `test-wildcard-misuse`
 
 A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `expect` — in a reducer/tile/fn/app body, or in a test's `given`. Wildcards are a matching construct for the expected result only ([Wildcards](./testing.md#_8-2-2-wildcards)); they have no meaning as a value to compute or feed in.
@@ -113,6 +123,38 @@ A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `exp
 > `Test wildcard "<any-id>" is only valid inside a reducer-test \`expect\``
 
 **Fix**: Remove the wildcard, or move it into the `reducer-test` `expect`.
+
+### E0110 `sub-routes-without-wildcard-parent`
+
+A tile declares `sub-routes` but its parent route in `app.routes` is not a wildcard (`/*`) pattern. Without a wildcard parent the runtime never reaches the nested matcher, so the sub-routes can never apply. See [Nested Routes](./routing.md#_3-6-nested-routes).
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
+
+### E0111 `orphan-sub-routes`
+
+A tile declares `sub-routes` but no entry in `app.routes` targets that tile. The nested route table cannot be reached.
+
+> `Tile "<name>" declares sub-routes but is not the target of any route in app.routes`
+
+**Fix**: Add a route in `app.routes` that targets this tile with a `/*` pattern, or remove the `sub-routes` block.
+
+### E0112 `duplicate-sub-route`
+
+The same sub-route path is declared more than once on a single tile. Match order is positional, so duplicates are either dead code or a typo.
+
+> `Sub-route path "<path>" is declared more than once in tile "<name>"`
+
+**Fix**: Remove the duplicate entry, or rename one of the paths.
+
+### E0113 `sub-routes-without-outlet`
+
+A tile declares `sub-routes` but its body never calls `route-outlet`. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
+
+> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+
+**Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
 
 ## E02xx — Types
 
@@ -122,6 +164,129 @@ An event handler argument / prop must be a reducer name, but was a different kin
 
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+
+### E0204 `effect-id-misuse`
+
+A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+
+> `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
+> `text(...) cannot render EffectId — it is an opaque handle`
+
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+
+### E0205 `bind-on-file-input`
+
+`input(type="file")` cannot bind a slot via `bind=`. The `bind=` two-way binding table ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) has no acceptable type for files — files are surfaced through the change event payload instead ([Forms §5.10](./forms.md#_5-10-file-upload)).
+
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+
+**Fix**: Remove `bind=`, and add a reducer that picks the file from the event:
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*")
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
+### E0206 `file-only-prop`
+
+The `accept` and `multiple` props on `input` apply only when `type="file"`. They are rendered onto the underlying `<input>` element, where they are valid HTML only for a file picker ([Forms §5.10](./forms.md#_5-10-file-upload)). Used on any other input type — or when `type` is omitted (it defaults to `"text"`) — they are invalid HTML and a latent bug. The diagnostic fires only when the type is statically known to not be `"file"`; a non-literal `type=` expression is left alone.
+
+> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
+> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
+
+**Fix**: Either add `type="file"` to opt into a file picker, or remove the `accept` / `multiple` prop:
+
+```kumiki
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
+reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
+```
+
+### E0207 `pat-arity-mismatch`
+
+A `match` arm pattern's element count does not agree with the scrutinee's static type. Tuple patterns must have the same arity as their `Tuple(...)` scrutinee; variant patterns must have the same bind count as the variant's payload arity. Without this check, codegen would emit a guard that is always false at runtime — the arm would silently never fire ("compiles but the wrong branch runs").
+
+> `Tuple pattern has <m> item(s) but scrutinee type "Tuple(<…>)" has <n>`
+> `Variant "<tag>" pattern has <m> bind(s) but the variant carries <n> payload(s)`
+
+**Fix**: Add or drop pattern elements to match the type. For `Tuple(Int, Int)`, write `(a, b)`. For `Some(T)`, write `Some(x)` (one bind) rather than `Some(x, y)`.
+
+### E0208 `pat-type-mismatch`
+
+A `match` arm pattern's shape does not agree with the scrutinee's static type — for example, a tuple pattern `(a, b)` is used against a scrutinee of type `Int`, or a variant pattern `Some(x)` is used against a record type. The pattern can never structurally match, so the arm is dead at compile time.
+
+> `Tuple pattern cannot match scrutinee of type "<T>"`
+> `Variant pattern "<tag>" cannot match scrutinee of type "<T>"`
+
+**Fix**: Use a pattern whose shape matches the scrutinee. If the scrutinee really should be a union or a tuple, fix its declared type instead.
+
+### E0209 `pat-unknown-variant`
+
+A `match` arm names a variant tag that is not declared by the scrutinee's union type. Built-in unions (`Option(T)` admits `Some` / `None`; `Result(T, E)` admits `Ok` / `Err`) and user-declared `type X = A | B(…) | …` definitions are both checked.
+
+> `Variant "<tag>" is not a member of scrutinee type "<T>"`
+
+**Fix**: Correct the tag spelling, or add the variant to the union definition. `kumiki fix` can suggest a close name (→ [AI Editing](./ai-edit.md)).
+
+### E0210 `type-arity-mismatch`
+
+A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
+
+> `Type "<name>" expects <m> type argument(s) but got <n>`
+
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+
+### E0211 `undef-tile-in-selector`
+
+A reducer's `ui.*` selector names a tile that has not been declared. Without this check a typo (`ui.click(SaveBtn)` vs `ui.click(SaveBtnn)`) compiles silently and binds nothing — indistinguishable from a deliberately unused reducer.
+
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
+
+**Fix**: Add a `tile <Tile> = …` declaration, or correct the selector's tile name to match an existing one. The `_` wildcard (for reducers dispatched indirectly via `emit confirm({onYes: r, …})` callbacks, see [Lifecycle §7](./lifecycle.md)) is accepted and has no tile to resolve.
+
+### E0212 `selector-id-mismatch` (opt-in via `--strict-selector-id`)
+
+A reducer's `ui.<ev>(Tile#id)` selector names an id that the target tile's literal `{id: "..."}` prop cannot produce. E0211 catches typos in the tile name; this catches typos in the `#id` fragment — e.g. `on=ui.submit(NewForm#nw)` against `tile NewForm = form(...) {id: "new"}`. The runtime `_dispatch` filter (spec §1.6.2) silently skips the mismatch, so without this check the reducer never fires and the developer sees no error. Opt in with `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
+
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but tile "<Tile>" is declared with id "<actual>" — this selector can never match`
+
+The checker descends into all four control-flow bodies (`for` / `when` / `if` / `match`): `for` / `when` pass through to their single body, `if`'s two branches merge, and every `match` arm contributes to the observed id set. `tile T = if c then button(...) {id: "a"} else button(...) {id: "b"}` produces `"a" | "b"`; a selector `T#c` under `--strict-selector-id` fires E0212. Referenced user tiles are NOT descended — a `Ref` to another tile leaves the id set unknown, so a future per-instance id-override syntax at the use site isn't foreclosed at compile time.
+
+**When E0212 stays silent (runtime filter is authoritative)**:
+
+- The tile has no `{id}` prop at all.
+- The tile's `{id}` value is a non-literal expression (a `Ref`, method call, etc.) — its runtime value is not known at check time.
+- The selector has no `#id` portion.
+- The selector uses the `_` wildcard.
+- The target tile is undeclared (E0211 already fires; E0212 is suppressed to surface a single root cause).
+
+**Fix**: Correct the `#id` in the selector to match the tile's declared `{id}`, or correct the tile's `{id}` literal.
+
+### W0212 `ui-event-tile-mismatch` (warning)
+
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant.
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+The allowed root builtins per event are (current toolchain coverage; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both `codegen.ts`'s handler-emission gate and the W0212 check derive from. Runtime DOM-event surfaces are owned by `packages/runtime/src/tiles-input.ts` and the universal `applyUiEventHandlers` in `core.ts`):
+
+| `ui.<ev>` | allowed root tile kinds |
+|---|---|
+| `click`  | `button`, `check`, `switch`, `radio` |
+| `submit` | `form` |
+| `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
+| `input`  | `input`, `textarea` |
+| `key`    | `input`, `textarea`, `button` |
+| `focus`  | `input`, `textarea`, `button`, `select` |
+| `blur`   | `input`, `textarea`, `button`, `select` |
+| `hover`  | any tile |
+
+**Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
+
+The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
+
+**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
 
 ## E03xx — Capabilities and Purity
 
@@ -140,6 +305,17 @@ An entry in `app.caps` is neither a standard capability ([Standard Capabilities]
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
 **Fix**: Use a standard capability, correct the spelling, or register the custom capability in a `kumiki.caps.json` next to the `.kumiki` file. See [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities).
+
+### E0303 `invalid-cancel-target`
+
+An effect declared with `cap=http.cancel` does not have the required shape `in=EffectId out=Unit`, or declares attributes the cancel path silently ignores (`policy`, `retry`, `map-request`). The cancel capability cancels by id and returns nothing; declaring per-request behaviour on it is a user-intent mismatch.
+
+> `effect "<name>" with cap=http.cancel must declare in=EffectId out=Unit`
+> `effect "<name>" with cap=http.cancel cannot declare a policy`
+> `effect "<name>" with cap=http.cancel cannot declare retry`
+> `effect "<name>" with cap=http.cancel cannot declare map-request`
+
+**Fix**: Change the `in=` and `out=` clauses to `in=EffectId out=Unit`, drop any `policy=` / `retry=` / `map-request=` clauses, or remove the `cap=http.cancel` clause. See [HTTP Cancellation](./http.md#_6-4-cancellation).
 
 ### E0305 `fn-impurity`
 
@@ -187,7 +363,9 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 **Note**: The granularity is **path shape**. `issues[id].status` and `issues[id].updatedAt` are considered different shapes and can coexist, but double assignment to `count` is forbidden.
 
-## E07xx — Accessibility (a11y)
+## E07xx — Accessibility (a11y) and strict-icons
+
+A band for checks that ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in. `check()` filters these codes out unless the matching flag is set.
 
 a11y checking is enabled via `check(program, { strictA11y: true })`.
 
@@ -204,6 +382,16 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 > `link must have inner text or aria-label`
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
+
+Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNames })`.
+
+### E0704 `unknown-icon`
+
+> `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
+
+A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
+
+**Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
 ## E08xx — Runtime Hazards
 

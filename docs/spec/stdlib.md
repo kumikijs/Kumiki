@@ -13,8 +13,21 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Float` | 64-bit floating point | `3.14`, `-0.5` |
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
-| `Bytes` | byte sequence | no literal; created with `Bytes.from-text()` |
+| `Bytes` | byte sequence | no literal; `Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` (see §2.2.10) |
 | `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse()` |
+| `EffectId` | opaque handle returned by `emit` (see §2.1.1.1) | no literal; `EffectId.none` |
+
+#### 2.1.1.1 `EffectId`
+
+`EffectId` is an opaque handle that identifies a single dispatched effect. It is returned by `emit` when used as an expression:
+
+```
+let id = emit fetchQuote()
+```
+
+The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
+
+`EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
 ### 2.1.2 Generic Types
 
@@ -228,6 +241,16 @@ fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
 ```
 
+### 2.2.10 Bytes
+
+`Bytes` is a raw byte sequence (`Uint8Array` at runtime). It has no collection-style methods in v0.x; only constructors are provided.
+
+```
+Bytes.from-text(text)       : Bytes        ; UTF-8 encode
+Bytes.from-base64(text)     : Bytes        ; standard base64 decode
+Bytes.from-bytes(list)      : Bytes        ; from List(Int) (each value masked to its low 8 bits)
+```
+
 ---
 
 ## 2.3 Tile Primitive Elements
@@ -275,11 +298,11 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `button` | button | `text`, `onClick`, `variant`, `disabled`, `loading` |
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
-| `check` | checkbox | `value`, `onClick`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick` |
-| `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder` |
-| `slider` | slider | `bind`, `min`, `max`, `step` |
-| `switch` | toggle | `value`, `onClick` |
+| `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
+| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
+| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `switch` | toggle | `value`, `onClick`, `onChange` |
 
 ### 2.3.5 Forms
 
@@ -400,6 +423,7 @@ The standard set of capabilities that can be declared in `app.caps`:
 | capability | Use |
 |---|---|
 | `http.get`, `http.post`, `http.put`, `http.patch`, `http.delete` | HTTP requests |
+| `http.cancel` | Cancel an in-flight HTTP request by `EffectId` (see [Cancellation](./http.md#_6-4-cancellation)) |
 | `storage.read`, `storage.write` | localStorage |
 | `session.read`, `session.write` | sessionStorage |
 | `indexed.read`, `indexed.write` | IndexedDB |

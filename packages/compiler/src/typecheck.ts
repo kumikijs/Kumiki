@@ -4,6 +4,7 @@ import type {
   Expr,
   FnDef,
   Lvalue,
+  Pattern,
   Pos,
   Program,
   ReducerDef,
@@ -18,29 +19,86 @@ import type {
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
+import { UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
 
 export type KumikiError = {
   code: string;
   kind: string;
   message: string;
   pos: Pos;
+  /**
+   * Diagnostic severity. Omitted → "error" (default), failing `compile()` and
+   * `kumiki check`. `"warning"` is non-fatal: still surfaced to stderr (CLI) /
+   * Rollup `this.warn` (Vite), but does not change the exit code. See
+   * `docs/spec/errors.md` for the W02xx band.
+   */
+  severity?: "error" | "warning";
 };
 
 const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
 
+// `UI_EVENT_TILE_KINDS` is the W0212 gate, derived from the shared
+// `UI_LIFTS` table in `ui-lifts.ts` so codegen's handler-emission gate and
+// the typecheck-time warning stay in lockstep. `null` = "any tile is
+// allowed" (hover, wired by the universal `applyUiEventHandlers`).
+// The per-row rationale (including why `link` is omitted from `click`)
+// lives next to the table itself in `ui-lifts.ts`.
+
 /**
- * Returns errors with a11y warnings filtered out (unless strict).
- * `capabilities` lists project-registered capabilities (from a
- * `kumiki.caps.json` manifest) that are accepted in `app.caps` in addition to
- * the standard set.
+ * Diagnostic codes filtered out of `check()`'s output unless `strictIcons` is
+ * on. The runtime placeholder (spec §4.8.3) stays fail-soft for smoke-driven
+ * authoring; opt in via `kumiki check --strict-icons` or
+ * `compile({ strictIcons: true })` to surface them.
+ */
+const STRICT_ICONS_CODES = new Set(["E0704"]);
+
+/**
+ * Diagnostic codes filtered out of `check()`'s output unless `strictSelectorId`
+ * is on. The runtime `_dispatch` filter (packages/runtime/src/core.ts) is the
+ * authority for id-scoped selectors and defensively drops mismatches; E0212
+ * lifts a subset of those silent drops — the ones provably unreachable at
+ * compile time — into a check-time diagnostic. Opt in via
+ * `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
+ * Kept off by default so the PR #148 runtime-filter regression test
+ * (`packages/tests/selector-id.test.ts`, which uses a deliberate literal
+ * mismatch to prove the filter fires) still compiles cleanly.
+ */
+const STRICT_SELECTOR_ID_CODES = new Set(["E0212"]);
+
+/**
+ * Returns errors with a11y / strict-icons warnings filtered out (unless their
+ * respective `strict*` opt-ins are on). `capabilities` lists project-registered
+ * capabilities (from a `kumiki.caps.json` manifest) that are accepted in
+ * `app.caps` in addition to the standard set. `iconNames` is the closed name
+ * set from `@kumikijs/icons` (Vite plugin / CLI passes `Object.keys(ALL_ICONS)`);
+ * with `strictIcons: true`, any literal `icon(name="<x>")` whose name is in
+ * neither `iconNames` nor a `theme.icons` block becomes an `E0704`.
  */
 export function check(
   program: Program,
-  opts?: { strictA11y?: boolean; capabilities?: string[] },
+  opts?: {
+    strictA11y?: boolean;
+    strictIcons?: boolean;
+    strictSelectorId?: boolean;
+    iconNames?: Iterable<string>;
+    capabilities?: string[];
+  },
 ): KumikiError[] {
-  const errors = checkAll(program, new Set(opts?.capabilities ?? []));
-  if (opts?.strictA11y) return errors;
-  return errors.filter((e) => !A11Y_CODES.has(e.code));
+  const iconDomain = new Set<string>(opts?.iconNames ?? []);
+  for (const def of program.defs) {
+    if (def.kind !== "ThemeDef") continue;
+    const icons = def.body.icons;
+    if (icons && typeof icons === "object" && !Array.isArray(icons)) {
+      for (const key of Object.keys(icons)) iconDomain.add(key);
+    }
+  }
+  const errors = checkAll(program, new Set(opts?.capabilities ?? []), iconDomain);
+  return errors.filter((e) => {
+    if (A11Y_CODES.has(e.code) && !opts?.strictA11y) return false;
+    if (STRICT_ICONS_CODES.has(e.code) && !opts?.strictIcons) return false;
+    if (STRICT_SELECTOR_ID_CODES.has(e.code) && !opts?.strictSelectorId) return false;
+    return true;
+  });
 }
 
 type SymbolTable = {
@@ -54,10 +112,21 @@ type SymbolTable = {
   timerNames: Set<string>;
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
   motions: Set<string>;
+  /**
+   * Closed icon-name domain for `--strict-icons`: union of the
+   * `@kumikijs/icons` registry passed by the toolchain and every key seen
+   * in any `theme.icons` block in the program. Always populated; `E0704`
+   * emission is gated by the strictIcons opt-in in `check()`.
+   */
+  iconDomain: Set<string>;
   app?: AppDef;
 };
 
-function checkAll(program: Program, registeredCaps: Set<string>): KumikiError[] {
+function checkAll(
+  program: Program,
+  registeredCaps: Set<string>,
+  iconDomain: Set<string>,
+): KumikiError[] {
   const errors: KumikiError[] = [];
   const sym: SymbolTable = {
     types: new Map(),
@@ -68,6 +137,7 @@ function checkAll(program: Program, registeredCaps: Set<string>): KumikiError[] 
     effects: new Map(),
     timerNames: new Set(),
     motions: new Set(),
+    iconDomain,
   };
 
   for (const def of program.defs) {
@@ -260,6 +330,104 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     ctx.localTypes?.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
+  if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
+}
+
+function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const subRoutes = tile.subRoutes;
+  if (!subRoutes) return;
+  // Each sub-route's target tile must exist (redirects skip).
+  for (const sr of subRoutes) {
+    if (sr.tile.startsWith(">>")) continue;
+    if (!sym.tiles.has(sr.tile)) {
+      errors.push({
+        code: "E0105",
+        kind: "undef-tile",
+        message: `Sub-route "${sr.path}" in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // Duplicate sub-route paths within the same tile.
+  const seen = new Set<string>();
+  for (const sr of subRoutes) {
+    if (seen.has(sr.path)) {
+      errors.push({
+        code: "E0112",
+        kind: "duplicate-sub-route",
+        message: `Sub-route path "${sr.path}" is declared more than once in tile "${tile.name}"`,
+        pos: tile.pos,
+      });
+    }
+    seen.add(sr.path);
+  }
+  // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
+  // never match because the runtime only looks them up after the parent
+  // wildcard matches the path. If the tile isn't a route target at all,
+  // emit `orphan-sub-routes` instead.
+  const app = sym.app;
+  if (!app) return;
+  const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
+  if (parents.length === 0) {
+    errors.push({
+      code: "E0111",
+      kind: "orphan-sub-routes",
+      message: `Tile "${tile.name}" declares sub-routes but is not the target of any route in app.routes`,
+      pos: tile.pos,
+    });
+    return;
+  }
+  for (const parent of parents) {
+    if (!parent.path.endsWith("/*")) {
+      errors.push({
+        code: "E0110",
+        kind: "sub-routes-without-wildcard-parent",
+        message: `Tile "${tile.name}" declares sub-routes but its parent route "${parent.path}" is not a wildcard pattern (must end with "/*")`,
+        pos: tile.pos,
+      });
+    }
+  }
+  // The matched child can only render if the parent's body actually contains
+  // a `route-outlet`. Without one, sub-routes compile but silently render
+  // nothing — exactly the "compiles but does nothing" failure mode Kumiki
+  // refuses to ship. Catch it at the type check.
+  if (!tileBodyUsesRouteOutlet(tile.body)) {
+    errors.push({
+      code: "E0113",
+      kind: "sub-routes-without-outlet",
+      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      pos: tile.pos,
+    });
+  }
+}
+
+/** True if any sub-tree of the tile body is a `route-outlet` call. */
+function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
+  switch (t.kind) {
+    case "TileCall": {
+      if (t.name === "route-outlet") return true;
+      for (const arg of t.args) {
+        const v = arg.value as TileExpr;
+        if (
+          v.kind === "TileCall" ||
+          v.kind === "TileFor" ||
+          v.kind === "TileWhen" ||
+          v.kind === "TileIf" ||
+          v.kind === "TileMatch"
+        ) {
+          if (tileBodyUsesRouteOutlet(v)) return true;
+        }
+      }
+      return false;
+    }
+    case "TileFor":
+    case "TileWhen":
+      return tileBodyUsesRouteOutlet(t.body);
+    case "TileIf":
+      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
+    case "TileMatch":
+      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
+  }
 }
 
 type Ctx = {
@@ -275,6 +443,34 @@ type Ctx = {
    */
   localTypes?: Map<string, TypeExpr>;
 };
+
+/**
+ * Validate `icon(name="<literal>")` against the strict-icons domain. Only
+ * literal string names are checked — dynamic forms (`icon(name=slot)`,
+ * computed expressions) are unresolvable at check time, matching the codegen
+ * gate in `packages/compiler/src/codegen.ts` (icon case). E0704 is gated by
+ * the `strictIcons` opt-in in `check()` so default callers never see it.
+ */
+function checkIconName(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (t.name !== "icon") return;
+  const nameArg = t.args.find((a) => a.name === "name");
+  if (!nameArg) return;
+  const v = nameArg.value as Expr;
+  if (v.kind !== "Str") return;
+  const literal = v.value;
+  if (!literal) return;
+  if (sym.iconDomain.has(literal)) return;
+  errors.push({
+    code: "E0704",
+    kind: "unknown-icon",
+    message: `Unknown icon name "${literal}" — not in @kumikijs/icons or any theme.icons block`,
+    pos: v.pos,
+  });
+}
 
 function checkA11y(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   if (t.name === "button") {
@@ -336,20 +532,27 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       checkTileExpr(t.consequent, sym, errors, ctx);
       checkTileExpr(t.alternate, sym, errors, ctx);
       return;
-    case "TileMatch":
+    case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
+      const scrutType = inferType(t.scrutinee, sym, ctx);
       for (const arm of t.arms) {
         const inner: Ctx = {
           ...ctx,
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        if (arm.pattern.kind === "PVariant")
-          for (const b of arm.pattern.binds) inner.localBinds.add(b);
-        if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+        checkPatternAgainstType(
+          arm.pattern,
+          scrutType,
+          sym,
+          errors,
+          inner.localBinds,
+          inner.localTypes,
+        );
         checkTileExpr(arm.body, sym, errors, inner);
       }
       return;
+    }
     case "TileCall":
       checkTileCall(t, sym, errors, ctx);
       return;
@@ -371,6 +574,41 @@ function checkTileCall(
     });
   }
   checkA11y(t, errors);
+  checkIconName(t, sym, errors);
+  if (t.name === "input") {
+    const bindArg = t.args.find((a) => a.name === "bind");
+    const typeArg = t.args.find((a) => a.name === "type");
+    const typeVal = typeArg?.value as Expr | undefined;
+    const isFileType = typeVal?.kind === "Str" && typeVal.value === "file";
+    if (bindArg && isFileType) {
+      const bindVal = bindArg.value as Expr;
+      const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
+      errors.push({
+        code: "E0205",
+        kind: "bind-on-file-input",
+        message: `input(type="file") does not support bind="${slotName}"; receive files via a ui.change reducer with $event.files.head (see docs/spec/forms.md §5.10, §5.1.1)`,
+        pos: bindVal.pos,
+      });
+    }
+    const isKnownNonFile =
+      typeVal === undefined || (typeVal.kind === "Str" && typeVal.value !== "file");
+    if (isKnownNonFile) {
+      const observedType =
+        typeVal === undefined
+          ? `no type, defaults to "text"`
+          : `type="${(typeVal as Expr & { kind: "Str" }).value}"`;
+      for (const arg of t.args) {
+        if (arg.name !== "accept" && arg.name !== "multiple") continue;
+        const argVal = arg.value as Expr;
+        errors.push({
+          code: "E0206",
+          kind: "file-only-prop",
+          message: `input prop "${arg.name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md §5.10)`,
+          pos: argVal.pos,
+        });
+      }
+    }
+  }
   const HANDLER_NAMES = new Set([
     "onClick",
     "onSubmit",
@@ -442,8 +680,177 @@ function checkTileCall(
           pos: prop.value.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch") {
+      // §3.8 prefetch — value names a reducer (bare ident or string literal),
+      // not a value expression. Skip checkExpr (would flag the ident as undef)
+      // and instead verify the reducer exists.
+      const ref = prop.value;
+      const name = ref.kind === "Ref" ? ref.name : ref.kind === "Str" ? ref.value : null;
+      if (name === null) {
+        errors.push({
+          code: "E0201",
+          kind: "type-mismatch",
+          message: `link prefetch must be a reducer name`,
+          pos: ref.pos,
+        });
+      } else if (!sym.reducers.has(name)) {
+        errors.push({
+          code: "E0102",
+          kind: "undef-reducer",
+          message: `Reference to undefined reducer "${name}"`,
+          pos: ref.pos,
+        });
+      }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+    }
+  }
+}
+
+/**
+ * Collect every BUILTIN_TILES kind that may appear as a (descendant) part of
+ * a named tile's render tree. Returns an empty set when nothing can be
+ * statically inferred (cycle, undeclared name, or only dynamic bodies
+ * without resolvable children). Used by the `W0212` check to suppress
+ * cascade false positives — codegen propagates `ui.click(TodoRow)` down to
+ * the `check` descendant of `TodoRow = row(check(...), …)`, so finding any
+ * descendant in the allowed kind set means the subscription is wired.
+ */
+function collectTileBuiltinKinds(
+  tileName: string,
+  sym: SymbolTable,
+  visited: Set<string> = new Set(),
+): Set<string> {
+  if (visited.has(tileName)) return new Set();
+  visited.add(tileName);
+  if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
+  const def = sym.tiles.get(tileName);
+  if (!def) return new Set();
+  return walkTileExprForBuiltinKinds(def.body, sym, visited);
+}
+
+function walkTileExprForBuiltinKinds(
+  expr: TileExpr,
+  sym: SymbolTable,
+  visited: Set<string>,
+): Set<string> {
+  if (expr.kind === "TileFor" || expr.kind === "TileWhen") {
+    return walkTileExprForBuiltinKinds(expr.body, sym, visited);
+  }
+  if (expr.kind === "TileIf") {
+    const a = walkTileExprForBuiltinKinds(expr.consequent, sym, visited);
+    const b = walkTileExprForBuiltinKinds(expr.alternate, sym, visited);
+    return new Set([...a, ...b]);
+  }
+  if (expr.kind === "TileMatch") {
+    const out = new Set<string>();
+    for (const arm of expr.arms) {
+      for (const k of walkTileExprForBuiltinKinds(arm.body, sym, visited)) out.add(k);
+    }
+    return out;
+  }
+  // TileCall: include the call itself, then recurse into positional TileExpr-
+  // typed args (children) and into `Ref` args that name another tile.
+  const out = new Set<string>();
+  if (BUILTIN_TILES.has(expr.name)) {
+    out.add(expr.name);
+  } else {
+    for (const k of collectTileBuiltinKinds(expr.name, sym, visited)) out.add(k);
+  }
+  for (const a of expr.args) {
+    if (a.name) continue; // skip named args — they're props, not children
+    const v = a.value as { kind?: string };
+    if (!v || typeof v !== "object" || !("kind" in v)) continue;
+    if (
+      v.kind === "TileCall" ||
+      v.kind === "TileFor" ||
+      v.kind === "TileWhen" ||
+      v.kind === "TileIf" ||
+      v.kind === "TileMatch"
+    ) {
+      for (const k of walkTileExprForBuiltinKinds(v as TileExpr, sym, visited)) out.add(k);
+    } else if (v.kind === "Ref") {
+      const refName = (v as Expr & { name: string }).name;
+      if (sym.tiles.has(refName) || BUILTIN_TILES.has(refName)) {
+        for (const k of collectTileBuiltinKinds(refName, sym, visited)) out.add(k);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Result of walking a tile body to collect the literal `{id: "..."}` values
+ * its `TileCall`s can produce. `known: true` means every `TileCall` reachable
+ * through the body's control-flow branches carries a literal `Str` id, so the
+ * `ids` set fully enumerates the DOM ids the tile can render. `known: false`
+ * means at least one reachable `TileCall` has no `{id}` prop or its `{id}`
+ * value is a non-`Str` expression (a `Ref` etc.) — the runtime filter is the
+ * authority for those cases and E0212 stays silent.
+ */
+type TileIdCollection =
+  | { readonly known: true; readonly ids: ReadonlySet<string> }
+  | { readonly known: false };
+
+const ID_COLL_UNKNOWN: TileIdCollection = Object.freeze({ known: false });
+
+function mergeIdCollections(a: TileIdCollection, b: TileIdCollection): TileIdCollection {
+  if (!a.known || !b.known) return ID_COLL_UNKNOWN;
+  const out = new Set(a.ids);
+  for (const v of b.ids) out.add(v);
+  return { known: true, ids: out };
+}
+
+/**
+ * §1.6.2 / issue #149 — collect the literal `{id}` values a tile's `TileCall`
+ * roots can produce. Only walks THIS tile's body — referenced user tiles are
+ * intentionally not descended so a future per-instance id-override at the use
+ * site isn't foreclosed at compile time. Cycle-safe by construction: the
+ * walker never crosses tile boundaries, so recursion is bounded by this
+ * tile's own AST depth. Takes the `TileDef` directly (rather than looking up
+ * by name) so a caller that forgets the existence guard fails loudly instead
+ * of getting a silent `known: false` — the exact silent-failure mode this
+ * whole diagnostic exists to prevent.
+ */
+function collectTileDeclaredIds(def: TileDef): TileIdCollection {
+  return walkTileExprForDeclaredIds(def.body);
+}
+
+function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
+  // Exhaustive switch: a future 6th `TileExpr` variant would otherwise
+  // silently fall through to the `TileCall`-shaped `props` read below and
+  // either return a wrong-looking id set or crash at runtime with no code /
+  // position. The `never` fallthrough turns that into a compile-time error.
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      return walkTileExprForDeclaredIds(expr.body);
+    case "TileIf":
+      return mergeIdCollections(
+        walkTileExprForDeclaredIds(expr.consequent),
+        walkTileExprForDeclaredIds(expr.alternate),
+      );
+    case "TileMatch": {
+      // Seed with UNKNOWN so a hypothetical 0-arm match (no branches to
+      // vouch for the id set) yields `known: false` and E0212 stays silent
+      // instead of emitting a message with an empty `actual` — the parser
+      // rejects 0-arm matches today, but this keeps the diagnostic honest
+      // if that ever changes.
+      let acc: TileIdCollection = ID_COLL_UNKNOWN;
+      for (let i = 0; i < expr.arms.length; i++) {
+        const armIds = walkTileExprForDeclaredIds(expr.arms[i]!.body);
+        acc = i === 0 ? armIds : mergeIdCollections(acc, armIds);
+      }
+      return acc;
+    }
+    case "TileCall": {
+      const idProp = expr.props.find((p) => p.name === "id");
+      if (!idProp || idProp.value.kind !== "Str") return ID_COLL_UNKNOWN;
+      return { known: true, ids: new Set([idProp.value.value]) };
+    }
+    default: {
+      const _exhaustive: never = expr;
+      return _exhaustive;
     }
   }
 }
@@ -460,6 +867,79 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   }
   if (r.on.kind === "LifecycleEvent") {
     if (r.on.name.startsWith("route.")) ctx.localBinds.add("$route");
+  }
+  // §1.6.2 — the selector's tile name must refer to a declared `tile`. A typo
+  // here used to bind nothing silently, which made `ui.click(Foo)` indistin-
+  // guishable from `ui.click(Fooo)`. Fires before the reducer body is checked
+  // so the diagnostic carries the actual selector position. The `_` wildcard
+  // selector is a parser-accepted sentinel for reducers dispatched indirectly
+  // (e.g. as `emit confirm({onYes: r})` callbacks), so it has no tile to
+  // resolve — see docs/spec/lifecycle.md.
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && !sym.tiles.has(r.on.selector.tile)) {
+    errors.push({
+      code: "E0211",
+      kind: "undef-tile-in-selector",
+      message: `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) but tile "${r.on.selector.tile}" is not declared`,
+      pos: r.on.pos,
+    });
+  }
+  // §1.6.2 / issue #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)`
+  // selector previously survived all four compile stages and was silently
+  // filtered by the runtime `_dispatch`. When the target tile's every reachable
+  // TileCall carries a literal `{id: "..."}` prop and none of those literals
+  // matches the selector's id, the subscription can never fire — surface it as
+  // a compile-time error, gated by `strictSelectorId` (the runtime filter stays
+  // the authority for tiles with computed or missing `{id}`, and for the PR
+  // #148 regression test that intentionally constructs a literal mismatch).
+  // Skipped when E0211 already fires (undeclared tile) so users see one root
+  // cause, not two overlapping ones.
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
+    const def = sym.tiles.get(r.on.selector.tile);
+    if (def !== undefined) {
+      const decl = collectTileDeclaredIds(def);
+      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
+        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+        errors.push({
+          code: "E0212",
+          kind: "selector-id-mismatch",
+          message:
+            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
+            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+          pos: r.on.pos,
+        });
+      }
+    }
+  }
+  // §1.6.1 — flag `ui.<ev>(Tile)` subscriptions whose target tile has no
+  // descendant that can fire `<ev>` in the DOM (e.g. `ui.focus(Card)` where
+  // `Card = box(...)`). Codegen drops the handler silently for that case,
+  // so the reducer is dead code. Surfacing it as a warning matches the
+  // issue's "warn first, promote to error later" plan. The descendant walk
+  // suppresses false positives for the cascade pattern where a focusable
+  // child IS in the body (e.g. `TodoRow = row(check(...))` + `ui.click`).
+  // Wildcard `_` selectors are skipped (no tile to resolve); undeclared
+  // selectors are already covered by E0211.
+  if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
+    const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
+    if (allowed != null) {
+      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const hasMatch = [...descendants].some((k) => allowed.has(k));
+      // Empty set = unresolvable (cycle / undeclared / dynamic-only body) →
+      // conservative skip, no warning.
+      if (descendants.size > 0 && !hasMatch) {
+        errors.push({
+          code: "W0212",
+          kind: "ui-event-tile-mismatch",
+          severity: "warning",
+          message:
+            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) ` +
+            `but tile "${r.on.selector.tile}" has no descendant that fires "${r.on.ev}" ` +
+            `(DOM-allowed: ${[...allowed].join(", ")}; observed in body: ${[...descendants].sort().join(", ")}). ` +
+            `The handler is silently dropped.`,
+          pos: r.on.pos,
+        });
+      }
+    }
   }
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");
@@ -507,6 +987,7 @@ function checkStmt(
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
+    const scrutType = inferType(s.scrutinee, sym, ctx);
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
@@ -515,9 +996,14 @@ function checkStmt(
         localBinds: new Set(ctx.localBinds),
         localTypes: new Map(ctx.localTypes ?? []),
       };
-      if (arm.pattern.kind === "PVariant")
-        for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
-      if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+      checkPatternAgainstType(
+        arm.pattern,
+        scrutType,
+        sym,
+        errors,
+        inner.localBinds,
+        inner.localTypes,
+      );
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
       armSets.push(armWrites);
@@ -537,29 +1023,7 @@ function checkStmt(
     return;
   }
   if (s.kind === "Emit") {
-    const eff = sym.effects.get(s.effect);
-    const isBuiltinNav =
-      s.effect === "navigate" ||
-      s.effect === "navigate-replace" ||
-      s.effect === "navigate-back" ||
-      s.effect === "toast" ||
-      s.effect === "confirm" ||
-      s.effect === "log";
-    if (!eff && !isBuiltinNav) {
-      errors.push({
-        code: "E0104",
-        kind: "undef-effect",
-        message: `Reference to undefined effect "${s.effect}"`,
-        pos: s.pos,
-      });
-    } else if (eff && ctx.capsAvailable && !ctx.capsAvailable.has(eff.cap)) {
-      errors.push({
-        code: "E0301",
-        kind: "missing-capability",
-        message: `Effect "${s.effect}" requires capability "${eff.cap}" which is not declared in app.caps`,
-        pos: s.pos,
-      });
-    }
+    checkEmitTarget(s.effect, s.args, sym, errors, ctx, s.pos);
     // `emit confirm({onYes: <reducer>, onNo: <reducer>})` (lifecycle §7.6):
     // the onYes/onNo fields name reducers, not values. Skip the standard
     // checkExpr on those Refs (which would flag them as undefined names),
@@ -693,10 +1157,30 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Variant":
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
-    case "BinOp":
+    case "BinOp": {
+      // EffectId is opaque (spec stdlib §2.1.1.1): only `==` / `!=` defined.
+      // Boolean `&` / `|` cannot meaningfully apply to it either, but we leave
+      // them to the general unknown-receiver path — the typical misuse is
+      // arithmetic (`+` / `-` / `*` / `/`) or ordering (`<` / `>` / `<=` /
+      // `>=`), which is what we flag here.
+      const isEffectId = (t: TypeExpr | null): boolean =>
+        !!t && t.kind === "TypePrim" && t.name === "EffectId";
+      if (e.op !== "==" && e.op !== "!=") {
+        const lt = inferType(e.lhs, sym, ctx);
+        const rt = inferType(e.rhs, sym, ctx);
+        if (isEffectId(lt) || isEffectId(rt)) {
+          errors.push({
+            code: "E0204",
+            kind: "effect-id-misuse",
+            message: `Operator "${e.op}" cannot be applied to EffectId — only "==" / "!=" are defined`,
+            pos: e.pos,
+          });
+        }
+      }
       checkExpr(e.lhs, sym, errors, ctx);
       checkExpr(e.rhs, sym, errors, ctx);
       return;
+    }
     case "UnaryOp":
       checkExpr(e.rhs, sym, errors, ctx);
       return;
@@ -755,15 +1239,21 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
+      const scrutType = inferType(e.scrutinee, sym, ctx);
       for (const arm of e.arms) {
         const inner: Ctx = {
           ...ctx,
           localBinds: new Set(ctx.localBinds),
           localTypes: new Map(ctx.localTypes ?? []),
         };
-        if (arm.pattern.kind === "PVariant")
-          for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
-        if (arm.pattern.kind === "PBind") inner.localBinds.add(arm.pattern.name);
+        checkPatternAgainstType(
+          arm.pattern,
+          scrutType,
+          sym,
+          errors,
+          inner.localBinds,
+          inner.localTypes,
+        );
         checkExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -786,8 +1276,109 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.body, sym, errors, inner);
       return;
     }
+    case "TokenRef":
+      if (!KNOWN_TOKEN_GROUPS.has(e.group)) {
+        errors.push({
+          code: "E0110",
+          kind: "unknown-token-group",
+          message: `Unknown theme token group "@${e.group}" (allowed: ${[...KNOWN_TOKEN_GROUPS].join(", ")})`,
+          pos: e.pos,
+        });
+      }
+      return;
+    case "EmitExpr":
+      // `emit X(...)` is a dispatch — it has side effects (the effect queue is
+      // populated). Allowed only in a reducer body, mirroring statement-form
+      // `emit` (parsed only inside `parseStatement`). A fn / slot-init / tile
+      // body that "yields an EffectId" would have nowhere meaningful to send
+      // the dispatch.
+      if (ctx.kind !== "reducer") {
+        errors.push({
+          code: "E0305",
+          kind: "fn-impurity",
+          message: `emit "${e.effect}" used as an expression is only allowed inside a reducer body`,
+          pos: e.pos,
+        });
+        return;
+      }
+      checkEmitTarget(e.effect, e.args, sym, errors, ctx, e.pos);
+      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      return;
   }
 }
+
+/**
+ * Common emit-call validation shared by `Statement.Emit` (line ~655) and the
+ * `Expr.EmitExpr` form used in `let id = emit X(...)`. Checks the effect is
+ * defined, its capability is available, and — when both sides have a known
+ * type — that the first arg matches the effect's `in` type (the catch for
+ * `emit cancel(slotOfWrongType)`).
+ */
+function checkEmitTarget(
+  effect: string,
+  args: Expr[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  pos: Pos,
+): void {
+  const eff = sym.effects.get(effect);
+  const isBuiltinNav =
+    effect === "navigate" ||
+    effect === "navigate-replace" ||
+    effect === "navigate-back" ||
+    effect === "scroll-to" ||
+    effect === "toast" ||
+    effect === "confirm" ||
+    effect === "log";
+  if (!eff && !isBuiltinNav) {
+    errors.push({
+      code: "E0104",
+      kind: "undef-effect",
+      message: `Reference to undefined effect "${effect}"`,
+      pos,
+    });
+    return;
+  }
+  if (eff && ctx.capsAvailable && !ctx.capsAvailable.has(eff.cap)) {
+    errors.push({
+      code: "E0301",
+      kind: "missing-capability",
+      message: `Effect "${effect}" requires capability "${eff.cap}" which is not declared in app.caps`,
+      pos,
+    });
+  }
+  if (eff && args.length > 0) {
+    const declared = eff.inType;
+    const actual = inferType(args[0] as Expr, sym, ctx);
+    if (
+      declared.kind === "TypePrim" &&
+      declared.name === "EffectId" &&
+      actual &&
+      !(actual.kind === "TypePrim" && actual.name === "EffectId")
+    ) {
+      errors.push({
+        code: "E0202",
+        kind: "emit-arg-type-mismatch",
+        message: `emit "${effect}" expects an EffectId argument`,
+        pos,
+      });
+    }
+  }
+}
+
+// Closed set of theme token namespaces (spec/style.md §4.2). The token name
+// itself (the path beneath the group) is intentionally NOT validated here:
+// themes can be slot-driven and swap at runtime, so the runtime resolver does
+// the lookup with a graceful fallback to the spec's built-in defaults.
+const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
+  "colors",
+  "spacing",
+  "radius",
+  "shadow",
+  "typography",
+  "breakpoints",
+]);
 
 // ===== Receiver type inference (ADR-002, #23) =====
 // A minimal, dispatch-directed inferencer: just enough to tell a record field
@@ -796,8 +1387,26 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
 // inference never guesses, so an untyped receiver keeps the historical
 // name-based shortcut dispatch with no diagnostic.
 
-const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes"]);
+const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes", "File"]);
 const STDLIB_CONTAINERS = new Set(["List", "Map", "Set", "Option", "Result"]);
+
+/**
+ * Structural fields exposed by built-in prim types. `File` is treated as a
+ * scalar at the type system level (its handle is opaque, never inspected by
+ * the compiler) but the runtime stores it as a record so Kumiki expressions
+ * can read its metadata — `f.name : Text`, `f.size : Int`, `f.type : Text`
+ * (docs/spec/stdlib.md §2.1). Without this table classifyFieldAccess would
+ * emit E0108 on every legitimate File field read.
+ */
+const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
+  File: { name: "Text", size: "Int", type: "Text" },
+};
+
+function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
+  const name = PRIM_FIELDS[primName]?.[field];
+  if (!name) return null;
+  return { kind: "TypePrim", name, pos };
+}
 
 /** Unwrap type aliases (`TypeRef` → its `TypeDef` body) and nominal/refinement wrappers. */
 function unaliasType(
@@ -842,6 +1451,10 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
+      if (base.kind === "TypePrim") {
+        const t = primFieldType(base.name, e.field, e.pos);
+        if (t) return t;
+      }
       // `.get` unwraps Option(T) / Result(T,E) → T
       if (
         e.field === "get" &&
@@ -894,6 +1507,18 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // Err carries E, not T — can't infer the success type, so stay dynamic.
       return null;
     }
+    case "EmitExpr":
+      // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
+      // yields the dispatched effect's EffectId.
+      return { kind: "TypePrim", name: "EffectId", pos: e.pos };
+    case "Call":
+      // `EffectId.none` is the empty-handle sentinel for slot init / cancel
+      // no-op. Treated as a builtin call so it sits beside `Duration.ms` /
+      // `Decoder.Json` (same shape — uppercase qualifier + dot + member).
+      if (e.callee === "EffectId.none") {
+        return { kind: "TypePrim", name: "EffectId", pos: e.pos };
+      }
+      return null;
     default:
       return null;
   }
@@ -934,6 +1559,10 @@ function classifyFieldAccess(
     (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
     (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
   if (isKnownReceiver) {
+    if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[e.field]) {
+      e.accessKind = "field";
+      return;
+    }
     if (KNOWN_MEMBERS.has(e.field)) {
       e.accessKind = "shortcut";
       return;
@@ -971,6 +1600,47 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
 function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
   resolveType(eff.inType, sym, errors);
   resolveType(eff.outType, sym, errors);
+  // §6.4: an effect bound to `cap=http.cancel` cancels an in-flight effect by
+  // EffectId and returns nothing. Any other shape is a misuse of the cap.
+  // `policy` / `retry` / `map-request` are silently ignored by the dispatcher
+  // (the cancel path returns before any of them apply), so declaring them is
+  // a user-intent mismatch that we reject up front rather than let it pass.
+  if (eff.cap === "http.cancel") {
+    const inOk = eff.inType.kind === "TypePrim" && eff.inType.name === "EffectId";
+    const outOk = eff.outType.kind === "TypePrim" && eff.outType.name === "Unit";
+    if (!inOk || !outOk) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel must declare in=EffectId out=Unit`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.policy) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare a policy`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.retry) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare retry`,
+        pos: eff.pos,
+      });
+    }
+    if (eff.mapRequest) {
+      errors.push({
+        code: "E0303",
+        kind: "invalid-cancel-target",
+        message: `effect "${eff.name}" with cap=http.cancel cannot declare map-request`,
+        pos: eff.pos,
+      });
+    }
+  }
   if (eff.mapRequest)
     checkExpr(eff.mapRequest, sym, errors, {
       kind: "slot-init", // treat as pure context (no slots, no fns)
@@ -980,6 +1650,304 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
 
 function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
+}
+
+/**
+ * Validate that `pat` is structurally compatible with `scrutType`, push
+ * diagnostics for any mismatch, and register every bind name into `binds` /
+ * (when its type is known) `localTypes` so the arm body resolves names and
+ * sees the right inner type.
+ *
+ * When `scrutType` is null (undecidable), we still collect bind names — the
+ * arm body must remain usable — but skip the structural checks (consistent
+ * with the rest of the type checker's "dynamic ⇒ no diagnostic" stance).
+ *
+ * Without this structural check, a mismatched arm lowers to a guard that
+ * always fails at runtime — the arm silently never fires.
+ */
+function checkPatternAgainstType(
+  pat: Pattern,
+  scrutType: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  binds: Set<string>,
+  localTypes: Map<string, TypeExpr> | undefined,
+): void {
+  const t = unaliasType(scrutType, sym);
+  // Diagnostics prefer the user-written name (`Light`) over its expanded body
+  // (`Red | Green`). Fall back to the unaliased shape when no original was
+  // passed (e.g. when recursing into an inferred element type).
+  const display = scrutType ?? t;
+
+  if (pat.kind === "PWildcard") return;
+
+  if (pat.kind === "PBind") {
+    binds.add(pat.name);
+    if (t && localTypes) localTypes.set(pat.name, t);
+    return;
+  }
+
+  if (pat.kind === "PTuple") {
+    const tupleT = resolveToTuple(t, sym);
+    if (tupleT === null) {
+      // Undecidable scrutinee — still walk the items so nested binds land in
+      // scope; just skip the per-element type check.
+      for (const it of pat.items) {
+        checkPatternAgainstType(it, null, sym, errors, binds, localTypes);
+      }
+      return;
+    }
+    if (tupleT === "not-a-tuple") {
+      errors.push({
+        code: "E0208",
+        kind: "pat-type-mismatch",
+        message: `Tuple pattern cannot match scrutinee of type "${typeToString(display as TypeExpr)}"`,
+        pos: pat.pos,
+      });
+      for (const it of pat.items) {
+        checkPatternAgainstType(it, null, sym, errors, binds, localTypes);
+      }
+      return;
+    }
+    if (tupleT.args.length !== pat.items.length) {
+      errors.push({
+        code: "E0207",
+        kind: "pat-arity-mismatch",
+        message: `Tuple pattern has ${pat.items.length} item(s) but scrutinee type "${typeToString(tupleT)}" has ${tupleT.args.length}`,
+        pos: pat.pos,
+      });
+    }
+    // Even on an arity mismatch, walk every item so nested binds land in the
+    // arm body's scope. Extra items get a null element type, which silences
+    // further structural diagnostics under them — the outer E0207 already
+    // names the root cause.
+    for (let i = 0; i < pat.items.length; i++) {
+      const item = pat.items[i];
+      if (!item) continue;
+      const elemType = tupleT.args[i] ?? null;
+      checkPatternAgainstType(item, elemType, sym, errors, binds, localTypes);
+    }
+    return;
+  }
+
+  // PVariant
+  if (!t) {
+    // Undecidable scrutinee — register binds without types and stop.
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  const payloads = lookupVariantPayloads(pat.name, t, sym);
+  if (payloads === null) {
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  if (payloads === "unknown-tag") {
+    errors.push({
+      code: "E0209",
+      kind: "pat-unknown-variant",
+      message: `Variant "${pat.name}" is not a member of scrutinee type "${typeToString(display as TypeExpr)}"`,
+      pos: pat.pos,
+    });
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  if (payloads === "not-a-union") {
+    errors.push({
+      code: "E0208",
+      kind: "pat-type-mismatch",
+      message: `Variant pattern "${pat.name}" cannot match scrutinee of type "${typeToString(display as TypeExpr)}"`,
+      pos: pat.pos,
+    });
+    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    return;
+  }
+  if (pat.binds.length !== payloads.length) {
+    errors.push({
+      code: "E0207",
+      kind: "pat-arity-mismatch",
+      message: `Variant "${pat.name}" pattern has ${pat.binds.length} bind(s) but the variant carries ${payloads.length} payload(s)`,
+      pos: pat.pos,
+    });
+  }
+  for (let i = 0; i < pat.binds.length; i++) {
+    const name = pat.binds[i];
+    if (!name || name === "_") continue;
+    binds.add(name);
+    const ty = payloads[i] ?? null;
+    if (ty && localTypes) localTypes.set(name, ty);
+  }
+}
+
+/**
+ * Resolve the expected payload type list for a variant tag against a
+ * scrutinee type. Return values:
+ *   - `TypeExpr[]` — the variant exists; one entry per payload (may be empty).
+ *   - `"unknown-tag"` — scrutinee IS a union shape but has no such tag.
+ *   - `"not-a-union"` — scrutinee is a concrete non-union type (e.g. Int).
+ *   - `null` — scrutinee type is undecidable; caller skips diagnostics.
+ *
+ * Built-in `Option(T)` and `Result(T,E)` are handled here so they don't need
+ * to be desugared into a user TypeUnion first.
+ */
+function lookupVariantPayloads(
+  tag: string,
+  scrut: TypeExpr | null,
+  sym: SymbolTable,
+  seen: Set<string> = new Set(),
+): TypeExpr[] | "unknown-tag" | "not-a-union" | null {
+  if (!scrut) return null;
+  if (scrut.kind === "TypeApp") {
+    if (scrut.name === "Option") {
+      const inner = scrut.args[0];
+      if (tag === "Some") return inner ? [inner] : [];
+      if (tag === "None") return [];
+      return "unknown-tag";
+    }
+    if (scrut.name === "Result") {
+      const okT = scrut.args[0];
+      const errT = scrut.args[1];
+      if (tag === "Ok") return okT ? [okT] : [];
+      if (tag === "Err") return errT ? [errT] : [];
+      return "unknown-tag";
+    }
+    // User-defined generic union, e.g. `type LoadResult(T) = Idle | …`.
+    // Substitute the type params in the variant's payloads before returning.
+    const def = sym.types.get(scrut.name);
+    if (def) {
+      if (seen.has(scrut.name)) return null;
+      const sub = paramSubstitution(def.params, scrut.args);
+      const next = new Set(seen);
+      next.add(scrut.name);
+      return lookupVariantPayloads(tag, substituteType(def.body, sub), sym, next);
+    }
+    // Stdlib containers (List, Map, Set, Tuple) and unknown names — no union shape.
+    return "not-a-union";
+  }
+  if (scrut.kind === "TypeUnion") {
+    const v = scrut.variants.find((x) => x.name === tag);
+    if (!v) return "unknown-tag";
+    return v.payloads;
+  }
+  if (scrut.kind === "TypeRef") {
+    if (seen.has(scrut.name)) return null;
+    const def = sym.types.get(scrut.name);
+    if (!def) return null; // unknown name / type param — opaque
+    const next = new Set(seen);
+    next.add(scrut.name);
+    return lookupVariantPayloads(tag, def.body, sym, next);
+  }
+  if (scrut.kind === "TypeNominal" || scrut.kind === "TypeRefinement") {
+    return lookupVariantPayloads(tag, scrut.inner, sym, seen);
+  }
+  // TypePrim / TypeRecord — variants can't live on these.
+  return "not-a-union";
+}
+
+/**
+ * Reduce a scrutinee type to a `Tuple(...)` shape if it is one (transitively
+ * through user generic aliases). Mirrors `lookupVariantPayloads` for symmetry
+ * — a `type Pair(A, B) = Tuple(A, B)` should accept a `(a, b)` pattern.
+ */
+function resolveToTuple(
+  scrut: TypeExpr | null,
+  sym: SymbolTable,
+  seen: Set<string> = new Set(),
+): (TypeExpr & { kind: "TypeApp"; name: "Tuple" }) | "not-a-tuple" | null {
+  if (!scrut) return null;
+  if (scrut.kind === "TypeApp") {
+    if (scrut.name === "Tuple") {
+      return scrut as TypeExpr & { kind: "TypeApp"; name: "Tuple" };
+    }
+    const def = sym.types.get(scrut.name);
+    if (def) {
+      if (seen.has(scrut.name)) return null;
+      const sub = paramSubstitution(def.params, scrut.args);
+      const next = new Set(seen);
+      next.add(scrut.name);
+      return resolveToTuple(substituteType(def.body, sub), sym, next);
+    }
+    return "not-a-tuple";
+  }
+  if (scrut.kind === "TypeRef") {
+    if (seen.has(scrut.name)) return null;
+    const def = sym.types.get(scrut.name);
+    if (!def) return null;
+    const next = new Set(seen);
+    next.add(scrut.name);
+    return resolveToTuple(def.body, sym, next);
+  }
+  if (scrut.kind === "TypeNominal" || scrut.kind === "TypeRefinement") {
+    return resolveToTuple(scrut.inner, sym, seen);
+  }
+  return "not-a-tuple";
+}
+
+function paramSubstitution(params: string[], args: TypeExpr[]): Map<string, TypeExpr> {
+  const m = new Map<string, TypeExpr>();
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    const a = args[i];
+    if (p && a) m.set(p, a);
+  }
+  return m;
+}
+
+/** Substitute type-param names (carried as `TypeRef`) inside `t` using `sub`. */
+function substituteType(t: TypeExpr, sub: Map<string, TypeExpr>): TypeExpr {
+  if (sub.size === 0) return t;
+  switch (t.kind) {
+    case "TypePrim":
+      return t;
+    case "TypeRef": {
+      const r = sub.get(t.name);
+      return r ?? t;
+    }
+    case "TypeApp":
+      return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
+    case "TypeRecord":
+      return {
+        ...t,
+        fields: t.fields.map((f) => ({ name: f.name, type: substituteType(f.type, sub) })),
+      };
+    case "TypeUnion":
+      return {
+        ...t,
+        variants: t.variants.map((v) => ({
+          name: v.name,
+          payloads: v.payloads.map((p) => substituteType(p, sub)),
+        })),
+      };
+    case "TypeNominal":
+      return { ...t, inner: substituteType(t.inner, sub) };
+    case "TypeRefinement":
+      return { ...t, inner: substituteType(t.inner, sub) };
+  }
+}
+
+/** Best-effort textual rendering of a type for diagnostic messages. */
+function typeToString(t: TypeExpr): string {
+  switch (t.kind) {
+    case "TypePrim":
+      return t.name;
+    case "TypeRef":
+      return t.name;
+    case "TypeApp":
+      return t.args.length === 0 ? t.name : `${t.name}(${t.args.map(typeToString).join(", ")})`;
+    case "TypeRecord":
+      return `{${t.fields.map((f) => `${f.name}: ${typeToString(f.type)}`).join(", ")}}`;
+    case "TypeUnion":
+      return t.variants
+        .map((v) =>
+          v.payloads.length === 0
+            ? v.name
+            : `${v.name}(${v.payloads.map(typeToString).join(", ")})`,
+        )
+        .join(" | ");
+    case "TypeNominal":
+      return `nominal ${typeToString(t.inner)}`;
+    case "TypeRefinement":
+      return typeToString(t.inner);
+  }
 }
 
 /**
@@ -1041,6 +2009,9 @@ function walkExpr(e: Expr | undefined, visit: (n: Expr) => void): void {
     case "Variant":
       for (const p of e.payload) walkExpr(p, visit);
       return;
+    case "EmitExpr":
+      for (const a of e.args) walkExpr(a, visit);
+      return;
   }
 }
 
@@ -1058,6 +2029,39 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
       });
     }
   });
+  if (t.testKind === "episode-test") {
+    // §8.6: each `mocks` key must name a declared effect — same
+    // no-silent-typo guard as reducer-test mocks. The value must be one of
+    // `from-log` / `ignore` / `ok(...)` / `err(...)`; codegen would otherwise
+    // silently fall back to `{ policy: "ignore" }` for a typo like
+    // `from_log`, which makes the test pass by skipping the very effect it
+    // was supposed to replay.
+    if (t.mocks?.kind === "RecordLit") {
+      for (const m of t.mocks.fields) {
+        if (!sym.effects.has(m.name)) {
+          errors.push({
+            code: "E0104",
+            kind: "undef-effect",
+            message: `Mock targets undefined effect "${m.name}"`,
+            pos: t.mocks.pos,
+          });
+        }
+        const v = m.value;
+        const isFromLog = v.kind === "Ref" && v.name === "from-log";
+        const isIgnore = v.kind === "Ref" && v.name === "ignore";
+        const isOkErr = v.kind === "Call" && (v.callee === "ok" || v.callee === "err");
+        if (!isFromLog && !isIgnore && !isOkErr) {
+          errors.push({
+            code: "E0712",
+            kind: "episode-mock-invalid",
+            message: `Mock for "${m.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
+            pos: v.pos,
+          });
+        }
+      }
+    }
+    return;
+  }
   if (t.testKind === "property-test") {
     // The `for-all` types must resolve, and every `run-reducer(name)` in the
     // invariant must name a declared reducer.
@@ -1190,9 +2194,19 @@ function resolveType(t: TypeExpr, sym: SymbolTable, errors: KumikiError[]): void
         return;
       }
       return;
-    case "TypeApp":
+    case "TypeApp": {
+      const def = sym.types.get(t.name);
+      if (def && def.params.length !== t.args.length) {
+        errors.push({
+          code: "E0210",
+          kind: "type-arity-mismatch",
+          message: `Type "${t.name}" expects ${def.params.length} type argument(s) but got ${t.args.length}`,
+          pos: t.pos,
+        });
+      }
       for (const a of t.args) resolveType(a, sym, errors);
       return;
+    }
     case "TypeRecord":
       for (const f of t.fields) resolveType(f.type, sym, errors);
       return;

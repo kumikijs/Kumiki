@@ -47,5 +47,6 @@ Minimal examples, one feature per file. Each file is a self-contained, working K
 | [39-effect-session](https://github.com/kage1020/Kumiki/blob/main/examples/features/39-effect-session.kumiki) | sessionStorage persistence (per-tab; same shape as `storage-*`) |
 | [21-timer](https://github.com/kage1020/Kumiki/blob/main/examples/features/21-timer.kumiki) | periodic execution with `timer(1s)` |
 | [23-lifecycle-route-enter](https://github.com/kage1020/Kumiki/blob/main/examples/features/23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
+| [46-stdlib-paren-methods](https://github.com/kage1020/Kumiki/blob/main/examples/features/46-stdlib-paren-methods.kumiki) | paren-form stdlib methods (`is-ok()` / `values()` / `lower()` / `sort()` etc.) + `Bytes.from-text/base64/bytes` constructors |
 
 New questions and bugs are answered first by adding a minimal reproduction here.

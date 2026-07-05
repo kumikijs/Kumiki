@@ -1,0 +1,42 @@
+# SSR hydration demo (issue#119, runtime.md §10.6.2)
+# Exercises the SSR/hydration boundary:
+#  - `app.init` fires `loadUser` on the server — the result lands in `user`
+#    and becomes the bootstrap episode's slot-diff.
+#  - `draft` is `volatile`, so it MUST be absent from the SSR snapshot.
+#  - `count` and the `IncBtn` reducer exercise post-hydration interaction so
+#    tests can confirm episode continuity ([ssr.hydrate, app.start, ui.click]).
+
+type User = {id: Text, name: Text}
+
+slot user  : User                = {id: "guest", name: "guest"}
+slot count : Int                 = 0
+slot draft : Text     volatile   = ""
+
+effect loadUser cap=http.get
+                in=Unit
+                out=Result(User, HttpError)
+                policy=once
+                map-request={url: "/api/me", decode: Decoder.Json(User)}
+
+reducer userLoaded on=loadUser.ok($u, _)   do= user := $u
+reducer userFailed on=loadUser.err(_, _)   do= user := {id: "guest", name: "guest"}
+
+reducer inc        on=ui.click(IncBtn)     do= count := count + 1
+reducer typeDraft  on=ui.input(DraftInput) do= draft := $el.value
+
+tile IncBtn    = button(text="+", onClick=inc)
+tile DraftInput
+    = input(bind=draft, placeholder="draft (volatile)")
+
+tile App
+    = column(
+        heading("Hi " + user.name),
+        text("count: " + count.show),
+        IncBtn,
+        DraftInput)
+      {pad: "lg", gap: "md"}
+
+app SsrHydration
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadUser()]

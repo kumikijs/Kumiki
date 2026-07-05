@@ -5,6 +5,17 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
+import type { Episode, EpisodeLogger, SlotDiff } from "./episode.ts";
+
+/**
+ * SSR slot snapshot — the non-`volatile` slot values an SSR pass produces.
+ * Hydration overlays this on `app.live` BEFORE wiring effect dispatchers or
+ * firing `app.start`, so the very first render reflects the server's final
+ * state without re-running the `app.init` effects (§10.6.1 keeps init "not
+ * re-executed at hydration").
+ */
+export type SsrSnapshot = Record<string, unknown>;
+
 export type RefinementCheck = (v: unknown) => boolean;
 export type EventHandler = (el: Record<string, unknown>) => void;
 
@@ -51,6 +62,8 @@ export type TileNode =
       required?: boolean;
       autoFocus?: boolean;
       id?: string;
+      accept?: string;
+      multiple?: boolean;
     }
   | {
       kind: "textarea";
@@ -67,7 +80,16 @@ export type TileNode =
   | { kind: "skeleton"; props?: TileProps }
   | { kind: "form"; children: TileNode[]; props?: TileProps }
   | { kind: "label"; text: string; props?: TileProps }
-  | { kind: "link"; text: string; to: string; props?: TileProps }
+  | {
+      kind: "link";
+      text: string;
+      to: string;
+      /** §3.8 prefetch: name of the reducer to dispatch on viewport entry. */
+      prefetch?: string;
+      /** §3.8 prefetch-args: payload passed to the reducer's `$el` / `$event` binding. */
+      prefetchArgs?: Record<string, unknown>;
+      props?: TileProps;
+    }
   | { kind: "markdown"; text: string; props?: TileProps }
   | { kind: "image"; src: string; props?: TileProps }
   | { kind: "icon"; name: string; props?: TileProps }
@@ -134,6 +156,10 @@ export type TileProps = Record<string, unknown> & {
   onChange?: EventHandler;
   onInput?: EventHandler;
   onClose?: EventHandler;
+  onKeyDown?: EventHandler;
+  onMouseEnter?: EventHandler;
+  onFocus?: EventHandler;
+  onBlur?: EventHandler;
   el?: Record<string, unknown>;
 };
 
@@ -180,7 +206,7 @@ export type EffectSpec = {
   retry?:
     | { kind: "linear"; n: number; ms: number }
     | { kind: "exponential"; n: number; ms: number; factor: number };
-  invoke: (input: unknown, caps: CapabilityRegistry) => Promise<EffectResult>;
+  invoke: (input: unknown, caps: CapabilityRegistry, signal?: AbortSignal) => Promise<EffectResult>;
 };
 
 export type EffectResult = { kind: "ok"; value: unknown } | { kind: "err"; value: unknown };
@@ -195,6 +221,7 @@ export type EffectResult = { kind: "ok"; value: unknown } | { kind: "err"; value
 export type CapabilityProvider = (
   input: unknown,
   caps: CapabilityRegistry,
+  signal?: AbortSignal,
 ) => Promise<EffectResult> | EffectResult;
 
 export type CapabilityRegistry = {
@@ -242,6 +269,14 @@ export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
   matchPattern(pattern: string, path: string): Record<string, string> | null;
+  /**
+   * Resolve any static redirect (`->>`) that applies to the current location —
+   * top-level entry, or one under a matched parent's `subRoutes`. Returns the
+   * redirect target path, or `null` if no redirect applies. The runtime then
+   * `router.replace`s before parsing so the URL bar stays in sync with what is
+   * rendered.
+   */
+  findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -282,12 +317,56 @@ export type MountOptions = {
   routing?: RoutingImpl;
   /** Built-in effect installers (e.g. `installToast`) this app can emit. */
   builtins?: BuiltinInstaller[];
+  /**
+   * Episode logger (docs/spec/runtime.md §10.5). When provided, every reducer
+   * / effect-start / effect-end / signal-update / panic that occurs during
+   * this mount is recorded into the logger; `kumiki run --episode-log` and the
+   * `episode-test` runner both read from this. Omit (or pass `null`) for
+   * production mounts that don't care about episode capture.
+   */
+  episodeLogger?: EpisodeLogger | null;
+  /**
+   * SSR slot snapshot to overlay on `app.live` before the first render
+   * (docs/spec/runtime.md §10.6.2). Keyed by slot name; values come straight
+   * from `renderToString().snapshot.slots`. `volatile` slots are already
+   * absent on the server side, so the host can pass the snapshot through
+   * verbatim — the runtime never re-imports volatile values here.
+   */
+  ssrSnapshot?: SsrSnapshot;
+  /**
+   * Bootstrap episode (`trigger.kind = "ssr.hydrate"`) produced by
+   * `renderToString()`. When present, the runtime injects it into the
+   * `episodeLogger` BEFORE firing `app.start`, so `app.episodes()[0]` is the
+   * SSR-side causal chain that filled the snapshot (§10.5.1 + §10.6.2).
+   */
+  bootstrapEpisode?: Episode;
+  /**
+   * When true, the mount treats `app.live` as already-initialised by a server
+   * render: the `app.init` effects are NOT re-dispatched and the bootstrap
+   * episode replaces the local init causal chain. Lifecycle reducers
+   * (`app.start`, `route.enter`) still fire as usual (§10.6.2 step 5).
+   */
+  hydrate?: boolean;
 };
 
 export type RouteEntry = {
   pattern: string;
   /** Returns the TileNode for this route given the current state. */
   tile: () => TileNode;
+  /**
+   * Nested route table for parent routes that delegate to a `route-outlet`
+   * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
+   * runtime re-matches the path against these entries and injects the matched
+   * child tile into the first `route-outlet` of the parent's render tree.
+   */
+  subRoutes?: Array<RouteEntry | RedirectEntry>;
+  /**
+   * §3.9 scroll-restoration. When `false`, the runtime skips both the
+   * forward-navigation scrollTo(0,0) and the back-navigation restore for this
+   * route. Tiles that own their own internal scroll surface (chats, virtual
+   * lists) set this to keep the chrome stable across transitions.
+   */
+  scrollRestoration?: false;
 };
 
 export type RedirectEntry = { pattern: string; redirectTo: string };
@@ -320,6 +399,23 @@ export type AppShape = {
   themes?: Record<string, Theme>;
   /** selected theme name. */
   themeName?: string | null;
+  /**
+   * Compile-time-baked built-in icon registry (#101). Maps spec-form names
+   * (`"check"`, `"chevron-down"`, …) to single-path SVG `d` data inside a
+   * 24×24 viewBox. Populated by the toolchain (`@kumikijs/vite` / `kumiki`
+   * CLI) from `@kumikijs/icons`, restricted to names actually referenced by
+   * `icon(name="<literal>")` in the source. `theme.icons[name]` (when set)
+   * overrides any entry here.
+   *
+   * The renderer reads `icons` off `globalThis.__kumikiApp`, which holds the
+   * most-recently-mounted instance. When several Kumiki apps share a page
+   * (Web Component, micro-frontend), the last mount wins for unrelated apps
+   * too. The compiled icon set is normally identical across mounts of the
+   * same source, so this is only a hazard when two distinct apps with
+   * different icon registries share the document — wrap one in a closed
+   * shadow root, or pre-merge their `theme.icons`, to avoid cross-talk.
+   */
+  icons?: Record<string, string>;
   /** reusable scoped animations by name (closed-grammar keyframes + timing). */
   motions?: Record<string, unknown>;
   /** §4.10: document-level metadata applied to <head> at mount. */
@@ -350,6 +446,8 @@ export type ParsedRoute = {
   params: Record<string, string>;
   query: Record<string, string>;
   hash: string | null;
+  /** Matched sub-route pattern when the parent route delegates to `route-outlet` (§3.6). */
+  childPattern?: string;
 };
 
 /** The slice of `Location` the routing path actually reads. */
@@ -376,6 +474,91 @@ function emptyRoute(): ParsedRoute {
 }
 
 /**
+ * Walk the parent tile tree and inject the matched child as the children of
+ * the first `route-outlet` node we find (spec/routing.md §3.6). The render
+ * pass in tiles-layout.ts then mounts the child via the normal renderer.
+ * Spec leaves multi-outlet behavior unspecified, so we treat the first one
+ * as the active slot and leave any additional outlets empty.
+ *
+ * NOTE: this mutates `node` in place, so each call site MUST hand in a fresh
+ * tree — i.e. tile factories returned by codegen must produce a new object
+ * literal per invocation (they do today). A cached / shared tree would be
+ * corrupted across navigations.
+ */
+function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
+  if (!node || typeof node !== "object") return false;
+  if ((node as { kind?: string }).kind === "route-outlet") {
+    (node as { children: TileNode[] }).children = [child];
+    return true;
+  }
+  const children = (node as { children?: TileNode[] }).children;
+  if (Array.isArray(children)) {
+    for (const c of children) {
+      if (injectRouteOutlet(c, child)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve the root TileNode for the current route (or the app's static root
+ * when no routes are declared). Exported so SSR (`ssr.ts`) can pick the same
+ * tree the live mount would render, without re-implementing the route /
+ * sub-route matching logic.
+ */
+export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>): TileNode {
+  if (app.routes && app.routes.length > 0) {
+    const cur = slotValues.route as ParsedRoute;
+    for (const r of app.routes) {
+      if (r.pattern === cur.pattern && "tile" in r) {
+        const root = r.tile();
+        // §3.6: parent route delegates child rendering to `route-outlet`.
+        if (cur.childPattern && r.subRoutes) {
+          const childEntry = r.subRoutes.find(
+            (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+          );
+          if (childEntry) injectRouteOutlet(root, childEntry.tile());
+        }
+        return root;
+      }
+    }
+    // 404 fallback tile
+    for (const r of app.routes) {
+      if (r.pattern === "/404" && "tile" in r) return r.tile();
+    }
+  }
+  return app.root ? app.root() : { kind: "text", text: "(no root)" };
+}
+
+/**
+ * Apply a reducer's returned slot map and compute the `slot-diffs` an episode
+ * step needs (docs/spec/language.md §175 — `volatile` slots get the new value
+ * but are excluded from diffs / dirty signal-update). Pure: it mutates the
+ * `prev` record (the live `app.live`) in place but otherwise has no side
+ * effects, so both `applyReducer` (mount) and the SSR pseudo-reducer pipeline
+ * can share the exact same volatile/refine semantics.
+ */
+export function computeSlotDiffs(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+  slotMetas: Record<string, SlotMeta>,
+): { diffs: SlotDiff[]; dirty: string[] } {
+  const diffs: SlotDiff[] = [];
+  const dirty: string[] = [];
+  for (const [k, v] of Object.entries(next)) {
+    const meta = slotMetas[k];
+    if (meta?.refine && !meta.refine(v)) continue;
+    const before = prev[k];
+    prev[k] = v;
+    if (!meta?.volatile) {
+      diffs.push({ name: k, before, after: v });
+      dirty.push(k);
+    }
+  }
+  return { diffs, dirty };
+}
+
+/**
  * The granular mount (#71): renders with exactly the tile renderers / routing /
  * builtin effects passed via options. Generated apps from `kumiki build` call
  * this with just the modules they import; the package-entry `mount` wraps it
@@ -385,10 +568,24 @@ export function mountCore(
   app: AppShape,
   target: HTMLElement,
   options: MountOptions = {},
-): { dispose: () => void } {
+): { dispose: () => void; episodes: () => ReturnType<EpisodeLogger["list"]> } {
+  // Episode logger (§10.5). Null when the host did not opt in — every record
+  // call below short-circuits via the `?.` optional chain, so the no-logger
+  // path stays zero-cost.
+  const episode: EpisodeLogger | null = options.episodeLogger ?? null;
   if (!app.live) {
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
+  }
+  // SSR hydration overlay (§10.6.2 step 2): drop the server snapshot onto
+  // `app.live` BEFORE wiring the route / effect dispatcher, so the first
+  // render already reflects the SSR-final values. `volatile` slots are not in
+  // the snapshot by construction (see `renderToString`), so this loop never
+  // smuggles a volatile value across the hydration boundary.
+  if (options.ssrSnapshot) {
+    for (const [k, v] of Object.entries(options.ssrSnapshot)) {
+      if (k in app.slots) app.live[k] = v;
+    }
   }
   // Ensure `route` slot exists (auto-managed by runtime when routes are declared).
   if (!("route" in app.live)) {
@@ -423,9 +620,16 @@ export function mountCore(
   // fills the gap when the app declares an analytics sink directly.
   const providers = withAnalyticsDefault(app, options.providers);
   const caps = makeCapabilityRegistry(app.caps, providers);
-  const dispatcher = makeEffectDispatcher(app, caps, (effect, outcome, value, key) => {
-    handleEffectResult(effect, outcome, value, key);
-  });
+  const dispatcher = makeEffectDispatcher(
+    app,
+    caps,
+    (effect, outcome, value, key, token) => {
+      handleEffectResult(effect, outcome, value, key, token);
+    },
+    episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
+    episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
+    episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
+  );
 
   // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
   // when a route.leave reducer emits `confirm`, the runtime holds the
@@ -435,6 +639,13 @@ export function mountCore(
   let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
   let observeLeaveConfirm = false;
   let leaveAskedConfirm = false;
+
+  // §3.9 scroll restoration: track per-path scroll positions and the source of
+  // each navigation. push / replace forward → scroll to top (unless the matched
+  // tile opted out with `scroll-restoration = false`); popstate → restore the
+  // saved position for the destination path.
+  const scrollSaved = new Map<string, { x: number; y: number }>();
+  let lastNavSource: "push" | "replace" | "pop" = "push";
 
   let currentRoot: HTMLElement | null = null;
   let disposed = false;
@@ -479,7 +690,7 @@ export function mountCore(
     let dom: HTMLElement;
     let renderedTree: TileNode | null = null;
     try {
-      renderedTree = pickRootTile(app);
+      renderedTree = pickRootTile(app, slotValues);
       dom = tileCtx.render(renderedTree);
     } catch (e) {
       // A render panic NOT caught by a per-tile `error-boundary` (e.g. one under
@@ -489,6 +700,7 @@ export function mountCore(
       // escape and leave the DOM stale. Logged via console.error so the smoke /
       // scenario tiers still flag it (#24).
       reportPanic("render", e);
+      episode?.recordPanic(panicInfo(e).message, "render");
       if (!fireRouteError(e)) {
         dom = renderPanicFallback(e);
       } else {
@@ -496,7 +708,7 @@ export function mountCore(
         // (without retrying the broken tile) and use whatever the next pick
         // produces. If the re-render still throws, fall back to the panic UI.
         try {
-          renderedTree = pickRootTile(app);
+          renderedTree = pickRootTile(app, slotValues);
           dom = tileCtx.render(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
@@ -505,8 +717,19 @@ export function mountCore(
         }
       }
     }
-    if (currentRoot) target.replaceChild(dom, currentRoot);
-    else target.appendChild(dom);
+    if (currentRoot) {
+      target.replaceChild(dom, currentRoot);
+    } else if (options.hydrate && target.firstChild) {
+      // §10.6.2: the SSR HTML is already in `target` (the host injected it
+      // before calling `hydrate`). Replace it with the CSR-rendered tree
+      // wholesale so we never end up with SSR + CSR DOM as siblings. True
+      // identity-preserving hydration (re-using SSR nodes in place) is out
+      // of scope for v1 — the SSR pass exists for first-paint/SEO, not for
+      // DOM stability across the boundary.
+      target.replaceChildren(dom);
+    } else {
+      target.appendChild(dom);
+    }
     currentRoot = dom;
 
     if (snap) {
@@ -576,20 +799,6 @@ export function mountCore(
     return true;
   }
 
-  function pickRootTile(app: AppShape): TileNode {
-    if (app.routes && app.routes.length > 0) {
-      const cur = slotValues.route as ParsedRoute;
-      for (const r of app.routes) {
-        if (r.pattern === cur.pattern && "tile" in r) return r.tile();
-      }
-      // 404 fallback tile
-      for (const r of app.routes) {
-        if (r.pattern === "/404" && "tile" in r) return r.tile();
-      }
-    }
-    return app.root ? app.root() : { kind: "text", text: "(no root)" };
-  }
-
   // Re-entrancy guard so a panic inside the `app.error` handler itself does not
   // recurse — it is just logged.
   let inPanicHandler = false;
@@ -602,6 +811,7 @@ export function mountCore(
    */
   function handleLivePanic(location: string, e: unknown): void {
     reportPanic(location, e);
+    episode?.recordPanic(panicInfo(e).message, location);
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -616,8 +826,35 @@ export function mountCore(
     }
   }
 
+  /**
+   * §10.5 trigger kind for an auto-opened episode. The runtime auto-opens at
+   * the outermost `applyReducer` so every dispatch entry point (DOM event,
+   * lifecycle fire, timer tick, route.enter, init effect, ...) gets a trigger
+   * without each call site having to wrap itself.
+   */
+  function triggerOfReducer(r: ReducerSpec): { kind: string; target: string } {
+    if (r.event.kind === "ui") {
+      return { kind: `ui.${r.event.ev}`, target: r.selector?.tile ?? r.name };
+    }
+    if (r.event.kind === "effect") {
+      return { kind: `effect.${r.event.outcome}`, target: r.event.effect };
+    }
+    if (r.event.kind === "timer") {
+      return { kind: "timer", target: r.event.name ?? "anonymous" };
+    }
+    return { kind: "lifecycle", target: r.event.name };
+  }
+
   function applyReducer(r: ReducerSpec, payload: Record<string, unknown>): void {
     if (disposed) return;
+    // Auto-open an episode at the outermost reducer dispatch. Nested calls
+    // (e.g. effect-result → .ok reducer → emits → ...) join the existing one
+    // so the whole causal chain stays in a single Episode per §10.5.1.
+    const opened = episode && !episode.hasOpenEpisode();
+    if (opened) {
+      const t = triggerOfReducer(r);
+      episode.beginTrigger({ kind: t.kind, target: t.target, payload });
+    }
     let result: ReturnType<ReducerSpec["apply"]>;
     try {
       result = r.apply(slotValues, payload);
@@ -629,13 +866,18 @@ export function mountCore(
       // dispatch still runs); the `app.error` reducer (if any) is fired with
       // PanicInfo. The reducer-test harness catches panics separately (#24).
       handleLivePanic(`reducer "${r.name}"`, e);
+      if (opened) episode?.endTrigger();
       return;
     }
-    for (const [k, v] of Object.entries(result.slots)) {
-      const meta = app.slots[k];
-      if (meta?.refine && !meta.refine(v)) continue;
-      slotValues[k] = v;
-    }
+    // Compute slot diffs (excluding `volatile` slots per language.md §175):
+    // shared with the SSR pseudo-reducer pipeline so volatile semantics never
+    // drift across the hydration boundary.
+    const { diffs, dirty } = computeSlotDiffs(slotValues, result.slots, app.slots);
+    episode?.recordReducer(
+      r.name,
+      diffs,
+      result.emits.map((e) => e.effect),
+    );
     for (const emit of result.emits) {
       if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;
       dispatcher.dispatch(emit);
@@ -648,6 +890,8 @@ export function mountCore(
       }
     }
     render();
+    if (dirty.length > 0) episode?.recordSignalUpdate(dirty);
+    if (opened) episode?.endTrigger();
   }
 
   function handleEffectResult(
@@ -655,47 +899,59 @@ export function mountCore(
     outcome: "ok" | "err",
     value: unknown,
     key: unknown,
+    token = "",
   ): void {
+    // §10.5: the matching effect-end step lands on the SAME Episode the
+    // effect-start was logged into (looked up by `token`). The returned exit
+    // pops that Episode off the focus stack and commits if no more inflight
+    // effects remain — so the .ok / .err reducer chain that runs in between
+    // attaches to the same Episode.
+    const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
     let matched = 0;
-    for (const r of app.reducers) {
-      if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
-        applyReducer(r, { $1: value, $2: key });
-        matched++;
+    try {
+      for (const r of app.reducers) {
+        if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
+          applyReducer(r, { $1: value, $2: key });
+          matched++;
+        }
       }
-    }
-    // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
-    // an err whose value carries a 401/403/5xx is forwarded to the global
-    // `app.http.on-*` reducer — independent of whether a per-effect `.err`
-    // reducer also matched.
-    if (outcome === "err" && app.http) {
-      const status = readStatus(value);
-      if (status !== null) {
-        const name =
-          status === 401
-            ? app.http.on401
-            : status === 403
-              ? app.http.on403
-              : status >= 500
-                ? app.http.on5xx
-                : undefined;
-        if (name) {
-          const r = app.reducers.find((r) => r.name === name);
-          if (r) {
-            applyReducer(r, { $1: value, $2: key });
-            matched++;
+      // Status-coded routing for HTTP-shaped err payloads (#78, spec §6.3.2):
+      // an err whose value carries a 401/403/5xx is forwarded to the global
+      // `app.http.on-*` reducer — independent of whether a per-effect `.err`
+      // reducer also matched.
+      if (outcome === "err" && app.http) {
+        const status = readStatus(value);
+        if (status !== null) {
+          const name =
+            status === 401
+              ? app.http.on401
+              : status === 403
+                ? app.http.on403
+                : status >= 500
+                  ? app.http.on5xx
+                  : undefined;
+          if (name) {
+            const r = app.reducers.find((r) => r.name === name);
+            if (r) {
+              applyReducer(r, { $1: value, $2: key });
+              matched++;
+            }
           }
         }
       }
+      // No-silent-failure contract (#37): an `err` result that no `.err` reducer
+      // consumes is a dropped error — surfaced (never swallowed) exactly like a
+      // live panic. An app that means to ignore an error opts in with an `.err`
+      // reducer (even an empty one).
+      if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
+    } finally {
+      exitScope?.();
     }
-    // No-silent-failure contract (#37): an `err` result that no `.err` reducer
-    // consumes is a dropped error — surfaced (never swallowed) exactly like a
-    // live panic. An app that means to ignore an error opts in with an `.err`
-    // reducer (even an empty one).
-    if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
   }
 
   function updateRoute(newPath: string, replace: boolean): void {
     if (!router) return;
+    lastNavSource = replace ? "replace" : "push";
     if (replace) router.replace(newPath);
     else router.push(newPath);
     syncRouteFromLocation();
@@ -706,8 +962,20 @@ export function mountCore(
     // A pending leave guard is already gating the previous transition; ignore
     // re-entrant syncs (e.g. a router.replace from the No path would re-call us).
     if (pendingLeave) return;
+    // Resolve any static redirect for the current path BEFORE computing the
+    // new route — keeps the URL bar in sync with what gets rendered and
+    // covers both top-level and sub-route redirects.
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slotValues.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
+    // §3.9: save the OLD route's scroll position before any transition work, so
+    // it is available when the user lands here again via back / forward.
+    if (oldRoute && typeof window !== "undefined") {
+      const sx = typeof window.scrollX === "number" ? window.scrollX : 0;
+      const sy = typeof window.scrollY === "number" ? window.scrollY : 0;
+      scrollSaved.set(oldRoute.path, { x: sx, y: sy });
+    }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
     // gate the transition. We observe whether any leave reducer emitted
     // `confirm` — if so, we hold off updating slotValues.route and firing
@@ -744,7 +1012,41 @@ export function mountCore(
         applyReducer(r, { $route: newRoute });
       }
     }
+    applyScrollFor(newRoute);
     render();
+  }
+
+  function findRouteEntry(route: ParsedRoute): RouteEntry | undefined {
+    if (!app.routes) return undefined;
+    for (const r of app.routes) {
+      if ("redirectTo" in r) continue;
+      if (r.pattern !== route.pattern) continue;
+      if (route.childPattern && r.subRoutes) {
+        for (const sr of r.subRoutes) {
+          if ("redirectTo" in sr) continue;
+          if (sr.pattern === route.childPattern) return sr;
+        }
+      }
+      return r;
+    }
+    return undefined;
+  }
+
+  function applyScrollFor(route: ParsedRoute): void {
+    if (typeof window === "undefined" || typeof window.scrollTo !== "function") return;
+    const entry = findRouteEntry(route);
+    if (entry?.scrollRestoration === false) return;
+    if (lastNavSource === "pop") {
+      // pop with no saved entry (e.g. first-visit hash deep-link or a path that
+      // bypassed our save hook) — fall through to (0,0) instead of leaving the
+      // viewport where the last route left it. Because we took manual control
+      // of `history.scrollRestoration`, the browser default won't kick in here.
+      const saved = scrollSaved.get(route.path);
+      if (saved) window.scrollTo(saved.x, saved.y);
+      else window.scrollTo(0, 0);
+    } else {
+      window.scrollTo(0, 0);
+    }
   }
 
   function resolveLeave(outcome: "yes" | "no"): void {
@@ -761,6 +1063,7 @@ export function mountCore(
           applyReducer(r, { $route: p.newRoute });
         }
       }
+      applyScrollFor(p.newRoute);
       render();
     } else {
       // Revert: rewrite the URL back to the old path without re-firing the
@@ -789,16 +1092,26 @@ export function mountCore(
   lastAppliedThemeName =
     (app.live?.[app.themeName ?? ""] as string | undefined) ?? app.themeName ?? null;
 
-  // Initial route sync — but first check for a static redirect on the current path.
+  // Initial route sync — but first resolve any static redirect (top-level
+  // `->>` or one declared inside a matched parent's sub-routes per §3.6).
   if (routing && router && app.routes && app.routes.length > 0) {
-    for (const r of app.routes) {
-      if ("redirectTo" in r && routing.matchPattern(r.pattern, router.read().pathname)) {
-        router.replace(r.redirectTo);
-        break;
+    // §3.9: take manual control so we can restore positions explicitly on pop
+    // and reset to top on push, without the browser's auto-restore racing us.
+    if (typeof history !== "undefined" && "scrollRestoration" in history) {
+      try {
+        (history as History & { scrollRestoration: ScrollRestoration }).scrollRestoration =
+          "manual";
+      } catch {
+        // Some embedded contexts (sandboxed iframes) forbid writes; ignore.
       }
     }
+    const redirectTo = routing.findRedirect(app.routes, router.read());
+    if (redirectTo !== null) router.replace(redirectTo);
     slotValues.route = routing.parseLocation(app.routes, router.read());
-    routerUnsub = router.subscribe(syncRouteFromLocation);
+    routerUnsub = router.subscribe(() => {
+      lastNavSource = "pop";
+      syncRouteFromLocation();
+    });
   }
 
   app._rerender = render;
@@ -807,7 +1120,36 @@ export function mountCore(
   )._dispatch = (reducerName: string, el: Record<string, unknown>) => {
     const r = app.reducers.find((x) => x.name === reducerName);
     if (!r) return;
+    // §1.6.2 — `on=ui.event(Tile#id)` matches only when the dispatched
+    // element's `{id}` prop equals the selector's id. Codegen chains every
+    // same-tile reducer onto the implicit handler so §1.6.4 invariant 3
+    // (definition-order multi-dispatch) holds; this is where the id-scoped
+    // ones drop out. `el.id` is undefined when the tile has no `{id}`, which
+    // also fails the equality and skips an id-scoped reducer — as intended.
+    const wantId = r.selector?.id;
+    if (wantId != null && el.id !== wantId) return;
     applyReducer(r, { $el: el, $event: el });
+  };
+  // §3.8 prefetch — same argument binding as route.enter so the prefetch and
+  // the actual navigation share one reducer body. `prefetch-args` lowers to
+  // `$route.params`; `path` / `pattern` carry the link target verbatim (the
+  // matched pattern is unknowable at the link site, but `params` is what
+  // reducer bodies read).
+  (
+    app as AppShape & {
+      _prefetch?: (name: string, args: Record<string, string>, to: string) => void;
+    }
+  )._prefetch = (reducerName: string, args: Record<string, string>, to: string) => {
+    const r = app.reducers.find((x) => x.name === reducerName);
+    if (!r) return;
+    const syntheticRoute: ParsedRoute = {
+      path: to,
+      pattern: to,
+      params: args,
+      query: {},
+      hash: null,
+    };
+    applyReducer(r, { $route: syntheticRoute });
   };
   (app as AppShape & { _setSlot?: (name: string, value: unknown) => void })._setSlot = (
     name: string,
@@ -827,8 +1169,28 @@ export function mountCore(
   (app as AppShape & { _resolveLeave?: (outcome: "yes" | "no") => void })._resolveLeave =
     resolveLeave;
 
-  // Fire app.start lifecycle + init effects.
-  for (const emit of app.init) dispatcher.dispatch(emit);
+  // SSR hydration (§10.6.2 step 3): inject the server-side bootstrap episode
+  // into the logger BEFORE any client-side episode is opened, so
+  // `app.episodes()[0]` is the `ssr.hydrate` causal chain. The client must
+  // NOT re-execute `app.init` (step 5 in spec: "not re-executed at
+  // hydration"); the snapshot already carries those effects' results.
+  //
+  // Fail-fast on `hydrate: true` without a bootstrap episode: silently
+  // skipping `app.init` AND skipping the ingest would leave the logger
+  // incoherent — and the app stuck on default slot values with no record
+  // of why. Spec §10.6.2 step 1 expects the host to drop to CSR before
+  // calling `hydrate`, so reaching this code path is a contract violation.
+  if (options.hydrate) {
+    if (!options.bootstrapEpisode) {
+      throw new Error(
+        "mountCore: `hydrate: true` requires `bootstrapEpisode` (runtime.md §10.6.2 step 3). Fall back to a fresh `mount` if the snapshot is missing or version-mismatched.",
+      );
+    }
+    episode?.ingestBootstrap(options.bootstrapEpisode);
+  } else {
+    for (const emit of app.init) dispatcher.dispatch(emit);
+  }
+  // Fire app.start lifecycle reducer — always, whether SSR-hydrated or fresh.
   for (const r of app.reducers) {
     if (r.event.kind === "lifecycle" && r.event.name === "app.start") {
       applyReducer(r, {});
@@ -877,6 +1239,8 @@ export function mountCore(
       target.replaceChildren();
       dispatcher.dispose();
     },
+    /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
+    episodes: () => episode?.list() ?? [],
   };
 }
 
@@ -1021,28 +1385,85 @@ type Dispatcher = {
 function makeEffectDispatcher(
   app: AppShape,
   caps: CapabilityRegistry,
-  onResult: (effect: string, outcome: "ok" | "err", value: unknown, key: unknown) => void,
+  onResult: (
+    effect: string,
+    outcome: "ok" | "err",
+    value: unknown,
+    key: unknown,
+    token: string,
+  ) => void,
+  onLaunch?: (effect: string, input: unknown) => string,
+  onCancel?: (targetId: string) => void,
+  // Policy-induced cancel of a pending effect-start that was already claimed
+  // on its originating episode (spec §10.5.1). The seam fires for: a debounce
+  // timer replaced before it fires, `dispose()` draining still-pending
+  // debounces at unmount, the `http.cancel` branch clearing a debounce timer,
+  // and `launch`'s capability early-return for a debounced effect whose cap
+  // is undeclared. The logger reattaches the cancel to the episode that owns
+  // the token, NOT the current top.
+  onPolicyCancel?: (token: string, effectName: string) => void,
 ): Dispatcher {
+  type TimerEntry = {
+    // §6.4.1: cancel clears `debounce` (a pending-but-not-yet-issued launch)
+    // and leaves `throttle` (the rate-limit window marker for an effect that
+    // already launched) intact, so cancel doesn't accidentally reset the
+    // throttle window and let an immediate next emit slip past.
+    kind: "debounce" | "throttle";
+    h: ReturnType<typeof setTimeout>;
+    // debounce only: token + name claimed at dispatch time so the eventual
+    // `launch` lands `effect-start`/`effect-end` on the originating episode
+    // (spec §10.5.1), and any path that drops the pending launch (timer
+    // replace, `http.cancel` clearing the timer, `dispose()` drain) can mark
+    // that episode's pending start as cancelled via `onPolicyCancel`.
+    token?: string;
+    effectName?: string;
+  };
   type RunState = {
     inflight: Map<string, AbortController>;
-    timers: Map<string, ReturnType<typeof setTimeout>>;
+    timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
   };
   const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
 
-  const launch = async (eff: EffectSpec, input: unknown, key: string): Promise<void> => {
-    if (!caps.has(eff.cap)) {
+  const launch = async (
+    eff: EffectSpec,
+    input: unknown,
+    key: string,
+    presetToken?: string,
+  ): Promise<void> => {
+    // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
+    if (eff.cap !== "" && !caps.has(eff.cap)) {
       console.warn(`Capability "${eff.cap}" not declared in app.caps`);
+      // Deferred-policy dispatch (debounce) already recorded an effect-start
+      // on the originating episode before the timer fired. Bailing out here
+      // without releasing the token would strand that episode in
+      // `closedAwaiting` forever — drain it via the cancel seam so the
+      // trace shows WHY no effect-end ever lands.
+      if (presetToken) onPolicyCancel?.(presetToken, eff.name);
       return;
     }
+    // Episode logger seam (§10.5): the moment the dispatcher commits to
+    // actually invoking the effect — policy filtering (debounce / once /
+    // queue) has already passed. Token threads through to onResult so the
+    // matching effect-end lands on the same Episode. For deferred policies
+    // (debounce) the dispatch site already claimed the token + recorded the
+    // effect-start; reusing it keeps the causal chain on the originating
+    // episode (spec §10.5.1).
+    const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
+    const id = `${eff.name}:${key}`;
+    // Every in-flight effect gets its own AbortController so `http.cancel`
+    // (spec http.md §6.4) — and the existing `policy=latest`/`latest-per-key`
+    // paths — can abort the actual `fetch`, not just delete a map entry. The
+    // signal threads through `runWithRetry` → `eff.invoke` → `httpFetch`.
+    const ctl = new AbortController();
+    state.inflight.set(id, ctl);
     try {
-      const res = await runWithRetry(eff, input, caps);
-      onResult(eff.name, res.kind, res.value, input);
+      const res = await runWithRetry(eff, input, caps, ctl.signal);
+      onResult(eff.name, res.kind, res.value, input, token);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input);
+      onResult(eff.name, "err", { message: String(e) }, input, token);
     } finally {
-      const ic = state.inflight.get(`${eff.name}:${key}`);
-      if (ic) state.inflight.delete(`${eff.name}:${key}`);
+      if (state.inflight.get(id) === ctl) state.inflight.delete(id);
     }
   };
 
@@ -1050,6 +1471,41 @@ function makeEffectDispatcher(
     dispatch(emit: EmitSpec): void {
       const eff = app.effects[emit.effect];
       if (!eff) return;
+      // §6.4: `cap=http.cancel` is a meta-effect — its `input` IS an
+      // `EffectId` (the `${name}:${key}` string produced by codegen and the
+      // launch path). Abort the matching in-flight controller AND clear any
+      // pending debounce/throttle timer, then surface the cancel intent to
+      // the episode log. Unknown / already-completed ids are a silent no-op
+      // (cancellation is an idempotent intent, not a contract violation —
+      // user code shouldn't have to guard a rapidly-clicked Cancel button).
+      if (eff.cap === "http.cancel") {
+        const target = String(emit.args[0] ?? "");
+        if (target.length > 0) {
+          const ic = state.inflight.get(target);
+          if (ic) {
+            ic.abort();
+            state.inflight.delete(target);
+          }
+          const t = state.timers.get(target);
+          // Only debounce timers represent a pending launch we want to drop.
+          // A throttle timer is the open-window marker for an already-issued
+          // launch — clearing it would let the very next emit slip through
+          // ahead of the rate limit (spec §6.4.1).
+          if (t !== undefined && t.kind === "debounce") {
+            clearTimeout(t.h);
+            state.timers.delete(target);
+            // The pending debounce already claimed an effect-start on its
+            // originating episode. Without releasing the token here, that
+            // episode stays in `closedAwaiting` forever — symmetric with the
+            // debounce-replace and `dispose()` drain paths (spec §10.5.1).
+            if (t.token && t.effectName) {
+              onPolicyCancel?.(t.token, t.effectName);
+            }
+          }
+          onCancel?.(target);
+        }
+        return;
+      }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
       const keyOf = (input: unknown): string => {
@@ -1068,39 +1524,65 @@ function makeEffectDispatcher(
         return;
       }
       if (policy.kind === "debounce") {
-        const t = state.timers.get(id);
-        if (t) clearTimeout(t);
-        state.timers.set(
-          id,
-          setTimeout(() => {
-            state.timers.delete(id);
-            void launch(eff, input, key);
-          }, policy.ms),
-        );
+        const prev = state.timers.get(id);
+        if (prev) {
+          clearTimeout(prev.h);
+          // The prior dispatch already claimed an episode token + recorded
+          // an effect-start (spec §10.5.1). Replacing the timer drops that
+          // launch, so the originating episode must see an effect-cancel +
+          // decrement its pending counter so it can commit. The truthy
+          // guard skips the empty-string token a no-logger mount yields
+          // (would otherwise be a noisy silent no-op in the logger seam).
+          if (prev.token && prev.effectName) {
+            onPolicyCancel?.(prev.token, prev.effectName);
+          }
+        }
+        // Claim the episode token NOW so effect-start lands on the episode
+        // that emitted us, not on whatever happens to be on top of the stack
+        // when the timer fires later.
+        const token = onLaunch?.(eff.name, input) ?? "";
+        const h = setTimeout(() => {
+          state.timers.delete(id);
+          void launch(eff, input, key, token);
+        }, policy.ms);
+        state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
         return;
       }
       if (policy.kind === "throttle") {
         if (state.timers.has(id)) return;
-        state.timers.set(
-          id,
-          setTimeout(() => state.timers.delete(id), policy.ms),
-        );
+        const h = setTimeout(() => state.timers.delete(id), policy.ms);
+        state.timers.set(id, { kind: "throttle", h });
         void launch(eff, input, key);
         return;
       }
       if (policy.kind === "latest" || policy.kind === "latest-per-key") {
+        // Abort the previous in-flight invocation under the same id, then
+        // launch a fresh one. `launch` itself installs the new controller —
+        // the dispatcher only has to evict the old.
         const ic = state.inflight.get(id);
-        if (ic) ic.abort();
-        const ctl = new AbortController();
-        state.inflight.set(id, ctl);
+        if (ic) {
+          ic.abort();
+          state.inflight.delete(id);
+        }
         void launch(eff, input, key);
         return;
       }
       void launch(eff, input, key);
     },
     dispose(): void {
-      for (const t of state.timers.values()) clearTimeout(t);
+      // Pending debounce timers hold a claimed effect-start on an episode
+      // that already endTrigger'd — without notifying the logger, those
+      // episodes stay forever in `closedAwaiting` and never commit
+      // (spec §10.5.1). Snapshot the values first so the iteration is
+      // immune to reentrancy via `onPolicyCancel`.
+      const pendingTimers = [...state.timers.values()];
       state.timers.clear();
+      for (const t of pendingTimers) {
+        clearTimeout(t.h);
+        if (t.kind === "debounce" && t.token && t.effectName) {
+          onPolicyCancel?.(t.token, t.effectName);
+        }
+      }
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
     },
@@ -1114,12 +1596,12 @@ function makeEffectDispatcher(
  */
 export function overridableInvoke(
   cap: string,
-  fn: (input: unknown) => Promise<EffectResult>,
+  fn: (input: unknown, signal?: AbortSignal) => Promise<EffectResult>,
 ): EffectSpec["invoke"] {
-  return async (input, caps) => {
+  return async (input, caps, signal) => {
     const p = caps.provider(cap);
-    if (p) return p(input, caps);
-    return fn(input);
+    if (p) return p(input, caps, signal);
+    return fn(input, signal);
   };
 }
 
@@ -1168,7 +1650,7 @@ export function _setPathHelper(obj: unknown, path: string[], value: unknown): un
 }
 
 /** Message + optional source location for a caught throw (panic or otherwise). */
-function panicInfo(e: unknown): { message: string; location: string | undefined } {
+export function panicInfo(e: unknown): { message: string; location: string | undefined } {
   if (isPanic(e)) return { message: e.message, location: e.location };
   if (e instanceof Error) return { message: e.message, location: undefined };
   return { message: String(e), location: undefined };
@@ -1216,7 +1698,7 @@ function collectMountedTiles(root: TileNode): Set<string> {
 }
 
 /** Pull `status` off an HttpError-shaped err value; returns null otherwise. */
-function readStatus(value: unknown): number | null {
+export function readStatus(value: unknown): number | null {
   if (!value || typeof value !== "object") return null;
   const s = (value as { status?: unknown }).status;
   return typeof s === "number" ? s : null;
@@ -1232,18 +1714,22 @@ async function runWithRetry(
   eff: EffectSpec,
   input: unknown,
   caps: CapabilityRegistry,
+  signal?: AbortSignal,
 ): Promise<EffectResult> {
   const policy = eff.retry;
-  if (!policy) return eff.invoke(input, caps);
-  let last: EffectResult = await eff.invoke(input, caps);
+  if (!policy) return eff.invoke(input, caps, signal);
+  let last: EffectResult = await eff.invoke(input, caps, signal);
   for (let attempt = 1; attempt < policy.n; attempt++) {
     if (last.kind !== "err") return last;
+    // §6.4.1: abort short-circuits retries — re-issuing a cancelled request
+    // would defeat the cancel intent.
+    if (signal?.aborted) return last;
     const status = readStatus(last.value);
     const retriable = status === null || status === 0 || status >= 500;
     if (!retriable) return last;
     const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
     await sleep(delay);
-    last = await eff.invoke(input, caps);
+    last = await eff.invoke(input, caps, signal);
   }
   return last;
 }
@@ -1252,7 +1738,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function reportUnhandledEffectError(effect: string, value: unknown): void {
+export function reportUnhandledEffectError(effect: string, value: unknown): void {
   const message =
     value && typeof value === "object" && "message" in value
       ? String((value as { message: unknown }).message)
@@ -1283,10 +1769,44 @@ function makeTileCtx(tiles: TileRenderers): TileCtx {
       // A `motion` prop applies to any tile uniformly (M5). The keyframes/classes
       // are injected once at mount by ensureMotionStyles.
       applyMotion(el, node.props);
+      // ui.key / ui.hover / ui.focus / ui.blur handlers (§1.6.1) — codegen
+      // lifts these into onKeyDown / onMouseEnter / onFocus / onBlur props.
+      // Wiring them once on the universal render output keeps every tile
+      // uniform (no per-renderer plumbing).
+      applyUiEventHandlers(el, node.props);
       return el;
     },
   };
   return ctx;
+}
+
+function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
+  if (!props) return;
+  if (props.onKeyDown) {
+    const handler = props.onKeyDown;
+    el.addEventListener("keydown", (e) => {
+      const ke = e as KeyboardEvent;
+      handler({ ...(props.el ?? {}), key: ke.key, code: ke.code });
+    });
+  }
+  if (props.onMouseEnter) {
+    const handler = props.onMouseEnter;
+    el.addEventListener("mouseenter", () => {
+      handler(props.el ?? {});
+    });
+  }
+  if (props.onFocus) {
+    const handler = props.onFocus;
+    el.addEventListener("focus", () => {
+      handler(props.el ?? {});
+    });
+  }
+  if (props.onBlur) {
+    const handler = props.onBlur;
+    el.addEventListener("blur", () => {
+      handler(props.el ?? {});
+    });
+  }
 }
 
 /**
@@ -1315,8 +1835,25 @@ export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
   if (mw !== undefined) el.style.maxWidth = typeof mw === "number" ? `${mw}px` : String(mw);
   if (typeof props.bg === "string") el.style.background = mapColor(props.bg as string);
   if (typeof props.radius === "string") el.style.borderRadius = mapToken(props.radius as string);
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
   applyTransition(el, props);
+}
+
+/**
+ * Apply a `style: { ... }` block (spec/style.md §4.3) — each key is set as a CSS
+ * property on the element verbatim. Keys are kebab-case CSS property names
+ * (`background`, `padding`, `border-radius`, `box-shadow`, …) and their values
+ * are resolved strings/numbers (`@token` references are already lowered by the
+ * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
+ */
+function applyStyleBlock(el: HTMLElement, raw: unknown): void {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === undefined || value === null) continue;
+    const v = typeof value === "number" ? `${value}px` : String(value);
+    el.style.setProperty(key, v);
+  }
 }
 
 /** Apply a value that may be a literal or a responsive `{base, sm, md, lg, xl}` map. */
@@ -1536,6 +2073,7 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   if (typeof props.color === "string") el.style.color = mapColor(props.color as string);
   if (typeof props.size === "string") el.style.fontSize = mapSize(props.size as string);
   if (props.weight === "bold") el.style.fontWeight = "700";
+  applyStyleBlock(el, props.style);
   applyStateStyles(el, props);
 }
 
@@ -1768,7 +2306,6 @@ function mapSize(s: string): string {
       if (typeof v === "number") return `${v}px`;
     }
   }
-  void resolveToken;
   switch (s) {
     case "sm":
       return "14px";
@@ -1783,4 +2320,35 @@ function mapSize(s: string): string {
     default:
       return s;
   }
+}
+
+/**
+ * Resolve a theme token reference written as `@<group>.<seg>(.<seg>)*` in source
+ * (spec/style.md §4.3). Walks the active theme's group/path; on miss, dispatches
+ * to the group-specific `map*` helpers so the spec's built-in defaults (e.g.
+ * `surface` → `#f7f7f7`) still apply when no theme defines the name.
+ */
+export function tokenRef(group: string, path: string[]): string {
+  const theme = currentTheme();
+  if (theme) {
+    let node: ThemeValue | undefined = theme[group];
+    for (const seg of path) {
+      if (node && typeof node === "object" && !Array.isArray(node) && seg in node) {
+        node = (node as Record<string, ThemeValue>)[seg];
+      } else {
+        node = undefined;
+        break;
+      }
+    }
+    if (typeof node === "string") return node;
+    if (typeof node === "number") return `${node}px`;
+  }
+  // Group-specific fallback to the built-in defaults baked into the runtime.
+  const last = path[path.length - 1] ?? "";
+  if (group === "colors") return mapColor(last);
+  if (group === "spacing") return mapToken(last);
+  if (group === "radius") return mapToken(last);
+  if (group === "shadow") return resolveToken("shadow", last);
+  if (group === "typography" && path[0] === "size") return mapSize(last);
+  return resolveToken(group, last);
 }

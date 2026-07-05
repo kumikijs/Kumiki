@@ -1,0 +1,51 @@
+# Feature: the icon registry (#101). `icon(name="…")` resolves through
+# `theme.icons[name]` → compile-baked built-ins from @kumikijs/icons →
+# `[name]` placeholder. Built-in names come from spec/style.md §4.8.1; the
+# toolchain bakes only the referenced paths into App.icons.
+
+slot themeName : Text = "Light"
+
+reducer toggle on=ui.click(ThemeBtn)
+    do= themeName := if themeName == "Light" then "Dark" else "Light"
+
+# A mix of built-ins from different intent groups, plus props.
+tile StatusRow = row(icon(name="check") {color: "success"},
+                     icon(name="info"),
+                     icon(name="alert-triangle") {color: "warning"},
+                     icon(name="x") {color: "danger"})
+
+tile SizedRow  = row(icon(name="star") {size: "sm"},
+                     icon(name="star") {size: "md"},
+                     icon(name="star") {size: "lg"},
+                     icon(name="star") {size: "xl"})
+
+# `logo` isn't in the built-in set — it must come from theme.icons. Same for
+# `check` overridden below (the theme entry wins over the built-in).
+tile ThemedRow = row(icon(name="logo") {size: "lg", color: "primary"},
+                     icon(name="check") {size: "lg"})
+
+tile ThemeBtn  = button(text="Toggle theme", onClick=toggle)
+tile App       = page(heading("Icons"),
+                      StatusRow, SizedRow, ThemedRow, ThemeBtn) {pad: "lg", gap: "md"}
+
+theme Light = {
+    colors: {bg: "#ffffff", fg: "#1a1a1a",
+             primary: "#0070f3", success: "#16a34a",
+             warning: "#d97706", danger: "#dc2626"},
+    icons:  {logo:  "M3 12 L12 3 L21 12 L12 21 Z",
+             check: "M4 12 L10 18 L20 6"}
+}
+
+theme Dark = {
+    colors: {bg: "#111", fg: "#eee",
+             primary: "#3291ff", success: "#22c55e",
+             warning: "#f59e0b", danger: "#ef4444"},
+    icons:  {logo:  "M3 12 L12 3 L21 12 L12 21 Z",
+             check: "M4 12 L10 18 L20 6"}
+}
+
+app IconSet
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = themeName

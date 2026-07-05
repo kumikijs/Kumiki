@@ -11,6 +11,8 @@ export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
   | { clickText: string }
   | { click: string }
+  | { focus: string }
+  | { blur: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
   | { navigate: string };
@@ -153,6 +155,8 @@ function describeAction(a: Action): string {
   if ("dispatch" in a) return `dispatch ${a.dispatch}`;
   if ("clickText" in a) return `clickText "${a.clickText}"`;
   if ("click" in a) return `click ${a.click}`;
+  if ("focus" in a) return `focus ${a.focus}`;
+  if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
   return `navigate ${a.navigate}`;
@@ -181,6 +185,14 @@ async function performAction(page: Page, a: Action): Promise<void> {
   }
   if ("click" in a) {
     await page.locator(a.click).first().click({ timeout: 3000 });
+    return;
+  }
+  if ("focus" in a) {
+    await page.locator(a.focus).first().focus({ timeout: 3000 });
+    return;
+  }
+  if ("blur" in a) {
+    await page.locator(a.blur).first().blur({ timeout: 3000 });
     return;
   }
   if ("fill" in a) {

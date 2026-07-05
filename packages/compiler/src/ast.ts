@@ -32,13 +32,13 @@ export type Def =
 export type TestDef = {
   kind: "TestDef";
   name: string;
-  /** `reducer-test` targets a reducer; `tile-test` a tile; `property-test` has no target. */
-  testKind: "reducer-test" | "tile-test" | "property-test";
-  /** Reducer / tile name. Absent for `property-test`. */
+  /** `reducer-test` targets a reducer; `tile-test` a tile; `episode-test` replays an episode log; `property-test` has no target. */
+  testKind: "reducer-test" | "tile-test" | "property-test" | "episode-test";
+  /** Reducer / tile name. Absent for `property-test` / `episode-test`. */
   target?: string;
   /** The `given = { ... }` record literal (interpreted, not codegen'd as-is). */
   given: Expr;
-  /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test. Absent for `property-test`. */
+  /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
   expect?: Expr | TileExpr;
   /** `property-test` only: the `for-all = { name: Type }` generators. */
   forAll?: { name: string; type: TypeExpr }[];
@@ -48,6 +48,10 @@ export type TestDef = {
   count?: number;
   /** `property-test` only: shrink on failure (default true). */
   shrink?: boolean;
+  /** `episode-test` only: path to the episode-log file relative to the .kumiki source. */
+  load?: string;
+  /** `episode-test` only: per-effect mock policy (`from-log` / `ignore` / `ok(v)` / `err(e)`). */
+  mocks?: Expr;
   pos: Pos;
 };
 
@@ -100,6 +104,9 @@ export type TileDef = {
   name: string;
   in?: TypeExpr;
   errorBoundary?: string;
+  subRoutes?: { path: string; tile: string }[];
+  /** §3.9 scroll-restoration. Absent ≡ default (true). `false` opts the tile out of automatic restore. */
+  scrollRestoration?: boolean;
   body: TileExpr;
   pos: Pos;
 };
@@ -196,7 +203,7 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes";
+      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File" | "EffectId";
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
@@ -221,7 +228,15 @@ export type EventPattern =
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }
   | { kind: "LifecycleEvent"; name: string; pos: Pos };
 
-export type UiEventKind = "click" | "submit" | "change" | "input" | "focus" | "blur";
+export type UiEventKind =
+  | "click"
+  | "submit"
+  | "change"
+  | "input"
+  | "focus"
+  | "blur"
+  | "key"
+  | "hover";
 
 // ----- Statements (reducer body) -----
 
@@ -283,7 +298,16 @@ export type Expr =
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
-  | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos }; // e.g., All, Some(x), Loaded(t)
+  // `emit X(args)` used as an expression — yields the dispatched effect's
+  // `EffectId` (spec §2.1.1.1, http.md §6.4). Statement-form `emit` keeps the
+  // separate `Statement.Emit` so existing reducers without a capture stay
+  // unchanged.
+  | { kind: "EmitExpr"; effect: string; args: Expr[]; pos: Pos }
+  | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
+  // Theme-token reference (spec/style.md §4.3): `@colors.surface`,
+  // `@spacing.md`, `@typography.size.lg`. `group` is the top-level theme
+  // namespace; `path` is the dotted path beneath it (always ≥ 1 segment).
+  | { kind: "TokenRef"; group: string; path: string[]; pos: Pos };
 
 export type MatchArm = {
   pattern: Pattern;
@@ -294,7 +318,7 @@ export type Pattern =
   | { kind: "PVariant"; name: string; binds: string[]; pos: Pos } // All, Some(x), Loaded(x), _ has special form
   | { kind: "PWildcard"; pos: Pos }
   | { kind: "PBind"; name: string; pos: Pos } // single identifier
-  | { kind: "PLiteral"; value: number | string | boolean; pos: Pos };
+  | { kind: "PTuple"; items: Pattern[]; pos: Pos }; // (p1, p2, ...) — destructures Tuple values
 
 export type BinOp = "+" | "-" | "*" | "/" | "%" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&" | "|"; // boolean and/or
 

@@ -10,7 +10,11 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { compile, generateDts } from "@kumikijs/compiler";
-import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
+import {
+  nodeRuntimeBundleReader,
+  resolveBuiltinIcons,
+  resolveCapabilities,
+} from "@kumikijs/compiler/node";
 import type { Plugin } from "vite";
 
 export type KumikiPluginOptions = {
@@ -26,6 +30,28 @@ export type KumikiPluginOptions = {
    * its contents change. Default: false.
    */
   types?: boolean;
+  /**
+   * Promote a11y warnings (E07xx) to compile errors. Mirrors the dev-server
+   * `--strict-a11y` flag (spec §10.7) so violations surface in Vite's error
+   * overlay during development. Default: false.
+   */
+  strictA11y?: boolean;
+  /**
+   * Promote unknown literal `icon(name="<x>")` to compile errors as
+   * `E0704 unknown-icon`. Mirrors `kumiki check --strict-icons`. The domain
+   * is `@kumikijs/icons` ∪ every `theme.icons` block in the source; dynamic
+   * `icon(name=expr)` calls stay unchecked. Default: false (the runtime
+   * `[name]` placeholder is the fail-soft default, spec §4.8.3).
+   */
+  strictIcons?: boolean;
+  /**
+   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` cannot match any of the
+   * target tile's literal `{id: "..."}` props to `E0212 selector-id-mismatch`.
+   * Mirrors `kumiki check --strict-selector-id`. Tiles with computed or
+   * missing `{id}` (where the runtime `_dispatch` filter is authoritative)
+   * stay unblocked. Default: false.
+   */
+  strictSelectorId?: boolean;
 };
 
 /** Write `path` only if its current contents differ — avoids spurious watch churn. */
@@ -47,21 +73,88 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
   return {
     name: "vite-plugin-kumiki",
     enforce: "pre",
-    transform(code, id) {
+    async transform(code, id) {
       const file = cleanId(id);
       if (!KUMIKI_RE.test(file)) return null;
 
-      const result = compile(code, {
+      // When --strict-icons is on, resolve @kumikijs/icons up front so the
+      // closed name set reaches `check()` on the first pass. The resolver is
+      // cached per project root, so this is a one-time cost. When the
+      // registry is absent or strictIcons is off, `iconNames` stays empty —
+      // `theme.icons` then defines the domain. The degraded-mode warning is
+      // emitted through Rollup's plugin context so it shows up in the build
+      // log next to other Vite diagnostics.
+      let iconNames: string[] = [];
+      if (options.strictIcons) {
+        const registry = await resolveBuiltinIcons(file);
+        if (registry) {
+          iconNames = Object.keys(registry);
+        } else {
+          this.warn("strictIcons: @kumikijs/icons not resolved; checking against theme.icons only");
+        }
+      }
+
+      const baseOpts = {
         runtimeSpecifier: "@kumikijs/runtime",
         exportApp: true,
         bundle,
         ...(bundle ? { readRuntimeBundle: nodeRuntimeBundleReader } : {}),
         capabilities: resolveCapabilities(file),
-      });
+        ...(options.strictA11y ? { strictA11y: true as const } : {}),
+        ...(options.strictIcons ? { strictIcons: true as const, iconNames } : {}),
+        ...(options.strictSelectorId ? { strictSelectorId: true as const } : {}),
+      } as const;
 
-      if (result.kind !== "ok") {
-        const detail = result.errors.map((e) => `  ${e.code} ${e.message}`).join("\n");
-        this.error(`Kumiki compile failed (${file}):\n${detail}`);
+      const first = compile(code, baseOpts);
+      // Surface non-fatal warnings (W02xx) through Rollup's plugin context so
+      // they show in Vite's overlay/build log without breaking the import.
+      // Emit BEFORE the error-bail path so warnings detected alongside a
+      // fatal error aren't silently lost when `this.error` throws.
+      for (const w of first.warnings) {
+        this.warn({
+          message: `${w.code} ${w.kind}: ${w.message}`,
+          loc: { file, line: w.pos.line, column: w.pos.col },
+        });
+      }
+      if (first.kind !== "ok") {
+        const detail = first.errors.map((e) => `  ${e.code} ${e.message}`).join("\n");
+        const message = `Kumiki compile failed (${file}):\n${detail}`;
+        // Hand the first error's source position to Rollup so Vite's overlay
+        // links straight to the offending line instead of just naming the
+        // file. `loc.column` is 1-based in the parser; Rollup expects the
+        // same here. `first.errors` is non-empty here (kind !== "ok" ⇒
+        // errors.length > 0) but TS can't infer that.
+        const head = first.errors[0];
+        if (head) {
+          this.error({
+            message,
+            id: file,
+            loc: { file, line: head.pos.line, column: head.pos.col },
+          });
+        } else {
+          this.error(message);
+        }
+      }
+
+      // Auto-bundle referenced icons (#101). When the project has
+      // @kumikijs/icons installed, look up each name surfaced by the first
+      // pass and re-codegen with `icons` populated so only used paths reach
+      // the output. When the package is absent we fall through; theme.icons
+      // remains the manual escape hatch.
+      let result = first;
+      if (first.usedIcons.length > 0) {
+        const registry = await resolveBuiltinIcons(file);
+        if (registry) {
+          const subset: Record<string, string> = {};
+          for (const name of first.usedIcons) {
+            const path = registry[name];
+            if (typeof path === "string") subset[name] = path;
+          }
+          if (Object.keys(subset).length > 0) {
+            const second = compile(code, { ...baseOpts, icons: subset });
+            if (second.kind === "ok") result = second;
+          }
+        }
       }
 
       if (options.types) writeIfChanged(`${file}.gen.ts`, generateDts(result.program));

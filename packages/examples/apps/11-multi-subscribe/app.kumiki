@@ -1,0 +1,23 @@
+# Multi-subscribe
+# Two reducers subscribe to ui.click(SaveBtn). Per spec §1.6.4 they both fire,
+# in source order: first `save` bumps `version`, then `audit` records the click
+# count in `log`. Click the button — both slots advance together.
+
+slot version : Int = 0
+slot log     : Int = 0
+
+reducer save  on=ui.click(SaveBtn) do= version := version + 1
+reducer audit on=ui.click(SaveBtn) do= log     := log     + 1
+
+tile SaveBtn = button(text="Save")
+
+tile App = column(
+             heading("Multi-subscribe demo"),
+             row(text("version: " + version.show),
+                 text("log: " + log.show)) {gap: "md"},
+             SaveBtn)
+
+app MultiSubscribe
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

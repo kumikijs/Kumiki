@@ -8,6 +8,7 @@
 // (reducers), and effects are mocked at the capability boundary — so the oracle
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
+import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape } from "./index.ts";
 import { mount } from "./index.ts";
 
@@ -16,6 +17,8 @@ export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
   | { clickText: string }
   | { click: string }
+  | { focus: string }
+  | { blur: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
   | { navigate: string };
@@ -68,7 +71,12 @@ export async function runScenario(
   app: AppShape,
   root: HTMLElement,
   scenario: Scenario,
-  opts: { settleMs?: number; router?: "history" | "memory"; initialPath?: string } = {},
+  opts: {
+    settleMs?: number;
+    router?: "history" | "memory";
+    initialPath?: string;
+    episodeLogger?: EpisodeLogger | null;
+  } = {},
 ): Promise<ScenarioReport> {
   const settleMs = opts.settleMs ?? 25;
   const steps: StepResult[] = [];
@@ -113,9 +121,14 @@ export async function runScenario(
 
   const dispatchable = app as Dispatchable;
 
-  const mountOpts: { router?: "history" | "memory"; initialPath?: string } = {};
+  const mountOpts: {
+    router?: "history" | "memory";
+    initialPath?: string;
+    episodeLogger?: EpisodeLogger | null;
+  } = {};
   if (opts.router) mountOpts.router = opts.router;
   if (opts.initialPath !== undefined) mountOpts.initialPath = opts.initialPath;
+  if (opts.episodeLogger) mountOpts.episodeLogger = opts.episodeLogger;
 
   try {
     try {
@@ -187,6 +200,8 @@ function describeAction(a: Action): string {
   if ("dispatch" in a) return `dispatch ${a.dispatch}`;
   if ("clickText" in a) return `clickText "${a.clickText}"`;
   if ("click" in a) return `click ${a.click}`;
+  if ("focus" in a) return `focus ${a.focus}`;
+  if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
   return `navigate ${a.navigate}`;
@@ -216,6 +231,25 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
       root.querySelector<HTMLElement>(a.click) ?? document.querySelector<HTMLElement>(a.click);
     if (!el) throw new Error(`no element matching selector ${a.click}`);
     el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return;
+  }
+  if ("focus" in a) {
+    // Verify the DOM-wiring path: addEventListener("focus") → applyUiEventHandlers
+    // (core.ts) → reducer. focus/blur do not bubble per DOM spec, but the runtime
+    // attaches the listener directly on the tile element so a non-bubbling
+    // dispatch reaches it. Scope the query to `root`: focus/blur targets render
+    // inside the mount tree (unlike confirm/toast overlays that justify `click`'s
+    // document fallback), and a document-wide lookup would silently hit a leaked
+    // element from a prior test.
+    const el = root.querySelector<HTMLElement>(a.focus);
+    if (!el) throw new Error(`no element matching selector ${a.focus}`);
+    el.dispatchEvent(new FocusEvent("focus"));
+    return;
+  }
+  if ("blur" in a) {
+    const el = root.querySelector<HTMLElement>(a.blur);
+    if (!el) throw new Error(`no element matching selector ${a.blur}`);
+    el.dispatchEvent(new FocusEvent("blur"));
     return;
   }
   if ("fill" in a) {

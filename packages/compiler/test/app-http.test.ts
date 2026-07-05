@@ -112,7 +112,7 @@ describe("codegen: app.http (#78)", () => {
     expect(result.js).toContain("timeout: 5000");
     expect(result.js).toContain('credentials: "include"');
     expect(result.js).toContain("http: _http,");
-    expect(result.js).toMatch(/httpFetch\("GET", \w+, _http\)/);
+    expect(result.js).toMatch(/httpFetch\("GET", \w+, _http, signal\)/);
   });
 
   it("emits const _http = undefined when app has no http block", () => {

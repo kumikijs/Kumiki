@@ -1,0 +1,31 @@
+# Feature: `@token` references inside a `style: {}` block (spec/style.md §4.3).
+# Lets a tile reach theme tokens that the shorthand props (§4.3.1) don't expose
+# (e.g. `border-color`, gradient stops, custom CSS properties).
+
+tile Card = box(text("body")) {
+    style: {
+        background:   @colors.surface,
+        padding:      @spacing.md,
+        border-radius: @radius.md,
+        box-shadow:   @shadow.sm,
+        color:        @colors.fg,
+        font-size:    @typography.size.lg
+    }
+}
+
+tile App = column(Card) {pad: "lg"}
+
+theme Light = {
+    colors:     {bg: "#ffffff", fg: "#1a1a1a", primary: "#0070f3", surface: "#f7f7f7",
+                 border: "#e0e0e0", muted: "#888"},
+    spacing:    {sm: "8px", md: "16px", lg: "24px"},
+    radius:     {sm: "4px", md: "8px"},
+    shadow:     {sm: "0 1px 2px rgba(0,0,0,0.08)"},
+    typography: {size: {sm: "14px", md: "16px", lg: "20px"}}
+}
+
+app TokenRefs
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = Light
