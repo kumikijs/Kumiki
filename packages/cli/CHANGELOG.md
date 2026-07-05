@@ -1,5 +1,78 @@
 # @kumikijs/cli
 
+## 0.6.0
+
+### Minor Changes
+
+- 07e9c6b: feat(runtime,compiler,cli): episode logger (§10.5) + `episode-test` (§8.6) (#90).
+
+  - runtime: new `createEpisodeLogger` (in-memory ring buffer + opt-in localStorage mirror) plus `MountOptions.episodeLogger` hooked into every reducer / effect-start / effect-end / signal-update / panic seam. Mounted apps expose `app.episodes()` (§10.7). Volatile slots are excluded from `slot-diffs` per language.md §175.
+  - runtime/testkit: new `_stdlibTest.runEpisodeTest` — replays the logged trigger → reducer chain, resolves effects via `from-log` / `ignore` / `ok(v)` / `err(e)` mocks, and asserts `slots-equal: from-log` / `no-panics` / `no-errors`.
+  - compiler: `episode-test` added to AST / parser / typecheck / codegen. The log fixture is read at compile time via the injected `readEpisodeLog` (Node helper `nodeEpisodeLogReader`) so the runtime never touches the filesystem.
+  - cli: `kumiki run --episode-log <file>` now emits real per-trigger §10.5.1 episodes instead of the placeholder one-scenario-step records. `kumiki test` wires `readEpisodeLog` automatically when an `episode-test` is present.
+  - examples: new `packages/examples/features/44-episode-test.kumiki` + fixture.
+
+- 07e9c6b: feat(cli): `kumiki dev` — Vite dev server + episode timeline panel (#118).
+
+  New `kumiki dev <file>` verb boots a Vite dev server that compiles the source `.kumiki` on-the-fly, remounts the app across HMR without losing the in-flight episode, and exposes a browser-side episode timeline panel for step-through inspection.
+
+  - cli: `packages/cli/src/dev.ts` orchestrates the Vite server; middleware serves the compiled bundle non-silently on errors. HMR remount catches listener leaks by cleaning up before remounting.
+  - cli: `packages/cli/src/dev/panel.ts` renders the timeline overlay; `dev/client.ts` streams episode events to it.
+  - tests: CLI dispatch test widened to 30s for tsx cold start.
+
+- 07e9c6b: feat(cli,runtime): `kumiki replay` — interactive episode replay (§10.5.3) (#117).
+
+  - cli: new `replay` verb. `kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]` replays a recorded episode log against a compiled app and streams the per-step trace (reducer / effect-start / effect-end / signal-update). `--mock` is repeatable; values follow §8.6's `from-log | ignore | ok(<json>) | err(<json>)` grammar. `--until-step` halts after the Nth observed step (1-indexed, global across episodes) and prints the slots at that moment.
+  - runtime/testkit: extracted the per-episode executor that already powered `runEpisodeTest` into a shared `executeEpisode` and exposed it through a new `replayEpisodes` export. Both the assert-based test runner and the CLI trace formatter call the same engine — `from-log` cursor, refine ward, and unhandled-error accounting can no longer drift between them.
+  - compiler: `parseEpisodeLogText` is now exported from `@kumikijs/compiler/node` so CLI tooling can consume `kumiki run --episode-log` output without going through codegen.
+
+- 07e9c6b: feat(compiler,cli,vite): `--strict-icons` to flag unknown `icon(name=...)` at check time (#127).
+
+  Kumiki ships a built-in icon set but rendering an unknown `name=` silently fell back to an empty placeholder. `--strict-icons` promotes the runtime silence into a compile-time error so typos and dropped icons are caught during `kumiki check`.
+
+  - compiler: `check()` gains a `strictIcons` option; `E02xx strict-icon-unknown` is emitted when `name=` is not a member of the built-in set.
+  - cli: `kumiki check --strict-icons` and `kumiki build --strict-icons`.
+  - vite: `strictIcons: true` plugin option.
+  - spec: `docs/spec/errors.md` and `docs/spec/style.md` document the strict gate.
+
+- 07e9c6b: feat(compiler,cli,vite): `--strict-selector-id` to flag `TileName#id` typos at check time (#149).
+
+  `E0212 selector-id-mismatch` is now emitted (opt-in via `strictSelectorId`) when a reducer subscribes to `Tile#id` but every declaration of `Tile` has a **literal** `{id: "..."}` that does not match the selector's id — the reducer would otherwise silently never fire at runtime. Tiles whose `{id}` is computed are deliberately exempt so the runtime filter remains the authority for dynamic ids.
+
+  - compiler: `check()` gains `strictSelectorId`; `E0212` mirrors the existing `strictIcons` / `strictA11y` gate pattern.
+  - cli: `kumiki check --strict-selector-id` and `kumiki build --strict-selector-id`.
+  - vite: `strictSelectorId: true` plugin option.
+  - spec: `docs/spec/errors.md` documents `E0212` alongside the runtime-filter fallback for dynamic ids.
+
+### Patch Changes
+
+- 07e9c6b: feat(compiler): `W0212 ui-event-subscription-mismatch` — warn on `ui-event` subscriptions that cannot fire (#143).
+
+  When a reducer subscribes to a `ui-event` on a tile that cannot emit it (e.g. `ui.submit(DivTile)` or `ui.focus(NonFocusableTile)`), the compiler now emits `W0212` instead of silently generating a handler the DOM will never invoke. The rule consults the ui-event implicit-lift table (single source of truth in `packages/compiler/src/ui-lifts.ts`) to decide whether the subscription is admissible.
+
+  - compiler: `checkReducer` cross-references the target tile's kind against the ui-event's admissible tile set.
+  - runtime / cli / vite: no behavioural change; the diagnostic surfaces through the standard `check` gate and Vite overlay.
+  - spec: `docs/spec/errors.md` and `docs/spec/stdlib.md` document `W0212`; `docs/spec/language.md` cross-links to the ui-event lift table.
+
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+  - @kumikijs/runtime@0.11.0
+  - @kumikijs/compiler@0.11.0
+  - @kumikijs/vite@0.5.0
+
 ## 0.5.1
 
 ### Patch Changes

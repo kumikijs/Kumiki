@@ -1,5 +1,17 @@
 # kumiki
 
+## 0.3.9
+
+### Patch Changes
+
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+  - @kumikijs/cli@0.6.0
+
 ## 0.3.8
 
 ### Patch Changes
