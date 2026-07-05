@@ -115,7 +115,16 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
   });
 
   it("debounce: a replaced timer records effect-cancel on its originating episode and the new episode owns the eventual effect-end", async () => {
-    const ctx = makeDebounceApp(20);
+    // Timing budget: the invariant we care about is "the second dispatch
+    // reaches the reducer before the first debounce timer fires". A 20ms
+    // window with a 5ms inter-dispatch wait leaves ~15ms of slack, which
+    // shared CI runners can burn through when the event loop stalls
+    // (observed: first timer fires before the cancel, `searchCalls` hits 2).
+    // A 200ms window with a 20ms inter-dispatch wait keeps ~180ms of slack
+    // without materially slowing the test — the `tick(300)` afterwards
+    // remains dominated by the debounce.
+    const DEBOUNCE_MS = 200;
+    const ctx = makeDebounceApp(DEBOUNCE_MS);
     const logger = createEpisodeLogger({ memoryMax: 10 });
     const root = document.createElement("div");
     document.body.appendChild(root);
@@ -127,14 +136,16 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
 
       dispatch("onInput", { value: "k" });
       // Before the first timer fires, dispatch a second input — replaces the
-      // pending launch.
-      await tick(5);
+      // pending launch. Guard the invariant explicitly so a flake here
+      // fails with a clear message instead of on the count below.
+      await tick(20);
+      expect(ctx.searchCalls, "first debounce timer must not have fired yet").toBe(0);
       dispatch("onInput", { value: "ku" });
 
       // The first (cancelled) episode commits as soon as its pending counter
       // hits 0 via the cancel path. The second episode is still pending its
       // effect-end.
-      await tick(40);
+      await tick(DEBOUNCE_MS + 100);
       expect(ctx.searchCalls).toBe(1);
 
       ctx.resolveSearch({ hits: ["ku-result"] });
