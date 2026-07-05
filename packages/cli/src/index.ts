@@ -3,11 +3,16 @@
 export { type DevCmdOptions, devCmd, startDevServer } from "./dev.ts";
 export {
   type AutoPatch,
+  applyFixPlan,
+  type FixApplyResult,
   type FixFromTestOutcome,
+  type FixPlan,
   fixCmd,
   fixFromTest,
+  planFix,
   planFixes,
   planTestPatch,
+  runFixFromTest,
 } from "./fix.ts";
 export {
   addDef,
@@ -25,7 +30,18 @@ export {
   viewHash,
   viewHistory,
 } from "./mutate.ts";
-export { runCmd, runScenarioSource, smokeCmd, smokeFile, smokeSource } from "./smoke.ts";
+export {
+  type Coverage,
+  runCmd,
+  runScenarioSource,
+  runTests,
+  smokeCmd,
+  smokeFile,
+  smokeSource,
+  type TestReport,
+  testCmd,
+  testFile,
+} from "./smoke.ts";
 export {
   directDeps,
   findReferences,

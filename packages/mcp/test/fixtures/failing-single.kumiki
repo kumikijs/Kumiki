@@ -1,0 +1,12 @@
+slot greeting : Text = "hi"
+reducer greet on=ui.click(Btn) do= greeting := "world"
+tile Btn = button(text="click", onClick=greet)
+tile App = column(heading(greeting), Btn)
+app FailingApp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test greet-should-say-planet =
+    reducer-test greet
+        given  = {slots: {greeting: "hi"}, event: {type: ui.click, target: Btn}}
+        expect = {slots: {greeting: "planet"}, effects: []}
