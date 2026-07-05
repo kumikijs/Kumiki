@@ -1,32 +1,33 @@
-# @kumikijs/site
+# @kumikijs/docs
 
-The Kumiki documentation site (VitePress). It serves `spec/`, `guide/`, and `examples/` as a single source, and includes an in-browser **Playground** (running the compiler + runtime in the browser) and **WebMCP** tools.
-
-## How it works
-
-The normative source lives at the repository root in `spec/` etc. Before the build, `scripts/sync-docs.mjs` copies them into `site/` (the copy destination is gitignored). This lets VitePress keep a single source while staying in its usual in-project layout.
+The Kumiki documentation site (VitePress). It serves `spec/` and `guide/` and includes an in-browser **Playground** (running the compiler + runtime in the browser) and **WebMCP** tools.
 
 ## Development
 
 ```sh
-pnpm --filter @kumikijs/site dev      # sync + dev server
-pnpm --filter @kumikijs/site build    # sync + production build → site/dist
-pnpm --filter @kumikijs/site preview
+pnpm --filter @kumikijs/docs dev
+pnpm --filter @kumikijs/docs build     # → docs/.vitepress/dist
+pnpm --filter @kumikijs/docs preview
 ```
 
-The Playground imports `@kumikijs/runtime/bundle?raw`, so the runtime bundle is required before building. Using `pnpm exec turbo run build --filter=@kumikijs/site` builds the dependencies (runtime/compiler) first automatically.
+The Playground imports `@kumikijs/runtime/bundle?raw`, so the runtime bundle must exist before the site is built. Use `pnpm exec turbo run build --filter=@kumikijs/docs` — Turborepo's `dependsOn: ^build` builds the runtime and compiler first automatically.
 
-## Deploy (Cloudflare Pages → kumiki.kage1020.com)
+## Deploy (Cloudflare Pages)
 
-CI ([`.github/workflows/deploy-site.yml`](../.github/workflows/deploy-site.yml)) deploys automatically on push to `main`. The following is required beforehand:
+Deployed by the **Cloudflare Pages Git Integration** on push to `main`. There is no GitHub Actions workflow and no repo-side Cloudflare secret — CF authenticates the deploy via its GitHub App connection.
 
-1. Create a Pages project `kumiki` in Cloudflare.
-2. Register `CLOUDFLARE_API_TOKEN` (Pages edit permission) and `CLOUDFLARE_ACCOUNT_ID` in the repository's GitHub Secrets.
-3. Add `kumiki.kage1020.com` to the Pages project's **Custom domains** (DNS sets up the CNAME automatically on the Cloudflare side).
+Pages project settings (dashboard) that must match `wrangler.jsonc`:
 
-For a manual deploy:
+| Field | Value |
+|---|---|
+| Project name | `kumiki` |
+| Root directory | `/docs` |
+| Build command | `pnpm exec turbo run build --filter=@kumikijs/docs` |
+| Build output directory | `.vitepress/dist` |
+
+Manual deploy (requires local `wrangler login`):
 
 ```sh
-pnpm exec turbo run build --filter=@kumikijs/site
-cd site && wrangler pages deploy   # uses pages_build_output_dir=dist from wrangler.jsonc
+pnpm exec turbo run build --filter=@kumikijs/docs
+cd docs && wrangler pages deploy
 ```

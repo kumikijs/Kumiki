@@ -24,7 +24,7 @@ export default defineConfig({
   },
   themeConfig: {
     logo: { light: "/kumiki-mark.svg", dark: "/kumiki-mark-dark.svg" },
-    socialLinks: [{ icon: "github", link: "https://github.com/kage1020/Kumiki" }],
+    socialLinks: [{ icon: "github", link: "https://github.com/kumikijs/Kumiki" }],
     search: { provider: "local" },
   },
   locales: {
