@@ -5,7 +5,7 @@
 
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
-import { chromium, type Page } from "playwright";
+import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
 
 export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
@@ -60,7 +60,37 @@ function buildHtml(js: string): string {
 <body><div id="root"></div><script type="module">${safe}</script></body></html>`;
 }
 
+// A synthetic origin the tier-3 runner serves the built app under. The default
+// history-based router uses `history.pushState`, which throws a SecurityError on
+// the null origin returned by page.setContent (about:blank) and data: URLs.
+// Serving from a real (intercepted) HTTP origin lets `navigate` actions round-
+// trip through `pushState` the way a shipped page would.
+const KUMIKI_HOST = "http://kumiki.local";
+const KUMIKI_DOC_URL = `${KUMIKI_HOST}/`;
+const KUMIKI_ROUTE_GLOB = `${KUMIKI_HOST}/**`;
+
 export async function runScenarioInBrowser(
+  source: string,
+  scenario: Scenario,
+  opts: BrowserOptions = {},
+): Promise<BrowserReport> {
+  const browser = await chromium.launch({ headless: !opts.headed });
+  try {
+    const page = await browser.newPage();
+    return await runOnPage(page, source, scenario, opts);
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Drive a scenario against an already-open Playwright `Page`. Console / pageerror
+ * listeners and the route interceptor installed here are removed before return,
+ * so the same `Page` can be reused for another `runOnPage` call without leaking
+ * handlers or having the first invocation's HTML shadow the second.
+ */
+export async function runOnPage(
+  page: Page,
   source: string,
   scenario: Scenario,
   opts: BrowserOptions = {},
@@ -86,17 +116,33 @@ export async function runScenarioInBrowser(
     };
   }
 
-  const browser = await chromium.launch({ headless: !opts.headed });
   const steps: StepResult[] = [];
   let errorBuf: string[] = [];
-  try {
-    const page = await browser.newPage();
-    page.on("console", (m) => {
-      if (m.type() === "error") errorBuf.push(m.text());
-    });
-    page.on("pageerror", (e) => errorBuf.push(String(e)));
+  const html = buildHtml(compiled.js);
+  const onConsole = (m: ConsoleMessage): void => {
+    if (m.type() === "error") errorBuf.push(m.text());
+  };
+  const onPageError = (e: Error): void => {
+    errorBuf.push(String(e));
+  };
+  // Serve only the app document at the synthetic origin. Any other request
+  // under that origin (subresources, `fetch("/api/...")` from a capability)
+  // must NOT get the HTML shell back — that would surface as a confusing JSON
+  // parse error inside the app. Abort them so the app sees a real network
+  // failure instead of a silently mislabelled response.
+  const onRoute = (route: Route): Promise<void> => {
+    if (route.request().url() === KUMIKI_DOC_URL) {
+      return route.fulfill({ contentType: "text/html; charset=utf-8", body: html });
+    }
+    return route.abort();
+  };
 
-    await page.setContent(buildHtml(compiled.js), { waitUntil: "load" });
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
+
+  try {
+    await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
     await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
     await page.waitForTimeout(settleMs);
 
@@ -126,9 +172,16 @@ export async function runScenarioInBrowser(
       steps.push(r);
     }
   } finally {
-    await browser.close();
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
   }
 
+  // The browser tier is strict on uncaught errors by design: a JS exception or
+  // console error in the app is a real defect that must not slip through as
+  // "green with warnings". `expect.noErrors` in a fixture is therefore
+  // redundant here — accepted for scenario-format compatibility, but not
+  // load-bearing.
   const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);
   return { ok, steps };
 }

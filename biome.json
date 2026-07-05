@@ -17,6 +17,8 @@
       "!**/.turbo",
       "!**/examples-build",
       "!**/test-tmp",
+      "!**/playwright-report",
+      "!**/test-results",
       "!packages/benchmarks/size-comparison/scenarios/**/react-modified.tsx",
       "!packages/benchmarks/size-comparison/todomvc-react"
     ]
