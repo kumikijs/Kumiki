@@ -1,0 +1,16 @@
+slot message : Text = "hello"
+reducer set on=ui.click(Btn) do= message := "world"
+tile Btn = button(text="click", onClick=set)
+tile App = column(heading(message), Btn)
+app RegressApp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test A =
+    reducer-test set
+        given  = {slots: {message: "hello"}, event: {type: ui.click, target: Btn}}
+        expect = {slots: {message: "planet"}, effects: []}
+test B =
+    reducer-test set
+        given  = {slots: {message: "hello"}, event: {type: ui.click, target: Btn}}
+        expect = {slots: {message: "world"}, effects: []}

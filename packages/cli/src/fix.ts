@@ -134,9 +134,11 @@ export type FixPlan = {
  * Apply the planned patches to `path`, re-typecheck the result, and return
  * before/after source plus the residual diagnostic set. `parseError` is set
  * only when the composed patches produced source the lexer/parser cannot
- * accept — the file is already written in that case (matches `fixCmd`'s prior
- * "surface it, don't throw" behavior). Callers that need a dry preview should
- * use `planFix` and apply `patches[i].apply` themselves.
+ * accept — the file has already been written in that case; surfacing the
+ * error to the caller is preferred to throwing, because rolling back would
+ * lose the artefact that shows *why* the composed patch was bad. Callers
+ * that need a dry preview should use `planFix` and apply `patches[i].apply`
+ * themselves.
  */
 export function applyFixPlan(
   path: string,
@@ -156,12 +158,25 @@ export function applyFixPlan(
     const remaining = check(next, { capabilities });
     return { applied: plan.patches.length, before, after, remaining };
   } catch (e) {
+    // The composed patches produced unparseable source (already on disk).
+    // Emit a synthetic parse-error diagnostic so `remaining.length === 0 ⇔
+    // file is clean` holds; callers that read only `remaining` won't mistake
+    // a broken file for a fixed one. `parseError` still carries the raw
+    // message for surfacing.
+    const message = e instanceof Error ? e.message : String(e);
+    const pe = e as { pos?: { line: number; col: number } };
+    const synthetic: KumikiError = {
+      code: "E0000",
+      kind: "parse-error",
+      message,
+      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    };
     return {
       applied: plan.patches.length,
       before,
       after,
-      remaining: [],
-      parseError: e instanceof Error ? e.message : String(e),
+      remaining: [synthetic],
+      parseError: message,
     };
   }
 }
@@ -173,9 +188,18 @@ export type FixApplyResult = {
   before: string;
   /** Source after writing (already on disk). */
   after: string;
-  /** Residual typecheck diagnostics after the write. Empty when the file is now clean. */
+  /**
+   * Residual diagnostics after the write. Empty ⇔ file is clean. When the
+   * write produced unparseable source, this contains a synthetic `E0000`
+   * parse-error so the empty-⇔-clean invariant holds without callers needing
+   * to inspect `parseError` first.
+   */
   remaining: KumikiError[];
-  /** Set when the composed patches produced unparseable source (already on disk). */
+  /**
+   * Raw parser message when the composed patches broke syntax. Duplicated by
+   * the `E0000` entry in `remaining`; kept as a convenience field for
+   * callers rendering a human message.
+   */
   parseError?: string;
 };
 
@@ -230,38 +254,74 @@ export function fixCmd(
 //   2. behavioral — the file compiles but the test fails; apply a deterministic
 //      literal repair when one is provable (see `planTestPatch`), else report.
 
-export type FixFromTestOutcome = {
-  /** true when the named test ends up passing, or a fix is available in dry-run. */
-  ok: boolean;
-  status:
-    | "not-found"
-    | "already-pass"
-    | "proposed"
-    | "applied"
-    | "no-patch"
-    | "compile-proposed"
-    | "compile-remaining";
-  /** Post-apply status of the named test, when an apply happened. */
-  pass?: boolean;
-  /** The behavioral patch proposed or applied. */
-  patch?: AutoPatch;
-  /** Count of Tier-1 compile fixes proposed or applied. */
-  compileFixes?: number;
-  /** Names of other tests that regressed after applying. */
-  regressed?: string[];
-  /** Compile errors surfaced when Tier-1 could not clear the blockage. */
-  compileErrors?: KumikiError[];
-  /** Compile-tier patches proposed in dry-run (`status="compile-proposed"`). */
-  compilePatches?: AutoPatch[];
-  /** Test result for `testName` when Tier-2 has no deterministic patch. */
-  failingTest?: TestResult;
-  /** Names of all tests when the target was not found. */
-  availableTests?: string[];
-  /** Set when the test runner itself threw before any test could run. */
-  testRunError?: string;
-  /** Set when compile-tier patches broke the file's syntax. */
-  parseError?: string;
-};
+/**
+ * Two-tier fix-from-test outcome as a discriminated union on `status`. Each
+ * variant carries only the fields it defines, so callers can narrow with
+ * `switch (outcome.status)` and get exact-shape TypeScript. `ok: true` means
+ * the named test either already passes, will pass after applying, or a fix is
+ * available in dry-run; every other case is `ok: false`.
+ *
+ * Tier-1 failures short-circuit before the test can run:
+ *   `no-patch` (compile-blocked, nothing repairable) |
+ *   `compile-proposed` (dry-run: repairable compile errors) |
+ *   `compile-remaining` (apply: still broken after Tier-1 write).
+ *
+ * Tier-2 covers the compiling file:
+ *   `not-found` | `already-pass` | `no-patch` (no deterministic patch) |
+ *   `proposed` (dry-run patch) | `applied` (patch written; carries `regressed`).
+ */
+export type FixFromTestOutcome =
+  | {
+      ok: false;
+      status: "no-patch";
+      /** Compile-tier blockage: file has errors and none are auto-repairable. */
+      compileErrors?: KumikiError[];
+      /** Test runner threw before any test could execute. */
+      testRunError?: string;
+      /** Behavioral tier: the target test failed but no deterministic literal repair exists. */
+      failingTest?: TestResult;
+      compileFixes?: number;
+    }
+  | {
+      ok: true;
+      status: "compile-proposed";
+      compileFixes: number;
+      compilePatches: AutoPatch[];
+    }
+  | {
+      ok: false;
+      status: "compile-remaining";
+      compileFixes: number;
+      compileErrors?: KumikiError[];
+      parseError?: string;
+    }
+  | {
+      ok: false;
+      status: "not-found";
+      availableTests: string[];
+      compileFixes?: number;
+    }
+  | {
+      ok: true;
+      status: "already-pass";
+      pass: true;
+      compileFixes?: number;
+    }
+  | {
+      ok: true;
+      status: "proposed";
+      patch: AutoPatch;
+      compileFixes?: number;
+    }
+  | {
+      ok: boolean;
+      status: "applied";
+      pass: boolean;
+      patch: AutoPatch;
+      /** Names of other tests that were passing before the write and now fail. Always populated (may be []). */
+      regressed: string[];
+      compileFixes?: number;
+    };
 
 /**
  * Render a string as a Kumiki source literal, or null if it needs an escape the
@@ -349,11 +409,12 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
 }
 
 /**
- * Pure, printer-free variant of `fixFromTest`. Same two-tier repair — compile
- * fixes first (`planFixes` → optionally written), then a deterministic
- * literal repair from a failing test (`planTestPatch` → optionally written) —
- * but every branch returns via the `FixFromTestOutcome` structure. The outcome
- * carries the compile-tier failing errors (`compileErrors`), the failing test
+ * Two-tier fix-from-test. Tier 1 clears compile errors with `planFixes` so the
+ * test can run; Tier 2 applies a deterministic literal repair from the failing
+ * test with `planTestPatch`. Every branch returns via the `FixFromTestOutcome`
+ * discriminated union — no stdout side effects. `fixFromTest` wraps this and
+ * adds the CLI printer. The outcome carries compile-tier errors
+ * (`compileErrors`), the failing test
  * itself (`failingTest`), and the current set of test results (`tests`) so
  * MCP callers can render diagnostics without stdout scraping.
  */
@@ -457,8 +518,10 @@ export async function runFixFromTest(
     status: "applied",
     pass: nowPass,
     patch,
+    // Always populated: `[]` means "checked, none regressed" — never absent
+    // on the `applied` branch. Baked into the type by the discriminated union.
+    regressed,
     ...(compileFixes ? { compileFixes } : {}),
-    ...(regressed.length ? { regressed } : {}),
   };
 }
 
@@ -473,14 +536,17 @@ export async function fixFromTest(
   return outcome;
 }
 
-/** Human-readable print of a `runFixFromTest` outcome. Mirrors the pre-refactor CLI output. */
+/** Human-readable print of a `runFixFromTest` outcome. */
 function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
-  // Applied-tier-1 header — printed before the Tier-2 line whenever Tier-1
-  // wrote patches, matching the pre-refactor sequenced output.
+  // Applied-tier-1 header: only when Tier-1 patches were *written* — i.e. the
+  // apply path. `compile-proposed` also carries `compileFixes` (the count of
+  // proposed patches), but printing "applied N" for it would lie about a
+  // dry-run.
   if (
     outcome.compileFixes !== undefined &&
     outcome.compileFixes > 0 &&
-    outcome.status !== "compile-remaining"
+    outcome.status !== "compile-remaining" &&
+    outcome.status !== "compile-proposed"
   ) {
     console.log(`applied ${outcome.compileFixes} compile fix(es) — file now compiles`);
   }

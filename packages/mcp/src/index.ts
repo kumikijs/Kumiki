@@ -31,6 +31,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 type Scenario = Parameters<typeof runScenarioSource>[1];
 
+import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
 import type { KumikiError } from "@kumikijs/compiler";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import {
@@ -66,10 +67,78 @@ function capsForInput(input: {
   return input.capabilities ?? [];
 }
 
-/** Turn a thrown input error (bad path / malformed manifest) into a clean message. */
-function errMsg(e: unknown): string {
-  if (e instanceof CapabilityManifestError) return `capability manifest error: ${e.message}`;
-  return `error: ${e instanceof Error ? e.message : String(e)}`;
+/**
+ * Uniform JSON error envelope for tool responses. Success responses use their
+ * own JSON shape (e.g. `{ total, passed, ... }`); a client that always
+ * `JSON.parse`s the tool output would otherwise hit an exception on the
+ * failure path with the older `"error: <msg>"` plain-text form.
+ */
+function errText(e: unknown) {
+  const kind = e instanceof CapabilityManifestError ? "capability-manifest" : "error";
+  const message = e instanceof Error ? e.message : String(e);
+  return text(JSON.stringify({ error: { kind, message } }, null, 2));
+}
+
+/**
+ * Serialise a `FixFromTestOutcome` for the MCP wire: drop the un-serialisable
+ * `apply` closure from every `AutoPatch`, convert `KumikiError[]` →
+ * `Diagnostic[]`, and preserve the discriminated union so the client can
+ * `switch (r.status)` on the response. The `applied` variant always carries
+ * `regressed: string[]` (may be empty) — the client never has to fall back to
+ * `?? []`.
+ */
+function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
+  const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
+  const base = { ok: o.ok, status: o.status };
+  switch (o.status) {
+    case "no-patch":
+      return {
+        ...base,
+        ...(o.compileErrors ? { compileErrors: toDiagnostics(o.compileErrors) } : {}),
+        ...(o.testRunError ? { testRunError: o.testRunError } : {}),
+        ...(o.failingTest ? { failingTest: o.failingTest } : {}),
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+    case "compile-proposed":
+      return {
+        ...base,
+        compileFixes: o.compileFixes,
+        compilePatches: o.compilePatches.map(patchWire),
+      };
+    case "compile-remaining":
+      return {
+        ...base,
+        compileFixes: o.compileFixes,
+        ...(o.compileErrors ? { compileErrors: toDiagnostics(o.compileErrors) } : {}),
+        ...(o.parseError ? { parseError: o.parseError } : {}),
+      };
+    case "not-found":
+      return {
+        ...base,
+        availableTests: o.availableTests,
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+    case "already-pass":
+      return {
+        ...base,
+        pass: o.pass,
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+    case "proposed":
+      return {
+        ...base,
+        patch: patchWire(o.patch),
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+    case "applied":
+      return {
+        ...base,
+        pass: o.pass,
+        patch: patchWire(o.patch),
+        regressed: o.regressed,
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+  }
 }
 
 type Episode = {
@@ -79,23 +148,56 @@ type Episode = {
   steps?: unknown[];
 };
 
+type EpisodeLogRead = {
+  entries: Episode[];
+  /** Number of non-blank JSONL lines that failed to parse. */
+  skipped: number;
+  /** 1-based line number of the first malformed line, if any. */
+  firstMalformedLine?: number;
+};
+
 /**
  * Read a `<file>.kumiki-episodes.jsonl` log into a chronological (append-order)
- * array. Malformed JSONL lines are skipped rather than throwing — logs are
- * appended to by long-running processes and may end mid-write.
+ * array. Malformed JSONL lines are counted (not silently dropped) so callers
+ * can surface a warning — a log written by a long-running process may end
+ * mid-write, which is expected; arbitrary bad lines usually mean the runtime
+ * logger produced garbage, and hiding that would mask the real bug.
  */
-function readEpisodeLog(logPath: string): Episode[] {
+function readEpisodeLog(logPath: string): EpisodeLogRead {
   const lines = readFileSync(logPath, "utf8").split(/\r?\n/);
   const entries: Episode[] = [];
-  for (const line of lines) {
+  let skipped = 0;
+  let firstMalformedLine: number | undefined;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
     if (!line.trim()) continue;
     try {
       entries.push(JSON.parse(line) as Episode);
     } catch {
-      // skip malformed line
+      skipped++;
+      if (firstMalformedLine === undefined) firstMalformedLine = i + 1;
     }
   }
-  return entries;
+  return {
+    entries,
+    skipped,
+    ...(firstMalformedLine !== undefined ? { firstMalformedLine } : {}),
+  };
+}
+
+function buildEpisodeWarnings(
+  skipped: number,
+  firstMalformedLine: number | undefined,
+): Array<{ kind: string; message: string }> {
+  return [
+    {
+      kind: "malformed-jsonl",
+      message:
+        firstMalformedLine !== undefined
+          ? `skipped ${skipped} malformed line(s); first at line ${firstMalformedLine}`
+          : `skipped ${skipped} malformed line(s)`,
+    },
+  ];
 }
 
 function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
@@ -189,7 +291,7 @@ export function createServer(): McpServer {
         if (result.ok) return text("ok — no diagnostics");
         return text(JSON.stringify(result.diagnostics, null, 2));
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
     },
   );
@@ -229,7 +331,7 @@ export function createServer(): McpServer {
           `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,
         );
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
     },
   );
@@ -266,7 +368,7 @@ export function createServer(): McpServer {
           `runtime smoke failed (mounted=${report.mounted}, rendered=${report.rendered}):\n${lines.join("\n")}`,
         );
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
     },
   );
@@ -304,7 +406,7 @@ export function createServer(): McpServer {
           capsForInput(input),
         );
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
       const lines = report.steps.map((s, i) => {
         const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
@@ -482,15 +584,16 @@ export function createServer(): McpServer {
       inputSchema: { path: z.string(), episodeId: z.string() },
     },
     async ({ path, episodeId }) => {
-      const logPath = episodeLogPathFor(resolve(process.cwd(), path));
-      if (!existsSync(logPath)) return text("(no episode log)");
-      const lines = readFileSync(logPath, "utf8").split(/\r?\n/);
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const entry = JSON.parse(line) as { id?: string };
-        if (entry.id === episodeId) return text(JSON.stringify(entry, null, 2));
+      try {
+        const logPath = episodeLogPathFor(resolve(process.cwd(), path));
+        if (!existsSync(logPath)) return text("(no episode log)");
+        const { entries } = readEpisodeLog(logPath);
+        const hit = entries.find((e) => e.id === episodeId);
+        if (hit) return text(JSON.stringify(hit, null, 2));
+        return text(`(no episode with id ${episodeId})`);
+      } catch (e) {
+        return errText(e);
       }
-      return text(`(no episode with id ${episodeId})`);
     },
   );
 
@@ -499,7 +602,7 @@ export function createServer(): McpServer {
     {
       title: "List recent runtime episodes",
       description:
-        "List the most recent episodes in `<file>.kumiki-episodes.jsonl` as compact summaries (`id`, `trigger.kind`, `trigger.target`, `status`, `steps`), newest first. Use this to discover ids for `kumiki_episode` / `kumiki_episode_tail`.",
+        "List the most recent episodes in `<file>.kumiki-episodes.jsonl` as compact summaries (`id`, `trigger.kind`, `trigger.target`, `status`, `steps`), newest first. Use this to discover ids for `kumiki_episode` / `kumiki_episode_tail`. When some JSONL lines fail to parse (e.g. runtime logger bug), the response is wrapped as `{ summaries, warnings: [...] }` so the caller sees the drop count.",
       inputSchema: {
         path: z.string(),
         limit: z
@@ -511,19 +614,34 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, limit }) => {
-      const logPath = episodeLogPathFor(resolve(process.cwd(), path));
-      if (!existsSync(logPath)) return text("(no episode log)");
-      const entries = readEpisodeLog(logPath);
-      if (entries.length === 0) return text("(empty episode log)");
-      const n = limit ?? 20;
-      const tail = entries.slice(-n).reverse();
-      const summaries = tail.map((ep) => ({
-        id: ep.id,
-        trigger: { kind: ep.trigger?.kind, target: ep.trigger?.target },
-        status: ep.status,
-        steps: Array.isArray(ep.steps) ? ep.steps.length : 0,
-      }));
-      return text(JSON.stringify(summaries, null, 2));
+      try {
+        const logPath = episodeLogPathFor(resolve(process.cwd(), path));
+        if (!existsSync(logPath)) return text("(no episode log)");
+        const { entries, skipped, firstMalformedLine } = readEpisodeLog(logPath);
+        if (entries.length === 0) return text("(empty episode log)");
+        const n = limit ?? 20;
+        const summaries = entries
+          .slice(-n)
+          .reverse()
+          .map((ep) => ({
+            id: ep.id,
+            trigger: { kind: ep.trigger?.kind, target: ep.trigger?.target },
+            status: ep.status,
+            steps: Array.isArray(ep.steps) ? ep.steps.length : 0,
+          }));
+        if (skipped > 0) {
+          return text(
+            JSON.stringify(
+              { summaries, warnings: buildEpisodeWarnings(skipped, firstMalformedLine) },
+              null,
+              2,
+            ),
+          );
+        }
+        return text(JSON.stringify(summaries, null, 2));
+      } catch (e) {
+        return errText(e);
+      }
     },
   );
 
@@ -532,7 +650,7 @@ export function createServer(): McpServer {
     {
       title: "Tail the most recent runtime episodes",
       description:
-        "Return the most recent N episodes from `<file>.kumiki-episodes.jsonl` as full JSON entries, newest first. Use `kumiki_episode_list` first if you only need summaries.",
+        "Return the most recent N episodes from `<file>.kumiki-episodes.jsonl` as full JSON entries, newest first. Use `kumiki_episode_list` first if you only need summaries. Malformed JSONL lines are surfaced in a `warnings` field when present.",
       inputSchema: {
         path: z.string(),
         n: z
@@ -544,13 +662,26 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, n }) => {
-      const logPath = episodeLogPathFor(resolve(process.cwd(), path));
-      if (!existsSync(logPath)) return text("(no episode log)");
-      const entries = readEpisodeLog(logPath);
-      if (entries.length === 0) return text("(empty episode log)");
-      const take = n ?? 5;
-      const tail = entries.slice(-take).reverse();
-      return text(JSON.stringify(tail, null, 2));
+      try {
+        const logPath = episodeLogPathFor(resolve(process.cwd(), path));
+        if (!existsSync(logPath)) return text("(no episode log)");
+        const { entries, skipped, firstMalformedLine } = readEpisodeLog(logPath);
+        if (entries.length === 0) return text("(empty episode log)");
+        const take = n ?? 5;
+        const episodes = entries.slice(-take).reverse();
+        if (skipped > 0) {
+          return text(
+            JSON.stringify(
+              { episodes, warnings: buildEpisodeWarnings(skipped, firstMalformedLine) },
+              null,
+              2,
+            ),
+          );
+        }
+        return text(JSON.stringify(episodes, null, 2));
+      } catch (e) {
+        return errText(e);
+      }
     },
   );
 
@@ -609,7 +740,7 @@ export function createServer(): McpServer {
         }
         return text(plan.patches.map((p) => `${p.code}: ${p.description}`).join("\n"));
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
     },
   );
@@ -640,38 +771,9 @@ export function createServer(): McpServer {
         const abs = resolve(process.cwd(), input.path);
         const caps = capsForInput(input);
         const outcome = await runFixFromTest(abs, input.testName, input.apply === true, caps);
-        // Serialise the outcome, converting KumikiError[] → Diagnostic[] and
-        // dropping the un-serialisable `apply` closure on patches. Always
-        // include `regressed` on `apply: true` runs (AC2: "regression must be
-        // in the tool output") — `[]` when nothing regressed, so the caller
-        // can distinguish "checked" from "not-applicable".
-        const serialised: Record<string, unknown> = {
-          ok: outcome.ok,
-          status: outcome.status,
-        };
-        if (outcome.pass !== undefined) serialised.pass = outcome.pass;
-        if (outcome.compileFixes !== undefined) serialised.compileFixes = outcome.compileFixes;
-        if (outcome.patch) {
-          serialised.patch = { code: outcome.patch.code, description: outcome.patch.description };
-        }
-        if (outcome.compilePatches) {
-          serialised.compilePatches = outcome.compilePatches.map((p) => ({
-            code: p.code,
-            description: p.description,
-          }));
-        }
-        if (outcome.compileErrors) {
-          serialised.compileErrors = toDiagnostics(outcome.compileErrors);
-        }
-        if (outcome.failingTest) serialised.failingTest = outcome.failingTest;
-        if (outcome.availableTests) serialised.availableTests = outcome.availableTests;
-        if (outcome.testRunError) serialised.testRunError = outcome.testRunError;
-        if (outcome.parseError) serialised.parseError = outcome.parseError;
-        if (input.apply === true) serialised.regressed = outcome.regressed ?? [];
-        else if (outcome.regressed) serialised.regressed = outcome.regressed;
-        return text(JSON.stringify(serialised, null, 2));
+        return text(JSON.stringify(serialiseFixFromTest(outcome), null, 2));
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
     },
   );
@@ -715,7 +817,7 @@ export function createServer(): McpServer {
           ),
         );
       } catch (e) {
-        return text(errMsg(e));
+        return errText(e);
       }
     },
   );
