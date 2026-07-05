@@ -60,7 +60,36 @@ function buildHtml(js: string): string {
 <body><div id="root"></div><script type="module">${safe}</script></body></html>`;
 }
 
+// A synthetic origin the tier-3 runner serves the built app under. The default
+// history-based router uses `history.pushState`, which throws a SecurityError on
+// the null origin you get from `about:blank` / `data:` URLs (`.setContent`).
+// Serving from a real (intercepted) HTTP origin lets `navigate` actions round-
+// trip through `pushState` the way a shipped page would.
+const KUMIKI_HOST = "http://kumiki.local";
+
 export async function runScenarioInBrowser(
+  source: string,
+  scenario: Scenario,
+  opts: BrowserOptions = {},
+): Promise<BrowserReport> {
+  const browser = await chromium.launch({ headless: !opts.headed });
+  try {
+    const page = await browser.newPage();
+    return await runOnPage(page, source, scenario, opts);
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Drive a scenario against an already-open Playwright `Page`. Intended for the
+ * Playwright test runner, which owns the browser lifecycle via its `page`
+ * fixture — this leaves compile + mount + step-drive to us while the runner
+ * handles workers, retries, and browser cache. `runScenarioInBrowser` is the
+ * thin standalone wrapper that launches its own Chromium.
+ */
+export async function runOnPage(
+  page: Page,
   source: string,
   scenario: Scenario,
   opts: BrowserOptions = {},
@@ -86,47 +115,45 @@ export async function runScenarioInBrowser(
     };
   }
 
-  const browser = await chromium.launch({ headless: !opts.headed });
   const steps: StepResult[] = [];
   let errorBuf: string[] = [];
-  try {
-    const page = await browser.newPage();
-    page.on("console", (m) => {
-      if (m.type() === "error") errorBuf.push(m.text());
-    });
-    page.on("pageerror", (e) => errorBuf.push(String(e)));
+  page.on("console", (m) => {
+    if (m.type() === "error") errorBuf.push(m.text());
+  });
+  page.on("pageerror", (e) => errorBuf.push(String(e)));
 
-    await page.setContent(buildHtml(compiled.js), { waitUntil: "load" });
-    await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
-    await page.waitForTimeout(settleMs);
+  const html = buildHtml(compiled.js);
+  await page.route(`${KUMIKI_HOST}/**`, (route) =>
+    route.fulfill({ contentType: "text/html; charset=utf-8", body: html }),
+  );
+  await page.goto(`${KUMIKI_HOST}/`, { waitUntil: "load" });
+  await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
+  await page.waitForTimeout(settleMs);
 
-    for (const step of scenario.steps) {
-      errorBuf = [];
-      const actionDesc = step.do ? describeAction(step.do) : undefined;
-      if (step.do) {
-        try {
-          await performAction(page, step.do);
-        } catch (e) {
-          errorBuf.push(`action failed: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        await page.waitForTimeout(settleMs);
+  for (const step of scenario.steps) {
+    errorBuf = [];
+    const actionDesc = step.do ? describeAction(step.do) : undefined;
+    if (step.do) {
+      try {
+        await performAction(page, step.do);
+      } catch (e) {
+        errorBuf.push(`action failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const state = (await page.evaluate(snapshotStateFn).catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
-      const visibleText = await page
-        .locator("body")
-        .innerText()
-        .catch(() => "");
-      const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
-      const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
-      if (step.label !== undefined) r.label = step.label;
-      if (actionDesc !== undefined) r.action = actionDesc;
-      steps.push(r);
+      await page.waitForTimeout(settleMs);
     }
-  } finally {
-    await browser.close();
+    const state = (await page.evaluate(snapshotStateFn).catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
+    const visibleText = await page
+      .locator("body")
+      .innerText()
+      .catch(() => "");
+    const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
+    const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
+    if (step.label !== undefined) r.label = step.label;
+    if (actionDesc !== undefined) r.action = actionDesc;
+    steps.push(r);
   }
 
   const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);

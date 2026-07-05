@@ -21,13 +21,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "biome check src"
+    "lint": "biome check src tests",
+    "test:e2e": "playwright test",
+    "playwright:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@kumikijs/compiler": "workspace:*",
-    "playwright": "^1.60.0"
+    "playwright": "catalog:"
   },
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:"

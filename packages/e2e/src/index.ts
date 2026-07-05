@@ -4,6 +4,7 @@ export {
   type BrowserOptions,
   type BrowserReport,
   type Expect,
+  runOnPage,
   runScenarioInBrowser,
   type Scenario,
   type ScenarioStep,

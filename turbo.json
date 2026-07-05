@@ -11,6 +11,11 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "env": ["CI"],
+      "outputs": ["playwright-report/**", "test-results/**"]
+    },
     "lint": {},
     "typecheck": {
       "dependsOn": ["^build"]
