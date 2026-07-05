@@ -1,7 +1,22 @@
 {
   // Cloudflare Pages config for the Kumiki docs site.
-  // Deploy locally with:  wrangler pages deploy  (run from this directory)
-  // The CI workflow (.github/workflows/deploy-site.yml) deploys on push to main.
+  //
+  // Deployed by the Cloudflare Pages Git Integration on push to `main` — no
+  // GitHub Actions workflow and no repo-side secrets (CF authenticates via
+  // its GitHub App).
+  //
+  // Dashboard settings that must match this file:
+  //   - Root directory:            /docs
+  //   - Build command:             pnpm exec turbo run build --filter=@kumikijs/docs
+  //   - Build output directory:    .vitepress/dist  (== pages_build_output_dir)
+  //
+  // The `turbo run build --filter=@kumikijs/docs` pulls `^build` deps
+  // (runtime + compiler) so that `docs/.vitepress/theme/preview.ts` can
+  // resolve its `@kumikijs/runtime/bundle?raw` import.
+  //
+  // Manual deploy (requires local `wrangler login`):
+  //   pnpm exec turbo run build --filter=@kumikijs/docs
+  //   cd docs && wrangler pages deploy
   "name": "kumiki",
-  "pages_build_output_dir": "dist"
+  "pages_build_output_dir": ".vitepress/dist"
 }
