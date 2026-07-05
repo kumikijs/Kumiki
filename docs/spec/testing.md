@@ -255,12 +255,14 @@ Real rendering in a browser (CSS layout, real focus, etc.) cannot be fully repro
 
 Because it is heavy (browser binaries), it is not included in the default CI tests; it is an opt-in layer used for verifying focus, layout, and real rendering, and for final verification. The **correctness** of results cannot be judged by smoke; the layer-3 assertions handle that.
 
-**Fixture shape (`.browser.json`).** A `.browser.json` is the same JSON as a `scenario.json` — `{ "steps": [{ "label"?, "do"?, "expect"? }, ...] }` — with two intentional differences from the scenario tier:
+**Fixture shape (`.browser.json`).** A `.browser.json` is the same JSON as a `scenario.json` — `{ "steps": [{ "label"?, "do"?, "expect"? }, ...] }` — with these intentional differences from the scenario tier:
 
 - `expect` may additionally use the browser-only assertions `focused` / `visible` / `hidden` / `animating` described above.
-- `effects: { ... }` (the capability-boundary mock) and `router: "memory" | "hash" | ...` (both accepted by the scenario tier's `runScenario`) are **not supported** here. The browser tier deliberately drives a real Chromium against the real DOM/CSS — mocking effects would defeat what tier 3 is for, and routing runs off the `setContent` document rather than a URL, so the memory router applies uniformly.
+- Uncaught JS exceptions and `console.error` output are **always fatal** at this tier — a real defect must not slip through as "green with warnings". `expect.noErrors` is accepted for scenario-format compatibility but is redundant here.
+- `effects: { ... }` (the scenario tier's capability-boundary mock) is **not supported**. The browser tier drives a real Chromium against the real DOM/CSS on purpose; mocking effects would defeat what tier 3 is for.
+- The runner serves the compiled app on a fixed intercepted origin (`http://kumiki.local/`), so the default history-based router runs as it would in production — `navigate` actions round-trip through real `history.pushState`. There is no per-fixture router-mode switch.
 
-Drop a fixture at `packages/examples/features/<name>.browser.json` (paired with the sibling `<name>.kumiki`) or `packages/examples/apps/<app>/app.browser.json` (paired with `app.kumiki` in the same directory) and `pnpm test:e2e` picks it up automatically — one Playwright test per fixture. `kumiki-e2e <file> <scenario.json> [--headed]` remains the single-fixture CLI wrapper (same runner, own Chromium).
+Drop a fixture at `packages/examples/features/<name>.browser.json` (paired with the sibling `<name>.kumiki`) or `packages/examples/apps/<app>/<any>.browser.json` (paired with `app.kumiki` in the same directory) and `pnpm test:e2e` picks it up automatically — one Playwright test per fixture. `kumiki-e2e <file> <scenario.json> [--headed]` remains the single-fixture CLI wrapper (same runner, own Chromium).
 
 `@kumikijs/mcp` provides an equivalent `kumiki_smoke`, allowing an AI agent to self-verify after editing.
 

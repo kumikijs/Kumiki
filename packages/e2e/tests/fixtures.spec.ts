@@ -1,11 +1,11 @@
-// Auto-discovered .browser.json fixtures — the concrete tier-3 verification
-// (Chromium via Playwright) for the 3-tier verification model in CLAUDE.md.
-// Each `*.browser.json` under packages/examples/features/ or
-// packages/examples/apps/<name>/ is paired with its sibling `.kumiki` source
-// (features/X.browser.json <-> features/X.kumiki;
-//  apps/<name>/app.browser.json <-> apps/<name>/app.kumiki) and driven as a
-// single Playwright test. Fixture count 0 fails the whole spec — a missing
-// fixture directory should not silently produce a green tier-3.
+// Auto-discovered browser-tier fixtures. `.browser.json` files under
+// `packages/examples/features/` and `packages/examples/apps/<name>/` are the
+// concrete substrate for the tier-3 verification described in
+// `docs/spec/testing.md` §8.10. Pairing rule: for a features fixture
+// `<X>.browser.json` the source is `<X>.kumiki` in the same directory; for an
+// apps fixture any `<any>.browser.json` targets that app's single `app.kumiki`.
+// A missing examples directory is treated as a discovery failure — surfaced as
+// a spec-level throw so a moved/renamed corpus can't produce a silent green.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -34,18 +34,12 @@ function featureFixtures(): Fixture[] {
 
 function appFixtures(): Fixture[] {
   const dir = join(examplesDir, "apps");
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
   const out: Fixture[] = [];
-  for (const name of names) {
+  for (const name of readdirSync(dir)) {
     const appDir = join(dir, name);
     if (!isDir(appDir)) continue;
     // An app has exactly one `app.kumiki`; any number of scenarios and browser
-    // fixtures live beside it and all target the same source.
+    // fixtures live beside it and all target that same source.
     const source = join(appDir, "app.kumiki");
     for (const entry of readdirSync(appDir)) {
       if (!entry.endsWith(".browser.json")) continue;
@@ -59,28 +53,38 @@ function appFixtures(): Fixture[] {
   return out;
 }
 
+// A missing/inaccessible dentry is an expected outcome for both helpers — the
+// caller can proceed with an empty list. Any other errno (EACCES, EPERM, IO)
+// is a real failure and must propagate, not be silently mistaken for absence.
 function isDir(p: string): boolean {
   try {
     return statSync(p).isDirectory();
-  } catch {
-    return false;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw e;
   }
 }
 
 function isFile(p: string): boolean {
   try {
     return statSync(p).isFile();
-  } catch {
-    return false;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw e;
   }
 }
 
-const fixtures = [...featureFixtures(), ...appFixtures()];
+const features = featureFixtures();
+const apps = appFixtures();
+const fixtures = [...features, ...apps];
 
 test("browser fixtures were discovered", () => {
   // A silent zero-fixture run would mask a broken discovery path or moved
-  // examples directory — surface it as a failure instead.
-  expect(fixtures.length, "no .browser.json fixtures were found").toBeGreaterThan(0);
+  // examples directory. Requiring at least one per bucket also catches the
+  // "features/ still there, apps/ moved" asymmetric drift the mixed-total
+  // check would let through.
+  expect(features.length, "no features/*.browser.json fixtures were found").toBeGreaterThan(0);
+  expect(apps.length, "no apps/**/*.browser.json fixtures were found").toBeGreaterThan(0);
 });
 
 for (const fx of fixtures) {

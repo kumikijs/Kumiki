@@ -14,6 +14,16 @@
     "test:e2e": {
       "dependsOn": ["^build"],
       "env": ["CI"],
+      "inputs": [
+        "src/**",
+        "tests/**",
+        "playwright.config.ts",
+        "package.json",
+        "../examples/features/**/*.browser.json",
+        "../examples/features/**/*.kumiki",
+        "../examples/apps/**/*.browser.json",
+        "../examples/apps/**/*.kumiki"
+      ],
       "outputs": ["playwright-report/**", "test-results/**"]
     },
     "lint": {},

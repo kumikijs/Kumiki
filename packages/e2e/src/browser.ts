@@ -5,7 +5,7 @@
 
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
-import { chromium, type Page } from "playwright";
+import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
 
 export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
@@ -62,10 +62,12 @@ function buildHtml(js: string): string {
 
 // A synthetic origin the tier-3 runner serves the built app under. The default
 // history-based router uses `history.pushState`, which throws a SecurityError on
-// the null origin you get from `about:blank` / `data:` URLs (`.setContent`).
+// the null origin returned by page.setContent (about:blank) and data: URLs.
 // Serving from a real (intercepted) HTTP origin lets `navigate` actions round-
 // trip through `pushState` the way a shipped page would.
 const KUMIKI_HOST = "http://kumiki.local";
+const KUMIKI_DOC_URL = `${KUMIKI_HOST}/`;
+const KUMIKI_ROUTE_GLOB = `${KUMIKI_HOST}/**`;
 
 export async function runScenarioInBrowser(
   source: string,
@@ -82,11 +84,10 @@ export async function runScenarioInBrowser(
 }
 
 /**
- * Drive a scenario against an already-open Playwright `Page`. Intended for the
- * Playwright test runner, which owns the browser lifecycle via its `page`
- * fixture — this leaves compile + mount + step-drive to us while the runner
- * handles workers, retries, and browser cache. `runScenarioInBrowser` is the
- * thin standalone wrapper that launches its own Chromium.
+ * Drive a scenario against an already-open Playwright `Page`. Console / pageerror
+ * listeners and the route interceptor installed here are removed before return,
+ * so the same `Page` can be reused for another `runOnPage` call without leaking
+ * handlers or having the first invocation's HTML shadow the second.
  */
 export async function runOnPage(
   page: Page,
@@ -117,45 +118,70 @@ export async function runOnPage(
 
   const steps: StepResult[] = [];
   let errorBuf: string[] = [];
-  page.on("console", (m) => {
-    if (m.type() === "error") errorBuf.push(m.text());
-  });
-  page.on("pageerror", (e) => errorBuf.push(String(e)));
-
   const html = buildHtml(compiled.js);
-  await page.route(`${KUMIKI_HOST}/**`, (route) =>
-    route.fulfill({ contentType: "text/html; charset=utf-8", body: html }),
-  );
-  await page.goto(`${KUMIKI_HOST}/`, { waitUntil: "load" });
-  await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
-  await page.waitForTimeout(settleMs);
-
-  for (const step of scenario.steps) {
-    errorBuf = [];
-    const actionDesc = step.do ? describeAction(step.do) : undefined;
-    if (step.do) {
-      try {
-        await performAction(page, step.do);
-      } catch (e) {
-        errorBuf.push(`action failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      await page.waitForTimeout(settleMs);
+  const onConsole = (m: ConsoleMessage): void => {
+    if (m.type() === "error") errorBuf.push(m.text());
+  };
+  const onPageError = (e: Error): void => {
+    errorBuf.push(String(e));
+  };
+  // Serve only the app document at the synthetic origin. Any other request
+  // under that origin (subresources, `fetch("/api/...")` from a capability)
+  // must NOT get the HTML shell back — that would surface as a confusing JSON
+  // parse error inside the app. Abort them so the app sees a real network
+  // failure instead of a silently mislabelled response.
+  const onRoute = (route: Route): Promise<void> => {
+    if (route.request().url() === KUMIKI_DOC_URL) {
+      return route.fulfill({ contentType: "text/html; charset=utf-8", body: html });
     }
-    const state = (await page.evaluate(snapshotStateFn).catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    const visibleText = await page
-      .locator("body")
-      .innerText()
-      .catch(() => "");
-    const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
-    const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
-    if (step.label !== undefined) r.label = step.label;
-    if (actionDesc !== undefined) r.action = actionDesc;
-    steps.push(r);
+    return route.abort();
+  };
+
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
+
+  try {
+    await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
+    await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
+    await page.waitForTimeout(settleMs);
+
+    for (const step of scenario.steps) {
+      errorBuf = [];
+      const actionDesc = step.do ? describeAction(step.do) : undefined;
+      if (step.do) {
+        try {
+          await performAction(page, step.do);
+        } catch (e) {
+          errorBuf.push(`action failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        await page.waitForTimeout(settleMs);
+      }
+      const state = (await page.evaluate(snapshotStateFn).catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      const visibleText = await page
+        .locator("body")
+        .innerText()
+        .catch(() => "");
+      const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
+      const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
+      if (step.label !== undefined) r.label = step.label;
+      if (actionDesc !== undefined) r.action = actionDesc;
+      steps.push(r);
+    }
+  } finally {
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
   }
 
+  // The browser tier is strict on uncaught errors by design: a JS exception or
+  // console error in the app is a real defect that must not slip through as
+  // "green with warnings". `expect.noErrors` in a fixture is therefore
+  // redundant here — accepted for scenario-format compatibility, but not
+  // load-bearing.
   const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);
   return { ok, steps };
 }
