@@ -9,16 +9,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   addDef,
+  applyFixPlan,
   editDef,
   episodeLogPathFor,
   findReferences,
   listDefs,
   load,
-  planFixes,
+  planFix,
   removeDef,
   renameDef,
   replaceDef,
+  runFixFromTest,
   runScenarioSource,
+  runTests,
   smokeSource,
   viewDef,
   viewHistory,
@@ -33,6 +36,7 @@ import { check, compile, lex, parse } from "@kumikijs/compiler";
 import {
   CapabilityManifestError,
   nodeRuntimeBundleReader,
+  resolveBuiltinIcons,
   resolveCapabilities,
 } from "@kumikijs/compiler/node";
 import { z } from "zod";
@@ -68,6 +72,32 @@ function errMsg(e: unknown): string {
   return `error: ${e instanceof Error ? e.message : String(e)}`;
 }
 
+type Episode = {
+  id?: string;
+  trigger?: { kind?: string; target?: string };
+  status?: string;
+  steps?: unknown[];
+};
+
+/**
+ * Read a `<file>.kumiki-episodes.jsonl` log into a chronological (append-order)
+ * array. Malformed JSONL lines are skipped rather than throwing — logs are
+ * appended to by long-running processes and may end mid-write.
+ */
+function readEpisodeLog(logPath: string): Episode[] {
+  const lines = readFileSync(logPath, "utf8").split(/\r?\n/);
+  const entries: Episode[] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line) as Episode);
+    } catch {
+      // skip malformed line
+    }
+  }
+  return entries;
+}
+
 function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
   return errors.map((e) => ({
     code: e.code,
@@ -78,14 +108,22 @@ function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
   }));
 }
 
+type StrictCheckOpts = {
+  strictA11y?: boolean;
+  strictIcons?: boolean;
+  strictSelectorId?: boolean;
+  iconNames?: Iterable<string>;
+};
+
 /** Parse + typecheck, normalizing parse exceptions into a single diagnostic. */
 function validate(
   source: string,
   capabilities: string[] = [],
+  opts: StrictCheckOpts = {},
 ): { ok: boolean; diagnostics: Diagnostic[] } {
   try {
     const program = parse(lex(source));
-    const errors = check(program, { capabilities });
+    const errors = check(program, { capabilities, ...opts });
     return { ok: errors.length === 0, diagnostics: toDiagnostics(errors) };
   } catch (e) {
     const pe = e as { message?: string; pos?: { line: number; col: number } };
@@ -112,7 +150,7 @@ export function createServer(): McpServer {
     {
       title: "Check Kumiki source",
       description:
-        "Parse and typecheck a Kumiki program. Pass `source` (text) or `path` (file). Returns ok or a list of diagnostics with codes (see docs/spec/errors.md).",
+        "Parse and typecheck a Kumiki program. Pass `source` (text) or `path` (file). Returns ok or a list of diagnostics with codes (see docs/spec/errors.md). The `strict*` toggles surface diagnostics that are hidden by default: `strictA11y` (E0701..E0703), `strictIcons` (E0704), `strictSelectorId` (E0212). With `path` + `strictIcons`, @kumikijs/icons is resolved to widen the icon-name domain; when the package isn't installed, only theme.icons is used.",
       inputSchema: {
         source: z.string().optional().describe("Full Kumiki source text"),
         path: z.string().optional().describe("Path to a .kumiki file (relative to cwd)"),
@@ -122,11 +160,32 @@ export function createServer(): McpServer {
           .describe(
             "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
           ),
+        strictA11y: z
+          .boolean()
+          .optional()
+          .describe("Emit a11y diagnostics (E0701..E0703) that are hidden by default."),
+        strictIcons: z
+          .boolean()
+          .optional()
+          .describe("Emit E0704 for icon names outside the resolved icon domain."),
+        strictSelectorId: z
+          .boolean()
+          .optional()
+          .describe("Emit E0212 (selector-id) diagnostics that are hidden by default."),
       },
     },
     async (input) => {
       try {
-        const result = validate(readSource(input), capsForInput(input));
+        const strictOpts: StrictCheckOpts = {
+          ...(input.strictA11y ? { strictA11y: true } : {}),
+          ...(input.strictIcons ? { strictIcons: true } : {}),
+          ...(input.strictSelectorId ? { strictSelectorId: true } : {}),
+        };
+        if (input.strictIcons && input.path) {
+          const registry = await resolveBuiltinIcons(resolve(process.cwd(), input.path));
+          if (registry) strictOpts.iconNames = Object.keys(registry);
+        }
+        const result = validate(readSource(input), capsForInput(input), strictOpts);
         if (result.ok) return text("ok — no diagnostics");
         return text(JSON.stringify(result.diagnostics, null, 2));
       } catch (e) {
@@ -217,7 +276,7 @@ export function createServer(): McpServer {
     {
       title: "Run a scenario",
       description:
-        "Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→fix loop: write the user's requirements as scenario steps with `expect` assertions on state, run, read the trace, and patch without a human operating the app.\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action `do` is one of: {dispatch, payload?}, {clickText}, {click}, {fill, value}, {choose, value}, {navigate}. An `expect` is { noErrors?, state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths).",
+        "Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with `expect` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call `kumiki_auto_patch { apply: true, testName }` (test-driven, deterministic literal repair); on a compile diagnostic, call `kumiki_fix { apply: true }` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action `do` is one of: {dispatch, payload?}, {clickText}, {click}, {fill, value}, {choose, value}, {navigate}. An `expect` is { noErrors?, state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths).",
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -419,7 +478,7 @@ export function createServer(): McpServer {
     {
       title: "Fetch a runtime episode",
       description:
-        "Read one episode (from `<file>.kumiki-episodes.jsonl`) by id. Episodes are written by `kumiki run` and capture the per-trigger trace described in docs/spec/runtime.md §10.5.1.",
+        "Read one episode (from `<file>.kumiki-episodes.jsonl`) by id. Episodes are written by `kumiki run --episode-log` and `kumiki dev --episode-log` and capture the per-trigger trace described in docs/spec/runtime.md §10.5.1. Prefer `kumiki_episode_list` / `kumiki_episode_tail` to discover ids first.",
       inputSchema: { path: z.string(), episodeId: z.string() },
     },
     async ({ path, episodeId }) => {
@@ -436,19 +495,228 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    "kumiki_episode_list",
+    {
+      title: "List recent runtime episodes",
+      description:
+        "List the most recent episodes in `<file>.kumiki-episodes.jsonl` as compact summaries (`id`, `trigger.kind`, `trigger.target`, `status`, `steps`), newest first. Use this to discover ids for `kumiki_episode` / `kumiki_episode_tail`.",
+      inputSchema: {
+        path: z.string(),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum entries to return, newest first. Default 20."),
+      },
+    },
+    async ({ path, limit }) => {
+      const logPath = episodeLogPathFor(resolve(process.cwd(), path));
+      if (!existsSync(logPath)) return text("(no episode log)");
+      const entries = readEpisodeLog(logPath);
+      if (entries.length === 0) return text("(empty episode log)");
+      const n = limit ?? 20;
+      const tail = entries.slice(-n).reverse();
+      const summaries = tail.map((ep) => ({
+        id: ep.id,
+        trigger: { kind: ep.trigger?.kind, target: ep.trigger?.target },
+        status: ep.status,
+        steps: Array.isArray(ep.steps) ? ep.steps.length : 0,
+      }));
+      return text(JSON.stringify(summaries, null, 2));
+    },
+  );
+
+  server.registerTool(
+    "kumiki_episode_tail",
+    {
+      title: "Tail the most recent runtime episodes",
+      description:
+        "Return the most recent N episodes from `<file>.kumiki-episodes.jsonl` as full JSON entries, newest first. Use `kumiki_episode_list` first if you only need summaries.",
+      inputSchema: {
+        path: z.string(),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Number of episodes to return, newest first. Default 5."),
+      },
+    },
+    async ({ path, n }) => {
+      const logPath = episodeLogPathFor(resolve(process.cwd(), path));
+      if (!existsSync(logPath)) return text("(no episode log)");
+      const entries = readEpisodeLog(logPath);
+      if (entries.length === 0) return text("(empty episode log)");
+      const take = n ?? 5;
+      const tail = entries.slice(-take).reverse();
+      return text(JSON.stringify(tail, null, 2));
+    },
+  );
+
+  server.registerTool(
     "kumiki_fix",
     {
-      title: "Plan auto-fixes",
+      title: "Plan or apply rule-based auto-fixes",
       description:
-        "Typecheck a file and propose auto-patches for repairable errors (e.g. misspelled names). Returns the planned fixes; this tool does not write to disk.",
-      inputSchema: { path: z.string() },
+        'Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (`apply: false`); pass `apply: true` to close the loop and persist the fixes. On apply, returns `{ applied, before, after, remaining }` with the residual diagnostics after re-typechecking. Use `only` (e.g. "E0103") to restrict to a single diagnostic code.',
+      inputSchema: {
+        path: z.string(),
+        apply: z
+          .boolean()
+          .optional()
+          .describe("Write patches to disk. Default false = dry-run planning."),
+        only: z
+          .string()
+          .optional()
+          .describe('Restrict to a specific diagnostic code (e.g. "E0103").'),
+        capabilities: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+          ),
+      },
     },
-    async ({ path }) => {
-      const abs = resolve(process.cwd(), path);
-      const store = load(abs);
-      const errors = check(store.program);
-      const patches = planFixes(store, errors).map((p) => `${p.code}: ${p.description}`);
-      return text(patches.join("\n") || "(no auto-fixable diagnostics)");
+    async (input) => {
+      try {
+        const abs = resolve(process.cwd(), input.path);
+        const caps = capsForInput(input);
+        if (input.apply) {
+          const r = applyFixPlan(abs, input.only, caps);
+          return text(
+            JSON.stringify(
+              {
+                applied: r.applied,
+                before: r.before,
+                after: r.after,
+                remaining: toDiagnostics(r.remaining),
+                ...(r.parseError ? { parseError: r.parseError } : {}),
+              },
+              null,
+              2,
+            ),
+          );
+        }
+        const plan = planFix(abs, input.only, caps);
+        if (plan.errors.length === 0) return text("no errors");
+        if (plan.patches.length === 0) {
+          return text(
+            `(no auto-patches available)\n${plan.errors
+              .map((e) => `${e.code} ${e.message}`)
+              .join("\n")}`,
+          );
+        }
+        return text(plan.patches.map((p) => `${p.code}: ${p.description}`).join("\n"));
+      } catch (e) {
+        return text(errMsg(e));
+      }
+    },
+  );
+
+  server.registerTool(
+    "kumiki_auto_patch",
+    {
+      title: "Fix a failing test (behavioral auto-patch)",
+      description:
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-remaining` | `no-patch` | `not-found`).",
+      inputSchema: {
+        path: z.string(),
+        testName: z.string().describe("The name of the failing `test` definition to fix."),
+        apply: z
+          .boolean()
+          .optional()
+          .describe("Write the patch to disk. Default false = propose only."),
+        capabilities: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+          ),
+      },
+    },
+    async (input) => {
+      try {
+        const abs = resolve(process.cwd(), input.path);
+        const caps = capsForInput(input);
+        const outcome = await runFixFromTest(abs, input.testName, input.apply === true, caps);
+        // Serialise the outcome, converting KumikiError[] → Diagnostic[] and
+        // dropping the un-serialisable `apply` closure on patches. Always
+        // include `regressed` on `apply: true` runs (AC2: "regression must be
+        // in the tool output") — `[]` when nothing regressed, so the caller
+        // can distinguish "checked" from "not-applicable".
+        const serialised: Record<string, unknown> = {
+          ok: outcome.ok,
+          status: outcome.status,
+        };
+        if (outcome.pass !== undefined) serialised.pass = outcome.pass;
+        if (outcome.compileFixes !== undefined) serialised.compileFixes = outcome.compileFixes;
+        if (outcome.patch) {
+          serialised.patch = { code: outcome.patch.code, description: outcome.patch.description };
+        }
+        if (outcome.compilePatches) {
+          serialised.compilePatches = outcome.compilePatches.map((p) => ({
+            code: p.code,
+            description: p.description,
+          }));
+        }
+        if (outcome.compileErrors) {
+          serialised.compileErrors = toDiagnostics(outcome.compileErrors);
+        }
+        if (outcome.failingTest) serialised.failingTest = outcome.failingTest;
+        if (outcome.availableTests) serialised.availableTests = outcome.availableTests;
+        if (outcome.testRunError) serialised.testRunError = outcome.testRunError;
+        if (outcome.parseError) serialised.parseError = outcome.parseError;
+        if (input.apply === true) serialised.regressed = outcome.regressed ?? [];
+        else if (outcome.regressed) serialised.regressed = outcome.regressed;
+        return text(JSON.stringify(serialised, null, 2));
+      } catch (e) {
+        return text(errMsg(e));
+      }
+    },
+  );
+
+  server.registerTool(
+    "kumiki_test",
+    {
+      title: "Run in-language tests",
+      description:
+        "Compile a Kumiki program with `test` definitions included, mount it in a headless DOM, run every `test`, and return a structured pass/fail report. Pass `filter` to restrict by exact name or a `prefix*` wildcard. This is the substrate for the fix loop: on failure, feed the failing test's name to `kumiki_auto_patch` to close the loop.",
+      inputSchema: {
+        path: z.string(),
+        filter: z
+          .string()
+          .optional()
+          .describe('Test name or `prefix*` wildcard (e.g. "reducer-*").'),
+        capabilities: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+          ),
+      },
+    },
+    async (input) => {
+      try {
+        const abs = resolve(process.cwd(), input.path);
+        const caps = capsForInput(input);
+        const report = await runTests(abs, input.filter, caps);
+        return text(
+          JSON.stringify(
+            {
+              total: report.total,
+              passed: report.passed,
+              failed: report.failed,
+              filter: report.filter ?? null,
+              results: report.results,
+            },
+            null,
+            2,
+          ),
+        );
+      } catch (e) {
+        return text(errMsg(e));
+      }
     },
   );
 

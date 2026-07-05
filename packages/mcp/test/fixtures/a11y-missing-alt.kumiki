@@ -1,0 +1,5 @@
+tile App = button()
+app A11yDemo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

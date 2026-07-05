@@ -104,48 +104,122 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
   return patches;
 }
 
+/**
+ * Pure planner: read + typecheck + planFixes (filtered by `onlyCode` when set).
+ * No I/O beyond reading the file. Returned `patches` is empty when nothing is
+ * repairable; `errors` carries the raw diagnostics either way so the caller can
+ * distinguish "clean file" from "errors but nothing to auto-fix".
+ */
+export function planFix(
+  path: string,
+  onlyCode: string | undefined,
+  capabilities: string[] = [],
+): FixPlan {
+  const store = load(path);
+  const errors = check(store.program, { capabilities });
+  if (errors.length === 0) return { errors, patches: [] };
+  const all = planFixes(store, errors);
+  const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
+  return { errors, patches };
+}
+
+export type FixPlan = {
+  /** Raw typecheck errors on `path`. Empty when the file is clean. */
+  errors: KumikiError[];
+  /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
+  patches: AutoPatch[];
+};
+
+/**
+ * Apply the planned patches to `path`, re-typecheck the result, and return
+ * before/after source plus the residual diagnostic set. `parseError` is set
+ * only when the composed patches produced source the lexer/parser cannot
+ * accept — the file is already written in that case (matches `fixCmd`'s prior
+ * "surface it, don't throw" behavior). Callers that need a dry preview should
+ * use `planFix` and apply `patches[i].apply` themselves.
+ */
+export function applyFixPlan(
+  path: string,
+  onlyCode: string | undefined,
+  capabilities: string[] = [],
+): FixApplyResult {
+  const plan = planFix(path, onlyCode, capabilities);
+  const before = readFileSync(path, "utf8");
+  if (plan.patches.length === 0) {
+    return { applied: 0, before, after: before, remaining: plan.errors };
+  }
+  let after = before;
+  for (const p of plan.patches) after = p.apply(after);
+  writeFileSync(path, after);
+  try {
+    const next = parse(lex(after));
+    const remaining = check(next, { capabilities });
+    return { applied: plan.patches.length, before, after, remaining };
+  } catch (e) {
+    return {
+      applied: plan.patches.length,
+      before,
+      after,
+      remaining: [],
+      parseError: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+export type FixApplyResult = {
+  /** Number of patches actually applied. `0` when the file was already clean or nothing was auto-fixable. */
+  applied: number;
+  /** Source before writing. Equal to `after` when `applied === 0`. */
+  before: string;
+  /** Source after writing (already on disk). */
+  after: string;
+  /** Residual typecheck diagnostics after the write. Empty when the file is now clean. */
+  remaining: KumikiError[];
+  /** Set when the composed patches produced unparseable source (already on disk). */
+  parseError?: string;
+};
+
 export function fixCmd(
   path: string,
   apply: boolean,
   onlyCode?: string,
   capabilities: string[] = [],
 ): void {
-  const store = load(path);
-  // Thread manifest capabilities so a file using a registered cap is not falsely
-  // reported as E0302 (and so the planned patches match what `check`/`build` see).
-  const errors = check(store.program, { capabilities });
-  if (errors.length === 0) {
-    console.log("no errors");
-    return;
-  }
-  let patches = planFixes(store, errors);
-  if (onlyCode) patches = patches.filter((p) => p.code === onlyCode);
-  if (patches.length === 0) {
-    console.log("(no auto-patches available)");
-    for (const e of errors) console.error(`${e.code} ${e.message}`);
-    return;
-  }
   if (!apply) {
+    const { errors, patches } = planFix(path, onlyCode, capabilities);
+    if (errors.length === 0) {
+      console.log("no errors");
+      return;
+    }
+    if (patches.length === 0) {
+      console.log("(no auto-patches available)");
+      for (const e of errors) console.error(`${e.code} ${e.message}`);
+      return;
+    }
     for (const p of patches) {
       console.log(`${p.code} ${p.message}`);
       console.log(`  fix: ${p.description}`);
     }
     return;
   }
-  let text = readFileSync(path, "utf8");
-  for (const p of patches) {
-    text = p.apply(text);
+  const result = applyFixPlan(path, onlyCode, capabilities);
+  if (result.applied === 0) {
+    if (result.remaining.length === 0) {
+      console.log("no errors");
+      return;
+    }
+    console.log("(no auto-patches available)");
+    for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+    return;
   }
-  writeFileSync(path, text);
-  // Re-validate
-  try {
-    const next = parse(lex(text));
-    const after = check(next, { capabilities });
-    if (after.length === 0) console.log(`applied ${patches.length} fix(es) — file now clean`);
-    else console.log(`applied ${patches.length} fix(es) — ${after.length} error(s) remain`);
-  } catch (e) {
-    console.error(`fixes broke the file: ${String(e)}`);
+  if (result.parseError) {
+    console.error(`fixes broke the file: ${result.parseError}`);
+    return;
   }
+  if (result.remaining.length === 0)
+    console.log(`applied ${result.applied} fix(es) — file now clean`);
+  else
+    console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
 }
 
 // ----- `kumiki fix --auto-patch <test-name>` (M4b) -----
@@ -175,6 +249,18 @@ export type FixFromTestOutcome = {
   compileFixes?: number;
   /** Names of other tests that regressed after applying. */
   regressed?: string[];
+  /** Compile errors surfaced when Tier-1 could not clear the blockage. */
+  compileErrors?: KumikiError[];
+  /** Compile-tier patches proposed in dry-run (`status="compile-proposed"`). */
+  compilePatches?: AutoPatch[];
+  /** Test result for `testName` when Tier-2 has no deterministic patch. */
+  failingTest?: TestResult;
+  /** Names of all tests when the target was not found. */
+  availableTests?: string[];
+  /** Set when the test runner itself threw before any test could run. */
+  testRunError?: string;
+  /** Set when compile-tier patches broke the file's syntax. */
+  parseError?: string;
 };
 
 /**
@@ -262,7 +348,16 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
     .map((e): [number, number] => [e.range.startLine, e.range.endLine]);
 }
 
-export async function fixFromTest(
+/**
+ * Pure, printer-free variant of `fixFromTest`. Same two-tier repair — compile
+ * fixes first (`planFixes` → optionally written), then a deterministic
+ * literal repair from a failing test (`planTestPatch` → optionally written) —
+ * but every branch returns via the `FixFromTestOutcome` structure. The outcome
+ * carries the compile-tier failing errors (`compileErrors`), the failing test
+ * itself (`failingTest`), and the current set of test results (`tests`) so
+ * MCP callers can render diagnostics without stdout scraping.
+ */
+export async function runFixFromTest(
   path: string,
   testName: string,
   apply: boolean,
@@ -275,42 +370,34 @@ export async function fixFromTest(
   if (compileErrors.length > 0) {
     const patches = planFixes(store, compileErrors);
     if (patches.length === 0) {
-      console.log(
-        `(no auto-patch available) — test "${testName}" is blocked by ${compileErrors.length} compile error(s):`,
-      );
-      for (const e of compileErrors) console.error(`  ${e.code} ${e.message}`);
-      return { ok: false, status: "no-patch" };
+      return { ok: false, status: "no-patch", compileErrors };
     }
     if (!apply) {
-      console.log(`test "${testName}" is blocked by compile errors; proposed fixes (dry-run):`);
-      for (const p of patches) {
-        console.log(`  ${p.code} ${p.message}`);
-        console.log(`    fix: ${p.description}`);
-      }
-      return { ok: true, status: "compile-proposed", compileFixes: patches.length };
+      return {
+        ok: true,
+        status: "compile-proposed",
+        compileFixes: patches.length,
+        compilePatches: patches,
+      };
     }
     let text = readFileSync(path, "utf8");
     for (const p of patches) text = p.apply(text);
     writeFileSync(path, text);
     compileFixes = patches.length;
-    // Guard the re-check: a patch could (defensively) yield invalid syntax, and
-    // the file is already written — surface that instead of throwing.
     let remaining: ReturnType<typeof check>;
     try {
       remaining = check(parse(lex(text)), { capabilities });
     } catch (e) {
-      console.log(
-        `applied ${compileFixes} compile fix(es) but they broke the file (${String(e)}); cannot run "${testName}"`,
-      );
-      return { ok: false, status: "compile-remaining", compileFixes };
+      return {
+        ok: false,
+        status: "compile-remaining",
+        compileFixes,
+        parseError: e instanceof Error ? e.message : String(e),
+      };
     }
     if (remaining.length > 0) {
-      console.log(
-        `applied ${compileFixes} compile fix(es) — ${remaining.length} error(s) remain; cannot run "${testName}"`,
-      );
-      return { ok: false, status: "compile-remaining", compileFixes };
+      return { ok: false, status: "compile-remaining", compileFixes, compileErrors: remaining };
     }
-    console.log(`applied ${compileFixes} compile fix(es) — file now compiles`);
   }
 
   // Run the tests on the (now-compiling) file.
@@ -318,17 +405,23 @@ export async function fixFromTest(
   try {
     before = await testFile(path, capabilities);
   } catch (e) {
-    console.error(`could not run tests: ${String(e)}`);
-    return { ok: false, status: "no-patch", ...(compileFixes ? { compileFixes } : {}) };
+    return {
+      ok: false,
+      status: "no-patch",
+      testRunError: e instanceof Error ? e.message : String(e),
+      ...(compileFixes ? { compileFixes } : {}),
+    };
   }
   const target = before.find((r) => r.name === testName);
   if (!target) {
-    const have = before.map((r) => r.name).join(", ") || "none";
-    console.error(`no test named "${testName}" (have: ${have})`);
-    return { ok: false, status: "not-found", ...(compileFixes ? { compileFixes } : {}) };
+    return {
+      ok: false,
+      status: "not-found",
+      availableTests: before.map((r) => r.name),
+      ...(compileFixes ? { compileFixes } : {}),
+    };
   }
   if (target.pass) {
-    console.log(`test "${testName}" passes — nothing to fix`);
     return {
       ok: true,
       status: "already-pass",
@@ -343,15 +436,14 @@ export async function fixFromTest(
   const curSource = readFileSync(path, "utf8");
   const patch = planTestPatch(curSource, target, testBodyLineRanges(load(path)));
   if (!patch) {
-    console.log(`(no auto-patch available) for failing test "${testName}":`);
-    if (target.expected !== undefined) console.log(`  expected: ${target.expected}`);
-    if (target.actual !== undefined) console.log(`  actual:   ${target.actual}`);
-    if (target.diffAt !== undefined) console.log(`  diff at:  ${target.diffAt}`);
-    return { ok: false, status: "no-patch", ...(compileFixes ? { compileFixes } : {}) };
+    return {
+      ok: false,
+      status: "no-patch",
+      failingTest: target,
+      ...(compileFixes ? { compileFixes } : {}),
+    };
   }
   if (!apply) {
-    console.log(`proposed fix for "${testName}" (dry-run):`);
-    console.log(`  ${patch.description}`);
     return { ok: true, status: "proposed", patch, ...(compileFixes ? { compileFixes } : {}) };
   }
   writeFileSync(path, patch.apply(curSource));
@@ -360,10 +452,6 @@ export async function fixFromTest(
   const regressed = after
     .filter((r) => !r.pass && before.find((b) => b.name === r.name)?.pass === true)
     .map((r) => r.name);
-  console.log(`applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`);
-  if (regressed.length > 0) {
-    console.log(`  WARNING: ${regressed.length} other test(s) regressed: ${regressed.join(", ")}`);
-  }
   return {
     ok: nowPass && regressed.length === 0,
     status: "applied",
@@ -372,4 +460,101 @@ export async function fixFromTest(
     ...(compileFixes ? { compileFixes } : {}),
     ...(regressed.length ? { regressed } : {}),
   };
+}
+
+export async function fixFromTest(
+  path: string,
+  testName: string,
+  apply: boolean,
+  capabilities: string[] = [],
+): Promise<FixFromTestOutcome> {
+  const outcome = await runFixFromTest(path, testName, apply, capabilities);
+  printFixFromTest(outcome, testName);
+  return outcome;
+}
+
+/** Human-readable print of a `runFixFromTest` outcome. Mirrors the pre-refactor CLI output. */
+function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
+  // Applied-tier-1 header — printed before the Tier-2 line whenever Tier-1
+  // wrote patches, matching the pre-refactor sequenced output.
+  if (
+    outcome.compileFixes !== undefined &&
+    outcome.compileFixes > 0 &&
+    outcome.status !== "compile-remaining"
+  ) {
+    console.log(`applied ${outcome.compileFixes} compile fix(es) — file now compiles`);
+  }
+  switch (outcome.status) {
+    case "no-patch": {
+      if (outcome.compileErrors && outcome.compileErrors.length > 0) {
+        console.log(
+          `(no auto-patch available) — test "${testName}" is blocked by ${outcome.compileErrors.length} compile error(s):`,
+        );
+        for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+        return;
+      }
+      if (outcome.testRunError) {
+        console.error(`could not run tests: ${outcome.testRunError}`);
+        return;
+      }
+      if (outcome.failingTest) {
+        const t = outcome.failingTest;
+        console.log(`(no auto-patch available) for failing test "${testName}":`);
+        if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
+        if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
+        if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
+        return;
+      }
+      console.log(`(no auto-patch available) for "${testName}"`);
+      return;
+    }
+    case "compile-proposed": {
+      console.log(`test "${testName}" is blocked by compile errors; proposed fixes (dry-run):`);
+      for (const p of outcome.compilePatches ?? []) {
+        console.log(`  ${p.code} ${p.message}`);
+        console.log(`    fix: ${p.description}`);
+      }
+      return;
+    }
+    case "compile-remaining": {
+      const n = outcome.compileFixes ?? 0;
+      if (outcome.parseError) {
+        console.log(
+          `applied ${n} compile fix(es) but they broke the file (${outcome.parseError}); cannot run "${testName}"`,
+        );
+        return;
+      }
+      const rem = outcome.compileErrors?.length ?? 0;
+      console.log(
+        `applied ${n} compile fix(es) — ${rem} error(s) remain; cannot run "${testName}"`,
+      );
+      return;
+    }
+    case "not-found": {
+      const have = (outcome.availableTests ?? []).join(", ") || "none";
+      console.error(`no test named "${testName}" (have: ${have})`);
+      return;
+    }
+    case "already-pass": {
+      console.log(`test "${testName}" passes — nothing to fix`);
+      return;
+    }
+    case "proposed": {
+      if (outcome.patch) {
+        console.log(`proposed fix for "${testName}" (dry-run):`);
+        console.log(`  ${outcome.patch.description}`);
+      }
+      return;
+    }
+    case "applied": {
+      const nowPass = outcome.pass === true;
+      console.log(`applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`);
+      if (outcome.regressed && outcome.regressed.length > 0) {
+        console.log(
+          `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,
+        );
+      }
+      return;
+    }
+  }
 }

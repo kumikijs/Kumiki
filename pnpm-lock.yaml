@@ -221,12 +221,18 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.1
+      happy-dom:
+        specifier: 'catalog:'
+        version: 20.10.2
       tsx:
         specifier: 'catalog:'
         version: 4.22.3
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.8(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.14(@types/node@25.9.1)(esbuild@0.28.0)(tsx@4.22.3))
 
   packages/runtime:
     devDependencies:
