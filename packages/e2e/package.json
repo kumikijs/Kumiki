@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/e2e",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "description": "Kumiki real-browser verification tier — runs the same scenarios in Chromium (Playwright) to catch CSS layout, real focus, and rendering bugs a headless DOM can't see.",
