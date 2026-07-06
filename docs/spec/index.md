@@ -18,4 +18,4 @@ Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/
 | [Runtime](./runtime.md) | Runtime implementation guide (signal graph, mount, dispatch, dispose) |
 | [AI Editing](./ai-edit.md) | AI editing API, CRDT ops, referential integrity |
 | [Testing](./testing.md) | Testing strategy |
-| [Error Codes](./errors.md) | Error code catalog (E0001..E07xx) |
+| [Error Codes](./errors.md) | Error code catalog (E0001..E08xx) |
