@@ -34,6 +34,44 @@ A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the par
 | `E08xx` | Runtime hazards (code that compiles but breaks at runtime) |
 | `W02xx` | Non-fatal warnings (build still succeeds) |
 
+## Auto-patch Coverage
+
+`kumiki fix` (and `kumiki fix --apply`) rewrites source deterministically for a
+subset of diagnostics. All applied patches pass through a regression gate:
+the composed source is re-parsed and re-typechecked before the write commits,
+and the write is rolled back whenever the resulting diagnostic set introduces
+a new failure OR fails to resolve any pre-existing one (the comparison is by
+`code@line:col`, not raw count, so a 1-for-1 swap like `E0301 → E0302 via a
+typo` is caught rather than accepted).
+
+| Code | Auto-patch | Strategy |
+|---|---|---|
+| `E0001` | yes | Inject a `NotFound` tile and add `"/404" -> NotFound` to `app.routes`. |
+| `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
+| `E0103` | yes | Close-name suggestion against known slot / binding names. |
+| `E0104` | yes | Close-name suggestion against known effect names. |
+| `E0105` | yes | Close-name suggestion against known tile names. |
+| `E0107` | yes | Close-name suggestion against declared motion names. |
+| `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
+| `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
+| `E0106` | no | Timer names live in effect-scoped state, not top-level defs — requires a scoped candidate set (planned). |
+| `E0209` | no | Variant tags live inside their union type — requires a scoped candidate set (planned). |
+| `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
+| Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
+
+Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
+is a separate tier and works whenever the failing leaf can be traced to a
+unique source position:
+
+- Exact literal match on string / number / boolean, with **scope-aware
+  disambiguation**: the target tile / reducer's own line range is preferred
+  over its dependencies, which are preferred over unrelated code.
+- **String prefix/suffix repair**: swap only the divergent middle when
+  `actual` and `expected` share a common prefix and suffix.
+- **Reducer arithmetic repair**: rewrite `slot := slot ± N` to match the
+  expected delta (sign flip and/or operand change) when exactly one reducer
+  writes the failing slot.
+
 ## E00xx — Structure
 
 ### E0001 `missing-404`

@@ -1,11 +1,11 @@
 // kumiki fix — propose auto-patches for repairable typecheck errors.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import type { KumikiError } from "@kumikijs/compiler";
+import type { KumikiError, TestDef } from "@kumikijs/compiler";
 import { check, lex, parse } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
-import { listDefs, load, type Store } from "./store.ts";
+import { directDeps, listDefs, load, type Store } from "./store.ts";
 
 export type AutoPatch = {
   code: string;
@@ -52,18 +52,70 @@ function suggestName(store: Store, missing: string): string | null {
   return null;
 }
 
+/**
+ * Append a capability name to an app's `caps = [...]` array, constrained to
+ * the given line range so the search cannot accidentally hit a same-name field
+ * elsewhere in the source. Returns:
+ *   - a rewritten source when the caller's cap was added
+ *   - `null` when no `caps = [...]` field exists in the range OR the cap was
+ *     already present (no-op — nothing to patch)
+ * A null return means "no patch was made"; the caller must not present the
+ * patch as `applied`. The regex tolerates arbitrary whitespace around `caps`
+ * / `=` and either empty (`[]`) or populated (`[a, b]`) arrays.
+ */
+function appendAppCap(text: string, cap: string, appRange: [number, number] | null): string | null {
+  const lines = text.split(/\r?\n/);
+  const start = appRange ? appRange[0] - 1 : 0;
+  const end = appRange ? Math.min(appRange[1], lines.length) : lines.length;
+  const scoped = lines.slice(start, end).join("\n");
+  const re = /(caps\s*=\s*\[)([^\]]*)(\])/;
+  const match = re.exec(scoped);
+  if (!match) return null;
+  const items = match[2]!
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (items.includes(cap)) return null;
+  items.push(cap);
+  const patchedScoped = `${scoped.slice(0, match.index)}${match[1]}${items.join(", ")}${match[3]}${scoped.slice(match.index + match[0].length)}`;
+  return [...lines.slice(0, start), ...patchedScoped.split("\n"), ...lines.slice(end)].join("\n");
+}
+
+/**
+ * Diagnostic codes whose message shape is `... "<name>" ...` and whose repair
+ * is "replace the misspelled name with a close top-level definition name".
+ * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
+ * from `listDefs(store)`) for every code in this set.
+ *
+ * Excluded on purpose:
+ *   - **E0106** (undef-timer) — timer names live in effect-scoped
+ *     `sym.timerNames` in the compiler, not among top-level defs; suggesting
+ *     a tile / reducer name here would silently rewrite `stop-timer("x")` to
+ *     an unrelated identifier. Requires a scoped candidate set.
+ *   - **E0209** (pat-unknown-variant) — variant tags live inside their union
+ *     type's payload list, not among top-level defs; same failure mode.
+ * Adding either code back means also plumbing the scoped candidate set into
+ * `planFixes` — a set-membership tweak alone is a correctness bug.
+ */
+const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
+  "E0102", // undef-reducer
+  "E0103", // undef-ref / undef-slot
+  "E0104", // undef-effect
+  "E0105", // undef-tile
+  "E0107", // undef-motion
+  "E0211", // undef-tile-in-selector
+]);
+
 export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
   const patches: AutoPatch[] = [];
   for (const err of errors) {
-    if (
-      err.code === "E0103" ||
-      err.code === "E0105" ||
-      err.code === "E0102" ||
-      err.code === "E0104"
-    ) {
-      const match = /"([^"]+)"/.exec(err.message);
-      if (!match) continue;
-      const missing = match[1]!;
+    if (NAME_SUGGEST_CODES.has(err.code)) {
+      // Most diagnostics quote a single name; E0211 quotes the reducer name
+      // *and then* the tile name — the tile is what needs suggesting, so pick
+      // the last quoted name for that code specifically.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) continue;
+      const missing = err.code === "E0211" ? quoted[quoted.length - 1]! : quoted[0]!;
       const suggested = suggestName(store, missing);
       if (!suggested) continue;
       patches.push({
@@ -78,6 +130,30 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
           lines[idx] = line.replace(re, suggested);
           return lines.join("\n");
         },
+      });
+    }
+    if (err.code === "E0301") {
+      // "Effect "<effect>" requires capability "<cap>" which is not declared in app.caps"
+      // — extract <cap> and append it to the app's `caps = [...]` array. Only
+      // emit a patch when the app def is reachable AND `appendAppCap` produced
+      // a mutated source. A no-op patch (silent unchanged input) would be
+      // reported as `applied: 1` despite doing nothing, which the regression
+      // gate can't catch on its own (nothing changed ⇒ same errors ⇒ same
+      // count) — the pre-check here keeps the "applied ⇔ source changed"
+      // invariant.
+      const capMatch = /requires capability "([^"]+)"/.exec(err.message);
+      if (!capMatch) continue;
+      const cap = capMatch[1]!;
+      const appEntry = store.defs.find((e) => e.def.kind === "AppDef");
+      if (!appEntry) continue;
+      const appRange: [number, number] = [appEntry.range.startLine, appEntry.range.endLine];
+      const dryRun = appendAppCap(store.source, cap, appRange);
+      if (dryRun === null) continue;
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `add capability "${cap}" to app.caps`,
+        apply: (text: string) => appendAppCap(text, cap, appRange) ?? text,
       });
     }
     if (err.code === "E0001") {
@@ -152,17 +228,31 @@ export function applyFixPlan(
   }
   let after = before;
   for (const p of plan.patches) after = p.apply(after);
-  writeFileSync(path, after);
+  // Regression gate. Every path that would touch disk first re-parses and
+  // re-typechecks the composed source, then compares diagnostic *sets* (code
+  // + position) rather than counts. Rollback triggers when any of:
+  //   1. The composed source no longer parses at all — a *parse-error* is
+  //      strictly worse than the original type errors, so we discard even
+  //      though the pre-patch file had errors.
+  //   2. Any diagnostic exists in `after` but not `before` — introduced a
+  //      new failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
+  //      count-only guard would miss.
+  //   3. No diagnostic from `before` was resolved — the patch either did
+  //      nothing (silent noop) or replaced errors position-for-position
+  //      with different codes (still a swap).
+  // Invariant: "apply => file is either strictly cleaner or unchanged".
+  // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
+  const key = (e: KumikiError): string => `${e.code}@${e.pos.line}:${e.pos.col}`;
+  const beforeSet = new Set(plan.errors.map(key));
+  let dryRemaining: KumikiError[];
   try {
     const next = parse(lex(after));
-    const remaining = check(next, { capabilities });
-    return { applied: plan.patches.length, before, after, remaining };
+    dryRemaining = check(next, { capabilities });
   } catch (e) {
-    // The composed patches produced unparseable source (already on disk).
-    // Emit a synthetic parse-error diagnostic so `remaining.length === 0 ⇔
-    // file is clean` holds; callers that read only `remaining` won't mistake
-    // a broken file for a fixed one. `parseError` still carries the raw
-    // message for surfacing.
+    // Parse-error rollback (case 1). Do NOT write. The synthetic E0000 in
+    // `remaining` and the `parseError` string surface the parser's message
+    // for callers rendering diagnostics; `regressionBlocked` distinguishes
+    // this from "genuinely no patch available".
     const message = e instanceof Error ? e.message : String(e);
     const pe = e as { pos?: { line: number; col: number } };
     const synthetic: KumikiError = {
@@ -172,13 +262,28 @@ export function applyFixPlan(
       pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
     };
     return {
-      applied: plan.patches.length,
+      applied: 0,
       before,
-      after,
-      remaining: [synthetic],
+      after: before,
+      remaining: [...plan.errors, synthetic],
+      regressionBlocked: true,
       parseError: message,
     };
   }
+  const afterSet = new Set(dryRemaining.map(key));
+  const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
+  const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
+  if (introduced.length > 0 || resolved.length === 0) {
+    return {
+      applied: 0,
+      before,
+      after: before,
+      remaining: plan.errors,
+      regressionBlocked: true,
+    };
+  }
+  writeFileSync(path, after);
+  return { applied: plan.patches.length, before, after, remaining: dryRemaining };
 }
 
 export type FixApplyResult = {
@@ -201,6 +306,13 @@ export type FixApplyResult = {
    * callers rendering a human message.
    */
   parseError?: string;
+  /**
+   * True when the composed patch would have introduced *more* diagnostics
+   * than the pre-patch file had — the regression gate rolled the write back
+   * and `applied` is `0`. Absent means either the patch cleanly applied or
+   * there was nothing to apply.
+   */
+  regressionBlocked?: boolean;
 };
 
 export function fixCmd(
@@ -232,7 +344,11 @@ export function fixCmd(
       console.log("no errors");
       return;
     }
-    console.log("(no auto-patches available)");
+    if (result.regressionBlocked) {
+      console.log("(auto-patch rolled back — it would have introduced new errors)");
+    } else {
+      console.log("(no auto-patches available)");
+    }
     for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
     return;
   }
@@ -354,51 +470,34 @@ function lineOfOffset(source: string, offset: number): number {
 }
 
 /**
- * A deterministic patch from a failing test, when one is provable: the failing
- * leaf is a string whose *actual* value appears verbatim, exactly once, as a
- * source string literal **in implementation code** (tile / reducer), not in a
- * `test` body. `excludedLineRanges` are the 1-based inclusive line spans of the
- * file's `test` definitions; a match inside one is skipped, because patching a
- * test's own `given` / `expect` data would mutate the fixture into passing
- * without touching any production definition. Returns null when no such patch
- * exists — the caller reports the diff instead.
+ * Longest common prefix + suffix decomposition. Returns the two divergent
+ * middles: `actual = P + midA + S`, `expected = P + midE + S`. When one side
+ * is a strict prefix/suffix of the other, one middle is empty. Used by the
+ * string-partial-repair path in `planTestPatch` to isolate the smallest
+ * substring to swap inside a shared literal.
  */
-export function planTestPatch(
-  source: string,
-  r: TestResult,
-  excludedLineRanges: Array<[number, number]> = [],
-): AutoPatch | null {
-  if (r.pass || !r.leaf) return null;
-  const { expected, actual } = r.leaf;
-  if (typeof actual !== "string" || typeof expected !== "string" || actual === expected) {
-    return null;
-  }
-  const actualLit = kumikiStringLit(actual);
-  const expectedLit = kumikiStringLit(expected);
-  if (actualLit === null || expectedLit === null) return null;
-
-  // Collect occurrences outside any `test` body. Determinism requires exactly
-  // one: assembled text (concatenation) is never found; a fixture-only literal
-  // yields zero implementation hits; duplicates are ambiguous — all → null.
-  const inExcluded = (offset: number): boolean => {
-    const line = lineOfOffset(source, offset);
-    return excludedLineRanges.some(([lo, hi]) => line >= lo && line <= hi);
-  };
-  const hits: number[] = [];
-  for (let idx = source.indexOf(actualLit); idx !== -1; idx = source.indexOf(actualLit, idx + 1)) {
-    if (!inExcluded(idx)) hits.push(idx);
-  }
-  if (hits.length !== 1) return null;
-  const hit = hits[0]!;
-  const at = r.diffAt ?? "(leaf)";
+function affixDiff(a: string, b: string): { pfx: string; midA: string; midE: string; sfx: string } {
+  let p = 0;
+  const minLen = Math.min(a.length, b.length);
+  while (p < minLen && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < minLen - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
   return {
-    code: "TEST",
-    message: `test "${r.name}" failed at ${at}`,
-    description: `replace ${actualLit} with ${expectedLit} (from failing test "${r.name}" @ ${at})`,
-    // Positional splice at the proven offset — avoids String.replace's first-
-    // match-anywhere (which could hit a test body) and `$`-substitution.
-    apply: (text: string) => text.slice(0, hit) + expectedLit + text.slice(hit + actualLit.length),
+    pfx: a.slice(0, p),
+    midA: a.slice(p, a.length - s),
+    midE: b.slice(p, b.length - s),
+    sfx: a.slice(a.length - s),
   };
+}
+
+/**
+ * Render a number as a Kumiki numeric literal source form (`Int` or fractional).
+ * Rejects NaN / Infinity — those cannot be spelled as literals and would break
+ * `.kumiki` parsing.
+ */
+function kumikiNumberLit(n: number): string | null {
+  if (!Number.isFinite(n)) return null;
+  return String(n);
 }
 
 /** 1-based inclusive line spans of every `test` definition in `store`. */
@@ -406,6 +505,364 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
   return store.defs
     .filter((e) => e.def.kind === "TestDef")
     .map((e): [number, number] => [e.range.startLine, e.range.endLine]);
+}
+
+/**
+ * Line ranges of the target def and every def it transitively references, used
+ * to constrain a literal search to code the failing test can actually reach.
+ * Returned as (target-range, dependency-ranges) so the caller can prefer a hit
+ * in the target itself before falling back to its dependencies. Returns null
+ * when the target can't be resolved — the caller falls back to whole-file
+ * search.
+ */
+function scopeOfTest(
+  store: Store,
+  testName: string,
+): { target: [number, number]; deps: Array<[number, number]> } | null {
+  const testEntry = store.defs.find((e) => e.def.kind === "TestDef" && e.name === testName);
+  if (!testEntry) return null;
+  const td = testEntry.def as TestDef;
+  if (!td.target) return null;
+  // Explicit switch — `property-test` / `episode-test` do not have a scope
+  // to disambiguate against, so return null instead of silently falling into
+  // the reducer namespace (which would misresolve a same-name reducer).
+  let targetQname: string;
+  switch (td.testKind) {
+    case "tile-test":
+      targetQname = `tile.${td.target}`;
+      break;
+    case "reducer-test":
+      targetQname = `reducer.${td.target}`;
+      break;
+    default:
+      return null;
+  }
+  const target = store.byQName.get(targetQname);
+  if (!target) return null;
+  const deps: Array<[number, number]> = [];
+  for (const dq of directDeps(store, targetQname)) {
+    const dep = store.byQName.get(dq);
+    if (dep) deps.push([dep.range.startLine, dep.range.endLine]);
+  }
+  return { target: [target.range.startLine, target.range.endLine], deps };
+}
+
+/**
+ * Reducers that write to `slot.<slotName>`. Returned as line ranges plus each
+ * def's raw source so the arithmetic-pattern search can inspect the body
+ * directly without re-slicing lines. Used by `planTestPatch` when the failing
+ * leaf is a numeric slot mismatch.
+ */
+function reducersWritingSlot(
+  store: Store,
+  slotName: string,
+): Array<{ range: [number, number]; body: string; name: string }> {
+  const out: Array<{ range: [number, number]; body: string; name: string }> = [];
+  const assignRe = new RegExp(`\\b${escapeRegex(slotName)}\\s*:=`);
+  for (const e of store.defs) {
+    if (e.def.kind !== "ReducerDef") continue;
+    const body = store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
+    if (assignRe.test(body))
+      out.push({ range: [e.range.startLine, e.range.endLine], name: e.name, body });
+  }
+  return out;
+}
+
+/**
+ * A deterministic patch from a failing test. Two tiers of relaxation over the
+ * naive "actual appears exactly once as a source literal" rule:
+ *
+ * 1. Exact-literal repair — `actual` appears verbatim. Scope-aware
+ *    disambiguation (via `store`): prefer a hit inside the target def's line
+ *    range, then a dependency of the target, before rejecting ambiguity.
+ *    Handles string / number / boolean leaves.
+ * 2. Prefix-suffix repair — `actual` and `expected` share a common prefix and
+ *    suffix; the divergent middle is a substring of an implementation literal.
+ *    Swap the middle only.
+ * 3. Arithmetic repair — a numeric slot mismatch where the responsible reducer
+ *    body has a `slot := slot ± N` shape. Reproduce the actual/expected delta
+ *    to pick the corrected operator/operand.
+ *
+ * `excludedLineRanges` are the 1-based inclusive line spans of the file's
+ * `test` definitions; matches inside them are skipped so a fixture literal is
+ * never patched into passing. `store` is optional — without it, the function
+ * degrades to the pre-relax exactly-one behavior for backward compatibility
+ * with the existing external API.
+ */
+export function planTestPatch(
+  source: string,
+  r: TestResult,
+  excludedLineRanges: Array<[number, number]> = [],
+  store?: Store,
+): AutoPatch | null {
+  if (r.pass || !r.leaf) return null;
+  const { expected, actual } = r.leaf;
+  if (actual === expected) return null;
+  const at = r.diffAt ?? "(leaf)";
+  const inExcluded = (offset: number): boolean => {
+    const line = lineOfOffset(source, offset);
+    return excludedLineRanges.some(([lo, hi]) => line >= lo && line <= hi);
+  };
+  const scope = store ? scopeOfTest(store, r.name) : null;
+
+  // ----- Tier 1: exact-literal repair (string / number / boolean) -----
+
+  const exactPatch = planExactLiteralPatch(source, r, actual, expected, at, inExcluded, scope);
+  if (exactPatch) return exactPatch;
+
+  // ----- Tier 2: string prefix/suffix partial repair -----
+
+  if (typeof actual === "string" && typeof expected === "string") {
+    const partial = planPartialStringPatch(source, r, actual, expected, at, inExcluded, scope);
+    if (partial) return partial;
+  }
+
+  // ----- Tier 3: numeric slot delta → reducer arithmetic pattern -----
+
+  if (
+    store &&
+    typeof actual === "number" &&
+    typeof expected === "number" &&
+    typeof r.diffAt === "string" &&
+    r.diffAt.startsWith("slots.")
+  ) {
+    const slotName = r.diffAt.slice("slots.".length);
+    const arith = planArithmeticPatch(source, r, slotName, actual, expected, at, store, inExcluded);
+    if (arith) return arith;
+  }
+
+  return null;
+}
+
+/**
+ * Render a leaf value as a Kumiki source literal for the exact-match tier.
+ * String / number / boolean are supported; anything else returns null.
+ */
+function leafLit(v: unknown): string | null {
+  if (typeof v === "string") return kumikiStringLit(v);
+  if (typeof v === "number") return kumikiNumberLit(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return null;
+}
+
+/**
+ * Locate hits of a literal outside any test body, then rank them: hits inside
+ * the target's line range win; hits inside a dependency range are runners-up;
+ * everything else is last. Returns the single winner offset when unambiguous,
+ * or null when the top rank has more than one hit (still ambiguous). Used by
+ * exact-literal and partial-string patches; encapsulates the shared
+ * disambiguation policy so both paths behave identically.
+ */
+function pickScopedHit(
+  source: string,
+  needle: string,
+  inExcluded: (offset: number) => boolean,
+  scope: { target: [number, number]; deps: Array<[number, number]> } | null,
+): number | null {
+  const hits: number[] = [];
+  for (let idx = source.indexOf(needle); idx !== -1; idx = source.indexOf(needle, idx + 1)) {
+    if (!inExcluded(idx)) hits.push(idx);
+  }
+  if (hits.length === 0) return null;
+  if (hits.length === 1) return hits[0]!;
+  if (!scope) return null;
+  const inRange = (offset: number, range: [number, number]): boolean => {
+    const line = lineOfOffset(source, offset);
+    return line >= range[0] && line <= range[1];
+  };
+  const inTarget = hits.filter((h) => inRange(h, scope.target));
+  if (inTarget.length === 1) return inTarget[0]!;
+  if (inTarget.length > 1) return null;
+  const inDeps = hits.filter((h) => scope.deps.some((r) => inRange(h, r)));
+  if (inDeps.length === 1) return inDeps[0]!;
+  return null;
+}
+
+/**
+ * True at offsets that sit inside a `"..."` string literal. Number / boolean
+ * exact-literal searches must reject these so a leaf like `-1` doesn't get
+ * matched against the substring `-1` inside a source string like `text="-1"`.
+ * Cached per call via a closure — pre-scanning the whole source once beats
+ * re-checking every candidate hit.
+ */
+function stringLiteralSpans(source: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const re = /"(?:[^"\\]|\\.)*"/g;
+  let m: RegExpExecArray | null = re.exec(source);
+  while (m !== null) {
+    spans.push([m.index, m.index + m[0].length]);
+    m = re.exec(source);
+  }
+  return spans;
+}
+
+function planExactLiteralPatch(
+  source: string,
+  r: TestResult,
+  actual: unknown,
+  expected: unknown,
+  at: string,
+  inExcluded: (offset: number) => boolean,
+  scope: { target: [number, number]; deps: Array<[number, number]> } | null,
+): AutoPatch | null {
+  const actualLit = leafLit(actual);
+  const expectedLit = leafLit(expected);
+  if (actualLit === null || expectedLit === null) return null;
+  // For non-string leaves, hits inside string literals are false positives
+  // (e.g. numeric `-1` matching inside `text="-1"`). Build a rejection filter
+  // that composes with `inExcluded`.
+  const isStringLeaf = typeof actual === "string";
+  const spans = isStringLeaf ? null : stringLiteralSpans(source);
+  const combinedExcluded = spans
+    ? (offset: number): boolean =>
+        inExcluded(offset) ||
+        spans.some(([lo, hi]) => offset >= lo && offset + actualLit.length <= hi)
+    : inExcluded;
+  const hit = pickScopedHit(source, actualLit, combinedExcluded, scope);
+  if (hit === null) return null;
+  return {
+    code: "TEST",
+    message: `test "${r.name}" failed at ${at}`,
+    description: `replace ${actualLit} with ${expectedLit} (from failing test "${r.name}" @ ${at})`,
+    apply: (text: string) => text.slice(0, hit) + expectedLit + text.slice(hit + actualLit.length),
+  };
+}
+
+function planPartialStringPatch(
+  source: string,
+  r: TestResult,
+  actual: string,
+  expected: string,
+  at: string,
+  inExcluded: (offset: number) => boolean,
+  scope: { target: [number, number]; deps: Array<[number, number]> } | null,
+): AutoPatch | null {
+  const { midA, midE } = affixDiff(actual, expected);
+  // If either side has an empty middle we're in the exact-literal tier and it
+  // already ran; skip so the two paths don't compete.
+  if (midA.length === 0 || midE.length === 0) return null;
+  // The exact-literal search would've been used if `actual` itself appeared;
+  // here we look for a string literal containing `midA` as a substring. Walk
+  // every `"..."` in the source and score by scope.
+  const literalRe = /"(?:[^"\\]|\\.)*"/g;
+  type Match = { start: number; end: number; body: string };
+  const matches: Match[] = [];
+  let m: RegExpExecArray | null = literalRe.exec(source);
+  while (m !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    // Body without surrounding quotes.
+    if (!inExcluded(start) && m[0].includes(midA))
+      matches.push({ start, end, body: m[0].slice(1, -1) });
+    m = literalRe.exec(source);
+  }
+  if (matches.length === 0) return null;
+  const rank = (offset: number): number => {
+    if (!scope) return 2;
+    const line = lineOfOffset(source, offset);
+    if (line >= scope.target[0] && line <= scope.target[1]) return 0;
+    if (scope.deps.some(([lo, hi]) => line >= lo && line <= hi)) return 1;
+    return 2;
+  };
+  const ranked = matches.map((mm) => ({ mm, rank: rank(mm.start) }));
+  const minRank = Math.min(...ranked.map((x) => x.rank));
+  const top = ranked.filter((x) => x.rank === minRank).map((x) => x.mm);
+  if (top.length !== 1) return null;
+  const target = top[0]!;
+  // Rebuild the literal with `midA` swapped for `midE`, keeping the rest of
+  // the string exactly as authored (so any escape sequences the developer
+  // typed pass through untouched).
+  const bodyIdx = target.body.indexOf(midA);
+  if (bodyIdx < 0) return null;
+  const patchedBody =
+    target.body.slice(0, bodyIdx) + midE + target.body.slice(bodyIdx + midA.length);
+  // Guard: the new body must still be spellable as a Kumiki literal (no raw
+  // control chars via `midE`).
+  const patchedLit = kumikiStringLit(patchedBody);
+  if (patchedLit === null) return null;
+  return {
+    code: "TEST",
+    message: `test "${r.name}" failed at ${at}`,
+    description: `replace "${midA}" with "${midE}" inside "${target.body}" (from failing test "${r.name}" @ ${at})`,
+    apply: (text: string) => text.slice(0, target.start) + patchedLit + text.slice(target.end),
+  };
+}
+
+function planArithmeticPatch(
+  source: string,
+  r: TestResult,
+  slotName: string,
+  actual: number,
+  expected: number,
+  at: string,
+  store: Store,
+  inExcluded: (offset: number) => boolean,
+): AutoPatch | null {
+  // Find reducers writing to this slot. When more than one exists, we can't
+  // pick — the caller falls back to no-patch.
+  const reducers = reducersWritingSlot(store, slotName);
+  if (reducers.length !== 1) return null;
+  const red = reducers[0]!;
+  // Match `<slot> := <slot> <op> <N>` where <op> is `+` / `-` / `*`. `N` is
+  // an Int literal (the arithmetic tier deliberately doesn't handle mixed
+  // expressions — those are out of scope by AC).
+  const stmtRe = new RegExp(
+    `\\b${escapeRegex(slotName)}\\s*:=\\s*${escapeRegex(slotName)}\\s*([+\\-*])\\s*(-?\\d+)\\b`,
+  );
+  const bodyMatch = stmtRe.exec(red.body);
+  if (!bodyMatch) return null;
+  const op = bodyMatch[1] as "+" | "-" | "*";
+  const n = Number.parseInt(bodyMatch[2]!, 10);
+  if (!Number.isFinite(n)) return null;
+  // Reproduce what the reducer added: `+ N` → delta = +N, `- N` → delta = -N.
+  // The initial `<slot>` value at test time is `actual - delta`. Solve for the
+  // new op/N whose delta equals `expected - (actual - delta)`.
+  let newLine: string | null = null;
+  let newDesc = "";
+  if (op === "+" || op === "-") {
+    const delta = op === "+" ? n : -n;
+    const base = actual - delta;
+    const wantedDelta = expected - base;
+    if (wantedDelta === 0) return null;
+    const newOp = wantedDelta > 0 ? "+" : "-";
+    const newN = Math.abs(wantedDelta);
+    if (newOp === op && newN === n) return null;
+    newLine = `${slotName} := ${slotName} ${newOp} ${newN}`;
+    newDesc = `reducer "${red.name}": ${slotName} := ${slotName} ${op} ${n} → ${newLine}`;
+  } else {
+    // Multiplicative — solve N' from expected = base * N' where base = actual / n.
+    if (n === 0 || actual === 0) return null;
+    const base = actual / n;
+    if (!Number.isInteger(base) || base === 0) return null;
+    const newN = expected / base;
+    if (!Number.isInteger(newN) || newN === n) return null;
+    newLine = `${slotName} := ${slotName} * ${newN}`;
+    newDesc = `reducer "${red.name}": ${slotName} := ${slotName} * ${n} → ${newLine}`;
+  }
+  // Positional splice — locate the match within source (not just the body).
+  const globalRe = new RegExp(stmtRe.source, "g");
+  let sourceMatch: RegExpExecArray | null = null;
+  let running: RegExpExecArray | null = globalRe.exec(source);
+  while (running !== null) {
+    if (
+      !inExcluded(running.index) &&
+      lineOfOffset(source, running.index) >= red.range[0] &&
+      lineOfOffset(source, running.index) <= red.range[1]
+    ) {
+      sourceMatch = running;
+      break;
+    }
+    running = globalRe.exec(source);
+  }
+  if (!sourceMatch) return null;
+  const start = sourceMatch.index;
+  const end = start + sourceMatch[0].length;
+  return {
+    code: "TEST",
+    message: `test "${r.name}" failed at ${at}`,
+    description: newDesc,
+    apply: (text: string) => text.slice(0, start) + newLine + text.slice(end),
+  };
 }
 
 /**
@@ -492,10 +949,12 @@ export async function runFixFromTest(
   }
 
   // Tier 2: behavioral, deterministic literal repair. Re-load from the current
-  // (possibly Tier-1-patched) file so the source and the `test` body line ranges
-  // used to exclude fixture literals are consistent.
+  // (possibly Tier-1-patched) file so the source, the `test` body line ranges
+  // used to exclude fixture literals, and the scope-aware disambiguation store
+  // are all consistent.
   const curSource = readFileSync(path, "utf8");
-  const patch = planTestPatch(curSource, target, testBodyLineRanges(load(path)));
+  const curStore = load(path);
+  const patch = planTestPatch(curSource, target, testBodyLineRanges(curStore), curStore);
   if (!patch) {
     return {
       ok: false,

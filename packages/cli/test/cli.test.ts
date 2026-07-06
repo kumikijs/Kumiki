@@ -529,10 +529,10 @@ test inc-works =
     expect(verify.out).toContain("PASS  inc-works");
   });
 
-  it("reports 'no auto-patch available' for a non-literal mismatch (AC1)", {
+  it("auto-patches a numeric slot mismatch by flipping the reducer operator (issue #156)", {
     timeout: 30000,
   }, () => {
-    const file = join(dir, "no-patch.kumiki");
+    const file = join(dir, "arith-patch.kumiki");
     const source = `slot count : Int = 0
 reducer dec on=ui.click(DecBtn) do= count := count - 1
 tile DecBtn = button(text="-1", onClick=dec)
@@ -547,11 +547,13 @@ test dec-should-add =
         expect = {slots: {count: 1}, effects: []}
 `;
     writeFileSync(file, source);
-    const { out, code } = runCli(["fix", file, "--auto-patch", "dec-should-add", "--apply"]);
-    expect(code).toBe(1);
-    expect(out).toContain("no auto-patch available");
-    // File untouched — no guessing.
-    expect(readFileSync(file, "utf8")).toBe(source);
+    // Pre-#156 this returned `no auto-patch available`; the expanded literal /
+    // arithmetic tier now rewrites the reducer body so the test passes.
+    const { code } = runCli(["fix", file, "--auto-patch", "dec-should-add", "--apply"]);
+    expect(code).toBe(0);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("count := count + 1");
+    expect(after).not.toContain("count := count - 1");
   });
 
   // Regression (PR #18 review, Codex P2): when the failing text comes from the
