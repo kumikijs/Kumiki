@@ -443,6 +443,70 @@ describe("planTestPatch: relaxed repair tiers", () => {
     expect(patch?.apply(source)).toContain("flag := false");
   });
 
+  it("boolean leaf: swaps true → false in the reverse direction (I4)", () => {
+    const { source, store } = writeAndLoad(
+      [
+        "slot flag : Bool = true",
+        "reducer flip on=ui.click(B) do= flag := false",
+        'tile B = button(text="toggle")',
+        "test t =",
+        "    reducer-test flip",
+        "        given  = {slots: {flag: true}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {flag: true}}",
+        "",
+      ].join("\n"),
+    );
+    const patch = planTestPatch(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.flag",
+        leaf: { expected: true, actual: false },
+      },
+      [[4, 7]],
+      store,
+    );
+    expect(patch).not.toBeNull();
+    expect(patch?.apply(source)).toContain("flag := true");
+  });
+
+  it("does not match a numeric leaf inside a string literal (I4)", () => {
+    // The failing reducer emits actual=-1; a `text="-1"` on a tile
+    // dependency contains the same `-1` characters. The exact-literal tier
+    // must NOT rewrite inside the string — that's the very defense the
+    // `stringLiteralSpans` filter provides.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 0",
+        "reducer dec on=ui.click(DecBtn) do= count := count - 1",
+        'tile DecBtn = button(text="-1")',
+        'tile App = column(heading("x"), DecBtn)',
+        "test t =",
+        "    reducer-test dec",
+        "        given  = {slots: {count: 0}, event: {kind: click, tile: DecBtn, id: none}}",
+        "        expect = {slots: {count: 1}}",
+        "",
+      ].join("\n"),
+    );
+    const patch = planTestPatch(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { expected: 1, actual: -1 },
+      },
+      [[5, 8]],
+      store,
+    );
+    // The arithmetic tier rewrites the reducer — not the `text="-1"` string.
+    expect(patch).not.toBeNull();
+    const patched = patch?.apply(source) ?? "";
+    expect(patched).toContain('tile DecBtn = button(text="-1")');
+    expect(patched).toMatch(/count := count \+ 1/);
+  });
+
   it("prefix/suffix: swaps the divergent middle inside a shared string literal", () => {
     const { source, store } = writeAndLoad(
       [
@@ -555,7 +619,7 @@ describe("planFixes: expanded auto-patch coverage", () => {
     writeFileSync(
       file,
       [
-        "effect logHello cap=log",
+        "effect logHello cap=log.write",
         "                in=Text",
         "                out=Unit",
         "",
@@ -564,7 +628,7 @@ describe("planFixes: expanded auto-patch coverage", () => {
         "app A",
         "    caps   = []",
         '    routes = {"/" -> App, "/404" -> App}',
-        "    init   = [greet]",
+        "    init   = []",
         "",
       ].join("\n"),
     );
@@ -574,29 +638,76 @@ describe("planFixes: expanded auto-patch coverage", () => {
     const result = applyFixPlan(file, "E0301");
     expect(result.applied).toBeGreaterThan(0);
     const after = readFileSync(file, "utf8");
-    // The caps array now contains `log`.
-    expect(after).toMatch(/caps\s*=\s*\[[^\]]*\blog\b[^\]]*\]/);
+    // The caps array now contains `log.write`.
+    expect(after).toMatch(/caps\s*=\s*\[[^\]]*\blog\.write\b[^\]]*\]/);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("caps merge is idempotent — adding an existing cap is a no-op patch (C5)", () => {
+    // The `appendAppCap` helper must return null (patch not offered) when the
+    // cap is already present, so we never report `applied: N` for a no-op.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-idem-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = [log.write]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    // Cap already present → file already clean → no patch to apply.
+    const result = applyFixPlan(file, "E0301");
+    expect(result.applied).toBe(0);
+    expect(result.remaining).toEqual([]);
+  });
+
+  it("caps merge preserves existing entries", () => {
+    // `[storage.read]` + new `log.write` → `[storage.read, log.write]`. Verifies
+    // we're not clobbering the array, and that the new cap lands in the same
+    // one-line array (not on a new line).
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-merge-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        "effect loadX cap=storage.read",
+        "             in=Unit",
+        "             out=Result(Text, Text)",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = [storage.read]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const result = applyFixPlan(file, "E0301");
+    expect(result.applied).toBeGreaterThan(0);
+    const after = readFileSync(file, "utf8");
+    expect(after).toMatch(/caps\s*=\s*\[storage\.read,\s*log\.write\]/);
   });
 });
 
-// M4b+: regression gate. A patch that would introduce new diagnostics is not
-// applied to disk; the pre-patch content is preserved.
+// M4b+ / #156 review C4: regression gate.
 describe("applyFixPlan: regression gate", () => {
-  it("does not touch disk when the composed patch increases the error count", () => {
-    const dir = mkdtempSync(join(tmpdir(), "kumiki-regression-"));
+  it("clean patch: writes through and reports not-blocked", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-regression-ok-"));
     const file = join(dir, "in.kumiki");
-    // E0001 (no /404 route) is repairable, but our NotFound injection lands in
-    // an app whose routes body has never been declared correctly — synthesize
-    // an already-broken source where the composed patch demonstrably adds a
-    // new diagnostic. Here: use an app that also has E0301 (missing cap) with
-    // NO effect def — so patching E0001 doesn't help, and we can verify the
-    // gate leaves the file byte-identical when the patch is neutral. We use a
-    // stronger synthetic: after "fixing" the app.routes E0001 by injecting a
-    // NotFound tile, the file already had unrelated errors — count is unchanged
-    // → the write goes through. This test therefore uses the negative branch
-    // by asserting `regressionBlocked` is unset for a benign patch, and pairs
-    // with a positive case below.
     writeFileSync(
       file,
       [
@@ -613,8 +724,71 @@ describe("applyFixPlan: regression gate", () => {
     // The E0001 patch cleanly clears the diagnostic → applied, not blocked.
     expect(result.regressionBlocked).toBeFalsy();
     expect(result.applied).toBeGreaterThan(0);
-    // Sanity: it did write.
     expect(readFileSync(file, "utf8")).not.toBe(before);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("swap E0301 → E0302 (typo cap): blocked, file byte-identical", () => {
+    // The very case the count-only guard would miss: an effect declared with
+    // a non-standard `cap=lgo` produces E0301 "missing capability lgo". Adding
+    // `lgo` to app.caps clears the E0301 but immediately triggers E0302
+    // "unknown-capability lgo". Diagnostic count stays 1; the set-difference
+    // gate must catch this as a 1-for-1 swap and roll back.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-regression-swap-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=lgo",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const before = readFileSync(file, "utf8");
+    const result = applyFixPlan(file, "E0301");
+    expect(result.regressionBlocked).toBe(true);
+    expect(result.applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("no resolutions: rolled back even when nothing new is introduced", () => {
+    // A `suggestName` that finds no viable neighbor emits no patch, so this
+    // case doesn't naturally arise from planFixes. Directly construct a plan
+    // via `applyFixPlan` with a code that has no repair — the pre-existing
+    // errors survive and we assert the file wasn't touched.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-regression-noop-"));
+    const file = join(dir, "in.kumiki");
+    // Only an unrepairable error (E0601 duplicate-write is not in planFixes).
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "reducer bad on=ui.click(B) do=",
+        "    count := 1",
+        "    count := 2",
+        'tile B = button(text="+")',
+        'tile App = column(heading("hi"), B)',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const before = readFileSync(file, "utf8");
+    const result = applyFixPlan(file, undefined);
+    // No patches available → applied 0, remaining preserves original errors.
+    expect(result.applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(before);
     rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -53,40 +53,56 @@ function suggestName(store: Store, missing: string): string | null {
 }
 
 /**
- * Append a capability name to the app's `caps = [...]` array. Returns the input
- * untouched when the pattern can't be found or when the cap is already present
- * (idempotent — replaying the same patch is a no-op). The regex tolerates
- * arbitrary whitespace around `caps` / `=` and either empty (`[]`) or
- * populated (`[a, b]`) arrays.
+ * Append a capability name to an app's `caps = [...]` array, constrained to
+ * the given line range so the search cannot accidentally hit a same-name field
+ * elsewhere in the source. Returns:
+ *   - a rewritten source when the caller's cap was added
+ *   - `null` when no `caps = [...]` field exists in the range OR the cap was
+ *     already present (no-op — nothing to patch)
+ * A null return means "no patch was made"; the caller must not present the
+ * patch as `applied`. The regex tolerates arbitrary whitespace around `caps`
+ * / `=` and either empty (`[]`) or populated (`[a, b]`) arrays.
  */
-function appendAppCap(text: string, cap: string): string {
+function appendAppCap(text: string, cap: string, appRange: [number, number] | null): string | null {
+  const lines = text.split(/\r?\n/);
+  const start = appRange ? appRange[0] - 1 : 0;
+  const end = appRange ? Math.min(appRange[1], lines.length) : lines.length;
+  const scoped = lines.slice(start, end).join("\n");
   const re = /(caps\s*=\s*\[)([^\]]*)(\])/;
-  return text.replace(re, (_m, open: string, body: string, close: string) => {
-    const items = body
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (items.includes(cap)) return `${open}${body}${close}`;
-    items.push(cap);
-    return `${open}${items.join(", ")}${close}`;
-  });
+  const match = re.exec(scoped);
+  if (!match) return null;
+  const items = match[2]!
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (items.includes(cap)) return null;
+  items.push(cap);
+  const patchedScoped = `${scoped.slice(0, match.index)}${match[1]}${items.join(", ")}${match[3]}${scoped.slice(match.index + match[0].length)}`;
+  return [...lines.slice(0, start), ...patchedScoped.split("\n"), ...lines.slice(end)].join("\n");
 }
 
 /**
  * Diagnostic codes whose message shape is `... "<name>" ...` and whose repair
- * is "replace the misspelled name with a close-neighbor definition name".
- * `planFixes` extracts the quoted name and consults `suggestName` for every
- * code in this set. Kept as a Set (not a switch) so extending it is a one-line
- * change and it can be introspected from tests.
+ * is "replace the misspelled name with a close top-level definition name".
+ * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
+ * from `listDefs(store)`) for every code in this set.
+ *
+ * Excluded on purpose:
+ *   - **E0106** (undef-timer) — timer names live in effect-scoped
+ *     `sym.timerNames` in the compiler, not among top-level defs; suggesting
+ *     a tile / reducer name here would silently rewrite `stop-timer("x")` to
+ *     an unrelated identifier. Requires a scoped candidate set.
+ *   - **E0209** (pat-unknown-variant) — variant tags live inside their union
+ *     type's payload list, not among top-level defs; same failure mode.
+ * Adding either code back means also plumbing the scoped candidate set into
+ * `planFixes` — a set-membership tweak alone is a correctness bug.
  */
 const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
   "E0102", // undef-reducer
   "E0103", // undef-ref / undef-slot
   "E0104", // undef-effect
   "E0105", // undef-tile
-  "E0106", // undef-timer
   "E0107", // undef-motion
-  "E0209", // pat-unknown-variant
   "E0211", // undef-tile-in-selector
 ]);
 
@@ -118,15 +134,26 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
     }
     if (err.code === "E0301") {
       // "Effect "<effect>" requires capability "<cap>" which is not declared in app.caps"
-      // — extract <cap> and append it to the app's `caps = [...]` array.
+      // — extract <cap> and append it to the app's `caps = [...]` array. Only
+      // emit a patch when the app def is reachable AND `appendAppCap` produced
+      // a mutated source. A no-op patch (silent unchanged input) would be
+      // reported as `applied: 1` despite doing nothing, which the regression
+      // gate can't catch on its own (nothing changed ⇒ same errors ⇒ same
+      // count) — the pre-check here keeps the "applied ⇔ source changed"
+      // invariant.
       const capMatch = /requires capability "([^"]+)"/.exec(err.message);
       if (!capMatch) continue;
       const cap = capMatch[1]!;
+      const appEntry = store.defs.find((e) => e.def.kind === "AppDef");
+      if (!appEntry) continue;
+      const appRange: [number, number] = [appEntry.range.startLine, appEntry.range.endLine];
+      const dryRun = appendAppCap(store.source, cap, appRange);
+      if (dryRun === null) continue;
       patches.push({
         code: err.code,
         message: err.message,
         description: `add capability "${cap}" to app.caps`,
-        apply: (text: string) => appendAppCap(text, cap),
+        apply: (text: string) => appendAppCap(text, cap, appRange) ?? text,
       });
     }
     if (err.code === "E0001") {
@@ -201,18 +228,31 @@ export function applyFixPlan(
   }
   let after = before;
   for (const p of plan.patches) after = p.apply(after);
-  // Regression gate: dry-run the composed patch through the typechecker before
-  // committing to disk. If the diagnostic count went *up* (a supposedly-fixing
-  // patch introduced new errors — e.g. E0301 caps-injection producing an E0302
-  // unknown-cap on a typo), or if the source no longer parses at all, discard
-  // the write and report zero patches applied. This keeps the invariant
-  // "apply => file is either cleaner or unchanged" for every code path that
-  // touches disk. Callers still see the pre-existing errors in `remaining`.
+  // Regression gate. Every path that would touch disk first re-parses and
+  // re-typechecks the composed source, then compares diagnostic *sets* (code
+  // + position) rather than counts. Rollback triggers when any of:
+  //   1. The composed source no longer parses at all — a *parse-error* is
+  //      strictly worse than the original type errors, so we discard even
+  //      though the pre-patch file had errors.
+  //   2. Any diagnostic exists in `after` but not `before` — introduced a
+  //      new failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
+  //      count-only guard would miss.
+  //   3. No diagnostic from `before` was resolved — the patch either did
+  //      nothing (silent noop) or replaced errors position-for-position
+  //      with different codes (still a swap).
+  // Invariant: "apply => file is either strictly cleaner or unchanged".
+  // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
+  const key = (e: KumikiError): string => `${e.code}@${e.pos.line}:${e.pos.col}`;
+  const beforeSet = new Set(plan.errors.map(key));
   let dryRemaining: KumikiError[];
   try {
     const next = parse(lex(after));
     dryRemaining = check(next, { capabilities });
   } catch (e) {
+    // Parse-error rollback (case 1). Do NOT write. The synthetic E0000 in
+    // `remaining` and the `parseError` string surface the parser's message
+    // for callers rendering diagnostics; `regressionBlocked` distinguishes
+    // this from "genuinely no patch available".
     const message = e instanceof Error ? e.message : String(e);
     const pe = e as { pos?: { line: number; col: number } };
     const synthetic: KumikiError = {
@@ -221,18 +261,19 @@ export function applyFixPlan(
       message,
       pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
     };
-    writeFileSync(path, after);
     return {
-      applied: plan.patches.length,
+      applied: 0,
       before,
-      after,
-      remaining: [synthetic],
+      after: before,
+      remaining: [...plan.errors, synthetic],
+      regressionBlocked: true,
       parseError: message,
     };
   }
-  if (dryRemaining.length > plan.errors.length) {
-    // Introduced regressions — never touch disk. `remaining` carries the pre-
-    // patch diagnostics so the caller sees the original errors intact.
+  const afterSet = new Set(dryRemaining.map(key));
+  const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
+  const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
+  if (introduced.length > 0 || resolved.length === 0) {
     return {
       applied: 0,
       before,
@@ -482,7 +523,20 @@ function scopeOfTest(
   if (!testEntry) return null;
   const td = testEntry.def as TestDef;
   if (!td.target) return null;
-  const targetQname = td.testKind === "tile-test" ? `tile.${td.target}` : `reducer.${td.target}`;
+  // Explicit switch — `property-test` / `episode-test` do not have a scope
+  // to disambiguate against, so return null instead of silently falling into
+  // the reducer namespace (which would misresolve a same-name reducer).
+  let targetQname: string;
+  switch (td.testKind) {
+    case "tile-test":
+      targetQname = `tile.${td.target}`;
+      break;
+    case "reducer-test":
+      targetQname = `reducer.${td.target}`;
+      break;
+    default:
+      return null;
+  }
   const target = store.byQName.get(targetQname);
   if (!target) return null;
   const deps: Array<[number, number]> = [];
