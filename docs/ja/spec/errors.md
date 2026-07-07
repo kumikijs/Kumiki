@@ -110,6 +110,14 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 
+### E0110 `unknown-token-group`
+
+`@<group>.<name>` 形式のテーマトークン参照（[スタイル §4.3](./style.md#_4-3-トークン参照)）の `<group>` が、閉じたテーマ名前空間（`colors`・`spacing`・`radius`・`shadow`・`typography`・`breakpoints`）のいずれでもない。
+
+> `Unknown theme token group "@<group>" (allowed: …)`
+
+**修正**：列挙されたグループを使う（`@colors.surface`、`@spacing.md` など）。素の識別子のつもりだったなら `@` 接頭辞を外す。
+
 ### E0109 `test-wildcard-misuse`
 
 テスト用ワイルドカード（`<any-id>` / `<slots.X>`）が `reducer-test` の `expect` 以外の場所 — reducer / tile / fn / app の本体、あるいはテストの `given` — に出現している。ワイルドカードは期待結果側の照合構文（[ワイルドカード](./testing.md#_8-2-2-wildcards)）であり、計算する値としても、入力として与える値としても意味を持たない。

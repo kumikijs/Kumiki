@@ -12,6 +12,7 @@
   "devDependencies": {
     "@kumikijs/compiler": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
+    "@mdit-vue/shared": "catalog:",
     "happy-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

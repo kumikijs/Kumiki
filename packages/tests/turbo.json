@@ -1,0 +1,16 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docs/spec/**/*.md",
+        "$TURBO_ROOT$/docs/ja/spec/**/*.md",
+        "$TURBO_ROOT$/packages/examples/features/**",
+        "$TURBO_ROOT$/packages/examples/apps/**"
+      ]
+    }
+  }
+}
