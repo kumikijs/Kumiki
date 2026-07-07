@@ -12,6 +12,9 @@ catalogs:
     '@happy-dom/global-registrator':
       specifier: ^20.10.2
       version: 20.10.2
+    '@mdit-vue/shared':
+      specifier: ^3.0.2
+      version: 3.0.2
     '@playwright/test':
       specifier: ^1.61.1
       version: 1.61.1
@@ -264,7 +267,7 @@ importers:
         specifier: workspace:*
         version: link:../runtime
       '@mdit-vue/shared':
-        specifier: ^3.0.2
+        specifier: 'catalog:'
         version: 3.0.2
       happy-dom:
         specifier: 'catalog:'
