@@ -56,7 +56,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | core |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | core |
 | [E0104](./errors.md#e0104-undef-effect) | `undef-effect` | effect | core |
-| [E0106](./errors.md#e0106-undef-timer) | `undef-timer` | effect | lifecycle |
+| [E0106](./errors.md#e0106-undef-timer) | `undef-timer` | reducer | lifecycle |
 | [E0105](./errors.md#e0105-undef-tile) | `undef-tile` | tile | core |
 | [E0107](./errors.md#e0107-undef-motion) | `undef-motion` | tile | style |
 | [E0108](./errors.md#e0108-undef-member) | `undef-member` | fn | stdlib |

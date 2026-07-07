@@ -56,7 +56,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | コア |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | コア |
 | [E0104](./errors.md#e0104-undef-effect) | `undef-effect` | effect | コア |
-| [E0106](./errors.md#e0106-undef-timer) | `undef-timer` | effect | ライフサイクル |
+| [E0106](./errors.md#e0106-undef-timer) | `undef-timer` | reducer | ライフサイクル |
 | [E0105](./errors.md#e0105-undef-tile) | `undef-tile` | tile | コア |
 | [E0107](./errors.md#e0107-undef-motion) | `undef-motion` | tile | スタイル |
 | [E0108](./errors.md#e0108-undef-member) | `undef-member` | fn | 標準ライブラリ |
