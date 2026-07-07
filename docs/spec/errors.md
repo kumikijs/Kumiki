@@ -20,7 +20,7 @@ type KumikiError = {
 
 A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
 
-Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. Lexer and parser stages surface failures as bare `ParseError` throws by design (single-shot; no recovery), so they carry `message` + `pos` but no `code`. The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) therefore extracts implementation-side codes from `typecheck.ts` only.
+Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. The lexer throws `LexError` and the parser throws `ParseError` — both carry `message` + `pos` but no `code`, by design (single-shot; no recovery). The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) therefore extracts implementation-side codes from `typecheck.ts` only.
 
 ## The Code System
 
@@ -210,6 +210,8 @@ An event handler argument / prop must be a reducer name, but was a different kin
 An `emit` targets an effect whose declared input type is `EffectId`, but the argument's statically-inferred type is not `EffectId`. This is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Without this check, codegen would pass through a non-`EffectId` runtime value and the cancel path would silently no-op, indistinguishable from a successful cancel.
 
 > `emit "<effect>" expects an EffectId argument`
+
+The check is best-effort: it only fires when the `emit` has at least one argument AND the argument's type can be statically inferred. A zero-argument `emit`, or an argument whose type is unresolvable at check time, is left to the runtime.
 
 **Fix**: Pass a slot / binding of type `EffectId` (the value returned by an earlier fire-and-track of the same effect), or — if the effect really should accept a scalar — change its `in=` type in the `effect` declaration. See [EffectId](./stdlib.md#_2-1-1-1-effectid) and [emit](./lifecycle.md).
 
@@ -441,11 +443,11 @@ A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set 
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
-Testing-DSL invariants (E0710 onwards) fire only inside test-family definitions and do not require an opt-in flag.
+Testing-DSL invariants (currently E0712; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
 
 ### E0712 `episode-mock-invalid`
 
-An `episode-test` `mocks` record binds an effect to a policy value that is not one of the four accepted forms: the bare identifiers `from-log` (replay recorded outcomes) and `ignore` (skip the effect entirely), or the constructor calls `ok(...)` (return a canned success payload) and `err(...)` (return a canned failure). Any other value — a typo like `from_log`, an arbitrary expression, or a bare reducer name — would fall through codegen's default and silently degrade to `{ policy: "ignore" }`, so the episode test would pass by skipping the very effect it was meant to replay.
+An `episode-test` `mocks` record binds an effect to a policy value that is not one of the four accepted forms: the bare identifiers `from-log` (replay recorded outcomes) and `ignore` (skip the effect entirely), or the constructor calls `ok(...)` (return a canned success payload) and `err(...)` (return a canned failure). Any other value — a typo like `from_log`, an arbitrary expression, or a bare reducer name — has no defined lowering in codegen and will trigger a loud `Error` at build time. The purpose of E0712 is to surface that failure earlier, at `check` time, with a source position that points at the offending value — instead of a codegen-stage throw whose stack points at the compiler.
 
 > `Mock for "<name>" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``
 

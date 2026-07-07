@@ -9,7 +9,12 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docs/spec/errors.md",
+        "$TURBO_ROOT$/docs/ja/spec/errors.md"
+      ]
     },
     "test:e2e": {
       "dependsOn": ["^build"],

@@ -1,14 +1,13 @@
-// Mechanized guard for issue #157: the diagnostic code set emitted by the
-// compiler must equal the code set documented in the normative spec — on both
-// EN (docs/spec/errors.md) and JA (docs/ja/spec/errors.md) tracks.
+// Mechanized guard: the diagnostic code set emitted by the compiler must
+// equal the code set documented in the normative spec — on both EN
+// (docs/spec/errors.md) and JA (docs/ja/spec/errors.md) tracks.
 //
 // Design decision (documented in docs/spec/errors.md / docs/ja/spec/errors.md
 // under "The Form of an Error" / "エラーの形"): coded diagnostics are emitted
-// only by packages/compiler/src/typecheck.ts. The lexer and parser throw
-// bare ParseError values (message + pos) with no code by design — the parse
-// stage stops at the first error and no recovery table exists to hang codes
-// off. This test therefore extracts implementation-side codes from
-// typecheck.ts only.
+// only by packages/compiler/src/typecheck.ts. The lexer throws `LexError` and
+// the parser throws `ParseError` — both carry `message` + `pos` but no
+// `code`, by design (single-shot; no recovery). This test therefore extracts
+// implementation-side codes from typecheck.ts only.
 //
 // If a new code is introduced, add it to typecheck.ts AND to both errors.md
 // files in the same PR. If a code is removed from typecheck.ts, drop its
@@ -26,6 +25,14 @@ const repoRoot = path.resolve(here, "..", "..", "..");
 
 const CODE_RE = /code:\s*"(E\d{4}|W\d{4})"/g;
 const HEADING_RE = /^### (E\d{4}|W\d{4})\b/gm;
+
+// Regex-integrity floor. If both sides drop below this simultaneously the
+// symmetric difference could go empty and the whole guard would silently pass
+// — worse, a partial regex breakage (impl-only) yields a fail message that
+// tells the reader to delete every spec section. Any real refactor keeps the
+// count well above this floor; drop it only if the code-band table is
+// deliberately shrunk.
+const MIN_CODES = 30;
 
 function collect(source: string, re: RegExp): Set<string> {
   const set = new Set<string>();
@@ -54,7 +61,7 @@ function report(label: string, implSide: Set<string>, specSide: Set<string>): st
   return lines.join("\n");
 }
 
-describe("spec ⇆ typecheck code-set drift (issue #157)", () => {
+describe("spec ⇆ typecheck diagnostic code-set drift", () => {
   const implSrc = readFileSync(
     path.join(repoRoot, "packages", "compiler", "src", "typecheck.ts"),
     "utf8",
@@ -65,15 +72,19 @@ describe("spec ⇆ typecheck code-set drift (issue #157)", () => {
   const specEnCodes = collect(specEnSrc, HEADING_RE);
   const specJaCodes = collect(specJaSrc, HEADING_RE);
 
+  it("extraction regexes still match the expected shapes on all three sides", () => {
+    expect(implCodes.size).toBeGreaterThan(MIN_CODES);
+    expect(specEnCodes.size).toBeGreaterThan(MIN_CODES);
+    expect(specJaCodes.size).toBeGreaterThan(MIN_CODES);
+  });
+
   it("EN spec (docs/spec/errors.md) documents exactly the codes typecheck.ts emits", () => {
     const msg = report("EN", implCodes, specEnCodes);
     if (msg !== "") expect.fail(msg);
-    expect(msg).toBe("");
   });
 
   it("JA spec (docs/ja/spec/errors.md) documents exactly the codes typecheck.ts emits", () => {
     const msg = report("JA", implCodes, specJaCodes);
     if (msg !== "") expect.fail(msg);
-    expect(msg).toBe("");
   });
 });
