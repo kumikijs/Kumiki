@@ -18,4 +18,4 @@
 | [ランタイム](./runtime.md) | ランタイム実装ガイド（signal graph・mount・dispatch・dispose） |
 | [AI 編集](./ai-edit.md) | AI 編集 API、CRDT op、参照整合性 |
 | [テスト](./testing.md) | テスト戦略 |
-| [エラーコード](./errors.md) | エラーコードカタログ（E0001..E07xx） |
+| [エラーコード](./errors.md) | エラーコードカタログ（E0001..E08xx） |

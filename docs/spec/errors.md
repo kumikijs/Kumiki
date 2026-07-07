@@ -20,6 +20,8 @@ type KumikiError = {
 
 A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
 
+Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. The lexer throws `LexError` and the parser throws `ParseError` — both carry `message` + `pos` but no `code`, by design (single-shot; no recovery). The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) therefore extracts implementation-side codes from `typecheck.ts` only.
+
 ## The Code System
 
 | Band | Domain |
@@ -30,7 +32,7 @@ A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the par
 | `E03xx` | Capabilities and purity |
 | `E04xx` | Motion |
 | `E06xx` | reducer write rules |
-| `E07xx` | Accessibility (a11y), strict-icons |
+| `E07xx` | Opt-in checks: accessibility (a11y), strict-icons, testing-DSL invariants |
 | `E08xx` | Runtime hazards (code that compiles but breaks at runtime) |
 | `W02xx` | Non-fatal warnings (build still succeeds) |
 
@@ -202,6 +204,16 @@ An event handler argument / prop must be a reducer name, but was a different kin
 
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+
+### E0202 `emit-arg-type-mismatch`
+
+An `emit` targets an effect whose declared input type is `EffectId`, but the argument's statically-inferred type is not `EffectId`. This is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Without this check, codegen would pass through a non-`EffectId` runtime value and the cancel path would silently no-op, indistinguishable from a successful cancel.
+
+> `emit "<effect>" expects an EffectId argument`
+
+The check is best-effort: it only fires when the `emit` has at least one argument AND the argument's type can be statically inferred. A zero-argument `emit`, or an argument whose type is unresolvable at check time, is left to the runtime.
+
+**Fix**: Pass a slot / binding of type `EffectId` (the value returned by an earlier fire-and-track of the same effect), or — if the effect really should accept a scalar — change its `in=` type in the `effect` declaration. See [EffectId](./stdlib.md#_2-1-1-1-effectid) and [emit](./lifecycle.md).
 
 ### E0204 `effect-id-misuse`
 
@@ -401,9 +413,9 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 **Note**: The granularity is **path shape**. `issues[id].status` and `issues[id].updatedAt` are considered different shapes and can coexist, but double assignment to `count` is forbidden.
 
-## E07xx — Accessibility (a11y) and strict-icons
+## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 
-A band for checks that ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in. `check()` filters these codes out unless the matching flag is set.
+A band for checks that either ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in, or that guard invariants of the testing DSL itself. `check()` filters the `strict*` codes out unless the matching flag is set; testing-DSL codes are always active because they only fire inside `test`/`episode-test`/`property-test` bodies.
 
 a11y checking is enabled via `check(program, { strictA11y: true })`.
 
@@ -430,6 +442,16 @@ Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNa
 A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
+
+Testing-DSL invariants (currently E0712; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+
+### E0712 `episode-mock-invalid`
+
+An `episode-test` `mocks` record binds an effect to a policy value that is not one of the four accepted forms: the bare identifiers `from-log` (replay recorded outcomes) and `ignore` (skip the effect entirely), or the constructor calls `ok(...)` (return a canned success payload) and `err(...)` (return a canned failure). Any other value — a typo like `from_log`, an arbitrary expression, or a bare reducer name — has no defined lowering in codegen and will trigger a loud `Error` at build time. The purpose of E0712 is to surface that failure earlier, at `check` time, with a source position that points at the offending value — instead of a codegen-stage throw whose stack points at the compiler.
+
+> `Mock for "<name>" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``
+
+**Fix**: Replace the mock value with one of the four accepted forms. Use `from-log` to replay from the recorded episode, `ignore` to no-op the effect, `ok(<value>)` to force a success payload, or `err(<value>)` to force a failure. See [episode-test](./testing.md).
 
 ## E08xx — Runtime Hazards
 
