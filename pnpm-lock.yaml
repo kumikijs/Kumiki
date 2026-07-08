@@ -96,12 +96,18 @@ importers:
 
   packages/benchmarks:
     devDependencies:
+      '@happy-dom/global-registrator':
+        specifier: 'catalog:'
+        version: 20.10.2
       '@kumikijs/cli':
         specifier: workspace:*
         version: link:../cli
       '@kumikijs/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@kumikijs/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       gpt-tokenizer:
         specifier: 'catalog:'
         version: 3.4.0
