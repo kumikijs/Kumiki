@@ -8,16 +8,16 @@
 
 Kumiki's runtime is, today, a **full teardown & replace** renderer. Every state change — a reducer, a `bind` input write, a route change, a timer, or a lifecycle event — funnels into an unconditional `render()`:
 
-- `applyReducer` (`packages/runtime/src/core.ts:892`) calls `render()` on every reducer application; `_setSlot` (`:1161`) and `syncRouteFromLocation` (`:1016`) do the same.
-- `render()` (`core.ts:660-772`) rebuilds from scratch: `pickRootTile(app, slotValues)` produces a **brand-new `TileNode` tree from root to leaves**, `tileCtx.render()` converts **the entire tree into new `HTMLElement`s**, and `target.replaceChild(dom, currentRoot)` swaps **the whole app in a single `replaceChild`**. There is no DOM diff, no node reuse, and no keyed reconcile.
-- `computeSlotDiffs()` (`core.ts:541-559`) does compute which slots changed (`dirty`), but its **only consumer is `episode?.recordSignalUpdate(dirty)`** (`core.ts:893`) — an observation log. `dirty` never narrows the render.
-- There is **no signal graph**. `app.live` is a plain `Record<string, unknown>` (`core.ts:577`); no proxy, no getters, no dependency collection. UI never records which slot it read.
+- `applyReducer` in `packages/runtime/src/core.ts` calls `render()` on every reducer application; `_setSlot` and `syncRouteFromLocation` do the same.
+- `render()` rebuilds from scratch: `pickRootTile(app, slotValues)` produces a **brand-new `TileNode` tree from root to leaves**, `tileCtx.render()` converts **the entire tree into new `HTMLElement`s**, and `target.replaceChild(dom, currentRoot)` swaps **the whole app in a single `replaceChild`**. There is no DOM diff, no node reuse, and no keyed reconcile.
+- `computeSlotDiffs()` does compute which slots changed (`dirty`), but its **only consumer is `episode?.recordSignalUpdate(dirty)`** at the tail of `applyReducer` — an observation log. `dirty` never narrows the render.
+- There is **no signal graph**. `app.live` is a plain `Record<string, unknown>` (initialised in `mountCore`); no proxy, no getters, no dependency collection. UI never records which slot it read.
 
 Because the whole DOM is discarded on every update, browser/DOM state that lives on the nodes is lost and must be reconstructed artificially:
 
-- Input focus + caret: snapshot → restore via `data-kumiki-bind` / `id` / `domPath` (`core.ts:665-755`).
+- Input focus + caret: snapshot → restore via `data-kumiki-bind` / `id` / `domPath` (the snapshot/restore block inside `render()`).
 - Scroll position: `scrollSaved` map, saved/restored per root.
-- Mount/unmount lifecycle: not a DOM diff — a set-difference over tile names (`collectMountedTiles`, `core.ts:762-771`).
+- Mount/unmount lifecycle: not a DOM diff — a set-difference over tile names (`collectMountedTiles`).
 
 `<select>` (open state), `<details>` (open), `contenteditable`, and `<video>` (playback position, buffering) hold internal state the snapshot layer **cannot** capture, so they break under any re-render triggered while the user is interacting.
 
@@ -57,11 +57,11 @@ Why Hybrid over the alternatives:
 
 ## 3. Design decision 2 — `AppShape` contract change
 
-**Question:** may the `AppShape` (`core.ts:377-441`) contract change, given that would force a coordinated compiler+runtime release?
+**Question:** may the `AppShape` type in `packages/runtime/src/core.ts` contract change, given that would force a coordinated compiler+runtime release?
 
 **Decision: allow it, but keep it additive, and ship compiler + runtime together.**
 
-Under Hybrid the core contract is preserved: `root?: () => TileNode` (`core.ts:438`) still returns a fresh plain-data tree each call, and `live` / `_rerender` are unchanged. The one thing keyed diff needs that the tree does not yet carry is **stable tile identity** — the key that says "this tile in the new tree is the same instance as that tile in the old tree", so its DOM node (and focus/scroll/`<select>` state) is reused rather than rebuilt.
+Under Hybrid the core contract is preserved: the `AppShape.root?: () => TileNode` factory still returns a fresh plain-data tree each call, and `live` / `_rerender` are unchanged. The one thing keyed diff needs that the tree does not yet carry is **stable tile identity** — the key that says "this tile in the new tree is the same instance as that tile in the old tree", so its DOM node (and focus/scroll/`<select>` state) is reused rather than rebuilt.
 
 Two ways to supply identity:
 
@@ -74,7 +74,7 @@ Two ways to supply identity:
 
 **Question:** how fine should `episode.recordSignalUpdate` get — more debug signal vs. more learning cost?
 
-Today `recordSignalUpdate` records **one step per reducer application**, carrying only the dirty slot names (`core.ts:893`, `ssr.ts:270`). The `EpisodeStep` `signal-update` variant already declares a `binds-updated: string[]` field (`episode.ts:47-52`), but **no call site ever populates it** — it is always `[]`.
+Today `recordSignalUpdate` records **one step per reducer application**, carrying only the dirty slot names (called from `applyReducer` in `core.ts` and from the SSR dispatch in `ssr.ts`). The `EpisodeStep` `signal-update` variant in `packages/runtime/src/episode.ts` already declares a `binds-updated: string[]` field, but **no call site ever populates it** — it is always `[]`.
 
 **Decision: populate `binds-updated` with the tiles/binds the diff actually patched; do not add new episode step kinds.**
 
@@ -89,7 +89,7 @@ Today `recordSignalUpdate` records **one step per reducer application**, carryin
 **Decision: granularity fixes the majority; the residual is a separate issue.**
 
 - The root cause today is that **every** re-render discards **every** node, so any element with internal state loses it and the snapshot layer can only restore what it can serialize (focus + caret; not `<select>` open state, not `<video>` playback). Keyed diff keeps the DOM node for any tile that did not change, so the internal state simply **stays on the live node** — no snapshot/restore needed for the untouched case. This dissolves the common failures (interacting with element A no longer resets element B).
-- The residual case: a tile *does* change and must be reused across that change while preserving its internal state (e.g. a `<select>` whose options changed but whose open/selection state should persist). That requires identity-preserving reconciliation guarantees at the element level — an **identity-preserving hydration** design that is out of scope for #159 (Non-goal) and is split into its own follow-up issue (§6). The focus/scroll snapshot layer (`core.ts:665-755`) is retained as a fallback during migration and revisited there.
+- The residual case: a tile *does* change and must be reused across that change while preserving its internal state (e.g. a `<select>` whose options changed but whose open/selection state should persist). That requires identity-preserving reconciliation guarantees at the element level — an **identity-preserving hydration** design that is out of scope for #159 (Non-goal) and is split into its own follow-up issue (§6). The focus/scroll snapshot layer inside `render()` is retained as a fallback during migration and revisited there.
 
 ## 6. `AppShape` migration plan
 
