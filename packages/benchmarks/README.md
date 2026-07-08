@@ -1,6 +1,6 @@
 # @kumikijs/benchmarks
 
-Two benchmark suites for Kumiki. Private workspace package; run via `pnpm --filter @kumikijs/benchmarks <script>`.
+Three benchmark suites for Kumiki. Private workspace package; run via `pnpm --filter @kumikijs/benchmarks <script>`.
 
 ```
 benchmarks/
@@ -8,6 +8,8 @@ benchmarks/
 │   ├── todomvc-react/      #   React baseline (App.tsx)
 │   ├── scenarios/          #   4 edit scenarios (kumiki-modified / react-modified)
 │   └── scripts/            #   measure.mjs · measure-scenarios.mjs · measure-ops.mjs
+├── reactivity/             # How costly is a re-render? (runtime baseline)
+│   └── reactivity-cost.mjs #   coarse full-teardown model across app sizes
 └── learning-cost/          # Can an LLM write Kumiki from the spec alone?
     ├── summary.md          #   cross-vendor results + methodology (read this)
     ├── eval.mjs            #   scores one .kumiki file: parse / typecheck / build + LOC / tokens
@@ -31,6 +33,16 @@ pnpm --filter @kumikijs/benchmarks measure:ops        # Kumiki edit cost: full-f
 ```
 
 Tokenized with `gpt-tokenizer` (cl100k_base / o200k_base). Latest headline: a Kumiki app is ~1.4× fewer tokens and ~2.0× fewer lines than the equivalent React.
+
+## Reactivity cost (runtime re-render baseline)
+
+Quantifies the **current** coarse-grained runtime model: every state change tears the whole tile tree down and rebuilds it (`packages/runtime/src/core.ts` `render()` → `replaceChild`). A single-slot update recreates every DOM node even though one text node semantically changes. The harness mounts generated apps of increasing size in happy-dom and times single-slot updates, establishing the numeric baseline a future fine-grained model must beat (see `docs/design/reactivity-v2.md`, issue #159).
+
+```sh
+pnpm --filter @kumikijs/benchmarks measure:reactivity   # median render ms + nodes-recreated / waste× per app size
+```
+
+Requires the runtime + compiler dist bundles (`pnpm build` upstream, which Turborepo's `^build` handles). happy-dom is far faster than a real browser, so the absolute times are a floor, not a ceiling; the point is the **linear O(tree-size)** cost per update regardless of how little changed.
 
 ## Learning cost (LLM writes Kumiki from spec)
 
