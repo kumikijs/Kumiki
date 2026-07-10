@@ -73,9 +73,7 @@ export function propsFor(
     // reference — tiles are emitted inside `() =>` thunks that run after the
     // instance exists), so several compiled apps on one page never cross-wire
     // through a shared global.
-    const body = names
-      .map((n) => `App._dispatch(${JSON.stringify(n)}, el)`)
-      .join("; ");
+    const body = names.map((n) => `App._dispatch(${JSON.stringify(n)}, el)`).join("; ");
     entries.push(`${handlerName}: (el) => { ${body} }`);
     emittedHandlers.add(handlerName);
   };

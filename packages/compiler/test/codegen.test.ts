@@ -378,9 +378,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onKeyDown: \(el\) => \{ App._dispatch\("onKey"/,
-    );
+    expect(result.js).toMatch(/onKeyDown: \(el\) => \{ App._dispatch\("onKey"/);
   });
 
   it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
@@ -394,9 +392,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onMouseEnter: \(el\) => \{ App._dispatch\("onHover"/,
-    );
+    expect(result.js).toMatch(/onMouseEnter: \(el\) => \{ App._dispatch\("onHover"/);
   });
 
   // issue #122 — §1.6.1 ui.focus / ui.blur. Parser/AST already accepted
@@ -418,9 +414,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onFocus: \(el\) => \{ App._dispatch\("recordFocus"/,
-    );
+    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
   });
 
   it("emits onBlur for ui.blur(EnclosingTile) on an input (§1.6.1)", () => {
@@ -434,9 +428,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onBlur: \(el\) => \{ App._dispatch\("markBlur"/,
-    );
+    expect(result.js).toMatch(/onBlur: \(el\) => \{ App._dispatch\("markBlur"/);
   });
 
   it("emits onFocus on a textarea (one of the focusable tile gates) (§1.6.1)", () => {
@@ -450,9 +442,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onFocus: \(el\) => \{ App._dispatch\("recordFocus"/,
-    );
+    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
   });
 
   // The "non-focusable" guard is a deliberate codegen design choice: a
@@ -515,9 +505,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onFocus: \(el\) => \{ App._dispatch\("recordFocus"/,
-    );
+    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
   });
 
   it("emits onClick on a radio tile so `ui.click(Radio)` reducers fire (§1.6.1)", () => {
@@ -570,9 +558,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(
-      /onBlur: \(el\) => \{ App._dispatch\("markBlur"/,
-    );
+    expect(result.js).toMatch(/onBlur: \(el\) => \{ App._dispatch\("markBlur"/);
   });
 
   it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {

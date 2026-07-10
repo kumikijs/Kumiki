@@ -93,9 +93,9 @@ export const textTiles: TileRenderers = {
         const fire = (): void => {
           const app = resolveApp(a) as PrefetchApp | undefined;
           if (!app) return;
-          const seen = (app._prefetched ??= new Set<string>());
-          if (seen.has(dedupeKey)) return;
-          seen.add(dedupeKey);
+          if (!app._prefetched) app._prefetched = new Set<string>();
+          if (app._prefetched.has(dedupeKey)) return;
+          app._prefetched.add(dedupeKey);
           app._prefetch?.(reducer, payload as Record<string, string>, node.to);
         };
         const IO = (globalThis as { IntersectionObserver?: typeof IntersectionObserver })
