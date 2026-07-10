@@ -598,13 +598,14 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
  * `emit X(args)` used as an expression (spec http.md §6.4, stdlib §2.1.1.1)
  * — push the same `{effect, args}` record the statement form pushes, then
  * yield the dispatched effect's `EffectId`. The id format mirrors the
- * runtime dispatcher (`packages/runtime/src/core.ts:1324-1329`): `name:_`
- * by default, `name:String(keyOf(input))` for `latest-per-key`. Each arg is
- * lowered ONCE into a local (`__a0` / `__a1` / …) so a side-effecting expr
- * (`now()`, `T.fresh()`, …) cannot diverge between the value pushed onto
- * `_emits` and the value the EffectId is computed from — otherwise the
- * reducer's captured id wouldn't match the inflight key the launch path
- * registers, and `emit cancel(id)` would silently no-op.
+ * runtime effect dispatcher (`core.ts`'s `keyOf` / `id = "name:key"`
+ * derivation): `name:_` by default, `name:String(keyOf(input))` for
+ * `latest-per-key`. Each arg is lowered ONCE into a local (`__a0` / `__a1`
+ * / …) so a side-effecting expr (`now()`, `T.fresh()`, …) cannot diverge
+ * between the value pushed onto `_emits` and the value the EffectId is
+ * computed from — otherwise the reducer's captured id wouldn't match the
+ * inflight key the launch path registers, and `emit cancel(id)` would
+ * silently no-op.
  */
 export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
   const effect = e.effect;

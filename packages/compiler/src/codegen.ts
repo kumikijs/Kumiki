@@ -1,12 +1,15 @@
 // AST → self-contained ES module that uses the runtime API.
 //
 // The compile pipeline is `lex → parse → check → codegen`. This entry file
-// orchestrates codegen — the actual emission for each of the seven language
-// layers (type / slot / effect / reducer / tile / fn / app) lives under
-// `./codegen/`, alongside the import-header analysis and the selector
-// dispatch wiring. See `docs/spec/index.md` for the layer semantics and
-// `packages/runtime/src/tiles-*.ts` / `effects-*.ts` for the runtime
-// modules the granular (#71) build imports here.
+// assembles the app: it drives the per-definition emitters — slot / effect /
+// reducer / tile / fn (and the test DSL) — from `./codegen/`, threads their
+// output into the `createApp()` factory, builds the routes / theme / motion
+// registries + `App` object, bakes the used-icon subset (#101), and emits
+// the mount call. The import-header analysis and selector dispatch wiring
+// also live under `./codegen/`. Expression lowering (`jsOfExpr`) is shared
+// by every layer via `./codegen/expr.ts`. See `docs/spec/index.md` for the
+// layer semantics and `packages/runtime/src/tiles-*.ts` / `effects-*.ts`
+// for the runtime modules the granular per-feature build imports here.
 
 import type {
   AppDef,
@@ -59,8 +62,11 @@ export type CodegenOptions = {
   /**
    * Resolve an `episode-test load = "<path>"` directive (spec §8.6) to its
    * file contents — the compiler inlines the parsed log into codegen so the
-   * runtime test harness does not need filesystem access. Optional; emit a
-   * placeholder when omitted and no `episode-test` appears.
+   * runtime test harness does not need filesystem access. Optional. When
+   * omitted, an `episode-test load = "..."` still emits (with an empty
+   * `episodes: []`), so callers that actually run episode tests must
+   * provide this — otherwise the replay loop is skipped and `from-log`
+   * expectations degenerate into no-ops.
    */
   readEpisodeLog?: (relativePath: string) => string;
   /**

@@ -106,9 +106,13 @@ export function analyzeRuntimeUsage(
 }
 
 /**
- * Build the import header + `_s` / `_tiles` bindings for the compiled module.
- * `runtimeModulesDir` picks the granular (#71) path; the alternative is the
- * monolith single-import shape used by `inlineRuntime`.
+ * Build the import header for the compiled module together with the `_s`
+ * stdlib binding (and, in the granular path only, the `_tiles` renderer map).
+ * `runtimeModulesDir` picks the per-feature granular path — one import per
+ * runtime module that `analyzeRuntimeUsage` decided is needed. Otherwise a
+ * single monolithic import from `runtimeSpecifier` covers everything;
+ * `inlineRuntime` (`bundle: true`) then relies on that one-statement shape
+ * to strip and inline the runtime bundle in place.
  */
 export function emitImportHeader(
   usage: RuntimeUsage,

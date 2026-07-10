@@ -104,8 +104,10 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   if (t.testKind === "episode-test") {
     // §8.6: load the episode log at compile time so the runtime test harness
     // never touches the filesystem. The reader is injected via CodegenOptions
-    // (Node-only callers pass `nodeEpisodeLogReader`); without it we emit a
-    // failing stub so a misconfigured CLI surfaces the gap loudly.
+    // (Node-only callers pass `nodeEpisodeLogReader`); without it we emit an
+    // empty `episodes: []` — the runtime skips the replay loop, so a
+    // `from-log` expect can silently pass. A separate check should refuse to
+    // build an `episode-test load = "..."` when no reader is available.
     let episodesJs = "[]";
     if (opts.readEpisodeLog && t.load) {
       const raw = opts.readEpisodeLog(t.load);
