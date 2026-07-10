@@ -69,8 +69,12 @@ export function propsFor(
       return true;
     });
     if (names.length === 0) return;
+    // Dispatch through the enclosing `createApp()` scope's own `App` (a lazy
+    // reference — tiles are emitted inside `() =>` thunks that run after the
+    // instance exists), so several compiled apps on one page never cross-wire
+    // through a shared global.
     const body = names
-      .map((n) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(n)}, el)`)
+      .map((n) => `App._dispatch(${JSON.stringify(n)}, el)`)
       .join("; ");
     entries.push(`${handlerName}: (el) => { ${body} }`);
     emittedHandlers.add(handlerName);
@@ -88,9 +92,7 @@ export function propsFor(
   // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
   for (const [handlerName, names] of explicitByHandler) {
     if (emittedHandlers.has(handlerName)) continue;
-    const body = names
-      .map((n) => `globalThis.__kumikiApp._dispatch(${JSON.stringify(n)}, el)`)
-      .join("; ");
+    const body = names.map((n) => `App._dispatch(${JSON.stringify(n)}, el)`).join("; ");
     entries.push(`${handlerName}: (el) => { ${body} }`);
   }
   // Build `el` from explicit {key: expr} that aren't handlers

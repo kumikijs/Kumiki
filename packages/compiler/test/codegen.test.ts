@@ -31,7 +31,10 @@ describe("codegen", () => {
     expect(result.js).toMatch(/import \{ mount[^}]*\} from "\.\/runtime\.js"/);
     expect(result.js).toContain('"count":');
     expect(result.js).toContain("_reducers");
-    expect(result.js).toContain("__kumikiApp._dispatch");
+    // Handlers dispatch through the instance's own `App`; the global stays as
+    // a tooling state oracle only.
+    expect(result.js).toContain('App._dispatch("inc"');
+    expect(result.js).toContain("globalThis.__kumikiApp = App;");
   });
 
   it("compiles a program that uses .concat (issue #5 regression)", () => {
@@ -376,7 +379,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onKeyDown: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onKey"/,
+      /onKeyDown: \(el\) => \{ App._dispatch\("onKey"/,
     );
   });
 
@@ -392,7 +395,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onMouseEnter: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onHover"/,
+      /onMouseEnter: \(el\) => \{ App._dispatch\("onHover"/,
     );
   });
 
@@ -416,7 +419,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+      /onFocus: \(el\) => \{ App._dispatch\("recordFocus"/,
     );
   });
 
@@ -432,7 +435,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onBlur: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("markBlur"/,
+      /onBlur: \(el\) => \{ App._dispatch\("markBlur"/,
     );
   });
 
@@ -448,7 +451,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+      /onFocus: \(el\) => \{ App._dispatch\("recordFocus"/,
     );
   });
 
@@ -513,7 +516,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onFocus: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("recordFocus"/,
+      /onFocus: \(el\) => \{ App._dispatch\("recordFocus"/,
     );
   });
 
@@ -528,7 +531,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("pick"/);
+    expect(result.js).toMatch(/onClick: \(el\) => \{ App._dispatch\("pick"/);
   });
 
   it("emits onChange on form-control tiles (check / radio / switch / slider) — `ui.change(Tile)` reducers fire (§1.6.1)", () => {
@@ -550,7 +553,7 @@ describe("codegen", () => {
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") continue;
       expect(result.js).toMatch(
-        new RegExp(`onChange: \\(el\\) => \\{ globalThis\\.__kumikiApp\\._dispatch\\("${reducer}"`),
+        new RegExp(`onChange: \\(el\\) => \\{ App\\._dispatch\\("${reducer}"`),
       );
     }
   });
@@ -568,7 +571,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toMatch(
-      /onBlur: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("markBlur"/,
+      /onBlur: \(el\) => \{ App._dispatch\("markBlur"/,
     );
   });
 
@@ -758,7 +761,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toContain('_dispatch("inc", el)');
-    expect(result.js).toMatch(/onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("inc"/);
+    expect(result.js).toMatch(/onClick: \(el\) => \{ App._dispatch\("inc"/);
   });
 
   it("chains explicit `onClick=fn` and a separate ui.click reducer on the same tile (§1.6.4)", () => {
@@ -787,7 +790,7 @@ describe("codegen", () => {
     // duplicate-key object literal (`{ onClick: a, onClick: b }`) by checking
     // the explicit dispatch and the implicit dispatch land in the same body.
     expect(result.js).toMatch(
-      /onClick: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("onExplicit", el\); globalThis\.__kumikiApp\._dispatch\("onImplicit", el\) \}/,
+      /onClick: \(el\) => \{ App._dispatch\("onExplicit", el\); App._dispatch\("onImplicit", el\) \}/,
     );
   });
 
@@ -831,7 +834,7 @@ describe("codegen", () => {
     expect(iAudit).toBeGreaterThan(iSave);
     // Both dispatches share a single chained handler body.
     expect(result.js).toMatch(
-      /onSubmit: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("save", el\); globalThis\.__kumikiApp\._dispatch\("audit", el\) \}/,
+      /onSubmit: \(el\) => \{ App._dispatch\("save", el\); App._dispatch\("audit", el\) \}/,
     );
   });
 
@@ -855,7 +858,7 @@ describe("codegen", () => {
     expect(iWake).toBeGreaterThanOrEqual(0);
     expect(iNote).toBeGreaterThan(iWake);
     expect(result.js).toMatch(
-      /onMouseEnter: \(el\) => \{ globalThis\.__kumikiApp\._dispatch\("wake", el\); globalThis\.__kumikiApp\._dispatch\("note", el\) \}/,
+      /onMouseEnter: \(el\) => \{ App._dispatch\("wake", el\); App._dispatch\("note", el\) \}/,
     );
   });
 });

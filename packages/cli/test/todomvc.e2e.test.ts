@@ -33,9 +33,14 @@ function rowTexts(root: HTMLElement): string[] {
   });
 }
 
-async function typeInto(input: HTMLInputElement, text: string): Promise<void> {
-  input.focus();
+// Re-query the input on every keystroke: each bind write-back re-renders and
+// swaps the node in place (focus restore keeps it focused), and a real user's
+// next key lands on the LIVE element. Events on the detached previous node are
+// a no-op by design — app resolution is anchored to the mounted tree.
+async function typeInto(root: HTMLElement, text: string): Promise<void> {
+  getInput(root).focus();
   for (const ch of text) {
+    const input = getInput(root);
     input.value = input.value + ch;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     await flush();
@@ -86,8 +91,7 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   it("adds a todo on Enter", async () => {
     const app = await buildAndLoad(TODOMVC, rootId);
     track(mount(app, root));
-    const input = getInput(root);
-    await typeInto(input, "Buy milk");
+    await typeInto(root, "Buy milk");
     submitForm(root);
     await flush();
     expect(rowTexts(root)).toEqual(["Buy milk"]);
@@ -98,7 +102,7 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   it("toggles done state via checkbox", async () => {
     const app = await buildAndLoad(TODOMVC, rootId);
     track(mount(app, root));
-    await typeInto(getInput(root), "task");
+    await typeInto(root, "task");
     submitForm(root);
     await flush();
     const check = root.querySelector<HTMLInputElement>(
@@ -116,7 +120,7 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   it("removes a todo via × button", async () => {
     const app = await buildAndLoad(TODOMVC, rootId);
     track(mount(app, root));
-    await typeInto(getInput(root), "ephemeral");
+    await typeInto(root, "ephemeral");
     submitForm(root);
     await flush();
     expect(rowTexts(root)).toEqual(["ephemeral"]);
@@ -131,10 +135,10 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   it("filters Active / Done", async () => {
     const app = await buildAndLoad(TODOMVC, rootId);
     track(mount(app, root));
-    await typeInto(getInput(root), "todo1");
+    await typeInto(root, "todo1");
     submitForm(root);
     await flush();
-    await typeInto(getInput(root), "todo2");
+    await typeInto(root, "todo2");
     submitForm(root);
     await flush();
     // Toggle the first row done.
@@ -164,10 +168,10 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   it("clears completed todos", async () => {
     const app = await buildAndLoad(TODOMVC, rootId);
     track(mount(app, root));
-    await typeInto(getInput(root), "keep");
+    await typeInto(root, "keep");
     submitForm(root);
     await flush();
-    await typeInto(getInput(root), "drop");
+    await typeInto(root, "drop");
     submitForm(root);
     await flush();
     const checkboxes = root.querySelectorAll<HTMLInputElement>(
@@ -190,7 +194,7 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   it("persists to localStorage", async () => {
     const app = await buildAndLoad(TODOMVC, rootId);
     track(mount(app, root));
-    await typeInto(getInput(root), "persisted");
+    await typeInto(root, "persisted");
     submitForm(root);
     // saveTodos has policy=debounce(300ms). Wait long enough for it to fire.
     await flush(400);
