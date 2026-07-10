@@ -407,13 +407,9 @@ export type AppShape = {
    * `icon(name="<literal>")` in the source. `theme.icons[name]` (when set)
    * overrides any entry here.
    *
-   * The renderer reads `icons` off `globalThis.__kumikiApp`, which holds the
-   * most-recently-mounted instance. When several Kumiki apps share a page
-   * (Web Component, micro-frontend), the last mount wins for unrelated apps
-   * too. The compiled icon set is normally identical across mounts of the
-   * same source, so this is only a hazard when two distinct apps with
-   * different icon registries share the document — wrap one in a closed
-   * shadow root, or pre-merge their `theme.icons`, to avoid cross-talk.
+   * The renderer resolves `icons` off the app whose render pass is running
+   * (see the multi-mount app registry above `mountCore`), so several apps
+   * with different icon registries can share a document without cross-talk.
    */
   icons?: Record<string, string>;
   /** reusable scoped animations by name (closed-grammar keyframes + timing). */
@@ -558,6 +554,76 @@ export function computeSlotDiffs(
   return { diffs, dirty };
 }
 
+// ---------------------------------------------------------------------------
+// Multi-mount app registry: answers "which app owns this element?" without a
+// shared global. Each mount stamps its target with `data-kumiki-root` and
+// registers itself in a WeakMap keyed by that element, so several Kumiki apps
+// (Web Components, micro-frontends, Storybook previews) can share a page
+// without cross-wiring. Event-time consumers (bind write-back, link nav,
+// prefetch) resolve through `resolveApp(el)`; render-time consumers (theme
+// tokens, icon lookup) run while the tree is still detached — `closest()`
+// cannot work there — so every render pass is bracketed with
+// `withRenderingApp` and they read `getRenderingApp()` instead.
+
+const ROOT_ATTR = "data-kumiki-root";
+
+const appByRoot = new WeakMap<Element, AppShape>();
+
+/** Non-null only while a mount's synchronous render pass is running. */
+let renderingApp: AppShape | null = null;
+
+function registerAppRoot(target: Element, app: AppShape): void {
+  appByRoot.set(target, app);
+  target.setAttribute(ROOT_ATTR, "");
+}
+
+function unregisterAppRoot(target: Element): void {
+  appByRoot.delete(target);
+  target.removeAttribute(ROOT_ATTR);
+}
+
+/**
+ * Resolve the app owning `el` by walking up to the nearest registered mount
+ * root, hopping shadow boundaries via the host element. Returns undefined for
+ * elements outside any live mount (e.g. a stale listener firing after
+ * dispose) — deliberately NOT the most-recently-mounted app, which would
+ * reintroduce the last-write-wins cross-talk this registry exists to remove.
+ */
+export function resolveApp(el: Element | null | undefined): AppShape | undefined {
+  let node: Element | null = el ?? null;
+  while (node) {
+    const root = node.closest(`[${ROOT_ATTR}]`);
+    if (root) {
+      const app = appByRoot.get(root);
+      if (app) return app;
+    }
+    const rootNode = (root ?? node).getRootNode();
+    node =
+      typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot ? rootNode.host : null;
+  }
+  return renderingApp ?? undefined;
+}
+
+/** The app whose synchronous render pass is currently executing, if any. */
+export function getRenderingApp(): AppShape | undefined {
+  return renderingApp ?? undefined;
+}
+
+/**
+ * Bracket a render pass. Saved/restored (not just cleared) because a custom
+ * element inside the tree can synchronously mount a nested Kumiki app while
+ * the outer render is still on the stack.
+ */
+function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+  const prev = renderingApp;
+  renderingApp = app;
+  try {
+    return fn();
+  } finally {
+    renderingApp = prev;
+  }
+}
+
 /**
  * The granular mount (#71): renders with exactly the tile renderers / routing /
  * builtin effects passed via options. Generated apps from `kumiki build` call
@@ -577,6 +643,7 @@ export function mountCore(
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
   }
+  registerAppRoot(target, app);
   // SSR hydration overlay (§10.6.2 step 2): drop the server snapshot onto
   // `app.live` BEFORE wiring the route / effect dispatcher, so the first
   // render already reflects the SSR-final values. `volatile` slots are not in
@@ -662,6 +729,12 @@ export function mountCore(
     // was disposed) must not touch the DOM — `currentRoot` has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
     if (disposed) return;
+    withRenderingApp(app, renderPass);
+  };
+  // The full render pass, bracketed by `withRenderingApp` so render-time app
+  // resolution (theme tokens, icon lookup — the tree is still detached, so
+  // `resolveApp` cannot walk it) lands on this mount's app.
+  const renderPass = (): void => {
     type FocusSnap = {
       bind?: string | undefined;
       id?: string | undefined;
@@ -1084,9 +1157,9 @@ export function mountCore(
   routing?.installNavEffects(app, nav);
   for (const installer of options.builtins ?? []) installer(app, nav);
 
-  // Apply theme defaults to <body> and inject base CSS for tile primitives.
-  // Reset the cache so subsequent mounts (e.g. across parallel tests) always
-  // re-bind the global `__kumikiApp` reference, even if the theme name matches.
+  // Apply theme defaults to the style host and inject base CSS for tile
+  // primitives. Reset the cache so subsequent mounts (e.g. across parallel
+  // tests) always re-apply this app's theme, even if the name matches.
   lastAppliedThemeName = null;
   applyThemeDefaults(app);
   lastAppliedThemeName =
@@ -1237,6 +1310,7 @@ export function mountCore(
       routerUnsub?.();
       for (const unsub of lifecycleUnsubs) unsub();
       target.replaceChildren();
+      unregisterAppRoot(target);
       dispatcher.dispose();
     },
     /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
@@ -2096,9 +2170,7 @@ function maybeReapplyTheme(app: AppShape): void {
 }
 
 function applyThemeDefaults(app: AppShape): void {
-  // We need __kumikiApp set before currentTheme() works.
-  (window as unknown as { __kumikiApp?: AppShape }).__kumikiApp = app;
-  const theme = currentTheme();
+  const theme = currentThemeOf(app);
   if (!theme) return;
   const colors = (theme.colors ?? {}) as Record<string, ThemeValue>;
   const typography = (theme.typography ?? {}) as Record<string, ThemeValue>;
@@ -2192,10 +2264,18 @@ function resolveToken(group: string, name: string): string {
   return name;
 }
 
+/**
+ * Theme of the app whose render pass is currently running. Outside a render /
+ * mount pass there is no "current" app anymore (the global last-mount
+ * reference is gone), so this returns null there.
+ */
 export function currentTheme(): Theme | null {
-  const win = window as unknown as { __kumikiApp?: AppShape };
-  const app = win.__kumikiApp;
-  if (!app?.themes) return null;
+  const app = getRenderingApp();
+  return app ? currentThemeOf(app) : null;
+}
+
+function currentThemeOf(app: AppShape): Theme | null {
+  if (!app.themes) return null;
   let name = app.themeName;
   // If `app.theme = someSlot` was used in source, app.themeName holds the slot
   // NAME (e.g. "themeName"). Resolve through the live slot value so theme

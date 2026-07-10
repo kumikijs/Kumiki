@@ -1,19 +1,20 @@
 // Input tile renderers (#71): interactive controls (button, input, textarea,
 // check, radio, select, slider, switch, form). `bind=` controls write back to
-// their slot through the mounted app's `_setSlot` (the `__kumikiApp` global —
-// a compiled app is single-instance; see core).
+// their slot through the owning mount's `_setSlot`, resolved from the control
+// element via the multi-mount app registry (`resolveApp` in core) so several
+// apps on one page never cross-wire.
 
 import type { AppShape, TileCtx, TileNode, TileRenderers } from "./core.ts";
-import { _setPathHelper } from "./core.ts";
+import { _setPathHelper, resolveApp } from "./core.ts";
 
 type LiveApp = AppShape & {
   _setSlot?: (n: string, v: unknown) => void;
   live?: Record<string, unknown>;
 };
 
-function liveApp(): LiveApp | undefined {
-  const win = window as unknown as { __kumikiApp?: AppShape };
-  return win.__kumikiApp as LiveApp | undefined;
+/** The app owning the mount tree `el` sits in, typed for slot write-back. */
+function liveApp(el: Element): LiveApp | undefined {
+  return resolveApp(el) as LiveApp | undefined;
 }
 
 function writeBind(
@@ -86,7 +87,7 @@ export const inputTiles: TileRenderers = {
         const slotName = node.bind;
         const bindPath = node.bindPath;
         inp.addEventListener("input", () => {
-          const app = liveApp();
+          const app = liveApp(inp);
           if (!app?._setSlot) return;
           writeBind(app, slotName, bindPath, inp.value);
         });
@@ -133,7 +134,7 @@ export const inputTiles: TileRenderers = {
       const slotName = node.bind;
       const bindPath = node.bindPath;
       ta.addEventListener("input", () => {
-        const app = liveApp();
+        const app = liveApp(ta);
         if (!app?._setSlot) return;
         writeBind(app, slotName, bindPath, ta.value);
       });
@@ -243,7 +244,7 @@ export const inputTiles: TileRenderers = {
       const k = sel.value;
       const matched = options.find((o) => valueKey(o.value) === k);
       if (matched === undefined) return;
-      const app = liveApp();
+      const app = liveApp(sel);
       if (node.bind && app?._setSlot) {
         writeBind(app, node.bind, node.bindPath, matched.value);
       }
@@ -270,7 +271,7 @@ export const inputTiles: TileRenderers = {
       const slotName = node.bind;
       const bindPath = node.bindPath;
       inp.addEventListener("input", () => {
-        const app = liveApp();
+        const app = liveApp(inp);
         if (!app?._setSlot) return;
         writeBind(app, slotName, bindPath, Number(inp.value));
       });
