@@ -1,0 +1,30 @@
+{
+  "apps": ["counter.kumiki", "binder.kumiki"],
+  "steps": [
+    {
+      "label": "counter click stays in app 0",
+      "do": { "click": "#kumiki-root-0 button" },
+      "expect": {
+        "noErrors": true,
+        "state": { "0.count": 1, "1.name": "" },
+        "domIncludes": ["Count: 1", "Hello, stranger"]
+      }
+    },
+    {
+      "label": "binder input stays in app 1",
+      "do": { "fill": "#kumiki-root-1 input", "value": "ada" },
+      "expect": {
+        "state": { "1.name": "ada", "0.count": 1 },
+        "domIncludes": ["Count: 1", "Hello, ada"]
+      }
+    },
+    {
+      "label": "second counter click after cross-app input",
+      "do": { "click": "#kumiki-root-0 button" },
+      "expect": {
+        "state": { "0.count": 2, "1.name": "ada" },
+        "domIncludes": ["Count: 2", "Hello, ada"]
+      }
+    }
+  ]
+}
