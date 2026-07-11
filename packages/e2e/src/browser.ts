@@ -52,12 +52,59 @@ export type BrowserReport = { ok: boolean; steps: StepResult[] };
 
 export type BrowserOptions = { headed?: boolean; settleMs?: number };
 
+// Escape any literal `</script` so it can't terminate the inline module.
+const escapeScript = (js: string): string => js.replace(/<\/script/gi, "<\\/script");
+
 function buildHtml(js: string): string {
-  // Escape any literal `</script` so it can't terminate the inline module.
-  const safe = js.replace(/<\/script/gi, "<\\/script");
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
-<body><div id="root"></div><script type="module">${safe}</script></body></html>`;
+<body><div id="root"></div><script type="module">${escapeScript(js)}</script></body></html>`;
+}
+
+/** Root `i` is `#kumiki-root-<i>`; inline module scripts execute in document order. */
+function buildHtmlMulti(bundles: string[]): string {
+  const body = bundles
+    .map(
+      (js, i) =>
+        `<div id="kumiki-root-${i}"></div><script type="module">${escapeScript(js)}</script>`,
+    )
+    .join("\n");
+  return `<!doctype html><html><head><meta charset="utf-8">
+<style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
+<body>${body}</body></html>`;
+}
+
+/**
+ * Re-target one compiled bundle for co-mounting: auto-mount into its own root
+ * div, and register the instance in `window.__kumikiApps` (the single
+ * `__kumikiApp` oracle is last-write-wins by construction, so the multi runner
+ * reads the array instead). Both replaces are verbatim matches against codegen
+ * output; a silent miss would surface as a bewildering mount-into-nothing or a
+ * ready-wait timeout, so an unmatched pattern throws instead.
+ */
+function patchBundleForMulti(js: string, index: number): string {
+  const retargeted = replaceOrThrow(
+    js,
+    'document.getElementById("root")',
+    `document.getElementById("kumiki-root-${index}")`,
+    "auto-mount root lookup",
+  );
+  return replaceOrThrow(
+    retargeted,
+    "globalThis.__kumikiApp = App;",
+    "globalThis.__kumikiApp = App;\n(globalThis.__kumikiApps = globalThis.__kumikiApps || []).push(App);",
+    "state-oracle assignment",
+  );
+}
+
+function replaceOrThrow(js: string, search: string, replacement: string, what: string): string {
+  const out = js.replace(search, replacement);
+  if (out === js) {
+    throw new Error(
+      `patchBundleForMulti: ${what} (${JSON.stringify(search)}) not found in the compiled bundle — codegen output drifted; update the patch patterns`,
+    );
+  }
+  return out;
 }
 
 // A synthetic origin the tier-3 runner serves the built app under. The default
@@ -102,23 +149,83 @@ export async function runOnPage(
     readRuntimeBundle: nodeRuntimeBundleReader,
   });
   if (compiled.kind !== "ok") {
-    return {
-      ok: false,
-      steps: [
-        {
-          action: "compile",
-          errors: compiled.errors.map((e) => `${e.code} ${e.message}`),
-          state: {},
-          visibleText: "",
-          failures: ["did not compile"],
-        },
-      ],
-    };
+    return compileFailure(
+      "compile",
+      compiled.errors.map((e) => `${e.code} ${e.message}`),
+    );
   }
+  return serveScenario(
+    page,
+    buildHtml(compiled.js),
+    scenario,
+    settleMs,
+    "window.__kumikiApp !== undefined",
+    snapshotStateFn,
+  );
+}
 
+/**
+ * Drive one scenario against SEVERAL compiled apps co-mounted on a single page
+ * (the multi-mount isolation tier). App `i` auto-mounts into `#kumiki-root-<i>`
+ * and registers in `window.__kumikiApps`; state keys in `expect.state` are
+ * namespaced by app index (`"0.count"`, `"1.name"`). Scope DOM actions to a
+ * root (`{"click": "#kumiki-root-0 button"}`); `dispatch` / `navigate` go
+ * through the single-app `__kumikiApp` oracle (last bundle wins) — avoid them
+ * in multi fixtures.
+ */
+export async function runMultiOnPage(
+  page: Page,
+  sources: string[],
+  scenario: Scenario,
+  opts: BrowserOptions = {},
+): Promise<BrowserReport> {
+  const settleMs = opts.settleMs ?? 60;
+  const bundles: string[] = [];
+  for (const [i, source] of sources.entries()) {
+    const compiled = compile(source, {
+      runtimeSpecifier: "",
+      bundle: true,
+      readRuntimeBundle: nodeRuntimeBundleReader,
+    });
+    if (compiled.kind !== "ok") {
+      return compileFailure(
+        `compile app ${i}`,
+        compiled.errors.map((e) => `${e.code} ${e.message}`),
+      );
+    }
+    bundles.push(patchBundleForMulti(compiled.js, i));
+  }
+  return serveScenario(
+    page,
+    buildHtmlMulti(bundles),
+    scenario,
+    settleMs,
+    `window.__kumikiApps !== undefined && window.__kumikiApps.length === ${sources.length}`,
+    snapshotMultiStateFn,
+  );
+}
+
+function compileFailure(action: string, errors: string[]): BrowserReport {
+  return {
+    ok: false,
+    steps: [{ action, errors, state: {}, visibleText: "", failures: ["did not compile"] }],
+  };
+}
+
+/**
+ * Serve `html` at the synthetic origin and drive the scenario. `readyExpr`
+ * gates the first step; `stateFn` is the serialized state-oracle read.
+ */
+async function serveScenario(
+  page: Page,
+  html: string,
+  scenario: Scenario,
+  settleMs: number,
+  readyExpr: string,
+  stateFn: string,
+): Promise<BrowserReport> {
   const steps: StepResult[] = [];
   let errorBuf: string[] = [];
-  const html = buildHtml(compiled.js);
   const onConsole = (m: ConsoleMessage): void => {
     if (m.type() === "error") errorBuf.push(m.text());
   };
@@ -143,7 +250,7 @@ export async function runOnPage(
 
   try {
     await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
-    await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
+    await page.waitForFunction(readyExpr, null, { timeout: 5000 });
     await page.waitForTimeout(settleMs);
 
     for (const step of scenario.steps) {
@@ -157,10 +264,7 @@ export async function runOnPage(
         }
         await page.waitForTimeout(settleMs);
       }
-      const state = (await page.evaluate(snapshotStateFn).catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
+      const state = (await page.evaluate(stateFn).catch(() => ({}))) as Record<string, unknown>;
       const visibleText = await page
         .locator("body")
         .innerText()
@@ -201,6 +305,30 @@ const snapshotStateFn = `(() => {
   };
   const out = {};
   for (const k of Object.keys(live)) { if (k !== "route") out[k] = san(live[k]); }
+  return out;
+})()`;
+
+// Multi-mount variant: `{"0": {...app0 slots...}, "1": {...}}` — `readPath`
+// then resolves namespaced expect keys like `"0.count"` with no extra glue.
+const snapshotMultiStateFn = `(() => {
+  const apps = window.__kumikiApps || [];
+  const seen = new WeakSet();
+  const san = (v) => {
+    if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
+    if (seen.has(v)) return "[circular]";
+    seen.add(v);
+    if (Array.isArray(v)) return v.map(san);
+    const o = {};
+    for (const k of Object.keys(v)) { if (typeof v[k] !== "function") o[k] = san(v[k]); }
+    return o;
+  };
+  const out = {};
+  apps.forEach((app, i) => {
+    const live = (app && app.live) || {};
+    const o = {};
+    for (const k of Object.keys(live)) { if (k !== "route") o[k] = san(live[k]); }
+    out[String(i)] = o;
+  });
   return out;
 })()`;
 
@@ -352,5 +480,7 @@ declare global {
       _dispatch?: (n: string, p: Record<string, unknown>) => void;
       _navigate?: (path: string) => void;
     };
+    /** Co-mounted instances, in document order (multi-mount runner). */
+    __kumikiApps?: Array<{ live?: Record<string, unknown> }>;
   }
 }

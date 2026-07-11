@@ -1,8 +1,14 @@
 // Text tile renderers (#71): static content tiles (heading, text, label,
 // link, markdown, code, icon).
 
-import type { AppShape, TileProps, TileRenderers } from "./core.ts";
-import { applyTextProps, currentTheme } from "./core.ts";
+import type { TileProps, TileRenderers } from "./core.ts";
+import {
+  applyTextProps,
+  currentTheme,
+  getRenderingApp,
+  resolveApp,
+  warnUnresolvedEvent,
+} from "./core.ts";
 
 const ICON_SIZE_TOKENS: Record<string, string> = {
   sm: "16px",
@@ -22,15 +28,18 @@ function resolveIconSize(raw: unknown): string {
   return "1em";
 }
 
-/** Theme override (`theme.icons[name]`) wins over the compile-baked built-ins. */
+/**
+ * Theme override (`theme.icons[name]`) wins over the compile-baked built-ins.
+ * Render-time lookup: both sources come from the app whose render pass is
+ * running (multi-mount registry in core).
+ */
 function resolveIconPath(name: string): string | null {
   const themeIcons = currentTheme()?.icons;
   if (themeIcons && typeof themeIcons === "object") {
     const t = (themeIcons as Record<string, unknown>)[name];
     if (typeof t === "string" && t.length > 0) return t;
   }
-  const app = (window as unknown as { __kumikiApp?: AppShape }).__kumikiApp;
-  const builtin = app?.icons?.[name];
+  const builtin = getRenderingApp()?.icons?.[name];
   if (typeof builtin === "string" && builtin.length > 0) return builtin;
   return null;
 }
@@ -65,11 +74,16 @@ export const textTiles: TileRenderers = {
     a.textContent = node.text;
     a.addEventListener("click", (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      // Resolve BEFORE preventDefault: a link outside any live mount (stale
+      // node, disposed app) degrades to the browser's native navigation via
+      // `href` instead of becoming a dead link.
+      const app = resolveApp(a);
+      if (!app) {
+        warnUnresolvedEvent(a, "link click; falling back to native navigation");
+        return;
+      }
       e.preventDefault();
-      const win = window as unknown as { __kumikiApp?: AppShape };
-      const nav = (win.__kumikiApp as AppShape & { _navigate?: (p: string, r?: boolean) => void })
-        ?._navigate;
-      if (nav) nav(node.to, false);
+      app._navigate(node.to, false);
     });
     // §3.8 prefetch — fire the named reducer once the link enters the viewport.
     // Dedupe by `to` URL (kept on the app instance) so that re-renders triggered
@@ -77,24 +91,21 @@ export const textTiles: TileRenderers = {
     if (node.prefetch) {
       const reducer = node.prefetch;
       const payload = node.prefetchArgs ?? {};
-      const winRef = window as unknown as { __kumikiApp?: AppShape };
-      const app = winRef.__kumikiApp as
-        | (AppShape & {
-            _prefetch?: (name: string, args: Record<string, string>, to: string) => void;
-            _prefetched?: Set<string>;
-          })
-        | undefined;
-      let seen: Set<string> | undefined;
-      if (app) {
-        if (!app._prefetched) app._prefetched = new Set<string>();
-        seen = app._prefetched;
-      }
       const dedupeKey = node.to;
-      if (!seen?.has(dedupeKey)) {
+      // Render-time gate: skip re-observing when this app already prefetched
+      // the target. The observer callback / microtask runs after the tree is
+      // attached, so `fire` resolves the OWNING app from the anchor element.
+      if (!getRenderingApp()?._prefetched?.has(dedupeKey)) {
         const fire = (): void => {
-          if (seen?.has(dedupeKey)) return;
-          seen?.add(dedupeKey);
-          app?._prefetch?.(reducer, payload as Record<string, string>, node.to);
+          const app = resolveApp(a);
+          if (!app) {
+            warnUnresolvedEvent(a, "link prefetch");
+            return;
+          }
+          if (!app._prefetched) app._prefetched = new Set<string>();
+          if (app._prefetched.has(dedupeKey)) return;
+          app._prefetched.add(dedupeKey);
+          app._prefetch(reducer, payload as Record<string, string>, node.to);
         };
         const IO = (globalThis as { IntersectionObserver?: typeof IntersectionObserver })
           .IntersectionObserver;

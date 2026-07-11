@@ -66,7 +66,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const app = readFileSync(join(outDir, "app.js"), "utf8");
     expect(app).toContain('import { mountCore } from "./runtime/core.js"');
     expect(app).toContain('tile: "IncBtn"');
-    expect(app).toContain('__kumikiApp._dispatch("inc"');
+    expect(app).toContain('App._dispatch("inc"');
 
     // Size acceptance (#71): the counter runtime payload is well below the
     // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).
@@ -81,10 +81,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // Bumped to 39.5KB with the per-tile onChange wirings on check/radio/
     // switch in tiles-input (#143 — needed so `ui.change(<Toggle>)` reducers
     // fire; the counter rides on tiles-input via `button`).
+    // Bumped to 40.5KB with the multi-mount app registry in core.ts
+    // (WeakMap root registry + render-pass bracketing replacing the
+    // `__kumikiApp` global, so co-mounted apps never cross-wire).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(39_500);
+    expect(total).toBeLessThan(40_500);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

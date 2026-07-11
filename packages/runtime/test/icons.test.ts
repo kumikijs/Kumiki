@@ -55,9 +55,6 @@ describe("icon renderer", () => {
 
   afterEach(() => {
     host.remove();
-    // Reset the runtime's global theme cache between tests so an earlier
-    // theme.icons configuration doesn't leak into the next mount.
-    (window as unknown as { __kumikiApp?: AppShape }).__kumikiApp = undefined;
   });
 
   it("renders the compile-baked built-in path when no theme override is set", () => {

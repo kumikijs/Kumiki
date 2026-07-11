@@ -1,30 +1,27 @@
 // Input tile renderers (#71): interactive controls (button, input, textarea,
 // check, radio, select, slider, switch, form). `bind=` controls write back to
-// their slot through the mounted app's `_setSlot` (the `__kumikiApp` global —
-// a compiled app is single-instance; see core).
+// their slot through the owning mount's `_setSlot`, resolved from the control
+// element via the multi-mount app registry (`resolveApp` in core) so several
+// apps on one page never cross-wire.
 
-import type { AppShape, TileCtx, TileNode, TileRenderers } from "./core.ts";
-import { _setPathHelper } from "./core.ts";
+import type { MountedApp, TileCtx, TileNode, TileRenderers } from "./core.ts";
+import { _setPathHelper, resolveApp, warnUnresolvedEvent } from "./core.ts";
 
-type LiveApp = AppShape & {
-  _setSlot?: (n: string, v: unknown) => void;
-  live?: Record<string, unknown>;
-};
-
-function liveApp(): LiveApp | undefined {
-  const win = window as unknown as { __kumikiApp?: AppShape };
-  return win.__kumikiApp as LiveApp | undefined;
+/** The app owning the mount tree `el` sits in; warns once when there is none. */
+function liveApp(el: Element): MountedApp | undefined {
+  const app = resolveApp(el);
+  if (!app) warnUnresolvedEvent(el, "bind write-back");
+  return app;
 }
 
 function writeBind(
-  app: LiveApp,
+  app: MountedApp,
   slotName: string,
   bindPath: string[] | undefined,
   value: unknown,
 ): void {
-  if (!app._setSlot) return;
   if (bindPath && bindPath.length > 0) {
-    const current = app.live?.[slotName] ?? {};
+    const current = app.live[slotName] ?? {};
     app._setSlot(slotName, _setPathHelper(current, bindPath, value));
   } else {
     app._setSlot(slotName, value);
@@ -86,8 +83,8 @@ export const inputTiles: TileRenderers = {
         const slotName = node.bind;
         const bindPath = node.bindPath;
         inp.addEventListener("input", () => {
-          const app = liveApp();
-          if (!app?._setSlot) return;
+          const app = liveApp(inp);
+          if (!app) return;
           writeBind(app, slotName, bindPath, inp.value);
         });
       }
@@ -133,8 +130,8 @@ export const inputTiles: TileRenderers = {
       const slotName = node.bind;
       const bindPath = node.bindPath;
       ta.addEventListener("input", () => {
-        const app = liveApp();
-        if (!app?._setSlot) return;
+        const app = liveApp(ta);
+        if (!app) return;
         writeBind(app, slotName, bindPath, ta.value);
       });
     }
@@ -243,9 +240,9 @@ export const inputTiles: TileRenderers = {
       const k = sel.value;
       const matched = options.find((o) => valueKey(o.value) === k);
       if (matched === undefined) return;
-      const app = liveApp();
-      if (node.bind && app?._setSlot) {
-        writeBind(app, node.bind, node.bindPath, matched.value);
+      if (node.bind) {
+        const app = liveApp(sel);
+        if (app) writeBind(app, node.bind, node.bindPath, matched.value);
       }
       // Fire onChange handler (set up by `ui.change(SelectTile)` reducers) so
       // both bound and unbound select tiles can drive logic that reads $event.value.
@@ -270,8 +267,8 @@ export const inputTiles: TileRenderers = {
       const slotName = node.bind;
       const bindPath = node.bindPath;
       inp.addEventListener("input", () => {
-        const app = liveApp();
-        if (!app?._setSlot) return;
+        const app = liveApp(inp);
+        if (!app) return;
         writeBind(app, slotName, bindPath, Number(inp.value));
       });
     }

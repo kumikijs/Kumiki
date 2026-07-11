@@ -298,6 +298,12 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("}"); // end createApp
   lines.push("");
   // The default instance — used by auto-mount, the embedding host, and tooling.
+  // The global is a state oracle for smoke/scenario/e2e/benchmark harnesses
+  // ONLY: the runtime and the generated event handlers do not read it (app
+  // resolution goes through the runtime's mount-root registry / the instance's
+  // own `App` reference). The exact spelling of the next two emitted lines is
+  // load-bearing: cli/test/helpers/build-and-load.ts, tests/helpers/load.ts,
+  // and e2e/src/browser.ts patch them with verbatim string replaces.
   lines.push("const App = createApp();");
   lines.push("globalThis.__kumikiApp = App;");
 

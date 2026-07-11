@@ -1,8 +1,8 @@
 // Status / messaging tile renderers (#71): spinner, skeleton, progress, the
 // inline toast tile, and the validation `error` tile.
 
-import type { AppShape, TileRenderers } from "./core.ts";
-import { currentTheme, ensureAnimationStyles } from "./core.ts";
+import type { TileRenderers } from "./core.ts";
+import { currentTheme, ensureAnimationStyles, getRenderingApp } from "./core.ts";
 
 /**
  * Resolve the current validation message for a slot, for the `error` tile.
@@ -11,8 +11,9 @@ import { currentTheme, ensureAnimationStyles } from "./core.ts";
  * from `theme.errors[<pred>]` if overridden, else the spec §5.7.2 default.
  */
 function resolveFieldError(field: string): string {
-  const win = window as unknown as { __kumikiApp?: AppShape };
-  const app = win.__kumikiApp;
+  // Render-time lookup: the error tile is being built for the app whose
+  // render pass is running (multi-mount registry in core).
+  const app = getRenderingApp();
   if (!app || !field) return "";
   const meta = app.slots?.[field];
   if (!meta?.refine) return "";
