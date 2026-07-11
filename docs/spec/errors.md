@@ -56,8 +56,8 @@ typo` is caught rather than accepted).
 | `E0107` | yes | Close-name suggestion against declared motion names. |
 | `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
 | `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
-| `E0106` | no | Timer names live in effect-scoped state, not top-level defs — requires a scoped candidate set (planned). |
-| `E0209` | no | Variant tags live inside their union type — requires a scoped candidate set (planned). |
+| `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
+| `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
@@ -123,7 +123,7 @@ A `stop-timer(N)` statement refers to a timer name `N` that no `timer(d, name=N)
 
 > `stop-timer refers to undefined timer name "<name>"`
 
-**Fix**: Check the spelling, or declare the timer with `timer(d, name=N)`. See [timer](./lifecycle.md#_7-1-5-timer).
+**Fix**: Check the spelling, or declare the timer with `timer(d, name=N)`. `kumiki fix` can suggest a close name (→ [AI Editing](./ai-edit.md)). See [timer](./lifecycle.md#_7-1-5-timer).
 
 ### E0105 `undef-tile`
 
