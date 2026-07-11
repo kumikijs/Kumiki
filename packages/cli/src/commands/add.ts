@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { addDef } from "../mutate.ts";
 import { resolveBody } from "./_shared/body-input.ts";
+import { requireValue } from "./_shared/value.ts";
 
 const USAGE = "Usage: kumiki add <file> <layer> <name> <body>";
 
@@ -13,7 +14,11 @@ export function registerAdd(program: Command): void {
     .argument("[layer]", "layer name (type/slot/effect/reducer/tile/fn/app)")
     .argument("[name]", "definition name")
     .argument("[body...]", "body tokens (joined by spaces; prefer --body-file for multi-line)")
-    .option("--body-file <path>", "read body from a file (use '-' for stdin); preserves whitespace")
+    .option(
+      "--body-file <path>",
+      "read body from a file (use '-' for stdin); preserves whitespace",
+      requireValue(USAGE),
+    )
     .allowExcessArguments(false)
     .action(
       async (

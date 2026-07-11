@@ -107,17 +107,17 @@ async function main(argv: string[]): Promise<void> {
       ) {
         process.exit(e.exitCode ?? 0);
       }
-      // Parse failures (missing option arg, unknown option, excess positional)
-      // route through the per-verb USAGE so tests that assert on the verb-
-      // specific usage string keep passing.
-      const usage = usageFor(argv);
+      // Parse failures (unknown option, missing option arg, excess positional):
+      // print commander's diagnostic first so the exact flag / count the user
+      // typo'd is preserved, then append the per-verb USAGE so tests that
+      // assert on the verb-specific usage string keep passing.
+      console.error(e.message);
       if (e.code === "commander.excessArguments" && argv[2] === "replay") {
-        // Preserve the historical wording so `unexpected positional` regex hits.
+        // Preserve the pre-refactor wording so `unexpected positional` regex hits.
         console.error("kumiki replay: unexpected positional arguments after <episode-id>");
-      } else if (usage) {
-        console.error(usage);
       } else {
-        console.error(e.message);
+        const usage = usageFor(argv);
+        if (usage) console.error(usage);
       }
       // Commander sends parse failures through exitCode=1 by default
       // (`commander.optionMissingArgument`, `commander.excessArguments`).

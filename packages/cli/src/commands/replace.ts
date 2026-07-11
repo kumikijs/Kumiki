@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { replaceDef } from "../mutate.ts";
 import { resolveBody } from "./_shared/body-input.ts";
+import { requireValue } from "./_shared/value.ts";
 
 const USAGE = "Usage: kumiki replace <file> <qname> <body>";
 
@@ -12,7 +13,11 @@ export function registerReplace(program: Command): void {
     .argument("[file]", "target .kumiki file")
     .argument("[qname]", "qualified name (layer.name)")
     .argument("[body...]", "body tokens (joined by spaces; prefer --body-file for multi-line)")
-    .option("--body-file <path>", "read body from a file (use '-' for stdin); preserves whitespace")
+    .option(
+      "--body-file <path>",
+      "read body from a file (use '-' for stdin); preserves whitespace",
+      requireValue(USAGE),
+    )
     .allowExcessArguments(false)
     .action(
       async (

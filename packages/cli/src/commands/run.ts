@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { runCmd } from "../smoke.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { requireValue } from "./_shared/value.ts";
 
 const USAGE = "Usage: kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]";
 
@@ -11,7 +12,11 @@ export function registerRun(program: Command): void {
     .description("Drive a scenario JSON against a compiled app")
     .argument("[input]", "input .kumiki file")
     .argument("[scenario]", "scenario JSON file")
-    .option("--episode-log <path>", "append committed episodes here (one JSON per line)")
+    .option(
+      "--episode-log <path>",
+      "append committed episodes here (one JSON per line)",
+      requireValue(USAGE),
+    )
     .allowExcessArguments(false)
     .action(
       async (

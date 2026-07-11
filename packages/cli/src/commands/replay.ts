@@ -3,6 +3,7 @@ import type { EpisodeMockPolicy } from "@kumikijs/runtime";
 import type { Command } from "commander";
 import { parseMockArg, replayCmd } from "../replay.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { requireValue } from "./_shared/value.ts";
 
 const USAGE =
   "Usage: kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]";
@@ -27,7 +28,7 @@ export function registerReplay(program: Command): void {
     .description("Replay a recorded episode log against the compiled app (§10.5.3)")
     .argument("[input]", "input .kumiki file")
     .argument("[episode-id]", "optional single episode id to replay")
-    .option("--from-log <path>", "JSONL episode log to replay from (required)")
+    .option("--from-log <path>", "JSONL episode log to replay from (required)", requireValue(USAGE))
     .option(
       "--mock <spec>",
       "override an effect: 'name:from-log|ignore|ok(...)|err(...)'",

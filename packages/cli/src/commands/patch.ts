@@ -6,7 +6,18 @@ const APPLY_USAGE = "Usage: kumiki patch apply <file> <ops.jsonl>";
 const REVERT_USAGE = "Usage: kumiki patch revert <file> <op-id>";
 
 export function registerPatch(program: Command): void {
-  const patch = program.command("patch").description("Apply or revert batched op-log patches");
+  const patch = program
+    .command("patch")
+    .description("Apply or revert batched op-log patches")
+    // Bare `kumiki patch` used to fall through to the parser's `default:` usage
+    // block (exit 2). Commander's default for a group command is to print help
+    // and exit 0, which loses the shape signal. Restore the pre-refactor
+    // behavior explicitly.
+    .action(() => {
+      console.error(APPLY_USAGE);
+      console.error(REVERT_USAGE);
+      process.exit(2);
+    });
 
   patch
     .command("apply")
