@@ -78,15 +78,33 @@ function buildHtmlMulti(bundles: string[]): string {
  * Re-target one compiled bundle for co-mounting: auto-mount into its own root
  * div, and register the instance in `window.__kumikiApps` (the single
  * `__kumikiApp` oracle is last-write-wins by construction, so the multi runner
- * reads the array instead).
+ * reads the array instead). Both replaces are verbatim matches against codegen
+ * output; a silent miss would surface as a bewildering mount-into-nothing or a
+ * ready-wait timeout, so an unmatched pattern throws instead.
  */
 function patchBundleForMulti(js: string, index: number): string {
-  return js
-    .replace('document.getElementById("root")', `document.getElementById("kumiki-root-${index}")`)
-    .replace(
-      "globalThis.__kumikiApp = App;",
-      "globalThis.__kumikiApp = App;\n(globalThis.__kumikiApps = globalThis.__kumikiApps || []).push(App);",
+  const retargeted = replaceOrThrow(
+    js,
+    'document.getElementById("root")',
+    `document.getElementById("kumiki-root-${index}")`,
+    "auto-mount root lookup",
+  );
+  return replaceOrThrow(
+    retargeted,
+    "globalThis.__kumikiApp = App;",
+    "globalThis.__kumikiApp = App;\n(globalThis.__kumikiApps = globalThis.__kumikiApps || []).push(App);",
+    "state-oracle assignment",
+  );
+}
+
+function replaceOrThrow(js: string, search: string, replacement: string, what: string): string {
+  const out = js.replace(search, replacement);
+  if (out === js) {
+    throw new Error(
+      `patchBundleForMulti: ${what} (${JSON.stringify(search)}) not found in the compiled bundle — codegen output drifted; update the patch patterns`,
     );
+  }
+  return out;
 }
 
 // A synthetic origin the tier-3 runner serves the built app under. The default

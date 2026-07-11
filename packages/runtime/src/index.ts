@@ -39,6 +39,7 @@ export {
   type EventHandler,
   KumikiPanic,
   type LocationLike,
+  type MountedApp,
   type MountOptions,
   mountCore,
   type NavContext,

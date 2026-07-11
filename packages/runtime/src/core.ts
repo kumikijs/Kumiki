@@ -567,17 +567,42 @@ export function computeSlotDiffs(
 
 const ROOT_ATTR = "data-kumiki-root";
 
-const appByRoot = new WeakMap<Element, AppShape>();
+/**
+ * An app that has been through `mountCore`: the mount attaches the imperative
+ * seams (`_dispatch` / `_setSlot` / `_navigate` / `_prefetch` / `_rerender`)
+ * and initializes `live`, so registry consumers can rely on them without
+ * per-call-site casts.
+ */
+export type MountedApp = AppShape & {
+  _dispatch: (name: string, el: Record<string, unknown>) => void;
+  _setSlot: (name: string, value: unknown) => void;
+  _navigate: (path: string, replace?: boolean) => void;
+  _prefetch: (name: string, args: Record<string, string>, to: string) => void;
+  _rerender: () => void;
+  /** Prefetch dedupe set (§3.8), lazily created on first link prefetch. */
+  _prefetched?: Set<string>;
+  live: Record<string, unknown>;
+};
+
+const appByRoot = new WeakMap<Element, MountedApp>();
 
 /** Non-null only while a mount's synchronous render pass is running. */
-let renderingApp: AppShape | null = null;
+let renderingApp: MountedApp | null = null;
 
+// Registration happens at the top of `mountCore`, BEFORE the imperative seams
+// are attached — safe because nothing can resolve through the registry until
+// the first render attaches the tree, and by then the seams exist. That
+// ordering is why the producer casts to `MountedApp` here instead of the
+// consumers casting on every read.
 function registerAppRoot(target: Element, app: AppShape): void {
-  appByRoot.set(target, app);
+  appByRoot.set(target, app as MountedApp);
   target.setAttribute(ROOT_ATTR, "");
 }
 
-function unregisterAppRoot(target: Element): void {
+/** No-op unless `app` is the current registrant, so disposing an older mount
+ *  of the same target never unhooks a newer one. */
+function unregisterAppRoot(target: Element, app: AppShape): void {
+  if (appByRoot.get(target) !== app) return;
   appByRoot.delete(target);
   target.removeAttribute(ROOT_ATTR);
 }
@@ -588,24 +613,35 @@ function unregisterAppRoot(target: Element): void {
  * elements outside any live mount (e.g. a stale listener firing after
  * dispose) — deliberately NOT the most-recently-mounted app, which would
  * reintroduce the last-write-wins cross-talk this registry exists to remove.
+ * One exception: during a synchronous render pass, unresolvable elements fall
+ * back to the app currently rendering (its tree may still be detached);
+ * outside a render pass there is no fallback.
  */
-export function resolveApp(el: Element | null | undefined): AppShape | undefined {
+export function resolveApp(el: Element | null | undefined): MountedApp | undefined {
   let node: Element | null = el ?? null;
   while (node) {
     const root = node.closest(`[${ROOT_ATTR}]`);
     if (root) {
       const app = appByRoot.get(root);
       if (app) return app;
+      // Marker without a registration — a stale attribute (e.g. a cloned or
+      // serialized subtree copies the attribute but never the WeakMap entry).
+      // Keep climbing this tree so a live ancestor root is not shadowed.
+      node = root.parentElement ?? shadowHost(root);
+      continue;
     }
-    const rootNode = (root ?? node).getRootNode();
-    node =
-      typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot ? rootNode.host : null;
+    node = shadowHost(node);
   }
   return renderingApp ?? undefined;
 }
 
+function shadowHost(el: Element): Element | null {
+  const rootNode = el.getRootNode();
+  return typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot ? rootNode.host : null;
+}
+
 /** The app whose synchronous render pass is currently executing, if any. */
-export function getRenderingApp(): AppShape | undefined {
+export function getRenderingApp(): MountedApp | undefined {
   return renderingApp ?? undefined;
 }
 
@@ -616,12 +652,27 @@ export function getRenderingApp(): AppShape | undefined {
  */
 function withRenderingApp<T>(app: AppShape, fn: () => T): T {
   const prev = renderingApp;
-  renderingApp = app;
+  // Renders only run from mountCore, after the imperative seams are attached.
+  renderingApp = app as MountedApp;
   try {
     return fn();
   } finally {
     renderingApp = prev;
   }
+}
+
+const warnedUnresolved = new WeakSet<Element>();
+
+/**
+ * Once-per-element diagnostic for event-time consumers whose `resolveApp`
+ * came back empty: the event is dropped by design (no last-mount fallback),
+ * but silently-dead controls are miserable to debug — and the smoke tier
+ * watches console output, so this makes the drop observable there too.
+ */
+export function warnUnresolvedEvent(el: Element, what: string): void {
+  if (warnedUnresolved.has(el)) return;
+  warnedUnresolved.add(el);
+  console.warn(`kumiki: ${what} fired on an element outside any mount root; ignored`, el);
 }
 
 /**
@@ -1310,7 +1361,7 @@ export function mountCore(
       routerUnsub?.();
       for (const unsub of lifecycleUnsubs) unsub();
       target.replaceChildren();
-      unregisterAppRoot(target);
+      unregisterAppRoot(target, app);
       dispatcher.dispose();
     },
     /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
@@ -2151,6 +2202,13 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   applyStateStyles(el, props);
 }
 
+// Module-global by design (one style host per document in the common case),
+// which means it is shared ACROSS mounts: two co-mounted apps whose themes
+// share a NAME but differ in content will cache-hit each other and skip
+// re-injection — the shared style host keeps whichever applied last. That is
+// part of the style-root contention this registry deliberately does not solve
+// (see the multi-mount changeset); give co-mounted apps distinct theme names
+// or isolate them in shadow roots.
 let lastAppliedThemeName: string | null = null;
 function maybeReapplyTheme(app: AppShape): void {
   // Resolve the current theme name (could be slot-driven via `app.theme = slotName`).
@@ -2265,9 +2323,11 @@ function resolveToken(group: string, name: string): string {
 }
 
 /**
- * Theme of the app whose render pass is currently running. Outside a render /
- * mount pass there is no "current" app anymore (the global last-mount
- * reference is gone), so this returns null there.
+ * Theme of the app whose render pass is currently running; null outside a
+ * render pass (including during mount before the first render — theme setup
+ * there goes through `currentThemeOf` with an explicit app). Hosts that need
+ * a theme outside a render pass should resolve the app themselves, e.g. via
+ * `resolveApp(el)`.
  */
 export function currentTheme(): Theme | null {
   const app = getRenderingApp();

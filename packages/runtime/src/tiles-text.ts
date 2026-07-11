@@ -1,8 +1,14 @@
 // Text tile renderers (#71): static content tiles (heading, text, label,
 // link, markdown, code, icon).
 
-import type { AppShape, TileProps, TileRenderers } from "./core.ts";
-import { applyTextProps, currentTheme, getRenderingApp, resolveApp } from "./core.ts";
+import type { TileProps, TileRenderers } from "./core.ts";
+import {
+  applyTextProps,
+  currentTheme,
+  getRenderingApp,
+  resolveApp,
+  warnUnresolvedEvent,
+} from "./core.ts";
 
 const ICON_SIZE_TOKENS: Record<string, string> = {
   sm: "16px",
@@ -68,11 +74,16 @@ export const textTiles: TileRenderers = {
     a.textContent = node.text;
     a.addEventListener("click", (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      // Resolve BEFORE preventDefault: a link outside any live mount (stale
+      // node, disposed app) degrades to the browser's native navigation via
+      // `href` instead of becoming a dead link.
+      const app = resolveApp(a);
+      if (!app) {
+        warnUnresolvedEvent(a, "link click; falling back to native navigation");
+        return;
+      }
       e.preventDefault();
-      const nav = (
-        resolveApp(a) as (AppShape & { _navigate?: (p: string, r?: boolean) => void }) | undefined
-      )?._navigate;
-      if (nav) nav(node.to, false);
+      app._navigate(node.to, false);
     });
     // §3.8 prefetch — fire the named reducer once the link enters the viewport.
     // Dedupe by `to` URL (kept on the app instance) so that re-renders triggered
@@ -80,23 +91,21 @@ export const textTiles: TileRenderers = {
     if (node.prefetch) {
       const reducer = node.prefetch;
       const payload = node.prefetchArgs ?? {};
-      type PrefetchApp = AppShape & {
-        _prefetch?: (name: string, args: Record<string, string>, to: string) => void;
-        _prefetched?: Set<string>;
-      };
       const dedupeKey = node.to;
       // Render-time gate: skip re-observing when this app already prefetched
       // the target. The observer callback / microtask runs after the tree is
       // attached, so `fire` resolves the OWNING app from the anchor element.
-      const seenAtRender = (getRenderingApp() as PrefetchApp | undefined)?._prefetched;
-      if (!seenAtRender?.has(dedupeKey)) {
+      if (!getRenderingApp()?._prefetched?.has(dedupeKey)) {
         const fire = (): void => {
-          const app = resolveApp(a) as PrefetchApp | undefined;
-          if (!app) return;
+          const app = resolveApp(a);
+          if (!app) {
+            warnUnresolvedEvent(a, "link prefetch");
+            return;
+          }
           if (!app._prefetched) app._prefetched = new Set<string>();
           if (app._prefetched.has(dedupeKey)) return;
           app._prefetched.add(dedupeKey);
-          app._prefetch?.(reducer, payload as Record<string, string>, node.to);
+          app._prefetch(reducer, payload as Record<string, string>, node.to);
         };
         const IO = (globalThis as { IntersectionObserver?: typeof IntersectionObserver })
           .IntersectionObserver;

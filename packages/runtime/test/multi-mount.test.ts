@@ -152,6 +152,66 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(el2.getSlot("text")).toBe("second");
   });
 
+  it("drops real events on a detached tree after dispose instead of misdelivering (T6)", () => {
+    const app1 = makeBindApp();
+    const app2 = makeBindApp();
+    const root1 = freshRoot();
+    const root2 = freshRoot();
+    const handle1 = mount(app1, root1);
+    mount(app2, root2);
+
+    const input1 = root1.querySelector("input") as HTMLInputElement;
+    handle1.dispose(); // detaches root1's tree; input1 keeps its listener
+
+    typeInto(input1, "ghost");
+    // Neither the disposed app nor the still-live one may receive the event —
+    // a "resolve to the last mount" fallback would revive the cross-wiring.
+    expect(app1.live?.text).toBe("");
+    expect(app2.live?.text).toBe("");
+  });
+
+  it("restores the rendering context across a nested synchronous mount (T7)", () => {
+    // A custom element inside a Kumiki tree mounts its own app synchronously
+    // from connectedCallback while the outer render is still on the stack.
+    // Simulate that re-entrancy directly: the outer root() mounts the inner
+    // app mid-render. Outer render-time resolution (its icon) must still land
+    // on the outer app afterwards.
+    const inner = makeIconApp("M9 9 L8 8");
+    const innerHost = freshRoot();
+    let innerMounted = false;
+    const outer: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      icons: { star: "M1 1 L2 2" },
+      themes: { plain: {} },
+      themeName: "plain",
+      root: () => {
+        if (!innerMounted) {
+          innerMounted = true;
+          mount(inner, innerHost);
+        }
+        return {
+          kind: "column",
+          children: [
+            { kind: "icon", name: "star" },
+            { kind: "text", text: `n: ${outer.live?.n ?? 0}` },
+          ],
+        };
+      },
+    };
+    const outerRoot = freshRoot();
+    mount(outer, outerRoot);
+
+    expect(outerRoot.querySelector("path")?.getAttribute("d")).toBe("M1 1 L2 2");
+    expect(innerHost.querySelector("path")?.getAttribute("d")).toBe("M9 9 L8 8");
+    const innerEl = innerHost.querySelector('[data-kumiki-tile="icon"]') as Element;
+    expect(resolveApp(innerEl)).toBe(inner);
+    expect(resolveApp(outerRoot.querySelector('[data-kumiki-tile="icon"]') as Element)).toBe(outer);
+  });
+
   it("resolves icons per app on re-render, even after another app mounts (T5)", () => {
     const app1 = makeIconApp("M1 1 L2 2");
     const app2 = makeIconApp("M9 9 L8 8");
