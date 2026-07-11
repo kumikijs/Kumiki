@@ -35,4 +35,21 @@ describe("parseEpisodeLogText", () => {
 {still bad}`;
     expect(() => parseEpisodeLogText(mixed)).toThrow(/at line 3/);
   });
+
+  it("still parses pre-#162 panic steps (no stack / cause / category)", () => {
+    // A log written by an older runtime uses the minimal panic shape
+    // {kind, message, location?, ts}. New readers MUST accept it as-is —
+    // that's the forward-compat guarantee spec §10.5 promises.
+    const raw =
+      '{"id":"ep_old","trigger":{"kind":"ui.click","ts":1},"steps":[{"kind":"panic","message":"boom","location":"reducer \\"x\\"","ts":2}],"status":"panic"}';
+    const parsed = parseEpisodeLogText(raw);
+    expect(parsed).toHaveLength(1);
+    const step = (parsed[0] as { steps: Array<{ kind: string; message?: string }> }).steps[0]!;
+    expect(step.kind).toBe("panic");
+    expect(step.message).toBe("boom");
+    // No stack / cause / category fields — reader must not synthesise them.
+    expect(step).not.toHaveProperty("stack");
+    expect(step).not.toHaveProperty("cause");
+    expect(step).not.toHaveProperty("category");
+  });
 });

@@ -400,4 +400,47 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
       expect(tailParsed.warnings[0]?.kind).toBe("malformed-jsonl");
     });
   });
+
+  it("passes through #162 panic fields (stack / cause / category) via episode_tail", async () => {
+    const source = join(workdir, "app.kumiki");
+    writeFileSync(source, "");
+    const logPath = `${source}.kumiki-episodes.jsonl`;
+    const withStack = {
+      id: "ep_stack",
+      trigger: { kind: "ui.click", target: "BoomBtn", ts: 1 },
+      steps: [
+        {
+          kind: "panic",
+          message: "boom",
+          location: `reducer "boom"`,
+          stack: "Error: boom\n    at boom (src/x.ts:1:1)",
+          cause: [{ message: "root", stack: "Error: root\n    at inner (src/y.ts:2:2)" }],
+          category: "reducer",
+          ts: 2,
+        },
+      ],
+      status: "panic",
+    };
+    writeFileSync(logPath, `${JSON.stringify(withStack)}\n`);
+    await withClient(async (client) => {
+      const tailOut = await callTool(client, "kumiki_episode_tail", { path: source });
+      const tail = JSON.parse(tailOut) as Array<{
+        steps: Array<{
+          kind: string;
+          message?: string;
+          stack?: string;
+          cause?: Array<{ message: string; stack?: string }>;
+          category?: string;
+        }>;
+      }>;
+      expect(tail).toHaveLength(1);
+      const panicStep = tail[0]!.steps[0]!;
+      expect(panicStep.kind).toBe("panic");
+      expect(panicStep.stack).toMatch(/at boom/);
+      expect(panicStep.category).toBe("reducer");
+      expect(panicStep.cause).toHaveLength(1);
+      expect(panicStep.cause![0]!.message).toBe("root");
+      expect(panicStep.cause![0]!.stack).toMatch(/at inner/);
+    });
+  });
 });

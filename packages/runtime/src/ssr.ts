@@ -30,6 +30,7 @@ import {
   type EffectResult,
   type EmitSpec,
   type ParsedRoute,
+  panicInfo,
   pickRootTile,
   type RoutingImpl,
   readStatus,
@@ -294,8 +295,9 @@ function applyReducerOnSsr(
     // shape parity rather than omitting it.
     applied = r.apply(live, { $1: value, $2: undefined });
   } catch (e) {
-    const info = e instanceof Error ? e.message : String(e);
-    logger.recordPanic(info, `reducer "${r.name}"`);
+    // #162: route SSR panics through the same panicInfo pipeline as the live
+    // path so stack + Error.cause survive into the bootstrap episode.
+    logger.recordPanic({ ...panicInfo(e, "hydrate"), location: `reducer "${r.name}"` });
     return null;
   }
   const { diffs, dirty } = computeSlotDiffs(live, applied.slots, slotMetas);

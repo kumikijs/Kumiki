@@ -84,10 +84,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // Bumped to 40.5KB with the multi-mount app registry in core.ts
     // (WeakMap root registry + render-pass bracketing replacing the
     // `__kumikiApp` global, so co-mounted apps never cross-wire).
+    // Bumped to 41.5KB with #162 — panicInfo now walks Error.cause into a
+    // JSON-safe chain, KumikiPanic forwards `cause`, and reportPanic emits
+    // multi-line stack + cause output so devtools see the root cause instead
+    // of just the message.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(40_500);
+    expect(total).toBeLessThan(41_500);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

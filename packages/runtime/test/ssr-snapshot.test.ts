@@ -237,6 +237,17 @@ describe("renderToString §10.6.1", () => {
     expect(panicStep).toBeDefined();
     expect((panicStep as { message: string }).message).toContain("boom");
     expect(result.bootstrapEpisode.status).toBe("panic");
+    // #162: SSR panics travel through the same panicInfo pipeline as the live
+    // path — stack + category must survive into the bootstrap episode.
+    const enriched = panicStep as {
+      message: string;
+      location?: string;
+      stack?: string;
+      category?: string;
+    };
+    expect(enriched.location).toBe(`reducer "userLoaded"`);
+    expect(enriched.category).toBe("hydrate");
+    expect(enriched.stack).toMatch(/at .+/);
     consoleErr.mockRestore();
   });
 

@@ -35,7 +35,7 @@ describe("installDevPanel", () => {
   it("opens the panic overlay when the latest episode ended in a panic", () => {
     const logger = createEpisodeLogger();
     logger.beginTrigger({ kind: "ui.click", target: "B" });
-    logger.recordPanic("boom", "tile App");
+    logger.recordPanic({ message: "boom", location: "tile App" });
     logger.endTrigger();
     const panel = installDevPanel({
       logger,
@@ -52,7 +52,7 @@ describe("installDevPanel", () => {
   it("auto-clears the overlay on the next completed episode", () => {
     const logger = createEpisodeLogger();
     logger.beginTrigger({ kind: "ui.click", target: "B" });
-    logger.recordPanic("boom");
+    logger.recordPanic({ message: "boom" });
     logger.endTrigger();
     const panel = installDevPanel({
       logger,

@@ -1,5 +1,11 @@
 import type { AppShape } from "@kumikijs/runtime";
-import { _stdlib, builtinEffects, KumikiPanic, mount } from "@kumikijs/runtime";
+import {
+  _stdlib,
+  builtinEffects,
+  createEpisodeLogger,
+  KumikiPanic,
+  mount,
+} from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Hand-crafted AppShape mirroring the counter example, using the Phase 2 runtime contract.
@@ -1226,6 +1232,56 @@ describe("live panic handling (#24)", () => {
     dispatch(app, "boom");
     // spec §7.2.3: app.error receives the PanicInfo, whose .message is the panic.
     expect((app.live as Record<string, unknown>).lastError).toBe("boom in reducer");
+  });
+
+  it("panics are recorded to the episode log with stack + category (#162)", () => {
+    const app = makePanicApp();
+    const logger = createEpisodeLogger();
+    mount(app, root, { episodeLogger: logger });
+    dispatch(app, "boom");
+
+    const eps = logger.list();
+    expect(eps.length).toBeGreaterThan(0);
+    const last = eps[eps.length - 1]!;
+    expect(last.status).toBe("panic");
+    const panicStep = last.steps.find((s) => s.kind === "panic") as
+      | { kind: "panic"; message: string; location?: string; stack?: string; category?: string }
+      | undefined;
+    expect(panicStep).toBeDefined();
+    expect(panicStep!.message).toBe("boom in reducer");
+    expect(panicStep!.location).toBe(`reducer "boom"`);
+    expect(panicStep!.stack).toMatch(/at .+/);
+    expect(panicStep!.category).toBe("reducer");
+  });
+
+  it("app.error $event does NOT expose stack/cause to user code (#162)", () => {
+    // Capture the $event payload the app.error reducer sees.
+    let seen: unknown;
+    const app = makePanicApp();
+    app.reducers = app.reducers.map((r) =>
+      r.name === "onError"
+        ? {
+            ...r,
+            apply: (_live, payload) => {
+              seen = payload.$event;
+              return {
+                slots: { lastError: (payload.$event as { message: string }).message },
+                emits: [],
+              };
+            },
+          }
+        : r,
+    );
+    mount(app, root);
+    dispatch(app, "boom");
+    expect(seen).toBeDefined();
+    const ev = seen as Record<string, unknown>;
+    expect(ev.message).toBe("boom in reducer");
+    expect(ev.location).toBe(`reducer "boom"`);
+    expect(ev.category).toBe("reducer");
+    // Dev-only fields must stay in the episode log, not on user reducer input.
+    expect(ev).not.toHaveProperty("stack");
+    expect(ev).not.toHaveProperty("cause");
   });
 
   it("a render panic with no error-boundary is caught by the top-level boundary", () => {

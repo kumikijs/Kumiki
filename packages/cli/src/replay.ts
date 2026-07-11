@@ -71,7 +71,25 @@ function jsonOrNull(v: unknown): string {
   }
 }
 
-function formatEvent(ev: ReplayEvent): string | null {
+/**
+ * Split an `Error.stack` string into indented continuation lines for the
+ * `[panic]` block. V8-style stacks include the message on the first line
+ * ("Error: boom\n    at ..."); strip it so the header is not duplicated.
+ */
+function formatStackForReplay(stack: string, message: string, indent: string): string[] {
+  const raw = stack.split("\n");
+  const trimmed =
+    raw.length > 0 && raw[0] !== undefined && raw[0].includes(message) ? raw.slice(1) : raw;
+  const out: string[] = [];
+  for (const line of trimmed) {
+    const l = line.replace(/\s+$/, "");
+    if (l.length === 0) continue;
+    out.push(`${indent}${l.trim()}`);
+  }
+  return out;
+}
+
+export function formatEvent(ev: ReplayEvent): string | null {
   switch (ev.kind) {
     case "episode-start": {
       const target = ev.trigger.target ? ` on ${ev.trigger.target}` : "";
@@ -94,8 +112,28 @@ function formatEvent(ev: ReplayEvent): string | null {
     }
     case "signal-update":
       return `  [signal-update] dirty=[${ev.dirty.join(",")}]`;
-    case "panic":
-      return `  [panic] ${ev.message}`;
+    case "panic": {
+      // #162: expose stack + Error.cause chain so the operator can trace the
+      // root cause without opening devtools. Fields are optional — a pre-#162
+      // log with only `message` prints unchanged.
+      const cat = ev.category ? `:${ev.category}` : "";
+      const loc = ev.location ? `  ${ev.location}` : "";
+      const lines: string[] = [`  [panic${cat}] ${ev.message}${loc}`];
+      if (ev.stack !== undefined) {
+        for (const line of formatStackForReplay(ev.stack, ev.message, "    ")) lines.push(line);
+      }
+      if (ev.cause !== undefined) {
+        for (const link of ev.cause) {
+          lines.push(`    Caused by: ${link.message}`);
+          if (link.stack !== undefined) {
+            for (const line of formatStackForReplay(link.stack, link.message, "      ")) {
+              lines.push(line);
+            }
+          }
+        }
+      }
+      return lines.join("\n");
+    }
     case "episode-end":
       return null;
   }

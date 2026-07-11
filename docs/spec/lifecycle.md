@@ -146,9 +146,12 @@ type PanicInfo = {
     message: Text,
     location: Text,         ; "reducer:foo:line:42"
     episode-id: Text,
-    cause: Option(Text)
+    cause: Option(Text),
+    category: Text          ; #162: "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
 }
 ```
+
+The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` §10.5.1) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 
 ---
 
