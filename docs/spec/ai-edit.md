@@ -49,13 +49,18 @@ kumiki list                         # all definition names (with layer prefix)
 
 ```bash
 kumiki add <layer> <name> <body>            # add a new definition
+kumiki add ... --body-file <path>           # read body from a file ('-' = stdin) — preserves whitespace
 kumiki replace <layer>.<name> <body>        # replace a definition
+kumiki replace ... --body-file <path>       # read body from a file ('-' = stdin) — preserves whitespace
 kumiki edit <layer>.<name> <patch>          # partial edit (e.g., inside a reducer's do=)
+kumiki edit ... --patch-file <path>         # read patch JSON from a file ('-' = stdin)
 kumiki rename <layer>.<old> <new>           # rename (hash invariant)
 kumiki remove <layer>.<name>                # remove (fails if referenced)
 kumiki patch apply <file>                   # apply a CRDT op bundle
 kumiki patch revert <op-id>                 # revert a specific op
 ```
+
+Multi-line bodies (a reducer's `do=` block, a fn's multi-line RHS, etc.) must go through `--body-file` — the positional form is joined with single spaces so whitespace-significant content (newlines, tab runs) is lost. Passing `--body-file` alongside a positional body is rejected as a mutually-exclusive conflict.
 
 ### 9.2.3 Validation Commands
 
