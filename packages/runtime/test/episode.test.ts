@@ -62,7 +62,7 @@ describe("EpisodeLogger §10.5", () => {
   it("flips status to panic when recordPanic is called and finalizes", () => {
     const { logger } = makeLogger();
     logger.beginTrigger({ kind: "ui.click", target: "OopsBtn" });
-    logger.recordPanic("boom", `reducer "oops"`);
+    logger.recordPanic({ message: "boom", location: `reducer "oops"` });
     logger.endTrigger();
 
     const eps = logger.list();
@@ -73,6 +73,46 @@ describe("EpisodeLogger §10.5", () => {
       message: "boom",
       location: `reducer "oops"`,
     });
+  });
+
+  it("carries stack / cause / category from recordPanic into the step", () => {
+    const { logger } = makeLogger();
+    logger.beginTrigger({ kind: "ui.click", target: "OopsBtn" });
+    logger.recordPanic({
+      message: "boom",
+      location: `reducer "oops"`,
+      stack: "Error: boom\n    at oops (src/x.ts:1:1)",
+      cause: [{ message: "root", stack: "Error: root\n    at inner (src/y.ts:2:2)" }],
+      category: "reducer",
+    });
+    logger.endTrigger();
+
+    const step = logger.list()[0]!.steps[0]!;
+    expect(step).toMatchObject({
+      kind: "panic",
+      message: "boom",
+      location: `reducer "oops"`,
+      stack: expect.stringContaining("at oops"),
+      category: "reducer",
+    });
+    expect((step as { cause?: unknown[] }).cause).toHaveLength(1);
+    expect((step as { cause: { message: string; stack?: string }[] }).cause[0]).toMatchObject({
+      message: "root",
+      stack: expect.stringContaining("at inner"),
+    });
+  });
+
+  it("omits empty cause / undefined stack fields on the step (forward-compat)", () => {
+    const { logger } = makeLogger();
+    logger.beginTrigger({ kind: "ui.click", target: "OopsBtn" });
+    logger.recordPanic({ message: "boom", cause: [], category: "unknown" });
+    logger.endTrigger();
+
+    const step = logger.list()[0]!.steps[0]!;
+    expect(step).not.toHaveProperty("cause");
+    expect(step).not.toHaveProperty("stack");
+    expect(step).not.toHaveProperty("location");
+    expect(step).toMatchObject({ kind: "panic", message: "boom", category: "unknown" });
   });
 
   it("ring-buffers the most recent N episodes (memoryMax)", () => {

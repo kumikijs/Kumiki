@@ -261,11 +261,28 @@ The causal sequence derived from a single trigger is recorded as one **episode**
     {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"], "ts": ...},
     {"kind": "effect-start", "name": "persist", "args": {...}, "ts": ...},
     {"kind": "effect-end", "name": "persist", "result": "ok", "value": "()", "ts": ...},
-    {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...}
+    {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...},
+    {
+      "kind": "panic",
+      "message": "boom",
+      "location": "reducer \"addTodo\"",
+      "stack": "Error: boom\n    at ...",
+      "cause": [{"message": "root", "stack": "..."}],
+      "category": "reducer",
+      "ts": ...
+    }
   ],
   "status": "completed" | "panic" | "cancelled" | "ongoing"
 }
 ```
+
+A `panic` step additionally carries:
+
+- `stack`: the `Error.stack` of the caught throw, when available.
+- `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
+- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the throw was caught. Emitted by the reducer / tile-render / hydrate catch sites today; `effect` / `capability` / `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw currently surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step.
+
+`stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. `stack` / `cause` are dev-tooling — the runtime never splats them into user reducer `$event` payloads; only `message`, `location`, and `category` reach `app.error` / `route.error(<pattern>)`.
 
 Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see §10.6.2). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
@@ -317,6 +334,7 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 - An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
 - `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
 - Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
+- A `panic` step (§10.5.1) is rendered as a multi-line block: header `[panic:<category>] <message>  <location>` followed by indented `.stack` lines and, for each `cause` link, a `Caused by: <message>` line with the link's own indented stack. The replay executor derives `category` for every observed panic (an older episode log missing the field still gets a category assigned when its reducer re-throws during replay), so the multi-line form is what the CLI normally shows. The formatter also accepts a minimal `{kind, message}` panic event and prints it as the single-line `[panic] <message>` fallback — this only surfaces if a caller feeds `formatEvent` a hand-authored event outside the normal replay pipeline.
 - Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
 ---
