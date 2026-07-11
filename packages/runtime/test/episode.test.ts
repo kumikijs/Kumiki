@@ -75,7 +75,7 @@ describe("EpisodeLogger §10.5", () => {
     });
   });
 
-  it("carries stack / cause / category from recordPanic into the step (#162)", () => {
+  it("carries stack / cause / category from recordPanic into the step", () => {
     const { logger } = makeLogger();
     logger.beginTrigger({ kind: "ui.click", target: "OopsBtn" });
     logger.recordPanic({

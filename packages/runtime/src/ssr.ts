@@ -295,7 +295,7 @@ function applyReducerOnSsr(
     // shape parity rather than omitting it.
     applied = r.apply(live, { $1: value, $2: undefined });
   } catch (e) {
-    // #162: route SSR panics through the same panicInfo pipeline as the live
+    // Route SSR panics through the same panicInfo pipeline as the live
     // path so stack + Error.cause survive into the bootstrap episode.
     logger.recordPanic({ ...panicInfo(e, "hydrate"), location: `reducer "${r.name}"` });
     return null;

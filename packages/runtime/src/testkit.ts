@@ -35,7 +35,7 @@ type EpisodeStepLite =
       kind: "panic";
       message: string;
       location?: string;
-      /** #162: root-cause devtools trail — optional so pre-#162 logs still parse. */
+      /** Root-cause devtools trail — optional so older logs still parse. */
       stack?: string;
       cause?: PanicCauseLink[];
       category?: PanicCategory;
@@ -531,7 +531,7 @@ export type ReplayEvent =
       episodeId: string;
       stepIndex: number;
       message: string;
-      /** #162: propagate root-cause fields so the replay CLI can render them. */
+      /** Propagate root-cause fields so the replay CLI can render them. */
       location?: string;
       stack?: string;
       cause?: PanicCauseLink[];
@@ -551,7 +551,7 @@ export type ReplayReport = {
   panics: {
     episodeId: string;
     message: string;
-    /** #162: keep root-cause fields on the aggregate report too. Optional so pre-#162 callers stay compatible. */
+    /** Keep root-cause fields on the aggregate report too. Optional for back-compat with older callers. */
     location?: string;
     stack?: string;
     cause?: PanicCauseLink[];
@@ -683,18 +683,21 @@ function executeEpisode(
     try {
       res = job.reducer.apply(app.live, job.payload);
     } catch (e) {
-      // #162: derive the record via panicInfo so stack + Error.cause reach the
+      // Derive the record via panicInfo so stack + Error.cause reach the
       // replay CLI unchanged. The runner treats this catch site as `reducer`
-      // — it's replaying the initial reducer of a recorded episode.
+      // — it's replaying the initial reducer of a recorded episode. If the
+      // thrown KumikiPanic didn't stamp its own location, fall back to the
+      // reducer name we're replaying so the CLI can render "reducer "foo""
+      // instead of leaving the location blank.
       const rec = panicInfo(e, "reducer");
+      const location = rec.location ?? `reducer "${job.reducer.name}"`;
       const panicEntry: {
         message: string;
         location?: string;
         stack?: string;
         cause?: PanicCauseLink[];
         category?: PanicCategory;
-      } = { message: rec.message, category: rec.category };
-      if (rec.location !== undefined) panicEntry.location = rec.location;
+      } = { message: rec.message, location, category: rec.category };
       if (rec.stack !== undefined) panicEntry.stack = rec.stack;
       if (rec.cause !== undefined) panicEntry.cause = rec.cause;
       panics.push(panicEntry);
@@ -704,7 +707,7 @@ function executeEpisode(
           episodeId: ep.id,
           stepIndex: 0,
           message: rec.message,
-          ...(rec.location !== undefined ? { location: rec.location } : {}),
+          location,
           ...(rec.stack !== undefined ? { stack: rec.stack } : {}),
           ...(rec.cause !== undefined ? { cause: rec.cause } : {}),
           category: rec.category,

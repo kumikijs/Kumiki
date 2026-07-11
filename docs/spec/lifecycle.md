@@ -144,12 +144,16 @@ The `PanicInfo` type:
 ```kumiki
 type PanicInfo = {
     message: Text,
-    location: Text,         ; "reducer:foo:line:42"
+    location: Text,         ; e.g. `reducer "foo"` or `render`
     episode-id: Text,
     cause: Option(Text),
-    category: Text          ; #162: "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
+    category: Text          ; "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
 }
 ```
+
+`category` names the runtime catch site where the throw was intercepted. The reducer / tile-render / hydrate paths emit their own category today; `effect` / `capability` / `unknown` are reserved values so app code can exhaustive-match without a fallthrough as future callsites are wired in.
+
+**Implementation gaps to close.** Today's runtime only populates `message`, `location`, and `category` on the `$event` payload. `episode-id` and `cause` are declared on the type for forward compatibility but are NOT supplied yet — reducers MUST treat both as `None`-equivalent. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime actually emits `reducer "foo"` / `render`. These are pre-existing gaps tracked separately from the panic-info wire-through work.
 
 The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` §10.5.1) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 

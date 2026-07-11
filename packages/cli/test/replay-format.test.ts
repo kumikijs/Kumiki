@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import { formatEvent } from "../src/replay.ts";
 
 /**
- * `kumiki replay` panic display (#162). The formatter is exercised via
- * `formatEvent` directly — driving a full CLI panic fixture would test the
- * runtime's replay-executor pipeline, not the CLI's stack / cause rendering,
- * which is what changed here.
+ * `kumiki replay` panic display. The formatter is exercised via `formatEvent`
+ * directly — driving a full CLI panic fixture would test the runtime's
+ * replay-executor pipeline, not the CLI's stack / cause rendering, which is
+ * what changed here.
  */
-describe("formatEvent panic (#162)", () => {
+describe("formatEvent panic", () => {
   it("prints category, message, location, indented stack, and cause chain", () => {
     const ev: ReplayEvent = {
       kind: "panic",
@@ -33,7 +33,7 @@ describe("formatEvent panic (#162)", () => {
     expect(lines).toContain("      at inner (src/z.ts:3:3)");
   });
 
-  it("falls back to a single line when a pre-#162 log has only `message`", () => {
+  it("falls back to a single line when a log has only `message`", () => {
     const ev: ReplayEvent = {
       kind: "panic",
       episodeId: "ep_0001",

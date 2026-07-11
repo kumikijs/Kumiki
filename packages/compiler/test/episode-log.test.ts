@@ -36,7 +36,7 @@ describe("parseEpisodeLogText", () => {
     expect(() => parseEpisodeLogText(mixed)).toThrow(/at line 3/);
   });
 
-  it("still parses pre-#162 panic steps (no stack / cause / category)", () => {
+  it("still parses minimal panic steps (no stack / cause / category)", () => {
     // A log written by an older runtime uses the minimal panic shape
     // {kind, message, location?, ts}. New readers MUST accept it as-is —
     // that's the forward-compat guarantee spec §10.5 promises.

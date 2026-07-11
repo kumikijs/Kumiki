@@ -1234,7 +1234,7 @@ describe("live panic handling (#24)", () => {
     expect((app.live as Record<string, unknown>).lastError).toBe("boom in reducer");
   });
 
-  it("panics are recorded to the episode log with stack + category (#162)", () => {
+  it("panics are recorded to the episode log with stack + category", () => {
     const app = makePanicApp();
     const logger = createEpisodeLogger();
     mount(app, root, { episodeLogger: logger });
@@ -1254,16 +1254,49 @@ describe("live panic handling (#24)", () => {
     expect(panicStep!.category).toBe("reducer");
   });
 
-  it("app.error $event does NOT expose stack/cause to user code (#162)", () => {
+  it("reportPanic emits stack lines and Caused-by continuation to console.error", () => {
+    // Verify the exact console.error shape reportPanic produces — the smoke /
+    // scenario tiers rely on the "[kumiki] panic in ..." header staying the
+    // first line, and devtools users rely on stack + Caused-by continuation
+    // lines showing up right after it.
+    const app = makePanicApp();
+    // Rewire boom to throw a cause-chain error so we exercise the Caused-by
+    // path too.
+    app.reducers = app.reducers.map((r) =>
+      r.name === "boom"
+        ? {
+            ...r,
+            apply: () => {
+              const rootCause = new Error("root cause");
+              throw new Error("boom detail", { cause: rootCause });
+            },
+          }
+        : r,
+    );
+    mount(app, root);
+    dispatch(app, "boom");
+    expect(errSpy).toHaveBeenCalled();
+    const joined = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    // First line format is stable — used as a grep target by verification tiers.
+    expect(joined).toMatch(/^\[kumiki\] (?:panic|error) in reducer "boom": boom detail/m);
+    // Stack lines land as indented continuation.
+    expect(joined).toMatch(/\n {2}at .+/);
+    // Cause chain surfaces its own header + stack.
+    expect(joined).toContain("Caused by: root cause");
+    errSpy.mockRestore();
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("app.error $event does NOT expose stack/cause to user code", () => {
     // Capture the $event payload the app.error reducer sees.
-    let seen: unknown;
+    let capturedEvent: unknown;
     const app = makePanicApp();
     app.reducers = app.reducers.map((r) =>
       r.name === "onError"
         ? {
             ...r,
             apply: (_live, payload) => {
-              seen = payload.$event;
+              capturedEvent = payload.$event;
               return {
                 slots: { lastError: (payload.$event as { message: string }).message },
                 emits: [],
@@ -1274,8 +1307,8 @@ describe("live panic handling (#24)", () => {
     );
     mount(app, root);
     dispatch(app, "boom");
-    expect(seen).toBeDefined();
-    const ev = seen as Record<string, unknown>;
+    expect(capturedEvent).toBeDefined();
+    const ev = capturedEvent as Record<string, unknown>;
     expect(ev.message).toBe("boom in reducer");
     expect(ev.location).toBe(`reducer "boom"`);
     expect(ev.category).toBe("reducer");

@@ -81,8 +81,9 @@ export type EpisodeStep =
       /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
       cause?: PanicCauseLink[];
       /**
-       * Where the runtime caught the throw. Omitted in pre-#162 logs; readers
-       * should treat absence as {@link PanicCategory} `"unknown"`.
+       * Where the runtime caught the throw. Omitted in episode logs written
+       * before this field existed; readers should treat absence as
+       * {@link PanicCategory} `"unknown"`.
        */
       category?: PanicCategory;
       ts: number;

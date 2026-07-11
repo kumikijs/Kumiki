@@ -34,8 +34,8 @@ export class KumikiPanic extends Error {
   readonly location: string | undefined;
   constructor(message: string, location?: string, options?: { cause?: unknown }) {
     // Forward `cause` to the native Error(message, options) so root-cause
-    // information survives on the standard `.cause` field (#162). Older
-    // callsites that pass only (message, location?) keep working unchanged.
+    // information survives on the standard `.cause` field. Older callsites
+    // that pass only (message, location?) keep working unchanged.
     super(message, options);
     this.name = "KumikiPanic";
     this.location = location;
@@ -828,9 +828,10 @@ export function mountCore(
       // otherwise render a top-level panic fallback so the exception does not
       // escape and leave the DOM stale. Logged via console.error so the smoke /
       // scenario tiers still flag it (#24).
+      const renderRec = panicInfo(e, "tile-render");
       reportPanic("render", e);
-      episode?.recordPanic({ ...panicInfo(e, "tile-render"), location: "render" });
-      if (!fireRouteError(e)) {
+      episode?.recordPanic({ ...renderRec, location: "render" });
+      if (!fireRouteError(renderRec)) {
         dom = renderPanicFallback(e);
       } else {
         // route.error handlers ran — they may have navigated. Re-render once
@@ -841,6 +842,9 @@ export function mountCore(
           dom = tileCtx.render(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
+          // The second render also panicked; keep the episode-log honest by
+          // recording that too, so replays surface both failures.
+          episode?.recordPanic({ ...panicInfo(e2, "tile-render"), location: "render" });
           renderedTree = null;
           dom = renderPanicFallback(e2);
         }
@@ -906,7 +910,14 @@ export function mountCore(
     }
   }
 
-  function fireRouteError(e: unknown): boolean {
+  /**
+   * Fire the `route.error(<pattern>)` reducer chain. Takes the already-derived
+   * PanicRecord from the caller so category / stack aren't recomputed and —
+   * more importantly — the $event category matches the recording site's
+   * category. The one caller today is the tile render catch, so a route.error
+   * from a render panic reports `category: "tile-render"`, not `"reducer"`.
+   */
+  function fireRouteError(rec: PanicRecord): boolean {
     if (!app.routes || app.routes.length === 0) return false;
     const cur = slotValues.route as ParsedRoute | undefined;
     const pattern = cur?.pattern;
@@ -916,11 +927,10 @@ export function mountCore(
       (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
     );
     if (handlers.length === 0) return false;
-    // #162: user-facing $event stays limited to fields already exposed by the
-    // Kumiki PanicInfo type (message / location) plus `category` (a coarse
-    // dev-friendly tag). `stack` and `cause` are intentionally NOT splatted —
-    // they belong in the episode-log, not on a production reducer payload.
-    const rec = panicInfo(e, "reducer");
+    // User-facing $event stays limited to the fields the Kumiki PanicInfo
+    // type documents (message / location + category). `stack` and `cause`
+    // are intentionally NOT splatted — a raw devtools stack in production UI
+    // is a footgun; those fields live in the episode-log only.
     const info: {
       message: string;
       location?: string;
@@ -958,7 +968,7 @@ export function mountCore(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
     );
     if (handlers.length === 0) return;
-    // #162: user-facing $event is limited to fields the spec's PanicInfo type
+    // User-facing $event is limited to fields the spec's PanicInfo type
     // documents; `stack` / `cause` stay in the episode-log only.
     const info = { message: rec.message, location, category: rec.category };
     inPanicHandler = true;
@@ -1795,11 +1805,11 @@ export function _setPathHelper(obj: unknown, path: string[], value: unknown): un
 
 /**
  * Full-fidelity record extracted from a caught throw for episode-log capture
- * (docs/spec/runtime.md §10.5.1, #162). `message` / `location` are the fields
- * the user-facing `PanicInfo` type historically exposed; `stack` / `cause` /
- * `category` are dev-tooling grade — retained inside the episode-log and shown
- * by `kumiki replay` / `kumiki_episode_tail`, but NOT splatted into user
- * reducer `$event` payloads (stack traces would leak to production UI).
+ * (docs/spec/runtime.md §10.5.1). `message` / `location` are the fields the
+ * user-facing `PanicInfo` type exposes; `stack` / `cause` / `category` are
+ * dev-tooling grade — retained inside the episode-log and shown by
+ * `kumiki replay` / `kumiki_episode_tail`, but NOT splatted into user reducer
+ * `$event` payloads (raw stack traces would leak to production UI).
  */
 export type PanicRecord = {
   message: string;
@@ -1817,66 +1827,118 @@ export type PanicRecord = {
 const PANIC_CAUSE_MAX_DEPTH = 8;
 
 /**
- * Walk `Error.cause` iteratively into a flat, JSON-safe list. `seen` guards
- * against cycles (`err.cause = err`) — first repeat visitor is skipped. Each
- * link keeps `message` (mandatory) and `stack` (when available), matching
- * {@link PanicCauseLink}.
+ * Read `.message` / `.stack` / `.cause` off an arbitrary caught throw without
+ * ever letting a hostile getter / Proxy / `toString` re-throw. `panicInfo` is
+ * called from inside every panic-catch site, so a secondary throw here would
+ * escape the dispatch handler and defeat the "no uncaught panic reaches the
+ * DOM event loop" contract.
+ */
+function safeErrorField(e: unknown, field: "message" | "stack"): string | undefined {
+  try {
+    const v = (e as Record<string, unknown> | null | undefined)?.[field];
+    return typeof v === "string" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeString(v: unknown): string {
+  try {
+    return String(v);
+  } catch {
+    return "<unstringifiable>";
+  }
+}
+
+function safeCauseOf(e: unknown): unknown {
+  try {
+    return (e as { cause?: unknown } | null | undefined)?.cause;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Walk `Error.cause` iteratively into a flat, JSON-safe list. `seen` seeds
+ * with the root object so a cause pointer that loops back to the root is
+ * caught, and every field read runs through the safe helpers so a hostile
+ * getter can never leak a fresh throw. Order: nearest cause first, root-most
+ * last. Capped at {@link PANIC_CAUSE_MAX_DEPTH} links.
  */
 function collectCauseChain(root: unknown): PanicCauseLink[] {
   const chain: PanicCauseLink[] = [];
   const seen = new Set<unknown>();
-  let cur: unknown =
-    root && typeof root === "object" ? (root as { cause?: unknown }).cause : undefined;
+  if (root !== null && (typeof root === "object" || typeof root === "function")) seen.add(root);
+  let cur: unknown = safeCauseOf(root);
   while (cur !== undefined && cur !== null && chain.length < PANIC_CAUSE_MAX_DEPTH) {
     if (seen.has(cur)) break;
     seen.add(cur);
-    if (cur instanceof Error) {
-      const link: PanicCauseLink = { message: cur.message };
-      if (cur.stack !== undefined) link.stack = cur.stack;
-      chain.push(link);
-      cur = (cur as { cause?: unknown }).cause;
-    } else {
-      chain.push({ message: String(cur) });
-      cur = undefined;
+    const link: PanicCauseLink = { message: "" };
+    try {
+      if (cur instanceof Error) {
+        link.message = safeErrorField(cur, "message") ?? "";
+        const stack = safeErrorField(cur, "stack");
+        if (stack !== undefined) link.stack = stack;
+      } else {
+        link.message = safeString(cur);
+      }
+    } catch {
+      link.message = "<cause unavailable>";
     }
+    chain.push(link);
+    cur = cur instanceof Error ? safeCauseOf(cur) : undefined;
   }
   return chain;
 }
 
 /**
  * Full-fidelity extraction of a caught throw for the episode-log / devtools
- * path (#162). Preserves `message` + optional `location` (as the pre-#162
- * `panicInfo` did) and additionally captures `.stack`, the flattened
- * `Error.cause` chain, and the caller-supplied `category`.
+ * path. Preserves `message` + optional `location` (the fields the user-facing
+ * `PanicInfo` type exposes) and additionally captures `.stack`, the flattened
+ * `Error.cause` chain (nearest cause first, root-most last), and the caller-
+ * supplied `category`. Never throws — a secondary exception inside a getter
+ * or a Proxy is caught and downgraded to a "details unavailable" record so
+ * the outer catch (which already committed to handling the primary panic)
+ * always gets a value.
  */
 export function panicInfo(e: unknown, category: PanicCategory = "unknown"): PanicRecord {
-  const cause = collectCauseChain(e);
-  const chain = cause.length > 0 ? cause : undefined;
-  if (isPanic(e)) {
+  try {
+    const cause = collectCauseChain(e);
+    const chain = cause.length > 0 ? cause : undefined;
+    if (isPanic(e)) {
+      return {
+        message: safeErrorField(e, "message") ?? "",
+        location: e.location,
+        stack: safeErrorField(e, "stack"),
+        cause: chain,
+        category,
+      };
+    }
+    if (e instanceof Error) {
+      return {
+        message: safeErrorField(e, "message") ?? "",
+        location: undefined,
+        stack: safeErrorField(e, "stack"),
+        cause: chain,
+        category,
+      };
+    }
     return {
-      message: e.message,
-      location: e.location,
-      stack: e.stack,
-      cause: chain,
-      category,
-    };
-  }
-  if (e instanceof Error) {
-    return {
-      message: e.message,
+      message: safeString(e),
       location: undefined,
-      stack: e.stack,
+      stack: undefined,
       cause: chain,
       category,
     };
+  } catch {
+    return {
+      message: "panic (details unavailable)",
+      location: undefined,
+      stack: undefined,
+      cause: undefined,
+      category,
+    };
   }
-  return {
-    message: String(e),
-    location: undefined,
-    stack: undefined,
-    cause: chain,
-    category,
-  };
 }
 
 /**
@@ -1885,8 +1947,9 @@ export function panicInfo(e: unknown, category: PanicCategory = "unknown"): Pani
  * a controlled panic is reported as a failure rather than silently swallowed.
  *
  * The first line format (`[kumiki] panic in <where>: <message>`) is stable —
- * `scenario.ts` greps for it to distinguish a controlled panic from a generic
- * console.error. Stack trace + Error.cause chain (#162) are appended as
+ * `packages/tests/scenario.test.ts` greps for it (via the console.error buffer
+ * that `runScenario` collects) to distinguish a controlled panic from a
+ * generic console.error. Stack trace + Error.cause chain are appended as
  * indented continuation lines so devtools show a full root-cause trail without
  * breaking that grep.
  */

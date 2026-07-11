@@ -113,9 +113,9 @@ export function formatEvent(ev: ReplayEvent): string | null {
     case "signal-update":
       return `  [signal-update] dirty=[${ev.dirty.join(",")}]`;
     case "panic": {
-      // #162: expose stack + Error.cause chain so the operator can trace the
-      // root cause without opening devtools. Fields are optional — a pre-#162
-      // log with only `message` prints unchanged.
+      // Expose stack + Error.cause chain so the operator can trace the root
+      // cause without opening devtools. Fields are optional — an older log
+      // with only `message` prints unchanged.
       const cat = ev.category ? `:${ev.category}` : "";
       const loc = ev.location ? `  ${ev.location}` : "";
       const lines: string[] = [`  [panic${cat}] ${ev.message}${loc}`];

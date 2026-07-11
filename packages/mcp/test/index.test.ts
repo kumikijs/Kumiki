@@ -401,7 +401,7 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
     });
   });
 
-  it("passes through #162 panic fields (stack / cause / category) via episode_tail", async () => {
+  it("passes through panic stack / cause / category via episode_tail", async () => {
     const source = join(workdir, "app.kumiki");
     writeFileSync(source, "");
     const logPath = `${source}.kumiki-episodes.jsonl`;
