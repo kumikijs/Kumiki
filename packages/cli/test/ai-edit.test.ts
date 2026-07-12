@@ -25,7 +25,7 @@ import {
   viewHash,
   viewHistory,
 } from "@kumikijs/cli";
-import { check } from "@kumikijs/compiler";
+import { check, collectTimerNames, variantTagsOf } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -707,6 +707,11 @@ describe("planFixes: expanded auto-patch coverage", () => {
     // note` sits at Levenshtein 1 from `nope`, so the pre-#175 unscoped code
     // path would have proposed `note` — a silent corruption. The scoped
     // candidate set (only `{tick}`) must reject all E0106 patches instead.
+    //
+    // The direct assertions on `collectTimerNames` and every patch
+    // description below are the load-bearing ones: a bare "no E0106 patch"
+    // check would also pass if `collectTimerNames` silently returned an
+    // empty set — reviewer C1 flagged that as a bug-hiding shape.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0106-scope-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -726,10 +731,17 @@ describe("planFixes: expanded auto-patch coverage", () => {
       ].join("\n"),
     );
     const store = load(file);
+    // The candidate set is exactly the timer namespace — no top-level defs.
+    expect(collectTimerNames(store.program)).toEqual(new Set(["tick"]));
     const errors = check(store.program);
     expect(errors.some((e) => e.code === "E0106")).toBe(true);
     const patches = planFixes(store, errors);
     expect(patches.some((p) => p.code === "E0106")).toBe(false);
+    // Belt-and-braces: even if a future code path re-enables generic
+    // suggestions for this code, no proposed patch may name `note` / `count`.
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`"note"`))).toBe(false);
+    expect(descs.some((d) => d.includes(`"count"`))).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -774,6 +786,11 @@ describe("planFixes: expanded auto-patch coverage", () => {
     // Levenshtein 1 from `Qqq`, so the pre-#175 unscoped path would have
     // suggested `Qqq0` (a silent corruption of the pattern). The scoped
     // candidate set must reject every E0209 patch.
+    //
+    // As with the E0106 scope-safety test, the direct `variantTagsOf`
+    // assertion and the description exclusion below are what distinguishes
+    // "correctly rejected by threshold" from "silently skipped" (reviewer
+    // C1).
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0209-scope-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -795,10 +812,18 @@ describe("planFixes: expanded auto-patch coverage", () => {
       ].join("\n"),
     );
     const store = load(file);
+    // The candidate set is exactly the union's variant tags — top-level
+    // `Qqq0` is not a candidate.
+    expect(variantTagsOf("Direction", store.program)).toEqual(["North", "South"]);
     const errors = check(store.program);
     expect(errors.some((e) => e.code === "E0209")).toBe(true);
     const patches = planFixes(store, errors);
     expect(patches.some((p) => p.code === "E0209")).toBe(false);
+    // A proposed patch that names `Qqq0` is exactly the corruption we're
+    // guarding against; assert on the description text so a future set
+    // widening of NAME_SUGGEST_CODES can't reintroduce it.
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes("Qqq0"))).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -35,8 +35,21 @@ export function collectTimerNames(program: Program): Set<string> {
  * Built-in `Option` / `Result` are resolved directly; user types are looked
  * up in `program.defs` and their body is unwrapped through `TypeRef`,
  * `TypeApp`, `TypeNominal`, and `TypeRefinement` until a `TypeUnion` is
- * reached. Mirrors the resolution in typecheck's `lookupVariantPayloads`
- * (minus payload extraction).
+ * reached. Handles the tag names only — payload extraction and type-parameter
+ * substitution (both done by typecheck's `lookupVariantPayloads`) are
+ * intentionally omitted because tag identity is independent of both.
+ *
+ * Rendered shapes that `typeToString` can produce but are NOT expected to
+ * reach this function in practice:
+ *   - `"nominal <inner>"` for `TypeNominal` — `extractBareName` returns
+ *     `"nominal"`, which is not a valid type identifier, so the lookup
+ *     safely returns `null` (no suggestion, no wrong candidate set).
+ *   - `"Red | Green"` for an anonymous `TypeUnion` — `extractBareName`
+ *     returns the first tag (`"Red"`), which would silently look up a
+ *     same-named `TypeDef` if one exists. Scrutinee expressions always type
+ *     to a named `TypeRef` / `TypeApp` at the E0209 site, so this shape is
+ *     unreachable from the CLI caller; if the invariant ever changes,
+ *     rendering the union tags explicitly is safer than parsing.
  */
 export function variantTagsOf(scrutTypeName: string, program: Program): string[] | null {
   const bare = extractBareName(scrutTypeName);
