@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import type { KumikiError, TestDef } from "@kumikijs/compiler";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
@@ -35,21 +35,33 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function suggestName(store: Store, missing: string): string | null {
-  const all = listDefs(store).map((e) => e.name);
+/**
+ * Closest candidate name for `missing` under the same threshold used by every
+ * name-suggest branch (Levenshtein ≤ 2 edits or ≤ 25% of the missing name's
+ * length). Takes candidates as an iterable so callers can supply a scoped
+ * set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
+ * names for E0106, variant tags for E0209.
+ */
+function suggestNameFrom(candidates: Iterable<string>, missing: string): string | null {
   let best: string | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
-  for (const cand of all) {
+  for (const cand of candidates) {
     const d = levenshtein(missing, cand);
     if (d < bestScore) {
       bestScore = d;
       best = cand;
     }
   }
-  // Accept the suggestion only if the names are close enough (≤ 2 edits or ≤ 25%).
   if (best === null) return null;
   if (bestScore <= 2 || bestScore <= Math.ceil(missing.length * 0.25)) return best;
   return null;
+}
+
+function suggestName(store: Store, missing: string): string | null {
+  return suggestNameFrom(
+    listDefs(store).map((e) => e.name),
+    missing,
+  );
 }
 
 /**
@@ -87,15 +99,17 @@ function appendAppCap(text: string, cap: string, appRange: [number, number] | nu
  * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
  * from `listDefs(store)`) for every code in this set.
  *
- * Excluded on purpose:
- *   - **E0106** (undef-timer) — timer names live in effect-scoped
- *     `sym.timerNames` in the compiler, not among top-level defs; suggesting
- *     a tile / reducer name here would silently rewrite `stop-timer("x")` to
- *     an unrelated identifier. Requires a scoped candidate set.
- *   - **E0209** (pat-unknown-variant) — variant tags live inside their union
- *     type's payload list, not among top-level defs; same failure mode.
- * Adding either code back means also plumbing the scoped candidate set into
- * `planFixes` — a set-membership tweak alone is a correctness bug.
+ * Handled with a *scoped* candidate set in their own branch below (not in this
+ * set, because top-level defs would produce wrong suggestions):
+ *   - **E0106** (undef-timer) — timer names live in `SymbolTable.timerNames`;
+ *     we mirror them via `collectTimerNames(program)` and never fall back to
+ *     top-level defs.
+ *   - **E0209** (pat-unknown-variant) — variant tags live inside the union
+ *     type's payload list; we resolve them via `variantTagsOf(typeName,
+ *     program)` (built-in `Option` / `Result` plus user `TypeDef` bodies).
+ * Adding either code back to *this* set would reintroduce the silent
+ * corruption PR #175 removed — the shared candidate list has no timer /
+ * variant entries and would suggest an unrelated tile or reducer.
  */
 const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
   "E0102", // undef-reducer
@@ -117,6 +131,58 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
       if (quoted.length === 0) continue;
       const missing = err.code === "E0211" ? quoted[quoted.length - 1]! : quoted[0]!;
       const suggested = suggestName(store, missing);
+      if (!suggested) continue;
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => {
+          const lines = text.split(/\r?\n/);
+          const idx = err.pos.line - 1;
+          const line = lines[idx] ?? "";
+          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+          lines[idx] = line.replace(re, suggested);
+          return lines.join("\n");
+        },
+      });
+    }
+    if (err.code === "E0106") {
+      // Message shape: `stop-timer refers to undefined timer name "<name>"`.
+      // The candidate set is the timer namespace, not top-level defs — see
+      // NAME_SUGGEST_CODES doc-comment for why this branch is separate.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) continue;
+      const missing = quoted[0]!;
+      const timers = collectTimerNames(store.program);
+      if (timers.size === 0) continue;
+      const suggested = suggestNameFrom(timers, missing);
+      if (!suggested) continue;
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => {
+          const lines = text.split(/\r?\n/);
+          const idx = err.pos.line - 1;
+          const line = lines[idx] ?? "";
+          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+          lines[idx] = line.replace(re, suggested);
+          return lines.join("\n");
+        },
+      });
+    }
+    if (err.code === "E0209") {
+      // Message shape: `Variant "<tag>" is not a member of scrutinee type "<T>"`.
+      // Candidates are the union's tag list, not top-level defs. `<T>` may be
+      // rendered as `Option(Int)` / `Result(Ok, Err)` / a plain `TypeRef` name;
+      // `variantTagsOf` strips the generic argument list and resolves aliases.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length < 2) continue;
+      const missing = quoted[0]!;
+      const typeName = quoted[1]!;
+      const tags = variantTagsOf(typeName, store.program);
+      if (!tags || tags.length === 0) continue;
+      const suggested = suggestNameFrom(tags, missing);
       if (!suggested) continue;
       patches.push({
         code: err.code,

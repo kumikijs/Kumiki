@@ -25,7 +25,7 @@ import {
   viewHash,
   viewHistory,
 } from "@kumikijs/cli";
-import { check } from "@kumikijs/compiler";
+import { check, collectTimerNames, variantTagsOf } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -668,6 +668,194 @@ describe("planFixes: expanded auto-patch coverage", () => {
     const result = applyFixPlan(file, "E0301");
     expect(result.applied).toBe(0);
     expect(result.remaining).toEqual([]);
+  });
+
+  it("suggests a close timer name for E0106", () => {
+    // Timer `countdown` is declared; `stop-timer(coutdown)` is a Levenshtein-1
+    // typo. The candidate set is the timer namespace (built from
+    // `collectTimerNames`), not top-level defs — but even the correct name is
+    // there, so the assertion is the positive one.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0106-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot remaining : Int = 5",
+        "reducer tick on=timer(100ms, name=countdown) do= remaining := remaining - 1",
+        "reducer stop on=ui.click(StopBtn) do= stop-timer(coutdown)",
+        'tile StopBtn = button(text="Stop", onClick=stop)',
+        'tile App = column(heading("hi"), StopBtn)',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    expect(errors.some((e) => e.code === "E0106")).toBe(true);
+    const patches = planFixes(store, errors);
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "coutdown" with "countdown"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("E0106 does not fall back to unrelated top-level names (scoped candidate set)", () => {
+    // Timer `tick` is declared; `stop-timer(nope)` is a 4-edit typo — too far
+    // from any timer name to pass the suggestion threshold. Top-level `slot
+    // note` sits at Levenshtein 1 from `nope`, so the pre-#175 unscoped code
+    // path would have proposed `note` — a silent corruption. The scoped
+    // candidate set (only `{tick}`) must reject all E0106 patches instead.
+    //
+    // The direct assertions on `collectTimerNames` and every patch
+    // description below are the load-bearing ones: a bare "no E0106 patch"
+    // check would also pass if `collectTimerNames` silently returned an
+    // empty set — reviewer C1 flagged that as a bug-hiding shape.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0106-scope-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot note  : Int = 0",
+        "slot count : Int = 0",
+        "reducer step on=timer(100ms, name=tick) do= count := count + 1",
+        "reducer stop on=ui.click(StopBtn) do= stop-timer(nope)",
+        'tile StopBtn = button(text="Stop", onClick=stop)',
+        'tile App = column(heading("hi"), StopBtn)',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    // The candidate set is exactly the timer namespace — no top-level defs.
+    expect(collectTimerNames(store.program)).toEqual(new Set(["tick"]));
+    const errors = check(store.program);
+    expect(errors.some((e) => e.code === "E0106")).toBe(true);
+    const patches = planFixes(store, errors);
+    expect(patches.some((p) => p.code === "E0106")).toBe(false);
+    // Belt-and-braces: even if a future code path re-enables generic
+    // suggestions for this code, no proposed patch may name `note` / `count`.
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`"note"`))).toBe(false);
+    expect(descs.some((d) => d.includes(`"count"`))).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close variant tag for E0209 on a user union", () => {
+    // Union `Light = Red | Green`; `| Grn ->` is a 2-edit typo of `Green` and
+    // passes the ≤ 2 threshold. Top-level tile `Grn0` sits at Levenshtein 1
+    // from `Grn`, so the pre-#175 unscoped path would have suggested `Grn0`.
+    // The scoped candidate set (variants of `Light`) must pick `Green`.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0209-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "type Light = Red | Green",
+        "fn label(l: Light) -> Text = match l with",
+        '  | Red -> "STOP"',
+        '  | Grn -> "GO"',
+        "slot x : Int = 0",
+        'tile Grn0 = text("hi")',
+        "tile App = column(text(x.show), Grn0)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    expect(errors.some((e) => e.code === "E0209")).toBe(true);
+    const patches = planFixes(store, errors);
+    const e0209 = patches.filter((p) => p.code === "E0209");
+    expect(e0209.length).toBe(1);
+    expect(e0209[0]?.description).toContain(`replace "Grn" with "Green"`);
+    expect(e0209[0]?.description).not.toContain("Grn0");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("E0209 does not fall back to unrelated top-level names (scoped candidate set)", () => {
+    // Union `Direction = North | South`; typo `Qqq` is ≥ 5 edits from either
+    // variant — beyond the threshold. Top-level tile `Qqq0` sits at
+    // Levenshtein 1 from `Qqq`, so the pre-#175 unscoped path would have
+    // suggested `Qqq0` (a silent corruption of the pattern). The scoped
+    // candidate set must reject every E0209 patch.
+    //
+    // As with the E0106 scope-safety test, the direct `variantTagsOf`
+    // assertion and the description exclusion below are what distinguishes
+    // "correctly rejected by threshold" from "silently skipped" (reviewer
+    // C1).
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0209-scope-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "type Direction = North | South",
+        "fn describe(d: Direction) -> Text = match d with",
+        '  | North -> "n"',
+        '  | South -> "s"',
+        '  | Qqq   -> "?"',
+        "slot x : Int = 0",
+        'tile Qqq0 = text("hi")',
+        "tile App = column(text(x.show), Qqq0)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    // The candidate set is exactly the union's variant tags — top-level
+    // `Qqq0` is not a candidate.
+    expect(variantTagsOf("Direction", store.program)).toEqual(["North", "South"]);
+    const errors = check(store.program);
+    expect(errors.some((e) => e.code === "E0209")).toBe(true);
+    const patches = planFixes(store, errors);
+    expect(patches.some((p) => p.code === "E0209")).toBe(false);
+    // A proposed patch that names `Qqq0` is exactly the corruption we're
+    // guarding against; assert on the description text so a future set
+    // widening of NAME_SUGGEST_CODES can't reintroduce it.
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes("Qqq0"))).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close variant tag for E0209 on a built-in Option scrutinee", () => {
+    // Built-in unions (`Option(T)` / `Result(T, E)`) are also covered — the
+    // scoped candidate set for `Option` is `{Some, None}` regardless of the
+    // instantiated type argument. `Non` -> `None` (distance 1) passes the
+    // ≤ 2 threshold.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0209-option-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "fn describe(o: Option(Int)) -> Text = match o with",
+        '  | Some(_) -> "some"',
+        '  | Non    -> "none"',
+        "slot x : Int = 0",
+        "tile App = column(text(x.show))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    expect(errors.some((e) => e.code === "E0209")).toBe(true);
+    const patches = planFixes(store, errors);
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "Non" with "None"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("caps merge preserves existing entries", () => {
