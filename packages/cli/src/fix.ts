@@ -94,6 +94,11 @@ function suggestNameFrom(candidates: Iterable<string>, missing: string): string 
     }
   }
   if (best === null) return null;
+  // Self-match gate: distance 0 means `missing` equals a candidate, which would
+  // produce a `replace X with X` no-op patch. Rely on the `applied ⇔ source
+  // changed` invariant to catch it downstream is fragile — cut it off here so
+  // the caller records `no-close-name-suggestion` instead.
+  if (bestScore === 0) return null;
   if (bestScore <= 2 || bestScore <= Math.ceil(missing.length * 0.25)) return best;
   return null;
 }
