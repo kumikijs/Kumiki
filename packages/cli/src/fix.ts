@@ -31,9 +31,10 @@ export type SkipReason = {
 
 /**
  * True when the caller opted in to skip-diagnostics via `KUMIKI_DEBUG=fix`
- * (comma-separated so future scopes can compose: `KUMIKI_DEBUG=fix,smoke`).
- * The parse is intentionally forgiving on whitespace but exact on the token
- * `fix` — a substring match would mis-fire on future scopes like `fix-verbose`.
+ * (comma-separated so scopes can compose: `KUMIKI_DEBUG=fix,smoke`). The
+ * parse is intentionally forgiving on whitespace but exact-token match on
+ * `fix` — a substring match would mis-fire on scope names sharing a prefix
+ * (`fix-verbose`, `not-fix`) or containing `fix` as a fragment.
  */
 function debugFixEnabled(): boolean {
   const v = process.env.KUMIKI_DEBUG;
@@ -147,9 +148,9 @@ function appendAppCap(text: string, cap: string, appRange: [number, number] | nu
  *   - **E0209** (pat-unknown-variant) — variant tags live inside the union
  *     type's payload list; we resolve them via `variantTagsOf(typeName,
  *     program)` (built-in `Option` / `Result` plus user `TypeDef` bodies).
- * Adding either code back to *this* set would reintroduce the silent
- * corruption PR #175 removed — the shared candidate list has no timer /
- * variant entries and would suggest an unrelated tile or reducer.
+ * Adding either code back to *this* set silently corrupts the source: the
+ * shared candidate list has no timer / variant entries, so `suggestName`
+ * would propose an unrelated tile or reducer whose name happens to be close.
  */
 const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
   "E0102", // undef-reducer
@@ -181,6 +182,8 @@ export function planFixesExplained(
     debugSkip(`planFixes:${code}`, reason, message);
   };
   for (const err of errors) {
+    const beforePatches = patches.length;
+    const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
       // Most diagnostics quote a single name; E0211 quotes the reducer name
       // *and then* the tile name — the tile is what needs suggesting, so pick
@@ -251,7 +254,9 @@ export function planFixesExplained(
       // `variantTagsOf` strips the generic argument list and resolves aliases.
       const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
       if (quoted.length < 2) {
-        skip(err.code, "e0209-quoted-pair-missing", err.message);
+        // Same family as the other `*-quoted-name-extract-failed` reasons —
+        // a sudden spike across the family signals compiler message drift.
+        skip(err.code, "e0209-quoted-name-extract-failed", err.message);
         continue;
       }
       const missing = quoted[0]!;
@@ -291,7 +296,10 @@ export function planFixesExplained(
       // invariant.
       const capMatch = /requires capability "([^"]+)"/.exec(err.message);
       if (!capMatch) {
-        skip(err.code, "e0301-cap-name-extract-failed", err.message);
+        // Named for the shared drift-detection family, even though this
+        // branch parses a fixed phrase rather than a quoted name — a spike
+        // across all `*-quoted-name-extract-failed` reasons is the signal.
+        skip(err.code, "e0301-quoted-name-extract-failed", err.message);
         continue;
       }
       const cap = capMatch[1]!;
@@ -332,6 +340,14 @@ export function planFixesExplained(
           return need + replaced;
         },
       });
+    }
+    // Default classifier: this diagnostic code has no repair branch at all.
+    // Distinct from `*-quoted-name-extract-failed` (which means "a branch
+    // fired but the message shape didn't match") — `no-repair-branch` means
+    // "planFixes doesn't know how to repair this code yet". AI loops can use
+    // the difference to decide "extend the branch set" vs "compiler drift".
+    if (patches.length === beforePatches && skipped.length === beforeSkipped) {
+      skip(err.code, "no-repair-branch", err.message);
     }
   }
   return { patches, skipped };
@@ -405,10 +421,13 @@ export function applyFixPlan(
   // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
   const key = (e: KumikiError): string => `${e.code}@${e.pos.line}:${e.pos.col}`;
   const beforeSet = new Set(plan.errors.map(key));
-  let dryRemaining: KumikiError[];
+  // Parse and typecheck have distinct failure semantics: a parse-error is a
+  // rollback (case 1), a `check()` throw is an internal typechecker bug that
+  // must surface, not be silently reported as `parseError`. Keep the catches
+  // separate — `check()` is not in the try.
+  let parsed: ReturnType<typeof parse>;
   try {
-    const next = parse(lex(after));
-    dryRemaining = check(next, { capabilities });
+    parsed = parse(lex(after));
   } catch (e) {
     // Parse-error rollback (case 1). Do NOT write. The synthetic E0000 in
     // `remaining` and the `parseError` string surface the parser's message
@@ -431,6 +450,7 @@ export function applyFixPlan(
       parseError: message,
     };
   }
+  const dryRemaining = check(parsed, { capabilities });
   const afterSet = new Set(dryRemaining.map(key));
   const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
   const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
@@ -559,10 +579,11 @@ export type FixFromTestOutcome =
       failingTest?: TestResult;
       /**
        * Stable kebab-case classifier for the silent-skip that produced the
-       * no-patch outcome. Compile-tier: taken from the first `planFixesExplained`
-       * skip entry when every error skipped; behavioral tier: the tier planner's
-       * bail reason. Absent when no classifier applies (compile errors exist but
-       * some were unhandled without hitting a skip branch — rare).
+       * no-patch outcome. Compile-tier: the first `planFixesExplained.skipped`
+       * entry's reason when `patches.length === 0` (this includes the new
+       * default `no-repair-branch` reason, so it's populated for every
+       * compile-tier no-patch outcome). Behavioral tier: the tier planner's
+       * bail reason. Test-runner threw: `test-runner-threw`.
        */
       reason?: string;
       compileFixes?: number;
@@ -738,7 +759,7 @@ function reducersWritingSlot(
 }
 
 /**
- * A deterministic patch from a failing test. Two tiers of relaxation over the
+ * A deterministic patch from a failing test. Three tiers of relaxation over the
  * naive "actual appears exactly once as a source literal" rule:
  *
  * 1. Exact-literal repair — `actual` appears verbatim. Scope-aware
@@ -752,21 +773,17 @@ function reducersWritingSlot(
  *    body has a `slot := slot ± N` shape. Reproduce the actual/expected delta
  *    to pick the corrected operator/operand.
  *
- * `excludedLineRanges` are the 1-based inclusive line spans of the file's
- * `test` definitions; matches inside them are skipped so a fixture literal is
- * never patched into passing. `store` is optional — without it, the function
- * degrades to the pre-relax exactly-one behavior for backward compatibility
- * with the existing external API.
- */
-/**
- * Explained variant of `planTestPatch`: returns either the same `AutoPatch` or
- * a stable kebab-case `reason` explaining why no tier produced a patch. The
- * `reason` is what the AI iteration loop consumes to distinguish "no
- * deterministic repair exists" from "compiler diagnostic format drifted";
- * every silent `return null` inside the tier planners maps to one identifier
- * here (see the plan doc in issue #177). Each early exit also flows through
- * `debugSkip` so `KUMIKI_DEBUG=fix` surfaces the same reason at runtime. The
- * plain `planTestPatch` is a wrapper for backward compatibility.
+ * The Explained form returns either the same `AutoPatch` or a stable
+ * kebab-case `reason` explaining why no tier produced a patch — the AI
+ * iteration loop consumes it to distinguish "no deterministic repair exists"
+ * from "compiler diagnostic format drifted". Every silent `return null` inside
+ * the tier planners maps to one identifier here, and each early exit also
+ * flows through `debugSkip` so `KUMIKI_DEBUG=fix` surfaces the same reason at
+ * runtime. `excludedLineRanges` are the 1-based inclusive line spans of the
+ * file's `test` definitions; matches inside them are skipped so a fixture
+ * literal is never patched into passing. `store` is optional — without it,
+ * the function degrades to the pre-relax exactly-one behavior for backward
+ * compatibility with the existing external API.
  */
 export function planTestPatchExplained(
   source: string,
@@ -844,6 +861,10 @@ export function planTestPatchExplained(
   return { patch: null, reason };
 }
 
+/**
+ * Backward-compatible wrapper returning only the patch (or `null`); new callers
+ * that need the skip classifier should prefer `planTestPatchExplained`.
+ */
 export function planTestPatch(
   source: string,
   r: TestResult,
@@ -998,6 +1019,10 @@ function planPartialStringPatchExplained(
   // the string exactly as authored (so any escape sequences the developer
   // typed pass through untouched).
   const bodyIdx = target.body.indexOf(midA);
+  // Defensive — `matches` was filtered by `m[0].includes(midA)`, so `midA` is
+  // guaranteed to be a substring of `target.body`. Kept so a future refactor
+  // that breaks that invariant lights up under `KUMIKI_DEBUG=fix` instead of
+  // returning a silently-wrong patch.
   if (bodyIdx < 0) return { patch: null, reason: "internal-body-not-found" };
   const patchedBody =
     target.body.slice(0, bodyIdx) + midE + target.body.slice(bodyIdx + midA.length);
@@ -1040,6 +1065,9 @@ function planArithmeticPatchExplained(
   if (!bodyMatch) return { patch: null, reason: "no-additive-multiplicative-shape" };
   const op = bodyMatch[1] as "+" | "-" | "*";
   const n = Number.parseInt(bodyMatch[2]!, 10);
+  // Defensive — `stmtRe` requires `-?\d+`, so `parseInt` on a match is always
+  // finite. Kept so a regex change that admits new forms (e.g. hex) trips this
+  // guard under `KUMIKI_DEBUG=fix` before producing a bad numeric splice.
   if (!Number.isFinite(n)) return { patch: null, reason: "non-finite-operand" };
   // Reproduce what the reducer added: `+ N` → delta = +N, `- N` → delta = -N.
   // The initial `<slot>` value at test time is `actual - delta`. Solve for the
@@ -1053,6 +1081,10 @@ function planArithmeticPatchExplained(
     if (wantedDelta === 0) return { patch: null, reason: "additive-zero-delta" };
     const newOp = wantedDelta > 0 ? "+" : "-";
     const newN = Math.abs(wantedDelta);
+    // Defensive — `newOp+newN === op+n` implies `wantedDelta === delta` which
+    // implies `expected === actual`, already rejected by the top-level guard.
+    // Kept so a future path that skips the guard trips this instead of writing
+    // an identity patch.
     if (newOp === op && newN === n) return { patch: null, reason: "additive-noop-solution" };
     newLine = `${slotName} := ${slotName} ${newOp} ${newN}`;
     newDesc = `reducer "${red.name}": ${slotName} := ${slotName} ${op} ${n} → ${newLine}`;
@@ -1083,6 +1115,10 @@ function planArithmeticPatchExplained(
     }
     running = globalRe.exec(source);
   }
+  // Defensive — the same `stmtRe` matched inside `red.body` (a slice of
+  // `store.lines`), so a walk over `source` must find it again within the
+  // reducer's line range. Kept as a `debugSkip` site in case the line-range
+  // computation drifts from what `reducersWritingSlot` used.
   if (!sourceMatch) return { patch: null, reason: "arithmetic-splice-target-lost" };
   const start = sourceMatch.index;
   const end = start + sourceMatch[0].length;
@@ -1138,9 +1174,12 @@ export async function runFixFromTest(
     for (const p of patches) text = p.apply(text);
     writeFileSync(path, text);
     compileFixes = patches.length;
-    let remaining: ReturnType<typeof check>;
+    // Split the catches: only `parse(lex(text))` may legitimately throw with
+    // a caller-facing parse-error. `check()` throwing is an internal
+    // typechecker bug and must NOT be laundered into a `parseError` string.
+    let parsed: ReturnType<typeof parse>;
     try {
-      remaining = check(parse(lex(text)), { capabilities });
+      parsed = parse(lex(text));
     } catch (e) {
       return {
         ok: false,
@@ -1149,6 +1188,7 @@ export async function runFixFromTest(
         parseError: e instanceof Error ? e.message : String(e),
       };
     }
+    const remaining = check(parsed, { capabilities });
     if (remaining.length > 0) {
       return { ok: false, status: "compile-remaining", compileFixes, compileErrors: remaining };
     }
@@ -1163,6 +1203,10 @@ export async function runFixFromTest(
       ok: false,
       status: "no-patch",
       testRunError: e instanceof Error ? e.message : String(e),
+      // Classify test-run failures under the same family as Tier-3 skips so
+      // an AI loop tallying `outcome.reason` can distinguish "the runner
+      // itself blew up" from "the file compiles but no patch applies".
+      reason: "test-runner-threw",
       ...(compileFixes ? { compileFixes } : {}),
     };
   }
@@ -1249,6 +1293,9 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
   }
   switch (outcome.status) {
     case "no-patch": {
+      // Unified `  reason: <slug>` output across all three sub-branches so
+      // machine parsers can grep one shape. Historical form ` [reason]` was
+      // dropped to avoid three-way format skew.
       if (outcome.compileErrors && outcome.compileErrors.length > 0) {
         console.log(
           `(no auto-patch available) — test "${testName}" is blocked by ${outcome.compileErrors.length} compile error(s):`,
@@ -1259,6 +1306,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
       }
       if (outcome.testRunError) {
         console.error(`could not run tests: ${outcome.testRunError}`);
+        if (outcome.reason) console.error(`  reason: ${outcome.reason}`);
         return;
       }
       if (outcome.failingTest) {
@@ -1267,11 +1315,11 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
         if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
         if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
         if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
-        if (outcome.reason) console.log(`  reason:   ${outcome.reason}`);
+        if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
         return;
       }
-      const suffix = outcome.reason ? ` [${outcome.reason}]` : "";
-      console.log(`(no auto-patch available) for "${testName}"${suffix}`);
+      console.log(`(no auto-patch available) for "${testName}"`);
+      if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
       return;
     }
     case "compile-proposed": {

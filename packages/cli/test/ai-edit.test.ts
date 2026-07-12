@@ -1317,8 +1317,12 @@ describe("parallel op merge", () => {
   });
 });
 
-// Issue #177 — surface silent-skip reasons through explained planners,
-// FixFromTestOutcome.reason, printFixFromTest, and the KUMIKI_DEBUG hook.
+// Every silent skip in `planFixes` / `planTestPatch` must surface a stable
+// kebab-case classifier so the AI iteration loop can distinguish "no
+// deterministic repair exists" from "compiler diagnostic format drifted". The
+// classifier is also emitted via `KUMIKI_DEBUG=fix` and printed by
+// `printFixFromTest`; the tests below pin each identifier so a rename or
+// silent bail can't slip past review.
 describe("planFixesExplained: skip-reason classification", () => {
   function writeAndLoad(source: string): ReturnType<typeof load> {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-reason-"));
@@ -1391,10 +1395,10 @@ describe("planFixesExplained: skip-reason classification", () => {
     expect(skipped[0]?.reason).toBe("e0106-no-close-timer");
   });
 
-  it("e0209-quoted-pair-missing: E0209 with fewer than 2 quoted names", () => {
+  it("e0209-quoted-name-extract-failed: E0209 with fewer than 2 quoted names", () => {
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { skipped } = planFixesExplained(store, [synth("E0209", 'Variant "X" is bad')]);
-    expect(skipped[0]?.reason).toBe("e0209-quoted-pair-missing");
+    expect(skipped[0]?.reason).toBe("e0209-quoted-name-extract-failed");
   });
 
   it("e0209-unresolved-variant-type: type name has no variant tags in the program", () => {
@@ -1415,7 +1419,7 @@ describe("planFixesExplained: skip-reason classification", () => {
     expect(skipped[0]?.reason).toBe("e0209-no-close-tag");
   });
 
-  it("e0301-cap-name-extract-failed: E0301 message without the `requires capability` phrase", () => {
+  it("e0301-quoted-name-extract-failed: E0301 message without the `requires capability` phrase", () => {
     const store = writeAndLoad(
       [
         'tile App = heading("hi")',
@@ -1427,7 +1431,7 @@ describe("planFixesExplained: skip-reason classification", () => {
       ].join("\n"),
     );
     const { skipped } = planFixesExplained(store, [synth("E0301", "capability not declared")]);
-    expect(skipped[0]?.reason).toBe("e0301-cap-name-extract-failed");
+    expect(skipped[0]?.reason).toBe("e0301-quoted-name-extract-failed");
   });
 
   it("e0301-no-app-def: no AppDef anywhere in the file", () => {
@@ -1457,6 +1461,20 @@ describe("planFixesExplained: skip-reason classification", () => {
       synth("E0301", 'Effect "e" requires capability "log.write" which is not declared'),
     ]);
     expect(skipped[0]?.reason).toBe("e0301-cap-already-present-or-no-caps-field");
+  });
+
+  it("no-repair-branch: diagnostic code has no repair branch at all", () => {
+    // E0999 is not among NAME_SUGGEST_CODES / E0106 / E0209 / E0301 / E0001,
+    // so no branch fires. Distinct from `*-quoted-name-extract-failed`:
+    // "we have no code path for this" rather than "the path we have couldn't
+    // parse the message".
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0999", "some future diagnostic"),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("no-repair-branch");
+    expect(skipped[0]?.code).toBe("E0999");
   });
 });
 
@@ -1512,6 +1530,46 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     });
     expect(result.patch).toBeNull();
     if (result.patch === null) expect(result.reason).toBe("no-scoped-literal-hit");
+  });
+
+  it("affix-empty-middle: actual is a strict prefix of expected", () => {
+    // affixDiff yields midA = "" when actual is fully consumed by pfx+sfx.
+    // Tier-2 bails with `affix-empty-middle`. Tier-1 misses because "abc"
+    // isn't a source literal (the tile spells "other").
+    const result = planTestPatchExplained('tile T = heading("other")\n', {
+      name: "t",
+      pass: false,
+      diffAt: "heading.text",
+      leaf: { actual: "abc", expected: "abcd" },
+    });
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("affix-empty-middle");
+  });
+
+  it("no-string-literal-contains-mida: no source literal contains the divergent middle", () => {
+    const result = planTestPatchExplained('tile T = heading("hi")\n', {
+      name: "t",
+      pass: false,
+      diffAt: "heading.text",
+      leaf: { actual: "abc", expected: "axc" },
+    });
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("no-string-literal-contains-mida");
+  });
+
+  it("patched-body-unspellable: patched body would contain a Kumiki-unspellable char", () => {
+    // midA = "elx", midE = "\by". A unique source literal contains "elx",
+    // but rebuilding it with `\b` produces a body `kumikiStringLit` refuses
+    // to render → `patched-body-unspellable`. Tier-1 misses ("Helxo" is not
+    // a source literal).
+    const result = planTestPatchExplained('tile T = heading("prefix elx suffix")\n', {
+      name: "t",
+      pass: false,
+      diffAt: "heading.text",
+      leaf: { actual: "Helxo", expected: "H\byo" },
+    });
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("patched-body-unspellable");
   });
 
   it("ambiguous-string-literal-match: partial-string tier can't disambiguate", () => {
@@ -1617,45 +1675,13 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     if (result.patch === null) expect(result.reason).toBe("additive-zero-delta");
   });
 
-  it("additive-noop-solution: proposed op+N is identical to the current shape", () => {
-    // The exact-literal tier picks the unique `1` first in most shapes; use a
-    // config where the exact `1` is ambiguous (appears also as a source
-    // literal for a different meaning) but arithmetic can still solve — with
-    // the same op+N answer.
-    const { source, store } = writeAndLoad(
-      [
-        "slot count : Int = 0",
-        "reducer inc on=ui.click(B) do= count := count + 1",
-        'tile B = button(text="click 1 more")',
-        "",
-      ].join("\n"),
-    );
-    // actual=1, expected=1 with base=0 (initial slot) means delta wanted is
-    // 1 = current — but the top-level `leaf-equal-no-diff` guard fires when
-    // actual===expected, so the arithmetic branch is reached via a different
-    // base assumption. Concretely: after `inc` runs once, actual=1 and
-    // expected=1 is degenerate; we instead exercise the multiplicative-noop
-    // path with a * reducer.
-    const result = planTestPatchExplained(
-      source,
-      {
-        name: "t",
-        pass: false,
-        diffAt: "slots.count",
-        // base = actual - 1 = 4. wantedDelta = expected - base = 5 - 4 = 1 =
-        // current +1 → noop.
-        leaf: { actual: 5, expected: 5 },
-      },
-      [],
-      store,
-    );
-    // Leaf-equal-no-diff fires first — the intent of *this* reason is
-    // reachable only through a synthesised test result path; assert both
-    // possible reasons and pin the one we actually got so the classifier
-    // stays honest.
-    expect(result.patch).toBeNull();
-    if (result.patch === null) expect(result.reason).toBe("leaf-equal-no-diff");
-  });
+  // `additive-noop-solution`, `non-finite-operand`, `arithmetic-splice-target-lost`,
+  // and `internal-body-not-found` are defensive branches: the algebra of
+  // `planArithmeticPatchExplained` (and the regex invariants of the string
+  // planner) makes them unreachable from the top-level API. Each is a guard
+  // for a state that would indicate a bug in an earlier step, not a real
+  // failure mode a caller can trip. They're kept as `debugSkip` sites so a
+  // future refactor that does hit them lights up under `KUMIKI_DEBUG=fix`.
 
   it("multiplicative-zero-guard: actual value is zero (base cannot be recovered)", () => {
     // Reducer `count * 3` with given count=0 → actual = 0. `0` is absent from
@@ -1773,6 +1799,86 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("runFixFromTest: compile-tier no-patch propagates the first skip reason end-to-end", async () => {
+    // E0301 fires (effect requires capability `log.write`) but there is no
+    // `app` def in the file, so `planFixesExplained` records
+    // `e0301-no-app-def` and returns zero patches. `runFixFromTest` must
+    // surface that reason into the outcome, and `printFixFromTest` must
+    // print it above the compile errors.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-compile-reason-e2e-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "",
+      ].join("\n"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await fixFromTest(file, "t", false);
+      expect(outcome.status).toBe("no-patch");
+      if (outcome.status === "no-patch") {
+        expect(outcome.compileErrors?.some((e) => e.code === "E0301")).toBe(true);
+        expect(outcome.reason).toBe("e0301-no-app-def");
+      }
+      const stdout = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(stdout).toMatch(/reason: e0301-no-app-def/);
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runFixFromTest: testRunError variant carries reason=test-runner-threw and printer surfaces it", async () => {
+    // The old-style `event: {kind: click, ...}` compiles but references the
+    // unbound `click` identifier at test evaluation time — the compiled
+    // module throws `ReferenceError: click is not defined` inside
+    // `testFile`, exercising the `try { testFile(...) }` catch path.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-runner-throw-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "reducer inc on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="+")',
+        "tile App = column(B, text(count.show))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {count: 1}}",
+        "",
+      ].join("\n"),
+    );
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await fixFromTest(file, "t", false);
+      expect(outcome.status).toBe("no-patch");
+      if (outcome.status === "no-patch") {
+        expect(outcome.testRunError).toBeDefined();
+        expect(outcome.reason).toBe("test-runner-threw");
+      }
+      const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(stderr).toContain("could not run tests");
+      expect(stderr).toMatch(/reason:\s+test-runner-threw/);
+    } finally {
+      errSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("printFixFromTest: emits `reason:` line when outcome carries one (failing-test branch)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-print-reason-"));
     const file = join(dir, "in.kumiki");
@@ -1871,6 +1977,39 @@ describe("KUMIKI_DEBUG=fix hook", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       withEnv("smoke,fix", () => planFixesExplained(store(), [noQuotedNameErr]));
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("is silent when KUMIKI_DEBUG is empty or whitespace-only", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      withEnv("", () => planFixesExplained(store(), [noQuotedNameErr]));
+      withEnv("   ", () => planFixesExplained(store(), [noQuotedNameErr]));
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("is silent when KUMIKI_DEBUG names a scope that shares a prefix with `fix`", () => {
+    // Exact-token match — `fix-verbose` must NOT trigger the `fix` scope.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      withEnv("fix-verbose", () => planFixesExplained(store(), [noQuotedNameErr]));
+      withEnv("prefix-of-fix", () => planFixesExplained(store(), [noQuotedNameErr]));
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("tolerates whitespace around comma-separated scope names", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      withEnv("  smoke ,  fix  ", () => planFixesExplained(store(), [noQuotedNameErr]));
       expect(warnSpy).toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
