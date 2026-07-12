@@ -11,8 +11,11 @@ export {
   fixFromTest,
   planFix,
   planFixes,
+  planFixesExplained,
   planTestPatch,
+  planTestPatchExplained,
   runFixFromTest,
+  type SkipReason,
 } from "./fix.ts";
 export {
   addDef,

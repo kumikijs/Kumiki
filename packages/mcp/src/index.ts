@@ -97,6 +97,7 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         ...(o.compileErrors ? { compileErrors: toDiagnostics(o.compileErrors) } : {}),
         ...(o.testRunError ? { testRunError: o.testRunError } : {}),
         ...(o.failingTest ? { failingTest: o.failingTest } : {}),
+        ...(o.reason ? { reason: o.reason } : {}),
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
     case "compile-proposed":
