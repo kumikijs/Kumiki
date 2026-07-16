@@ -565,6 +565,42 @@ describe("planTestPatch: relaxed repair tiers", () => {
     expect(patch).not.toBeNull();
     expect(patch?.apply(source)).toContain("count := count - 1");
   });
+
+  it("arithmetic: rewrites the multiplier when count := count * n needs a different n", () => {
+    // Multiplicative-tier positive case. Reducer: `count := count * 5`, given
+    // count=2 → actual=10; expected=6. Recovers base = 10/5 = 2, newN = 6/2 =
+    // 3 → rewrites to `count := count * 3`. Tier-1 misses because `10` never
+    // appears in source.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 0",
+        "reducer mul on=ui.click(B) do= count := count * 5",
+        'tile B = button(text="mul")',
+        "test t =",
+        "    reducer-test mul",
+        "        given  = {slots: {count: 2}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {count: 6}}",
+        "",
+      ].join("\n"),
+    );
+    const patch = planTestPatch(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { expected: 6, actual: 10 },
+      },
+      [[4, 7]],
+      store,
+    );
+    expect(patch).not.toBeNull();
+    const patched = patch?.apply(source) ?? "";
+    expect(patched).toContain("count := count * 3");
+    expect(patched).not.toContain("count := count * 5");
+    expect(patch?.description).toContain("count := count * 5");
+    expect(patch?.description).toContain("count := count * 3");
+  });
 });
 
 // M4b+: expanded `planFixes` name-suggestion and E0301 caps-injection.
@@ -1365,6 +1401,37 @@ describe("planFixesExplained: skip-reason classification", () => {
     expect(skipped.find((s) => s.reason === "no-close-name-suggestion")).toBeDefined();
   });
 
+  it("no-close-name-suggestion: missing name equals the only candidate (self-match gate)", () => {
+    // Regression pin for `suggestNameFrom`'s self-skip. Without it, a
+    // diagnostic that quotes a name that IS a top-level def name would
+    // produce a `replace "A" with "A"` no-op patch. Self is skipped in the
+    // loop, so with no other candidate the sweep leaves `best` null.
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0102", 'reducer refers to undefined name "A"'),
+    ]);
+    expect(patches).toEqual([]);
+    const s = skipped.find((r) => r.reason === "no-close-name-suggestion");
+    expect(s).toBeDefined();
+    expect(s?.code).toBe("E0102");
+  });
+
+  it("self-match does not eclipse a close alternative candidate", () => {
+    // With a self-match at distance 0 AND a genuinely close alternative,
+    // `suggestNameFrom` must skip self and still surface the alternative
+    // (here `Apps` at distance 1 from `App`). A naive `bestScore === 0`
+    // bail after the loop would drop the alternative too — this pins that
+    // it does not.
+    const store = writeAndLoad(
+      ['tile App = heading("hi")', 'tile Apps = label("hi")', ""].join("\n"),
+    );
+    const { patches } = planFixesExplained(store, [
+      synth("E0102", 'reducer refers to undefined name "App"'),
+    ]);
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.description).toContain('replace "App" with "Apps"');
+  });
+
   it("e0106-quoted-name-extract-failed: E0106 without a quoted name", () => {
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { skipped } = planFixesExplained(store, [synth("E0106", "stop-timer bad")]);
@@ -1595,6 +1662,69 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     if (result.patch === null) expect(result.reason).toBe("ambiguous-string-literal-match");
   });
 
+  it("ambiguous-string-literal-match: two literals inside the target scope (rank 0 tie)", () => {
+    // The existing sibling test has both hits OUTSIDE any scope (rank 2
+    // tie). Here both hits sit INSIDE the target's own range (rank 0 tie):
+    // two literals in tile A share the divergent middle from affixDiff
+    // ("Helo, cats" vs "Hi, cats"). Tier-1 misses because "Helo, cats"
+    // is not spelled anywhere.
+    const { source, store } = writeAndLoad(
+      [
+        'tile A = column(heading("Helo, world"), label("Helo, chum"))',
+        "test t =",
+        "    tile-test A",
+        "        given  = {slots: {}}",
+        '        expect = column(heading("Hi, cats"), label("Helo, chum"))',
+        "",
+      ].join("\n"),
+    );
+    const result = planTestPatchExplained(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "heading.text",
+        leaf: { actual: "Helo, cats", expected: "Hi, cats" },
+      },
+      [[2, 5]],
+      store,
+    );
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("ambiguous-string-literal-match");
+  });
+
+  it("ambiguous-string-literal-match: two literals inside deps of the target (rank 1 tie)", () => {
+    // Third rank tier: both hits sit in tiles the target depends on but
+    // not in the target itself. Completes rank 0 / 1 / 2 tie coverage.
+    // The target tile Root composes TileL and TileR (deps); both deps
+    // hold the divergent middle.
+    const { source, store } = writeAndLoad(
+      [
+        'tile TileL = heading("Helo, world")',
+        'tile TileR = label("Helo, chum")',
+        "tile Root = column(TileL, TileR)",
+        "test t =",
+        "    tile-test Root",
+        "        given  = {slots: {}}",
+        '        expect = column(heading("Hi, cats"), label("Helo, chum"))',
+        "",
+      ].join("\n"),
+    );
+    const result = planTestPatchExplained(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "heading.text",
+        leaf: { actual: "Helo, cats", expected: "Hi, cats" },
+      },
+      [[4, 7]],
+      store,
+    );
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("ambiguous-string-literal-match");
+  });
+
   it("ambiguous-reducer-set: two reducers write the same slot", () => {
     const { source, store } = writeAndLoad(
       [
@@ -1754,6 +1884,61 @@ describe("planTestPatchExplained: skip-reason classification", () => {
         pass: false,
         diffAt: "slots.count",
         leaf: { actual: 4, expected: 5 },
+      },
+      [],
+      store,
+    );
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("multiplicative-nonintegral-solution");
+  });
+
+  it("multiplicative-zero-guard: reducer operand is zero (n === 0 side)", () => {
+    // Complement to the actual===0 test above — exercises the `n === 0`
+    // side of the same OR. Reducer `count := count * 0`; actual=17 is
+    // absent from source, so Tier-1 misses and Tier-3 runs.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 9",
+        "reducer noop on=ui.click(B) do= count := count * 0",
+        'tile B = button(text="noop")',
+        "",
+      ].join("\n"),
+    );
+    const result = planTestPatchExplained(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { actual: 17, expected: 4 },
+      },
+      [],
+      store,
+    );
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("multiplicative-zero-guard");
+  });
+
+  it("multiplicative-nonintegral-solution: differently-shaped reducer", () => {
+    // Distinct instance of the same bail so a future refactor that only
+    // re-covers one arithmetic (e.g. narrows the regex) still trips this
+    // one. Reducer `count := count * 3`, actual=6 → base=2, expected=7 →
+    // newN=3.5 → bail.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 1",
+        "reducer tpl on=ui.click(B) do= count := count * 3",
+        'tile B = button(text="tpl")',
+        "",
+      ].join("\n"),
+    );
+    const result = planTestPatchExplained(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { actual: 6, expected: 7 },
       },
       [],
       store,

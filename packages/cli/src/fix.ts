@@ -88,6 +88,12 @@ function suggestNameFrom(candidates: Iterable<string>, missing: string): string 
   let bestScore = Number.POSITIVE_INFINITY;
   for (const cand of candidates) {
     const d = levenshtein(missing, cand);
+    // Skip self-matches so `missing === cand` never dominates a genuinely close
+    // alternative. Relying on the `applied ⇔ source changed` invariant to
+    // suppress `replace X with X` downstream is fragile: a candidate at
+    // distance 1 that would otherwise win never gets a chance if the loop
+    // latches onto the self-match first.
+    if (d === 0) continue;
     if (d < bestScore) {
       bestScore = d;
       best = cand;
