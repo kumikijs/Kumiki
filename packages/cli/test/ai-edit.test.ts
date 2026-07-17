@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -31,6 +32,19 @@ import {
 } from "@kumikijs/cli";
 import { check, collectTimerNames, variantTagsOf } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Re-materialize the `node:fs` namespace as a plain object so per-test
+// `vi.spyOn(fs, ...)` calls work. Native ESM module namespaces are frozen and
+// reject `vi.spyOn` with "Module namespace is not configurable"; spreading
+// through vi.mock yields a fresh object whose properties are configurable,
+// while the default identity of every function is preserved (pass-through).
+// `vi.mock` is hoisted above every import at compile time, so placing it here
+// (after the imports for readability) is safe. Used by the I6 (#179)
+// write-failure tests below.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual };
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const _COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
@@ -601,6 +615,191 @@ describe("planTestPatch: relaxed repair tiers", () => {
     expect(patch?.description).toContain("count := count * 5");
     expect(patch?.description).toContain("count := count * 3");
   });
+
+  // I5 (#179): partial-string tier compares `midA` (decoded from `TestResult`)
+  // against literal bodies drawn straight from raw source. When the divergent
+  // middle IS an escape char (`\n \t \r \" \\`), raw source spells it as two
+  // chars (`\` + `n`) while `midA` carries the real control char. The tier
+  // must decode literal bodies before comparing, and re-encode after splicing.
+  //
+  // Every scenario below wraps the failing text inside a LARGER source literal
+  // (`"outer ... outer"`) so Tier-1's exact-literal search misses and Tier-2
+  // is forced to run — that's where the escape-encoding asymmetry lives.
+  describe("partial-string: escape-normalized matching (I5)", () => {
+    it("rewrites when the divergent middle IS a real newline (source spells \\n)", () => {
+      // Wrapping literal `"outer foo\nbar outer"` (raw, `\n` = 2 chars).
+      // actual="foo\nbar" (real NL), expected="foo bar" — Tier-1 misses because
+      // no source literal spells `"foo\nbar"` on its own. Tier-2:
+      //   affixDiff → pfx="foo", sfx="bar", midA="\n" (real NL), midE=" ".
+      // Old code: `m[0].includes(realNL)` on raw body → false → bail. New code
+      // decodes the body first → match, splice, re-encode.
+      const { source, store } = writeAndLoad(
+        [
+          'tile Greet = heading("outer foo\\nbar outer")',
+          "test t =",
+          "    tile-test Greet",
+          "        given  = {slots: {}}",
+          '        expect = heading("outer foo bar outer")',
+          "",
+        ].join("\n"),
+      );
+      const patch = planTestPatch(
+        source,
+        {
+          name: "t",
+          pass: false,
+          diffAt: "heading.text",
+          leaf: { expected: "foo bar", actual: "foo\nbar" },
+        },
+        [[2, 5]],
+        store,
+      );
+      expect(patch).not.toBeNull();
+      const patched = patch?.apply(source) ?? "";
+      expect(patched).toContain('tile Greet = heading("outer foo bar outer")');
+    });
+
+    it("rewrites when the divergent middle IS a real tab (source spells \\t)", () => {
+      const { source, store } = writeAndLoad(
+        [
+          'tile Greet = heading("outer foo\\tbar outer")',
+          "test t =",
+          "    tile-test Greet",
+          "        given  = {slots: {}}",
+          '        expect = heading("outer foo bar outer")',
+          "",
+        ].join("\n"),
+      );
+      const patch = planTestPatch(
+        source,
+        {
+          name: "t",
+          pass: false,
+          diffAt: "heading.text",
+          leaf: { expected: "foo bar", actual: "foo\tbar" },
+        },
+        [[2, 5]],
+        store,
+      );
+      expect(patch).not.toBeNull();
+      expect(patch?.apply(source)).toContain('tile Greet = heading("outer foo bar outer")');
+    });
+
+    it("rewrites when the divergent middle IS a real CR (source spells \\r)", () => {
+      const { source, store } = writeAndLoad(
+        [
+          'tile Greet = heading("outer foo\\rbar outer")',
+          "test t =",
+          "    tile-test Greet",
+          "        given  = {slots: {}}",
+          '        expect = heading("outer foo bar outer")',
+          "",
+        ].join("\n"),
+      );
+      const patch = planTestPatch(
+        source,
+        {
+          name: "t",
+          pass: false,
+          diffAt: "heading.text",
+          leaf: { expected: "foo bar", actual: "foo\rbar" },
+        },
+        [[2, 5]],
+        store,
+      );
+      expect(patch).not.toBeNull();
+      expect(patch?.apply(source)).toContain('tile Greet = heading("outer foo bar outer")');
+    });
+
+    it('rewrites when the divergent middle IS a real quote (source spells \\")', () => {
+      // pfx="say ", sfx=" now", midA='"', midE="!".
+      const { source, store } = writeAndLoad(
+        [
+          'tile Greet = heading("outer say \\" now outer")',
+          "test t =",
+          "    tile-test Greet",
+          "        given  = {slots: {}}",
+          '        expect = heading("outer say ! now outer")',
+          "",
+        ].join("\n"),
+      );
+      const patch = planTestPatch(
+        source,
+        {
+          name: "t",
+          pass: false,
+          diffAt: "heading.text",
+          leaf: { expected: "say ! now", actual: 'say " now' },
+        },
+        [[2, 5]],
+        store,
+      );
+      expect(patch).not.toBeNull();
+      expect(patch?.apply(source)).toContain('tile Greet = heading("outer say ! now outer")');
+    });
+
+    it("rewrites when the divergent middle IS a real backslash (source spells \\\\)", () => {
+      // pfx="a", sfx="b", midA="\", midE="/".
+      const { source, store } = writeAndLoad(
+        [
+          'tile Greet = heading("outer a\\\\b outer")',
+          "test t =",
+          "    tile-test Greet",
+          "        given  = {slots: {}}",
+          '        expect = heading("outer a/b outer")',
+          "",
+        ].join("\n"),
+      );
+      const patch = planTestPatch(
+        source,
+        {
+          name: "t",
+          pass: false,
+          diffAt: "heading.text",
+          leaf: { expected: "a/b", actual: "a\\b" },
+        },
+        [[2, 5]],
+        store,
+      );
+      expect(patch).not.toBeNull();
+      expect(patch?.apply(source)).toContain('tile Greet = heading("outer a/b outer")');
+    });
+
+    it("preserves other escapes in the un-touched portion when repairing (canonical re-encode)", () => {
+      // Round-trip guard: source has an unrelated `\n` outside the divergent
+      // region. The old code spliced decoded `midE` into raw `body` and passed
+      // the mixed result to `kumikiStringLit`, which encoded existing raw `\n`
+      // (two chars) as `\\n` (four chars) — a silent corruption. The new
+      // decoded-space splice must produce a canonical single `\n` on output.
+      const { source, store } = writeAndLoad(
+        [
+          'tile Greet = heading("outer head\\nfoo tail outer")',
+          "test t =",
+          "    tile-test Greet",
+          "        given  = {slots: {}}",
+          '        expect = heading("outer head\\nbar tail outer")',
+          "",
+        ].join("\n"),
+      );
+      // midA="foo", midE="bar" — plain ASCII. The `\n` in the shared prefix
+      // must round-trip as a single `\n` escape (not `\\n`).
+      const patch = planTestPatch(
+        source,
+        {
+          name: "t",
+          pass: false,
+          diffAt: "heading.text",
+          leaf: { expected: "head\nbar tail", actual: "head\nfoo tail" },
+        },
+        [[2, 5]],
+        store,
+      );
+      expect(patch).not.toBeNull();
+      const patched = patch?.apply(source) ?? "";
+      expect(patched).toContain('tile Greet = heading("outer head\\nbar tail outer")');
+      expect(patched).not.toContain("head\\\\n");
+    });
+  });
 });
 
 // M4b+: expanded `planFixes` name-suggestion and E0301 caps-injection.
@@ -1018,6 +1217,147 @@ describe("applyFixPlan: regression gate", () => {
     expect(result.applied).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(before);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// I6 (#179): `writeFileSync` at three sites in fix.ts previously leaked EACCES
+// / ENOSPC / EBUSY as raw stacks. Callers of `applyFixPlan` and
+// `runFixFromTest` should observe I/O failure as structured return values —
+// symmetric with the existing `parseError` / `regressionBlocked` / `testRunError`
+// paths — and the on-disk file must be byte-identical (Node's `writeFileSync`
+// is atomic-fail: a throw means nothing was written).
+describe("write-failure handling (I6)", () => {
+  it("applyFixPlan: writeFileSync throws → writeError set, applied=0, file byte-identical", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-writefail-apply-"));
+    const file = join(dir, "in.kumiki");
+    // E0301 (missing capability log.write) has a deterministic auto-patch.
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const before = readFileSync(file, "utf8");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("EACCES: simulated write failure");
+    });
+    try {
+      const result = applyFixPlan(file, "E0301");
+      expect(result.writeError).toBeDefined();
+      expect(result.writeError).toContain("EACCES");
+      expect(result.applied).toBe(0);
+      // Node's `writeFileSync` is atomic-fail: throw ⇒ nothing was written.
+      expect(readFileSync(file, "utf8")).toBe(before);
+      // No regression rollback (that path is short-circuited before the write).
+      expect(result.regressionBlocked).toBeFalsy();
+      expect(result.parseError).toBeUndefined();
+    } finally {
+      writeSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runFixFromTest: Tier-1 (compile) write throws → status=write-failed, phase=compile", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-writefail-compile-"));
+    const file = join(dir, "in.kumiki");
+    // E0301 auto-fixable (effect requires `log.write`; app.caps is empty) plus
+    // an unrelated test-def — Tier-1 wants to write compile patches before
+    // running any test. We block that write; the test def never gets reached.
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        "slot count : Int = 0",
+        "reducer inc on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="+")',
+        "tile App = column(B, text(count.show))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {count: 1}}",
+        "",
+      ].join("\n"),
+    );
+    const before = readFileSync(file, "utf8");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("ENOSPC: simulated no space");
+    });
+    try {
+      const outcome = await runFixFromTest(file, "t", true);
+      expect(outcome.status).toBe("write-failed");
+      if (outcome.status === "write-failed") {
+        expect(outcome.phase).toBe("compile");
+        expect(outcome.writeError).toContain("ENOSPC");
+        expect(outcome.compileFixes).toBeGreaterThan(0);
+      }
+      expect(readFileSync(file, "utf8")).toBe(before);
+    } finally {
+      writeSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runFixFromTest: Tier-2 (test) write throws → status=write-failed, phase=test, patch preserved", async () => {
+    // Clean-compiling file with a failing test that has a deterministic
+    // Tier-2 (arithmetic) patch. Only the final write must throw.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-writefail-test-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "reducer dec on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="-")',
+        "tile App = column(B, text(count.show))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test dec",
+        "        given  = {slots: {count: 5}, event: {type: ui.click, target: B}}",
+        "        expect = {slots: {count: 4}}",
+        "",
+      ].join("\n"),
+    );
+    const before = readFileSync(file, "utf8");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("EBUSY: simulated busy");
+    });
+    try {
+      const outcome = await runFixFromTest(file, "t", true);
+      expect(outcome.status).toBe("write-failed");
+      if (outcome.status === "write-failed") {
+        expect(outcome.phase).toBe("test");
+        expect(outcome.writeError).toContain("EBUSY");
+        expect(outcome.patch).toBeDefined();
+        expect(outcome.patch?.description).toContain("count := count");
+        // No Tier-1 fixes ran (file compiles cleanly), so `compileFixes` absent.
+        expect(outcome.compileFixes).toBeUndefined();
+      }
+      expect(readFileSync(file, "utf8")).toBe(before);
+    } finally {
+      writeSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1693,6 +2033,43 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     if (result.patch === null) expect(result.reason).toBe("ambiguous-string-literal-match");
   });
 
+  it("ambiguous-string-literal-match: two literals resolve to the same decoded body via escapes (I5)", () => {
+    // Two literals `"a\nb"` and `"a\nb"` — the raw source is identical but so
+    // is the decoded body (`a` + real newline + `b`). Both must be surfaced as
+    // candidates in decoded space and produce an ambiguity bail, not a
+    // silent-mismatch that skips both.
+    const { source, store } = writeAndLoad(
+      ['tile A = heading("a\\nb suffix")', 'tile B = label("a\\nb suffix")', ""].join("\n"),
+    );
+    const result = planTestPatchExplained(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "heading.text",
+        leaf: { actual: "a\nb suffix", expected: "a\nb replaced" },
+      },
+      [],
+      store,
+    );
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("ambiguous-string-literal-match");
+  });
+
+  it("patched-body-unspellable: source contains an escape, midE would carry a control char (I5)", () => {
+    // Regression guard for I5's round-trip: even with escape-normalized
+    // matching, an unspellable `midE` must still bail via
+    // `patched-body-unspellable` and not silently ship a corrupt literal.
+    const result = planTestPatchExplained('tile T = heading("pre \\nX suffix")\n', {
+      name: "t",
+      pass: false,
+      diffAt: "heading.text",
+      leaf: { actual: "pre \nX suffix", expected: "pre \nX\bsuffix" },
+    });
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("patched-body-unspellable");
+  });
+
   it("ambiguous-string-literal-match: two literals inside deps of the target (rank 1 tie)", () => {
     // Third rank tier: both hits sit in tiles the target depends on but
     // not in the target itself. Completes rank 0 / 1 / 2 tie coverage.
@@ -2059,6 +2436,93 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
       expect(stderr).toContain("could not run tests");
       expect(stderr).toMatch(/reason:\s+test-runner-threw/);
     } finally {
+      errSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("printFixFromTest: write-failed / phase=test prints `could not write test patch` on stderr (I6)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-print-writefail-test-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "reducer dec on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="-")',
+        "tile App = column(B, text(count.show))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test dec",
+        "        given  = {slots: {count: 5}, event: {type: ui.click, target: B}}",
+        "        expect = {slots: {count: 4}}",
+        "",
+      ].join("\n"),
+    );
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("EBUSY: simulated");
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await fixFromTest(file, "t", true);
+      expect(outcome.status).toBe("write-failed");
+      const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(stderr).toContain('could not write test patch for "t"');
+      expect(stderr).toContain("EBUSY");
+    } finally {
+      writeSpy.mockRestore();
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("printFixFromTest: write-failed / phase=compile suppresses the `applied N compile fix(es)` header (I6)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-print-writefail-compile-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        "slot count : Int = 0",
+        "reducer inc on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="+")',
+        "tile App = column(B, text(count.show))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {count: 1}}",
+        "",
+      ].join("\n"),
+    );
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("ENOSPC: simulated");
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await fixFromTest(file, "t", true);
+      const stdout = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      // The compile-fix header would lie: no fix landed on disk. Must be absent.
+      expect(stdout).not.toMatch(/applied \d+ compile fix\(es\)/);
+      const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(stderr).toContain('could not write compile fix for "t"');
+      expect(stderr).toContain("ENOSPC");
+    } finally {
+      writeSpy.mockRestore();
+      logSpy.mockRestore();
       errSpy.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }

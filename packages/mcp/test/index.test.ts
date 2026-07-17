@@ -1,11 +1,19 @@
+import * as fs from "node:fs";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "../src/index.ts";
+
+// Re-materialize the `node:fs` namespace as a plain object so per-test
+// `vi.spyOn(fs, ...)` works — see the same pattern in packages/cli/test/ai-edit.test.ts.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual };
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIX_COUNTER_TYPO = resolve(here, "fixtures/counter-typo.kumiki");
@@ -264,6 +272,51 @@ describe("kumiki_auto_patch", () => {
       expect(parsed.error).toBeDefined();
       expect(typeof parsed.error.message).toBe("string");
     });
+  });
+
+  it("serialises the write-failed variant on the wire (I6 #179): status, phase, writeError, patch metadata", {
+    timeout: 30000,
+  }, async () => {
+    // The single-fixture failing test would normally reach Tier-2 and land
+    // an `applied` outcome. Blocking `writeFileSync` reroutes it through the
+    // new `write-failed` branch. The wire must expose status/phase/writeError
+    // plus the proposed `patch` metadata (code + description, no `apply`
+    // closure).
+    const file = join(workdir, "failing-single.kumiki");
+    copyFileSync(FIX_FAILING_SINGLE, file);
+    const before = readFileSync(file, "utf8");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("EBUSY: simulated for wire test");
+    });
+    try {
+      await withClient(async (client) => {
+        const out = await callTool(client, "kumiki_auto_patch", {
+          path: file,
+          testName: "greet-should-say-planet",
+          apply: true,
+        });
+        const parsed = JSON.parse(out) as {
+          ok: boolean;
+          status: string;
+          phase?: string;
+          writeError?: string;
+          patch?: { code: string; description: string; apply?: unknown };
+        };
+        expect(parsed.status).toBe("write-failed");
+        expect(parsed.ok).toBe(false);
+        expect(parsed.phase).toBe("test");
+        expect(parsed.writeError).toContain("EBUSY");
+        expect(parsed.patch).toBeDefined();
+        expect(parsed.patch?.code).toBe("TEST");
+        expect(typeof parsed.patch?.description).toBe("string");
+        // The un-serialisable `apply` closure must be dropped on the wire.
+        expect(parsed.patch?.apply).toBeUndefined();
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+    // Node's `writeFileSync` is atomic-fail: throw ⇒ nothing was written.
+    expect(readFileSync(file, "utf8")).toBe(before);
   });
 });
 

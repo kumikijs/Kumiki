@@ -139,6 +139,18 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         regressed: o.regressed,
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
+    case "write-failed":
+      // #179 (I6): I/O failure surfaces on the wire so MCP callers see it as a
+      // structured outcome rather than a transport-level error. `phase`
+      // distinguishes the two write sites; `patch` only appears on
+      // phase="test" (the tier-2 proposal that never landed).
+      return {
+        ...base,
+        phase: o.phase,
+        writeError: o.writeError,
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+        ...(o.patch ? { patch: patchWire(o.patch) } : {}),
+      };
   }
 }
 
@@ -751,7 +763,7 @@ export function createServer(): McpServer {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-remaining` | `no-patch` | `not-found`).",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; nothing landed on disk.",
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),

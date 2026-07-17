@@ -1,6 +1,12 @@
 // kumiki fix — propose auto-patches for repairable typecheck errors.
 
-import { readFileSync, writeFileSync } from "node:fs";
+// `writeFileSync` is dereferenced through the `node:fs` namespace so tests can
+// intercept it — a plain named import would be resolved as a snapshot binding
+// by Vitest's mock spread, defeating `vi.spyOn(fs, "writeFileSync")`. Property
+// access on the namespace goes through the live slot every call. `readFileSync`
+// stays named — no test needs to mock reads.
+import * as fs from "node:fs";
+import { readFileSync } from "node:fs";
 import type { KumikiError, TestDef } from "@kumikijs/compiler";
 import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
@@ -469,7 +475,21 @@ export function applyFixPlan(
       regressionBlocked: true,
     };
   }
-  writeFileSync(path, after);
+  try {
+    fs.writeFileSync(path, after);
+  } catch (e) {
+    // Symmetric with the `parseError` / `regressionBlocked` short-circuit
+    // above: I/O failure is a structured return, not a raw stack. The disk
+    // state is unchanged (Node's `writeFileSync` is atomic-fail), so
+    // `remaining` echoes the pre-patch diagnostics.
+    return {
+      applied: 0,
+      before,
+      after: before,
+      remaining: plan.errors,
+      writeError: e instanceof Error ? e.message : String(e),
+    };
+  }
   return { applied: plan.patches.length, before, after, remaining: dryRemaining };
 }
 
@@ -500,6 +520,16 @@ export type FixApplyResult = {
    * there was nothing to apply.
    */
   regressionBlocked?: boolean;
+  /**
+   * Raw filesystem error message when the composed patches passed the
+   * regression gate but the final `writeFileSync` threw (EACCES / ENOSPC /
+   * EBUSY, …). When set, `applied === 0`, `after === before`, `remaining`
+   * carries the pre-patch diagnostics, and the on-disk file is byte-identical
+   * to `before` (Node's `writeFileSync` is atomic-fail: a throw means nothing
+   * was written). Mutually exclusive with `parseError` and
+   * `regressionBlocked` — those short-circuit before the write.
+   */
+  writeError?: string;
 };
 
 export function fixCmd(
@@ -633,7 +663,56 @@ export type FixFromTestOutcome =
       /** Names of other tests that were passing before the write and now fail. Always populated (may be []). */
       regressed: string[];
       compileFixes?: number;
+    }
+  | {
+      /**
+       * A patch was chosen but `writeFileSync` threw before it could land.
+       * `phase` distinguishes the two write sites in `runFixFromTest`:
+       *  - `"compile"`: Tier-1 compile patches were about to be written.
+       *    `compileFixes` is the *proposed* count (nothing landed); the
+       *    on-disk file is byte-identical to before the call.
+       *  - `"test"`: Tier-2 behavioral patch was selected. `patch` carries
+       *    the proposed `AutoPatch` that never landed; `compileFixes` is
+       *    present only when Tier-1 wrote successfully first.
+       */
+      ok: false;
+      status: "write-failed";
+      phase: "compile" | "test";
+      writeError: string;
+      compileFixes?: number;
+      patch?: AutoPatch;
     };
+
+/**
+ * Inverse of the lexer's string-body decoding
+ * (packages/compiler/src/lexer.ts:123-147). Accepts the RAW inner body of a
+ * `"..."` source literal (no surrounding quotes) and returns the decoded
+ * runtime value. Escape set matches the lexer exactly: `\n \t \r \" \\`.
+ *
+ * Returns `null` when the body contains an escape sequence the lexer would
+ * reject — defensive; the file has already been lexed so this branch is
+ * unreachable in practice, but the caller treats `null` as "skip this literal
+ * candidate" rather than throwing so a future refactor that breaks the
+ * invariant fails soft (falling through to the tier's other bail paths).
+ */
+function decodeKumikiStringBody(raw: string): string | null {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const esc = raw[++i];
+    if (esc === "n") out += "\n";
+    else if (esc === "t") out += "\t";
+    else if (esc === "r") out += "\r";
+    else if (esc === '"') out += '"';
+    else if (esc === "\\") out += "\\";
+    else return null;
+  }
+  return out;
+}
 
 /**
  * Render a string as a Kumiki source literal, or null if it needs an escape the
@@ -994,18 +1073,28 @@ function planPartialStringPatchExplained(
   // already ran; skip so the two paths don't compete.
   if (midA.length === 0 || midE.length === 0) return { patch: null, reason: "affix-empty-middle" };
   // The exact-literal search would've been used if `actual` itself appeared;
-  // here we look for a string literal containing `midA` as a substring. Walk
-  // every `"..."` in the source and score by scope.
+  // here we look for a string literal whose *decoded* body contains `midA`
+  // as a substring. `midA` comes from `affixDiff` over `TestResult.leaf`,
+  // which is already decoded (`\n` → real NL, `\"` → `"`, …), so we must
+  // decode each literal body before comparing — otherwise a raw source
+  // `"a\nb"` mismatches a `midA` containing a real newline and the tier
+  // silently bails. The splice and re-encode also happen in decoded space
+  // to keep un-touched escapes canonical (raw source `\n` round-trips as a
+  // single `\n`, not as `\\n`).
   const literalRe = /"(?:[^"\\]|\\.)*"/g;
-  type Match = { start: number; end: number; body: string };
+  type Match = { start: number; end: number; body: string }; // body is DECODED
   const matches: Match[] = [];
   let m: RegExpExecArray | null = literalRe.exec(source);
   while (m !== null) {
     const start = m.index;
     const end = start + m[0].length;
-    // Body without surrounding quotes.
-    if (!inExcluded(start) && m[0].includes(midA))
-      matches.push({ start, end, body: m[0].slice(1, -1) });
+    if (!inExcluded(start)) {
+      const decoded = decodeKumikiStringBody(m[0].slice(1, -1));
+      // `decoded === null` is defensively unreachable (source already lexed).
+      // Skip such candidates rather than throw so the tier's other bail paths
+      // still get considered if the invariant ever breaks.
+      if (decoded?.includes(midA)) matches.push({ start, end, body: decoded });
+    }
     m = literalRe.exec(source);
   }
   if (matches.length === 0) return { patch: null, reason: "no-string-literal-contains-mida" };
@@ -1178,7 +1267,21 @@ export async function runFixFromTest(
     }
     let text = readFileSync(path, "utf8");
     for (const p of patches) text = p.apply(text);
-    writeFileSync(path, text);
+    try {
+      fs.writeFileSync(path, text);
+    } catch (e) {
+      // Tier-1 write failed. `compileFixes` here is the *proposed* count —
+      // nothing landed. The `write-failed` variant + `phase: "compile"` tells
+      // the printer / MCP serializer to avoid the misleading "applied N
+      // compile fix(es)" header.
+      return {
+        ok: false,
+        status: "write-failed",
+        phase: "compile",
+        writeError: e instanceof Error ? e.message : String(e),
+        compileFixes: patches.length,
+      };
+    }
     compileFixes = patches.length;
     // Split the catches: only `parse(lex(text))` may legitimately throw with
     // a caller-facing parse-error. `check()` throwing is an internal
@@ -1254,7 +1357,21 @@ export async function runFixFromTest(
   if (!apply) {
     return { ok: true, status: "proposed", patch, ...(compileFixes ? { compileFixes } : {}) };
   }
-  writeFileSync(path, patch.apply(curSource));
+  try {
+    fs.writeFileSync(path, patch.apply(curSource));
+  } catch (e) {
+    // Tier-2 write failed. The proposed `patch` is preserved so the caller
+    // can render / retry. `compileFixes` only appears if Tier-1 wrote
+    // successfully — that write already landed.
+    return {
+      ok: false,
+      status: "write-failed",
+      phase: "test",
+      writeError: e instanceof Error ? e.message : String(e),
+      patch,
+      ...(compileFixes ? { compileFixes } : {}),
+    };
+  }
   const after = await testFile(path, capabilities);
   const nowPass = after.find((r) => r.name === testName)?.pass === true;
   const regressed = after
@@ -1293,7 +1410,11 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
     outcome.compileFixes !== undefined &&
     outcome.compileFixes > 0 &&
     outcome.status !== "compile-remaining" &&
-    outcome.status !== "compile-proposed"
+    outcome.status !== "compile-proposed" &&
+    // `write-failed` with `phase: "compile"` carries the *proposed* count —
+    // nothing landed on disk, so the "applied N" header would lie. On
+    // `phase: "test"` the Tier-1 write did land; header is honest.
+    !(outcome.status === "write-failed" && outcome.phase === "compile")
   ) {
     console.log(`applied ${outcome.compileFixes} compile fix(es) — file now compiles`);
   }
@@ -1374,6 +1495,11 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
           `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,
         );
       }
+      return;
+    }
+    case "write-failed": {
+      const what = outcome.phase === "compile" ? "compile fix" : "test patch";
+      console.error(`could not write ${what} for "${testName}": ${outcome.writeError}`);
       return;
     }
   }
