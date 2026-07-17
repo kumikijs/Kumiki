@@ -83,6 +83,32 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * Write a file such that a failure (EACCES / ENOSPC / EBUSY) leaves the target
+ * byte-identical to before the call. Node's `writeFileSync` opens with
+ * `O_TRUNC`, so a mid-write ENOSPC produces a truncated file — unsafe for a
+ * repair tool whose contract is "cleaner or unchanged". We stage the content
+ * to a sibling temp file first, then `renameSync` it over the target.
+ * `renameSync` is atomic on the same filesystem on both POSIX and Windows
+ * (via `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`). On any throw the temp
+ * file is best-effort unlinked so a subsequent retry sees a clean directory.
+ */
+function atomicWriteFileSync(path: string, content: string): void {
+  const tmp = `${path}.kumiki-tmp`;
+  try {
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, path);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // Temp file may not exist (throw happened before create) or belong to a
+      // concurrent invocation. Best-effort cleanup — swallow.
+    }
+    throw e;
+  }
+}
+
+/**
  * Closest candidate name for `missing` under the same threshold used by every
  * name-suggest branch (Levenshtein ≤ 2 edits or ≤ 25% of the missing name's
  * length). Takes candidates as an iterable so callers can supply a scoped
@@ -397,13 +423,22 @@ export type FixPlan = {
 
 /**
  * Apply the planned patches to `path`, re-typecheck the result, and return
- * before/after source plus the residual diagnostic set. `parseError` is set
- * only when the composed patches produced source the lexer/parser cannot
- * accept — the file has already been written in that case; surfacing the
- * error to the caller is preferred to throwing, because rolling back would
- * lose the artefact that shows *why* the composed patch was bad. Callers
- * that need a dry preview should use `planFix` and apply `patches[i].apply`
- * themselves.
+ * before/after source plus the residual diagnostic set.
+ *
+ * The result carries three mutually-exclusive failure modifiers, each of which
+ * pins `applied: 0` and leaves the on-disk file byte-identical:
+ *  - `parseError`: the composed patches produced source the lexer/parser
+ *    cannot accept. Nothing is written; `remaining` includes a synthetic
+ *    `E0000` so the empty-⇔-clean invariant holds without a caller inspecting
+ *    `parseError` first.
+ *  - `regressionBlocked`: the composed patches would introduce a diagnostic
+ *    the pre-patch file did not have, or fail to resolve any pre-patch error.
+ *  - `writeError`: the composed patches passed both gates but the atomic
+ *    write threw (EACCES / ENOSPC / EBUSY, …). Raw message preserved for the
+ *    caller to render.
+ *
+ * Callers that need a dry preview should use `planFix` and apply
+ * `patches[i].apply` themselves.
  */
 export function applyFixPlan(
   path: string,
@@ -476,11 +511,11 @@ export function applyFixPlan(
     };
   }
   try {
-    fs.writeFileSync(path, after);
+    atomicWriteFileSync(path, after);
   } catch (e) {
     // Symmetric with the `parseError` / `regressionBlocked` short-circuit
-    // above: I/O failure is a structured return, not a raw stack. The disk
-    // state is unchanged (Node's `writeFileSync` is atomic-fail), so
+    // above: I/O failure is a structured return, not a raw stack. The atomic
+    // helper guarantees the on-disk file is unchanged on throw, so
     // `remaining` echoes the pre-patch diagnostics.
     return {
       applied: 0,
@@ -522,11 +557,12 @@ export type FixApplyResult = {
   regressionBlocked?: boolean;
   /**
    * Raw filesystem error message when the composed patches passed the
-   * regression gate but the final `writeFileSync` threw (EACCES / ENOSPC /
-   * EBUSY, …). When set, `applied === 0`, `after === before`, `remaining`
-   * carries the pre-patch diagnostics, and the on-disk file is byte-identical
-   * to `before` (Node's `writeFileSync` is atomic-fail: a throw means nothing
-   * was written). Mutually exclusive with `parseError` and
+   * regression gate but the write threw (EACCES / ENOSPC / EBUSY, …). When
+   * set, `applied === 0`, `after === before`, `remaining` carries the
+   * pre-patch diagnostics, and the on-disk target file is byte-identical to
+   * `before` — `atomicWriteFileSync` stages content in a sibling tmp file and
+   * atomically renames it into place, so a throw at any stage leaves the
+   * target untouched. Mutually exclusive with `parseError` and
    * `regressionBlocked` — those short-circuit before the write.
    */
   writeError?: string;
@@ -557,6 +593,15 @@ export function fixCmd(
   }
   const result = applyFixPlan(path, onlyCode, capabilities);
   if (result.applied === 0) {
+    if (result.writeError) {
+      // The plan passed the regression gate but the on-disk write threw. Fail
+      // loudly on stderr and exit non-zero — the pre-patch diagnostics survive
+      // so scripts inspecting `remaining` still get the compile state, but the
+      // I/O failure itself must not silently look like "no auto-patches".
+      console.error(`could not write fixes to ${path}: ${result.writeError}`);
+      process.exitCode = 1;
+      return;
+    }
     if (result.remaining.length === 0) {
       console.log("no errors");
       return;
@@ -602,6 +647,11 @@ export function fixCmd(
  * Tier-2 covers the compiling file:
  *   `not-found` | `already-pass` | `no-patch` (no deterministic patch) |
  *   `proposed` (dry-run patch) | `applied` (patch written; carries `regressed`).
+ *
+ * Independent of tier: `write-failed` fires when a patch was chosen but
+ * `atomicWriteFileSync` threw. `phase` (`compile` | `test`) picks the site,
+ * `patch` is preserved on `phase: "test"` for retry / display, and the
+ * on-disk file is byte-identical to before the call.
  */
 export type FixFromTestOutcome =
   | {
@@ -1092,8 +1142,14 @@ function planPartialStringPatchExplained(
       const decoded = decodeKumikiStringBody(m[0].slice(1, -1));
       // `decoded === null` is defensively unreachable (source already lexed).
       // Skip such candidates rather than throw so the tier's other bail paths
-      // still get considered if the invariant ever breaks.
-      if (decoded?.includes(midA)) matches.push({ start, end, body: decoded });
+      // still get considered if the invariant ever breaks. Emit a debug line
+      // under `KUMIKI_DEBUG=fix` so a broken decoder is loud, not silent —
+      // matches how the other tiers report their bail paths.
+      if (decoded === null) {
+        debugSkip("planPartialStringPatch", "decoder-returned-null", m[0].slice(0, 40));
+      } else if (decoded.includes(midA)) {
+        matches.push({ start, end, body: decoded });
+      }
     }
     m = literalRe.exec(source);
   }
@@ -1268,7 +1324,7 @@ export async function runFixFromTest(
     let text = readFileSync(path, "utf8");
     for (const p of patches) text = p.apply(text);
     try {
-      fs.writeFileSync(path, text);
+      atomicWriteFileSync(path, text);
     } catch (e) {
       // Tier-1 write failed. `compileFixes` here is the *proposed* count —
       // nothing landed. The `write-failed` variant + `phase: "compile"` tells
@@ -1357,12 +1413,15 @@ export async function runFixFromTest(
   if (!apply) {
     return { ok: true, status: "proposed", patch, ...(compileFixes ? { compileFixes } : {}) };
   }
+  // Apply the patch OUTSIDE the try — a throw from `patch.apply` (codegen /
+  // slice-index bug in the tier planner, or a downstream regression in
+  // `kumikiStringLit`) is a program bug, not an I/O failure. It must not
+  // land in the `write-failed` variant, which is reserved for filesystem
+  // errors the caller can act on (retry, elevate permissions, free space).
+  const patched = patch.apply(curSource);
   try {
-    fs.writeFileSync(path, patch.apply(curSource));
+    atomicWriteFileSync(path, patched);
   } catch (e) {
-    // Tier-2 write failed. The proposed `patch` is preserved so the caller
-    // can render / retry. `compileFixes` only appears if Tier-1 wrote
-    // successfully — that write already landed.
     return {
       ok: false,
       status: "write-failed",
@@ -1396,12 +1455,16 @@ export async function fixFromTest(
   capabilities: string[] = [],
 ): Promise<FixFromTestOutcome> {
   const outcome = await runFixFromTest(path, testName, apply, capabilities);
-  printFixFromTest(outcome, testName);
+  printFixFromTest(outcome, testName, path);
   return outcome;
 }
 
-/** Human-readable print of a `runFixFromTest` outcome. */
-function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
+/**
+ * Human-readable print of a `runFixFromTest` outcome. `path` is only used by
+ * the `write-failed` branch so a user staring at "could not write compile fix"
+ * can identify the affected file at a glance.
+ */
+function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: string): void {
   // Applied-tier-1 header: only when Tier-1 patches were *written* — i.e. the
   // apply path. `compile-proposed` also carries `compileFixes` (the count of
   // proposed patches), but printing "applied N" for it would lie about a
@@ -1499,8 +1562,15 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string): void {
     }
     case "write-failed": {
       const what = outcome.phase === "compile" ? "compile fix" : "test patch";
-      console.error(`could not write ${what} for "${testName}": ${outcome.writeError}`);
+      const where = path ? ` (${path})` : "";
+      console.error(`could not write ${what} for "${testName}"${where}: ${outcome.writeError}`);
       return;
+    }
+    default: {
+      // Exhaustiveness guard: adding a new variant to `FixFromTestOutcome`
+      // without a matching case here is a TS compile error.
+      const _exhaustive: never = outcome;
+      throw new Error(`unhandled FixFromTestOutcome status: ${JSON.stringify(_exhaustive)}`);
     }
   }
 }

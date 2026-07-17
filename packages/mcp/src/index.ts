@@ -140,7 +140,7 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
     case "write-failed":
-      // #179 (I6): I/O failure surfaces on the wire so MCP callers see it as a
+      // I/O failure surfaces on the wire so MCP callers see it as a
       // structured outcome rather than a transport-level error. `phase`
       // distinguishes the two write sites; `patch` only appears on
       // phase="test" (the tier-2 proposal that never landed).
@@ -151,6 +151,12 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
         ...(o.patch ? { patch: patchWire(o.patch) } : {}),
       };
+    default: {
+      // Exhaustiveness guard: a new variant on `FixFromTestOutcome` without a
+      // matching case here becomes a TS compile error.
+      const _exhaustive: never = o;
+      throw new Error(`unhandled FixFromTestOutcome status: ${JSON.stringify(_exhaustive)}`);
+    }
   }
 }
 
@@ -735,7 +741,14 @@ export function createServer(): McpServer {
                 before: r.before,
                 after: r.after,
                 remaining: toDiagnostics(r.remaining),
+                // Surface every non-success modifier on the wire so callers
+                // can distinguish "no patch was needed" (`applied === 0`,
+                // no modifier) from a rollback / parser-break / I/O failure.
+                // Without these fields the three failure shapes collapse into
+                // one indistinguishable `applied: 0`.
                 ...(r.parseError ? { parseError: r.parseError } : {}),
+                ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
+                ...(r.writeError ? { writeError: r.writeError } : {}),
               },
               null,
               2,

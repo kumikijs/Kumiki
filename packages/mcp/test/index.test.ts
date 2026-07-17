@@ -151,6 +151,40 @@ describe("kumiki_fix", () => {
       expect(typeof parsed.error.message).toBe("string");
     });
   });
+
+  it("apply-mode surfaces writeError on the wire when the on-disk write throws", async () => {
+    // Symmetric with the `kumiki_auto_patch` writeError test: the top-level
+    // apply wire must expose `writeError` (and by extension the two other
+    // non-success modifiers `regressionBlocked` / `parseError`) so MCP callers
+    // can distinguish "no patch needed" from a filesystem error the caller can
+    // act on. Without this surface the three failure shapes collapse into an
+    // indistinguishable `applied: 0`.
+    const file = join(workdir, "typo.kumiki");
+    copyFileSync(FIX_COUNTER_TYPO, file);
+    const before = readFileSync(file, "utf8");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("EACCES: simulated for kumiki_fix wire");
+    });
+    try {
+      await withClient(async (client) => {
+        const out = await callTool(client, "kumiki_fix", { path: file, apply: true });
+        const parsed = JSON.parse(out) as {
+          applied: number;
+          writeError?: string;
+          regressionBlocked?: boolean;
+          parseError?: string;
+        };
+        expect(parsed.applied).toBe(0);
+        expect(parsed.writeError).toContain("EACCES");
+        expect(parsed.regressionBlocked).toBeUndefined();
+        expect(parsed.parseError).toBeUndefined();
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+    // File unchanged.
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
 });
 
 describe("kumiki_auto_patch", () => {
@@ -274,7 +308,7 @@ describe("kumiki_auto_patch", () => {
     });
   });
 
-  it("serialises the write-failed variant on the wire (I6 #179): status, phase, writeError, patch metadata", {
+  it("serialises the write-failed variant on the wire: status, phase, writeError, patch metadata", {
     timeout: 30000,
   }, async () => {
     // The single-fixture failing test would normally reach Tier-2 and land
@@ -315,7 +349,8 @@ describe("kumiki_auto_patch", () => {
     } finally {
       writeSpy.mockRestore();
     }
-    // Node's `writeFileSync` is atomic-fail: throw ⇒ nothing was written.
+    // `atomicWriteFileSync` in fix.ts stages into a sibling tmp file and
+    // renames; a throw on the staging write leaves the target byte-identical.
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 });
