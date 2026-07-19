@@ -525,6 +525,46 @@ describe("planTestPatch: relaxed repair tiers", () => {
     expect(patched).toMatch(/count := count \+ 1/);
   });
 
+  it("boundary: single-digit numeric leaf inside a 3-char string span is rejected", () => {
+    // Complement to I4. The string literal `"7"` occupies exactly 3 source
+    // chars (`"`, `7`, `"`). The numeric actual `7` lands at the digit offset,
+    // which is `lo+1` and ends at `hi-1` — the tightest possible fit inside a
+    // string body. The strict `> lo && +len < hi` filter in `combinedExcluded`
+    // must still reject it so exact-literal never rewrites the tile text; the
+    // arithmetic tier picks up the reducer rewrite instead.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 0",
+        "reducer inc on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="7")',
+        'tile App = column(heading("x"), B)',
+        "test t =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 6}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {count: 8}}",
+        "",
+      ].join("\n"),
+    );
+    const patch = planTestPatch(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { expected: 8, actual: 7 },
+      },
+      [[5, 8]],
+      store,
+    );
+    expect(patch).not.toBeNull();
+    const patched = patch?.apply(source) ?? "";
+    // The literal `text="7"` survives verbatim — the boundary filter kept the
+    // digit `7` off the exact-literal candidate list.
+    expect(patched).toContain('tile B = button(text="7")');
+    // The arithmetic tier rewrote the reducer to hit expected=8.
+    expect(patched).toMatch(/count := count \+ 2/);
+  });
+
   it("prefix/suffix: swaps the divergent middle inside a shared string literal", () => {
     const { source, store } = writeAndLoad(
       [
@@ -2322,12 +2362,13 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     if (result.patch === null) expect(result.reason).toBe("additive-zero-delta");
   });
 
-  // `additive-noop-solution`, `non-finite-operand`, `arithmetic-splice-target-lost`,
+  // `additive-noop-solution`, `non-safe-integer-operand`, `arithmetic-splice-target-lost`,
   // and `internal-body-not-found` are defensive branches: the algebra of
   // `planArithmeticPatchExplained` (and the regex invariants of the string
   // planner) makes them unreachable from the top-level API. Each is a guard
-  // for a state that would indicate a bug in an earlier step, not a real
-  // failure mode a caller can trip. They're kept as `debugSkip` sites so a
+  // for a state that would indicate a bug in an earlier step (or a pathological
+  // input like a 20-digit operand exceeding `Number.MAX_SAFE_INTEGER`), not a
+  // real failure mode a caller can trip. They're kept as `debugSkip` sites so a
   // future refactor that does hit them lights up under `KUMIKI_DEBUG=fix`.
 
   it("multiplicative-zero-guard: actual value is zero (base cannot be recovered)", () => {
