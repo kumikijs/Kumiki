@@ -240,12 +240,10 @@ interface ExampleRow {
 }
 
 function exampleRows(md: string, label: string): ExampleRow[] {
+  // Column order: Example | Layers | Feature | Spec.
   return tableRows(markedSection(md, "examples", label), "examples", label).map((cells) => ({
     file: (cells[0] ?? "").replace(/`/g, "").trim(),
     layers: (cells[1] ?? "").split(",").map((s) => s.trim()),
-    // Example | Layers | Feature | Spec — the last two are language-specific text;
-    // cellSignature reduces the Spec cell to a link-target/§-label sequence that
-    // is stable across tracks.
     feature: cells[2] ?? "",
     spec: cells[3] ?? "",
   }));
@@ -345,6 +343,15 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
   });
 
   it("examples table lists exactly the files under packages/examples/features/", () => {
+    const rows = exampleRows(index, label);
+    // Symmetric with the code table's duplicate check below: a repeated
+    // filename would silently collapse in exampleFileSet (Set) and in the
+    // EN⇆JA sync's Object.fromEntries (last-wins), letting a stray extra row
+    // pass unnoticed.
+    const files = rows.map((r) => r.file);
+    expect(new Set(files).size, `[${label}] duplicate rows in the index examples table`).toBe(
+      files.length,
+    );
     const onDisk = new Set(readdirSync(featuresDir).filter((f) => f.endsWith(".kumiki")));
     const { onlyA, onlyB } = symmetricDiff(onDisk, exampleFileSet(index, label));
     const msgs: string[] = [];
@@ -359,6 +366,17 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
       );
     }
     if (msgs.length > 0) expect.fail(msgs.join("\n"));
+    // Extraction-integrity floor for the Spec column: cellSignature falls back
+    // to the raw cell when no link matches, so a mangled table row (or a
+    // uniformly empty Spec cell) would collapse both EN and JA to the same
+    // empty signature and silently pass the sync check. Require each Spec cell
+    // to carry at least one ./doc.md link.
+    const specless = rows.filter((r) => !/\[[^\]]+\]\(\.\/[\w.-]+\.md/.test(r.spec));
+    if (specless.length > 0) {
+      expect.fail(
+        `[${label}] examples rows have no ./doc.md link in the Spec column: ${specless.map((r) => r.file).join(", ")}`,
+      );
+    }
   });
 
   it("code table lists exactly the (code, kind) pairs errors.md documents", () => {
@@ -464,10 +482,9 @@ describe("spec index — EN ⇆ JA sync", () => {
   });
 
   it("examples tables agree on the spec link (doc + § label) of each file", () => {
-    // cellSignature collapses "[§1.4](./language.md#_1-4-store-layer-slot)" and
-    // its JA anchor-slug variant to the same "language.md:§1.4" token, so link
-    // targets and § labels compare cleanly across tracks despite different
-    // anchor slugs on the two sides.
+    // cellSignature reduces each `[§X.Y](./doc.md#…)` to `doc.md:§X.Y`, so
+    // link targets and § labels compare cleanly across tracks despite the
+    // language-specific anchor slugs on each side.
     const specByFile = (md: string, label: string) =>
       Object.fromEntries(
         exampleRows(md, label).map((r) => [r.file, cellSignature(r.spec)] as const),
