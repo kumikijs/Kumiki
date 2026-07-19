@@ -10,6 +10,7 @@ import {
   findReferences,
   fixCmd,
   fixFromTest,
+  iterStringLiterals,
   listDefs,
   load,
   lockDef,
@@ -324,6 +325,38 @@ describe("planTestPatch: deterministic literal repair from a failing test", () =
   });
 });
 
+// `iterStringLiterals` is the shared regex helper feeding both
+// `stringLiteralSpans` (numeric-hit rejection) and the partial-string tier.
+// The tiers exercise it indirectly, but a direct microtest guards the tricky
+// shapes (consecutive literals, escaped quotes, empty body) from refactor
+// regressions in the single-source `/"(?:[^"\\]|\\.)*"/g` regex.
+describe("iterStringLiterals: shared string-literal walker", () => {
+  it("returns spans and raw bodies for a lone literal", () => {
+    const lits = iterStringLiterals('x = "hello"');
+    expect(lits).toHaveLength(1);
+    expect(lits[0]).toMatchObject({ start: 4, end: 11, body: "hello" });
+  });
+
+  it("iterates consecutive literals as two separate entries", () => {
+    const lits = iterStringLiterals('"a""b"');
+    expect(lits.map((l) => l.body)).toEqual(["a", "b"]);
+    expect(lits[0]!.end).toBe(lits[1]!.start);
+  });
+
+  it('treats an escaped `\\"` inside a literal as part of its body', () => {
+    // Regex `"(?:[^"\\]|\\.)*"` must not terminate on the escaped quote.
+    const lits = iterStringLiterals('x = "a\\"b" y');
+    expect(lits).toHaveLength(1);
+    expect(lits[0]!.body).toBe('a\\"b');
+  });
+
+  it('yields an entry with an empty body for a bare `""`', () => {
+    const lits = iterStringLiterals('x = ""');
+    expect(lits).toHaveLength(1);
+    expect(lits[0]).toMatchObject({ start: 4, end: 6, body: "" });
+  });
+});
+
 // M4b+: relaxed literal-repair tiers (issue #156). scope-aware disambiguation,
 // non-string leaves, string prefix/suffix, and reducer arithmetic — each with
 // enough surrounding source that the store's def line ranges are meaningful.
@@ -523,6 +556,50 @@ describe("planTestPatch: relaxed repair tiers", () => {
     const patched = patch?.apply(source) ?? "";
     expect(patched).toContain('tile DecBtn = button(text="-1")');
     expect(patched).toMatch(/count := count \+ 1/);
+  });
+
+  it("smallest containment: single-digit numeric leaf inside a 3-char string span is rejected", () => {
+    // Sibling of the "does not match a numeric leaf inside a string literal"
+    // test above, at the *tightest* possible fit: the string literal `"7"`
+    // occupies exactly 3 source chars (`"`, `7`, `"`), so the numeric actual
+    // `7` lands at digit offset `lo+1` and ends at `hi-1` — the smallest
+    // containment case. `combinedExcluded` is only exercised for
+    // non-string leaves (numeric / boolean `actualLit`s never contain `"`),
+    // so `>=`/`<=` and `>`/`<` are behaviorally identical here; the strict
+    // form is a documentation choice, not a behavior change. This test
+    // guards against future refactors that widen `combinedExcluded` to
+    // string leaves or narrow the filter past the body edges.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 0",
+        "reducer inc on=ui.click(B) do= count := count + 1",
+        'tile B = button(text="7")',
+        'tile App = column(heading("x"), B)',
+        "test t =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 6}, event: {kind: click, tile: B, id: none}}",
+        "        expect = {slots: {count: 8}}",
+        "",
+      ].join("\n"),
+    );
+    const patch = planTestPatch(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { expected: 8, actual: 7 },
+      },
+      [[5, 8]],
+      store,
+    );
+    expect(patch).not.toBeNull();
+    const patched = patch?.apply(source) ?? "";
+    // The literal `text="7"` survives verbatim — the boundary filter kept the
+    // digit `7` off the exact-literal candidate list.
+    expect(patched).toContain('tile B = button(text="7")');
+    // The arithmetic tier rewrote the reducer to hit expected=8.
+    expect(patched).toMatch(/count := count \+ 2/);
   });
 
   it("prefix/suffix: swaps the divergent middle inside a shared string literal", () => {
@@ -2322,13 +2399,17 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     if (result.patch === null) expect(result.reason).toBe("additive-zero-delta");
   });
 
-  // `additive-noop-solution`, `non-finite-operand`, `arithmetic-splice-target-lost`,
-  // and `internal-body-not-found` are defensive branches: the algebra of
+  // `additive-noop-solution`, `arithmetic-splice-target-lost`, and
+  // `internal-body-not-found` are defensive branches: the algebra of
   // `planArithmeticPatchExplained` (and the regex invariants of the string
   // planner) makes them unreachable from the top-level API. Each is a guard
   // for a state that would indicate a bug in an earlier step, not a real
   // failure mode a caller can trip. They're kept as `debugSkip` sites so a
   // future refactor that does hit them lights up under `KUMIKI_DEBUG=fix`.
+  // `non-safe-integer-operand` is intentionally excluded — the lexer accepts
+  // arbitrary-length digit sequences, so a pathological source operand
+  // exceeding `Number.MAX_SAFE_INTEGER` reaches that guard through the
+  // top-level API; the dedicated reachability test below covers it.
 
   it("multiplicative-zero-guard: actual value is zero (base cannot be recovered)", () => {
     // Reducer `count * 3` with given count=0 → actual = 0. `0` is absent from
@@ -2462,6 +2543,35 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     );
     expect(result.patch).toBeNull();
     if (result.patch === null) expect(result.reason).toBe("multiplicative-nonintegral-solution");
+  });
+
+  it("non-safe-integer-operand: reducer operand exceeds Number.MAX_SAFE_INTEGER", () => {
+    // Reachability proof for the `Number.isSafeInteger(n)` guard: the lexer
+    // accepts arbitrary-length digit sequences and `stmtRe` is `-?\d+`, so a
+    // 20-digit operand parses fine but `Number.parseInt` returns a non-safe
+    // integer. Without the guard, the subsequent algebra (`actual - delta`,
+    // `expected - base`) would silently round and produce a bad splice.
+    const { source, store } = writeAndLoad(
+      [
+        "slot count : Int = 0",
+        "reducer inc on=ui.click(B) do= count := count + 99999999999999999999",
+        'tile B = button(text="inc")',
+        "",
+      ].join("\n"),
+    );
+    const result = planTestPatchExplained(
+      source,
+      {
+        name: "t",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { actual: 42, expected: 1 },
+      },
+      [],
+      store,
+    );
+    expect(result.patch).toBeNull();
+    if (result.patch === null) expect(result.reason).toBe("non-safe-integer-operand");
   });
 });
 

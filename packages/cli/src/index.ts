@@ -9,6 +9,7 @@ export {
   type FixPlan,
   fixCmd,
   fixFromTest,
+  iterStringLiterals,
   planFix,
   planFixes,
   planFixesExplained,

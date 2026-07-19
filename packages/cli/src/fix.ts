@@ -1054,6 +1054,30 @@ function pickScopedHit(
 }
 
 /**
+ * Every `"..."` string literal in `source`, one pass. `start` / `end` are the
+ * quote-inclusive source offsets; `body` is the raw inner slice (no quotes,
+ * no decoding — callers that need the runtime string must call
+ * `decodeKumikiStringBody`). Shared by `stringLiteralSpans` (needs only the
+ * spans, to reject numeric hits landing inside a string) and the partial-
+ * string tier (needs the decoded body to match the divergent middle), so the
+ * `"(?:[^"\\]|\\.)*"` regex lives in exactly one place.
+ */
+export function iterStringLiterals(
+  source: string,
+): Array<{ start: number; end: number; body: string }> {
+  const out: Array<{ start: number; end: number; body: string }> = [];
+  const re = /"(?:[^"\\]|\\.)*"/g;
+  let m: RegExpExecArray | null = re.exec(source);
+  while (m !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    out.push({ start, end, body: m[0].slice(1, -1) });
+    m = re.exec(source);
+  }
+  return out;
+}
+
+/**
  * True at offsets that sit inside a `"..."` string literal. Number / boolean
  * exact-literal searches must reject these so a leaf like `-1` doesn't get
  * matched against the substring `-1` inside a source string like `text="-1"`.
@@ -1061,14 +1085,7 @@ function pickScopedHit(
  * re-checking every candidate hit.
  */
 function stringLiteralSpans(source: string): Array<[number, number]> {
-  const spans: Array<[number, number]> = [];
-  const re = /"(?:[^"\\]|\\.)*"/g;
-  let m: RegExpExecArray | null = re.exec(source);
-  while (m !== null) {
-    spans.push([m.index, m.index + m[0].length]);
-    m = re.exec(source);
-  }
-  return spans;
+  return iterStringLiterals(source).map((l) => [l.start, l.end]);
 }
 
 type PatchOrReason = { patch: AutoPatch } | { patch: null; reason: string };
@@ -1088,13 +1105,17 @@ function planExactLiteralPatchExplained(
     return { patch: null, reason: "leaf-not-a-kumiki-literal" };
   // For non-string leaves, hits inside string literals are false positives
   // (e.g. numeric `-1` matching inside `text="-1"`). Build a rejection filter
-  // that composes with `inExcluded`.
+  // that composes with `inExcluded`. The `[lo, hi]` span is quote-inclusive,
+  // so we reject only when the candidate sits *strictly* between the quotes
+  // (`offset > lo && offset + len < hi`) — landing on a quote itself is
+  // impossible for a numeric/boolean actualLit but the strict form documents
+  // the "inside the body, not the quotes" intent for future readers.
   const isStringLeaf = typeof actual === "string";
   const spans = isStringLeaf ? null : stringLiteralSpans(source);
   const combinedExcluded = spans
     ? (offset: number): boolean =>
         inExcluded(offset) ||
-        spans.some(([lo, hi]) => offset >= lo && offset + actualLit.length <= hi)
+        spans.some(([lo, hi]) => offset > lo && offset + actualLit.length < hi)
     : inExcluded;
   const hit = pickScopedHit(source, actualLit, combinedExcluded, scope);
   if (hit === null) return { patch: null, reason: "no-scoped-literal-hit" };
@@ -1131,27 +1152,26 @@ function planPartialStringPatchExplained(
   // silently bails. The splice and re-encode also happen in decoded space
   // to keep un-touched escapes canonical (raw source `\n` round-trips as a
   // single `\n`, not as `\\n`).
-  const literalRe = /"(?:[^"\\]|\\.)*"/g;
   type Match = { start: number; end: number; body: string }; // body is DECODED
   const matches: Match[] = [];
-  let m: RegExpExecArray | null = literalRe.exec(source);
-  while (m !== null) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (!inExcluded(start)) {
-      const decoded = decodeKumikiStringBody(m[0].slice(1, -1));
-      // `decoded === null` is defensively unreachable (source already lexed).
-      // Skip such candidates rather than throw so the tier's other bail paths
-      // still get considered if the invariant ever breaks. Emit a debug line
-      // under `KUMIKI_DEBUG=fix` so a broken decoder is loud, not silent —
-      // matches how the other tiers report their bail paths.
-      if (decoded === null) {
-        debugSkip("planPartialStringPatch", "decoder-returned-null", m[0].slice(0, 40));
-      } else if (decoded.includes(midA)) {
-        matches.push({ start, end, body: decoded });
-      }
+  for (const lit of iterStringLiterals(source)) {
+    if (inExcluded(lit.start)) continue;
+    const decoded = decodeKumikiStringBody(lit.body);
+    // `decoded === null` is defensively unreachable (source already lexed).
+    // Skip such candidates rather than throw so the tier's other bail paths
+    // still get considered if the invariant ever breaks. Emit a debug line
+    // under `KUMIKI_DEBUG=fix` so a broken decoder is loud, not silent —
+    // matches how the other tiers report their bail paths.
+    if (decoded === null) {
+      // Slice within the literal's own bounds so the debug payload never
+      // spills past the closing quote into unrelated source.
+      const snippet = source.slice(lit.start, Math.min(lit.end, lit.start + 40));
+      debugSkip("planPartialStringPatch", "decoder-returned-null", snippet);
+      continue;
     }
-    m = literalRe.exec(source);
+    if (decoded.includes(midA)) {
+      matches.push({ start: lit.start, end: lit.end, body: decoded });
+    }
   }
   if (matches.length === 0) return { patch: null, reason: "no-string-literal-contains-mida" };
   const rank = (offset: number): number => {
@@ -1216,10 +1236,14 @@ function planArithmeticPatchExplained(
   if (!bodyMatch) return { patch: null, reason: "no-additive-multiplicative-shape" };
   const op = bodyMatch[1] as "+" | "-" | "*";
   const n = Number.parseInt(bodyMatch[2]!, 10);
-  // Defensive — `stmtRe` requires `-?\d+`, so `parseInt` on a match is always
-  // finite. Kept so a regex change that admits new forms (e.g. hex) trips this
-  // guard under `KUMIKI_DEBUG=fix` before producing a bad numeric splice.
-  if (!Number.isFinite(n)) return { patch: null, reason: "non-finite-operand" };
+  // `stmtRe` requires `-?\d+`, so `parseInt` is always finite — but the lexer
+  // accepts arbitrary-length digit sequences, so a source like `count + <20
+  // digits>` reaches here with a non-safe integer that the JS number
+  // arithmetic below (`actual - delta`, `expected / base`) would silently
+  // round, producing a garbage splice. This bail is genuinely reachable from
+  // the top-level API (see the corresponding test) and keeps the "cleaner or
+  // unchanged" invariant intact.
+  if (!Number.isSafeInteger(n)) return { patch: null, reason: "non-safe-integer-operand" };
   // Reproduce what the reducer added: `+ N` → delta = +N, `- N` → delta = -N.
   // The initial `<slot>` value at test time is `actual - delta`. Solve for the
   // new op/N whose delta equals `expected - (actual - delta)`.
