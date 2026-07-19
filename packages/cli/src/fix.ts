@@ -1062,7 +1062,9 @@ function pickScopedHit(
  * string tier (needs the decoded body to match the divergent middle), so the
  * `"(?:[^"\\]|\\.)*"` regex lives in exactly one place.
  */
-function iterStringLiterals(source: string): Array<{ start: number; end: number; body: string }> {
+export function iterStringLiterals(
+  source: string,
+): Array<{ start: number; end: number; body: string }> {
   const out: Array<{ start: number; end: number; body: string }> = [];
   const re = /"(?:[^"\\]|\\.)*"/g;
   let m: RegExpExecArray | null = re.exec(source);
@@ -1161,11 +1163,10 @@ function planPartialStringPatchExplained(
     // under `KUMIKI_DEBUG=fix` so a broken decoder is loud, not silent —
     // matches how the other tiers report their bail paths.
     if (decoded === null) {
-      debugSkip(
-        "planPartialStringPatch",
-        "decoder-returned-null",
-        source.slice(lit.start, lit.start + 40),
-      );
+      // Slice within the literal's own bounds so the debug payload never
+      // spills past the closing quote into unrelated source.
+      const snippet = source.slice(lit.start, Math.min(lit.end, lit.start + 40));
+      debugSkip("planPartialStringPatch", "decoder-returned-null", snippet);
       continue;
     }
     if (decoded.includes(midA)) {
@@ -1235,11 +1236,13 @@ function planArithmeticPatchExplained(
   if (!bodyMatch) return { patch: null, reason: "no-additive-multiplicative-shape" };
   const op = bodyMatch[1] as "+" | "-" | "*";
   const n = Number.parseInt(bodyMatch[2]!, 10);
-  // `stmtRe` requires `-?\d+`, so `parseInt` is always finite — but a long
-  // digit string (`999999999999999999`) parses to a non-safe integer that the
-  // JS number arithmetic below (`actual - delta`, `expected / base`) would
-  // silently round, producing a garbage splice. Bail before the algebra to
-  // keep the "cleaner or unchanged" invariant.
+  // `stmtRe` requires `-?\d+`, so `parseInt` is always finite — but the lexer
+  // accepts arbitrary-length digit sequences, so a source like `count + <20
+  // digits>` reaches here with a non-safe integer that the JS number
+  // arithmetic below (`actual - delta`, `expected / base`) would silently
+  // round, producing a garbage splice. This bail is genuinely reachable from
+  // the top-level API (see the corresponding test) and keeps the "cleaner or
+  // unchanged" invariant intact.
   if (!Number.isSafeInteger(n)) return { patch: null, reason: "non-safe-integer-operand" };
   // Reproduce what the reducer added: `+ N` → delta = +N, `- N` → delta = -N.
   // The initial `<slot>` value at test time is `actual - delta`. Solve for the
