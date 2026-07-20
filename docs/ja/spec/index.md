@@ -46,7 +46,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 
 ## 診断コード索引
 
-[エラーコード](./errors.md)に文書化された全コードを、発火する層と所属する機能次元でクロス分類したもの。E0110 は 2 つの kind に割り当てられている（既存の二重割当をそのまま記載）。
+[エラーコード](./errors.md)に文書化された全コードを、発火する層と所属する機能次元でクロス分類したもの。
 
 <!-- codes:start -->
 | コード | kind | 層 | 機能 |
@@ -62,10 +62,10 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0108](./errors.md#e0108-undef-member) | `undef-member` | fn | 標準ライブラリ |
 | [E0110](./errors.md#e0110-unknown-token-group) | `unknown-token-group` | tile | スタイル |
 | [E0109](./errors.md#e0109-test-wildcard-misuse) | `test-wildcard-misuse` | reducer | テスト |
-| [E0110](./errors.md#e0110-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0111](./errors.md#e0111-orphan-sub-routes) | `orphan-sub-routes` | tile | ルーティング |
 | [E0112](./errors.md#e0112-duplicate-sub-route) | `duplicate-sub-route` | tile | ルーティング |
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | ルーティング |
+| [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |

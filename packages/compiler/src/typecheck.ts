@@ -380,7 +380,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   for (const parent of parents) {
     if (!parent.path.endsWith("/*")) {
       errors.push({
-        code: "E0110",
+        code: "E0114",
         kind: "sub-routes-without-wildcard-parent",
         message: `Tile "${tile.name}" declares sub-routes but its parent route "${parent.path}" is not a wildcard pattern (must end with "/*")`,
         pos: tile.pos,

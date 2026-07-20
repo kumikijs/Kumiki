@@ -278,10 +278,10 @@ describe("typecheck", () => {
       expect(errors.some((e) => e.code === "E0105" && e.message.includes("Missing"))).toBe(true);
     });
 
-    it("reports a non-wildcard parent as E0110", () => {
+    it("reports a non-wildcard parent as E0114", () => {
       const errors = checkSrc(nested("/settings"));
       expect(
-        errors.some((e) => e.code === "E0110" && e.kind === "sub-routes-without-wildcard-parent"),
+        errors.some((e) => e.code === "E0114" && e.kind === "sub-routes-without-wildcard-parent"),
       ).toBe(true);
     });
 

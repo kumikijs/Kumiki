@@ -164,14 +164,6 @@ A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `exp
 
 **Fix**: Remove the wildcard, or move it into the `reducer-test` `expect`.
 
-### E0110 `sub-routes-without-wildcard-parent`
-
-A tile declares `sub-routes` but its parent route in `app.routes` is not a wildcard (`/*`) pattern. Without a wildcard parent the runtime never reaches the nested matcher, so the sub-routes can never apply. See [Nested Routes](./routing.md#_3-6-nested-routes).
-
-> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
-
-**Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
-
 ### E0111 `orphan-sub-routes`
 
 A tile declares `sub-routes` but no entry in `app.routes` targets that tile. The nested route table cannot be reached.
@@ -195,6 +187,14 @@ A tile declares `sub-routes` but its body never calls `route-outlet`. The matche
 > `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
 
 **Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
+
+### E0114 `sub-routes-without-wildcard-parent`
+
+A tile declares `sub-routes` but its parent route in `app.routes` is not a wildcard (`/*`) pattern. Without a wildcard parent the runtime never reaches the nested matcher, so the sub-routes can never apply. See [Nested Routes](./routing.md#_3-6-nested-routes).
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
 
 ## E02xx — Types
 
