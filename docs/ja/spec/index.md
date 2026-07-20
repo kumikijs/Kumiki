@@ -20,7 +20,7 @@
 | [テスト](./testing.md) | テスト戦略 |
 | [エラーコード](./errors.md) | エラーコードカタログ（E0001..E08xx） |
 
-以下の 3 つの索引は**機械検証されている**。`packages/tests/spec-index.test.ts` が、全 anchor リンクの実在、examples 索引と `packages/examples/features/` 実体の一致、診断コード索引と[エラーコード](./errors.md)の一致、そして英語版・日本語版 index の構造同期を検証する。コンパイラ側のドリフトガード（`packages/compiler/test/spec-drift.test.ts`、実装 ⇆ errors.md）と合わせて、spec ⇆ 実装 ⇆ examples の三角関係が機械的に閉じる。
+以下の 3 つの索引は**機械検証されている**。`packages/tests/spec-index.test.ts` が、全 anchor リンクの実在、examples 索引と `packages/examples/features/` 配下の `.kumiki` ファイル群（fixture / README / `.scenario.json` 等は対象外）の一致、診断コード索引と[エラーコード](./errors.md)の一致、そして英語版・日本語版 index の構造同期を検証する。コンパイラ側のドリフトガード（`packages/compiler/test/spec-drift.test.ts`、実装 ⇆ errors.md）と合わせて、spec ⇆ 実装 ⇆ examples の三角関係が機械的に閉じる。
 
 ## 層 × 機能マトリクス
 
