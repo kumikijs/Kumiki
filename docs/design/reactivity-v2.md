@@ -25,14 +25,14 @@ Because the whole DOM is discarded on every update, browser/DOM state that lives
 
 `packages/benchmarks/reactivity/reactivity-cost.mjs` mounts generated apps of increasing size in happy-dom and times single-slot updates (each update changes exactly one text node — the semantic minimum). happy-dom is far cheaper than a real browser, so these are a **floor**:
 
-| tiles | nodes recreated / update | nodes changed | waste | median render |
-|------:|-------------------------:|--------------:|------:|--------------:|
-|    10 |                       13 |             1 |   13× |      ~0.12 ms |
-|    50 |                       53 |             1 |   53× |      ~0.43 ms |
-|   200 |                      203 |             1 |  203× |      ~1.40 ms |
-|   500 |                      503 |             1 | 503× |      ~3.88 ms |
+| tiles | full-teardown: nodes / update | keyed diff (#187): nodes / update | changed | waste (pre → post) | median render (pre → post) |
+|------:|------------------------------:|----------------------------------:|--------:|-------------------:|---------------------------:|
+|    10 |                            13 |                                 1 |       1 |         13× → 1×   |    ~0.12 → ~0.03 ms |
+|    50 |                            53 |                                 1 |       1 |         53× → 1×   |    ~0.43 → ~0.04 ms |
+|   200 |                           203 |                                 1 |       1 |        203× → 1×   |    ~1.40 → ~0.10 ms |
+|   500 |                           503 |                                 1 |       1 |        503× → 1×   |    ~3.88 → ~0.19 ms |
 
-The headline is not the absolute time — it is the **linear O(tree-size) cost per update regardless of how little changed**. At 200+ tiles a single keystroke or click already rebuilds 200+ nodes; on a real browser DOM (layout, style recalc, event-listener reattach) the constant is far larger. This is the pressure issue #159 anticipates.
+The pre-#187 headline was not the absolute time — it was the **linear O(tree-size) cost per update regardless of how little changed**. At 200+ tiles a single keystroke or click rebuilt 200+ nodes; on a real browser DOM (layout, style recalc, event-listener reattach) the constant was far larger. Under the keyed diff (structural fallback), a single-slot leaf change now creates exactly one DOM element and decouples render time from total tile count — matching the semantic minimum. The residual `~0.19 ms @ 500 tiles` is happy-dom's per-render overhead (tree walk, prop equality) rather than DOM work.
 
 ## 2. Design decision 1 — granularity: **(c) Hybrid**
 
@@ -104,7 +104,7 @@ For the coordinated release (Decision 2):
 
 Filed against #159:
 
-- **#187 — runtime: tile-level keyed diff** (v0.13). Core of Decision 1(a). Reconcile new vs. mounted `TileNode` tree; reuse unchanged tiles' DOM; rebuild only changed subtrees; retire the whole-tree `replaceChild`. Baseline to beat: §1.1.
+- **#187 — runtime: tile-level keyed diff** (v0.13, **SHIPPED**). Core of Decision 1(a). Reconciles new vs. mounted `TileNode` tree — walker + prop equality kernel live inline in `packages/runtime/src/core.ts` (tsdown's modules build forbids anonymous shared chunks; splitting into a peer file would produce one, so the code is nested rather than moduled out). Reuses unchanged tiles' DOM (preserving focus, caret, `<select>` open state, and event listeners natively — snapshot/restore is now a fallback only for tiles that DID change); rebuilds only changed subtrees; retires the whole-tree `replaceChild`. Baseline collapse in §1.1 above. Identity is structural (position + `kind`) until #188 lands explicit keys.
 - **#188 — compiler,runtime: stable tile identity/key in `AppShape`** (v0.13, coordinated release). Decision 2 + §6. Additive `TileNode.key`, codegen emission, runtime fallback, matched-pair release.
 - **#189 — runtime: populate episode `binds-updated` from actually-patched tiles** (v0.13). Decision 3. Fill the existing field from the diff's touched set; no schema change.
 - **#190 — runtime: preserve browser-internal element state across tile reuse** (`<select>` / `<details>` / `contenteditable` / `<video>`, v0.14). Decision 4 residual. Identity-preserving reconciliation for changed-but-reused tiles; revisit the focus/scroll snapshot fallback.

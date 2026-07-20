@@ -88,10 +88,15 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // JSON-safe chain, KumikiPanic gained a `cause` option, and reportPanic
     // started emitting multi-line stack + cause output so devtools see the
     // root cause instead of just the message.
+    // Bumped to 44KB with the tile-level keyed diff (#187) landed in core.ts:
+    // the reconcile walker + prop equality kernel + per-render mapping ctx
+    // replace the pre-existing full-teardown swap. Payoff is measurable in
+    // `packages/benchmarks/reactivity/reactivity-cost.mjs` (waste× drops from
+    // 503× to 1× on the 500-tile case).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(41_500);
+    expect(total).toBeLessThan(44_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

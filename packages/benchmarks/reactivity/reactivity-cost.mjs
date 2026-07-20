@@ -1,14 +1,19 @@
-// Reactivity re-render cost baseline (issue #159, AC2).
+// Reactivity re-render cost (issue #159 AC2 → #187 keyed diff).
 //
-// Measures the CURRENT coarse-grained runtime model: every state change tears
-// the whole tile tree down and rebuilds it (`core.ts` `render()` →
-// `pickRootTile` → `tileCtx.render` → `target.replaceChild`). A single-slot
-// update recreates EVERY DOM node even though only one text node semantically
-// changes. This harness quantifies that waste across app sizes so a future
-// fine-grained model (reactivity-v2) has a numeric baseline to beat.
+// Measures how many DOM element nodes the runtime CREATES per single-slot
+// update. Under the pre-#187 model this was the whole tree every time (a
+// `target.replaceChild` swap); under the current tile-level keyed diff
+// (`packages/runtime/src/reconcile.ts`, docs/design/reactivity-v2.md §2
+// Decision 1(a)) only rebuilt subtrees create new nodes, so a leaf-only
+// change should create ~1 element. The `waste×` column is `nodes created ÷
+// nodes changed`; a perfect fine-grained model would land at 1×.
 //
-// Same shape as `size-comparison/scripts/*.mjs`: a tsx-run .mjs that prints a
-// monospace table + a `generatedAt` JSON blob. Run:
+// happy-dom is cheaper than a real browser (no layout/style recalc, no
+// listener reattach), so absolute wall-clock here is a floor — the shape
+// (waste× drops sharply, µs/node drops as unnecessary work disappears) is
+// what matters, not the absolute numbers.
+//
+// Run:
 //   pnpm --filter @kumikijs/benchmarks measure:reactivity
 
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -34,8 +39,8 @@ const doc = /** @type {Document} */ (globalThis.document);
 /**
  * Generate a Kumiki app whose `App` tile is a column of `rows` static text
  * tiles plus one heading bound to the `count` slot. Bumping `count` changes a
- * single text node — the theoretical minimum — while the coarse model rebuilds
- * the entire subtree.
+ * single text node — the theoretical minimum — so the diff should rebuild
+ * only the heading subtree and leave every sibling row untouched.
  * @param {number} rows
  */
 function makeSource(rows) {
@@ -90,8 +95,10 @@ function median(xs) {
 }
 
 /**
- * Mount an app of `rows` size, then time single-slot updates that each force a
- * full-tree rebuild via the runtime-injected `_rerender`.
+ * Mount an app of `rows` size, then time single-slot updates and count DOM
+ * element additions per update via a MutationObserver on the mount root. The
+ * observer sees only nodes the diff actually created — under the current
+ * keyed-diff model, that's just the rebuilt subtree of the changed tile.
  * @param {number} rows
  */
 async function measure(rows) {
@@ -100,39 +107,75 @@ async function measure(rows) {
   doc.body.appendChild(root);
   const handle = mount(app, root);
 
-  // Total element nodes recreated on each full rebuild.
-  const nodesRecreated = root.querySelectorAll("*").length;
+  const initialNodes = root.querySelectorAll("*").length;
 
   const rerender = app._rerender;
   if (typeof rerender !== "function") throw new Error("app._rerender missing after mount");
+
+  // Observer counts Element nodes added to the mount subtree since the last
+  // reset. `characterData` mutations (pure text swaps) do not create Elements
+  // so are excluded — this matches the metric's definition of "nodes created".
+  let createdThisUpdate = 0;
+  const observer = new MutationObserver((records) => {
+    for (const rec of records) {
+      for (const n of rec.addedNodes) {
+        if (n.nodeType === 1) createdThisUpdate += 1 + countDescendantElements(n);
+      }
+    }
+  });
+  observer.observe(root, { childList: true, subtree: true });
 
   let n = 0;
   for (let i = 0; i < WARMUP; i++) {
     app.live.count = ++n;
     rerender();
   }
+  // Drain any pending observer records from warmup before the timed loop.
+  observer.takeRecords();
+
   const samples = [];
+  const created = [];
   for (let i = 0; i < ITERATIONS; i++) {
     app.live.count = ++n;
+    createdThisUpdate = 0;
     const t0 = performance.now();
     rerender();
     samples.push(performance.now() - t0);
+    // Flush any records the observer batched — happy-dom fires the callback
+    // synchronously, but taking pending records makes the accounting exact.
+    for (const rec of observer.takeRecords()) {
+      for (const nn of rec.addedNodes) {
+        if (nn.nodeType === 1) createdThisUpdate += 1 + countDescendantElements(nn);
+      }
+    }
+    created.push(createdThisUpdate);
   }
 
+  observer.disconnect();
   handle.dispose();
   root.remove();
 
   const medMs = median(samples);
-  // One update changes exactly one text node ("Count: N"): the semantic minimum.
+  const medCreated = median(created);
+  // One update changes exactly one text node ("Count: N"): the semantic
+  // minimum. Under the keyed diff this manifests as rebuilding the heading
+  // subtree (heading element + its inner text container) — a small constant.
   const nodesChanged = 1;
   return {
     tiles: rows,
-    nodesRecreated,
+    initialNodes,
+    nodesCreatedPerUpdate: medCreated,
     nodesChanged,
-    wasteRatio: nodesRecreated / nodesChanged,
+    wasteRatio: medCreated / nodesChanged,
     renderMedianMs: medMs,
-    usPerNode: (medMs * 1000) / nodesRecreated,
+    usPerCreated: medCreated > 0 ? (medMs * 1000) / medCreated : 0,
   };
+}
+
+/** Recursive Element-descendant count for a freshly-attached node. */
+function countDescendantElements(node) {
+  if (node.nodeType !== 1) return 0;
+  return /** @type {Element} */ (node).querySelectorAll("*").length;
 }
 
 const rows = [];
@@ -140,29 +183,39 @@ for (const n of TILE_COUNTS) rows.push(await measure(n));
 
 // ----- report -----
 
-const headers = ["tiles", "nodes/render", "changed", "waste×", "median ms", "µs/node"];
+const headers = [
+  "tiles",
+  "initial DOM",
+  "created/upd",
+  "changed",
+  "waste×",
+  "median ms",
+  "µs/created",
+];
 const cells = rows.map((r) => [
   String(r.tiles),
-  String(r.nodesRecreated),
+  String(r.initialNodes),
+  String(r.nodesCreatedPerUpdate),
   String(r.nodesChanged),
-  `${r.wasteRatio.toFixed(0)}×`,
+  `${r.wasteRatio.toFixed(1)}×`,
   r.renderMedianMs.toFixed(3),
-  r.usPerNode.toFixed(2),
+  r.usPerCreated.toFixed(2),
 ]);
 const widths = headers.map((h, i) => Math.max(h.length, ...cells.map((c) => c[i].length)));
 const line = (c) => c.map((v, i) => v.padStart(widths[i])).join("  ");
-console.log("\nReactivity re-render cost — current coarse model (full teardown + replace)\n");
+console.log("\nReactivity re-render cost — tile-level keyed diff (#187, structural fallback)\n");
 console.log(line(headers));
 console.log(widths.map((w) => "-".repeat(w)).join("  "));
 for (const c of cells) console.log(line(c));
-console.log("\nEvery single-slot update recreates the whole tree; `changed` is the semantic");
-console.log("minimum (one text node). `waste×` = nodes recreated per node changed.\n");
+console.log("\n`created/upd` = Elements added to the DOM per single-slot update, measured");
+console.log("by MutationObserver. `changed` is the semantic minimum (one text node).");
+console.log("`waste×` = created ÷ changed; a perfect fine-grained model would land at 1×.\n");
 
 console.log(
   JSON.stringify(
     {
       benchmark: "reactivity-cost",
-      model: "coarse: full teardown + replaceChild",
+      model: "keyed diff (structural fallback, #187)",
       warmup: WARMUP,
       iterations: ITERATIONS,
       rows,

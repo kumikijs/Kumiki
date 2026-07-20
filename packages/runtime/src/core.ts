@@ -724,7 +724,14 @@ export function mountCore(
   ensureMotionStyles(app);
   const slotValues = app.live;
 
-  const tileCtx = makeTileCtx(options.tiles ?? {});
+  // Tile-level keyed diff (#187). Each render pass builds a fresh mapping ctx
+  // whose `render` populates a per-pass `TileNode → HTMLElement` map. The
+  // reconcile step diffs the new tree against the previous pass's tree +
+  // map, so unchanged tiles keep their live DOM node (and its focus / caret /
+  // <select> state / event listeners) — only changed subtrees are rebuilt.
+  const tiles = options.tiles ?? {};
+  const ctxWrap = { applyMotion, applyUiEventHandlers, renderMissingTile };
+  let currentMap: TileElementMap = new WeakMap();
 
   // Routing source: provided by the router feature module. A mount without
   // `options.routing` has no router at all — route-slot reads stay static and
@@ -771,6 +778,11 @@ export function mountCore(
   let lastNavSource: "push" | "replace" | "pop" = "push";
 
   let currentRoot: HTMLElement | null = null;
+  // Previously rendered tile tree, kept as the "old" side of the next
+  // reconcile. Cleared to null after a panic-fallback render so the following
+  // pass restarts from a full mount rather than diffing against a discarded
+  // tree.
+  let currentTree: TileNode | null = null;
   let disposed = false;
   // Named timers (`timer(d, name=N)`) are addressable so a reducer can
   // `stop-timer(N)`. Anonymous timers have no handle exposed to the app.
@@ -816,11 +828,69 @@ export function mountCore(
     }
 
     maybeReapplyTheme(app);
-    let dom: HTMLElement;
+    // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
+    // `newMap` (and recursively for its children). Reconcile also writes into
+    // `newMap` when it decides to *reuse* an old element (bypassing render).
+    // Either way, `newMap` becomes `currentMap` at the end of the pass so
+    // next round can find each mounted node's live element in O(1).
+    let newMap: TileElementMap = new WeakMap();
+    let tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
+    let dom: HTMLElement | null = null;
     let renderedTree: TileNode | null = null;
+    let panicked = false;
+    // Rebuild the tree from scratch (used by initial mount, panic fallback,
+    // and reconcile-bailout paths). Rebinds the local `newMap` + `tileCtx`
+    // so partially-populated entries from an aborted attempt are dropped.
+    const fullRender = (tree: TileNode): HTMLElement => {
+      newMap = new WeakMap();
+      tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
+      return tileCtx.render(tree);
+    };
     try {
       renderedTree = pickRootTile(app, slotValues);
-      dom = tileCtx.render(renderedTree);
+      if (currentTree && currentRoot) {
+        // Diff path: reuse unchanged tile DOM in place, rebuild only changed
+        // subtrees. `reconcileTree` returns the (possibly new) root — it can
+        // differ from `currentRoot` if the root tile itself was rebuilt.
+        try {
+          dom = reconcileTree({
+            oldNode: currentTree,
+            oldEl: currentRoot,
+            oldMap: currentMap,
+            newNode: renderedTree,
+            newMap,
+            ctx: tileCtx,
+          });
+        } catch (reconcileErr) {
+          // Reconcile itself broke — safety net: rebuild the whole tree and
+          // swap wholesale, recording the panic so the failure is visible in
+          // the episode log / smoke report rather than silently degrading.
+          reportPanic("render", reconcileErr);
+          episode?.recordPanic({
+            ...panicInfo(reconcileErr, "tile-render"),
+            location: "render",
+          });
+          dom = fullRender(renderedTree);
+          target.replaceChild(dom, currentRoot);
+        }
+      } else {
+        // Initial mount, or first render after a panic reset — no old tree
+        // to diff against.
+        dom = tileCtx.render(renderedTree);
+        if (currentRoot) {
+          target.replaceChild(dom, currentRoot);
+        } else if (options.hydrate && target.firstChild) {
+          // §10.6.2: the SSR HTML is already in `target` (the host injected it
+          // before calling `hydrate`). Replace it with the CSR-rendered tree
+          // wholesale so we never end up with SSR + CSR DOM as siblings. True
+          // identity-preserving hydration (re-using SSR nodes in place) is
+          // out of scope for v1 — the SSR pass exists for first-paint/SEO,
+          // not for DOM stability across the boundary.
+          target.replaceChildren(dom);
+        } else {
+          target.appendChild(dom);
+        }
+      }
     } catch (e) {
       // A render panic NOT caught by a per-tile `error-boundary` (e.g. one under
       // the root) lands here: surface it to a per-route `route.error(<pattern>)`
@@ -833,13 +903,15 @@ export function mountCore(
       episode?.recordPanic({ ...renderRec, location: "render" });
       if (!fireRouteError(renderRec)) {
         dom = renderPanicFallback(e);
+        panicked = true;
       } else {
         // route.error handlers ran — they may have navigated. Re-render once
         // (without retrying the broken tile) and use whatever the next pick
-        // produces. If the re-render still throws, fall back to the panic UI.
+        // produces. Always full-render on the retry: the previous tree is now
+        // suspect. If the re-render still throws, fall back to the panic UI.
         try {
           renderedTree = pickRootTile(app, slotValues);
-          dom = tileCtx.render(renderedTree);
+          dom = fullRender(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
           // The second render also panicked; keep the episode-log honest by
@@ -847,23 +919,26 @@ export function mountCore(
           episode?.recordPanic({ ...panicInfo(e2, "tile-render"), location: "render" });
           renderedTree = null;
           dom = renderPanicFallback(e2);
+          panicked = true;
         }
       }
-    }
-    if (currentRoot) {
-      target.replaceChild(dom, currentRoot);
-    } else if (options.hydrate && target.firstChild) {
-      // §10.6.2: the SSR HTML is already in `target` (the host injected it
-      // before calling `hydrate`). Replace it with the CSR-rendered tree
-      // wholesale so we never end up with SSR + CSR DOM as siblings. True
-      // identity-preserving hydration (re-using SSR nodes in place) is out
-      // of scope for v1 — the SSR pass exists for first-paint/SEO, not for
-      // DOM stability across the boundary.
-      target.replaceChildren(dom);
-    } else {
-      target.appendChild(dom);
+      // Panic path always swaps wholesale (never diffs against a possibly-
+      // corrupt tree).
+      if (currentRoot) {
+        target.replaceChild(dom, currentRoot);
+      } else if (options.hydrate && target.firstChild) {
+        target.replaceChildren(dom);
+      } else {
+        target.appendChild(dom);
+      }
     }
     currentRoot = dom;
+    // On panic (either the primary render threw and no route.error recovered
+    // it, or the recovery render also threw), abandon the diff baseline so the
+    // next render starts from a clean full mount. Otherwise carry the fresh
+    // tree + map forward as the next pass's `old` side.
+    currentTree = panicked ? null : renderedTree;
+    currentMap = newMap;
 
     if (snap) {
       let sel: Element | null = snap.bind
@@ -2084,8 +2159,36 @@ function renderPanicFallback(e: unknown): HTMLElement {
   return div;
 }
 
-/** Build the recursion context that resolves tile kinds through `tiles`. */
-function makeTileCtx(tiles: TileRenderers): TileCtx {
+// ---- tile-level keyed diff (issue #187) ----
+// The reconcile pass keeps `core.ts` as the single value-owner of the render
+// path (tsdown's modules build treats every non-entry file as an anonymous
+// shared chunk, which the CLI test asserts must never appear — see
+// `packages/runtime/tsdown.config.ts`). Types stay local; code is nested
+// here rather than split into a peer module for that reason.
+//
+// Design: docs/design/reactivity-v2.md §2 Decision 1(a). Walk new vs. mounted
+// `TileNode` in parallel, keep the DOM node for tiles whose data props did
+// not change (natively preserving focus / caret / `<select>` open state /
+// event listeners), rebuild only changed subtrees. Identity is structural
+// (position + `kind`); explicit `TileNode.key` is deferred to #188.
+//
+// Reused tiles are NEVER re-touched: `applyMotion` restarts animations, and
+// `applyUiEventHandlers` uses `addEventListener` and would multiply-register
+// on every reuse. Because our equality check compares DATA props (ignoring
+// function-valued fields), the OLD closure on a reused element is
+// behaviourally equivalent to what a fresh render would install.
+
+type TileElementMap = WeakMap<TileNode, HTMLElement>;
+
+function makeMappingTileCtx(
+  tiles: TileRenderers,
+  map: TileElementMap,
+  wrap: {
+    applyMotion: (el: HTMLElement, props: TileProps | undefined) => void;
+    applyUiEventHandlers: (el: HTMLElement, props: TileProps | undefined) => void;
+    renderMissingTile: (node: TileNode) => HTMLElement;
+  },
+): TileCtx {
   const lookup = tiles as Record<
     string,
     ((node: TileNode, ctx: TileCtx) => HTMLElement) | undefined
@@ -2093,19 +2196,132 @@ function makeTileCtx(tiles: TileRenderers): TileCtx {
   const ctx: TileCtx = {
     render(node: TileNode): HTMLElement {
       const renderer = lookup[node.kind];
-      const el = renderer ? renderer(node, ctx) : renderMissingTile(node);
-      // A `motion` prop applies to any tile uniformly (M5). The keyframes/classes
-      // are injected once at mount by ensureMotionStyles.
-      applyMotion(el, node.props);
-      // ui.key / ui.hover / ui.focus / ui.blur handlers (§1.6.1) — codegen
-      // lifts these into onKeyDown / onMouseEnter / onFocus / onBlur props.
-      // Wiring them once on the universal render output keeps every tile
-      // uniform (no per-renderer plumbing).
-      applyUiEventHandlers(el, node.props);
+      const el = renderer ? renderer(node, ctx) : wrap.renderMissingTile(node);
+      wrap.applyMotion(el, node.props);
+      wrap.applyUiEventHandlers(el, node.props);
+      map.set(node, el);
       return el;
     },
   };
   return ctx;
+}
+
+function reconcileTree(args: {
+  oldNode: TileNode;
+  oldEl: HTMLElement;
+  oldMap: TileElementMap;
+  newNode: TileNode;
+  newMap: TileElementMap;
+  ctx: TileCtx;
+}): HTMLElement {
+  return reconcileNode(args.oldNode, args.oldEl, args.oldMap, args.newNode, args.newMap, args.ctx);
+}
+
+function reconcileNode(
+  oldNode: TileNode,
+  oldEl: HTMLElement,
+  oldMap: TileElementMap,
+  newNode: TileNode,
+  newMap: TileElementMap,
+  ctx: TileCtx,
+): HTMLElement {
+  // Different kind → whole subtree is a different thing. Build fresh, splice.
+  if (oldNode.kind !== newNode.kind) {
+    return replaceWithFreshTile(oldEl, newNode, ctx);
+  }
+  // Same kind — inspect this node's own data props (everything except
+  // `children`, ignoring function-valued entries). If they differ, the element
+  // itself needs to be reconstructed: e.g. an input's `value` / `placeholder`
+  // / `bind` changed, a heading's `text` changed. Rebuild the whole subtree;
+  // #188's keyed diff will let us reuse grandchildren across a parent rebuild.
+  if (!tileFieldsEqual(oldNode, newNode)) {
+    return replaceWithFreshTile(oldEl, newNode, ctx);
+  }
+  const oldChildren = getTileChildren(oldNode);
+  const newChildren = getTileChildren(newNode);
+  if (oldChildren.length === 0 && newChildren.length === 0) {
+    newMap.set(newNode, oldEl);
+    return oldEl;
+  }
+  // Structural length change without keys → subtree rebuild. Preserves
+  // correctness at the cost of reuse; #188 will lift this restriction.
+  if (oldChildren.length !== newChildren.length) {
+    return replaceWithFreshTile(oldEl, newNode, ctx);
+  }
+  // Same length: walk in parallel, reconcile each child pair. The old child's
+  // live element is looked up in `oldMap`; if it's missing (defensive — could
+  // happen if a tile renderer built children outside the mapping ctx, but the
+  // built-in renderers all go through `ctx.render`), conservatively rebuild
+  // the parent subtree.
+  for (let i = 0; i < newChildren.length; i++) {
+    const oldChildNode = oldChildren[i];
+    const newChildNode = newChildren[i];
+    if (!oldChildNode || !newChildNode) return replaceWithFreshTile(oldEl, newNode, ctx);
+    const oldChildEl = oldMap.get(oldChildNode);
+    if (!oldChildEl) return replaceWithFreshTile(oldEl, newNode, ctx);
+    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx);
+  }
+  newMap.set(newNode, oldEl);
+  return oldEl;
+}
+
+function replaceWithFreshTile(oldEl: HTMLElement, newNode: TileNode, ctx: TileCtx): HTMLElement {
+  const fresh = ctx.render(newNode);
+  const parent = oldEl.parentNode;
+  if (parent) parent.replaceChild(fresh, oldEl);
+  return fresh;
+}
+
+// Every TileNode variant that carries a subtree spells it `children`
+// (`TileNode[]`); variants without children just have the property absent.
+const EMPTY_TILES: TileNode[] = [];
+function getTileChildren(node: TileNode): TileNode[] {
+  const c = (node as { children?: TileNode[] }).children;
+  return Array.isArray(c) ? c : EMPTY_TILES;
+}
+
+// Top-level TileNode keys the equality check ignores. `kind` is the
+// discriminant (already handled by the caller); `children` is walked
+// separately (each child is reconciled recursively).
+const TILE_SKIP_TOP: ReadonlySet<string> = new Set(["kind", "children"]);
+
+function tileFieldsEqual(a: TileNode, b: TileNode): boolean {
+  const oa = a as unknown as Record<string, unknown>;
+  const ob = b as unknown as Record<string, unknown>;
+  // Union of keys — a field present on only one side is a difference unless
+  // both values are equal (and `undefined === undefined`, so an absent key
+  // and an explicit-undefined key compare equal — matches TileNode usage
+  // where optional fields are simply not emitted).
+  const keys = new Set<string>();
+  for (const k of Object.keys(oa)) if (!TILE_SKIP_TOP.has(k)) keys.add(k);
+  for (const k of Object.keys(ob)) if (!TILE_SKIP_TOP.has(k)) keys.add(k);
+  for (const k of keys) if (!tileValueEqual(oa[k], ob[k])) return false;
+  return true;
+}
+
+function tileValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  // Ignore closure identity for handler-shaped fields — codegen mints new
+  // closures per render, but a same-data reused tile keeps working with the
+  // old closure (which references the same stable dispatch seam).
+  if (typeof a === "function" && typeof b === "function") return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!tileValueEqual(a[i], b[i])) return false;
+    return true;
+  }
+  // Plain object — key-wise compare. Anything exotic (Date, Map, DOM node)
+  // should NOT appear inside TileNode props (the compiler emits only data);
+  // conservatively treat two exotic instances as unequal so a caller who does
+  // smuggle one gets a rebuild rather than silent reuse.
+  const oa = a as Record<string, unknown>;
+  const ob = b as Record<string, unknown>;
+  const keys = new Set<string>([...Object.keys(oa), ...Object.keys(ob)]);
+  for (const k of keys) if (!tileValueEqual(oa[k], ob[k])) return false;
+  return true;
 }
 
 function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
