@@ -253,14 +253,108 @@ describe("runtime: tile-level keyed diff (#187)", () => {
       { _live: { n: 0 } },
     );
     const { dispose } = mount(app, root);
+    // Capture the button element BEFORE any re-renders. If reuse breaks and
+    // reconcile silently rebuilds it, `savedBtn !== root.querySelector("button")`
+    // will catch the fresh-render case (which would install exactly one
+    // fresh listener and pass the click count check by coincidence).
+    const savedBtn = root.querySelector("button") as HTMLButtonElement;
     // Force several re-renders. If reconcile re-attached handlers, each click
     // below would fire once per prior render.
     app._rerender?.();
     app._rerender?.();
     app._rerender?.();
-    const btn = root.querySelector("button") as HTMLButtonElement;
-    btn.click();
+    expect(root.querySelector("button")).toBe(savedBtn);
+    savedBtn.click();
     expect(clicks).toBe(1);
+    dispose();
+  });
+
+  it("rebuilds the element in place when the tile kind at a position changes", () => {
+    // Covers the `oldNode.kind !== newNode.kind` branch — the walker must
+    // splice a fresh element at that position while preserving siblings.
+    let showHeading = true;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [
+          { kind: "text", text: "top" },
+          showHeading ? { kind: "heading", text: "swap me" } : { kind: "text", text: "swap me" },
+          { kind: "text", text: "bottom" },
+        ],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const savedTop = column.children[0];
+    const savedMiddle = column.children[1];
+    const savedBottom = column.children[2];
+    expect(savedMiddle.tagName.toLowerCase()).toBe("h1");
+
+    showHeading = false;
+    app._rerender?.();
+
+    // Same column, same top / bottom, but middle became a fresh element of a
+    // different tag (`text` renders a <div>-family element, not <h1>).
+    expect(root.firstElementChild).toBe(column);
+    expect(column.children[0]).toBe(savedTop);
+    expect(column.children[2]).toBe(savedBottom);
+    expect(column.children[1]).not.toBe(savedMiddle);
+    expect(column.children[1].tagName.toLowerCase()).not.toBe("h1");
+    expect(column.children[1].textContent).toBe("swap me");
+    dispose();
+  });
+
+  it("preserves intermediate container identity on a deep-tree leaf change", () => {
+    // Every level between the root and the changing leaf must reuse its DOM
+    // node — this locks in that the walker recurses through unchanged parents
+    // instead of rebuilding the whole path.
+    const live = { n: 0 };
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [
+          { kind: "text", text: "sibling row" },
+          {
+            kind: "box",
+            children: [
+              {
+                kind: "card",
+                children: [{ kind: "heading", text: `deep ${live.n}` }],
+              },
+            ],
+          },
+        ],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const savedSibling = column.children[0];
+    const savedBox = column.children[1];
+    const savedCard = savedBox.children[0];
+    const savedHeading = savedCard.children[0];
+    expect(savedHeading.textContent).toBe("deep 0");
+
+    live.n = 7;
+    app._rerender?.();
+
+    // Root, sibling row, and every ancestor of the changed leaf keep identity.
+    expect(root.firstElementChild).toBe(column);
+    expect(column.children[0]).toBe(savedSibling);
+    expect(column.children[1]).toBe(savedBox);
+    expect(savedBox.children[0]).toBe(savedCard);
+    // Only the leaf whose text changed was rebuilt.
+    expect(savedCard.children[0]).not.toBe(savedHeading);
+    expect(savedCard.children[0].textContent).toBe("deep 7");
     dispose();
   });
 });

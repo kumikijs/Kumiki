@@ -3,10 +3,12 @@
 // Measures how many DOM element nodes the runtime CREATES per single-slot
 // update. Under the pre-#187 model this was the whole tree every time (a
 // `target.replaceChild` swap); under the current tile-level keyed diff
-// (`packages/runtime/src/reconcile.ts`, docs/design/reactivity-v2.md §2
-// Decision 1(a)) only rebuilt subtrees create new nodes, so a leaf-only
-// change should create ~1 element. The `waste×` column is `nodes created ÷
-// nodes changed`; a perfect fine-grained model would land at 1×.
+// (walker + prop equality kernel live inline in `packages/runtime/src/core.ts`
+// under the `// ---- tile-level keyed diff (issue #187) ----` section — see
+// docs/design/reactivity-v2.md §2 Decision 1(a)) only rebuilt subtrees create
+// new nodes, so a leaf-only change should create ~1 element. The `waste×`
+// column is `nodes created ÷ nodes changed`; a perfect fine-grained model
+// would land at 1×.
 //
 // happy-dom is cheaper than a real browser (no layout/style recalc, no
 // listener reattach), so absolute wall-clock here is a floor — the shape
@@ -157,6 +159,16 @@ async function measure(rows) {
 
   const medMs = median(samples);
   const medCreated = median(created);
+  // Invariant: a single-slot leaf change MUST create ≥1 Element (the rebuilt
+  // heading subtree). If we see 0, the MutationObserver never fired or the
+  // observe target detached — either way the metric would silently report
+  // `waste× 0×` / `0.00 µs/created` as "perfect", masking the regression the
+  // benchmark exists to catch. Fail loud instead.
+  if (!(medCreated >= 1)) {
+    throw new Error(
+      `reactivity benchmark: expected medCreated >= 1 for ${rows} tiles, got ${medCreated} — MutationObserver never observed the diff's element addition`,
+    );
+  }
   // One update changes exactly one text node ("Count: N"): the semantic
   // minimum. Under the keyed diff this manifests as rebuilding the heading
   // subtree (heading element + its inner text container) — a small constant.

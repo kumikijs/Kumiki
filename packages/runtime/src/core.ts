@@ -865,10 +865,13 @@ export function mountCore(
           // Reconcile itself broke — safety net: rebuild the whole tree and
           // swap wholesale, recording the panic so the failure is visible in
           // the episode log / smoke report rather than silently degrading.
-          reportPanic("render", reconcileErr);
+          // `location: "reconcile"` distinguishes this from a user tile-render
+          // throw (`location: "render"`) so debugging points at the diff kernel
+          // (or a detached-parent invariant) rather than a tile renderer.
+          reportPanic("reconcile", reconcileErr);
           episode?.recordPanic({
             ...panicInfo(reconcileErr, "tile-render"),
-            location: "render",
+            location: "reconcile",
           });
           dom = fullRender(renderedTree);
           target.replaceChild(dom, currentRoot);
@@ -2268,7 +2271,17 @@ function reconcileNode(
 function replaceWithFreshTile(oldEl: HTMLElement, newNode: TileNode, ctx: TileCtx): HTMLElement {
   const fresh = ctx.render(newNode);
   const parent = oldEl.parentNode;
-  if (parent) parent.replaceChild(fresh, oldEl);
+  // No parent → the caller's `oldEl` is detached from the live tree. If we
+  // silently returned `fresh` the caller would install a floating subtree as
+  // `currentRoot` and every subsequent `_rerender` would run against DOM the
+  // user cannot see. Throw so the outer reconcile catch bails to a full
+  // rebuild + `target.replaceChild(...)` and the failure is recorded.
+  if (!parent) {
+    throw new Error(
+      `reconcile: cannot splice new tile "${newNode.kind}" — old element has no parent (subtree detached from live DOM)`,
+    );
+  }
+  parent.replaceChild(fresh, oldEl);
   return fresh;
 }
 
