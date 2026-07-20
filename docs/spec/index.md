@@ -20,7 +20,7 @@ Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/
 | [Testing](./testing.md) | Testing strategy |
 | [Error Codes](./errors.md) | Error code catalog (E0001..E08xx) |
 
-The three indices below are **machine-checked**: `packages/tests/spec-index.test.ts` verifies that every anchor link resolves, that the examples index lists exactly the files under `packages/examples/features/`, that the diagnostic code index matches [Error Codes](./errors.md), and that the English and Japanese indices stay structurally in sync. Together with the compiler-side drift guard (`packages/compiler/test/spec-drift.test.ts`, implementation ⇆ errors.md), the spec ⇆ implementation ⇆ examples triangle is closed mechanically.
+The three indices below are **machine-checked**: `packages/tests/spec-index.test.ts` verifies that every anchor link resolves, that the examples index lists exactly the `.kumiki` files under `packages/examples/features/` (fixtures, READMEs, `.scenario.json` files, and other non-`.kumiki` files are out of scope), that the diagnostic code index matches [Error Codes](./errors.md), and that the English and Japanese indices stay structurally in sync. Together with the compiler-side drift guard (`packages/compiler/test/spec-drift.test.ts`, implementation ⇆ errors.md), the spec ⇆ implementation ⇆ examples triangle is closed mechanically.
 
 ## Layer × Feature Matrix
 
