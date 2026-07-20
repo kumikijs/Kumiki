@@ -155,8 +155,19 @@ async function initRenderers(): Promise<void> {
       if (!/language.*kumiki.*is not loaded/i.test(msg)) console.warn(msg);
     },
   };
-  for (const [label, dir] of Object.entries(tracks) as [TrackLabel, string][]) {
-    const renderer = await createMarkdownRenderer(dir, config.markdown, config.site.base, logger);
+  // Build both renderers in parallel: each spins up its own markdown-it +
+  // Shiki instance, so serialising the two roughly doubles the wall-clock —
+  // enough to push the CI runner past Vitest's default 5s beforeAll budget.
+  const built = await Promise.all(
+    (Object.entries(tracks) as [TrackLabel, string][]).map(
+      async ([label, dir]) =>
+        [
+          label,
+          await createMarkdownRenderer(dir, config.markdown, config.site.base, logger),
+        ] as const,
+    ),
+  );
+  for (const [label, renderer] of built) {
     if (!renderer) throw new Error(`[${label}] createMarkdownRenderer returned no renderer`);
     renderers[label] = renderer;
   }
@@ -350,9 +361,12 @@ function symmetricDiff(a: Set<string>, b: Set<string>): { onlyA: string[]; onlyB
   };
 }
 
+// 30s: local wall-clock is ~500ms, but CI runners (cold cache, slower disk)
+// have been observed to take several seconds spinning up two markdown-it +
+// Shiki instances, exceeding Vitest's default 5s beforeAll budget.
 beforeAll(async () => {
   await initRenderers();
-});
+}, 30_000);
 
 describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)", (label, dir) => {
   const index = read(dir, "index.md");
