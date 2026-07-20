@@ -14,7 +14,7 @@
     "@kumikijs/runtime": "workspace:*",
     "happy-dom": "catalog:",
     "typescript": "catalog:",
-    "vitepress": "^1.6.4",
+    "vitepress": "catalog:",
     "vitest": "catalog:"
   }
 }

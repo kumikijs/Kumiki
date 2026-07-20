@@ -33,15 +33,21 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createMarkdownRenderer, type MarkdownRenderer } from "vitepress";
+import { createMarkdownRenderer, type MarkdownRenderer, resolveConfig } from "vitepress";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
-const tracks = {
-  en: join(repoRoot, "docs", "spec"),
-  ja: join(repoRoot, "docs", "ja", "spec"),
-} as const;
+const docsRoot = join(repoRoot, "docs");
+
+// Two-track fixed by design: EN under docs/spec/, JA under docs/ja/spec/. The
+// key type is load-bearing — collectAnchors, initRenderers, and the
+// describe.each callback all rely on it to keep drive-by additions honest.
+type TrackLabel = "en" | "ja";
+const tracks: Record<TrackLabel, string> = {
+  en: join(docsRoot, "spec"),
+  ja: join(docsRoot, "ja", "spec"),
+};
 const featuresDir = join(repoRoot, "packages", "examples", "features");
 
 // The 7 layers are language-independent, so the layer columns can be validated
@@ -54,7 +60,7 @@ const LAYERS = new Set(["type", "slot", "effect", "reducer", "tile", "fn", "app"
 // key so both per-track vocabulary checks and EN⇆JA sync run on one basis.
 // An unknown display term throws in normalizeFeature: typos and drive-by new
 // vocabulary are caught rather than silently splitting the code/example sets.
-const FEATURE_DISPLAY_TO_KEY: Record<"en" | "ja", Record<string, string>> = {
+const FEATURE_DISPLAY_TO_KEY: Record<TrackLabel, Record<string, string>> = {
   en: {
     core: "core",
     stdlib: "stdlib",
@@ -77,8 +83,8 @@ const FEATURE_DISPLAY_TO_KEY: Record<"en" | "ja", Record<string, string>> = {
   },
 };
 
-function normalizeFeature(raw: string, label: string): string {
-  const map = FEATURE_DISPLAY_TO_KEY[label as "en" | "ja"];
+function normalizeFeature(raw: string, label: TrackLabel): string {
+  const map = FEATURE_DISPLAY_TO_KEY[label];
   const key = map?.[raw];
   if (!key) {
     throw new Error(
@@ -127,23 +133,47 @@ function* nonFenceLines(md: string): Generator<string> {
 // duplicate-suffix logic all come from the same code path that ships anchors
 // to production — so a VitePress bump can't drift the two out of step and
 // leave the test green while the built site has dead in-page links.
-const renderers: Partial<Record<"en" | "ja", MarkdownRenderer>> = {};
+//
+// The renderer is built from `resolveConfig(docsRoot)`, so any future
+// `markdown.anchor.slugify`, custom `permalink`, or other markdown-it plugin
+// added to `docs/.vitepress/config.ts` flows into this test automatically.
+// Passing `undefined` here (letting VitePress' defaults apply on our side but
+// not the site's) would reopen exactly the drift this guard exists to catch.
+const renderers: Record<TrackLabel, MarkdownRenderer | null> = { en: null, ja: null };
 
 async function initRenderers(): Promise<void> {
-  // VitePress logs a per-block warning for the `kumiki` grammar (not installed
-  // in this test workspace) — pass a silent logger so the noise doesn't drown
-  // the actual test output.
-  const silentLogger = { warn: () => {} };
-  for (const [label, dir] of Object.entries(tracks) as ["en" | "ja", string][]) {
-    renderers[label] = await createMarkdownRenderer(dir, undefined, "/", silentLogger);
+  const config = await resolveConfig(docsRoot);
+  // The `kumiki` Shiki grammar is only registered when the docs are built via
+  // the full VitePress pipeline; the raw MarkdownRenderer we build here doesn't
+  // register it, so shiki emits a fallback-to-txt warning per code block. Drop
+  // ONLY those messages and let everything else (unresolved plugins, broken
+  // `{#id}` overrides, shiki theme errors, …) surface — otherwise a real
+  // regression would hide behind a black-hole logger and the downstream
+  // "anchor does not exist" would be the only, misleading, diagnostic.
+  const logger = {
+    warn: (msg: string) => {
+      if (!/language.*kumiki.*is not loaded/i.test(msg)) console.warn(msg);
+    },
+  };
+  for (const [label, dir] of Object.entries(tracks) as [TrackLabel, string][]) {
+    const renderer = await createMarkdownRenderer(dir, config.markdown, config.site.base, logger);
+    if (!renderer) throw new Error(`[${label}] createMarkdownRenderer returned no renderer`);
+    renderers[label] = renderer;
   }
 }
 
-function collectAnchors(label: "en" | "ja", md: string): Set<string> {
+function collectAnchors(label: TrackLabel, md: string): Set<string> {
   const renderer = renderers[label];
   if (!renderer) throw new Error(`[${label}] MarkdownRenderer was not initialized`);
   const html = renderer.render(md);
-  return new Set([...html.matchAll(/<h[1-6][^>]*\bid="([^"]+)"/g)].map((m) => m[1]));
+  // Match both quoting styles VitePress could plausibly emit — the current
+  // build uses `id="…"`, but a version bump swapping to single quotes must
+  // fail loudly at the empty-set floor below (via the caller), not slip
+  // through as an empty Set.
+  const anchors = new Set(
+    [...html.matchAll(/<h[1-6][^>]*\bid=["']([^"']+)["']/g)].map((m) => m[1]),
+  );
+  return anchors;
 }
 
 interface DocLink {
@@ -292,7 +322,11 @@ interface FeatureFileSet {
 }
 
 function collectFeatureFilesOnDisk(): FeatureFileSet {
-  const relPaths = (readdirSync(featuresDir, { recursive: true }) as string[])
+  // `withFileTypes:false` (the default here) returns string[]; the runtime
+  // guard defends against a future switch to `withFileTypes:true` silently
+  // widening the type without us noticing.
+  const relPaths = readdirSync(featuresDir, { recursive: true })
+    .filter((p): p is string => typeof p === "string")
     .map((p) => p.replace(/\\/g, "/"))
     .filter((p) => p.endsWith(".kumiki"));
   const byBasename = new Map<string, string[]>();
@@ -304,7 +338,7 @@ function collectFeatureFilesOnDisk(): FeatureFileSet {
   }
   const duplicates = [...byBasename.entries()]
     .filter(([, paths]) => paths.length > 1)
-    .map(([basename, paths]) => ({ basename, paths: paths.sort() }))
+    .map(([name, paths]) => ({ basename: name, paths: paths.sort() }))
     .sort((a, b) => a.basename.localeCompare(b.basename));
   return { basenames: new Set(byBasename.keys()), duplicates };
 }
@@ -320,8 +354,7 @@ beforeAll(async () => {
   await initRenderers();
 });
 
-describe.each(Object.entries(tracks))("spec index (%s)", (rawLabel, dir) => {
-  const label = rawLabel as "en" | "ja";
+describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)", (label, dir) => {
   const index = read(dir, "index.md");
 
   it("has enough extractable content for the guards to be meaningful", () => {
@@ -356,6 +389,17 @@ describe.each(Object.entries(tracks))("spec index (%s)", (rawLabel, dir) => {
       let anchors = anchorCache.get(link.doc);
       if (!anchors) {
         anchors = collectAnchors(label, read(dir, link.doc));
+        // Extraction-integrity floor mirroring MIN_LINKS/MIN_CODES: if the
+        // <h…> id regex breaks (VitePress swapping to a shape the pattern
+        // doesn't match, id being dropped, …) the Set collapses to empty and
+        // every anchor lookup below would report "does not exist" — a swarm
+        // of misleading errors instead of the true root cause. Every real
+        // spec doc has at least one heading, so 0 anchors is always a bug.
+        if (anchors.size === 0) {
+          expect.fail(
+            `[${label}] extracted 0 anchors from ${link.doc} — the heading-id regex likely broke against a VitePress render change`,
+          );
+        }
         anchorCache.set(link.doc, anchors);
       }
       if (link.anchor === null) continue;
@@ -384,6 +428,20 @@ describe.each(Object.entries(tracks))("spec index (%s)", (rawLabel, dir) => {
     }
   });
 
+  // Split off from the symmetric-difference test below so the CI failure name
+  // ("basenames are unique …") names the actual violation instead of the
+  // downstream "missing from index" cascade a collapsed Set would cause.
+  it("example files have unique basenames across features/ subfolders", () => {
+    const { duplicates } = collectFeatureFilesOnDisk();
+    if (duplicates.length > 0) {
+      expect.fail(
+        `[${label}] two or more example files share a basename under packages/examples/features/ — the index keys by basename, so this is ambiguous:\n${duplicates
+          .map((d) => `  ${d.basename} → ${d.paths.join(", ")}`)
+          .join("\n")}`,
+      );
+    }
+  });
+
   it("examples table lists exactly the files under packages/examples/features/", () => {
     const rows = exampleRows(index, label);
     // Symmetric with the code table's duplicate check below: a repeated
@@ -394,14 +452,7 @@ describe.each(Object.entries(tracks))("spec index (%s)", (rawLabel, dir) => {
     expect(new Set(files).size, `[${label}] duplicate rows in the index examples table`).toBe(
       files.length,
     );
-    const { basenames: onDisk, duplicates } = collectFeatureFilesOnDisk();
-    if (duplicates.length > 0) {
-      expect.fail(
-        `[${label}] two or more example files share a basename under packages/examples/features/ — the index keys by basename, so this is ambiguous:\n${duplicates
-          .map((d) => `  ${d.basename} → ${d.paths.join(", ")}`)
-          .join("\n")}`,
-      );
-    }
+    const { basenames: onDisk } = collectFeatureFilesOnDisk();
     const { onlyA, onlyB } = symmetricDiff(onDisk, exampleFileSet(index, label));
     const msgs: string[] = [];
     if (onlyA.length > 0) {
