@@ -9,13 +9,17 @@
 // Guarded edges (spec-drift.test.ts in packages/compiler already pins
 // implementation ⇆ errors.md, so together the triangle closes):
 //   1. index ⇆ spec body — every `./doc.md#anchor` link resolves to a real
-//      heading anchor (computed with the same slugify VitePress uses) AND the
-//      anchor starts with the label's own section/code prefix, so a link that
-//      resolves but points at the wrong section is caught too. A separate check
-//      forbids bare `doc.md#…` links (no `./`), which would slip past the
-//      anchor scan entirely.
+//      heading anchor. Anchors are extracted by rendering each spec doc through
+//      VitePress' own `createMarkdownRenderer` and reading the emitted
+//      `<h1..6 id="…">` attributes, so there is no second slugify implementation
+//      to keep in step with VitePress. The label prefix check (§1.3 → `_1-3`)
+//      also runs, so a link that resolves but points at the wrong section is
+//      caught too. A separate check forbids bare `doc.md#…` links (no `./`),
+//      which would slip past the anchor scan entirely.
 //   2. index ⇆ examples — the examples table lists exactly the files under
-//      packages/examples/features/ (symmetric difference = 0).
+//      packages/examples/features/ (symmetric difference = 0). The disk walk is
+//      recursive, and two files sharing a basename across subfolders is a hard
+//      error since the table keys by basename alone.
 //   3. index ⇆ errors.md — the code table lists exactly the (code, kind) pairs
 //      errors.md documents, so dropping one row of a double-assigned code, or
 //      renaming a kind on one side, fails.
@@ -27,10 +31,10 @@
 // empty and passing silently.
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { slugify } from "@mdit-vue/shared";
-import { describe, expect, it } from "vitest";
+import { createMarkdownRenderer, type MarkdownRenderer } from "vitepress";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
@@ -117,24 +121,29 @@ function* nonFenceLines(md: string): Generator<string> {
   }
 }
 
-// Heading → anchor set, mirroring the VitePress pipeline: headings outside
-// fenced code blocks, explicit `{#id}` overrides, @mdit-vue/shared slugify of
-// the raw heading text, and markdown-it-anchor's `-1`, `-2`… suffixes for
-// duplicate slugs. (The spec's headings carry no inline markup, so slugifying
-// the raw line matches what VitePress emits.)
-function collectAnchors(md: string): Set<string> {
-  const anchors = new Set<string>();
-  const used = new Map<string, number>();
-  for (const line of nonFenceLines(md)) {
-    const heading = line.match(/^#{1,6}\s+(.+?)\s*$/);
-    if (!heading) continue;
-    const explicit = heading[1].match(/\{#([^}]+)\}\s*$/);
-    const slug = explicit ? explicit[1] : slugify(heading[1]);
-    const n = used.get(slug) ?? 0;
-    used.set(slug, n + 1);
-    anchors.add(n === 0 ? slug : `${slug}-${n}`);
+// Heading → anchor set, extracted from VitePress' own rendered HTML. Using
+// VitePress' `createMarkdownRenderer` (instead of a second slugify copy on our
+// side) means the fenced-block skip, `{#id}` overrides, Unicode NFKD, and
+// duplicate-suffix logic all come from the same code path that ships anchors
+// to production — so a VitePress bump can't drift the two out of step and
+// leave the test green while the built site has dead in-page links.
+const renderers: Partial<Record<"en" | "ja", MarkdownRenderer>> = {};
+
+async function initRenderers(): Promise<void> {
+  // VitePress logs a per-block warning for the `kumiki` grammar (not installed
+  // in this test workspace) — pass a silent logger so the noise doesn't drown
+  // the actual test output.
+  const silentLogger = { warn: () => {} };
+  for (const [label, dir] of Object.entries(tracks) as ["en" | "ja", string][]) {
+    renderers[label] = await createMarkdownRenderer(dir, undefined, "/", silentLogger);
   }
-  return anchors;
+}
+
+function collectAnchors(label: "en" | "ja", md: string): Set<string> {
+  const renderer = renderers[label];
+  if (!renderer) throw new Error(`[${label}] MarkdownRenderer was not initialized`);
+  const html = renderer.render(md);
+  return new Set([...html.matchAll(/<h[1-6][^>]*\bid="([^"]+)"/g)].map((m) => m[1]));
 }
 
 interface DocLink {
@@ -272,6 +281,34 @@ function errorsMdCodeKinds(dir: string): string[] {
   return out;
 }
 
+// Recursive walk under features/, so a future subfolder reorg doesn't silently
+// shrink the "on disk" set to the top level. The index lists examples by
+// basename, so we key the on-disk set by basename too — but two files sharing
+// a basename across subfolders would collapse into one Set entry and let an
+// asymmetry slip through, so we surface that as a hard error.
+interface FeatureFileSet {
+  basenames: Set<string>;
+  duplicates: Array<{ basename: string; paths: string[] }>;
+}
+
+function collectFeatureFilesOnDisk(): FeatureFileSet {
+  const relPaths = (readdirSync(featuresDir, { recursive: true }) as string[])
+    .map((p) => p.replace(/\\/g, "/"))
+    .filter((p) => p.endsWith(".kumiki"));
+  const byBasename = new Map<string, string[]>();
+  for (const rel of relPaths) {
+    const base = basename(rel);
+    const list = byBasename.get(base) ?? [];
+    list.push(rel);
+    byBasename.set(base, list);
+  }
+  const duplicates = [...byBasename.entries()]
+    .filter(([, paths]) => paths.length > 1)
+    .map(([basename, paths]) => ({ basename, paths: paths.sort() }))
+    .sort((a, b) => a.basename.localeCompare(b.basename));
+  return { basenames: new Set(byBasename.keys()), duplicates };
+}
+
 function symmetricDiff(a: Set<string>, b: Set<string>): { onlyA: string[]; onlyB: string[] } {
   return {
     onlyA: [...a].filter((x) => !b.has(x)).sort(),
@@ -279,7 +316,12 @@ function symmetricDiff(a: Set<string>, b: Set<string>): { onlyA: string[]; onlyB
   };
 }
 
-describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
+beforeAll(async () => {
+  await initRenderers();
+});
+
+describe.each(Object.entries(tracks))("spec index (%s)", (rawLabel, dir) => {
+  const label = rawLabel as "en" | "ja";
   const index = read(dir, "index.md");
 
   it("has enough extractable content for the guards to be meaningful", () => {
@@ -313,7 +355,7 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
     for (const link of collectDocLinks(index)) {
       let anchors = anchorCache.get(link.doc);
       if (!anchors) {
-        anchors = collectAnchors(read(dir, link.doc));
+        anchors = collectAnchors(label, read(dir, link.doc));
         anchorCache.set(link.doc, anchors);
       }
       if (link.anchor === null) continue;
@@ -352,7 +394,14 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
     expect(new Set(files).size, `[${label}] duplicate rows in the index examples table`).toBe(
       files.length,
     );
-    const onDisk = new Set(readdirSync(featuresDir).filter((f) => f.endsWith(".kumiki")));
+    const { basenames: onDisk, duplicates } = collectFeatureFilesOnDisk();
+    if (duplicates.length > 0) {
+      expect.fail(
+        `[${label}] two or more example files share a basename under packages/examples/features/ — the index keys by basename, so this is ambiguous:\n${duplicates
+          .map((d) => `  ${d.basename} → ${d.paths.join(", ")}`)
+          .join("\n")}`,
+      );
+    }
     const { onlyA, onlyB } = symmetricDiff(onDisk, exampleFileSet(index, label));
     const msgs: string[] = [];
     if (onlyA.length > 0) {
