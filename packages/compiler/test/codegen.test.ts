@@ -847,4 +847,136 @@ describe("codegen", () => {
       /onMouseEnter: \(el\) => \{ App._dispatch\("wake", el\); App._dispatch\("note", el\) \}/,
     );
   });
+
+  // Issue #188 — the compiler lifts author-written `{key: expr}` from tile
+  // props to a top-level `key` field on the emitted TileNode, and synthesizes
+  // an implicit key (`_s.show(<loopVar>)`) for tile calls inside `for`
+  // iteration bodies that don't declare their own. The runtime uses these
+  // keys for stable child reuse across reorder/insert/remove.
+  describe("issue #188 — stable tile identity (key)", () => {
+    // Helper: user-tile emissions in the codegen output are large parenthetical
+    // expressions. Nested `_wk(...)` calls make regex matching brittle, so this
+    // helper scans the emitted JS for a `_wk(` call whose payload contains the
+    // named boundary and whose key expression matches — using bracket-depth
+    // parsing rather than a fragile regex.
+    function findWkForBoundary(
+      js: string,
+      boundaryName: string,
+    ): Array<{ payload: string; key: string }> {
+      const marker = `"${boundaryName}"`;
+      const results: Array<{ payload: string; key: string }> = [];
+      for (let i = 0; i < js.length; i++) {
+        if (!js.startsWith("_wk(", i)) continue;
+        // Walk to the matching close paren of the _wk( call.
+        let depth = 1;
+        let j = i + 4;
+        const start = j;
+        for (; j < js.length && depth > 0; j++) {
+          const c = js[j];
+          if (c === "(") depth++;
+          else if (c === ")") depth--;
+          if (depth === 0) break;
+        }
+        const args = js.slice(start, j);
+        // Split at the top-level comma (depth 0) between payload and key.
+        let d = 0;
+        let splitAt = -1;
+        for (let k = 0; k < args.length; k++) {
+          const c = args[k];
+          if (c === "(") d++;
+          else if (c === ")") d--;
+          else if (c === "," && d === 0) {
+            splitAt = k;
+            break;
+          }
+        }
+        if (splitAt === -1) continue;
+        const payload = args.slice(0, splitAt).trim();
+        const key = args.slice(splitAt + 1).trim();
+        // Only DIRECT wraps of the boundary count — the payload must be the
+        // `_named(...)` call itself (or an error-boundary IIFE that returns
+        // one), not a container tile whose subtree happens to contain the
+        // boundary. This avoids matching an outer `_wk` around a `row` that
+        // contains a `_named("Cell")` deeper down.
+        const directNamed = /^\(*\s*_named\(/.test(payload);
+        const wrappedIife = /^\(\(\s*\(\s*\)\s*=>/.test(payload); // error-boundary IIFE
+        if ((directNamed || wrappedIife) && payload.includes(marker)) {
+          results.push({ payload, key });
+        }
+      }
+      return results;
+    }
+
+    it("lifts an explicit {key: expr} on a builtin tile call to a top-level `key` field", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2, 3]
+        tile Row = text("row")
+        tile App = column(for x in xs Row {key: x.show})
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      const wraps = findWkForBoundary(result.js, "Row");
+      expect(wraps.length).toBeGreaterThan(0);
+      // Every Row wrap for this program derives its key from `x` — either the
+      // explicit `x.show` (which lowers to `_s.show(x)`) or the equivalent.
+      for (const w of wraps) expect(w.key).toContain("_s.show(x)");
+      // The key must NOT leak into `el` (which is the selector-matching
+      // payload bag, unrelated to reconcile identity).
+      expect(result.js).not.toMatch(/el:\s*\{[^}]*key:/);
+    });
+
+    it("synthesizes an implicit key from the loop variable when the tile-for body omits {key: ...}", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2, 3]
+        tile Row = text("row")
+        tile App = column(for x in xs Row)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      const wraps = findWkForBoundary(result.js, "Row");
+      expect(wraps.length).toBeGreaterThan(0);
+      for (const w of wraps) expect(w.key).toBe("_s.show(x)");
+    });
+
+    it("does not synthesize an implicit key outside of a for iteration", () => {
+      // A top-level tile call with no explicit `{key: ...}` should NOT get an
+      // implicit key — implicit keys are a for-scope feature and adding one
+      // uninvited would pollute the emitted output for every non-iterated tile.
+      const src = `
+        tile Row = text("row")
+        tile App = column(Row)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      // The Row call inside App must not be wrapped in _wk.
+      expect(findWkForBoundary(result.js, "Row").length).toBe(0);
+    });
+
+    it("nested for-iteration uses the innermost loop variable for the implicit key", () => {
+      const src = `
+        slot outer : List(Int) = [1]
+        slot inner : List(Int) = [2]
+        tile Cell = text("c")
+        tile App = column(for o in outer row(for i in inner Cell))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      const wraps = findWkForBoundary(result.js, "Cell");
+      expect(wraps.length).toBeGreaterThan(0);
+      // The Cell call sits under the inner `for i in inner` — its implicit
+      // key must be `_s.show(i)`, not `_s.show(o)`.
+      for (const w of wraps) {
+        expect(w.key).toBe("_s.show(i)");
+        expect(w.key).not.toBe("_s.show(o)");
+      }
+    });
+  });
 });
