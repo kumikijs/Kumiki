@@ -46,7 +46,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 
 ## Diagnostic Code Index
 
-Every code documented in [Error Codes](./errors.md), cross-classified by the layer it fires on and the feature dimension it belongs to. E0110 is assigned to two kinds (a pre-existing double assignment, kept as-is).
+Every code documented in [Error Codes](./errors.md), cross-classified by the layer it fires on and the feature dimension it belongs to.
 
 <!-- codes:start -->
 | Code | Kind | Layer | Feature |
@@ -62,10 +62,10 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0108](./errors.md#e0108-undef-member) | `undef-member` | fn | stdlib |
 | [E0110](./errors.md#e0110-unknown-token-group) | `unknown-token-group` | tile | style |
 | [E0109](./errors.md#e0109-test-wildcard-misuse) | `test-wildcard-misuse` | reducer | testing |
-| [E0110](./errors.md#e0110-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
 | [E0111](./errors.md#e0111-orphan-sub-routes) | `orphan-sub-routes` | tile | routing |
 | [E0112](./errors.md#e0112-duplicate-sub-route) | `duplicate-sub-route` | tile | routing |
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | routing |
+| [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
