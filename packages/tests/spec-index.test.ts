@@ -397,25 +397,33 @@ describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)
   });
 
   it("every link resolves to a real anchor and points at the section its label names", () => {
-    const anchorCache = new Map<string, Set<string>>();
+    // Pre-render every referenced doc up front so the empty-set floor
+    // check below reports the offending doc name directly instead of via
+    // the downstream "anchor does not exist" cascade. Rendering itself is
+    // synchronous but not cheap — Shiki syntax-highlights every fenced
+    // block — hence the 30s test timeout (~10 docs × ~500ms Shiki cold
+    // start on CI puts this near Vitest's default 5s per-test budget).
+    const uniqueDocs = [...new Set(collectDocLinks(index).map((l) => l.doc))];
+    const anchorCache = new Map<string, Set<string>>(
+      uniqueDocs.map((doc) => [doc, collectAnchors(label, read(dir, doc))]),
+    );
+    // Extraction-integrity floor mirroring MIN_LINKS/MIN_CODES: if the
+    // <h…> id regex breaks (VitePress swapping to a shape the pattern
+    // doesn't match, id being dropped, …) the Set collapses to empty and
+    // every anchor lookup below would report "does not exist" — a swarm
+    // of misleading errors instead of the true root cause. Every real
+    // spec doc has at least one heading, so 0 anchors is always a bug.
+    for (const [doc, anchors] of anchorCache) {
+      if (anchors.size === 0) {
+        expect.fail(
+          `[${label}] extracted 0 anchors from ${doc} — the heading-id regex likely broke against a VitePress render change`,
+        );
+      }
+    }
     const problems: string[] = [];
     for (const link of collectDocLinks(index)) {
-      let anchors = anchorCache.get(link.doc);
-      if (!anchors) {
-        anchors = collectAnchors(label, read(dir, link.doc));
-        // Extraction-integrity floor mirroring MIN_LINKS/MIN_CODES: if the
-        // <h…> id regex breaks (VitePress swapping to a shape the pattern
-        // doesn't match, id being dropped, …) the Set collapses to empty and
-        // every anchor lookup below would report "does not exist" — a swarm
-        // of misleading errors instead of the true root cause. Every real
-        // spec doc has at least one heading, so 0 anchors is always a bug.
-        if (anchors.size === 0) {
-          expect.fail(
-            `[${label}] extracted 0 anchors from ${link.doc} — the heading-id regex likely broke against a VitePress render change`,
-          );
-        }
-        anchorCache.set(link.doc, anchors);
-      }
+      const anchors = anchorCache.get(link.doc);
+      if (!anchors) continue;
       if (link.anchor === null) continue;
       const anchor = link.anchor;
       if (!anchors.has(anchor)) {
@@ -440,7 +448,7 @@ describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)
     if (problems.length > 0) {
       expect.fail(`[${label}] ${problems.length} link problem(s):\n${problems.join("\n")}`);
     }
-  });
+  }, 30_000);
 
   // Split off from the symmetric-difference test below so the CI failure name
   // ("basenames are unique …") names the actual violation instead of the
