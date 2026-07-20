@@ -44,6 +44,46 @@ const featuresDir = join(repoRoot, "packages", "examples", "features");
 // against this closed set on both tracks.
 const LAYERS = new Set(["type", "slot", "effect", "reducer", "tile", "fn", "app"]);
 
+// Feature-dimension language-neutral keys. Each track spells the same key
+// differently (EN "http" vs JA "HTTP/Storage"), so raw column text is not
+// comparable across tracks — this table maps each display term to the shared
+// key so both per-track vocabulary checks and EN⇆JA sync run on one basis.
+// An unknown display term throws in normalizeFeature: typos and drive-by new
+// vocabulary are caught rather than silently splitting the code/example sets.
+const FEATURE_DISPLAY_TO_KEY: Record<"en" | "ja", Record<string, string>> = {
+  en: {
+    core: "core",
+    stdlib: "stdlib",
+    style: "style",
+    routing: "routing",
+    forms: "forms",
+    http: "http",
+    lifecycle: "lifecycle",
+    testing: "testing",
+  },
+  ja: {
+    コア: "core",
+    標準ライブラリ: "stdlib",
+    スタイル: "style",
+    ルーティング: "routing",
+    フォーム: "forms",
+    "HTTP/Storage": "http",
+    ライフサイクル: "lifecycle",
+    テスト: "testing",
+  },
+};
+
+function normalizeFeature(raw: string, label: string): string {
+  const map = FEATURE_DISPLAY_TO_KEY[label as "en" | "ja"];
+  const key = map?.[raw];
+  if (!key) {
+    throw new Error(
+      `[${label}] unknown feature "${raw}" — add it to FEATURE_DISPLAY_TO_KEY.${label} (or fix the typo in the index).`,
+    );
+  }
+  return key;
+}
+
 // Extraction-integrity floors (same idea as MIN_CODES in spec-drift.test.ts):
 // if a regex or marker breaks, the affected set collapses toward empty and a
 // symmetric-difference check could silently pass. Real content sits well above
@@ -196,13 +236,16 @@ interface ExampleRow {
   file: string;
   layers: string[];
   feature: string;
+  spec: string;
 }
 
 function exampleRows(md: string, label: string): ExampleRow[] {
+  // Column order: Example | Layers | Feature | Spec.
   return tableRows(markedSection(md, "examples", label), "examples", label).map((cells) => ({
     file: (cells[0] ?? "").replace(/`/g, "").trim(),
     layers: (cells[1] ?? "").split(",").map((s) => s.trim()),
-    feature: cells[2] ?? "", // Example | Layers | Feature | Spec → Feature is col index 2.
+    feature: cells[2] ?? "",
+    spec: cells[3] ?? "",
   }));
 }
 
@@ -300,6 +343,15 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
   });
 
   it("examples table lists exactly the files under packages/examples/features/", () => {
+    const rows = exampleRows(index, label);
+    // Symmetric with the code table's duplicate check below: a repeated
+    // filename would silently collapse in exampleFileSet (Set) and in the
+    // EN⇆JA sync's Object.fromEntries (last-wins), letting a stray extra row
+    // pass unnoticed.
+    const files = rows.map((r) => r.file);
+    expect(new Set(files).size, `[${label}] duplicate rows in the index examples table`).toBe(
+      files.length,
+    );
     const onDisk = new Set(readdirSync(featuresDir).filter((f) => f.endsWith(".kumiki")));
     const { onlyA, onlyB } = symmetricDiff(onDisk, exampleFileSet(index, label));
     const msgs: string[] = [];
@@ -314,6 +366,17 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
       );
     }
     if (msgs.length > 0) expect.fail(msgs.join("\n"));
+    // Extraction-integrity floor for the Spec column: cellSignature falls back
+    // to the raw cell when no link matches, so a mangled table row (or a
+    // uniformly empty Spec cell) would collapse both EN and JA to the same
+    // empty signature and silently pass the sync check. Require each Spec cell
+    // to carry at least one ./doc.md link.
+    const specless = rows.filter((r) => !/\[[^\]]+\]\(\.\/[\w.-]+\.md/.test(r.spec));
+    if (specless.length > 0) {
+      expect.fail(
+        `[${label}] examples rows have no ./doc.md link in the Spec column: ${specless.map((r) => r.file).join(", ")}`,
+      );
+    }
   });
 
   it("code table lists exactly the (code, kind) pairs errors.md documents", () => {
@@ -361,6 +424,9 @@ describe.each(Object.entries(tracks))("spec index (%s)", (label, dir) => {
         `[${label}] feature vocabulary diverges — only in code table: [${onlyA.join(", ")}], only in examples table: [${onlyB.join(", ")}]`,
       );
     }
+    // Every feature term must map to a language-neutral key. Unknown terms fail
+    // fast here rather than silently splitting EN⇆JA comparisons downstream.
+    for (const raw of [...codeFeatures, ...exampleFeatures]) normalizeFeature(raw, label);
   });
 });
 
@@ -382,6 +448,12 @@ describe("spec index — EN ⇆ JA sync", () => {
     expect(layers(ja, "ja")).toEqual(layers(en, "en"));
   });
 
+  it("code tables agree on the feature of each code", () => {
+    const features = (md: string, label: string) =>
+      codeRows(md, label).map((r) => `${r.code} ${r.kind} → ${normalizeFeature(r.feature, label)}`);
+    expect(features(ja, "ja")).toEqual(features(en, "en"));
+  });
+
   it("example file sets agree", () => {
     const { onlyA, onlyB } = symmetricDiff(exampleFileSet(en, "en"), exampleFileSet(ja, "ja"));
     if (onlyA.length > 0 || onlyB.length > 0) {
@@ -389,5 +461,34 @@ describe("spec index — EN ⇆ JA sync", () => {
         `examples tables diverge — EN only: [${onlyA.join(", ")}], JA only: [${onlyB.join(", ")}]`,
       );
     }
+  });
+
+  // The three checks below key by filename (already pinned by "example file
+  // sets agree") so the diff message names the offending example directly.
+  it("examples tables agree on the layers of each file", () => {
+    const layersByFile = (md: string, label: string) =>
+      Object.fromEntries(
+        exampleRows(md, label).map((r) => [r.file, [...r.layers].sort()] as const),
+      );
+    expect(layersByFile(ja, "ja")).toEqual(layersByFile(en, "en"));
+  });
+
+  it("examples tables agree on the feature of each file (normalized to language-neutral keys)", () => {
+    const featureByFile = (md: string, label: string) =>
+      Object.fromEntries(
+        exampleRows(md, label).map((r) => [r.file, normalizeFeature(r.feature, label)] as const),
+      );
+    expect(featureByFile(ja, "ja")).toEqual(featureByFile(en, "en"));
+  });
+
+  it("examples tables agree on the spec link (doc + § label) of each file", () => {
+    // cellSignature reduces each `[§X.Y](./doc.md#…)` to `doc.md:§X.Y`, so
+    // link targets and § labels compare cleanly across tracks despite the
+    // language-specific anchor slugs on each side.
+    const specByFile = (md: string, label: string) =>
+      Object.fromEntries(
+        exampleRows(md, label).map((r) => [r.file, cellSignature(r.spec)] as const),
+      );
+    expect(specByFile(ja, "ja")).toEqual(specByFile(en, "en"));
   });
 });
