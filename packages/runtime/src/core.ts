@@ -156,11 +156,12 @@ export type TileNode = (
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
 ) & {
   /**
-   * Stable per-instance identity for keyed reconcile (issue #188). Optional
-   * and additive: when every child at a given level carries a `key`, the
-   * runtime matches children by key across renders (survives reorder/insert/
-   * remove without rebuilding the subtree). If any child is missing a `key`
-   * the reconciler falls back to structural identity — the pre-#188 walk.
+   * Stable per-instance identity for keyed reconcile. Optional and additive:
+   * when every child at a given level carries a `key`, the runtime matches
+   * children by key across renders (survives reorder / insert / remove
+   * without rebuilding the parent subtree). When any child at that level is
+   * missing a `key`, the reconciler falls back to structural identity
+   * (position + `kind` + data-prop equality).
    */
   readonly key?: string;
 };
@@ -2172,7 +2173,7 @@ function renderPanicFallback(e: unknown): HTMLElement {
   return div;
 }
 
-// ---- tile-level keyed diff (issue #187) ----
+// ---- tile-level keyed diff ----
 // The reconcile pass keeps `core.ts` as the single value-owner of the render
 // path (tsdown's modules build treats every non-entry file as an anonymous
 // shared chunk, which the CLI test asserts must never appear — see
@@ -2183,7 +2184,8 @@ function renderPanicFallback(e: unknown): HTMLElement {
 // `TileNode` in parallel, keep the DOM node for tiles whose data props did
 // not change (natively preserving focus / caret / `<select>` open state /
 // event listeners), rebuild only changed subtrees. Identity is structural
-// (position + `kind`); explicit `TileNode.key` is deferred to #188.
+// (position + `kind`) unless the tile carries a `TileNode.key`, in which
+// case the keyed child-list path pairs children across renders by key.
 //
 // Reused tiles are NEVER re-touched: `applyMotion` restarts animations, and
 // `applyUiEventHandlers` uses `addEventListener` and would multiply-register
@@ -2246,7 +2248,7 @@ function reconcileNode(
   // `children`, ignoring function-valued entries). If they differ, the element
   // itself needs to be reconstructed: e.g. an input's `value` / `placeholder`
   // / `bind` changed, a heading's `text` changed. Rebuild the whole subtree;
-  // #188's keyed diff will let us reuse grandchildren across a parent rebuild.
+  // Reuse across parent rebuild is a keyed-diff concern (see below).
   if (!tileFieldsEqual(oldNode, newNode)) {
     return replaceWithFreshTile(oldEl, newNode, ctx);
   }
@@ -2256,18 +2258,14 @@ function reconcileNode(
     newMap.set(newNode, oldEl);
     return oldEl;
   }
-  // Keyed path (issue #188): all-or-nothing per parent. When every child on
-  // both sides carries a `key`, we can match children by key across renders
-  // and survive reorder / insert / remove without rebuilding the subtree.
-  // Mixed or absent keys fall through to the pre-#188 structural walk below.
+  // Keyed path — all-or-nothing per parent. When every child on both sides
+  // carries a `key`, we match children by key across renders and survive
+  // reorder / insert / remove without rebuilding the subtree. Mixed or
+  // absent keys fall through to the structural walk below.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    if (reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx)) {
-      newMap.set(newNode, oldEl);
-      return oldEl;
-    }
-    // Falling through: a defensive branch (e.g. an old child missing from
-    // oldMap) → conservative subtree rebuild.
-    return replaceWithFreshTile(oldEl, newNode, ctx);
+    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx);
+    newMap.set(newNode, oldEl);
+    return oldEl;
   }
   // Structural length change without keys → subtree rebuild. Preserves
   // correctness at the cost of reuse; keyed children above lift this
@@ -2299,11 +2297,7 @@ function allChildrenKeyed(nodes: TileNode[]): boolean {
 }
 
 /**
- * Keyed child reconcile (issue #188). Returns `true` when the pass mutated
- * `parentEl` into the target layout in place; returns `false` when a
- * defensive invariant broke (e.g. an old child that lost its element mapping
- * — should not happen for tiles rendered through the mapping ctx, but the
- * caller handles the escape by conservatively rebuilding the parent).
+ * Keyed child reconcile — mutates `parentEl` in place to match `newChildren`.
  *
  * Strategy: (1) build key→oldChild lookup, (2) for each new child either
  * reconcile against its keyed old counterpart or mount fresh, (3) drop
@@ -2311,6 +2305,12 @@ function allChildrenKeyed(nodes: TileNode[]): boolean {
  * match the target sequence. `appendChild` on an already-attached element
  * moves it, and `unmount` / `mount` lifecycle firing is centralised in the
  * outer render pass so no per-node hooks are needed here.
+ *
+ * Throws — never silently falls back — on: duplicate sibling keys, and any
+ * invariant break (an old keyed tile missing its element mapping). The outer
+ * reconcile bailout catches the throw, records the panic, and does a full
+ * rebuild so the failure is visible in the episode log rather than silently
+ * degrading DOM state.
  */
 function reconcileKeyedChildren(
   parentEl: HTMLElement,
@@ -2319,7 +2319,23 @@ function reconcileKeyedChildren(
   oldMap: TileElementMap,
   newMap: TileElementMap,
   ctx: TileCtx,
-): boolean {
+): void {
+  // Detect duplicate keys among the new children. Silently letting a
+  // duplicate through would collapse N tiles onto one DOM element (the
+  // second `parentEl.appendChild(el)` moves the same element to the end
+  // again). Throw so the outer reconcile bailout records a panic and does
+  // a full rebuild — a loud, recoverable failure rather than a silent
+  // DOM-loss bug.
+  const seenNew = new Set<string>();
+  for (const nc of newChildren) {
+    const k = nc.key as string;
+    if (seenNew.has(k)) {
+      throw new Error(
+        `reconcile: duplicate TileNode.key "${k}" among sibling tiles — keys must be unique within a parent's children list`,
+      );
+    }
+    seenNew.add(k);
+  }
   const byKey = new Map<string, TileNode>();
   for (const oc of oldChildren) if (typeof oc.key === "string") byKey.set(oc.key, oc);
   const targetEls: HTMLElement[] = [];
@@ -2330,7 +2346,16 @@ function reconcileKeyedChildren(
     if (oldChild) {
       matched.add(oldChild);
       const oldChildEl = oldMap.get(oldChild);
-      if (!oldChildEl) return false;
+      if (!oldChildEl) {
+        // Invariant violation — an old keyed tile should always be in the
+        // element map because every tile passes through `makeMappingTileCtx`.
+        // Throw so the outer reconcile bailout records this as a panic
+        // rather than silently forcing a subtree rebuild (which would erase
+        // focus, scroll, and any other DOM state on the whole parent).
+        throw new Error(
+          `reconcile: keyed old tile "${key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
+        );
+      }
       const el = reconcileNode(oldChild, oldChildEl, oldMap, newChild, newMap, ctx);
       targetEls.push(el);
     } else {
@@ -2356,7 +2381,6 @@ function reconcileKeyedChildren(
   // yields the exact new sequence. Elements already in the correct trailing
   // position get a no-op move.
   for (const el of targetEls) parentEl.appendChild(el);
-  return true;
 }
 
 function replaceWithFreshTile(oldEl: HTMLElement, newNode: TileNode, ctx: TileCtx): HTMLElement {
@@ -2386,9 +2410,9 @@ function getTileChildren(node: TileNode): TileNode[] {
 
 // Top-level TileNode keys the equality check ignores. `kind` is the
 // discriminant (already handled by the caller); `children` is walked
-// separately (each child is reconciled recursively). `key` (issue #188) is
-// identity metadata — a change in `key` means "different instance", handled
-// by the child-list matcher, not by data-prop equality.
+// separately (each child is reconciled recursively). `key` is identity
+// metadata — a change in `key` means "different instance", handled by the
+// child-list matcher, not by data-prop equality.
 const TILE_SKIP_TOP: ReadonlySet<string> = new Set(["kind", "children", "key"]);
 
 function tileFieldsEqual(a: TileNode, b: TileNode): boolean {

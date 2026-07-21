@@ -5,9 +5,9 @@ import { jsOfExpr } from "./expr.ts";
 
 /**
  * Author-supplied `{key: expr}` on a tile-call's props block, as a JS
- * expression string, or `null` when absent. Used by codegen (issue #188) to
- * lift tile identity out of the prop bag onto the emitted TileNode's
- * top-level `key`. Explicit keys always win over TileFor's implicit key.
+ * expression string, or `null` when absent. Used by codegen to lift tile
+ * identity out of the prop bag onto the emitted TileNode's top-level `key`.
+ * Explicit keys always win over TileFor's implicit key.
  */
 export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string | null {
   const keyProp = t.props.find((p) => p.name === "key");
@@ -50,8 +50,8 @@ export function propsFor(
     // do not also echo them through `props` (the bare-ident `prefetch: foo`
     // value would otherwise emit as a JS variable reference at codegen).
     if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
-    // Issue #188 — `key` is lifted to the TileNode's top level by `_wk` at
-    // the tile-call boundary; it must not also flow into `props` or `el`.
+    // `key` is lifted to the TileNode's top level by `_wk` at the tile-call
+    // boundary; it must not also flow into `props` or `el`.
     if (p.name === "key") continue;
     entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
@@ -119,7 +119,7 @@ export function propsFor(
     // not reducer data, and shipping it twice (top-level + el) re-evaluates
     // every `@token` ref needlessly.
     if (p.name === "style") continue;
-    // Issue #188 — see the note in the top-level props loop above.
+    // See the `key` note in the top-level props loop above.
     if (p.name === "key") continue;
     elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }

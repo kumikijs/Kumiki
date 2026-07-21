@@ -153,4 +153,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `50-match-pattern-integrity.kumiki` | type | コア | [§1.9](./language.md#_1-9-式言語) |
 | `51-selector-id.kumiki` | reducer | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
 | `52-selector-id-arg.kumiki` | reducer | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
+| `53-keyed-list-identity.kumiki` | tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 <!-- examples:end -->

@@ -14,11 +14,11 @@ export function tileExprJs(
   gen: GenCtx,
   ctx: EvalCtx,
   enclosingTile?: string,
-  // Issue #188 — when the enclosing scope is a `TileFor`, this carries the
-  // implicit key expression (`_s.show(<loopVar>)`) that any tile call in
-  // the body should stamp on itself unless it declared an explicit `{key: …}`.
-  // Propagates transparently through TileWhen / TileIf / TileMatch arms;
-  // resets at user-tile boundaries (see `tileCallJs`).
+  // When the enclosing scope is a `TileFor`, this carries the implicit key
+  // expression (`_s.show(<loopVar>)`) that any tile call in the body should
+  // stamp on itself unless it declared an explicit `{key: …}`. Propagates
+  // transparently through TileWhen / TileIf / TileMatch arms; resets at
+  // user-tile boundaries (see `tileCallJs`).
   implicitKeyExpr?: string,
 ): string {
   switch (t.kind) {
@@ -118,8 +118,8 @@ function tileCallJs(
   implicitKeyExpr?: string,
 ): string {
   const name = t.name;
-  // Issue #188 — explicit `{key: <expr>}` wins over the enclosing TileFor's
-  // implicit key. `null` means no wrap.
+  // Explicit `{key: <expr>}` on the tile call wins over the enclosing
+  // TileFor's implicit key. `null` means no wrap.
   const keyJs = keyFor(t, ctx) ?? implicitKeyExpr ?? null;
   const wrap = (lit: string): string => (keyJs ? `_wk(${lit}, ${keyJs})` : lit);
 

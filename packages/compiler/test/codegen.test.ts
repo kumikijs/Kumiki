@@ -893,14 +893,43 @@ describe("codegen", () => {
         if (splitAt === -1) continue;
         const payload = args.slice(0, splitAt).trim();
         const key = args.slice(splitAt + 1).trim();
-        // Only DIRECT wraps of the boundary count — the payload must be the
-        // `_named(...)` call itself (or an error-boundary IIFE that returns
-        // one), not a container tile whose subtree happens to contain the
-        // boundary. This avoids matching an outer `_wk` around a `row` that
-        // contains a `_named("Cell")` deeper down.
-        const directNamed = /^\(*\s*_named\(/.test(payload);
-        const wrappedIife = /^\(\(\s*\(\s*\)\s*=>/.test(payload); // error-boundary IIFE
-        if ((directNamed || wrappedIife) && payload.includes(marker)) {
+        // Only DIRECT wraps of THIS boundary count. `_named(inner, "Name")`
+        // — the second argument to the outermost `_named(` in the payload
+        // must be the marker literal. This rejects an outer `_wk` around a
+        // container (`_wk(_named(<column with Cell inside>, "Outer"), ...)`)
+        // that happens to contain the target name deep in its subtree.
+        let directNamedName: string | null = null;
+        // Strip a leading error-boundary IIFE if present: `((() => { try { return _named(...)...`
+        let scan = payload;
+        const iifeMatch = scan.match(/^\(\(\(\)\s*=>\s*\{\s*try\s*\{\s*return\s+/);
+        if (iifeMatch) scan = scan.slice(iifeMatch[0].length);
+        if (scan.startsWith("_named(")) {
+          // Walk to the matching close paren of _named(
+          let dd = 1;
+          let k = "_named(".length;
+          const s2 = k;
+          for (; k < scan.length && dd > 0; k++) {
+            const c = scan[k];
+            if (c === "(") dd++;
+            else if (c === ")") dd--;
+            if (dd === 0) break;
+          }
+          const namedArgs = scan.slice(s2, k);
+          // Split at top-level comma to isolate the boundary name (second arg).
+          let d2 = 0;
+          let split2 = -1;
+          for (let p = 0; p < namedArgs.length; p++) {
+            const c = namedArgs[p];
+            if (c === "(") d2++;
+            else if (c === ")") d2--;
+            else if (c === "," && d2 === 0) {
+              split2 = p;
+              break;
+            }
+          }
+          if (split2 !== -1) directNamedName = namedArgs.slice(split2 + 1).trim();
+        }
+        if (directNamedName === marker) {
           results.push({ payload, key });
         }
       }
@@ -974,6 +1003,70 @@ describe("codegen", () => {
       // The Cell call sits under the inner `for i in inner` — its implicit
       // key must be `_s.show(i)`, not `_s.show(o)`.
       for (const w of wraps) {
+        expect(w.key).toBe("_s.show(i)");
+        expect(w.key).not.toBe("_s.show(o)");
+      }
+    });
+
+    it("propagates the implicit key through TileWhen (for x in xs when(cond, Row))", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2, 3]
+        tile Row = text("row")
+        tile App = column(for x in xs when(x > 0, Row))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      const wraps = findWkForBoundary(result.js, "Row");
+      expect(wraps.length).toBeGreaterThan(0);
+      for (const w of wraps) expect(w.key).toBe("_s.show(x)");
+    });
+
+    it("propagates the implicit key through TileMatch (for id in ids match kind with |A -> Row)", () => {
+      const src = `
+        type Kind = A | B
+        slot kind : Kind = A
+        slot ids : List(Int) = [1, 2, 3]
+        tile Row = text("row")
+        tile App = column(for id in ids match kind with |A -> Row |B -> Row)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      const wraps = findWkForBoundary(result.js, "Row");
+      expect(wraps.length).toBeGreaterThan(0);
+      // Both match arms sit under \`for id in ids\` — every Row emission must
+      // carry the loop var's key, not undefined.
+      for (const w of wraps) expect(w.key).toBe("_s.show(id)");
+    });
+
+    it("resets the implicit key at user-tile boundaries (inner for uses its own loop var)", () => {
+      // Critical invariant: an implicit key introduced by an outer for must
+      // NOT leak into the body of a user tile it wraps. Otherwise an inner
+      // for in that user tile would silently reuse the outer loop var.
+      const src = `
+        slot outer : List(Int) = [1]
+        slot inner : List(Int) = [2, 3]
+        tile Cell = text("c")
+        tile Inner = column(for i in inner Cell)
+        tile Outer = column(Inner)
+        tile App = column(for o in outer Outer)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      // The Outer boundary itself is the target of the outer for → key = o.
+      const outerWraps = findWkForBoundary(result.js, "Outer");
+      expect(outerWraps.length).toBeGreaterThan(0);
+      for (const w of outerWraps) expect(w.key).toBe("_s.show(o)");
+      // Cell sits inside Inner's for-body — its key must derive from the
+      // inner loop var i, not the outer o (which would be a scope leak).
+      const cellWraps = findWkForBoundary(result.js, "Cell");
+      expect(cellWraps.length).toBeGreaterThan(0);
+      for (const w of cellWraps) {
         expect(w.key).toBe("_s.show(i)");
         expect(w.key).not.toBe("_s.show(o)");
       }

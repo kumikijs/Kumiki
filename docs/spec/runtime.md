@@ -189,7 +189,7 @@ It maintains the focus and cursor position of an input/textarea being edited eve
 - Elements with `id=`: re-identified by id
 - Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
 
-### 10.3.10 Stable Tile Identity — `TileNode.key`
+### 10.3.10 Stable tile identity
 
 The compiler↔runtime tile-tree contract carries an optional per-tile identity
 field for keyed reconcile (introduced in #187 as the diff kernel, wired end to

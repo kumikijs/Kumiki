@@ -189,7 +189,7 @@ app App ... theme = themeName    ; ← slot 名を渡す
 - `id=` がある要素: id で再特定
 - どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
 
-### 10.3.10 安定タイル identity — `TileNode.key`
+### 10.3.10 安定タイル identity
 
 compiler↔runtime のタイル木コントラクトが keyed reconcile 用のインスタンス
 identity フィールドを持つ（#187 で diff カーネルを、#188 で end-to-end 配線）:
