@@ -96,7 +96,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(44_000);
+    expect(total).toBeLessThan(45_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

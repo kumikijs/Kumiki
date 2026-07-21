@@ -358,3 +358,384 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     dispose();
   });
 });
+
+// Keyed diff (issue #188) — once `TileNode.key` is present on every child at a
+// given level, reconcile matches children by key across renders. Reorder,
+// insert, and remove all preserve DOM identity of the surviving children. Old
+// bundles (children without `key`) still work via the structural path locked in
+// by the #187 suite above.
+describe("runtime: keyed reconcile (#188)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  function keyedListApp(getOrder: () => string[]): AppShape {
+    return {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: getOrder().map((id) => ({
+          kind: "text",
+          text: `row ${id}`,
+          key: id,
+        })),
+      }),
+    };
+  }
+
+  it("preserves DOM identity across a full reorder of keyed children", () => {
+    let order = ["a", "b", "c"];
+    const app = keyedListApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const [ea, eb, ec] = Array.from(column.children) as HTMLElement[];
+    expect([ea.textContent, eb.textContent, ec.textContent]).toEqual(["row a", "row b", "row c"]);
+
+    order = ["c", "a", "b"];
+    app._rerender?.();
+
+    const reordered = Array.from(column.children);
+    expect(reordered).toEqual([ec, ea, eb]);
+    expect(reordered.map((e) => e.textContent)).toEqual(["row c", "row a", "row b"]);
+    dispose();
+  });
+
+  it("reuses existing children on middle insert", () => {
+    let order = ["a", "b", "c"];
+    const app = keyedListApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const [ea, eb, ec] = Array.from(column.children) as HTMLElement[];
+
+    order = ["a", "x", "b", "c"];
+    app._rerender?.();
+
+    const after = Array.from(column.children) as HTMLElement[];
+    expect(after.length).toBe(4);
+    expect(after[0]).toBe(ea);
+    expect(after[2]).toBe(eb);
+    expect(after[3]).toBe(ec);
+    expect(after[1].textContent).toBe("row x");
+    dispose();
+  });
+
+  it("keeps DOM identity of surviving children after a remove and fires no rebuild", () => {
+    let order = ["a", "b", "c"];
+    const app = keyedListApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const [ea, , ec] = Array.from(column.children) as HTMLElement[];
+
+    order = ["a", "c"];
+    app._rerender?.();
+
+    const after = Array.from(column.children) as HTMLElement[];
+    expect(after.length).toBe(2);
+    expect(after[0]).toBe(ea);
+    expect(after[1]).toBe(ec);
+    dispose();
+  });
+
+  it("preserves DOM-only state (a manually-set input value) across a reorder of keyed items", () => {
+    // The key guarantee for reorder is DOM element identity: because the very
+    // same HTMLInputElement is reused, anything the browser tracked on it
+    // survives — `<select>` value, `<details>` open state, focus, caret, and
+    // in this test a manually-set input value that the reconciler is unaware
+    // of. Using an input keeps the test decoupled from the select tile's
+    // option-value serialization details.
+    let order = ["a", "b", "c"];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: order.map((id) => ({
+          kind: "box",
+          key: id,
+          children: [{ kind: "input", id: `i-${id}` }],
+        })),
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const inputB = root.querySelector("#i-b") as HTMLInputElement;
+    inputB.value = "user typed this";
+
+    order = ["b", "a", "c"];
+    app._rerender?.();
+
+    // Same DOM element → the manually-typed value is still there.
+    expect(root.querySelector("#i-b")).toBe(inputB);
+    expect(inputB.value).toBe("user typed this");
+    dispose();
+  });
+
+  it("preserves focus and caret across a reorder of keyed items", () => {
+    let order = ["a", "b", "c"];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: order.map((id) => ({
+          kind: "box",
+          key: id,
+          children: [{ kind: "input", value: `v${id}`, id: `i-${id}` }],
+        })),
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const inputB = root.querySelector("#i-b") as HTMLInputElement;
+    inputB.focus();
+    inputB.setSelectionRange(1, 1);
+    expect(document.activeElement).toBe(inputB);
+
+    order = ["c", "b", "a"];
+    app._rerender?.();
+
+    // The DOM element identity for i-b is unchanged; browser focus and caret
+    // therefore survive naturally (no snapshot/restore path needed).
+    expect(root.querySelector("#i-b")).toBe(inputB);
+    expect(document.activeElement).toBe(inputB);
+    expect(inputB.selectionStart).toBe(1);
+    expect(inputB.selectionEnd).toBe(1);
+    dispose();
+  });
+
+  it("falls back to structural diff when only some children carry a key (mixed)", () => {
+    // Mixed-key children (some entries have `key`, some do not) should not
+    // enter the key-map path — reconcile keeps the current structural behavior
+    // (rebuild on length change). This locks in the design decision that key
+    // matching is all-or-nothing per parent.
+    let mode: "same" | "grow" = "same";
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => {
+        const base: TileNode[] = [
+          { kind: "text", text: "keyed", key: "a" },
+          { kind: "text", text: "not keyed" },
+        ];
+        if (mode === "grow") base.push({ kind: "text", text: "extra" });
+        return { kind: "column", children: base };
+      },
+    };
+    const { dispose } = mount(app, root);
+    const initialColumn = root.firstElementChild as HTMLElement;
+    expect(Array.from(initialColumn.children).length).toBe(2);
+
+    mode = "grow";
+    app._rerender?.();
+
+    // Structural path rebuilds the whole subtree on length change — the fresh
+    // column has 3 children, the old column reference is detached from DOM.
+    const rebuiltColumn = root.firstElementChild as HTMLElement;
+    expect(rebuiltColumn).not.toBe(initialColumn);
+    expect(Array.from(rebuiltColumn.children).length).toBe(3);
+    dispose();
+  });
+
+  it("keyed removal of one instance does NOT fire tile.unmount when another same-named tile remains (mount/unmount is name-based, not per-instance)", () => {
+    // Lock in the current name-based lifecycle semantics: removing one keyed
+    // Row while another Row is still mounted keeps the name in the mounted
+    // set → unmount does NOT fire. If we ever move to per-instance lifecycle
+    // this assertion must change accordingly.
+    const events: string[] = [];
+    let showTwo = true;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        lifecycleReducer('tile.unmount("Row")', (s) => {
+          events.push("unmount:Row");
+          return { slots: s, emits: [] };
+        }),
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: showTwo
+          ? [
+              {
+                kind: "box",
+                key: "a",
+                props: { _tile: "Row" },
+                children: [{ kind: "text", text: "a" }],
+              },
+              {
+                kind: "box",
+                key: "b",
+                props: { _tile: "Row" },
+                children: [{ kind: "text", text: "b" }],
+              },
+            ]
+          : [
+              {
+                kind: "box",
+                key: "a",
+                props: { _tile: "Row" },
+                children: [{ kind: "text", text: "a" }],
+              },
+            ],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    expect(events).toEqual([]);
+
+    showTwo = false;
+    app._rerender?.();
+
+    expect(events).toEqual([]);
+    dispose();
+  });
+
+  it("fires tile.unmount when the last instance of a keyed user tile is removed", () => {
+    // Complement to the "one of many" test above: removing the LAST Row
+    // takes the name out of the mounted set, so tile.unmount(Row) must fire.
+    // Proves the keyed removal path is not silently dropping the lifecycle
+    // signal that the outer render-pass walk needs to observe.
+    const events: string[] = [];
+    let showRow = true;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        lifecycleReducer('tile.unmount("Row")', (s) => {
+          events.push("unmount:Row");
+          return { slots: s, emits: [] };
+        }),
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: showRow
+          ? [
+              {
+                kind: "box",
+                key: "a",
+                props: { _tile: "Row" },
+                children: [{ kind: "text", text: "a" }],
+              },
+            ]
+          : [{ kind: "text", text: "empty", key: "placeholder" }],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    expect(events).toEqual([]);
+
+    showRow = false;
+    app._rerender?.();
+
+    expect(events).toEqual(["unmount:Row"]);
+    dispose();
+  });
+
+  it("panics on duplicate sibling keys (loud fallback, not silent DOM collapse)", () => {
+    // Two children with the same key would collapse into one DOM element
+    // silently — a bug class the outer bailout must at least surface. The
+    // reconciler throws, the outer render pass catches, records a
+    // 'reconcile' panic, and does a full rebuild. We only need to observe
+    // that the app does not crash and that DOM shape reflects the new tree.
+    let dupe = false;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: dupe
+          ? [
+              { kind: "text", text: "a1", key: "a" },
+              { kind: "text", text: "a2", key: "a" },
+            ]
+          : [{ kind: "text", text: "start", key: "s" }],
+      }),
+    };
+    const consoleError = console.error;
+    const suppressed: unknown[] = [];
+    console.error = (...args: unknown[]) => {
+      suppressed.push(args);
+    };
+    try {
+      const { dispose } = mount(app, root);
+      dupe = true;
+      app._rerender?.();
+      // Both duplicated children must actually be present after the outer
+      // rebuild — full rebuild renders them positionally.
+      const column = root.firstElementChild as HTMLElement;
+      expect(column.children.length).toBe(2);
+      expect(column.children[0].textContent).toBe("a1");
+      expect(column.children[1].textContent).toBe("a2");
+      // And the reconcile threw — the outer panic path logged it.
+      expect(suppressed.length).toBeGreaterThan(0);
+      dispose();
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
+  it("panics when a keyed tile's key is empty / null / undefined (compiler-side helper enforcement)", () => {
+    // Direct assertion of the invariant the compiler's `_wk` helper enforces.
+    // Runtime constructing a TileNode with an empty key manually is a bug —
+    // we prove the reconciler's own duplicate-detection path fires (empty
+    // strings collide when siblings coincide, but even a single "" is a
+    // programmer error). This test locks the runtime-side signal; the
+    // compiler side is covered by _wk itself which throws before emitting.
+    let broken = false;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: broken
+          ? [
+              { kind: "text", text: "x", key: "" },
+              { kind: "text", text: "y", key: "" },
+            ]
+          : [{ kind: "text", text: "start", key: "s" }],
+      }),
+    };
+    const consoleError = console.error;
+    const suppressed: unknown[] = [];
+    console.error = (...args: unknown[]) => {
+      suppressed.push(args);
+    };
+    try {
+      const { dispose } = mount(app, root);
+      broken = true;
+      app._rerender?.();
+      // Bailout renders both children — no silent collapse.
+      const column = root.firstElementChild as HTMLElement;
+      expect(column.children.length).toBe(2);
+      expect(suppressed.length).toBeGreaterThan(0);
+      dispose();
+    } finally {
+      console.error = consoleError;
+    }
+  });
+});

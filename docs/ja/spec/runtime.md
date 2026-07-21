@@ -189,6 +189,53 @@ app App ... theme = themeName    ; ← slot 名を渡す
 - `id=` がある要素: id で再特定
 - どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
 
+### 10.3.10 安定タイル identity
+
+compiler↔runtime のタイル木コントラクトが keyed reconcile 用のインスタンス
+identity フィールドを持つ（#187 で diff カーネルを、#188 で end-to-end 配線）:
+
+```ts
+type TileNode = (/* … kind variants … */) & { readonly key?: string };
+```
+
+**コントラクト**
+
+- `key` は **additive で optional**。key を持たないタイルも合法な `TileNode`
+  で、key を含まない旧コンパイル出力は新 runtime でそのまま mount し、逆に
+  新コンパイラの keyed 出力も旧 runtime で（key を無視して）動く。
+- reconciler は **親ごとに all-or-nothing** で keyed matching を判断する: ある
+  レベルの全子が `key` を持つときのみ key で pairing し、reorder/insert/remove
+  を親サブツリー再構築なしで乗り越える。1 つでも key を欠く子があれば、
+  #187 以前と同じ構造 diff（位置 + `kind` + データプロップ等価、length 変化 →
+  再構築）にフォールバックする。
+
+**コンパイラの emit**
+
+1. **作者が書いた `{key: <expr>}`** はタイル呼び出しのプロップから剥がされ、
+   emit される `TileNode` のトップレベル `key` に置かれる。値は `_s.show(...)`
+   で文字列化される。`props.el` には流れない。
+2. **`for` 反復の内側** で `{key: ...}` を書いていないタイル呼び出しには、
+   ループ変数から `_s.show(<loopVar>)` を暗黙 key として合成する。明示 key
+   が常に優先。ネストした `for` は内側のループ変数で上書きされ、`for i in
+   inner` 配下のタイルは外側の `for o in outer` の影響を受けず `_s.show(i)`
+   になる。
+3. **ユーザタイル境界** は外側の暗黙 key を body に持ち込まない。`_wk` は
+   境界ノードそのものに巻かれ、body 側の identity は body が反復すれば
+   body 自身で組む。
+4. **`TileWhen` / `TileIf` / `TileMatch`** は透過。タイルを emit する分岐に
+   暗黙 key を素通しで伝える。
+
+**runtime の消費**  `packages/runtime/src/core.ts` の reconciler が
+`oldNode.key` と `newNode.key` を子リストレベルで参照する。`key` は
+`TILE_SKIP_TOP` に含まれ、key の変化だけでは親の `replaceWithFreshTile` を
+起こさない — key は「どの旧子がどの新子と対応するか」を決めるだけで、
+タイル自体が再構築されるかどうかを決めるものではない。
+
+**Migration**  runtime とコンパイラは matched pair として同じ minor bump で
+リリースする。片側だけでも壊れない（graceful degradation）が、`<select>`
+value / `<input>` focus と caret / event listener が insert/remove/reorder を
+またいで保持されるという保証は両方が揃って初めて成立する。
+
 ---
 
 ## 10.4 Effect Dispatcher

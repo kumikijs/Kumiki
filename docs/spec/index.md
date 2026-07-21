@@ -153,4 +153,5 @@ Each file under [`packages/examples/features/`](https://github.com/kage1020/Kumi
 | `50-match-pattern-integrity.kumiki` | type | core | [§1.9](./language.md#_1-9-expression-language) |
 | `51-selector-id.kumiki` | reducer | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 | `52-selector-id-arg.kumiki` | reducer | core | [§1.6.2](./language.md#_1-6-2-selectors) |
+| `53-keyed-list-identity.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 <!-- examples:end -->

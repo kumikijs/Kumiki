@@ -189,6 +189,58 @@ It maintains the focus and cursor position of an input/textarea being edited eve
 - Elements with `id=`: re-identified by id
 - Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
 
+### 10.3.10 Stable tile identity
+
+The compiler↔runtime tile-tree contract carries an optional per-tile identity
+field for keyed reconcile (introduced in #187 as the diff kernel, wired end to
+end in #188):
+
+```ts
+type TileNode = (/* … kind variants … */) & { readonly key?: string };
+```
+
+**Contract.**
+
+- The field is **additive and optional**. A tile without `key` is a legal
+  `TileNode`; old compiled output (no keys anywhere) still mounts on a new
+  runtime, and a new compiler's keyed output still mounts on the old runtime
+  (which simply ignores the field).
+- The reconciler uses **all-or-nothing keyed matching per parent**: when every
+  child at a given level carries a `key`, the runtime pairs children across
+  renders by key (survives reorder, insert, and remove without rebuilding the
+  parent's subtree). When any child is missing a `key`, the reconciler falls
+  back to the pre-#188 structural walk (position + `kind` + data-prop
+  equality; length change → rebuild).
+
+**What the compiler emits.**
+
+1. **Author-supplied `{key: <expr>}`** on a tile-call's props block is lifted
+   to the emitted `TileNode`'s top-level `key` field. The value is coerced to
+   a string via `_s.show(...)`. It does **not** also flow into `props.el`.
+2. **Inside `for` iteration**, tile calls that do not declare their own
+   `{key: ...}` receive an implicit key derived from the loop variable —
+   `_s.show(<loopVar>)`. Explicit keys always win. Nested `for` loops
+   overwrite the enclosing implicit key with the inner loop's binding, so a
+   tile call under `for i in inner` gets `_s.show(i)` regardless of any
+   outer `for o in outer`.
+3. **User-tile boundaries** do not propagate the enclosing implicit key into
+   the tile's body — the `_wk` wrap sits on the outer boundary node, and the
+   body composes its own identity if it iterates internally.
+4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
+   flows through the branch that emits the tile.
+
+**Runtime consumption.** The reconciler in `packages/runtime/src/core.ts`
+reads `oldNode.key` and `newNode.key` at the child-list level. `key` is
+included in `TILE_SKIP_TOP` so a key change alone does not trigger
+`replaceWithFreshTile` on the parent — key drives which old child pairs with
+which new child, not whether the tile itself is rebuilt.
+
+**Migration.** Runtime and compiler ship the key contract as a matched pair
+(both in the same minor version bump). Each side degrades gracefully alone,
+but the reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
+focus and caret, and event listeners across insert/remove/reorder) require
+both.
+
 ---
 
 ## 10.4 Effect Dispatcher

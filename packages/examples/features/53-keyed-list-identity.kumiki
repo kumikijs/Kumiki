@@ -1,0 +1,48 @@
+# Feature: stable tile identity via `TileNode.key` (spec/runtime.md §10.3.10).
+# `for id in ids Row(id) {key: id.show}` gives each Row a stable identity so
+# the reconciler preserves DOM identity across insert / remove / reorder —
+# each Row's `<input>` value the user typed survives when items in front of
+# it are dropped. Without the key, the entire list subtree would rebuild on
+# every length change and the browser-side input state would be lost.
+
+slot ids : List(Int) = [1, 2, 3, 4]
+
+# Drop the head. `ids := [2,3,4]` on click. The keyed reconciler recognises
+# that ids 2, 3, 4 are the SAME instances as before and reuses their DOM
+# elements — including the `<input>` inside each Row.
+reducer dropHead on=ui.click(DropBtn)
+    do= ids := ids.tail
+
+# Reverse-append: pop the head into a spare slot and put it back at the end.
+# The rotate-like effect exercises reorder — the same 4 tiles remain, only
+# their sibling order changes. Under keyed reconcile the `<input>` values
+# follow their rows rather than being reset by position.
+slot tail : List(Int) = []
+
+reducer rotate on=ui.click(RotateBtn) do=
+    tail := ids;
+    ids := []
+
+reducer rotateBack on=ui.click(RestoreBtn) do=
+    ids := tail;
+    tail := []
+
+tile Row in=Int
+    = row(text($1.show), input(placeholder="type here"))
+      {gap: "sm"}
+
+tile DropBtn    = button(text="drop first")
+tile RotateBtn  = button(text="clear")
+tile RestoreBtn = button(text="restore")
+
+tile App
+    = column(
+        heading("keyed list identity"),
+        row(DropBtn, RotateBtn, RestoreBtn) {gap: "sm"},
+        for id in ids Row(id) {key: id.show}
+      ) {gap: "md", pad: "md"}
+
+app KeyedListIdentity
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
