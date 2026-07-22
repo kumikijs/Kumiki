@@ -6,8 +6,8 @@
 // through the snapshot-restore fallback (which only exists as a safety net for
 // tiles that DID change).
 
-import type { AppShape, ReducerSpec, TileNode } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import type { AppShape, Episode, EpisodeLogger, ReducerSpec, TileNode } from "@kumikijs/runtime";
+import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpec {
@@ -737,5 +737,345 @@ describe("runtime: keyed reconcile (#188)", () => {
     } finally {
       console.error = consoleError;
     }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #189: episode `signal-update` step's `binds-updated` is populated from the
+// tiles / binds the keyed diff (#187) actually patched. Same fixture pattern as
+// the reconcile tests above, but each case dispatches a reducer through the
+// `_dispatch` seam so the outer `applyReducer` fires a trailing `signal-update`
+// step that we can inspect on the logger.
+
+type DispatchApp = AppShape & {
+  _dispatch: (name: string, el: Record<string, unknown>) => void;
+};
+
+function makeLogger(): { logger: EpisodeLogger; committed: Episode[] } {
+  const committed: Episode[] = [];
+  let t = 1000;
+  let seq = 0;
+  const logger = createEpisodeLogger({
+    now: () => ++t,
+    idGen: () => `ep_${(seq++).toString().padStart(4, "0")}`,
+    onEpisode: (ep) => committed.push(ep),
+  });
+  return { logger, committed };
+}
+
+/** Extract the `binds-updated` list from the last committed episode. */
+function lastBindsUpdated(committed: Episode[]): string[] | undefined {
+  const ep = committed[committed.length - 1];
+  if (!ep) return undefined;
+  for (let i = ep.steps.length - 1; i >= 0; i--) {
+    const s = ep.steps[i];
+    if (s && s.kind === "signal-update") return s["binds-updated"];
+  }
+  return undefined;
+}
+
+describe("runtime: episode binds-updated wiring (#189)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  it("populates binds-updated with only the tiles the diff rebuilt", () => {
+    // The static rows are reused; only the heading is rebuilt. `binds-updated`
+    // must list "heading" alone — proving the log distinguishes "changed" from
+    // "unchanged" at the granularity of what the diff actually touched.
+    const app = makeStripApp({ rows: 5 }) as unknown as DispatchApp;
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    app._dispatch("bump", {});
+
+    expect(lastBindsUpdated(committed)).toEqual(["heading"]);
+    dispose();
+  });
+
+  it("emits the bind expression (bind + bindPath joined) for a rebuilt form control", () => {
+    // Same shape as data-kumiki-bind, so an authored `bind=todo.title` shows up
+    // as the same "todo.title" identifier a reader would see in the DOM.
+    let bindPath = ["title"];
+    let value = "initial";
+    const app: AppShape = {
+      slots: { flip: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "flip",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            value = "changed";
+            return { slots: { flip: ((s.flip as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [{ kind: "input", bind: "todo", bindPath, value }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("flip", {});
+    expect(lastBindsUpdated(committed)).toEqual(["todo.title"]);
+
+    // A bind without a bindPath collapses to just the bind name.
+    bindPath = [];
+    value = "again";
+    (app as unknown as DispatchApp)._dispatch("flip", {});
+    expect(lastBindsUpdated(committed)).toEqual(["todo"]);
+    dispose();
+  });
+
+  it("emits the key for a keyed-diff fresh insert (and not the survivors)", () => {
+    let items: Array<{ id: string; text: string }> = [
+      { id: "a", text: "A" },
+      { id: "b", text: "B" },
+    ];
+    const app: AppShape = {
+      slots: { rev: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "append",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            items = [...items, { id: "c", text: "C" }];
+            return { slots: { rev: ((s.rev as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: items.map(
+          (it): TileNode => ({ kind: "text", text: it.text, key: it.id }) as TileNode,
+        ),
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("append", {});
+
+    // Only the newly-mounted "c" child fires — "a" / "b" are keyed survivors
+    // and pass through reconcileNode without hitting a rebuild path.
+    expect(lastBindsUpdated(committed)).toEqual(["c"]);
+    dispose();
+  });
+
+  it("emits an empty binds-updated when the dirty slot did not change the tile tree", () => {
+    // The reducer writes a slot but the `root()` closure returns identical data
+    // — reconcile walks the tree, finds no differences, rebuilds nothing.
+    const app: AppShape = {
+      slots: { hidden: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "touchHidden",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => ({ slots: { hidden: ((s.hidden as number) ?? 0) + 1 }, emits: [] }),
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [{ kind: "text", text: "static" }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("touchHidden", {});
+
+    // dirty-slots still records the write; binds-updated is empty because the
+    // diff found nothing visible to patch.
+    const ep = committed[committed.length - 1]!;
+    const step = ep.steps.find((s) => s.kind === "signal-update") as
+      | { "dirty-slots": string[]; "binds-updated": string[] }
+      | undefined;
+    expect(step).toBeDefined();
+    expect(step!["dirty-slots"]).toEqual(["hidden"]);
+    expect(step!["binds-updated"]).toEqual([]);
+    dispose();
+  });
+
+  it("emits the new tile's identifier when the kind at a position changes", () => {
+    // Directly exercises the `oldNode.kind !== newNode.kind` branch of
+    // reconcileNode. The rebuilt element carries the NEW kind, which is what
+    // shows up in binds-updated — the log describes what was mounted, not
+    // what was thrown away.
+    let showHeading = true;
+    const app: AppShape = {
+      slots: { swap: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "swap",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            showHeading = !showHeading;
+            return { slots: { swap: ((s.swap as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [
+          { kind: "text", text: "top" },
+          showHeading ? { kind: "heading", text: "swap" } : { kind: "text", text: "swap" },
+          { kind: "text", text: "bottom" },
+        ],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("swap", {});
+
+    // heading → text: the incoming tile is `text`; siblings unchanged and
+    // do not appear.
+    expect(lastBindsUpdated(committed)).toEqual(["text"]);
+    dispose();
+  });
+
+  it("emits just the bind name when bindPath is absent (not just empty array)", () => {
+    // `bindPath === undefined` is a distinct branch from `bindPath === []` —
+    // both must collapse to the bare bind name. Codegen omits the field
+    // entirely for a bare `bind=note` input, so this is the common shape.
+    let value = "initial";
+    const app: AppShape = {
+      slots: { flip: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "flip",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            value = "changed";
+            return { slots: { flip: ((s.flip as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [{ kind: "input", bind: "note", value }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("flip", {});
+    expect(lastBindsUpdated(committed)).toEqual(["note"]);
+    dispose();
+  });
+
+  it("leaves binds-updated empty when reconcile throws and full-render bails out", () => {
+    // Regression guard: reconcile's local `touched` accumulator lives inside
+    // `reconcileTree` — a throw partway through (here: duplicate sibling keys
+    // in `reconcileKeyedChildren`) drops the array on the floor, so
+    // `lastRenderTouched` in `renderPass` is never assigned and stays at the
+    // `[]` reset. The episode step records `binds-updated: []` alongside the
+    // panic step. A future refactor that leaks partial touched IDs across the
+    // bailout would fail this test.
+    let broken = false;
+    const app: AppShape = {
+      slots: { rev: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "breakIt",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            broken = true;
+            return { slots: { rev: ((s.rev as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: broken
+          ? [
+              { kind: "text", text: "a", key: "dup" },
+              { kind: "text", text: "b", key: "dup" },
+            ]
+          : [{ kind: "text", text: "start", key: "s" }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const consoleError = console.error;
+    const suppressed: unknown[] = [];
+    console.error = (...args: unknown[]) => {
+      suppressed.push(args);
+    };
+    try {
+      const { dispose } = mount(app, root, { episodeLogger: logger });
+      (app as unknown as DispatchApp)._dispatch("breakIt", {});
+      expect(lastBindsUpdated(committed)).toEqual([]);
+      // The reconcile bailout also records a panic step — evidence the throw
+      // path was actually taken, not sidestepped.
+      const ep = committed[committed.length - 1]!;
+      expect(ep.steps.some((s) => s.kind === "panic")).toBe(true);
+      dispose();
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
+  it("dedups identifiers when multiple rebuilt subtrees share an identifier", () => {
+    // Two <text> tiles at different positions both change → each is a separate
+    // rebuild, but the identifier ("text") collapses to a single entry in the
+    // log so the field stays a small, human-scannable set.
+    let n = 0;
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "bump",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            n += 1;
+            return { slots: { n: ((s.n as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [
+          { kind: "text", text: `top ${n}` },
+          { kind: "text", text: "static" },
+          { kind: "text", text: `bottom ${n}` },
+        ],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("bump", {});
+
+    expect(lastBindsUpdated(committed)).toEqual(["text"]);
+    dispose();
   });
 });

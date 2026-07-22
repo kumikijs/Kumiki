@@ -794,6 +794,11 @@ export function mountCore(
   // pass restarts from a full mount rather than diffing against a discarded
   // tree.
   let currentTree: TileNode | null = null;
+  // #189: identifiers the most recent reconcile pass freshly built. Consumed
+  // by `applyReducer` when it fires the trailing `signal-update` step so
+  // `binds-updated` lists the tiles/binds the diff actually patched. Empty
+  // after a full-render / panic-fallback pass (those are not a diff).
+  let lastRenderTouched: string[] = [];
   let disposed = false;
   // Named timers (`timer(d, name=N)`) are addressable so a reducer can
   // `stop-timer(N)`. Anonymous timers have no handle exposed to the app.
@@ -857,6 +862,10 @@ export function mountCore(
       tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
       return tileCtx.render(tree);
     };
+    // Reset for this pass. The reconcile branch overwrites with the diff's
+    // touched set; every other branch (full-render, panic recovery) leaves it
+    // empty — those paths intentionally do not carry per-tile attribution.
+    lastRenderTouched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
       if (currentTree && currentRoot) {
@@ -864,7 +873,7 @@ export function mountCore(
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
         // differ from `currentRoot` if the root tile itself was rebuilt.
         try {
-          dom = reconcileTree({
+          const rec = reconcileTree({
             oldNode: currentTree,
             oldEl: currentRoot,
             oldMap: currentMap,
@@ -872,6 +881,8 @@ export function mountCore(
             newMap,
             ctx: tileCtx,
           });
+          dom = rec.el;
+          lastRenderTouched = rec.touched;
         } catch (reconcileErr) {
           // Reconcile itself broke — safety net: rebuild the whole tree and
           // swap wholesale, recording the panic so the failure is visible in
@@ -1132,7 +1143,15 @@ export function mountCore(
       }
     }
     render();
-    if (dirty.length > 0) episode?.recordSignalUpdate(dirty);
+    // #189: attach the tiles/binds reconcile actually patched during this
+    // render so the causal chain "slots X → tiles/binds A, B" lands in the
+    // episode log. `render()` populates `lastRenderTouched` from the diff;
+    // full-render / panic paths leave it empty (they carry no per-tile
+    // attribution). Set-dedup preserves first-seen order and collapses to
+    // `[]` when the array is empty.
+    if (dirty.length > 0) {
+      episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched)));
+    }
     if (opened) episode?.endTrigger();
   }
 
@@ -2228,8 +2247,23 @@ function reconcileTree(args: {
   newNode: TileNode;
   newMap: TileElementMap;
   ctx: TileCtx;
-}): HTMLElement {
-  return reconcileNode(args.oldNode, args.oldEl, args.oldMap, args.newNode, args.newMap, args.ctx);
+}): { el: HTMLElement; touched: string[] } {
+  // #189: collect an identifier per subtree that reconcile actually rebuilt or
+  // freshly mounted. Consumed by `renderPass` → `recordSignalUpdate`, filling
+  // the episode `signal-update` step's `binds-updated` field. Only the ROOT of
+  // each rebuilt subtree is pushed (no descent) to keep the log tight — per the
+  // learning-cost guard in docs/design/reactivity-v2.md §4.
+  const touched: string[] = [];
+  const el = reconcileNode(
+    args.oldNode,
+    args.oldEl,
+    args.oldMap,
+    args.newNode,
+    args.newMap,
+    args.ctx,
+    touched,
+  );
+  return { el, touched };
 }
 
 function reconcileNode(
@@ -2239,10 +2273,11 @@ function reconcileNode(
   newNode: TileNode,
   newMap: TileElementMap,
   ctx: TileCtx,
+  touched: string[],
 ): HTMLElement {
   // Different kind → whole subtree is a different thing. Build fresh, splice.
   if (oldNode.kind !== newNode.kind) {
-    return replaceWithFreshTile(oldEl, newNode, ctx);
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
   // Same kind — inspect this node's own data props (everything except
   // `children`, ignoring function-valued entries). If they differ, the element
@@ -2250,7 +2285,7 @@ function reconcileNode(
   // / `bind` changed, a heading's `text` changed. Rebuild the whole subtree;
   // Reuse across parent rebuild is a keyed-diff concern (see below).
   if (!tileFieldsEqual(oldNode, newNode)) {
-    return replaceWithFreshTile(oldEl, newNode, ctx);
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
@@ -2263,7 +2298,7 @@ function reconcileNode(
   // reorder / insert / remove without rebuilding the subtree. Mixed or
   // absent keys fall through to the structural walk below.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx);
+    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx, touched);
     newMap.set(newNode, oldEl);
     return oldEl;
   }
@@ -2271,7 +2306,7 @@ function reconcileNode(
   // correctness at the cost of reuse; keyed children above lift this
   // restriction when the compiler emits identity.
   if (oldChildren.length !== newChildren.length) {
-    return replaceWithFreshTile(oldEl, newNode, ctx);
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
   // Same length: walk in parallel, reconcile each child pair. The old child's
   // live element is looked up in `oldMap`; if it's missing (defensive — could
@@ -2281,10 +2316,10 @@ function reconcileNode(
   for (let i = 0; i < newChildren.length; i++) {
     const oldChildNode = oldChildren[i];
     const newChildNode = newChildren[i];
-    if (!oldChildNode || !newChildNode) return replaceWithFreshTile(oldEl, newNode, ctx);
+    if (!oldChildNode || !newChildNode) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     const oldChildEl = oldMap.get(oldChildNode);
-    if (!oldChildEl) return replaceWithFreshTile(oldEl, newNode, ctx);
-    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx);
+    if (!oldChildEl) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx, touched);
   }
   newMap.set(newNode, oldEl);
   return oldEl;
@@ -2319,6 +2354,7 @@ function reconcileKeyedChildren(
   oldMap: TileElementMap,
   newMap: TileElementMap,
   ctx: TileCtx,
+  touched: string[],
 ): void {
   // Detect duplicate keys among the new children. Silently letting a
   // duplicate through would collapse N tiles onto one DOM element (the
@@ -2356,12 +2392,13 @@ function reconcileKeyedChildren(
           `reconcile: keyed old tile "${key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
         );
       }
-      const el = reconcileNode(oldChild, oldChildEl, oldMap, newChild, newMap, ctx);
+      const el = reconcileNode(oldChild, oldChildEl, oldMap, newChild, newMap, ctx, touched);
       targetEls.push(el);
     } else {
       // Fresh mount: `ctx.render` records the new node → element mapping into
       // newMap via `makeMappingTileCtx`, so the next pass sees this child in
       // its map lookup.
+      touched.push(tileTouchedId(newChild));
       targetEls.push(ctx.render(newChild));
     }
   }
@@ -2383,7 +2420,13 @@ function reconcileKeyedChildren(
   for (const el of targetEls) parentEl.appendChild(el);
 }
 
-function replaceWithFreshTile(oldEl: HTMLElement, newNode: TileNode, ctx: TileCtx): HTMLElement {
+function replaceWithFreshTile(
+  oldEl: HTMLElement,
+  newNode: TileNode,
+  ctx: TileCtx,
+  touched: string[],
+): HTMLElement {
+  touched.push(tileTouchedId(newNode));
   const fresh = ctx.render(newNode);
   const parent = oldEl.parentNode;
   // No parent → the caller's `oldEl` is detached from the live tree. If we
@@ -2398,6 +2441,26 @@ function replaceWithFreshTile(oldEl: HTMLElement, newNode: TileNode, ctx: TileCt
   }
   parent.replaceChild(fresh, oldEl);
   return fresh;
+}
+
+/**
+ * Identifier for a tile the reconcile diff freshly built (subtree rebuild or
+ * keyed-diff insert). Consumed by episode `signal-update.binds-updated` (#189).
+ * Priority: `bind` (with `bindPath` joined) → `key` → `kind`. The bind form
+ * matches `data-kumiki-bind` in `tiles-input.ts` (`bindDataset`) so an authored
+ * `bind=todo.title` shows up as the same `"todo.title"` string in the log.
+ */
+function tileTouchedId(node: TileNode): string {
+  const asBindable = node as { bind?: unknown; bindPath?: unknown };
+  if (typeof asBindable.bind === "string") {
+    const bind = asBindable.bind;
+    if (Array.isArray(asBindable.bindPath) && asBindable.bindPath.length > 0) {
+      return `${bind}.${(asBindable.bindPath as string[]).join(".")}`;
+    }
+    return bind;
+  }
+  if (typeof node.key === "string") return node.key;
+  return node.kind;
 }
 
 // Every TileNode variant that carries a subtree spells it `children`
