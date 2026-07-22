@@ -1,14 +1,16 @@
-// Reactivity re-render cost (issue #159 AC2 → #187 keyed diff).
+// Reactivity re-render cost (issue #159 AC2 → #187 keyed diff → #190 patch).
 //
 // Measures how many DOM element nodes the runtime CREATES per single-slot
 // update. Under the pre-#187 model this was the whole tree every time (a
 // `target.replaceChild` swap); under the current tile-level keyed diff
 // (walker + prop equality kernel live inline in `packages/runtime/src/core.ts`
-// under the `// ---- tile-level keyed diff (issue #187) ----` section — see
+// under the `// ---- tile-level keyed diff ----` section — see
 // docs/design/reactivity-v2.md §2 Decision 1(a)) only rebuilt subtrees create
-// new nodes, so a leaf-only change should create ~1 element. The `waste×`
-// column is `nodes created ÷ nodes changed`; a perfect fine-grained model
-// would land at 1×.
+// new nodes. #190's identity-preserving patch drops the rebuild for tiles
+// whose kind is unchanged, so a leaf-only text change now creates ZERO new
+// elements — the mounted `<h1>` gets `.textContent = "Count: N"` in place
+// instead of a fresh `createElement`. `waste×` is `created ÷ changed`; the
+// #190 target is 0× (nothing added, one text node mutated).
 //
 // happy-dom is cheaper than a real browser (no layout/style recalc, no
 // listener reattach), so absolute wall-clock here is a floor — the shape
@@ -159,16 +161,14 @@ async function measure(rows) {
 
   const medMs = median(samples);
   const medCreated = median(created);
-  // Invariant: a single-slot leaf change MUST create ≥1 Element (the rebuilt
-  // heading subtree). If we see 0, the MutationObserver never fired or the
-  // observe target detached — either way the metric would silently report
-  // `waste× 0×` / `0.00 µs/created` as "perfect", masking the regression the
-  // benchmark exists to catch. Fail loud instead.
-  if (!(medCreated >= 1)) {
-    throw new Error(
-      `reactivity benchmark: expected medCreated >= 1 for ${rows} tiles, got ${medCreated} — MutationObserver never observed the diff's element addition`,
-    );
-  }
+  // #190 identity-preserving patch: a single-slot leaf-text change lands as
+  // an in-place `.textContent = ...` on the mounted `<h1>` — no
+  // `createElement`, no `replaceChild`, so `medCreated === 0` is now the
+  // expected outcome. Pre-#190 the invariant was `>= 1` (the rebuilt
+  // heading subtree); reverting to that would fail the very optimization
+  // this benchmark exists to demonstrate. Regressions we still want to
+  // catch loudly show up as `medCreated >> 0` on the WASTE side, and as a
+  // rerender ms that decouples from tile count — both still surfaced.
   // One update changes exactly one text node ("Count: N"): the semantic
   // minimum. Under the keyed diff this manifests as rebuilding the heading
   // subtree (heading element + its inner text container) — a small constant.
@@ -215,7 +215,9 @@ const cells = rows.map((r) => [
 ]);
 const widths = headers.map((h, i) => Math.max(h.length, ...cells.map((c) => c[i].length)));
 const line = (c) => c.map((v, i) => v.padStart(widths[i])).join("  ");
-console.log("\nReactivity re-render cost — tile-level keyed diff (#187, structural fallback)\n");
+console.log(
+  "\nReactivity re-render cost — tile-level keyed diff (#187) + identity-preserving patch (#190)\n",
+);
 console.log(line(headers));
 console.log(widths.map((w) => "-".repeat(w)).join("  "));
 for (const c of cells) console.log(line(c));

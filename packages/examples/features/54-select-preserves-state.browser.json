@@ -1,0 +1,47 @@
+{
+  "steps": [
+    {
+      "label": "initial render — full options list, current pick is Chili (present in both filters)",
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "All" }, "pick": { "_tag": "Chili" } },
+        "elementState": {
+          "#picker": { "value": "Chili" }
+        }
+      }
+    },
+    {
+      "label": "user focuses the picker before changing options",
+      "do": { "focus": "#picker" },
+      "expect": { "focused": "#picker" }
+    },
+    {
+      "label": "seed a browser-owned marker on the picker; its survival across the reducer proves the same HTMLSelectElement is reused",
+      "do": {
+        "setProperty": "#picker",
+        "property": "dataset.identityProbe",
+        "value": "seeded"
+      }
+    },
+    {
+      "label": "reducer toggles filter — options list shrinks to Hot-only. Element identity is preserved by the #190 patch path; the seeded marker + selection value both survive",
+      "do": { "dispatch": "showHot" },
+      "expect": {
+        "state": { "filter": { "_tag": "Hot" }, "pick": { "_tag": "Chili" } },
+        "elementState": {
+          "#picker[data-identity-probe='seeded']": { "value": "Chili" }
+        }
+      }
+    },
+    {
+      "label": "reducer restores full list — the same picker instance is still mounted (identity marker still there)",
+      "do": { "dispatch": "showAll" },
+      "expect": {
+        "state": { "filter": { "_tag": "All" }, "pick": { "_tag": "Chili" } },
+        "elementState": {
+          "#picker[data-identity-probe='seeded']": { "value": "Chili" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "steps": [
+    {
+      "label": "initial render — panel is collapsed",
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 0 },
+        "elementState": {
+          "#disc": { "open": false }
+        },
+        "domIncludes": ["clicks: 0"]
+      }
+    },
+    {
+      "label": "user opens the disclosure",
+      "do": {
+        "setProperty": "#disc",
+        "property": "open",
+        "value": true
+      },
+      "expect": {
+        "elementState": {
+          "#disc": { "open": true }
+        }
+      }
+    },
+    {
+      "label": "reducer changes the summary — patch path, element identity preserved, panel stays open",
+      "do": { "dispatch": "bump" },
+      "expect": {
+        "state": { "count": 1 },
+        "domIncludes": ["clicks: 1"],
+        "elementState": {
+          "#disc": { "open": true }
+        }
+      }
+    },
+    {
+      "label": "another summary refresh — still open",
+      "do": { "dispatch": "bump" },
+      "expect": {
+        "state": { "count": 2 },
+        "domIncludes": ["clicks: 2"],
+        "elementState": {
+          "#disc": { "open": true }
+        }
+      }
+    }
+  ]
+}

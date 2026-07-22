@@ -154,6 +154,35 @@ export type TileNode = (
   | { kind: "switch"; checked: boolean; props?: TileProps }
   | { kind: "error"; field: string; props?: TileProps }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
+  | {
+      /**
+       * Native `<details>` disclosure (§10 built-in tile catalog, #190).
+       * `open` maps to the DOM property of the same name; toggling it via a
+       * data-prop change hits the tile's patcher (element identity is
+       * preserved so the browser keeps the disclosure's animation state and
+       * any inner focus).
+       */
+      kind: "details";
+      summary: string;
+      children: TileNode[];
+      open?: boolean;
+      props?: TileProps;
+    }
+  | {
+      /**
+       * `contenteditable` text field (§10 built-in tile catalog, #190). Emits
+       * a `<div contenteditable="true">`; `bind=` writes back the plain
+       * `textContent` on every `input` event. The tile patcher preserves the
+       * live caret / IME composition by only overwriting `textContent` when
+       * `document.activeElement !== el`.
+       */
+      kind: "editable";
+      text: string;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: string[];
+      id?: string;
+    }
 ) & {
   /**
    * Stable per-instance identity for keyed reconcile. Optional and additive:
@@ -264,6 +293,28 @@ export type TileRenderer<K extends TileNode["kind"] = TileNode["kind"]> = (
 /** A registry of tile renderers, keyed by `TileNode["kind"]`. */
 export type TileRenderers = { [K in TileNode["kind"]]?: TileRenderer<K> };
 
+/**
+ * Mutates an already-mounted DOM element to reflect a new `TileNode` of the
+ * same kind, preserving element identity (and thus browser-internal state:
+ * `<select>` open dropdown / selection, `<input>` focus / caret,
+ * `<video>` playback position, `<details>` open, `contenteditable` caret and
+ * IME composition). Called by the reconcile diff whenever `oldNode.kind ===
+ * newNode.kind` and any own data prop differs; when no patcher is registered
+ * for a kind, the reconcile falls back to a full subtree rebuild (which
+ * discards internal state — hence #190). Container tile children are still
+ * walked by the reconcile after `patch` returns; a container patcher's job
+ * is to reconcile just this element's own attributes.
+ */
+export type TilePatcher<K extends TileNode["kind"] = TileNode["kind"]> = (
+  el: HTMLElement,
+  oldNode: TileNode & { kind: K },
+  newNode: TileNode & { kind: K },
+  ctx: TileCtx,
+) => void;
+
+/** A registry of tile patchers, keyed by `TileNode["kind"]`. */
+export type TilePatchers = { [K in TileNode["kind"]]?: TilePatcher<K> };
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -329,6 +380,15 @@ export type MountOptions = {
    * full built-in set.
    */
   tiles?: TileRenderers;
+  /**
+   * Tile patchers (#190). When present for a kind, the reconcile diff calls
+   * `patch(el, oldNode, newNode, ctx)` to mutate the mounted element in place
+   * rather than tearing down and rebuilding — preserving browser-internal
+   * element state (`<select>` open / `<video>` playback / focus / caret /
+   * `<details>` open / `contenteditable`) across a data-prop change. A kind
+   * with no registered patcher continues to fall back to a full rebuild.
+   */
+  tilePatchers?: TilePatchers;
   /** The routing feature module (`routing` from `router.ts`), when the app routes. */
   routing?: RoutingImpl;
   /** Built-in effect installers (e.g. `installToast`) this app can emit. */
@@ -741,6 +801,7 @@ export function mountCore(
   // map, so unchanged tiles keep their live DOM node (and its focus / caret /
   // <select> state / event listeners) — only changed subtrees are rebuilt.
   const tiles = options.tiles ?? {};
+  const tilePatchers = options.tilePatchers ?? {};
   const ctxWrap = { applyMotion, applyUiEventHandlers, renderMissingTile };
   let currentMap: TileElementMap = new WeakMap();
 
@@ -819,18 +880,31 @@ export function mountCore(
   // resolution (theme tokens, icon lookup — the tree is still detached, so
   // `resolveApp` cannot walk it) lands on this mount's app.
   const renderPass = (): void => {
+    // Focus / caret snapshot — kept as a fallback for panic / reconcile-
+    // bailout paths that swap DOM wholesale via `target.replaceChild` (or
+    // route-error retry). On the reconcile happy path (#187 keyed diff +
+    // #190 per-kind patch), element identity is preserved so this restore
+    // step never fires. `restoreFocus` is set true below only when the
+    // pass actually rebuilt the tree — see below.
+    // SELECT is included so a bailout still lands focus back on the same
+    // select control even though it lives outside the input/textarea family;
+    // its dropdown-open state is browser-owned and unrecoverable through
+    // snapshot, but re-focusing at least keeps keyboard-nav coherent.
     type FocusSnap = {
       bind?: string | undefined;
       id?: string | undefined;
       path?: number[] | undefined;
       selStart: number | null;
       selEnd: number | null;
+      isSelect: boolean;
     } | null;
     let snap: FocusSnap = null;
     const active = document.activeElement;
     if (
       active &&
-      (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
+      (active.tagName === "INPUT" ||
+        active.tagName === "TEXTAREA" ||
+        active.tagName === "SELECT") &&
       target.contains(active)
     ) {
       const el = active as HTMLInputElement;
@@ -838,8 +912,9 @@ export function mountCore(
         bind: el.dataset.kumikiBind ?? undefined,
         id: el.id || undefined,
         path: domPath(el, target),
-        selStart: el.selectionStart,
-        selEnd: el.selectionEnd,
+        selStart: el.tagName === "SELECT" ? null : el.selectionStart,
+        selEnd: el.tagName === "SELECT" ? null : el.selectionEnd,
+        isSelect: el.tagName === "SELECT",
       };
     }
 
@@ -880,6 +955,7 @@ export function mountCore(
             newNode: renderedTree,
             newMap,
             ctx: tileCtx,
+            patchers: tilePatchers,
           });
           dom = rec.el;
           lastRenderTouched = rec.touched;
@@ -965,6 +1041,15 @@ export function mountCore(
     currentTree = panicked ? null : renderedTree;
     currentMap = newMap;
 
+    // #190: on the happy patch path element identity is preserved, so this
+    // `focus()` degrades to a no-op — the browser cursor is already on the
+    // still-mounted control. Restoration still fires unconditionally to
+    // cover: (a) reconcile-bailout / panic recovery, where DOM was rebuilt
+    // wholesale; (b) keyed reorder, where the child element is moved via
+    // `parentEl.appendChild` (browsers, and happy-dom, blur a moved element
+    // even when its identity survives). The `.focus()` + setSelection calls
+    // are idempotent and cheap on the happy path, so keeping the layer
+    // active is a strict simplification win over per-path gating.
     if (snap) {
       let sel: Element | null = snap.bind
         ? target.querySelector(`[data-kumiki-bind="${snap.bind}"]`)
@@ -974,10 +1059,13 @@ export function mountCore(
       // Fall back to DOM-path restore for inputs without bind/id (e.g.
       // `value=`-only search boxes). Identifies the element by its position.
       if (!sel && snap.path) sel = elementAtPath(snap.path, target);
-      if (sel && (sel.tagName === "INPUT" || sel.tagName === "TEXTAREA")) {
+      if (
+        sel &&
+        (sel.tagName === "INPUT" || sel.tagName === "TEXTAREA" || sel.tagName === "SELECT")
+      ) {
         const el = sel as HTMLInputElement;
         el.focus();
-        if (snap.selStart !== null && snap.selEnd !== null) {
+        if (!snap.isSelect && snap.selStart !== null && snap.selEnd !== null) {
           try {
             el.setSelectionRange(snap.selStart, snap.selEnd);
           } catch {
@@ -2247,12 +2335,14 @@ function reconcileTree(args: {
   newNode: TileNode;
   newMap: TileElementMap;
   ctx: TileCtx;
+  patchers: TilePatchers;
 }): { el: HTMLElement; touched: string[] } {
   // #189: collect an identifier per subtree that reconcile actually rebuilt or
-  // freshly mounted. Consumed by `renderPass` → `recordSignalUpdate`, filling
-  // the episode `signal-update` step's `binds-updated` field. Only the ROOT of
-  // each rebuilt subtree is pushed (no descent) to keep the log tight — per the
-  // learning-cost guard in docs/design/reactivity-v2.md §4.
+  // freshly mounted (or patched in place, #190). Consumed by `renderPass` →
+  // `recordSignalUpdate`, filling the episode `signal-update` step's
+  // `binds-updated` field. Only the ROOT of each rebuilt / patched subtree is
+  // pushed (no descent) to keep the log tight — per the learning-cost guard in
+  // docs/design/reactivity-v2.md §4.
   const touched: string[] = [];
   const el = reconcileNode(
     args.oldNode,
@@ -2261,6 +2351,7 @@ function reconcileTree(args: {
     args.newNode,
     args.newMap,
     args.ctx,
+    args.patchers,
     touched,
   );
   return { el, touched };
@@ -2273,19 +2364,34 @@ function reconcileNode(
   newNode: TileNode,
   newMap: TileElementMap,
   ctx: TileCtx,
+  patchers: TilePatchers,
   touched: string[],
 ): HTMLElement {
   // Different kind → whole subtree is a different thing. Build fresh, splice.
   if (oldNode.kind !== newNode.kind) {
     return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
-  // Same kind — inspect this node's own data props (everything except
-  // `children`, ignoring function-valued entries). If they differ, the element
-  // itself needs to be reconstructed: e.g. an input's `value` / `placeholder`
-  // / `bind` changed, a heading's `text` changed. Rebuild the whole subtree;
-  // Reuse across parent rebuild is a keyed-diff concern (see below).
+  // Same kind, differing own data props (`children` / `key` / functions
+  // excluded — see `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
+  // preserving path: if a per-kind patcher is registered, mutate the mounted
+  // element in place (preserving `<select>` open state / focus / caret /
+  // `<video>` playback / `<details>` open / `contenteditable`), then continue
+  // into the children walk below so container-shaped changes still reconcile.
+  // Without a patcher, fall back to the full subtree rebuild (correct but
+  // discards browser-internal state — pre-#190 behaviour).
   if (!tileFieldsEqual(oldNode, newNode)) {
-    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    const patcher = (patchers as Record<string, TilePatcher | undefined>)[newNode.kind];
+    if (patcher) {
+      // Throws land in the outer `reconcileTree` bailout, which records a
+      // `location: "reconcile"` panic and does a full `target.replaceChild`.
+      // Patchers should therefore be side-effect-safe up to the throw point.
+      patcher(oldEl, oldNode as never, newNode as never, ctx);
+      touched.push(tileTouchedId(newNode));
+      // Fall through to the children reconcile below — a container tile may
+      // have both attribute AND child changes in the same render.
+    } else {
+      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    }
   }
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
@@ -2298,7 +2404,7 @@ function reconcileNode(
   // reorder / insert / remove without rebuilding the subtree. Mixed or
   // absent keys fall through to the structural walk below.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx, touched);
+    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx, patchers, touched);
     newMap.set(newNode, oldEl);
     return oldEl;
   }
@@ -2319,7 +2425,7 @@ function reconcileNode(
     if (!oldChildNode || !newChildNode) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     const oldChildEl = oldMap.get(oldChildNode);
     if (!oldChildEl) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
-    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx, touched);
+    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx, patchers, touched);
   }
   newMap.set(newNode, oldEl);
   return oldEl;
@@ -2354,6 +2460,7 @@ function reconcileKeyedChildren(
   oldMap: TileElementMap,
   newMap: TileElementMap,
   ctx: TileCtx,
+  patchers: TilePatchers,
   touched: string[],
 ): void {
   // Detect duplicate keys among the new children. Silently letting a
@@ -2392,7 +2499,16 @@ function reconcileKeyedChildren(
           `reconcile: keyed old tile "${key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
         );
       }
-      const el = reconcileNode(oldChild, oldChildEl, oldMap, newChild, newMap, ctx, touched);
+      const el = reconcileNode(
+        oldChild,
+        oldChildEl,
+        oldMap,
+        newChild,
+        newMap,
+        ctx,
+        patchers,
+        touched,
+      );
       targetEls.push(el);
     } else {
       // Fresh mount: `ctx.render` records the new node → element mapping into

@@ -184,10 +184,17 @@ app App ... theme = themeName    ; ← slot 名を渡す
 
 ### 10.3.9 focus 復元
 
+#190（要素同一性を保った reconciliation、§10.3.11）以降、runtime は同じ kind の
+タイルを data prop 変更時に「その場で patch」するので、mount 中の `<input>` /
+`<textarea>` / `<select>` は自然に browser focus を保つ。以下の snapshot / restore
+層は、**丸ごと DOM を swap するパス（reconcile bailout、panic recovery、
+focus 対象要素が DOM 位置を跨ぐ keyed reorder）専用の fallback** として残す。
+
 再レンダリング後も入力中の input/textarea の focus とカーソル位置を維持する:
 - `bind=` がある要素: `data-kumiki-bind` 属性（nested path は full path 文字列）で再特定
 - `id=` がある要素: id で再特定
 - どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
+- `<select>` も snapshot 対象に含まれるので、reorder / bailout パスでもピッカーへの focus は復元される（open dropdown の状態は復元不能で、それは §10.3.11 の patch パス側の保証）
 
 ### 10.3.10 安定タイル identity
 
@@ -235,6 +242,54 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 リリースする。片側だけでも壊れない（graceful degradation）が、`<select>`
 value / `<input>` focus と caret / event listener が insert/remove/reorder を
 またいで保持されるという保証は両方が揃って初めて成立する。
+
+### 10.3.11 要素同一性を保った reconciliation (#190)
+
+Keyed diff（§10.3.10）は「データ prop が変わらなかった」タイルの DOM 同一性を
+保つ。#190 はさらに「**データ prop が変わった**が in-place で更新できる」タイル
+まで保証範囲を広げ、browser 固有の状態（`<select>` の open dropdown、`<video>`
+の再生位置、`<details>` の open、contenteditable のキャレット/IME composition）
+がインタラクション中の再レンダーを生き残るようにした。
+
+**コントラクト**  すべての tile-renderer モジュールは `TileRenderers`（create）
+と `TilePatchers`（update）の 2 つを export する:
+
+```ts
+export type TilePatcher<K> = (
+  el: HTMLElement,
+  oldNode: TileNode & { kind: K },
+  newNode: TileNode & { kind: K },
+  ctx: TileCtx,
+) => void;
+```
+
+reconcile が `oldNode.kind === newNode.kind` かつ自分自身のデータ prop に差分を
+検出すると、その kind の patcher を引いて mount 中の要素を in-place で mutate
+し、その後 children を通常どおり walk する（container タイルは属性変更と子
+変更が同じ render で同居し得るため）。patcher がない kind は #190 以前と同じ
+subtree rebuild にフォールバックするので、この機能は **段階的に採用可能**で、
+runtime の全書き換えは要求しない。
+
+**Handler-slot パターン**  再利用される要素にリスナーを多重登録してはならず
+（runtime は `addEventListener` を使い、listener 参照を保持していない）、create
+時に登録した listener はその時点の node クロージャに束縛される。`bind` /
+`onChange` / `onClose` / `to` が render 間で変わり得るコントロールでは、各
+renderer が `WeakMap<HTMLElement, Handlers>` に現在の handler を格納し、create
+時に張った native listener はその slot 越しに dispatch する。`patch` は slot を
+新しい node の handler で上書きするだけ。適用対象: `input`, `textarea`,
+`select`, `check`, `radio`, `switch`, `slider`, `editable`, `form`, `button`,
+`link`, `modal`, `drawer`, `popover`。
+
+**value 書き込みのガード**  テキスト入力（`input`, `textarea`）は
+`.value === newNode.value` のときは代入を skip（typing 中のキャレット reset
+を回避）。slider は `activeElement === el` のときは skip（ドラッグ中ガード）。
+reducer が明示的にフィールドをクリアするケースは、外側の snapshot 層
+（§10.3.9）が patch 実行前に selection range を捕捉するので、そこで復元される。
+
+**episode log `binds-updated` への影響**  patch パスも subtree rebuild と同じ
+ように `tileTouchedId(newNode)` を touched セットに push するため、
+「slot `X` が変わった → タイル/bind `A`, `B` が patched」という因果は
+rebuild/patch のどちらを通っても `signal-update.binds-updated`（#189）に載る。
 
 ---
 

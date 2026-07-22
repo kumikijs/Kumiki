@@ -311,5 +311,31 @@ export function renderTileToString(node: TileNode): string {
       return el("div", { "data-kumiki-tile": "error", "data-field": node.field }, "");
     case "route-outlet":
       return el("div", { "data-kumiki-tile": "route-outlet" }, renderChildren(node.children));
+    case "details": {
+      // Native <details> disclosure. SSR emits the current open state via
+      // the `open` attribute so the server-painted collapse matches what
+      // the client renders on hydration; children still emit inside so a
+      // no-JS user (or search crawler) can read the content.
+      const inner = `<summary>${escapeText(node.summary)}</summary>${renderChildren(node.children)}`;
+      return `<details data-kumiki-tile="details"${node.open ? " open" : ""}>${inner}</details>`;
+    }
+    case "editable": {
+      // contenteditable div. `bind=`, if present, becomes `data-kumiki-bind`
+      // so the client picks up the same identity path used by input /
+      // textarea. The initial text is escaped verbatim; caret / selection
+      // state is a client-only concern.
+      const bind = node.bindPath
+        ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
+        : (node.bind ?? undefined);
+      return el(
+        "div",
+        {
+          "data-kumiki-tile": "editable",
+          contenteditable: "true",
+          "data-kumiki-bind": bind,
+        },
+        escapeText(node.text ?? ""),
+      );
+    }
   }
 }

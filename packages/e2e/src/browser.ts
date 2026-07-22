@@ -15,7 +15,13 @@ export type Action =
   | { blur: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
-  | { navigate: string };
+  | { navigate: string }
+  /**
+   * Set a live DOM property on the element matched by `selector`. Used by
+   * #190 fixtures to seed browser-owned state a Kumiki reducer has no way
+   * to produce (e.g. `<video>.currentTime = 3` before triggering a re-render).
+   */
+  | { setProperty: string; property: string; value: unknown };
 
 export type Expect = {
   noErrors?: boolean;
@@ -34,6 +40,15 @@ export type Expect = {
    * it's the verification tier for the `motion` layer.
    */
   animating?: string[];
+  /**
+   * Browser-only: assert on live element properties, keyed by CSS selector.
+   * Each value is a `{ property: expectedValue }` map read via
+   * `document.querySelector(sel)[property]`. Used by #190 to prove that
+   * `<select>` open state / `<video>` currentTime / `<details>` open /
+   * `contenteditable` textContent survive a re-render mid-interaction —
+   * behaviour a state-only oracle cannot see.
+   */
+  elementState?: Record<string, Record<string, unknown>>;
 };
 
 export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
@@ -340,6 +355,8 @@ function describeAction(a: Action): string {
   if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
+  if ("setProperty" in a)
+    return `setProperty ${a.setProperty}.${a.property}=${JSON.stringify(a.value)}`;
   return `navigate ${a.navigate}`;
 }
 
@@ -378,6 +395,28 @@ async function performAction(page: Page, a: Action): Promise<void> {
   }
   if ("fill" in a) {
     await page.locator(a.fill).first().fill(a.value, { timeout: 3000 });
+    return;
+  }
+  if ("setProperty" in a) {
+    await page.evaluate(
+      (arg: { sel: string; prop: string; val: unknown }) => {
+        const el = document.querySelector(arg.sel);
+        if (!el) return;
+        // Dotted paths land on nested holders like `dataset.foo` or
+        // `style.color`. Walk everything but the last segment (must exist),
+        // then assign the last segment. Non-existent intermediate props are
+        // a no-op (a common test-author mistake worth staying silent about).
+        const segs = arg.prop.split(".");
+        let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
+        for (let i = 0; i < segs.length - 1; i++) {
+          const nextRaw = host[segs[i] as string];
+          if (nextRaw == null || typeof nextRaw !== "object") return;
+          host = nextRaw as Record<string, unknown>;
+        }
+        host[segs[segs.length - 1] as string] = arg.val;
+      },
+      { sel: a.setProperty, prop: a.property, val: a.value },
+    );
     return;
   }
   // choose
@@ -441,6 +480,29 @@ async function evaluateExpect(
       }, sel)
       .catch(() => false);
     if (!isAnimating) failures.push(`"${sel}" should carry a running animation`);
+  }
+  for (const [sel, props] of Object.entries(expect.elementState ?? {})) {
+    const got = await page
+      .evaluate(
+        (arg: { s: string; ks: string[] }) => {
+          const el = document.querySelector(arg.s) as Record<string, unknown> | null;
+          if (!el) return null;
+          const out: Record<string, unknown> = {};
+          for (const k of arg.ks) out[k] = el[k];
+          return out;
+        },
+        { s: sel, ks: Object.keys(props) },
+      )
+      .catch(() => null);
+    if (!got) {
+      failures.push(`elementState ${sel}: element not found`);
+      continue;
+    }
+    for (const [prop, want] of Object.entries(props)) {
+      if (!matches(want, got[prop])) {
+        failures.push(`elementState ${sel}.${prop}: expected ${j(want)}, got ${j(got[prop])}`);
+      }
+    }
   }
   return failures;
 }

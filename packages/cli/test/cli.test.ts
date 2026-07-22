@@ -93,10 +93,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // replace the pre-existing full-teardown swap. Payoff is measurable in
     // `packages/benchmarks/reactivity/reactivity-cost.mjs` (waste× drops from
     // 503× to 1× on the 500-tile case).
+    // Bumped to 55KB with #190 identity-preserving reconciliation: every
+    // tile module exports a companion `patch(el, oldNode, newNode)` alongside
+    // its create renderer, plus per-element handler slots on tiles-input /
+    // tiles-text (link) / tiles-overlay so `bind` / `to` / `onClose` changes
+    // reroute the still-mounted element's listener without add/remove churn.
+    // Adds the `details` + `editable` tiles too. Payoff: `<select>` open
+    // dropdown, `<video>` currentTime, `<details>` open, `contenteditable`
+    // caret all survive a reducer-triggered re-render mid-interaction.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(45_000);
+    expect(total).toBeLessThan(55_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
