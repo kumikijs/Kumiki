@@ -1147,11 +1147,10 @@ export function mountCore(
     // render so the causal chain "slots X → tiles/binds A, B" lands in the
     // episode log. `render()` populates `lastRenderTouched` from the diff;
     // full-render / panic paths leave it empty (they carry no per-tile
-    // attribution). Dedup preserves first-seen order.
+    // attribution). Set-dedup preserves first-seen order and collapses to
+    // `[]` when the array is empty.
     if (dirty.length > 0) {
-      const bindsUpdated =
-        lastRenderTouched.length > 0 ? Array.from(new Set(lastRenderTouched)) : [];
-      episode?.recordSignalUpdate(dirty, bindsUpdated);
+      episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched)));
     }
     if (opened) episode?.endTrigger();
   }

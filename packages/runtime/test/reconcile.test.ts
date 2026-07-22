@@ -913,6 +913,134 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
     dispose();
   });
 
+  it("emits the new tile's identifier when the kind at a position changes", () => {
+    // Directly exercises the `oldNode.kind !== newNode.kind` branch of
+    // reconcileNode. The rebuilt element carries the NEW kind, which is what
+    // shows up in binds-updated — the log describes what was mounted, not
+    // what was thrown away.
+    let showHeading = true;
+    const app: AppShape = {
+      slots: { swap: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "swap",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            showHeading = !showHeading;
+            return { slots: { swap: ((s.swap as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [
+          { kind: "text", text: "top" },
+          showHeading ? { kind: "heading", text: "swap" } : { kind: "text", text: "swap" },
+          { kind: "text", text: "bottom" },
+        ],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("swap", {});
+
+    // heading → text: the incoming tile is `text`; siblings unchanged and
+    // do not appear.
+    expect(lastBindsUpdated(committed)).toEqual(["text"]);
+    dispose();
+  });
+
+  it("emits just the bind name when bindPath is absent (not just empty array)", () => {
+    // `bindPath === undefined` is a distinct branch from `bindPath === []` —
+    // both must collapse to the bare bind name. Codegen omits the field
+    // entirely for a bare `bind=note` input, so this is the common shape.
+    let value = "initial";
+    const app: AppShape = {
+      slots: { flip: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "flip",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            value = "changed";
+            return { slots: { flip: ((s.flip as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: [{ kind: "input", bind: "note", value }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("flip", {});
+    expect(lastBindsUpdated(committed)).toEqual(["note"]);
+    dispose();
+  });
+
+  it("leaves binds-updated empty when reconcile throws and full-render bails out", () => {
+    // Regression guard: reconcile's local `touched` accumulator lives inside
+    // `reconcileTree` — a throw partway through (here: duplicate sibling keys
+    // in `reconcileKeyedChildren`) drops the array on the floor, so
+    // `lastRenderTouched` in `renderPass` is never assigned and stays at the
+    // `[]` reset. The episode step records `binds-updated: []` alongside the
+    // panic step. A future refactor that leaks partial touched IDs across the
+    // bailout would fail this test.
+    let broken = false;
+    const app: AppShape = {
+      slots: { rev: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "breakIt",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            broken = true;
+            return { slots: { rev: ((s.rev as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: broken
+          ? [
+              { kind: "text", text: "a", key: "dup" },
+              { kind: "text", text: "b", key: "dup" },
+            ]
+          : [{ kind: "text", text: "start", key: "s" }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const consoleError = console.error;
+    const suppressed: unknown[] = [];
+    console.error = (...args: unknown[]) => {
+      suppressed.push(args);
+    };
+    try {
+      const { dispose } = mount(app, root, { episodeLogger: logger });
+      (app as unknown as DispatchApp)._dispatch("breakIt", {});
+      expect(lastBindsUpdated(committed)).toEqual([]);
+      // The reconcile bailout also records a panic step — evidence the throw
+      // path was actually taken, not sidestepped.
+      const ep = committed[committed.length - 1]!;
+      expect(ep.steps.some((s) => s.kind === "panic")).toBe(true);
+      dispose();
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
   it("dedups identifiers when multiple rebuilt subtrees share an identifier", () => {
     // Two <text> tiles at different positions both change → each is a separate
     // rebuild, but the identifier ("text") collapses to a single entry in the
