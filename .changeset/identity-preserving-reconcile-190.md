@@ -28,8 +28,14 @@ composition) now survives a reducer-triggered re-render mid-interaction.
 - **Compiler + runtime** — two new built-in tile kinds:
   - `details(summary=..., open=...)` — native `<details>` disclosure.
   - `editable(bind=..., text=...)` — `<div contenteditable="true">` with
-    plain-text `textContent` write-back on `input`, activeElement-guarded
-    text overwrite to preserve caret / IME composition.
+    plain-text `textContent` write-back on `input`. The patcher skips text
+    overwrites when the DOM already matches the target text (the common
+    case during typing, where the bind loop keeps slot and DOM in sync)
+    and skips them entirely while an IME composition is in flight so the
+    candidate window is not dismissed mid-glyph.
+  - `input`, `textarea`, and `editable` all install
+    `compositionstart` / `compositionend` listeners at create time so
+    JP/CN/KR IME users are not disrupted by a re-render mid-composition.
 
 - **Spec** — `docs/spec/runtime.md` gains §10.3.11 documenting the patch
   contract, handler-slot pattern, value-write guards, and the demoted role

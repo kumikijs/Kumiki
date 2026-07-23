@@ -1247,6 +1247,141 @@ describe("runtime: identity-preserving patch (#190)", () => {
     dispose();
   });
 
+  it("input: bind swap A→B routes new writes to the new slot (INPUT_STATE handler slot refresh)", () => {
+    // #190 handler-slot pattern: on the patch path, the input's native
+    // `input` listener stays the same but dispatches through the WeakMap
+    // slot, so `bind` swapping to a different slot after a data-prop patch
+    // must land the next keystroke in the NEW slot. Pre-#190 (full rebuild
+    // path) this always worked because the listener was re-created; the
+    // handler-slot pattern preserves that guarantee across in-place patch.
+    let bind: "a" | "b" = "a";
+    const live: Record<string, unknown> = { a: "", b: "" };
+    const app: AppShape = {
+      slots: { a: { value: "" }, b: { value: "" } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        bind,
+        // `placeholder` diverges so `tileFieldsEqual` is false → patch runs.
+        placeholder: bind === "a" ? "first" : "second",
+      }),
+    };
+    // Mirror slot writes into `live` so the next render reads the new value.
+    const original = mount(app, root);
+    const setSlot = (app as unknown as { _setSlot: (name: string, value: unknown) => void })
+      ._setSlot;
+    (app as unknown as { _setSlot: (name: string, value: unknown) => void })._setSlot = (
+      name,
+      value,
+    ) => {
+      live[name] = value;
+      (app as unknown as Record<string, Record<string, unknown>>).live[name] = value;
+      setSlot(name, value);
+    };
+    const inp = root.querySelector("input") as HTMLInputElement;
+    // Simulate user typing "x" while bound to slot `a`.
+    inp.value = "x";
+    inp.dispatchEvent(new Event("input", { bubbles: true }));
+    // Swap the bind + re-render (data-prop change → patch, NOT rebuild).
+    bind = "b";
+    app._rerender?.();
+    const inpAfter = root.querySelector("input") as HTMLInputElement;
+    // Identity preserved by the patch path.
+    expect(inpAfter).toBe(inp);
+    // New keystroke should now write to slot `b`.
+    inpAfter.value = "y";
+    inpAfter.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(live.b).toBe("y");
+    // And slot `a` still holds the previous "x" (never overwritten by the
+    // post-swap listener despite listener identity being unchanged).
+    expect(live.a).toBe("x");
+    original.dispose();
+  });
+
+  it("applyStateStyles: repeated patch does not grow data-kumiki-state or the shared stylesheet", () => {
+    // Pre-fix each patch appended a fresh token + a fresh rule; the element
+    // attribute and the `<style id=kumiki-state-styles>` node both grew
+    // unboundedly. Idempotency guard collapses identical re-applications to
+    // a no-op; a real state-prop change is still allowed.
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "bump",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => ({ slots: { n: ((s.n as number) ?? 0) + 1 }, emits: [] }),
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        // `hover` is a state-style prop; children carry a text tile whose
+        // content diverges on every dispatch so the parent's patcher runs.
+        props: { hover: { bg: "red" } } as unknown as Record<string, unknown>,
+        children: [
+          {
+            kind: "text",
+            text: `n=${((app as unknown as Record<string, Record<string, unknown>>).live?.n as number) ?? 0}`,
+          },
+        ],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const col = root.firstElementChild as HTMLElement;
+    const stateBefore = col.dataset.kumikiState;
+    expect(stateBefore).toBeTruthy();
+    const styleEl = document.getElementById("kumiki-state-styles");
+    const rulesBefore = styleEl?.childNodes.length ?? 0;
+    // Kick 10 dispatches; every one triggers the parent patcher.
+    for (let i = 0; i < 10; i++) {
+      (app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void })._dispatch(
+        "bump",
+        {},
+      );
+    }
+    // Same token; no growth on the shared stylesheet either.
+    expect(col.dataset.kumikiState).toBe(stateBefore);
+    expect(styleEl?.childNodes.length ?? 0).toBe(rulesBefore);
+    dispose();
+  });
+
+  it("list: `ordered` flip declines the in-place patch WITHOUT recording a reconcile panic", () => {
+    // `PatchRequiresRebuild` is a controlled escape hatch — the outer
+    // reconcile catches it specifically and falls back to a subtree rebuild
+    // WITHOUT calling `episode.recordPanic`, so a legitimate `<ul>` ↔ `<ol>`
+    // flip does not pollute the episode log. Raw throws still panic (locked
+    // in by the "reconcile bailout records a panic" test elsewhere).
+    let ordered = false;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "list",
+        ordered,
+        children: [{ kind: "list-item", children: [{ kind: "text", text: "one" }] }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+    expect((root.firstElementChild as HTMLElement).tagName).toBe("UL");
+    ordered = true;
+    app._rerender?.();
+    expect((root.firstElementChild as HTMLElement).tagName).toBe("OL");
+    // No panic step recorded — the sentinel path skipped `episode.recordPanic`.
+    for (const ep of committed) {
+      expect(ep.steps.some((s) => s.kind === "panic")).toBe(false);
+    }
+    dispose();
+  });
+
   it("binds-updated records the patched tile's identifier", () => {
     // A slot bump changes the input's `value` — reconcile takes the patch
     // path, and `tileTouchedId` is still pushed so the causal chain

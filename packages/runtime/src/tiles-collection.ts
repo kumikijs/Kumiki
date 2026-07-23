@@ -2,6 +2,7 @@
 
 import {
   applyContainerProps,
+  PatchRequiresRebuild,
   type TileCtx,
   type TileNode,
   type TilePatchers,
@@ -62,23 +63,16 @@ export const collectionTiles: TileRenderers = {
 
 export const collectionPatchers: TilePatchers = {
   list(el, _oldNode, newNode) {
-    // `list` renders <ol> or <ul> based on `ordered`; a change flips the tag
-    // — that's a different element and cannot be patched in place. Return
-    // without touching, so the outer reconcile stays with the previously-
-    // patched element identity when `ordered` did not change, and the whole
-    // subtree rebuilds if it did (through the fresh-tile fallback triggered
-    // by tag mismatch on the very next full render — see NB below).
-    // NB: the fresh-tile fallback in `replaceWithFreshTile` fires only when
-    // `oldNode.kind !== newNode.kind`; here both are `list`. If `ordered`
-    // flips, the tagName diverges but reconcile still calls this patcher.
-    // Guard here so a UL/OL swap goes through a full rebuild rather than
-    // silently living in the wrong tag.
+    // `list` renders `<ol>` or `<ul>` based on `ordered`; a change flips the
+    // tag, and a same-kind patch cannot rewrite an element's tagName. Signal
+    // the reconcile to fall back to a same-kind rebuild via the controlled
+    // `PatchRequiresRebuild` sentinel — this stays out of the panic log (it
+    // is a normal outcome for a legitimate authored change), unlike a raw
+    // `throw` which the outer bailout would record as `location: "reconcile"`.
     const list = el as HTMLUListElement | HTMLOListElement;
     const wantTag = newNode.ordered ? "OL" : "UL";
     if (list.tagName !== wantTag) {
-      throw new Error(
-        `reconcile: list "ordered" flipped (${list.tagName} → ${wantTag}); rebuilding subtree`,
-      );
+      throw new PatchRequiresRebuild(`list "ordered" flipped (${list.tagName} → ${wantTag})`);
     }
     applyContainerProps(list, newNode.props);
   },

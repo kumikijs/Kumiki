@@ -289,11 +289,19 @@ renders, each renderer stores the current handlers in a per-element
 `create` dispatch through the slot; `patch` overwrites the slot with the new
 node's handlers. This applies to `input`, `textarea`, `select`, `check`,
 `radio`, `switch`, `slider`, `editable`, `form`, `button`, `link`, `modal`,
-`drawer`, `popover`.
+`drawer`, and `popover`. `details` is intentionally excluded: it carries no
+Kumiki-level dynamic handler and browser-native `toggle` semantics do not
+need re-routing. The universal handlers `applyUiEventHandlers` lifts on every
+tile (`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur`) share a single
+`UI_HANDLER_STATE` slot that the reconcile refreshes on every patch, so a
+closure change reaches the next event regardless of tile kind.
 
-**Value-write guards.** Text inputs (`input`, `textarea`) skip the `.value`
-assignment when it already matches `newNode.value` (so typing does not
-reset the caret), and slider skips when `activeElement === el` (mid-drag
+**Value-write guards.** Text inputs (`input`, `textarea`, `editable`) skip
+the `.value` / `.textContent` assignment when it already matches
+`newNode.value` / `newNode.text` (so typing does not reset the caret) and
+skip it entirely while an IME composition is in flight (`compositionstart`
+→ `compositionend`) so the browser's JP/CN/KR candidate window is not
+dismissed mid-glyph. Slider skips when `activeElement === el` (mid-drag
 guard). The reducer-driven "clear the field" case is picked up by the
 outer snapshot layer (§10.3.9), which captures selection ranges before the
 patch runs.

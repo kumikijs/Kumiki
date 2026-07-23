@@ -240,8 +240,12 @@ export const overlayPatchers: TilePatchers = {
     } else if (det.id) {
       det.removeAttribute("id");
     }
-    const summary = det.querySelector("summary");
-    if (summary && summary.textContent !== newNode.summary) {
+    // Summary is always the first child of the <details> (create appends
+    // it before the panel children). Use `firstElementChild` so a nested
+    // <details> inside the panel is not misidentified as this tile's
+    // summary — `querySelector` walks descendants and could match.
+    const summary = det.firstElementChild;
+    if (summary && summary.tagName === "SUMMARY" && summary.textContent !== newNode.summary) {
       summary.textContent = newNode.summary;
     }
   },

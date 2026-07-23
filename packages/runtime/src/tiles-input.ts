@@ -78,6 +78,8 @@ type InputHandlers = {
   onInput?: EventHandler;
   onChange?: EventHandler;
   onClick?: EventHandler;
+  /** form-specific — the shared slot type so `form` does not need its own local intersection. */
+  onSubmit?: EventHandler;
   el?: Record<string, unknown>;
   // Select-specific — decoded via valueKey lookup on `change`.
   selectOptions?: Array<{ label: unknown; value: unknown }>;
@@ -85,6 +87,27 @@ type InputHandlers = {
   isSlider?: boolean;
 };
 const INPUT_STATE = new WeakMap<HTMLElement, InputHandlers>();
+
+/**
+ * Per-element IME composition flag (#190). Set between `compositionstart` and
+ * `compositionend` so patchers on `input` / `textarea` / `editable` can skip
+ * `.value` / `.textContent` overwrites that would otherwise destroy an in-
+ * flight IME candidate window (JP/CN/KR users typing kana → kanji, pinyin →
+ * hanzi, jamo → hangul). Divergence is REMEMBERED via a pending flag on the
+ * slot: the next `compositionend` triggers a bind writeback so state stays in
+ * sync with what the user actually committed.
+ */
+const IME_COMPOSING = new WeakSet<HTMLElement>();
+
+/** Attach `compositionstart` / `compositionend` listeners once at create time. */
+function installCompositionGuard(el: HTMLElement): void {
+  el.addEventListener("compositionstart", () => {
+    IME_COMPOSING.add(el);
+  });
+  el.addEventListener("compositionend", () => {
+    IME_COMPOSING.delete(el);
+  });
+}
 
 function setHandlers(el: HTMLElement, next: InputHandlers): void {
   INPUT_STATE.set(el, next);
@@ -275,6 +298,7 @@ export const inputTiles: TileRenderers = {
     if (!isFile) {
       if (node.bind) bindDataset(inp, node.bind, node.bindPath);
       inp.value = node.value ?? "";
+      installCompositionGuard(inp);
     }
     setHandlers(inp, inputHandlers(node));
     inp.addEventListener("input", () => {
@@ -317,6 +341,7 @@ export const inputTiles: TileRenderers = {
     if (id) ta.id = id;
     if (node.bind) bindDataset(ta, node.bind, node.bindPath);
     ta.value = node.value ?? "";
+    installCompositionGuard(ta);
     setHandlers(ta, inputHandlers(node));
     ta.addEventListener("input", () => {
       const state = INPUT_STATE.get(ta);
@@ -446,9 +471,7 @@ export const inputTiles: TileRenderers = {
     setHandlers(form, formHandlers(node));
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      const state = INPUT_STATE.get(form) as
-        | (InputHandlers & { onSubmit?: EventHandler })
-        | undefined;
+      const state = INPUT_STATE.get(form);
       if (state?.onSubmit) state.onSubmit(state.el ?? {});
     });
     for (const child of node.children as TileNode[]) {
@@ -464,6 +487,7 @@ export const inputTiles: TileRenderers = {
     if (id) div.id = id;
     if (node.bind) bindDataset(div, node.bind, node.bindPath);
     div.textContent = node.text ?? "";
+    installCompositionGuard(div);
     setHandlers(div, inputHandlers(node));
     div.addEventListener("input", () => {
       const state = INPUT_STATE.get(div);
@@ -486,8 +510,8 @@ function formHandlers(node: {
   bind?: string;
   bindPath?: string[];
   props?: TileProps;
-}): InputHandlers & { onSubmit?: EventHandler } {
-  const h: InputHandlers & { onSubmit?: EventHandler } = inputHandlers(node);
+}): InputHandlers {
+  const h: InputHandlers = inputHandlers(node);
   if (node.props?.onSubmit) h.onSubmit = node.props.onSubmit;
   return h;
 }
@@ -513,15 +537,22 @@ export const inputPatchers: TilePatchers = {
     if (!isFile) {
       if (newNode.bind) bindDataset(inp, newNode.bind, newNode.bindPath);
       else clearBindDataset(inp);
-      // Write when the DOM diverges from what the tile intends, regardless of
-      // focus. Typing "Bud" → bind writes slot="Bud" → rerender computes
-      // value=`_s.show(slot)`="Bud"; the DOM already reads "Bud", so this skips
-      // the assignment and the caret stays put. A reducer that clears / rewrites
-      // the slot ("Buy milk" → "" on Enter) DOES diverge and must land — caret
-      // restoration is picked up by the outer `renderPass` snapshot layer,
-      // which captures selectionStart/End BEFORE this write.
+      // Write when the DOM diverges from what the tile intends. Typing "Bud"
+      // → bind writes slot="Bud" → rerender computes value=`_s.show(slot)`
+      // ="Bud"; the DOM already reads "Bud", so this skips the assignment and
+      // the caret stays put. A reducer that clears / rewrites the slot ("Buy
+      // milk" → "" on Enter) DOES diverge and must land — caret restoration
+      // is picked up by the outer `renderPass` snapshot layer, which captures
+      // selectionStart/End BEFORE this write.
+      //
+      // IME guard: skip the write while the user is composing (JP/CN/KR IME
+      // candidate window open). Overwriting `.value` mid-composition would
+      // dismiss the candidate window and destroy the in-flight glyph. When
+      // `compositionend` fires, the browser dispatches a normal `input` event
+      // that syncs the slot to the committed text, and the next render's
+      // divergence is genuine.
       const nextValue = newNode.value ?? "";
-      if (inp.value !== nextValue) inp.value = nextValue;
+      if (inp.value !== nextValue && !IME_COMPOSING.has(inp)) inp.value = nextValue;
     }
     setHandlers(inp, inputHandlers(newNode));
   },
@@ -534,13 +565,19 @@ export const inputPatchers: TilePatchers = {
     else clearBindDataset(ta);
     const nextValue = newNode.value ?? "";
     // See `input` patcher — write on divergence, caret restore is upstream.
-    if (ta.value !== nextValue) ta.value = nextValue;
+    // IME guard as above: don't dismiss the IME candidate window mid-compose.
+    if (ta.value !== nextValue && !IME_COMPOSING.has(ta)) ta.value = nextValue;
     setHandlers(ta, inputHandlers(newNode));
   },
   check(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
     reconcileId(wrap, newNode);
-    const inp = wrap.querySelector("input") as HTMLInputElement | null;
+    // check / radio / switch: create wraps a single `<input>` as the first
+    // child (radio also appends a trailing `<span>` label; check / switch do
+    // not). Use the direct child instead of `querySelector("input")` to avoid
+    // matching a nested input if a future container tile ever wraps another
+    // input beneath the same label.
+    const inp = wrap.firstElementChild as HTMLInputElement | null;
     if (inp) {
       if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
       setHandlers(inp, inputHandlers(newNode));
@@ -549,7 +586,12 @@ export const inputPatchers: TilePatchers = {
   radio(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
     reconcileId(wrap, newNode);
-    const inp = wrap.querySelector("input") as HTMLInputElement | null;
+    // check / radio / switch: create wraps a single `<input>` as the first
+    // child (radio also appends a trailing `<span>` label; check / switch do
+    // not). Use the direct child instead of `querySelector("input")` to avoid
+    // matching a nested input if a future container tile ever wraps another
+    // input beneath the same label.
+    const inp = wrap.firstElementChild as HTMLInputElement | null;
     if (inp) {
       const nextName = newNode.group ? String(newNode.group) : "";
       if (inp.name !== nextName) inp.name = nextName;
@@ -598,7 +640,12 @@ export const inputPatchers: TilePatchers = {
   switch(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
     reconcileId(wrap, newNode);
-    const inp = wrap.querySelector("input") as HTMLInputElement | null;
+    // check / radio / switch: create wraps a single `<input>` as the first
+    // child (radio also appends a trailing `<span>` label; check / switch do
+    // not). Use the direct child instead of `querySelector("input")` to avoid
+    // matching a nested input if a future container tile ever wraps another
+    // input beneath the same label.
+    const inp = wrap.firstElementChild as HTMLInputElement | null;
     if (inp) {
       if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
       setHandlers(inp, inputHandlers(newNode));
@@ -617,13 +664,17 @@ export const inputPatchers: TilePatchers = {
     // Text write on divergence only. During typing the bind loop keeps the
     // slot in sync with the DOM (`slot = textContent`), so `newNode.text ===
     // div.textContent` and this skips the assignment — caret / IME composition
-    // survive. A reducer that explicitly rewrites the slot DOES land here and
-    // will jump the caret; contenteditable has no snapshot equivalent to
-    // INPUT's `setSelectionRange`, and restoring a text-node offset across
-    // an arbitrary rewrite is out of scope for #190 (native focus is still
-    // preserved via the outer snapshot fallback).
+    // survive. IME guard skips the write while a compositionstart..end is in
+    // flight (JP/CN/KR candidate window), matching the `input` / `textarea`
+    // patcher behaviour. A reducer that explicitly rewrites the slot outside
+    // of composition DOES land here and will jump the caret; contenteditable
+    // has no snapshot equivalent to INPUT's `setSelectionRange`, and
+    // restoring a text-node offset across an arbitrary rewrite is out of
+    // scope for #190 (native focus is still preserved via patch identity).
     const nextText = newNode.text ?? "";
-    if ((div.textContent ?? "") !== nextText) div.textContent = nextText;
+    if ((div.textContent ?? "") !== nextText && !IME_COMPOSING.has(div)) {
+      div.textContent = nextText;
+    }
     setHandlers(div, inputHandlers(newNode));
   },
 };

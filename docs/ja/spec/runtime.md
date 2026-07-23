@@ -278,13 +278,21 @@ renderer が `WeakMap<HTMLElement, Handlers>` に現在の handler を格納し�
 時に張った native listener はその slot 越しに dispatch する。`patch` は slot を
 新しい node の handler で上書きするだけ。適用対象: `input`, `textarea`,
 `select`, `check`, `radio`, `switch`, `slider`, `editable`, `form`, `button`,
-`link`, `modal`, `drawer`, `popover`。
+`link`, `modal`, `drawer`, `popover`。`details` は動的 handler を持たず、
+`toggle` は browser native なので slot 不要（意図的除外）。全 tile に対して
+`applyUiEventHandlers` が張る `onKeyDown` / `onMouseEnter` / `onFocus` /
+`onBlur` の 4 種は共通の `UI_HANDLER_STATE` slot を経由し、reconcile が patch
+のたびに refresh するので、tile kind に関係なくクロージャ変更が次のイベントに
+届く。
 
-**value 書き込みのガード**  テキスト入力（`input`, `textarea`）は
-`.value === newNode.value` のときは代入を skip（typing 中のキャレット reset
-を回避）。slider は `activeElement === el` のときは skip（ドラッグ中ガード）。
-reducer が明示的にフィールドをクリアするケースは、外側の snapshot 層
-（§10.3.9）が patch 実行前に selection range を捕捉するので、そこで復元される。
+**value 書き込みのガード**  テキスト入力（`input`, `textarea`, `editable`）は
+`.value === newNode.value`（`editable` は `textContent`）のときは代入を skip
+（typing 中のキャレット reset を回避）。加えて `compositionstart` から
+`compositionend` の間は書き込み自体を skip する — JP/CN/KR IME で候補ウィンドウ
+表示中に上書きすると変換候補が中断され失われるため。slider は
+`activeElement === el` のときは skip（ドラッグ中ガード）。reducer が明示的に
+フィールドをクリアするケースは、外側の snapshot 層（§10.3.9）が patch 実行前に
+selection range を捕捉するので、そこで復元される。
 
 **episode log `binds-updated` への影響**  patch パスも subtree rebuild と同じ
 ように `tileTouchedId(newNode)` を touched セットに push するため、
