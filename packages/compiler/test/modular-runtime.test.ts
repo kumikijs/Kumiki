@@ -83,7 +83,9 @@ describe("modular runtime emission (#71)", () => {
     // monolith `mount()` path (which merges the patchers itself) stays correct
     // and hides the regression from every test that goes through it.
     const r = modular(COUNTER);
-    expect(r.js).toContain('import { layoutTiles, layoutPatchers } from "./runtime/tiles-layout.js"');
+    expect(r.js).toContain(
+      'import { layoutTiles, layoutPatchers } from "./runtime/tiles-layout.js"',
+    );
     expect(r.js).toContain('import { textTiles, textPatchers } from "./runtime/tiles-text.js"');
     expect(r.js).toContain(
       "const _patchers = { ...layoutPatchers, ...textPatchers, ...inputPatchers };",

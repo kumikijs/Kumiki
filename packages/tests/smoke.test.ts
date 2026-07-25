@@ -65,3 +65,29 @@ describe("app examples — runtime smoke", () => {
     it(`runs ${label}`, () => smokeFile(file));
   }
 });
+
+describe("reconcile diagnostics reach the smoke report", () => {
+  // The one example authored to trip an identity-losing rebuild: its `Notes`
+  // column holds an unkeyed `when` child, so toggling the hint changes the
+  // sibling count and the whole column is rebuilt. Two things are asserted
+  // together on purpose — the diagnostic must actually surface end to end
+  // (compile → mount → drive → report), AND it must not fail the run, because
+  // every example above shares this harness and unkeyed siblings are ordinary
+  // Kumiki.
+  it("reports the unkeyed sibling rebuild without failing the run", async () => {
+    const file = join(examplesDir, "features", "58-unkeyed-conditional-rebuild.kumiki");
+    const app = await loadApp(file);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const report = await smoke(app, root, { settleMs: 20 });
+      expect(report.ok).toBe(true);
+      const reasons = report.diagnostics.map((d) =>
+        d.kind === "reconcile-fallback" ? d.reason : d.kind,
+      );
+      expect(reasons).toContain("child-count-change");
+    } finally {
+      root.remove();
+    }
+  });
+});
