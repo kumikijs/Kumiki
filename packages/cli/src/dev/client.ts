@@ -15,7 +15,13 @@
 //      and remount — so slot values and route survive the reload.
 
 import InitialApp from "__KUMIKI_TARGET__";
-import { type AppShape, createEpisodeLogger, type Episode, mount } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  createEpisodeLogger,
+  type Episode,
+  mount,
+  type RuntimeDiagnostic,
+} from "@kumikijs/runtime";
 import { installDevPanel } from "/@kumiki-dev/panel.ts";
 
 const root = document.getElementById("app");
@@ -38,7 +44,16 @@ const logger = createEpisodeLogger({
 
 const panel = installDevPanel({ logger, getApp: () => currentApp });
 
-let handle = mount(currentApp, root, { episodeLogger: logger });
+// The dev server is where a Kumiki app is developed, so it is where the
+// reconcile's identity-losing decisions should be visible. `warn` rather than
+// `error`: these are advisory (the app is still correct), and the smoke and
+// scenario harnesses treat any console.error as a failure.
+const mountOptions = {
+  episodeLogger: logger,
+  onDiagnostic: (d: RuntimeDiagnostic) => console.warn("[kumiki] reconcile diagnostic", d),
+};
+
+let handle = mount(currentApp, root, mountOptions);
 
 if (import.meta.hot) {
   import.meta.hot.accept("__KUMIKI_TARGET__", (mod) => {
@@ -51,7 +66,7 @@ if (import.meta.hot) {
       handle.dispose();
       currentApp = next;
       if (savedLive) currentApp.live = savedLive;
-      handle = mount(currentApp, root, { episodeLogger: logger });
+      handle = mount(currentApp, root, mountOptions);
       panel.onRemount();
     } catch (e) {
       // mount() can throw on programs whose top tile blows up at construction

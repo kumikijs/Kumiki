@@ -7,7 +7,7 @@
 // NOT verify behavioral correctness (a wrong-but-non-throwing result) — that is
 // the job of example-specific assertions.
 
-import type { AppShape } from "./index.ts";
+import type { AppShape, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 
 export type SmokePhase = "mount" | "initial-render" | "interaction" | "async";
@@ -25,6 +25,15 @@ export type SmokeReport = {
   rendered: boolean;
   interactions: number;
   issues: SmokeIssue[];
+  /**
+   * Reconcile observations collected while driving the app: subtrees the
+   * runtime rebuilt instead of reusing, and reuse decisions that ignored a
+   * changed closure on a host tile. These are performance and integration
+   * signals, not failures, so they do NOT affect `ok` — an app that rebuilds
+   * more than it needs to still works. Set `diagnosticsAsIssues` to treat them
+   * as failures instead.
+   */
+  diagnostics: RuntimeDiagnostic[];
 };
 
 export type SmokeOptions = {
@@ -34,6 +43,13 @@ export type SmokeOptions = {
   maxInteractions?: number;
   /** Milliseconds to let async effects/timers settle after each step. Default: 30. */
   settleMs?: number;
+  /**
+   * Also record each reconcile diagnostic as an issue, so any identity-losing
+   * rebuild fails the run. Off by default: an unkeyed sibling list whose length
+   * changes is ordinary, correct Kumiki, and failing on it would reject most
+   * apps. Turn it on for an app that has committed to keyed lists throughout.
+   */
+  diagnosticsAsIssues?: boolean;
 };
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -54,10 +70,22 @@ export async function smoke(
   root: HTMLElement,
   opts: SmokeOptions = {},
 ): Promise<SmokeReport> {
-  const { interact = true, maxInteractions = 40, settleMs = 30 } = opts;
+  const {
+    interact = true,
+    maxInteractions = 40,
+    settleMs = 30,
+    diagnosticsAsIssues = false,
+  } = opts;
   const issues: SmokeIssue[] = [];
+  const diagnostics: RuntimeDiagnostic[] = [];
   let currentTrigger: string | undefined;
   let phase: SmokePhase = "mount";
+
+  const onDiagnostic = (d: RuntimeDiagnostic): void => {
+    diagnostics.push(d);
+    if (!diagnosticsAsIssues) return;
+    issues.push({ phase, message: describeDiagnostic(d), trigger: currentTrigger });
+  };
 
   const onError = (ev: ErrorEvent): void => {
     issues.push({ phase, message: ev.message || String(ev.error), trigger: currentTrigger });
@@ -88,7 +116,7 @@ export async function smoke(
   try {
     phase = "mount";
     try {
-      dispose = mount(app, root).dispose;
+      dispose = mount(app, root, { onDiagnostic }).dispose;
       mounted = true;
     } catch (e) {
       issues.push({ phase: "mount", message: errStr(e) });
@@ -158,8 +186,17 @@ export async function smoke(
       rendered,
       interactions,
       issues,
+      diagnostics,
     };
   }
+}
+
+/** One-line rendering of a diagnostic promoted into `issues`. */
+function describeDiagnostic(d: RuntimeDiagnostic): string {
+  const where = d.tile ? `${d.tile} (${d.tileKind})` : d.tileKind;
+  return d.kind === "reconcile-fallback"
+    ? `reconcile rebuilt ${where} instead of reusing it: ${d.reason}`
+    : `reused ${where} with a changed ${d.field} closure still attached`;
 }
 
 function hasContent(root: HTMLElement): boolean {

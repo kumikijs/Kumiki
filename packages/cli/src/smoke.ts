@@ -118,6 +118,7 @@ export async function smokeCmd(path: string, capabilities: string[] = []): Promi
   const report = await smokeFile(path, capabilities);
   if (report.ok) {
     console.log(`ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`);
+    printDiagnostics(report);
     return;
   }
   console.error(
@@ -126,7 +127,28 @@ export async function smokeCmd(path: string, capabilities: string[] = []): Promi
   for (const i of report.issues) {
     console.error(`  [${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`);
   }
+  printDiagnostics(report);
   process.exit(1);
+}
+
+/**
+ * Reconcile churn observed while driving the app. Advisory, never fatal — an
+ * app that rebuilds more than it needs to still works — so this stays on stdout
+ * and leaves the exit code alone. Summarised by reason rather than listed one
+ * per occurrence: a single unkeyed list can produce one entry per interaction.
+ */
+function printDiagnostics(report: SmokeReport): void {
+  if (report.diagnostics.length === 0) return;
+  const byReason = new Map<string, number>();
+  for (const d of report.diagnostics) {
+    const label = d.kind === "reconcile-fallback" ? d.reason : "stale-closure-risk";
+    byReason.set(label, (byReason.get(label) ?? 0) + 1);
+  }
+  const summary = [...byReason]
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, n]) => `${reason} ×${n}`)
+    .join(", ");
+  console.log(`  reconcile diagnostics: ${summary}`);
 }
 
 /** Compile + mount + drive a scenario; return the structured trace. */

@@ -55,12 +55,14 @@ export {
   type PanicRecord,
   type ParsedRoute,
   panicInfo,
+  type ReconcileFallbackReason,
   type RedirectEntry,
   type ReducerSpec,
   type RefinementCheck,
   type RouteEntry,
   type Router,
   type RoutingImpl,
+  type RuntimeDiagnostic,
   resolveApp,
   type SlotMeta,
   type SsrSnapshot,
@@ -199,6 +201,10 @@ export function mount(
 ): ReturnType<typeof mountCore> {
   return mountCore(app, target, {
     ...options,
+    // Whatever the host put in `tiles` here is by definition its own renderer
+    // for that kind — this entry supplies the built-ins itself. That set is
+    // what scopes the stale-closure diagnostic; see `MountOptions`.
+    hostTileKinds: options.hostTileKinds ?? Object.keys(options.tiles ?? {}),
     tiles: options.tiles ? { ...allTiles, ...options.tiles } : allTiles,
     tilePatchers: options.tilePatchers
       ? { ...allTilePatchers, ...options.tilePatchers }

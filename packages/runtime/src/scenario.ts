@@ -9,7 +9,7 @@
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
 import type { EpisodeLogger } from "./episode.ts";
-import type { AppShape } from "./index.ts";
+import type { AppShape, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 
 /** One thing to do to the app. Exactly one field should be set. */
@@ -56,6 +56,14 @@ export type StepResult = {
   state: Record<string, unknown>;
   domText: string;
   failures: string[];
+  /**
+   * Reconcile observations this step's re-render produced — a subtree the
+   * runtime rebuilt rather than reused, or a reuse that kept a changed closure.
+   * Never a failure (`ok` ignores it): the point is to attribute the churn to
+   * the action that caused it. Absent when the step produced none, which is
+   * the healthy case.
+   */
+  diagnostics?: RuntimeDiagnostic[];
 };
 
 export type ScenarioReport = { ok: boolean; steps: StepResult[] };
@@ -121,11 +129,17 @@ export async function runScenario(
 
   const dispatchable = app as Dispatchable;
 
+  // Reconcile churn, buffered per step exactly like `errorBuf` / `emitBuf` so
+  // the trace attributes it to the action that triggered the re-render. The
+  // initial mount is a full render, so nothing lands here before the loop.
+  const diagBuf: RuntimeDiagnostic[] = [];
+
   const mountOpts: {
     router?: "history" | "memory";
     initialPath?: string;
     episodeLogger?: EpisodeLogger | null;
-  } = {};
+    onDiagnostic: (d: RuntimeDiagnostic) => void;
+  } = { onDiagnostic: (d) => diagBuf.push(d) };
   if (opts.router) mountOpts.router = opts.router;
   if (opts.initialPath !== undefined) mountOpts.initialPath = opts.initialPath;
   if (opts.episodeLogger) mountOpts.episodeLogger = opts.episodeLogger;
@@ -142,6 +156,7 @@ export async function runScenario(
     for (const step of scenario.steps) {
       errorBuf = [];
       emitBuf.length = 0;
+      diagBuf.length = 0;
       const actionDesc = step.do ? describeAction(step.do) : undefined;
       if (step.do) {
         try {
@@ -159,6 +174,7 @@ export async function runScenario(
         app,
         root,
         evaluateExpect(step.expect, errorBuf, app, root),
+        [...diagBuf],
       );
       steps.push(result);
     }
@@ -183,6 +199,7 @@ function mkStep(
   app: AppShape,
   root: HTMLElement,
   failures: string[],
+  diagnostics: RuntimeDiagnostic[] = [],
 ): StepResult {
   const step: StepResult = {
     errors,
@@ -193,6 +210,7 @@ function mkStep(
   };
   if (label !== undefined) step.label = label;
   if (action !== undefined) step.action = action;
+  if (diagnostics.length > 0) step.diagnostics = diagnostics;
   return step;
 }
 
