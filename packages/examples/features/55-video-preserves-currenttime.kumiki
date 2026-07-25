@@ -1,0 +1,31 @@
+# Feature (#190): a `<video>` whose Kumiki-level data props change is
+# patched in place — `.src`, `.controls`, `.autoplay` are set via the
+# runtime patcher only when they actually diverge, so browser-owned
+# playback state (`currentTime`, `paused`, buffered ranges) survives a
+# reducer-triggered re-render.
+#
+# Setup: `showControls` slot flips a caption tile in and out of the tree
+# alongside the video's `controls` attribute. Toggling it forces the video
+# tile through the patch path — pre-#190 this was a full teardown that
+# reset playback to 0.
+
+slot showControls : Bool = false
+
+reducer toggleControls on=ui.click(ToggleBtn)
+    do= showControls := not showControls
+
+tile ToggleBtn = button(text="toggle controls")
+tile Clip      = video(src="/demo.mp4", controls=showControls) {id: "clip"}
+
+tile App
+    = column(
+        heading("video preserves currentTime (#190)"),
+        ToggleBtn,
+        Clip,
+        text("controls on: " + showControls.show))
+      {pad: "lg", gap: "md"}
+
+app VideoPreservesCurrentTime
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

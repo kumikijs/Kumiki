@@ -184,10 +184,20 @@ app App ... theme = themeName    ; ← pass the slot name
 
 ### 10.3.9 Focus Restoration
 
+Since #190 (identity-preserving reconciliation, §10.3.11) the runtime patches every
+same-kind tile in place instead of tearing it down on a data-prop change, so the
+still-mounted `<input>` / `<textarea>` / `<select>` retains browser focus naturally.
+The snapshot/restore layer described below is retained as a **fallback for the
+wholesale-swap paths** — reconcile bailout, panic recovery, keyed reorder that
+moves a focused element between DOM positions — where element identity is
+either lost or the element itself is physically moved and blurred by the
+browser.
+
 It maintains the focus and cursor position of an input/textarea being edited even after re-rendering:
 - Elements with `bind=`: re-identified by the `data-kumiki-bind` attribute (a nested path is a full path string)
 - Elements with `id=`: re-identified by id
 - Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
+- `<select>` is included in the snapshot set so the reorder / bailout paths can restore focus on the picker (its native open-dropdown state is unrecoverable here — that guarantee comes from the patch path in §10.3.11)
 
 ### 10.3.10 Stable tile identity
 
@@ -240,6 +250,67 @@ which new child, not whether the tile itself is rebuilt.
 but the reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
 focus and caret, and event listeners across insert/remove/reorder) require
 both.
+
+### 10.3.11 Identity-preserving reconciliation (#190)
+
+Keyed diff (§10.3.10) preserves DOM identity for tiles whose data props did
+**not** change. #190 extends the guarantee to tiles whose data props **did**
+change but which the runtime can update in place, so browser-owned state
+(`<select>` open dropdown, `<video>` playback position, `<details>` open,
+`contenteditable` caret and IME composition) survives a re-render mid-
+interaction.
+
+**Contract.** Every tile-renderer module exports two maps: `TileRenderers`
+(create) and `TilePatchers` (update):
+
+```ts
+export type TilePatcher<K> = (
+  el: HTMLElement,
+  oldNode: TileNode & { kind: K },
+  newNode: TileNode & { kind: K },
+  ctx: TileCtx,
+) => void;
+```
+
+When reconcile sees `oldNode.kind === newNode.kind` and any own data prop
+differs, it looks up a patcher for the kind. If one is registered, the mounted
+element is mutated in place and the reconcile then walks the children as
+usual (a container tile may have both attribute and child changes in the same
+render). Without a patcher, reconcile falls back to the pre-#190 subtree
+rebuild — patchers remain **incrementally adoptable**, not an all-or-nothing
+runtime rewrite.
+
+**Handler-slot pattern.** Reused elements must not multiply-register
+listeners (the runtime uses `addEventListener` and holds no listener refs),
+and a listener registered at create time closes over the create-time node.
+For controls whose `bind` / `onChange` / `onClose` / `to` may change between
+renders, each renderer stores the current handlers in a per-element
+`WeakMap<HTMLElement, Handlers>` slot. Native listeners registered by
+`create` dispatch through the slot; `patch` overwrites the slot with the new
+node's handlers. This applies to `input`, `textarea`, `select`, `check`,
+`radio`, `switch`, `slider`, `editable`, `form`, `button`, `link`, `modal`,
+`drawer`, and `popover`. `details` is intentionally excluded: it carries no
+Kumiki-level dynamic handler and browser-native `toggle` semantics do not
+need re-routing. The universal handlers `applyUiEventHandlers` lifts on every
+tile (`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur`) share a single
+`UI_HANDLER_STATE` slot that the reconcile refreshes on every patch, so a
+closure change reaches the next event regardless of tile kind.
+
+**Value-write guards.** Text inputs (`input`, `textarea`, `editable`) skip
+the `.value` / `.textContent` assignment when it already matches
+`newNode.value` / `newNode.text` (so typing does not reset the caret) and
+skip it entirely while an IME composition is in flight (`compositionstart`
+→ `compositionend`) so the browser's JP/CN/KR candidate window is not
+dismissed mid-glyph. Slider skips when `activeElement === el` (mid-drag
+guard). The reducer-driven "clear the field" case is picked up by the
+outer snapshot layer (§10.3.9), which captures selection ranges before the
+patch runs.
+
+**Consequences for `binds-updated` (episode log).** The patch path pushes
+`tileTouchedId(newNode)` onto the reconcile-touched set exactly like a
+subtree rebuild does, so the causal chain "slot `X` changed → tiles/binds
+`A`, `B` patched" continues to land on `signal-update.binds-updated` (#189)
+regardless of whether reconcile ended up rebuilding or patching.
 
 ---
 

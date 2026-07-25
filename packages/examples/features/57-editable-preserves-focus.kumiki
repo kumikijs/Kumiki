@@ -1,0 +1,28 @@
+# Feature (#190): a `contenteditable` div (editable tile) bound to a slot.
+# The user types into it — the bind loop keeps slot and DOM textContent in
+# sync so the patch path skips writing the same value, preserving caret
+# and IME composition. A reducer that touches an unrelated slot still
+# triggers a re-render, but the editable element identity survives so
+# focus is retained.
+
+slot note   : Text = "hello"
+slot ticks  : Int  = 0
+
+reducer tick on=ui.click(TickBtn) do= ticks := ticks + 1
+
+tile TickBtn = button(text="tick")
+tile Editor  = editable(bind=note) {id: "editor"}
+
+tile App
+    = column(
+        heading("editable preserves focus (#190)"),
+        TickBtn,
+        Editor,
+        text("note: " + note),
+        text("ticks: " + ticks.show))
+      {pad: "lg", gap: "md"}
+
+app EditablePreservesFocus
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

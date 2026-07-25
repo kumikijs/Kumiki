@@ -93,8 +93,11 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     app._rerender?.();
 
     expect(root.firstElementChild).toBe(savedColumn); // root unchanged
-    // Heading was rebuilt because its text changed.
-    expect(column.children[0]).not.toBe(savedHeading);
+    // #190: identity-preserving reconciliation. The heading's text prop
+    // changed, but the per-kind patcher mutates .textContent in place and
+    // returns the same HTMLElement — no more subtree teardown for a leaf
+    // data-prop change. Pre-#190 this asserted `not.toBe` (rebuild path).
+    expect(column.children[0]).toBe(savedHeading);
     expect(column.children[0].textContent).toBe("Count: 1");
     // Every sibling row survived — SAME element reference.
     for (let i = 0; i < savedRows.length; i++) {
@@ -352,8 +355,9 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     expect(column.children[0]).toBe(savedSibling);
     expect(column.children[1]).toBe(savedBox);
     expect(savedBox.children[0]).toBe(savedCard);
-    // Only the leaf whose text changed was rebuilt.
-    expect(savedCard.children[0]).not.toBe(savedHeading);
+    // #190: leaf-tile data-prop change is patched in place, so element
+    // identity is preserved. Pre-#190 this asserted `not.toBe` (rebuild).
+    expect(savedCard.children[0]).toBe(savedHeading);
     expect(savedCard.children[0].textContent).toBe("deep 7");
     dispose();
   });
@@ -1076,6 +1080,340 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
     (app as unknown as DispatchApp)._dispatch("bump", {});
 
     expect(lastBindsUpdated(committed)).toEqual(["text"]);
+    dispose();
+  });
+});
+
+// Per-kind identity-preserving patch (#190). These lock in the invariant
+// that a same-kind tile whose data props diverge is reconciled in place —
+// the mounted HTMLElement is reused across the render, so browser-owned
+// state (`<select>` open, `<video>` playback, `<details>` open,
+// contenteditable caret) survives what pre-#190 was a full teardown +
+// createElement + replaceChild cycle.
+describe("runtime: identity-preserving patch (#190)", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  // A minimal single-slot app whose root() returns whatever `treeFn` produces —
+  // used across the suite so each per-kind test can focus on one tile.
+  function drive(treeFn: (s: Record<string, unknown>) => TileNode): {
+    app: AppShape;
+    dispose: () => void;
+  } {
+    const live: Record<string, unknown> = { n: 0 };
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => treeFn(live),
+    };
+    const rerender = { fn: undefined as (() => void) | undefined };
+    // Expose a setter for `n` that also re-renders — tests just call `bump()`.
+    const { dispose } = mount(app, root);
+    rerender.fn = app._rerender;
+    return {
+      app: Object.assign(app, {
+        _live: live,
+        bump: () => {
+          live.n = (live.n as number) + 1;
+          rerender.fn?.();
+        },
+      }) as AppShape & { _live: Record<string, unknown>; bump: () => void },
+      dispose,
+    };
+  }
+
+  it("select: DOM identity + a browser-marked open-index survives when the options list is patched", () => {
+    const { app, dispose } = drive((s) => ({
+      kind: "column",
+      children: [
+        {
+          kind: "select",
+          value: "b",
+          // On tick 0 → 3 options; on tick 1 → 4 (extra option appended).
+          options:
+            (s.n as number) === 0
+              ? [
+                  { label: "A", value: "a" },
+                  { label: "B", value: "b" },
+                  { label: "C", value: "c" },
+                ]
+              : [
+                  { label: "A", value: "a" },
+                  { label: "B", value: "b" },
+                  { label: "C", value: "c" },
+                  { label: "D", value: "d" },
+                ],
+        },
+      ],
+    }));
+    const sel = root.querySelector("select") as HTMLSelectElement;
+    expect(sel).toBeTruthy();
+    // Seed a dataset marker the runtime never writes — its survival across
+    // the rerender is direct evidence that the same HTMLSelectElement was
+    // reused (pre-#190 the select was destroyed and rebuilt on any
+    // `options` change, and this marker would vanish).
+    sel.dataset.probe = "seeded";
+    const optionsBefore = sel.options.length;
+    expect(optionsBefore).toBe(3);
+
+    (app as unknown as { bump: () => void }).bump();
+
+    const selAfter = root.querySelector("select") as HTMLSelectElement;
+    expect(selAfter).toBe(sel);
+    expect(selAfter.dataset.probe).toBe("seeded");
+    expect(selAfter.options.length).toBe(4);
+    // Value carries across the options change.
+    expect(selAfter.value).toBe(JSON.stringify("b"));
+    dispose();
+  });
+
+  it("input: element identity preserved on a value change; a stale-marker survives", () => {
+    const { app, dispose } = drive((s) => ({
+      kind: "input",
+      value: `v${s.n}`,
+    }));
+    const inp = root.querySelector("input") as HTMLInputElement;
+    inp.dataset.probe = "seeded";
+    expect(inp.value).toBe("v0");
+    (app as unknown as { bump: () => void }).bump();
+    const inpAfter = root.querySelector("input") as HTMLInputElement;
+    expect(inpAfter).toBe(inp);
+    expect(inpAfter.dataset.probe).toBe("seeded");
+    expect(inpAfter.value).toBe("v1");
+    dispose();
+  });
+
+  it("video: element identity preserved when `controls` flips", () => {
+    const { app, dispose } = drive((s) => ({
+      kind: "video",
+      src: "/demo.mp4",
+      controls: (s.n as number) % 2 === 1,
+    }));
+    const v = root.querySelector("video") as HTMLVideoElement;
+    v.dataset.probe = "seeded";
+    expect(v.controls).toBe(false);
+    (app as unknown as { bump: () => void }).bump();
+    const vAfter = root.querySelector("video") as HTMLVideoElement;
+    expect(vAfter).toBe(v);
+    expect(vAfter.dataset.probe).toBe("seeded");
+    expect(vAfter.controls).toBe(true);
+    dispose();
+  });
+
+  it("details: element identity preserved when the summary changes; native .open persists", () => {
+    const { app, dispose } = drive((s) => ({
+      kind: "details",
+      summary: `count ${s.n}`,
+      children: [{ kind: "text", text: "panel" }],
+    }));
+    const det = root.querySelector("details") as HTMLDetailsElement;
+    det.open = true;
+    det.dataset.probe = "seeded";
+    (app as unknown as { bump: () => void }).bump();
+    const detAfter = root.querySelector("details") as HTMLDetailsElement;
+    expect(detAfter).toBe(det);
+    expect(detAfter.open).toBe(true);
+    expect(detAfter.dataset.probe).toBe("seeded");
+    expect(detAfter.querySelector("summary")?.textContent).toBe("count 1");
+    dispose();
+  });
+
+  it("editable: element identity preserved on an unrelated slot bump; textContent survives", () => {
+    const { app, dispose } = drive((s) => ({
+      kind: "column",
+      children: [
+        { kind: "editable", text: "hello", id: "e" },
+        { kind: "text", text: `n=${s.n}` },
+      ],
+    }));
+    const div = root.querySelector("#e") as HTMLDivElement;
+    expect(div.contentEditable).toBe("true");
+    div.dataset.probe = "seeded";
+    (app as unknown as { bump: () => void }).bump();
+    const divAfter = root.querySelector("#e") as HTMLDivElement;
+    expect(divAfter).toBe(div);
+    expect(divAfter.dataset.probe).toBe("seeded");
+    expect(divAfter.textContent).toBe("hello");
+    dispose();
+  });
+
+  it("input: bind swap A→B routes new writes to the new slot (INPUT_STATE handler slot refresh)", () => {
+    // #190 handler-slot pattern: on the patch path, the input's native
+    // `input` listener stays the same but dispatches through the WeakMap
+    // slot, so `bind` swapping to a different slot after a data-prop patch
+    // must land the next keystroke in the NEW slot. Pre-#190 (full rebuild
+    // path) this always worked because the listener was re-created; the
+    // handler-slot pattern preserves that guarantee across in-place patch.
+    let bind: "a" | "b" = "a";
+    const live: Record<string, unknown> = { a: "", b: "" };
+    const app: AppShape = {
+      slots: { a: { value: "" }, b: { value: "" } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: () => ({
+        kind: "input",
+        bind,
+        // `placeholder` diverges so `tileFieldsEqual` is false → patch runs.
+        placeholder: bind === "a" ? "first" : "second",
+      }),
+    };
+    // Mirror slot writes into `live` so the next render reads the new value.
+    const original = mount(app, root);
+    const setSlot = (app as unknown as { _setSlot: (name: string, value: unknown) => void })
+      ._setSlot;
+    (app as unknown as { _setSlot: (name: string, value: unknown) => void })._setSlot = (
+      name,
+      value,
+    ) => {
+      live[name] = value;
+      (app as unknown as Record<string, Record<string, unknown>>).live[name] = value;
+      setSlot(name, value);
+    };
+    const inp = root.querySelector("input") as HTMLInputElement;
+    // Simulate user typing "x" while bound to slot `a`.
+    inp.value = "x";
+    inp.dispatchEvent(new Event("input", { bubbles: true }));
+    // Swap the bind + re-render (data-prop change → patch, NOT rebuild).
+    bind = "b";
+    app._rerender?.();
+    const inpAfter = root.querySelector("input") as HTMLInputElement;
+    // Identity preserved by the patch path.
+    expect(inpAfter).toBe(inp);
+    // New keystroke should now write to slot `b`.
+    inpAfter.value = "y";
+    inpAfter.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(live.b).toBe("y");
+    // And slot `a` still holds the previous "x" (never overwritten by the
+    // post-swap listener despite listener identity being unchanged).
+    expect(live.a).toBe("x");
+    original.dispose();
+  });
+
+  it("applyStateStyles: repeated patch does not grow data-kumiki-state or the shared stylesheet", () => {
+    // Pre-fix each patch appended a fresh token + a fresh rule; the element
+    // attribute and the `<style id=kumiki-state-styles>` node both grew
+    // unboundedly. Idempotency guard collapses identical re-applications to
+    // a no-op; a real state-prop change is still allowed.
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "bump",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => ({ slots: { n: ((s.n as number) ?? 0) + 1 }, emits: [] }),
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        // `hover` is a state-style prop; children carry a text tile whose
+        // content diverges on every dispatch so the parent's patcher runs.
+        props: { hover: { bg: "red" } } as unknown as Record<string, unknown>,
+        children: [
+          {
+            kind: "text",
+            text: `n=${((app as unknown as Record<string, Record<string, unknown>>).live?.n as number) ?? 0}`,
+          },
+        ],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const col = root.firstElementChild as HTMLElement;
+    const stateBefore = col.dataset.kumikiState;
+    expect(stateBefore).toBeTruthy();
+    const styleEl = document.getElementById("kumiki-state-styles");
+    const rulesBefore = styleEl?.childNodes.length ?? 0;
+    // Kick 10 dispatches; every one triggers the parent patcher.
+    for (let i = 0; i < 10; i++) {
+      (app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void })._dispatch(
+        "bump",
+        {},
+      );
+    }
+    // Same token; no growth on the shared stylesheet either.
+    expect(col.dataset.kumikiState).toBe(stateBefore);
+    expect(styleEl?.childNodes.length ?? 0).toBe(rulesBefore);
+    dispose();
+  });
+
+  it("list: `ordered` flip declines the in-place patch WITHOUT recording a reconcile panic", () => {
+    // `PatchRequiresRebuild` is a controlled escape hatch — the outer
+    // reconcile catches it specifically and falls back to a subtree rebuild
+    // WITHOUT calling `episode.recordPanic`, so a legitimate `<ul>` ↔ `<ol>`
+    // flip does not pollute the episode log. Raw throws still panic (locked
+    // in by the "reconcile bailout records a panic" test elsewhere).
+    let ordered = false;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "list",
+        ordered,
+        children: [{ kind: "list-item", children: [{ kind: "text", text: "one" }] }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+    expect((root.firstElementChild as HTMLElement).tagName).toBe("UL");
+    ordered = true;
+    app._rerender?.();
+    expect((root.firstElementChild as HTMLElement).tagName).toBe("OL");
+    // No panic step recorded — the sentinel path skipped `episode.recordPanic`.
+    for (const ep of committed) {
+      expect(ep.steps.some((s) => s.kind === "panic")).toBe(false);
+    }
+    dispose();
+  });
+
+  it("binds-updated records the patched tile's identifier", () => {
+    // A slot bump changes the input's `value` — reconcile takes the patch
+    // path, and `tileTouchedId` is still pushed so the causal chain
+    // `slot n → binds-updated ["field"]` lands in the episode log.
+    const live: Record<string, unknown> = { n: 0 };
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "bump",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            live.n = ((s.n as number) ?? 0) + 1;
+            return { slots: { n: live.n }, emits: [] };
+          },
+        },
+      ],
+      root: () => ({
+        kind: "column",
+        children: [{ kind: "input", bind: "field", value: `v${live.n}` }],
+      }),
+    };
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+    (app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void })._dispatch(
+      "bump",
+      {},
+    );
+    expect(lastBindsUpdated(committed)).toContain("field");
     dispose();
   });
 });

@@ -154,6 +154,39 @@ export type TileNode = (
   | { kind: "switch"; checked: boolean; props?: TileProps }
   | { kind: "error"; field: string; props?: TileProps }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
+  | {
+      /**
+       * Native `<details>` disclosure (§10 built-in tile catalog, #190).
+       * `open` maps to the DOM property of the same name; toggling it via a
+       * data-prop change hits the tile's patcher (element identity is
+       * preserved so the browser keeps the disclosure's animation state and
+       * any inner focus).
+       */
+      kind: "details";
+      summary: string;
+      children: TileNode[];
+      open?: boolean;
+      props?: TileProps;
+    }
+  | {
+      /**
+       * `contenteditable` text field (§10 built-in tile catalog, #190). Emits
+       * a `<div contenteditable="true">`; `bind=` writes back the plain
+       * `textContent` on every `input` event. The tile patcher preserves the
+       * live caret by skipping the `textContent` overwrite when the DOM
+       * already matches the new node's text (the common case during typing,
+       * where the bind loop keeps slot and DOM in sync). An in-flight IME
+       * composition is also skipped so the browser's candidate window is not
+       * dismissed mid-glyph; the trailing `compositionend` picks up the
+       * committed text via the normal `input` event.
+       */
+      kind: "editable";
+      text: string;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: string[];
+      id?: string;
+    }
 ) & {
   /**
    * Stable per-instance identity for keyed reconcile. Optional and additive:
@@ -264,6 +297,45 @@ export type TileRenderer<K extends TileNode["kind"] = TileNode["kind"]> = (
 /** A registry of tile renderers, keyed by `TileNode["kind"]`. */
 export type TileRenderers = { [K in TileNode["kind"]]?: TileRenderer<K> };
 
+/**
+ * Mutates an already-mounted DOM element to reflect a new `TileNode` of the
+ * same kind, preserving element identity (and thus browser-internal state:
+ * `<select>` open dropdown / selection, `<input>` focus / caret,
+ * `<video>` playback position, `<details>` open, `contenteditable` caret and
+ * IME composition). Called by the reconcile diff whenever `oldNode.kind ===
+ * newNode.kind` and any own data prop differs; when no patcher is registered
+ * for a kind, the reconcile falls back to a full subtree rebuild (which
+ * discards internal state — hence #190). Container tile children are still
+ * walked by the reconcile after `patch` returns; a container patcher's job
+ * is to reconcile just this element's own attributes.
+ */
+export type TilePatcher<K extends TileNode["kind"] = TileNode["kind"]> = (
+  el: HTMLElement,
+  oldNode: TileNode & { kind: K },
+  newNode: TileNode & { kind: K },
+  ctx: TileCtx,
+) => void;
+
+/** A registry of tile patchers, keyed by `TileNode["kind"]`. */
+export type TilePatchers = { [K in TileNode["kind"]]?: TilePatcher<K> };
+
+/**
+ * Controlled escape hatch a `TilePatcher` throws when it discovers the new
+ * `TileNode` cannot be applied in place — for example a `list` whose
+ * `ordered` flip changes the underlying tag between `<ul>` and `<ol>`. The
+ * reconcile catches this specifically and falls back to a same-kind subtree
+ * rebuild (`replaceWithFreshTile`) without recording it as a panic. Any
+ * OTHER throw from a patcher is treated as a real fault and lands in the
+ * outer `reconcileTree` bailout.
+ */
+export class PatchRequiresRebuild extends Error {
+  readonly isPatchRequiresRebuild = true as const;
+  constructor(reason: string) {
+    super(`patcher declined in-place update: ${reason}`);
+    this.name = "PatchRequiresRebuild";
+  }
+}
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -329,6 +401,15 @@ export type MountOptions = {
    * full built-in set.
    */
   tiles?: TileRenderers;
+  /**
+   * Tile patchers (#190). When present for a kind, the reconcile diff calls
+   * `patch(el, oldNode, newNode, ctx)` to mutate the mounted element in place
+   * rather than tearing down and rebuilding — preserving browser-internal
+   * element state (`<select>` open / `<video>` playback / focus / caret /
+   * `<details>` open / `contenteditable`) across a data-prop change. A kind
+   * with no registered patcher continues to fall back to a full rebuild.
+   */
+  tilePatchers?: TilePatchers;
   /** The routing feature module (`routing` from `router.ts`), when the app routes. */
   routing?: RoutingImpl;
   /** Built-in effect installers (e.g. `installToast`) this app can emit. */
@@ -741,6 +822,7 @@ export function mountCore(
   // map, so unchanged tiles keep their live DOM node (and its focus / caret /
   // <select> state / event listeners) — only changed subtrees are rebuilt.
   const tiles = options.tiles ?? {};
+  const tilePatchers = options.tilePatchers ?? {};
   const ctxWrap = { applyMotion, applyUiEventHandlers, renderMissingTile };
   let currentMap: TileElementMap = new WeakMap();
 
@@ -819,27 +901,49 @@ export function mountCore(
   // resolution (theme tokens, icon lookup — the tree is still detached, so
   // `resolveApp` cannot walk it) lands on this mount's app.
   const renderPass = (): void => {
+    // Focus / caret snapshot — kept as a fallback for panic / reconcile-
+    // bailout paths that swap DOM wholesale via `target.replaceChild` (or
+    // route-error retry). On the reconcile happy path (#187 keyed diff +
+    // #190 per-kind patch), element identity is preserved and this restore
+    // step degrades to a no-op — the browser cursor never left the still-
+    // mounted control.
+    //
+    // Scope: INPUT / TEXTAREA / SELECT / contenteditable. These are the
+    // focusable form controls Kumiki emits (input, textarea, select, editable
+    // — the `details` disclosure receives focus on its `<summary>` and is
+    // NOT included; refocusing summary after a full rebuild is out of scope
+    // for this fallback and browser-native tab order handles the common
+    // case). For SELECT the dropdown-open state is browser-owned and
+    // unrecoverable through snapshot; only the focus / kbd-nav position is
+    // restored. For contenteditable the caret position is not captured
+    // either — the equivalent of `setSelectionRange` for a text-node offset
+    // across an arbitrary DOM rebuild is out of scope for #190.
     type FocusSnap = {
       bind?: string | undefined;
       id?: string | undefined;
       path?: number[] | undefined;
       selStart: number | null;
       selEnd: number | null;
+      /** True when the snapshot target is a form control with `.selectionStart`. */
+      hasSelection: boolean;
     } | null;
     let snap: FocusSnap = null;
     const active = document.activeElement;
-    if (
-      active &&
-      (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
-      target.contains(active)
-    ) {
+    const isSnapshottable = (el: Element): boolean =>
+      el.tagName === "INPUT" ||
+      el.tagName === "TEXTAREA" ||
+      el.tagName === "SELECT" ||
+      (el as HTMLElement).isContentEditable === true;
+    if (active && isSnapshottable(active) && target.contains(active)) {
       const el = active as HTMLInputElement;
+      const hasSelection = el.tagName === "INPUT" || el.tagName === "TEXTAREA";
       snap = {
         bind: el.dataset.kumikiBind ?? undefined,
         id: el.id || undefined,
         path: domPath(el, target),
-        selStart: el.selectionStart,
-        selEnd: el.selectionEnd,
+        selStart: hasSelection ? el.selectionStart : null,
+        selEnd: hasSelection ? el.selectionEnd : null,
+        hasSelection,
       };
     }
 
@@ -880,6 +984,7 @@ export function mountCore(
             newNode: renderedTree,
             newMap,
             ctx: tileCtx,
+            patchers: tilePatchers,
           });
           dom = rec.el;
           lastRenderTouched = rec.touched;
@@ -965,7 +1070,21 @@ export function mountCore(
     currentTree = panicked ? null : renderedTree;
     currentMap = newMap;
 
+    // #190: on the happy patch path element identity is preserved, so this
+    // `focus()` degrades to a no-op — the browser cursor is already on the
+    // still-mounted control. Restoration still fires unconditionally to
+    // cover: (a) reconcile-bailout / panic recovery, where DOM was rebuilt
+    // wholesale; (b) keyed reorder, where the child element is moved via
+    // `parentEl.appendChild` (browsers, and happy-dom, blur a moved element
+    // even when its identity survives). The `.focus()` + setSelection calls
+    // are idempotent and cheap on the happy path, so keeping the layer
+    // active is a strict simplification win over per-path gating.
     if (snap) {
+      // `snap.bind` comes from `data-kumiki-bind`, which is set from Kumiki
+      // slot / bind-path syntax — a whitelisted identifier grammar without
+      // ", ], or backslash — so it does not need attribute-value escaping
+      // here. `snap.id` may be user-authored (`{id: "..."}`) and IS routed
+      // through `CSS.escape` below.
       let sel: Element | null = snap.bind
         ? target.querySelector(`[data-kumiki-bind="${snap.bind}"]`)
         : snap.id
@@ -974,14 +1093,22 @@ export function mountCore(
       // Fall back to DOM-path restore for inputs without bind/id (e.g.
       // `value=`-only search boxes). Identifies the element by its position.
       if (!sel && snap.path) sel = elementAtPath(snap.path, target);
-      if (sel && (sel.tagName === "INPUT" || sel.tagName === "TEXTAREA")) {
-        const el = sel as HTMLInputElement;
+      if (
+        sel &&
+        (sel.tagName === "INPUT" ||
+          sel.tagName === "TEXTAREA" ||
+          sel.tagName === "SELECT" ||
+          (sel as HTMLElement).isContentEditable === true)
+      ) {
+        const el = sel as HTMLElement;
         el.focus();
-        if (snap.selStart !== null && snap.selEnd !== null) {
+        if (snap.hasSelection && snap.selStart !== null && snap.selEnd !== null) {
           try {
-            el.setSelectionRange(snap.selStart, snap.selEnd);
+            (el as HTMLInputElement).setSelectionRange(snap.selStart, snap.selEnd);
           } catch {
-            // some input types don't support selection
+            // Some input types (`type=file` / `email` / `number` / ...) reject
+            // setSelectionRange with an InvalidStateError. Focus already
+            // landed, which is the load-bearing part of the fallback.
           }
         }
       }
@@ -2247,12 +2374,14 @@ function reconcileTree(args: {
   newNode: TileNode;
   newMap: TileElementMap;
   ctx: TileCtx;
+  patchers: TilePatchers;
 }): { el: HTMLElement; touched: string[] } {
   // #189: collect an identifier per subtree that reconcile actually rebuilt or
-  // freshly mounted. Consumed by `renderPass` → `recordSignalUpdate`, filling
-  // the episode `signal-update` step's `binds-updated` field. Only the ROOT of
-  // each rebuilt subtree is pushed (no descent) to keep the log tight — per the
-  // learning-cost guard in docs/design/reactivity-v2.md §4.
+  // freshly mounted (or patched in place, #190). Consumed by `renderPass` →
+  // `recordSignalUpdate`, filling the episode `signal-update` step's
+  // `binds-updated` field. Only the ROOT of each rebuilt / patched subtree is
+  // pushed (no descent) to keep the log tight — per the learning-cost guard in
+  // docs/design/reactivity-v2.md §4.
   const touched: string[] = [];
   const el = reconcileNode(
     args.oldNode,
@@ -2261,6 +2390,7 @@ function reconcileTree(args: {
     args.newNode,
     args.newMap,
     args.ctx,
+    args.patchers,
     touched,
   );
   return { el, touched };
@@ -2273,19 +2403,54 @@ function reconcileNode(
   newNode: TileNode,
   newMap: TileElementMap,
   ctx: TileCtx,
+  patchers: TilePatchers,
   touched: string[],
 ): HTMLElement {
   // Different kind → whole subtree is a different thing. Build fresh, splice.
   if (oldNode.kind !== newNode.kind) {
     return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
-  // Same kind — inspect this node's own data props (everything except
-  // `children`, ignoring function-valued entries). If they differ, the element
-  // itself needs to be reconstructed: e.g. an input's `value` / `placeholder`
-  // / `bind` changed, a heading's `text` changed. Rebuild the whole subtree;
-  // Reuse across parent rebuild is a keyed-diff concern (see below).
+  // Same kind, differing own data props (`children` / `key` / functions
+  // excluded — see `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
+  // preserving path: if a per-kind patcher is registered, mutate the mounted
+  // element in place (preserving `<select>` open state / focus / caret /
+  // `<video>` playback / `<details>` open / `contenteditable`), then continue
+  // into the children walk below so container-shaped changes still reconcile.
+  // Without a patcher, fall back to the full subtree rebuild (correct but
+  // discards browser-internal state — pre-#190 behaviour).
   if (!tileFieldsEqual(oldNode, newNode)) {
-    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    const patcher = (patchers as Record<string, TilePatcher | undefined>)[newNode.kind];
+    if (patcher) {
+      // Throws land in the outer `reconcileTree` bailout, which records a
+      // `location: "reconcile"` panic and does a full `target.replaceChild`.
+      // Patchers should therefore be side-effect-safe up to the throw point.
+      try {
+        patcher(oldEl, oldNode as never, newNode as never, ctx);
+      } catch (e) {
+        // `PatchRequiresRebuild` is a controlled escape hatch a patcher throws
+        // when it discovers the new node cannot be applied in place (e.g. a
+        // `list` whose `ordered` flip changes `<ul>` ↔ `<ol>`). Fall through
+        // to the same-kind rebuild path without polluting the episode log
+        // with a "reconcile panic" — this is a normal, expected outcome.
+        if (e instanceof PatchRequiresRebuild) {
+          return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+        }
+        throw e;
+      }
+      // Reused elements must dispatch through their handler-slot lookups with
+      // the *current* render's closures, not the create-time ones. INPUT_STATE
+      // (`tiles-input.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
+      // (`tiles-text.ts`) are refreshed by their per-kind patchers; the
+      // universal onKeyDown / onFocus / onBlur / onMouseEnter handlers, which
+      // `applyUiEventHandlers` wires on every tile via the create ctx, live in
+      // this shared UI_HANDLER_STATE and are refreshed here.
+      refreshUiHandlerSlot(oldEl, (newNode as { props?: TileProps }).props);
+      touched.push(tileTouchedId(newNode));
+      // Fall through to the children reconcile below — a container tile may
+      // have both attribute AND child changes in the same render.
+    } else {
+      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    }
   }
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
@@ -2298,7 +2463,7 @@ function reconcileNode(
   // reorder / insert / remove without rebuilding the subtree. Mixed or
   // absent keys fall through to the structural walk below.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx, touched);
+    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx, patchers, touched);
     newMap.set(newNode, oldEl);
     return oldEl;
   }
@@ -2319,7 +2484,7 @@ function reconcileNode(
     if (!oldChildNode || !newChildNode) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     const oldChildEl = oldMap.get(oldChildNode);
     if (!oldChildEl) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
-    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx, touched);
+    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx, patchers, touched);
   }
   newMap.set(newNode, oldEl);
   return oldEl;
@@ -2354,6 +2519,7 @@ function reconcileKeyedChildren(
   oldMap: TileElementMap,
   newMap: TileElementMap,
   ctx: TileCtx,
+  patchers: TilePatchers,
   touched: string[],
 ): void {
   // Detect duplicate keys among the new children. Silently letting a
@@ -2392,7 +2558,16 @@ function reconcileKeyedChildren(
           `reconcile: keyed old tile "${key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
         );
       }
-      const el = reconcileNode(oldChild, oldChildEl, oldMap, newChild, newMap, ctx, touched);
+      const el = reconcileNode(
+        oldChild,
+        oldChildEl,
+        oldMap,
+        newChild,
+        newMap,
+        ctx,
+        patchers,
+        touched,
+      );
       targetEls.push(el);
     } else {
       // Fresh mount: `ctx.render` records the new node → element mapping into
@@ -2517,33 +2692,72 @@ function tileValueEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
+// Per-element slot for the universally-lifted UI handlers (onKeyDown /
+// onMouseEnter / onFocus / onBlur). Same pattern as tiles-input.ts INPUT_STATE
+// and tiles-text.ts LINK_STATE: native listeners are registered once at
+// create-time and dispatch through the slot; `refreshUiHandlerSlot` overwrites
+// the slot when a patch runs so the new node's handler + `el` payload reach
+// subsequent events. Without this, `applyUiEventHandlers` used to close over
+// the create-time `props` — and because `tileValueEqual` treats function
+// values as always-equal, a changed handler or `el` payload would never even
+// trigger a subtree rebuild, silently firing the stale closure on every event.
+type UiHandlerSlot = {
+  onKeyDown?: EventHandler;
+  onMouseEnter?: EventHandler;
+  onFocus?: EventHandler;
+  onBlur?: EventHandler;
+  el?: Record<string, unknown>;
+};
+const UI_HANDLER_STATE = new WeakMap<HTMLElement, UiHandlerSlot>();
+
+function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
+  const slot: UiHandlerSlot = {};
+  if (!props) return slot;
+  if (props.onKeyDown) slot.onKeyDown = props.onKeyDown;
+  if (props.onMouseEnter) slot.onMouseEnter = props.onMouseEnter;
+  if (props.onFocus) slot.onFocus = props.onFocus;
+  if (props.onBlur) slot.onBlur = props.onBlur;
+  if (props.el !== undefined) slot.el = props.el;
+  return slot;
+}
+
+/**
+ * Overwrite an element's UI-handler slot from the current-render props. Called
+ * by `reconcileNode` whenever a patch runs, so re-used elements dispatch
+ * `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` through the LATEST closure
+ * instead of the create-time one.
+ */
+function refreshUiHandlerSlot(el: HTMLElement, props?: TileProps): void {
+  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+}
+
 function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  if (props.onKeyDown) {
-    const handler = props.onKeyDown;
-    el.addEventListener("keydown", (e) => {
-      const ke = e as KeyboardEvent;
-      handler({ ...(props.el ?? {}), key: ke.key, code: ke.code });
-    });
-  }
-  if (props.onMouseEnter) {
-    const handler = props.onMouseEnter;
-    el.addEventListener("mouseenter", () => {
-      handler(props.el ?? {});
-    });
-  }
-  if (props.onFocus) {
-    const handler = props.onFocus;
-    el.addEventListener("focus", () => {
-      handler(props.el ?? {});
-    });
-  }
-  if (props.onBlur) {
-    const handler = props.onBlur;
-    el.addEventListener("blur", () => {
-      handler(props.el ?? {});
-    });
-  }
+  const hasAny =
+    Boolean(props.onKeyDown) ||
+    Boolean(props.onMouseEnter) ||
+    Boolean(props.onFocus) ||
+    Boolean(props.onBlur);
+  if (!hasAny) return;
+  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  el.addEventListener("keydown", (e) => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (!state?.onKeyDown) return;
+    const ke = e as KeyboardEvent;
+    state.onKeyDown({ ...(state.el ?? {}), key: ke.key, code: ke.code });
+  });
+  el.addEventListener("mouseenter", () => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (state?.onMouseEnter) state.onMouseEnter(state.el ?? {});
+  });
+  el.addEventListener("focus", () => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (state?.onFocus) state.onFocus(state.el ?? {});
+  });
+  el.addEventListener("blur", () => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (state?.onBlur) state.onBlur(state.el ?? {});
+  });
 }
 
 /**
@@ -2765,7 +2979,33 @@ function applyMotion(el: HTMLElement, props?: TileProps): void {
 let stateStyleSeq = 0;
 let stateStylesEl: HTMLStyleElement | null = null;
 
+// #190 idempotency: `applyStateStyles` used to run once per element per mount,
+// so a monotonically-growing `stateStyleSeq` was harmless. With patchers
+// re-running `applyContainerProps` (and therefore `applyStateStyles`) on every
+// data-prop change, a call whose state props are unchanged would still append
+// a fresh `data-kumiki-state` token + a duplicate CSS rule on every render —
+// unbounded growth on both the element attribute and the shared stylesheet.
+// Cache the last-applied state signature per element and short-circuit an
+// unchanged re-application. When state props DO change, we still leak the old
+// stylesheet rule (its `data-kumiki-state` token is retired from the element),
+// but that's bounded by "unique state combos per element" rather than "render
+// count" — a genuine and rare change, not a per-render cost.
+const STATE_STYLE_SIG = new WeakMap<HTMLElement, string>();
+
 function applyStateStyles(el: HTMLElement, props: TileProps): void {
+  const sig = JSON.stringify([
+    props.hover,
+    props.focus,
+    props.active,
+    props.disabled,
+    props.selected,
+  ]);
+  if (STATE_STYLE_SIG.get(el) === sig) return;
+  // Retire any tokens the previous render installed on this element — the
+  // rules stay in the shared stylesheet (harmless dead rules) but the element
+  // stops matching them.
+  if (STATE_STYLE_SIG.has(el)) delete el.dataset.kumikiState;
+  STATE_STYLE_SIG.set(el, sig);
   for (const state of ["hover", "focus", "active", "disabled", "selected"] as const) {
     const sub = props[state];
     if (!sub || typeof sub !== "object" || Array.isArray(sub)) continue;

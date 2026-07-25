@@ -1,0 +1,52 @@
+{
+  "steps": [
+    {
+      "label": "initial render — editable contains the seed text",
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello", "ticks": 0 },
+        "elementState": {
+          "#editor": {
+            "textContent": "hello",
+            "contentEditable": "true"
+          }
+        }
+      }
+    },
+    {
+      "label": "seed a browser-owned marker on the editor; its survival across the reducer proves the same <div> is reused (focus check comes next via dispatch, which does not blur)",
+      "do": {
+        "setProperty": "#editor",
+        "property": "dataset.identityProbe",
+        "value": "seeded"
+      }
+    },
+    {
+      "label": "focus the editor via keyboard flow — then a reducer dispatched programmatically (no button click, no blur) still leaves the editor identity + focus intact",
+      "do": { "focus": "#editor" },
+      "expect": { "focused": "#editor" }
+    },
+    {
+      "label": "unrelated reducer fires via dispatch (not click → no button focus theft). The #190 patch preserves element identity, so both the seeded marker and text content survive; focus stays too",
+      "do": { "dispatch": "tick" },
+      "expect": {
+        "state": { "ticks": 1, "note": "hello" },
+        "focused": "#editor",
+        "elementState": {
+          "#editor[data-identity-probe='seeded']": { "textContent": "hello" }
+        }
+      }
+    },
+    {
+      "label": "second tick — still the same node, still focused",
+      "do": { "dispatch": "tick" },
+      "expect": {
+        "state": { "ticks": 2 },
+        "focused": "#editor",
+        "elementState": {
+          "#editor[data-identity-probe='seeded']": { "textContent": "hello" }
+        }
+      }
+    }
+  ]
+}

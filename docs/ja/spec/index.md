@@ -154,4 +154,8 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `51-selector-id.kumiki` | reducer | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
 | `52-selector-id-arg.kumiki` | reducer | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
 | `53-keyed-list-identity.kumiki` | tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
+| `54-select-preserves-state.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
+| `55-video-preserves-currenttime.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
+| `56-details-preserves-open.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
+| `57-editable-preserves-focus.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
 <!-- examples:end -->

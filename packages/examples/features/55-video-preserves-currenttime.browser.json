@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "label": "initial render — controls off",
+      "expect": {
+        "noErrors": true,
+        "state": { "showControls": false },
+        "elementState": {
+          "#clip": { "controls": false }
+        }
+      }
+    },
+    {
+      "label": "seed browser-owned state on the video (dataset stand-in for currentTime — a real .mp4 isn't served here, so we verify identity via a marker the runtime patcher never touches)",
+      "do": {
+        "setProperty": "#clip",
+        "property": "dataset.marker",
+        "value": "seeded"
+      }
+    },
+    {
+      "label": "reducer flips `controls` slot → tile patch path runs — element identity is preserved, so the seeded marker survives",
+      "do": { "dispatch": "toggleControls" },
+      "expect": {
+        "state": { "showControls": true },
+        "elementState": {
+          "#clip": { "controls": true }
+        }
+      }
+    },
+    {
+      "label": "the seeded dataset marker is still on the live element — proves the reducer did not rebuild the <video>",
+      "expect": {
+        "elementState": {
+          "#clip[data-marker='seeded']": { "controls": true }
+        }
+      }
+    }
+  ]
+}

@@ -303,6 +303,7 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
 | `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
+| `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
 ### 2.3.5 Forms
 
@@ -334,6 +335,7 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `tooltip` | tooltip | `text`, `placement` |
 | `popover` | popover | `open`, `onClose`, `placement` |
 | `toast` | toast notification | `kind` (info/success/warn/error), `text` |
+| `details` | native `<details>` disclosure (#190) — `summary` labels the header; children make up the collapsible panel | `summary`, `open` |
 
 ### 2.3.8 Feedback
 

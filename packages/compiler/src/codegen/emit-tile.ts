@@ -476,6 +476,45 @@ function tileCallJs(
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
+      case "details": {
+        // <details>: `summary=` supplies the disclosure label; unnamed args
+        // are the collapsed children. `open` is optional and defaults to
+        // false so the panel starts collapsed (native browser default).
+        const children = collectChildren(t.args, gen, ctx, enclosingTile);
+        const summaryArg = t.args.find((a) => a.name === "summary");
+        const summary = summaryArg ? jsOfExpr(asExpr(summaryArg.value), ctx) : '""';
+        const fields: string[] = [
+          `kind: "details"`,
+          `summary: _s.show(${summary})`,
+          `children: [${children}]`,
+        ];
+        const openArg = t.args.find((a) => a.name === "open");
+        if (openArg) fields.push(`open: !!(${jsOfExpr(asExpr(openArg.value), ctx)})`);
+        fields.push(`props: ${propsObj}`);
+        return `({ ${fields.join(", ")} })`;
+      }
+      case "editable": {
+        // contenteditable: first positional (or `text=`) supplies initial
+        // content; `bind=` optionally writes back user edits. Mirrors the
+        // input / textarea shape so codegen for text-in-bind is uniform.
+        const fields: string[] = [`kind: "editable"`];
+        const bindInfo = extractBindPath(t.args);
+        const textArg = t.args.find((a) => !a.name) ?? t.args.find((a) => a.name === "text");
+        const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
+        if (bindInfo) {
+          fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
+          if (bindInfo.path.length > 0) {
+            fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
+          }
+          fields.push(`text: _s.show(${bindInfo.readJs})`);
+        } else {
+          fields.push(`text: _s.show(${textJs})`);
+        }
+        const idArg = t.args.find((a) => a.name === "id");
+        if (idArg) fields.push(`id: ${jsOfExpr(asExpr(idArg.value), ctx)}`);
+        fields.push(`props: ${propsObj}`);
+        return `({ ${fields.join(", ")} })`;
+      }
     }
     throw new Error(`Unsupported builtin tile "${name}"`);
   };

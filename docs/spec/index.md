@@ -154,4 +154,8 @@ Each file under [`packages/examples/features/`](https://github.com/kage1020/Kumi
 | `51-selector-id.kumiki` | reducer | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 | `52-selector-id-arg.kumiki` | reducer | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 | `53-keyed-list-identity.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
+| `54-select-preserves-state.kumiki` | tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
+| `55-video-preserves-currenttime.kumiki` | tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
+| `56-details-preserves-open.kumiki` | tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
+| `57-editable-preserves-focus.kumiki` | tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
 <!-- examples:end -->
