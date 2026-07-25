@@ -299,7 +299,7 @@ selection range を捕捉するので、そこで復元される。
 「slot `X` が変わった → タイル/bind `A`, `B` が patched」という因果は
 rebuild/patch のどちらを通っても `signal-update.binds-updated`（#189）に載る。
 
-### 10.3.12 Reconcile diagnostics
+### 10.3.12 reconcile の診断
 
 keyed diff（§10.3.10）も in-place patch（§10.3.11）も、**静かに劣化する**。
 subtree の identity を保てないと判断したら reconciler は再構築する — 常に正しく、
@@ -316,12 +316,16 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 
 **報告される fallback**
 
-| reason | 失われたもの |
-|---|---|
-| `no-patcher` | タイルの data prop が変わったが、その kind に patcher が登録されていないため subtree ごと再構築した。その要素の focus / キャレット / `<select>` の open 状態 / `<video>` の再生位置が失われる。 |
-| `child-count-change` | キーの無い兄弟リストの長さが変わったため親を再構築した。全ての子に `key` を付ける（§10.3.10）とこの制限は外れ、keyed matcher が insert / remove / reorder を越えて無関係な兄弟に触れずに済む。 |
-| `child-hole` | children 配列に空スロットがあった。Kumiki の codegen は nil を潰すので、これはホストが組んだタイルツリーからしか到達しない。 |
-| `child-unmapped` | 旧 child がノード → 要素マップに存在しなかった。つまり親のレンダラが `ctx.render` を通さずに子を組んでいる。見つからないものは再利用できないので、その親は毎レンダ再構築される。 |
+全ての diagnostic は再構築されたタイルを特定する情報（`tileKind`、作者定義タイル名が
+あれば `tile`、および episode log と同じ `id`）を持つ。加えて reason ごとに、その
+reason だけが知っている証拠を載せる — ソースを読み直さなくても対処できるように。
+
+| reason | 証拠 | 失われたもの |
+|---|---|---|
+| `no-patcher` | — | タイルの data prop が変わったが、その kind に patcher が登録されていないため subtree ごと再構築した。その要素の focus / キャレット / `<select>` の open 状態 / `<video>` の再生位置が失われる。 |
+| `child-count-change` | `oldCount`, `newCount` | キーの無い兄弟リストの長さが変わったため親を再構築した。全ての子に `key` を付ける（§10.3.10）とこの制限は外れ、keyed matcher が insert / remove / reorder を越えて無関係な兄弟に触れずに済む。 |
+| `child-hole` | `index` | children 配列に空スロットがあった。Kumiki の codegen は nil を潰すので、これはホストが組んだタイルツリーからしか到達しない。 |
+| `child-unmapped` | `index`, `childKind` | 旧 child がノード → 要素マップに存在しなかった。つまり親のレンダラが `ctx.render` を通さずに子を組んでいる。見つからないものは再利用できないので、その親は毎レンダ再構築される。 |
 
 再構築パスのうち 2 つは**意図的に報告しない**。`kind` の変化はその位置に別のものが
 来たという意味なので、保つべき identity が無い。patcher が `PatchRequiresRebuild`
@@ -335,8 +339,20 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 キャプチャしていると、prop 等値による再利用は最初のレンダのクロージャを永久に
 発火させ続ける。それらの kind の再利用判断は関数 identity の変化を走査され、
 `stale-closure-risk` として報告される。対象範囲は `MountOptions.hostTileKinds` で決まり、
-パッケージエントリの `mount` は `tiles` の上書きマップから導出する。独自レンダラで
-`mountCore` を直接呼ぶホストは自分で渡す。
+パッケージエントリの `mount` は `tiles` の上書きマップから導出する — built-in kind の
+上書きも含む。built-in レンダラを差し替えた時点で、再利用を安全にしていたハンドラ
+スロットも一緒に失われるからである。独自レンダラで `mountCore` を直接呼ぶホストは
+自分で渡す。
+
+走査対象はノード自身のフィールドと `props` の 1 階層 — built-in レンダラが全て従って
+いる慣習（`props.onClick`, `props.onChange`）である。それより深くハンドラを埋めている
+ホストタイル（`props.handlers.onClick`）は検査されない。カバーされ続けるために
+ハンドラは `props` 直下に置くこと。
+
+2 つの diagnostic kind は severity が異なる。`reconcile-fallback` はアプリが正しいまま
+パフォーマンスとブラウザ所有の要素状態を失う。`stale-closure-risk` は作者が既に
+差し替えたコードをアプリが実行し続けているという意味である。`kumiki dev` は前者を
+`console.warn`、後者を `console.error` に振り分ける。
 
 **episode log との関係**  episode は「アプリが何をしたか」という作者向けの因果記録で、
 subtree が再レンダされた**こと自体**は既に `signal-update.binds-updated`（§10.3.11）に
@@ -344,11 +360,12 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
 内部の情報であり、アプリやホスト統合のチューニングには有用だが挙動トレースの中では
 ノイズになる。互いに補完的なチャネルなので、新しい episode step kind にはしていない。
 
-**consumer**  `smoke()` は非致命の `SmokeReport.diagnostics` に集める（必要以上に
-再構築していること自体は失敗ではない。`SmokeOptions.diagnosticsAsIssues` で失敗扱いに
-できる）。`runScenario` は再レンダを引き起こしたアクションのステップに紐付ける。
-`kumiki smoke` は reason ごとの要約を出力し、`kumiki dev` はブラウザコンソールに
-1 件ずつ warn する。
+**consumer**  `smoke()` は非致命の `SmokeReport.diagnostics` に集める。各要素は
+`SmokeIssue` と同じ phase / trigger を伴うので、どの操作が引き起こしたかを特定できる
+（必要以上に再構築していること自体は失敗ではない。`SmokeOptions.diagnosticsAsIssues`
+= `kumiki smoke --diagnostics-as-issues` で失敗扱いにできる）。`runScenario` は
+再レンダを引き起こしたアクションのステップに紐付け、`kumiki run` はそのステップの下に
+出力する。`kumiki smoke` は reason ごとの要約を出力する。
 
 ---
 

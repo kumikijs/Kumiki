@@ -158,5 +158,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `55-video-preserves-currenttime.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
 | `56-details-preserves-open.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
 | `57-editable-preserves-focus.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
-| `58-unkeyed-conditional-rebuild.kumiki` | tile | コア | [§10.3.12](./runtime.md#_10-3-12-reconcile-diagnostics) |
+| `58-unkeyed-conditional-rebuild.kumiki` | tile | コア | [§10.3.12](./runtime.md#_10-3-12-reconcile-の診断) |
 <!-- examples:end -->

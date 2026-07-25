@@ -331,12 +331,17 @@ bundler stripped anything.
 
 **Reported fallbacks.**
 
-| reason | what was lost |
-|---|---|
-| `no-patcher` | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
-| `child-count-change` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. |
-| `child-hole` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. |
-| `child-unmapped` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. |
+Every diagnostic names the rebuilt tile (`tileKind`, the authored `tile` name
+when there is one, and the same `id` the episode log uses). Each reason
+additionally carries the evidence only it has, so a report is actionable
+without re-deriving it from the source:
+
+| reason | evidence | what was lost |
+|---|---|---|
+| `no-patcher` | — | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
+| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. |
+| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. |
+| `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. |
 
 Two rebuild paths are deliberately **not** reported. A `kind` change means a
 different thing occupies that position, so there is no identity to preserve.
@@ -351,8 +356,20 @@ slot: if it captured a handler at create time, a props-equal reuse leaves the
 first render's closure firing forever. Reuse decisions on those kinds are
 scanned for a changed function identity and reported as
 `stale-closure-risk`. The scope comes from `MountOptions.hostTileKinds`, which
-the package-entry `mount` derives from the `tiles` override map; a host calling
-`mountCore` with its own renderers passes it directly.
+the package-entry `mount` derives from the `tiles` override map — including
+overrides of built-in kinds, since replacing a built-in renderer discards the
+handler slots that made reuse safe. A host calling `mountCore` with its own
+renderers passes the set directly.
+
+The scan reads the node's own fields and one level into `props` — the
+convention every built-in renderer follows (`props.onClick`, `props.onChange`).
+A host tile that buries its handlers deeper (`props.handlers.onClick`) is not
+inspected; keep handlers directly under `props` to stay covered.
+
+The two diagnostic kinds carry different severity. A `reconcile-fallback` costs
+performance and browser-owned element state while the app stays correct; a
+`stale-closure-risk` means the app is running code the author already replaced.
+`kumiki dev` routes them to `console.warn` and `console.error` respectively.
 
 **Relationship to the episode log.** An episode is the author-facing causal
 record of what the app did, and already reports *that* a subtree was
@@ -362,11 +379,13 @@ internals, useful when tuning an app or a host integration, noise inside a
 behavioural trace. They are complementary channels, which is why this is not a
 new episode step kind.
 
-**Consumers.** `smoke()` collects them into a non-fatal `SmokeReport.diagnostics`
-(rebuilding more than necessary is not a failure; `SmokeOptions.diagnosticsAsIssues`
-opts into treating it as one), `runScenario` attaches them to the step whose
-action triggered the re-render, `kumiki smoke` prints a per-reason summary, and
-`kumiki dev` warns on each one in the browser console.
+**Consumers.** `smoke()` collects them into a non-fatal `SmokeReport.diagnostics`,
+each wrapped with the same phase / trigger a `SmokeIssue` carries so the
+provoking interaction is identifiable (rebuilding more than necessary is not a
+failure; `SmokeOptions.diagnosticsAsIssues` — `kumiki smoke --diagnostics-as-issues`
+— opts into treating it as one). `runScenario` attaches them to the step whose
+action triggered the re-render, and `kumiki run` prints them under that step.
+`kumiki smoke` prints a per-reason summary.
 
 ---
 

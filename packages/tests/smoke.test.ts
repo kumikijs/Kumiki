@@ -82,10 +82,19 @@ describe("reconcile diagnostics reach the smoke report", () => {
     try {
       const report = await smoke(app, root, { settleMs: 20 });
       expect(report.ok).toBe(true);
-      const reasons = report.diagnostics.map((d) =>
-        d.kind === "reconcile-fallback" ? d.reason : d.kind,
-      );
-      expect(reasons).toContain("child-count-change");
+      const fallbacks = report.diagnostics
+        .map((d) => d.diagnostic)
+        .filter((d) => d.kind === "reconcile-fallback");
+      // The unkeyed `Notes` column rebuilds when its `when` child appears.
+      expect(fallbacks.map((d) => d.reason)).toContain("child-count-change");
+      // …and the keyed `Tags` column beside it does NOT, even though smoke's
+      // "add tag" click grows it. That contrast is the example's whole point,
+      // so it is asserted rather than left to the reader: every reported
+      // rebuild must be the unkeyed column.
+      for (const d of fallbacks) {
+        expect(d.id).not.toBe("Tags");
+        expect(d.tile).not.toBe("Tags");
+      }
     } finally {
       root.remove();
     }

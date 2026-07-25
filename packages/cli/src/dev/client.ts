@@ -45,12 +45,17 @@ const logger = createEpisodeLogger({
 const panel = installDevPanel({ logger, getApp: () => currentApp });
 
 // The dev server is where a Kumiki app is developed, so it is where the
-// reconcile's identity-losing decisions should be visible. `warn` rather than
-// `error`: these are advisory (the app is still correct), and the smoke and
-// scenario harnesses treat any console.error as a failure.
+// reconcile's identity-losing decisions should be visible. The two diagnostic
+// kinds get different levels because they are different problems: a fallback
+// costs performance and browser-owned element state while the app stays
+// correct, whereas a stale closure means the app is running code the author
+// already replaced.
 const mountOptions = {
   episodeLogger: logger,
-  onDiagnostic: (d: RuntimeDiagnostic) => console.warn("[kumiki] reconcile diagnostic", d),
+  onDiagnostic: (d: RuntimeDiagnostic) => {
+    if (d.kind === "stale-closure-risk") console.error("[kumiki] stale closure", d);
+    else console.warn("[kumiki] reconcile fallback", d);
+  },
 };
 
 let handle = mount(currentApp, root, mountOptions);

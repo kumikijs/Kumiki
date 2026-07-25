@@ -19,7 +19,14 @@ import type {
   TileNode,
   TileRenderers,
 } from "@kumikijs/runtime";
-import { mount, mountCore, smoke, textTiles } from "@kumikijs/runtime";
+import {
+  describeDiagnostic,
+  mount,
+  mountCore,
+  runScenario,
+  smoke,
+  textTiles,
+} from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 /** A bare app whose root tile is produced by `root` on every render pass. */
@@ -65,8 +72,55 @@ describe("runtime: reconcile diagnostics", () => {
     extra = false;
     app._rerender?.();
 
-    expect(fallbackReasons(seen)).toContain("child-count-change");
+    // The counts are the actionable part: "2 unkeyed children became 1" points
+    // straight at the `when` that has to become keyed.
+    expect(seen).toContainEqual(
+      expect.objectContaining({ reason: "child-count-change", oldCount: 2, newCount: 1 }),
+    );
     dispose();
+  });
+
+  it("survives a sink that throws without disturbing the render", () => {
+    // The walker runs inside the reconcile bailout's try/catch, so an unguarded
+    // throw from the host's sink would be recorded as a reconcile panic and
+    // force a full-tree rebuild — the diagnostic channel inflicting the exact
+    // identity loss it exists to report.
+    // The churn is nested one level down, so only the inner column should be
+    // rebuilt. A panic-driven `fullRender` would take the outer heading with it.
+    let extra = true;
+    const app = appOf(() => ({
+      kind: "column",
+      children: [
+        { kind: "heading", text: "outer" },
+        {
+          kind: "column",
+          children: [
+            { kind: "text", text: "inner" },
+            ...(extra ? [{ kind: "text" as const, text: "detail" }] : []),
+          ],
+        },
+      ],
+    }));
+    const suppressed: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => suppressed.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        onDiagnostic: () => {
+          throw new Error("host sink is broken");
+        },
+      });
+      const heading = root.querySelector("h1") as HTMLElement;
+
+      extra = false;
+      app._rerender?.();
+
+      expect(suppressed).toEqual([]);
+      expect(root.querySelector("h1")).toBe(heading);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
   });
 
   it("reports a same-kind prop change with no patcher registered for the kind", () => {
@@ -110,7 +164,7 @@ describe("runtime: reconcile diagnostics", () => {
     holed = true;
     app._rerender?.();
 
-    expect(fallbackReasons(seen)).toContain("child-hole");
+    expect(seen).toContainEqual(expect.objectContaining({ reason: "child-hole", index: 1 }));
     dispose();
   });
 
@@ -145,7 +199,11 @@ describe("runtime: reconcile diagnostics", () => {
     label = "b";
     app._rerender?.();
 
-    expect(fallbackReasons(seen)).toContain("child-unmapped");
+    // `childKind` names the child whose element went missing, which is what
+    // points at the renderer that skipped `ctx.render`.
+    expect(seen).toContainEqual(
+      expect.objectContaining({ reason: "child-unmapped", index: 0, childKind: "text" }),
+    );
     dispose();
   });
 
@@ -177,7 +235,51 @@ describe("runtime: reconcile diagnostics", () => {
 
     const stale = seen.filter((d) => d.kind === "stale-closure-risk");
     expect(stale).toHaveLength(1);
-    expect(stale[0]).toMatchObject({ tileKind: "card", field: "props.onClick" });
+    expect(stale[0]).toMatchObject({ tileKind: "card", id: "card", field: "props.onClick" });
+    dispose();
+  });
+
+  it("catches a handler on the node itself, not only under props", () => {
+    // Some hosts hang the handler off the node rather than `props`. The scan
+    // covers the node's own data fields too, so both conventions are seen.
+    const hostCard = (): HTMLElement => document.createElement("div");
+    const app = appOf(() => ({ kind: "card", onSelect: () => undefined }) as unknown as TileNode);
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    app._rerender?.();
+
+    expect(seen).toContainEqual(
+      expect.objectContaining({ kind: "stale-closure-risk", field: "onSelect" }),
+    );
+    dispose();
+  });
+
+  it("does not chase handlers nested deeper than props", () => {
+    // The scan stops at `props.x` on purpose. Anything deeper is past the point
+    // where a generic warning helps, and an unbounded walk would run on every
+    // reuse decision of every host tile. Locked in so the shallow contract in
+    // `ownFieldPairs` cannot silently widen.
+    const hostCard = (): HTMLElement => document.createElement("div");
+    const app = appOf(
+      () =>
+        ({
+          kind: "card",
+          props: { handlers: { onClick: () => undefined } },
+        }) as unknown as TileNode,
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    app._rerender?.();
+
+    expect(seen.filter((d) => d.kind === "stale-closure-risk")).toEqual([]);
     dispose();
   });
 
@@ -191,6 +293,30 @@ describe("runtime: reconcile diagnostics", () => {
     }));
     const { sink, seen } = collector();
     const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    app._rerender?.();
+
+    expect(seen.filter((d) => d.kind === "stale-closure-risk")).toEqual([]);
+    dispose();
+  });
+
+  it("scopes the scan to the kinds the host actually registered", () => {
+    // Registering `card` must not put every other tile under suspicion. Without
+    // the per-kind gate this passes trivially only while `hostTileKinds` is
+    // empty; here it is non-empty and still must not fire for `button`.
+    const hostCard = (): HTMLElement => document.createElement("div");
+    const app = appOf(() => ({
+      kind: "column",
+      children: [
+        { kind: "button", text: "go", props: { onClick: () => undefined } },
+        { kind: "card", children: [] },
+      ],
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
 
     app._rerender?.();
 
@@ -308,21 +434,130 @@ describe("smoke: reconcile diagnostics", () => {
     return app;
   }
 
-  it("collects diagnostics without failing the run", async () => {
+  it("collects diagnostics without failing the run, with the context of an issue", async () => {
     // The whole point of keeping these out of `issues`: an unkeyed sibling
-    // list is ordinary, correct Kumiki. The corpus must stay green.
+    // list is ordinary, correct Kumiki. The corpus must stay green. But a
+    // report that says "a subtree was rebuilt" without saying which
+    // interaction provoked it answers half the question, so each one carries
+    // the same phase / trigger a `SmokeIssue` would.
     const report = await smoke(togglingApp(), root, { settleMs: 0 });
 
     expect(report.ok).toBe(true);
-    expect(report.diagnostics.map((d) => d.kind === "reconcile-fallback" && d.reason)).toContain(
-      "child-count-change",
+    const fallback = report.diagnostics.find(
+      (d) =>
+        d.diagnostic.kind === "reconcile-fallback" && d.diagnostic.reason === "child-count-change",
     );
+    expect(fallback).toBeDefined();
+    expect(fallback?.phase).toBe("interaction");
+    expect(fallback?.trigger).toMatch(/^click button/);
   });
 
   it("promotes them to issues when the caller opts in", async () => {
     const report = await smoke(togglingApp(), root, { settleMs: 0, diagnosticsAsIssues: true });
 
     expect(report.ok).toBe(false);
-    expect(report.issues.some((i) => i.message.includes("child-count-change"))).toBe(true);
+    // The message spells out the evidence, not just the reason name.
+    expect(
+      report.issues.some((i) =>
+        /child-count-change \(1 unkeyed children became 2\)/.test(i.message),
+      ),
+    ).toBe(true);
+  });
+
+  it("spells out a stale closure as the correctness problem it is", async () => {
+    // "reused X" reads as success; the wording has to say the new handler will
+    // never fire. This is the only diagnostic that means the app is running
+    // the wrong code rather than merely rebuilding too much.
+    const hostCard = (): HTMLElement => document.createElement("div");
+    const app = appOf(
+      () =>
+        ({
+          kind: "card",
+          props: { _tile: "Panel", onClick: () => undefined },
+        }) as unknown as TileNode,
+    );
+    // Asserted outside the sink on purpose: the runtime swallows throws from a
+    // host sink, so an `expect` inside one would never fail the test.
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+    app._rerender?.();
+
+    expect(seen).toHaveLength(1);
+    expect(describeDiagnostic(seen[0] as RuntimeDiagnostic)).toBe(
+      "Panel (card) was reused with the PREVIOUS render's props.onClick — the new one will never fire",
+    );
+    dispose();
+  });
+});
+
+describe("runScenario: diagnostics are attributed to the step that caused them", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  /** Toggles an unkeyed sibling on `toggle`; `noop` re-renders without churn. */
+  function togglingApp(): AppShape {
+    let open = false;
+    return {
+      slots: { open: { value: false } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "toggle",
+          event: { kind: "ui", ev: "click" },
+          apply: () => {
+            open = !open;
+            return { slots: { open }, emits: [] };
+          },
+        },
+        {
+          name: "noop",
+          event: { kind: "ui", ev: "click" },
+          apply: () => ({ slots: { open }, emits: [] }),
+        },
+      ],
+      root: () => ({
+        kind: "column",
+        children: [
+          { kind: "heading", text: "steps" },
+          ...(open ? [{ kind: "text" as const, text: "detail" }] : []),
+        ],
+      }),
+    };
+  }
+
+  it("separates the churning step from the quiet ones", async () => {
+    const report = await runScenario(
+      togglingApp(),
+      root,
+      {
+        steps: [
+          { label: "quiet", do: { dispatch: "noop" } },
+          { label: "toggles", do: { dispatch: "toggle" } },
+          { label: "quiet again", do: { dispatch: "noop" } },
+        ],
+      },
+      { settleMs: 0 },
+    );
+
+    expect(report.steps.map((s) => s.diagnostics.length)).toEqual([0, 1, 0]);
+    expect(report.steps[1]?.diagnostics[0]).toMatchObject({
+      kind: "reconcile-fallback",
+      reason: "child-count-change",
+    });
+    // Buffered per step, so the churn never leaks forward into later steps or
+    // backward from the initial mount (which is a full render, not a diff).
+    expect(report.ok).toBe(true);
   });
 });

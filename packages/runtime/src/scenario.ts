@@ -60,10 +60,11 @@ export type StepResult = {
    * Reconcile observations this step's re-render produced — a subtree the
    * runtime rebuilt rather than reused, or a reuse that kept a changed closure.
    * Never a failure (`ok` ignores it): the point is to attribute the churn to
-   * the action that caused it. Absent when the step produced none, which is
-   * the healthy case.
+   * the action that caused it. Empty in the healthy case; always present, so a
+   * consumer can iterate it without a nil check (matching `errors` / `emits`
+   * rather than the presentational `label` / `action`).
    */
-  diagnostics?: RuntimeDiagnostic[];
+  diagnostics: RuntimeDiagnostic[];
 };
 
 export type ScenarioReport = { ok: boolean; steps: StepResult[] };
@@ -132,6 +133,10 @@ export async function runScenario(
   // Reconcile churn, buffered per step exactly like `errorBuf` / `emitBuf` so
   // the trace attributes it to the action that triggered the re-render. The
   // initial mount is a full render, so nothing lands here before the loop.
+  //
+  // Always installed, unlike a production mount: this runner exists to observe,
+  // and an agent reading the trace should not have to know to ask for the one
+  // signal that explains why a subtree churned.
   const diagBuf: RuntimeDiagnostic[] = [];
 
   const mountOpts: {
@@ -207,10 +212,10 @@ function mkStep(
     state: snapshotState(app),
     domText: (root.textContent ?? "").replace(/\s+/g, " ").trim(),
     failures,
+    diagnostics,
   };
   if (label !== undefined) step.label = label;
   if (action !== undefined) step.action = action;
-  if (diagnostics.length > 0) step.diagnostics = diagnostics;
   return step;
 }
 
