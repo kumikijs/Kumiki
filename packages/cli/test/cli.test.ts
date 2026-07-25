@@ -126,6 +126,34 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     }
   });
 
+  it("the built counter patches in place — the heading element survives a bump", {
+    timeout: 30000,
+  }, async () => {
+    // Runtime truth for the identity-preserving reconcile in a REAL build
+    // artifact. Every test that mounts through the monolith `mount()` gets the
+    // full patcher registry merged in for free, so only an artifact produced by
+    // `kumiki build` can prove the granular mount options carry it. Without
+    // patchers the heading is torn down and replaced on every count change.
+    build(COUNTER_PATH);
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    try {
+      await import(pathToFileURL(join(outDir, "app.js")).href);
+      const heading = root.querySelector("h1") as HTMLElement;
+      expect(heading.textContent).toContain("Count: 0");
+      // A marker the runtime never writes: it survives a patch, not a rebuild.
+      heading.dataset.probe = "seeded";
+      const incBtn = [...root.querySelectorAll("button")].find((b) => b.textContent === "+");
+      incBtn?.click();
+      expect(root.textContent).toContain("Count: 1");
+      expect(root.querySelector("h1")).toBe(heading);
+      expect((root.querySelector("h1") as HTMLElement).dataset.probe).toBe("seeded");
+    } finally {
+      root.remove();
+    }
+  });
+
   it("a routing app ships router.js and the built artifact navigates", {
     timeout: 30000,
   }, async () => {

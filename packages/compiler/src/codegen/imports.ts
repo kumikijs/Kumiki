@@ -38,6 +38,17 @@ export function tileFamilyVar(f: TileFamily): string {
 }
 
 /**
+ * The generated identifier holding one tile family's patcher map — the
+ * companion to `tileFamilyVar`. The reconcile mutates a mounted element in
+ * place only when it finds a patcher for the tile's kind; a mount without them
+ * falls back to rebuilding every changed subtree, discarding focus, caret,
+ * `<select>` open state and `<video>` playback on every data-prop change.
+ */
+export function tilePatcherFamilyVar(f: TileFamily): string {
+  return `${f}Patchers`;
+}
+
+/**
  * Decide which runtime feature modules a compiled app needs (#71).
  *
  * The router is included only when the app can actually navigate: nav.* caps,
@@ -133,7 +144,9 @@ export function emitImportHeader(
     if (usage.toast) header.push(`import { installToast } from "${dir}/effects-toast.js";`);
     if (usage.confirm) header.push(`import { installConfirm } from "${dir}/effects-confirm.js";`);
     for (const f of usage.families) {
-      header.push(`import { ${tileFamilyVar(f)} } from "${dir}/tiles-${f}.js";`);
+      header.push(
+        `import { ${tileFamilyVar(f)}, ${tilePatcherFamilyVar(f)} } from "${dir}/tiles-${f}.js";`,
+      );
     }
     header.push("");
     header.push(
@@ -141,6 +154,9 @@ export function emitImportHeader(
     );
     header.push(
       `const _tiles = { ${usage.families.map((f) => `...${tileFamilyVar(f)}`).join(", ")} };`,
+    );
+    header.push(
+      `const _patchers = { ${usage.families.map((f) => `...${tilePatcherFamilyVar(f)}`).join(", ")} };`,
     );
     header.push("");
   } else {
