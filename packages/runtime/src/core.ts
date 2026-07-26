@@ -337,10 +337,11 @@ export class PatchRequiresRebuild extends Error {
 }
 
 /**
- * Why the reconcile abandoned identity preservation for a subtree and rebuilt
- * it wholesale. Each one is correctness-preserving, so none of them throws —
- * which is exactly the problem: an app can be re-mounting every subtree on
- * every render while looking perfectly healthy from the outside.
+ * Why the reconcile gave up identity preservation for a subtree — either
+ * rebuilding it wholesale, or declining the keyed matcher and dropping to the
+ * weaker positional walk. Each one is correctness-preserving, so none of them
+ * throws — which is exactly the problem: an app can be re-mounting every
+ * subtree on every render while looking perfectly healthy from the outside.
  *
  * Two rebuild paths are deliberately absent. A `kind` change means a different
  * thing is in that position, so there is no identity to preserve. And a
@@ -381,7 +382,18 @@ export type ReconcileFallback =
    * The walker cannot reuse what it cannot find, so that parent rebuilds on
    * every render. `childKind` names the child whose element went missing.
    */
-  | { reason: "child-unmapped"; index: number; childKind: string };
+  | { reason: "child-unmapped"; index: number; childKind: string }
+  /**
+   * Every child carried a `key`, but the parent's renderer does not place its
+   * children directly under its own element — the child at `index` sits inside
+   * a renderer-owned wrapper (`overlay` wraps children 1..N in a positioning
+   * layer). Moving and removing children is addressed against the parent
+   * element, so the keyed matcher declined and the positional walk ran
+   * instead: correct, but reorder no longer preserves element identity. A host
+   * renderer hits this by appending children to anything other than the
+   * element it returns.
+   */
+  | { reason: "wrapped-children"; index: number; childKind: string };
 
 /**
  * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
@@ -2598,6 +2610,23 @@ function reconcileTree(args: {
   return { el, touched };
 }
 
+/**
+ * Reconciles one mounted tile against its next render and returns **the element
+ * that now occupies this node's slot** — `oldEl` when the tile was reused or
+ * patched in place, a fresh element when the subtree was rebuilt.
+ *
+ * **Who owns placement.** A rebuilt subtree is spliced into the live DOM by
+ * `replaceWithFreshTile`, anchored on the OLD element's own parent. That is
+ * deliberate and not an implementation detail the caller may work around: where
+ * a child element sits is decided by the parent tile's *renderer*, not by this
+ * walker. `overlay` wraps children 1..N in a positioning layer, and a host
+ * renderer may wrap arbitrarily — so the anchor is whatever node actually holds
+ * the slot, which is not necessarily the parent tile's element.
+ *
+ * A caller may therefore only place the returned element itself when it has
+ * established that it owns the slots. Exactly one does — `reconcileKeyedChildren`,
+ * and only behind the `keyedPassBlocker` gate below.
+ */
 function reconcileNode(
   oldNode: TileNode,
   oldEl: HTMLElement,
@@ -2671,20 +2700,43 @@ function reconcileNode(
   // carries a `key`, we match children by key across renders and survive
   // reorder / insert / remove without rebuilding the subtree. Mixed or
   // absent keys fall through to the structural walk below.
+  //
+  // Second condition: that pass MOVES and REMOVES child elements addressed
+  // against `oldEl`, so it may only run when `oldEl` is the node that actually
+  // holds those slots. A renderer that wraps its children owns their placement
+  // and the walker must not reach past it.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    reconcileKeyedChildren(
-      oldEl,
-      oldChildren,
-      newChildren,
-      oldMap,
-      newMap,
-      ctx,
-      patchers,
-      touched,
-      diag,
-    );
-    newMap.set(newNode, oldEl);
-    return oldEl;
+    const blocker = keyedPassBlocker(oldEl, oldChildren, oldMap);
+    if (blocker) {
+      // Fall through to the structural walk: it never repositions anything, so
+      // it stays correct under a wrapping renderer (a length change rebuilds
+      // the parent, which re-enters the renderer and re-wraps).
+      //
+      // Only the placement case is reported from here. An unmapped child is
+      // the structural walk's `child-unmapped` to name — or, when the length
+      // also changed, its `child-count-change` — and calling it a wrap would
+      // point the author at the wrong renderer.
+      if (blocker.kind === "wrapped") {
+        diag?.fallback(
+          { reason: "wrapped-children", index: blocker.index, childKind: blocker.childKind },
+          newNode,
+        );
+      }
+    } else {
+      reconcileKeyedChildren(
+        oldEl,
+        oldChildren,
+        newChildren,
+        oldMap,
+        newMap,
+        ctx,
+        patchers,
+        touched,
+        diag,
+      );
+      newMap.set(newNode, oldEl);
+      return oldEl;
+    }
   }
   // Structural length change without keys → subtree rebuild. Preserves
   // correctness at the cost of reuse; keyed children above lift this
@@ -2717,6 +2769,13 @@ function reconcileNode(
       diag?.fallback({ reason: "child-unmapped", index: i, childKind: oldChildNode.kind }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
+    // The returned element is deliberately discarded: on this path no child
+    // ever changes slot, so there is nothing for the parent to place. A
+    // rebuilt child was already spliced into the slot it held — by
+    // `replaceWithFreshTile`, anchored on `oldChildEl.parentNode`, which is
+    // the only node that knows where the slot is when the renderer wraps its
+    // children. Re-inserting it here against `oldEl` would be wrong for
+    // exactly those renderers. `newMap` is likewise populated inside the call.
     reconcileNode(
       oldChildNode,
       oldChildEl,
@@ -2740,7 +2799,45 @@ function allChildrenKeyed(nodes: TileNode[]): boolean {
 }
 
 /**
+ * The first old child that stops the keyed pass from running, or `undefined`
+ * when every child sits in a slot `parentEl` can address and moving / removing
+ * them there is sound.
+ *
+ * Two different things block it, and they are told apart because they have
+ * different causes to report:
+ * - `wrapped` — the element is mounted somewhere other than directly under
+ *   `parentEl`, so the parent's renderer owns its children's placement and the
+ *   walker must not reach past it.
+ * - `unmapped` — the child never passed through `ctx.render`. The keyed pass
+ *   treats that as an invariant break and throws; routing it to the structural
+ *   walk instead keeps a host-built tree out of the panic log and lets that
+ *   walk name the real cause (`child-unmapped`).
+ */
+function keyedPassBlocker(
+  parentEl: HTMLElement,
+  oldChildren: TileNode[],
+  oldMap: TileElementMap,
+): { kind: "wrapped" | "unmapped"; index: number; childKind: string } | undefined {
+  for (let i = 0; i < oldChildren.length; i++) {
+    const child = oldChildren[i];
+    if (!child) continue;
+    const el = oldMap.get(child);
+    if (!el) return { kind: "unmapped", index: i, childKind: child.kind };
+    if (el.parentNode !== parentEl) return { kind: "wrapped", index: i, childKind: child.kind };
+  }
+  return undefined;
+}
+
+/**
  * Keyed child reconcile — mutates `parentEl` in place to match `newChildren`.
+ *
+ * **Precondition, enforced by the caller.** Every old child's element is a
+ * direct child of `parentEl` (`keyedPassBlocker` gates this). The
+ * moves and removals below address `parentEl` itself, so under a renderer that
+ * wraps its children they would tear elements out of their wrappers and strand
+ * the emptied wrappers. Fresh mounts have the same limit from the other side:
+ * `ctx.render` returns a bare child element and only the renderer knows what
+ * to wrap it in.
  *
  * Strategy: (1) build key→oldChild lookup, (2) for each new child either
  * reconcile against its keyed old counterpart or mount fresh, (3) drop

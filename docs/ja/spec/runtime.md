@@ -215,6 +215,17 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   を親サブツリー再構築なしで乗り越える。1 つでも key を欠く子があれば、
   #187 以前と同じ構造 diff（位置 + `kind` + データプロップ等価、length 変化 →
   再構築）にフォールバックする。
+- keyed matching はさらに、**親のレンダラが子を自分の要素の直下に配置している**
+  ことを要求する。key で対応付けるのは半分でしかなく、その後 reconciler は
+  生存した子の移動と消えた子の削除を親要素に対して行う — これは親要素が
+  保持しているスロットにしか働かない。組み込みで唯一これを満たさないのが
+  `overlay` で、2 番目以降の子を配置用レイヤーで包むため、map された要素は
+  overlay の孫になる。この場合 reconciler は keyed matching を辞退して
+  `wrapped-children`（§10.3.12）を報告し、構造 diff に降りる。構造 diff は
+  要素を一切移動させないので、包むレンダラの下でも正しく動く。ホスト製
+  レンダラも「返した要素以外に子を append する」と同じ扱いになる — 並べ替える
+  keyed リストは素の container（`column` / `row` / `list`）の下に置き、ホスト
+  レンダラの子は root 要素の直下に置くこと。
 
 **コンパイラの emit**
 
@@ -302,9 +313,10 @@ rebuild/patch のどちらを通っても `signal-update.binds-updated`（#189�
 ### 10.3.12 reconcile の診断
 
 keyed diff（§10.3.10）も in-place patch（§10.3.11）も、**静かに劣化する**。
-subtree の identity を保てないと判断したら reconciler は再構築する — 常に正しく、
-例外も投げない。つまりアプリが毎レンダで全ツリーを再マウントしていても、外から
-見る限りは健全に見える。`MountOptions.onDiagnostic` はその判断を観測する opt-in。
+subtree の identity を保てないと判断したら reconciler は再構築するか、より弱い
+マッチング戦略に降りる — 常に正しく、例外も投げない。つまりアプリが毎レンダで
+全ツリーを再マウントしていても、外から見る限りは健全に見える。
+`MountOptions.onDiagnostic` はその判断を観測する opt-in。
 
 ```ts
 mount(app, root, { onDiagnostic: (d) => console.warn(d) });
@@ -316,9 +328,9 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 
 **報告される fallback**
 
-全ての diagnostic は再構築されたタイルを特定する情報（`tileKind`、作者定義タイル名が
-あれば `tile`、および episode log と同じ `id`）を持つ。加えて reason ごとに、その
-reason だけが知っている証拠を載せる — ソースを読み直さなくても対処できるように。
+全ての diagnostic は identity 保証を失ったタイルを特定する情報（`tileKind`、作者定義
+タイル名があれば `tile`、および episode log と同じ `id`）を持つ。加えて reason ごとに、
+その reason だけが知っている証拠を載せる — ソースを読み直さなくても対処できるように。
 
 | reason | 証拠 | 失われたもの |
 |---|---|---|
@@ -326,6 +338,7 @@ reason だけが知っている証拠を載せる — ソースを読み直さ�
 | `child-count-change` | `oldCount`, `newCount` | キーの無い兄弟リストの長さが変わったため親を再構築した。全ての子に `key` を付ける（§10.3.10）とこの制限は外れ、keyed matcher が insert / remove / reorder を越えて無関係な兄弟に触れずに済む。 |
 | `child-hole` | `index` | children 配列に空スロットがあった。Kumiki の codegen は nil を潰すので、これはホストが組んだタイルツリーからしか到達しない。 |
 | `child-unmapped` | `index`, `childKind` | 旧 child がノード → 要素マップに存在しなかった。つまり親のレンダラが `ctx.render` を通さずに子を組んでいる。見つからないものは再利用できないので、その親は毎レンダ再構築される。 |
+| `wrapped-children` | `index`, `childKind` | 全ての子が `key` を持っていたが、親のレンダラが子を直下に置かず包んでいる（§10.3.10）ため、keyed matcher が辞退して構造 diff が走った。何も再構築しない唯一の reason で、失われるのは subtree ではなく「並べ替えを越えた要素同一性」である。 |
 
 再構築パスのうち 2 つは**意図的に報告しない**。`kind` の変化はその位置に別のものが
 来たという意味なので、保つべき identity が無い。patcher が `PatchRequiresRebuild`

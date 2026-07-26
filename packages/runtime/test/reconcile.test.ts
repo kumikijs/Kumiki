@@ -1417,3 +1417,130 @@ describe("runtime: identity-preserving patch (#190)", () => {
     dispose();
   });
 });
+
+describe("runtime: reconcile child-placement contract", () => {
+  // The keyed child pass takes ownership of its children's DOM slots: it moves
+  // survivors with `parentEl.appendChild` and drops unmatched ones with
+  // `parentEl.removeChild`. Both only address elements the parent element holds
+  // DIRECTLY. `overlay` breaks that: children 1..N are each wrapped in an
+  // absolutely-positioned `overlay-layer` div, so the element the reconciler
+  // has mapped for a child is a grandchild of the overlay. Taking the keyed
+  // path there tears children out of their layer (destroying the stacking) and
+  // strands the emptied layer divs in the DOM. The walker must recognise that
+  // it does not own those slots and fall back to the structural walk, whose
+  // rebuild path re-enters the renderer and re-wraps correctly.
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  function overlayLayersApp(getOrder: () => string[]): AppShape {
+    return {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      // Every child keyed → the keyed gate would fire if placement were not
+      // checked. Mirrors `overlay(for l in layers Layer(l))`, where the
+      // compiler stamps an implicit key on each iteration's tile.
+      root: (): TileNode => ({
+        kind: "overlay",
+        props: { align: "center" },
+        children: getOrder().map((id) => ({
+          kind: "text",
+          text: `layer ${id}`,
+          key: id,
+        })),
+      }),
+    };
+  }
+
+  const layerDivs = (overlay: HTMLElement): HTMLElement[] =>
+    Array.from(overlay.children).filter(
+      (c) => (c as HTMLElement).dataset.kumikiTile === "overlay-layer",
+    ) as HTMLElement[];
+
+  it("keeps wrapped children inside their overlay layer across a reorder", () => {
+    let order = ["a", "b", "c"];
+    const app = overlayLayersApp(() => order);
+    const { dispose } = mount(app, root);
+    const overlay = root.firstElementChild as HTMLElement;
+    // child[0] is the base layer (in normal flow); [1] and [2] are wrapped.
+    expect(overlay.children.length).toBe(3);
+    expect(layerDivs(overlay).length).toBe(2);
+
+    order = ["c", "a", "b"];
+    app._rerender?.();
+
+    // Structure is intact: still one base child + two positioned layers, and
+    // every layer still holds exactly the one tile element it wraps.
+    expect(overlay.children.length).toBe(3);
+    const layers = layerDivs(overlay);
+    expect(layers.length).toBe(2);
+    for (const layer of layers) {
+      expect(layer.children.length).toBe(1);
+      expect(layer.style.position).toBe("absolute");
+    }
+    // No tile element escaped its wrapper onto the overlay itself.
+    expect((overlay.children[0] as HTMLElement).dataset.kumikiTile).toBe("text");
+    expect(overlay.textContent).toContain("layer c");
+    expect(overlay.textContent).toContain("layer a");
+    expect(overlay.textContent).toContain("layer b");
+    dispose();
+  });
+
+  it("leaves no stranded overlay layer when a wrapped keyed child is removed", () => {
+    let order = ["a", "b", "c"];
+    const app = overlayLayersApp(() => order);
+    const { dispose } = mount(app, root);
+    const overlay = root.firstElementChild as HTMLElement;
+    expect(layerDivs(overlay).length).toBe(2);
+
+    order = ["a", "c"];
+    app._rerender?.();
+
+    // Two children now → one base + exactly one layer. An emptied wrapper left
+    // behind would show up either as a third child or as a childless layer.
+    const after = root.firstElementChild as HTMLElement;
+    expect(after.children.length).toBe(2);
+    const layers = layerDivs(after);
+    expect(layers.length).toBe(1);
+    expect(layers[0]?.children.length).toBe(1);
+    expect(after.textContent).toContain("layer a");
+    expect(after.textContent).toContain("layer c");
+    expect(after.textContent).not.toContain("layer b");
+    dispose();
+  });
+
+  it("still takes the keyed path when the parent places its children directly", () => {
+    // Guard against the placement check over-triggering: `column` appends
+    // children directly, so keyed reuse across a reorder must be unaffected.
+    let order = ["a", "b", "c"];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: order.map((id) => ({ kind: "text", text: `row ${id}`, key: id })),
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const [ea, eb, ec] = Array.from(column.children) as HTMLElement[];
+
+    order = ["c", "a", "b"];
+    app._rerender?.();
+
+    expect(Array.from(column.children)).toEqual([ec, ea, eb]);
+    dispose();
+  });
+});

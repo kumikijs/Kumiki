@@ -345,6 +345,111 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
+  it("reports keyed children the parent renderer wrapped out of reach", () => {
+    // `overlay` puts children 1..N inside a positioning layer, so the elements
+    // the walker has mapped are grandchildren of the overlay. The keyed pass
+    // moves and removes children by addressing the parent element, which would
+    // tear them out of those layers — it stands down and the positional walk
+    // runs instead. The diagnostic is how an author learns the list stopped
+    // being reorder-stable despite every child carrying a key.
+    let order = ["a", "b", "c"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: order.map((id) => ({ kind: "text" as const, text: `layer ${id}`, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["c", "a", "b"];
+    app._rerender?.();
+
+    // index 1 is the first wrapped child — index 0 is the base layer, which
+    // the overlay does place directly.
+    expect(seen).toContainEqual(
+      expect.objectContaining({ reason: "wrapped-children", index: 1, childKind: "text" }),
+    );
+    dispose();
+  });
+
+  it("says the keyed match was declined, not that anything was rebuilt", () => {
+    // Every other fallback rebuilt a subtree; this one did not touch the DOM at
+    // all. Wording that claimed a rebuild would send the reader hunting churn
+    // that is not there.
+    let order = ["a", "b"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      props: { _tile: "Stack" },
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["b", "a"];
+    app._rerender?.();
+
+    const d = seen.find(
+      (x) => x.kind === "reconcile-fallback" && x.reason === "wrapped-children",
+    ) as RuntimeDiagnostic;
+    expect(describeDiagnostic(d)).toBe(
+      "reconcile could not key-match Stack (overlay)'s children: wrapped-children (children[1], a text, is wrapped by its parent's renderer instead of sitting directly under it, so reorder fell back to positional matching)",
+    );
+    dispose();
+  });
+
+  it("blames the missing map entry, not a wrapper, when keyed children skipped ctx.render", () => {
+    // Both conditions stop the keyed pass, and the one that fires decides what
+    // the author is told. A child the renderer built by hand has no mapped
+    // element at all — calling that a wrapping parent would point at the wrong
+    // problem in the same renderer.
+    const detachedColumn = (node: TileNode): HTMLElement => {
+      const el = document.createElement("div");
+      for (const child of (node as { children?: TileNode[] }).children ?? []) {
+        const span = document.createElement("span");
+        span.textContent = (child as { text?: string }).text ?? "";
+        el.appendChild(span);
+      }
+      return el;
+    };
+    let label = "a";
+    const app = appOf(() => ({
+      kind: "column",
+      children: [
+        { kind: "text", text: label, key: "first" },
+        { kind: "text", text: "static", key: "second" },
+      ],
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { column: detachedColumn } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    label = "b";
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toContain("child-unmapped");
+    expect(fallbackReasons(seen)).not.toContain("wrapped-children");
+    dispose();
+  });
+
+  it("stays quiet when the parent places its keyed children directly", () => {
+    // The placement check must not fire for the ordinary containers, or every
+    // keyed list in the app would report a fallback it did not take.
+    let order = ["a", "b", "c"];
+    const app = appOf(() => ({
+      kind: "column",
+      children: order.map((id) => ({ kind: "text" as const, text: `row ${id}`, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["c", "a", "b"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
   it("leaves the by-design paths alone", () => {
     // A kind change means "a different thing is here now", and a patcher that
     // declines (a `list` flipping <ul>↔<ol>) is a documented, expected outcome
