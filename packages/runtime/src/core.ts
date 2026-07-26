@@ -336,6 +336,94 @@ export class PatchRequiresRebuild extends Error {
   }
 }
 
+/**
+ * Why the reconcile abandoned identity preservation for a subtree and rebuilt
+ * it wholesale. Each one is correctness-preserving, so none of them throws —
+ * which is exactly the problem: an app can be re-mounting every subtree on
+ * every render while looking perfectly healthy from the outside.
+ *
+ * Two rebuild paths are deliberately absent. A `kind` change means a different
+ * thing is in that position, so there is no identity to preserve. And a
+ * patcher that declines in place (a `list` flipping `<ul>` ↔ `<ol>`) is a
+ * normal, expected outcome that `PatchRequiresRebuild` exists to keep out of
+ * the log.
+ */
+export type ReconcileFallbackReason = ReconcileFallback["reason"];
+
+/**
+ * The reason a subtree was rebuilt, together with the evidence only that reason
+ * has. The walker knows the counts / positions / kinds at each decision point,
+ * and a bare reason string would throw them away — "an unkeyed list changed
+ * length" is a fact, "3 children became 4" is something to act on.
+ */
+export type ReconcileFallback =
+  /**
+   * The tile's own data props changed and no patcher is registered for its
+   * kind (`tileKind` on the enclosing diagnostic), so the whole subtree was
+   * rebuilt — discarding focus, caret, `<select>` open state and `<video>`
+   * playback on that element.
+   */
+  | { reason: "no-patcher" }
+  /**
+   * An unkeyed sibling list changed length, so the parent was rebuilt. Giving
+   * every child a `key` lifts this: the keyed matcher then survives insert,
+   * remove and reorder without touching the untouched siblings.
+   */
+  | { reason: "child-count-change"; oldCount: number; newCount: number }
+  /**
+   * A children array had an empty slot at `index`. Kumiki codegen flattens
+   * nils away, so this only reaches the walker from a host-built tile tree.
+   */
+  | { reason: "child-hole"; index: number }
+  /**
+   * The old child at `index` had no entry in the node → element map, which
+   * means its parent's renderer built it without going through `ctx.render`.
+   * The walker cannot reuse what it cannot find, so that parent rebuilds on
+   * every render. `childKind` names the child whose element went missing.
+   */
+  | { reason: "child-unmapped"; index: number; childKind: string };
+
+/**
+ * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
+ *
+ * Distinct from the episode log on purpose: an episode is the author-facing
+ * causal record of what the app did, and already reports *that* a subtree was
+ * re-rendered through `signal-update.binds-updated`. A diagnostic reports
+ * *why* the runtime made that choice — useful when tuning an app or a host
+ * integration, noise in a behavioural trace.
+ *
+ * The two variants differ in severity, not just in shape. A
+ * `reconcile-fallback` costs performance and browser-owned element state; a
+ * `stale-closure-risk` means the app is running the wrong code. A host wiring
+ * these to a console should route them to different levels.
+ */
+export type RuntimeDiagnostic =
+  | ({
+      kind: "reconcile-fallback";
+      /** The built-in primitive that was rebuilt. */
+      tileKind: string;
+      /** Same identifier the episode log uses: bind path, else key, else kind. */
+      id: string;
+      /** The authored tile this node came from, when it came from one. */
+      tile?: string | undefined;
+    } & ReconcileFallback)
+  | {
+      /**
+       * A prop whose function identity changed was treated as equal, so the
+       * tile was reused with the previous render's closure still attached.
+       * Reported only for host-registered renderers: the built-ins dispatch
+       * every handler through a per-element slot the patcher refreshes, so a
+       * re-minted closure is not a hazard there.
+       */
+      kind: "stale-closure-risk";
+      tileKind: string;
+      /** Same identifier as the fallback variant, so the two can be correlated. */
+      id: string;
+      /** Dotted path of the offending field, e.g. `props.onClick`. */
+      field: string;
+      tile?: string | undefined;
+    };
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -422,6 +510,25 @@ export type MountOptions = {
    * production mounts that don't care about episode capture.
    */
   episodeLogger?: EpisodeLogger | null;
+  /**
+   * Development-time observation channel for the reconcile diff. When present,
+   * every rebuild the walker performs instead of preserving element identity —
+   * and every function-identity change the prop-equality check waved through on
+   * a host-registered tile — is reported here. Omit it (the default) and the
+   * checks never run: production mounts pay one optional-call check per
+   * fallback and nothing else.
+   */
+  onDiagnostic?: (d: RuntimeDiagnostic) => void;
+  /**
+   * Tile kinds whose renderer came from the host rather than the built-in set.
+   * Scopes the stale-closure check in `onDiagnostic`, which would otherwise
+   * fire once per handler per render on every built-in tile — the built-ins
+   * route handlers through per-element slots and are not at risk. The package
+   * entry's `mount` derives this from the `tiles` override map; callers using
+   * `mountCore` with their own renderers pass it themselves. Ignored without
+   * `onDiagnostic`.
+   */
+  hostTileKinds?: readonly string[];
   /**
    * SSR slot snapshot to overlay on `app.live` before the first render
    * (docs/spec/runtime.md §10.6.2). Keyed by slot name; values come straight
@@ -787,6 +894,9 @@ export function mountCore(
   // call below short-circuits via the `?.` optional chain, so the no-logger
   // path stays zero-cost.
   const episode: EpisodeLogger | null = options.episodeLogger ?? null;
+  // Reconcile diagnostics — same opt-in shape as the episode logger, and built
+  // once per mount so the render path only ever sees `diag?.…`.
+  const diag = options.onDiagnostic ? makeReconcileDiag(options.onDiagnostic, options) : undefined;
   if (!app.live) {
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
@@ -985,6 +1095,7 @@ export function mountCore(
             newMap,
             ctx: tileCtx,
             patchers: tilePatchers,
+            diag,
           });
           dom = rec.el;
           lastRenderTouched = rec.touched;
@@ -2367,6 +2478,95 @@ function makeMappingTileCtx(
   return ctx;
 }
 
+/**
+ * Reports the walker's identity-losing decisions to the host's `onDiagnostic`.
+ * Built once per mount by `makeReconcileDiag`; the render path holds it as an
+ * optional value so a mount without a sink runs the pre-existing code plus one
+ * `?.` check per fallback.
+ */
+type ReconcileDiag = {
+  fallback: (fallback: ReconcileFallback, node: TileNode) => void;
+  /**
+   * Called on the reuse decision — the props compared equal, so the mounted
+   * element keeps whatever closures it was created with. Only host-registered
+   * kinds are inspected.
+   */
+  staleClosure: (oldNode: TileNode, newNode: TileNode) => void;
+};
+
+function makeReconcileDiag(
+  report: (d: RuntimeDiagnostic) => void,
+  options: MountOptions,
+): ReconcileDiag {
+  const hostKinds = options.hostTileKinds?.length ? new Set(options.hostTileKinds) : undefined;
+  const authored = (node: TileNode): string | undefined => {
+    const name = (node as { props?: Record<string, unknown> }).props?._tile;
+    return typeof name === "string" ? name : undefined;
+  };
+  // A diagnostic must never be able to change the render it is observing. The
+  // walker runs inside the reconcile bailout's try/catch, so a host sink that
+  // throws would otherwise be recorded as a reconcile panic and trigger a
+  // full-tree rebuild — the exact identity loss this channel exists to report,
+  // caused by the reporting itself. The sink's own failures are the host's to
+  // notice; swallowing them here keeps the app correct.
+  const emit = (d: RuntimeDiagnostic): void => {
+    try {
+      report(d);
+    } catch {
+      // deliberately ignored — see above
+    }
+  };
+  return {
+    fallback(fallback, node) {
+      emit({
+        kind: "reconcile-fallback",
+        tileKind: node.kind,
+        id: tileTouchedId(node),
+        tile: authored(node),
+        ...fallback,
+      });
+    },
+    staleClosure(oldNode, newNode) {
+      if (!hostKinds?.has(newNode.kind)) return;
+      const tile = authored(newNode);
+      const id = tileTouchedId(newNode);
+      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
+        if (typeof oldValue !== "function" || typeof newValue !== "function") continue;
+        if (oldValue === newValue) continue;
+        emit({ kind: "stale-closure-risk", tileKind: newNode.kind, id, field, tile });
+      }
+    },
+  };
+}
+
+/**
+ * Own data fields paired old-to-new, one level deep into `props` — where a
+ * renderer's handlers conventionally live (`props.onClick`, `props.onChange`).
+ * This is NOT the full set `tileFieldsEqual` compares: that one recurses to
+ * the bottom of arrays and nested objects, while this stops at `props.x` on
+ * purpose. A handler buried deeper than that is past the point where a generic
+ * warning helps, and the shallow walk keeps the scan bounded.
+ */
+function* ownFieldPairs(
+  oldNode: TileNode,
+  newNode: TileNode,
+): Generator<[string, unknown, unknown]> {
+  const oa = oldNode as unknown as Record<string, unknown>;
+  const ob = newNode as unknown as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(oa), ...Object.keys(ob)])) {
+    if (TILE_SKIP_TOP.has(k)) continue;
+    if (k === "props") {
+      const pa = (oa.props ?? {}) as Record<string, unknown>;
+      const pb = (ob.props ?? {}) as Record<string, unknown>;
+      for (const pk of new Set([...Object.keys(pa), ...Object.keys(pb)])) {
+        yield [`props.${pk}`, pa[pk], pb[pk]];
+      }
+      continue;
+    }
+    yield [k, oa[k], ob[k]];
+  }
+}
+
 function reconcileTree(args: {
   oldNode: TileNode;
   oldEl: HTMLElement;
@@ -2375,6 +2575,7 @@ function reconcileTree(args: {
   newMap: TileElementMap;
   ctx: TileCtx;
   patchers: TilePatchers;
+  diag?: ReconcileDiag | undefined;
 }): { el: HTMLElement; touched: string[] } {
   // #189: collect an identifier per subtree that reconcile actually rebuilt or
   // freshly mounted (or patched in place, #190). Consumed by `renderPass` →
@@ -2392,6 +2593,7 @@ function reconcileTree(args: {
     args.ctx,
     args.patchers,
     touched,
+    args.diag,
   );
   return { el, touched };
 }
@@ -2405,6 +2607,7 @@ function reconcileNode(
   ctx: TileCtx,
   patchers: TilePatchers,
   touched: string[],
+  diag?: ReconcileDiag | undefined,
 ): HTMLElement {
   // Different kind → whole subtree is a different thing. Build fresh, splice.
   if (oldNode.kind !== newNode.kind) {
@@ -2449,8 +2652,14 @@ function reconcileNode(
       // Fall through to the children reconcile below — a container tile may
       // have both attribute AND child changes in the same render.
     } else {
+      diag?.fallback({ reason: "no-patcher" }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
+  } else {
+    // Reuse decision: this element stays mounted with the closures it was
+    // created with. Safe for the built-ins, a stale-closure hazard for a
+    // host renderer that captured a per-render handler.
+    diag?.staleClosure(oldNode, newNode);
   }
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
@@ -2463,7 +2672,17 @@ function reconcileNode(
   // reorder / insert / remove without rebuilding the subtree. Mixed or
   // absent keys fall through to the structural walk below.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    reconcileKeyedChildren(oldEl, oldChildren, newChildren, oldMap, newMap, ctx, patchers, touched);
+    reconcileKeyedChildren(
+      oldEl,
+      oldChildren,
+      newChildren,
+      oldMap,
+      newMap,
+      ctx,
+      patchers,
+      touched,
+      diag,
+    );
     newMap.set(newNode, oldEl);
     return oldEl;
   }
@@ -2471,6 +2690,14 @@ function reconcileNode(
   // correctness at the cost of reuse; keyed children above lift this
   // restriction when the compiler emits identity.
   if (oldChildren.length !== newChildren.length) {
+    diag?.fallback(
+      {
+        reason: "child-count-change",
+        oldCount: oldChildren.length,
+        newCount: newChildren.length,
+      },
+      newNode,
+    );
     return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
   // Same length: walk in parallel, reconcile each child pair. The old child's
@@ -2481,10 +2708,26 @@ function reconcileNode(
   for (let i = 0; i < newChildren.length; i++) {
     const oldChildNode = oldChildren[i];
     const newChildNode = newChildren[i];
-    if (!oldChildNode || !newChildNode) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    if (!oldChildNode || !newChildNode) {
+      diag?.fallback({ reason: "child-hole", index: i }, newNode);
+      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    }
     const oldChildEl = oldMap.get(oldChildNode);
-    if (!oldChildEl) return replaceWithFreshTile(oldEl, newNode, ctx, touched);
-    reconcileNode(oldChildNode, oldChildEl, oldMap, newChildNode, newMap, ctx, patchers, touched);
+    if (!oldChildEl) {
+      diag?.fallback({ reason: "child-unmapped", index: i, childKind: oldChildNode.kind }, newNode);
+      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    }
+    reconcileNode(
+      oldChildNode,
+      oldChildEl,
+      oldMap,
+      newChildNode,
+      newMap,
+      ctx,
+      patchers,
+      touched,
+      diag,
+    );
   }
   newMap.set(newNode, oldEl);
   return oldEl;
@@ -2521,6 +2764,7 @@ function reconcileKeyedChildren(
   ctx: TileCtx,
   patchers: TilePatchers,
   touched: string[],
+  diag?: ReconcileDiag | undefined,
 ): void {
   // Detect duplicate keys among the new children. Silently letting a
   // duplicate through would collapse N tiles onto one DOM element (the
@@ -2567,6 +2811,7 @@ function reconcileKeyedChildren(
         ctx,
         patchers,
         touched,
+        diag,
       );
       targetEls.push(el);
     } else {

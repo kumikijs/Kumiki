@@ -16,6 +16,7 @@ import {
 import {
   type AppShape,
   createEpisodeLogger,
+  describeDiagnostic,
   type EpisodeLogger,
   runScenario,
   type Scenario,
@@ -95,7 +96,7 @@ export async function loadApp(
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
-  opts: { sourcePath?: string } = {},
+  opts: { sourcePath?: string; diagnosticsAsIssues?: boolean } = {},
 ): Promise<SmokeReport> {
   ensureDom();
   const app = await loadApp(source, capabilities, opts);
@@ -103,21 +104,33 @@ export async function smokeSource(
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    return await smoke(app, root, { settleMs: 20 });
+    return await smoke(app, root, {
+      settleMs: 20,
+      diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
+    });
   } finally {
     root.remove();
   }
 }
 
-export async function smokeFile(path: string, capabilities: string[] = []): Promise<SmokeReport> {
-  return smokeSource(readFileSync(path, "utf8"), capabilities, { sourcePath: path });
+export async function smokeFile(
+  path: string,
+  capabilities: string[] = [],
+  opts: { diagnosticsAsIssues?: boolean } = {},
+): Promise<SmokeReport> {
+  return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
-export async function smokeCmd(path: string, capabilities: string[] = []): Promise<void> {
-  const report = await smokeFile(path, capabilities);
+export async function smokeCmd(
+  path: string,
+  capabilities: string[] = [],
+  opts: { diagnosticsAsIssues?: boolean } = {},
+): Promise<void> {
+  const report = await smokeFile(path, capabilities, opts);
   if (report.ok) {
     console.log(`ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`);
+    printDiagnostics(report, console.log);
     return;
   }
   console.error(
@@ -126,7 +139,32 @@ export async function smokeCmd(path: string, capabilities: string[] = []): Promi
   for (const i of report.issues) {
     console.error(`  [${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`);
   }
+  // Same stream as the failure it accompanies, so a caller reading stderr sees
+  // the whole picture and stdout stays parseable.
+  printDiagnostics(report, console.error);
   process.exit(1);
+}
+
+/**
+ * Reconcile churn observed while driving the app. Advisory, never fatal — an
+ * app that rebuilds more than it needs to still works — so this leaves the exit
+ * code alone (pass `--diagnostics-as-issues` to make them count). Summarised by
+ * reason rather than listed one per occurrence: a single unkeyed list produces
+ * one entry per interaction.
+ */
+function printDiagnostics(report: SmokeReport, write: (line: string) => void): void {
+  if (report.diagnostics.length === 0) return;
+  const byReason = new Map<string, number>();
+  for (const { diagnostic } of report.diagnostics) {
+    const label =
+      diagnostic.kind === "reconcile-fallback" ? diagnostic.reason : "stale-closure-risk";
+    byReason.set(label, (byReason.get(label) ?? 0) + 1);
+  }
+  const summary = [...byReason]
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, n]) => `${reason} ×${n}`)
+    .join(", ");
+  write(`  reconcile diagnostics: ${summary}`);
 }
 
 /** Compile + mount + drive a scenario; return the structured trace. */
@@ -181,6 +219,10 @@ export async function runCmd(
     console.log(`[${status}] ${head}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
+    // Advisory, and attributed to the action above it — that pairing is the
+    // whole reason the runner buffers diagnostics per step. Listed rather than
+    // summarised here (unlike `kumiki smoke`) because a step produces few.
+    for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
   if (episodeLogger && logFile) {

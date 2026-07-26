@@ -7,7 +7,7 @@
 // NOT verify behavioral correctness (a wrong-but-non-throwing result) — that is
 // the job of example-specific assertions.
 
-import type { AppShape } from "./index.ts";
+import type { AppShape, ReconcileFallback, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 
 export type SmokePhase = "mount" | "initial-render" | "interaction" | "async";
@@ -19,12 +19,33 @@ export type SmokeIssue = {
   trigger?: string | undefined;
 };
 
+/**
+ * A reconcile diagnostic plus the same "when did this happen" context a
+ * `SmokeIssue` carries. Without it a report says the runtime rebuilt a subtree
+ * but not which interaction provoked it, which is the first thing anyone asks.
+ */
+export type SmokeDiagnostic = {
+  phase: SmokePhase;
+  /** What triggered it, e.g. "click button[0] (\"Create issue\")". */
+  trigger?: string | undefined;
+  diagnostic: RuntimeDiagnostic;
+};
+
 export type SmokeReport = {
   ok: boolean;
   mounted: boolean;
   rendered: boolean;
   interactions: number;
   issues: SmokeIssue[];
+  /**
+   * Reconcile observations collected while driving the app: subtrees the
+   * runtime rebuilt instead of reusing, and reuse decisions that ignored a
+   * changed closure on a host tile. These are performance and integration
+   * signals, not failures, so they do NOT affect `ok` — an app that rebuilds
+   * more than it needs to still works. Set `diagnosticsAsIssues` to treat them
+   * as failures instead.
+   */
+  diagnostics: SmokeDiagnostic[];
 };
 
 export type SmokeOptions = {
@@ -34,6 +55,13 @@ export type SmokeOptions = {
   maxInteractions?: number;
   /** Milliseconds to let async effects/timers settle after each step. Default: 30. */
   settleMs?: number;
+  /**
+   * Also record each reconcile diagnostic as an issue, so any identity-losing
+   * rebuild fails the run. Off by default: an unkeyed sibling list whose length
+   * changes is ordinary, correct Kumiki, and failing on it would reject most
+   * apps. Turn it on for an app that has committed to keyed lists throughout.
+   */
+  diagnosticsAsIssues?: boolean;
 };
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -54,10 +82,22 @@ export async function smoke(
   root: HTMLElement,
   opts: SmokeOptions = {},
 ): Promise<SmokeReport> {
-  const { interact = true, maxInteractions = 40, settleMs = 30 } = opts;
+  const {
+    interact = true,
+    maxInteractions = 40,
+    settleMs = 30,
+    diagnosticsAsIssues = false,
+  } = opts;
   const issues: SmokeIssue[] = [];
+  const diagnostics: SmokeDiagnostic[] = [];
   let currentTrigger: string | undefined;
   let phase: SmokePhase = "mount";
+
+  const onDiagnostic = (d: RuntimeDiagnostic): void => {
+    diagnostics.push({ phase, trigger: currentTrigger, diagnostic: d });
+    if (!diagnosticsAsIssues) return;
+    issues.push({ phase, message: describeDiagnostic(d), trigger: currentTrigger });
+  };
 
   const onError = (ev: ErrorEvent): void => {
     issues.push({ phase, message: ev.message || String(ev.error), trigger: currentTrigger });
@@ -88,7 +128,7 @@ export async function smoke(
   try {
     phase = "mount";
     try {
-      dispose = mount(app, root).dispose;
+      dispose = mount(app, root, { onDiagnostic }).dispose;
       mounted = true;
     } catch (e) {
       issues.push({ phase: "mount", message: errStr(e) });
@@ -158,7 +198,37 @@ export async function smoke(
       rendered,
       interactions,
       issues,
+      diagnostics,
     };
+  }
+}
+
+/**
+ * One-line rendering of a diagnostic promoted into `issues`. Exported for the
+ * CLI so a diagnostic reads identically wherever it surfaces.
+ */
+export function describeDiagnostic(d: RuntimeDiagnostic): string {
+  const where = d.tile ? `${d.tile} (${d.tileKind})` : d.tileKind;
+  if (d.kind === "stale-closure-risk") {
+    return `${where} was reused with the PREVIOUS render's ${d.field} — the new one will never fire`;
+  }
+  return `reconcile rebuilt ${where} instead of reusing it: ${describeFallback(d)}`;
+}
+
+function describeFallback(f: ReconcileFallback): string {
+  switch (f.reason) {
+    case "no-patcher":
+      return "no-patcher (its data props changed and its kind has no patcher registered)";
+    case "child-count-change":
+      return `child-count-change (${f.oldCount} unkeyed children became ${f.newCount})`;
+    case "child-hole":
+      return `child-hole (children[${f.index}] was empty)`;
+    case "child-unmapped":
+      return `child-unmapped (children[${f.index}], a ${f.childKind}, was built outside ctx.render)`;
+    default:
+      // Exhaustiveness: a new reason must be given wording here, not silently
+      // fall through to a message that names none of its evidence.
+      return ((r: never) => String(r))(f);
   }
 }
 

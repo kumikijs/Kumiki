@@ -10,13 +10,19 @@ export function registerSmoke(program: Command): void {
     .command("smoke")
     .description("Mount + interact in happy-dom to catch 'compiles but doesn't render'")
     .argument("[input]", "input .kumiki file")
+    .option(
+      "--diagnostics-as-issues",
+      "fail the run on any reconcile fallback (unkeyed list rebuilds, stale closures)",
+    )
     .allowExcessArguments(false)
-    .action(async (input: string | undefined) => {
+    .action(async (input: string | undefined, opts: { diagnosticsAsIssues?: boolean }) => {
       if (!input) {
         console.error(USAGE);
         process.exit(2);
       }
       const inputPath = resolve(process.cwd(), input);
-      await smokeCmd(inputPath, capsFor(inputPath));
+      await smokeCmd(inputPath, capsFor(inputPath), {
+        diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
+      });
     });
 }

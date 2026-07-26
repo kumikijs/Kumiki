@@ -15,7 +15,13 @@
 //      and remount — so slot values and route survive the reload.
 
 import InitialApp from "__KUMIKI_TARGET__";
-import { type AppShape, createEpisodeLogger, type Episode, mount } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  createEpisodeLogger,
+  type Episode,
+  mount,
+  type RuntimeDiagnostic,
+} from "@kumikijs/runtime";
 import { installDevPanel } from "/@kumiki-dev/panel.ts";
 
 const root = document.getElementById("app");
@@ -38,7 +44,21 @@ const logger = createEpisodeLogger({
 
 const panel = installDevPanel({ logger, getApp: () => currentApp });
 
-let handle = mount(currentApp, root, { episodeLogger: logger });
+// The dev server is where a Kumiki app is developed, so it is where the
+// reconcile's identity-losing decisions should be visible. The two diagnostic
+// kinds get different levels because they are different problems: a fallback
+// costs performance and browser-owned element state while the app stays
+// correct, whereas a stale closure means the app is running code the author
+// already replaced.
+const mountOptions = {
+  episodeLogger: logger,
+  onDiagnostic: (d: RuntimeDiagnostic) => {
+    if (d.kind === "stale-closure-risk") console.error("[kumiki] stale closure", d);
+    else console.warn("[kumiki] reconcile fallback", d);
+  },
+};
+
+let handle = mount(currentApp, root, mountOptions);
 
 if (import.meta.hot) {
   import.meta.hot.accept("__KUMIKI_TARGET__", (mod) => {
@@ -51,7 +71,7 @@ if (import.meta.hot) {
       handle.dispose();
       currentApp = next;
       if (savedLive) currentApp.live = savedLive;
-      handle = mount(currentApp, root, { episodeLogger: logger });
+      handle = mount(currentApp, root, mountOptions);
       panel.onRemount();
     } catch (e) {
       // mount() can throw on programs whose top tile blows up at construction

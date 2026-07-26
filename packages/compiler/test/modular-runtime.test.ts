@@ -73,10 +73,30 @@ describe("modular runtime emission (#71)", () => {
     expect(r.js).toMatch(/mountCore\(App, document\.getElementById\("root"\), \{ tiles: _tiles/);
   });
 
+  it("assembles the patcher registry alongside the renderers", () => {
+    // Each tiles-* module exports a `create` renderer map AND a companion
+    // `patch` map; the reconcile mutates a mounted element in place only when
+    // it finds a patcher for the tile's kind. Dropping `tilePatchers` from the
+    // mount options makes `mountCore` default to `{}`, silently reverting the
+    // granular build to full subtree rebuilds — losing focus, caret, <select>
+    // open state and <video> playback on every data-prop change, while the
+    // monolith `mount()` path (which merges the patchers itself) stays correct
+    // and hides the regression from every test that goes through it.
+    const r = modular(COUNTER);
+    expect(r.js).toContain(
+      'import { layoutTiles, layoutPatchers } from "./runtime/tiles-layout.js"',
+    );
+    expect(r.js).toContain('import { textTiles, textPatchers } from "./runtime/tiles-text.js"');
+    expect(r.js).toContain(
+      "const _patchers = { ...layoutPatchers, ...textPatchers, ...inputPatchers };",
+    );
+    expect(r.js).toContain("tilePatchers: _patchers");
+  });
+
   it("a routing app (link + extra route + nav cap) ships the router module", () => {
     const r = modular(ROUTED);
     expect(r.js).toContain('import { routing } from "./runtime/router.js"');
-    expect(r.js).toMatch(/mountCore\([\s\S]*\{ tiles: _tiles, routing,/);
+    expect(r.js).toMatch(/mountCore\([\s\S]*\{ tiles: _tiles, tilePatchers: _patchers, routing,/);
     expect(r.runtimeModules).toContain("router");
   });
 

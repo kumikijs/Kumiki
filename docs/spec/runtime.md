@@ -312,6 +312,81 @@ subtree rebuild does, so the causal chain "slot `X` changed → tiles/binds
 `A`, `B` patched" continues to land on `signal-update.binds-updated` (#189)
 regardless of whether reconcile ended up rebuilding or patching.
 
+### 10.3.12 Reconcile diagnostics
+
+Keyed diff (§10.3.10) and in-place patching (§10.3.11) both **degrade
+silently**: when the reconciler cannot preserve a subtree's identity it
+rebuilds it, which is always correct and never throws. An app can therefore be
+re-mounting its whole tree on every render and look perfectly healthy from the
+outside. `MountOptions.onDiagnostic` opts into seeing those decisions.
+
+```ts
+mount(app, root, { onDiagnostic: (d) => console.warn(d) });
+```
+
+**Contract.** Omitting the sink is the default and costs one optional call per
+fallback; nothing is computed and nothing is emitted. There is no build-time
+flag — a production mount is silent because it does not opt in, not because a
+bundler stripped anything.
+
+**Reported fallbacks.**
+
+Every diagnostic names the rebuilt tile (`tileKind`, the authored `tile` name
+when there is one, and the same `id` the episode log uses). Each reason
+additionally carries the evidence only it has, so a report is actionable
+without re-deriving it from the source:
+
+| reason | evidence | what was lost |
+|---|---|---|
+| `no-patcher` | — | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
+| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. |
+| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. |
+| `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. |
+
+Two rebuild paths are deliberately **not** reported. A `kind` change means a
+different thing occupies that position, so there is no identity to preserve.
+And a patcher that declines in place via `PatchRequiresRebuild` (§10.3.11) is a
+normal, expected outcome that the sentinel exists to keep out of the log.
+
+**Stale closures on host tiles.** The prop-equality kernel treats any two
+functions as equal — codegen mints fresh closures every render, and a reused
+built-in keeps working because its handlers dispatch through the per-element
+slots of §10.3.11. A renderer supplied through `MountOptions.tiles` has no such
+slot: if it captured a handler at create time, a props-equal reuse leaves the
+first render's closure firing forever. Reuse decisions on those kinds are
+scanned for a changed function identity and reported as
+`stale-closure-risk`. The scope comes from `MountOptions.hostTileKinds`, which
+the package-entry `mount` derives from the `tiles` override map — including
+overrides of built-in kinds, since replacing a built-in renderer discards the
+handler slots that made reuse safe. A host calling `mountCore` with its own
+renderers passes the set directly.
+
+The scan reads the node's own fields and one level into `props` — the
+convention every built-in renderer follows (`props.onClick`, `props.onChange`).
+A host tile that buries its handlers deeper (`props.handlers.onClick`) is not
+inspected; keep handlers directly under `props` to stay covered.
+
+The two diagnostic kinds carry different severity. A `reconcile-fallback` costs
+performance and browser-owned element state while the app stays correct; a
+`stale-closure-risk` means the app is running code the author already replaced.
+`kumiki dev` routes them to `console.warn` and `console.error` respectively.
+
+**Relationship to the episode log.** An episode is the author-facing causal
+record of what the app did, and already reports *that* a subtree was
+re-rendered through `signal-update.binds-updated` (§10.3.11). A diagnostic
+reports *why* the runtime chose to rebuild rather than reuse — framework
+internals, useful when tuning an app or a host integration, noise inside a
+behavioural trace. They are complementary channels, which is why this is not a
+new episode step kind.
+
+**Consumers.** `smoke()` collects them into a non-fatal `SmokeReport.diagnostics`,
+each wrapped with the same phase / trigger a `SmokeIssue` carries so the
+provoking interaction is identifiable (rebuilding more than necessary is not a
+failure; `SmokeOptions.diagnosticsAsIssues` — `kumiki smoke --diagnostics-as-issues`
+— opts into treating it as one). `runScenario` attaches them to the step whose
+action triggered the re-render, and `kumiki run` prints them under that step.
+`kumiki smoke` prints a per-reason summary.
+
 ---
 
 ## 10.4 Effect Dispatcher

@@ -343,6 +343,12 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     // (`__kumikiProviders` / `__kumikiMount`) work as in monolith mode.
     const mountOpts = [
       "tiles: _tiles",
+      // Companion to `tiles`: without it `mountCore` defaults to an empty
+      // patcher registry and every data-prop change tears its tile down and
+      // rebuilds it, so the granular build would silently lose the in-place
+      // patch guarantees (focus, caret, <select> open, <video> playback) that
+      // the monolith mount path provides.
+      "tilePatchers: _patchers",
       ...(usage.router ? ["routing"] : []),
       ...(usage.toast || usage.confirm
         ? [

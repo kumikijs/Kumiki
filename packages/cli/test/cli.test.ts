@@ -9,6 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const ROUTING_PATH = resolve(here, "../../examples/features/18-routing.kumiki");
 const STORAGE_PATH = resolve(here, "../../examples/features/20-effect-storage.kumiki");
+const INPUT_BIND_PATH = resolve(here, "../../examples/features/13-text-input-bind.kumiki");
 const CLI_PATH = resolve(here, "../src/kumiki.ts");
 const REPLAY_COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
 const REPLAY_COUNTER_LOG = resolve(here, "fixtures/replay/counter.log.jsonl");
@@ -121,6 +122,65 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
       // so this exercises the exact artifact set `kumiki build` ships.
       await import(pathToFileURL(join(outDir, "app.js")).href);
       expect(root.textContent).toContain("Count: 0");
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("the built counter patches in place — the heading element survives a bump", {
+    timeout: 30000,
+  }, async () => {
+    // Runtime truth for the identity-preserving reconcile in a REAL build
+    // artifact. Every test that mounts through the monolith `mount()` gets the
+    // full patcher registry merged in for free, so only an artifact produced by
+    // `kumiki build` can prove the granular mount options carry it. Without
+    // patchers the heading is torn down and replaced on every count change.
+    build(COUNTER_PATH);
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    try {
+      await import(pathToFileURL(join(outDir, "app.js")).href);
+      const heading = root.querySelector("h1") as HTMLElement;
+      expect(heading.textContent).toContain("Count: 0");
+      // A marker the runtime never writes: it survives a patch, not a rebuild.
+      heading.dataset.probe = "seeded";
+      const incBtn = [...root.querySelectorAll("button")].find((b) => b.textContent === "+");
+      incBtn?.click();
+      expect(root.textContent).toContain("Count: 1");
+      expect(root.querySelector("h1")).toBe(heading);
+      expect((root.querySelector("h1") as HTMLElement).dataset.probe).toBe("seeded");
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("the built input keeps its element across a bound-value change", {
+    timeout: 30000,
+  }, async () => {
+    // The heading case above proves the patcher registry is wired at all; this
+    // one covers the tile kind where it actually matters, and where a rebuild
+    // is hardest to notice. Focus and caret are NOT asserted deliberately: the
+    // §10.3.9 snapshot layer restores both even when the element was destroyed
+    // and replaced (verified — a patcher-less rebuild still ends with the new
+    // input focused at the same offset), so they cannot distinguish a patch
+    // from a rebuild. Element identity is the only observable that can in a
+    // headless DOM; `<select>` open state and `<video>` playback are the
+    // browser-tier concerns identity protects.
+    build(INPUT_BIND_PATH);
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    try {
+      await import(pathToFileURL(join(outDir, "app.js")).href);
+      const input = root.querySelector("input") as HTMLInputElement;
+      input.dataset.probe = "seeded";
+      input.value = "ada";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      // The heading re-renders from the same slot, so the whole tree diffed.
+      expect(root.textContent).toContain("Hello, ada");
+      expect(root.querySelector("input")).toBe(input);
+      expect((root.querySelector("input") as HTMLElement).dataset.probe).toBe("seeded");
     } finally {
       root.remove();
     }
