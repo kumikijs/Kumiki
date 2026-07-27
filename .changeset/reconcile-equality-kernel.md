@@ -23,7 +23,11 @@ and an explicit `undefined` are equal, that comparison is `===`-based so `null`
 / `""` / `0` / `false` never collapse into each other, that two functions are
 always equal (closure identity is ignored on purpose — see the
 `stale-closure-risk` diagnostic), that `NaN` is not equal to itself, and that a
-non-plain object is never equal to anything but itself.
+non-plain object is never equal to anything but itself. It also states the two
+edges that stay outside the contract: "plain" is decided by realm-local
+prototype identity, so a cross-realm object rebuilds; and a cyclic value
+recurses until the stack runs out, landing in the reconcile bailout as a
+recorded panic plus a wholesale rebuild — unsupported, but contained.
 
 Pinned by `packages/runtime/test/reconcile-equality.test.ts`, which drives the
 real walker — `mountCore` with spy renderers and an empty patcher registry,

@@ -448,7 +448,16 @@ Consequences worth stating outright:
   value as unchanged. Kumiki codegen emits only plain data, so this is
   unreachable from a `.kumiki` source; a host renderer handed one gets a
   rebuild rather than silent reuse. The same instance passed twice still
-  compares equal through `===`.
+  compares equal through `===`. "Plain" is decided by prototype identity, which
+  is realm-local: an object built in another realm (an `<iframe>`, a `vm`
+  context) is treated as exotic and rebuilds — the safe direction, and the
+  reason this is not relaxed into a `toString`-tag check.
+
+Cycles are outside the contract. Two structurally cyclic but distinct bags
+recurse until the stack runs out; the throw lands in the reconcile bailout,
+which rebuilds the tree wholesale and records a `location: "reconcile"` panic.
+Unsupported, but contained and visible — codegen cannot produce a cycle, and a
+visited set would cost every render to defend against one.
 
 ---
 

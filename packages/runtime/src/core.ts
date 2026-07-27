@@ -3032,9 +3032,14 @@ function tileValueEqual(a: unknown, b: unknown): boolean {
 
 /**
  * An object whose entire state IS its own enumerable properties, so key-wise
- * comparison is complete. Object literals (what codegen emits) and
- * `Object.create(null)` / `JSON.parse` bags both qualify; anything with another
- * prototype does not.
+ * comparison is complete. Object literals — what codegen and `JSON.parse`
+ * produce — qualify via `Object.prototype`, and `Object.create(null)` bags via
+ * the null prototype; anything else does not.
+ *
+ * The prototype identity is realm-local, so a plain object built in another
+ * realm (an `<iframe>`, a `vm` context) is treated as exotic and rebuilds. That
+ * is the safe direction and deliberately not "fixed" with a `toString` tag
+ * check, which would let a genuinely exotic cross-realm value back through.
  */
 function isPlainDataBag(v: object): boolean {
   const proto = Object.getPrototypeOf(v);

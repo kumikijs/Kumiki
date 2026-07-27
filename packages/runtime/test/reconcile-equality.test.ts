@@ -33,8 +33,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
  * Builds a `TileNode` from a raw bag.
  *
  * Every case below is deliberately a shape Kumiki codegen would never emit —
- * an explicitly-`undefined` optional (`exactOptionalPropertyTypes` forbids
- * writing one), a `NaN`, a `Date`. Those are precisely the inputs whose
+ * an explicitly-`undefined` optional, a `NaN`, a `Date` — and `TileNode` is a
+ * closed union that cannot spell them. Those are precisely the inputs whose
  * handling this file exists to pin, so the conversion is funnelled through
  * this one helper instead of being scattered as casts at each call site.
  */
@@ -108,12 +108,25 @@ function decide(oldNode: TileNode, newNode: TileNode): Decision {
   });
   const before = host.firstElementChild as HTMLElement;
   const childrenBefore = [...before.children];
+  // Never `?.` here: a missing seam would silently report every case as a
+  // reuse (nothing re-rendered, so nothing changed) and turn this whole file
+  // green regardless of what the kernel does.
+  const rerender = app._rerender;
+  if (!rerender) throw new Error("mount did not attach `_rerender` — the harness cannot re-render");
 
   current = newNode;
-  app._rerender?.();
+  rerender();
   const after = host.firstElementChild as HTMLElement;
   dispose();
 
+  // Every diagnostic this harness can provoke is a reconcile fallback: no
+  // `hostTileKinds` are declared, so the stale-closure scan never runs. A new
+  // kind arriving here means the walker started reporting something these
+  // cases do not account for — look at it rather than filter it away.
+  const unexpected = seen.filter((d) => d.kind !== "reconcile-fallback");
+  if (unexpected.length > 0) {
+    throw new Error(`unexpected diagnostic kind(s): ${unexpected.map((d) => d.kind).join(", ")}`);
+  }
   const fallbacks = seen.filter((d) => d.kind === "reconcile-fallback");
   return {
     verdict: before === after ? "reuse" : "rebuild",
@@ -257,6 +270,22 @@ describe("runtime: reconcile prop-equality kernel", () => {
       );
     });
 
+    it("recurses into objects held as array elements", () => {
+      // The shape every `for` over records produces: an array of item bags. The
+      // element comparison has to descend into them, not stop at "both are
+      // objects".
+      expectSameKind(
+        leaf({ rows: [{ w: 1 }, { w: 2 }] }),
+        leaf({ rows: [{ w: 1 }, { w: 2 }] }),
+        "reuse",
+      );
+      expectSymmetric(
+        leaf({ rows: [{ w: 1 }, { w: 2 }] }),
+        leaf({ rows: [{ w: 1 }, { w: 3 }] }),
+        "rebuild",
+      );
+    });
+
     it("rebuilds for an array vs. a plain object", () => {
       // An empty array and an empty bag both have no keys to compare; without
       // the array-shape check they would collapse into each other.
@@ -325,7 +354,8 @@ describe("runtime: reconcile prop-equality kernel", () => {
       // A column whose own props are unchanged but whose child text changed must
       // keep its own element (and therefore its scroll position) while only the
       // changed child is rebuilt. If `children` fed the predicate, every
-      // ancestor of any change would rebuild — the pre-#187 behaviour.
+      // ancestor of any change would rebuild, which is the whole-tree replace
+      // the keyed diff exists to retire.
       const column = (childText: string): TileNode =>
         tile({
           kind: "column",
@@ -383,6 +413,16 @@ describe("runtime: reconcile prop-equality kernel", () => {
       expectSameKind(leaf({ at }), leaf({ at }), "reuse");
     });
 
+    it("reaches an exotic value buried inside a plain bag", () => {
+      // The guard sits on the recursive step, not only on the top-level prop —
+      // a timestamp nested in a config bag is the realistic way one arrives.
+      expectSymmetric(
+        leaf({ cfg: { label: "due", at: new Date(1) } }),
+        leaf({ cfg: { label: "due", at: new Date(2) } }),
+        "rebuild",
+      );
+    });
+
     it("rebuilds for two different Map instances", () => {
       // Same failure mode as `Date`, and the one a host renderer is most likely
       // to hit when it hands its tile a lookup table.
@@ -415,6 +455,42 @@ describe("runtime: reconcile prop-equality kernel", () => {
         Object.assign(Object.create(null) as Record<string, unknown>, { v });
       expectSameKind(leaf({ cfg: bag(1) }), leaf({ cfg: bag(1) }), "reuse");
       expectSymmetric(leaf({ cfg: bag(1) }), leaf({ cfg: bag(2) }), "rebuild");
+    });
+  });
+
+  describe("shapes the kernel does not support", () => {
+    it("contains a cyclic prop as a recorded panic rather than taking the app down", () => {
+      // The comparison recurses without a visited set, so two structurally
+      // cyclic but distinct bags recurse until the stack runs out. That is a
+      // deliberate non-goal — a cycle cannot come out of codegen, and a visited
+      // set would cost every render to defend against it — but "unsupported"
+      // still has to mean *contained*: the throw lands in the reconcile bailout,
+      // which rebuilds the tree wholesale and records the failure, rather than
+      // escaping into the host. This pins the containment, not the recursion.
+      const cyclic = (): Record<string, unknown> => {
+        const bag: Record<string, unknown> = {};
+        bag.self = bag;
+        return bag;
+      };
+      const errors: unknown[][] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => errors.push(args);
+      let d: ReturnType<typeof decide>;
+      try {
+        d = decide(leaf({ cfg: cyclic() }), leaf({ cfg: cyclic() }));
+      } finally {
+        console.error = original;
+      }
+
+      // The bailout is not a fallback decision — it reports a panic, and the
+      // tree is rebuilt from scratch rather than diffed.
+      expect(d.verdict).toBe("rebuild");
+      expect(d.reasons).toEqual([]);
+      expect(errors.map((args) => String(args[0]))).toContainEqual(
+        expect.stringContaining("error in reconcile"),
+      );
+      // Still rendering: the app survived the unsupported input.
+      expect(d.after.dataset.kind).toBe("text");
     });
   });
 });
