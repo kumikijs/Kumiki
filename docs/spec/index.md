@@ -159,4 +159,5 @@ Each file under [`packages/examples/features/`](https://github.com/kage1020/Kumi
 | `56-details-preserves-open.kumiki` | tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
 | `57-editable-preserves-focus.kumiki` | tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
 | `58-unkeyed-conditional-rebuild.kumiki` | tile | core | [§10.3.12](./runtime.md#_10-3-12-reconcile-diagnostics) |
+| `59-overlay-keyed-layers.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 <!-- examples:end -->

@@ -221,6 +221,24 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   parent's subtree). When any child is missing a `key`, the reconciler falls
   back to the pre-#188 structural walk (position + `kind` + data-prop
   equality; length change → rebuild).
+- Keyed matching additionally requires that the parent's renderer **place its
+  children directly under its own element**. Matching by key is only half the
+  work: the reconciler then moves survivors and drops departures by addressing
+  the parent element, which it can only do for slots the parent element holds.
+  Of the current built-ins only `overlay` fails this: it puts every child
+  after the first in a positioning layer, so those children's elements are
+  mounted a level below the overlay. There the reconciler declines the keyed
+  match, reports `wrapped-children` (§10.3.12), and runs the structural walk,
+  which never repositions anything and stays correct under a wrapping
+  renderer. A host renderer opts out the same way by appending children to
+  anything other than the element it returns — so put a reorderable keyed list
+  under a plain container (`column` / `row` / `list`), and keep host
+  renderers' children directly under their root element.
+- The two diagnostics can both fire for one parent in the same render: a
+  wrapping parent whose keyed child list also changed length reports
+  `wrapped-children` (the keys went unused) and then `child-count-change` (the
+  structural walk rebuilt it anyway). They name different facts, and fixing
+  the first is what makes the second stop mattering.
 
 **What the compiler emits.**
 
@@ -316,9 +334,10 @@ regardless of whether reconcile ended up rebuilding or patching.
 
 Keyed diff (§10.3.10) and in-place patching (§10.3.11) both **degrade
 silently**: when the reconciler cannot preserve a subtree's identity it
-rebuilds it, which is always correct and never throws. An app can therefore be
-re-mounting its whole tree on every render and look perfectly healthy from the
-outside. `MountOptions.onDiagnostic` opts into seeing those decisions.
+rebuilds it, or drops to a weaker matching strategy — always correct, never
+throws. An app can therefore be re-mounting its whole tree on every render and
+look perfectly healthy from the outside. `MountOptions.onDiagnostic` opts into
+seeing those decisions.
 
 ```ts
 mount(app, root, { onDiagnostic: (d) => console.warn(d) });
@@ -331,10 +350,10 @@ bundler stripped anything.
 
 **Reported fallbacks.**
 
-Every diagnostic names the rebuilt tile (`tileKind`, the authored `tile` name
-when there is one, and the same `id` the episode log uses). Each reason
-additionally carries the evidence only it has, so a report is actionable
-without re-deriving it from the source:
+Every diagnostic names the tile that lost its identity guarantee (`tileKind`,
+the authored `tile` name when there is one, and the same `id` the episode log
+uses). Each reason additionally carries the evidence only it has, so a report is
+actionable without re-deriving it from the source:
 
 | reason | evidence | what was lost |
 |---|---|---|
@@ -342,6 +361,7 @@ without re-deriving it from the source:
 | `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. |
 | `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. |
 | `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. |
+| `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly (§10.3.10), so the keyed matcher stood down and the positional walk ran. The only reason that rebuilds nothing: what is lost is reorder-stable element identity, not the subtree. |
 
 Two rebuild paths are deliberately **not** reported. A `kind` change means a
 different thing occupies that position, so there is no identity to preserve.
