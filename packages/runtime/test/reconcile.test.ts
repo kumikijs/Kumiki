@@ -1518,6 +1518,72 @@ describe("runtime: reconcile child-placement contract", () => {
     dispose();
   });
 
+  it("re-wraps correctly when a wrapped keyed list grows", () => {
+    // Growth lands on the structural walk's rebuild path (the length changed
+    // and the keyed matcher already stood down), so the overlay renderer runs
+    // again from scratch. What must come back is the same shape: one base
+    // child in normal flow plus one positioning layer per remaining tile.
+    let order = ["a", "b", "c"];
+    const app = overlayLayersApp(() => order);
+    const { dispose } = mount(app, root);
+    expect(layerDivs(root.firstElementChild as HTMLElement).length).toBe(2);
+
+    order = ["a", "b", "c", "d"];
+    app._rerender?.();
+
+    const after = root.firstElementChild as HTMLElement;
+    expect(after.children.length).toBe(4);
+    const layers = layerDivs(after);
+    expect(layers.length).toBe(3);
+    for (const layer of layers) {
+      expect(layer.children.length).toBe(1);
+      expect(layer.style.position).toBe("absolute");
+    }
+    expect(after.textContent).toContain("layer d");
+    dispose();
+  });
+
+  it("splices a rebuilt wrapped child into its wrapper, not onto the parent", () => {
+    // The structural walk discards `reconcileNode`'s return value because
+    // `replaceWithFreshTile` has already spliced the new element in — anchored
+    // on the OLD element's parent, which under `overlay` is the layer div. An
+    // anchor taken from the parent tile's element instead would put the fresh
+    // element directly on the overlay and empty the layer, and every other
+    // assertion in this file would still pass.
+    let secondKind: "text" | "heading" = "text";
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "overlay",
+        children: [
+          { kind: "text", text: "base", key: "a" },
+          { kind: secondKind, text: "wrapped", key: "b" },
+        ],
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const overlay = root.firstElementChild as HTMLElement;
+    const layer = layerDivs(overlay)[0] as HTMLElement;
+    expect(layer.children.length).toBe(1);
+
+    // A kind change is the one path that always rebuilds, so this exercises
+    // the splice without depending on which patcher is registered.
+    secondKind = "heading";
+    app._rerender?.();
+
+    // Same layer element, now holding the rebuilt tile — and the overlay still
+    // has exactly its base child plus that layer.
+    expect(layerDivs(overlay)[0]).toBe(layer);
+    expect(layer.children.length).toBe(1);
+    expect((layer.children[0] as HTMLElement).tagName).toBe("H1");
+    expect(overlay.children.length).toBe(2);
+    dispose();
+  });
+
   it("still takes the keyed path when the parent places its children directly", () => {
     // Guard against the placement check over-triggering: `column` appends
     // children directly, so keyed reuse across a reorder must be unaffected.

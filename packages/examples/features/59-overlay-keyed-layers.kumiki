@@ -6,7 +6,8 @@
 # out of its wrapper. It notices, declines the keyed match, and diffs the layers
 # by position instead. Correct either way; what is lost is reorder-stable
 # element identity, which is why `kumiki dev` reports one `wrapped-children`
-# diagnostic per flip here and none for the keyed `column` in 58.
+# diagnostic per flip here and none for the keyed `column` in
+# `unkeyed-conditional-rebuild`.
 #
 # The takeaway for authoring: put a keyed list under a plain container
 # (`column` / `row` / `list`), and use `overlay` for stacking a fixed set of

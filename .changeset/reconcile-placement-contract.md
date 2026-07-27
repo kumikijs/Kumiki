@@ -9,8 +9,8 @@ renderer, and the walker's placement contract is written down.
 survivors with `parentEl.appendChild` and drops the departures with
 `parentEl.removeChild`. Both only address elements the parent element holds
 directly — and `overlay` does not: it wraps every child after the first in an
-absolutely-positioned layer, so the elements the reconciler has mapped are
-grandchildren. An overlay whose layers all carried a key (an
+absolutely-positioned layer, so those children's elements are mounted a level
+below the overlay. An overlay whose layers all carried a key (an
 `overlay(for l in layers Layer(l))`, where the `for` binding supplies an
 implicit key) therefore lost its stacking on the first reorder: children were
 appended straight onto the overlay and the emptied layer divs were left behind,
@@ -25,7 +25,12 @@ anything and stays correct under a wrapping renderer. The decline is reported
 through `onDiagnostic` as a new `ReconcileFallback` reason,
 `wrapped-children` (with `index` and `childKind`) — the one reason that rebuilds
 nothing, since what it costs is reorder-stable element identity rather than a
-subtree.
+subtree. When the wrapped list also changed length, the structural walk reports
+`child-count-change` on top: two diagnostics naming two different facts.
+
+A child with no entry in the element map is deliberately left alone. That is a
+broken invariant rather than a placement style, and the keyed pass throws on it
+so the reconcile bailout records a panic — visible without a diagnostic sink.
 
 **Why the contract needed saying.** `reconcileNode` returns the element now
 occupying a node's slot, and who may place that element was implicit: a rebuilt

@@ -225,14 +225,20 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   children directly under its own element**. Matching by key is only half the
   work: the reconciler then moves survivors and drops departures by addressing
   the parent element, which it can only do for slots the parent element holds.
-  `overlay` is the one built-in that does not qualify — it wraps children 1..N
-  in a positioning layer, so the mapped elements are grandchildren. There the
-  reconciler declines the keyed match, reports `wrapped-children` (§10.3.12),
-  and runs the structural walk, which never repositions anything and stays
-  correct under a wrapping renderer. A host renderer opts out the same way by
-  appending children to anything other than the element it returns — so put a
-  reorderable keyed list under a plain container (`column` / `row` / `list`),
-  and keep host renderers' children directly under their root element.
+  Of the current built-ins only `overlay` fails this: it puts every child
+  after the first in a positioning layer, so those children's elements are
+  mounted a level below the overlay. There the reconciler declines the keyed
+  match, reports `wrapped-children` (§10.3.12), and runs the structural walk,
+  which never repositions anything and stays correct under a wrapping
+  renderer. A host renderer opts out the same way by appending children to
+  anything other than the element it returns — so put a reorderable keyed list
+  under a plain container (`column` / `row` / `list`), and keep host
+  renderers' children directly under their root element.
+- The two diagnostics can both fire for one parent in the same render: a
+  wrapping parent whose keyed child list also changed length reports
+  `wrapped-children` (the keys went unused) and then `child-count-change` (the
+  structural walk rebuilt it anyway). They name different facts, and fixing
+  the first is what makes the second stop mattering.
 
 **What the compiler emits.**
 

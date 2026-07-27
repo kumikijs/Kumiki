@@ -386,9 +386,9 @@ export type ReconcileFallback =
   /**
    * Every child carried a `key`, but the parent's renderer does not place its
    * children directly under its own element — the child at `index` sits inside
-   * a renderer-owned wrapper (`overlay` wraps children 1..N in a positioning
-   * layer). Moving and removing children is addressed against the parent
-   * element, so the keyed matcher declined and the positional walk ran
+   * a renderer-owned wrapper (`overlay` puts every child after the first in a
+   * positioning layer). Moving and removing children is addressed against the
+   * parent element, so the keyed matcher declined and the positional walk ran
    * instead: correct, but reorder no longer preserves element identity. A host
    * renderer hits this by appending children to anything other than the
    * element it returns.
@@ -2619,13 +2619,13 @@ function reconcileTree(args: {
  * `replaceWithFreshTile`, anchored on the OLD element's own parent. That is
  * deliberate and not an implementation detail the caller may work around: where
  * a child element sits is decided by the parent tile's *renderer*, not by this
- * walker. `overlay` wraps children 1..N in a positioning layer, and a host
- * renderer may wrap arbitrarily — so the anchor is whatever node actually holds
- * the slot, which is not necessarily the parent tile's element.
+ * walker. `overlay` puts every child after the first in a positioning layer,
+ * and a host renderer may wrap arbitrarily — so the anchor is whatever node
+ * actually holds the slot, which is not necessarily the parent tile's element.
  *
  * A caller may therefore only place the returned element itself when it has
  * established that it owns the slots. Exactly one does — `reconcileKeyedChildren`,
- * and only behind the `keyedPassBlocker` gate below.
+ * behind the `firstWrappedChild` gate.
  */
 function reconcileNode(
   oldNode: TileNode,
@@ -2706,22 +2706,17 @@ function reconcileNode(
   // holds those slots. A renderer that wraps its children owns their placement
   // and the walker must not reach past it.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    const blocker = keyedPassBlocker(oldEl, oldChildren, oldMap);
-    if (blocker) {
+    const wrapped = firstWrappedChild(oldEl, oldChildren, oldMap);
+    if (wrapped) {
+      diag?.fallback(
+        { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind },
+        newNode,
+      );
       // Fall through to the structural walk: it never repositions anything, so
-      // it stays correct under a wrapping renderer (a length change rebuilds
-      // the parent, which re-enters the renderer and re-wraps).
-      //
-      // Only the placement case is reported from here. An unmapped child is
-      // the structural walk's `child-unmapped` to name — or, when the length
-      // also changed, its `child-count-change` — and calling it a wrap would
-      // point the author at the wrong renderer.
-      if (blocker.kind === "wrapped") {
-        diag?.fallback(
-          { reason: "wrapped-children", index: blocker.index, childKind: blocker.childKind },
-          newNode,
-        );
-      }
+      // it stays correct under a wrapping renderer. When the length also
+      // changed it then rebuilds the parent and reports `child-count-change`
+      // on top — two diagnostics for one parent, naming two different facts
+      // (the keys went unused; the rebuild happened anyway).
     } else {
       reconcileKeyedChildren(
         oldEl,
@@ -2799,31 +2794,27 @@ function allChildrenKeyed(nodes: TileNode[]): boolean {
 }
 
 /**
- * The first old child that stops the keyed pass from running, or `undefined`
- * when every child sits in a slot `parentEl` can address and moving / removing
- * them there is sound.
+ * The first old child mounted somewhere other than directly under `parentEl` —
+ * the signal that the parent's renderer owns its children's placement and the
+ * keyed pass must not reach past it. `undefined` means every child sits in a
+ * slot `parentEl` can address, so moving and removing them there is sound.
  *
- * Two different things block it, and they are told apart because they have
- * different causes to report:
- * - `wrapped` — the element is mounted somewhere other than directly under
- *   `parentEl`, so the parent's renderer owns its children's placement and the
- *   walker must not reach past it.
- * - `unmapped` — the child never passed through `ctx.render`. The keyed pass
- *   treats that as an invariant break and throws; routing it to the structural
- *   walk instead keeps a host-built tree out of the panic log and lets that
- *   walk name the real cause (`child-unmapped`).
+ * A child with no entry in the map is NOT treated as blocking. That is a
+ * broken invariant, not a placement style, and the keyed pass throws on it so
+ * the reconcile bailout records a panic — visible without a diagnostic sink.
+ * Diverting it to the structural walk would trade that for a `child-unmapped`
+ * only an opted-in host ever sees.
  */
-function keyedPassBlocker(
+function firstWrappedChild(
   parentEl: HTMLElement,
   oldChildren: TileNode[],
   oldMap: TileElementMap,
-): { kind: "wrapped" | "unmapped"; index: number; childKind: string } | undefined {
+): { index: number; childKind: string } | undefined {
   for (let i = 0; i < oldChildren.length; i++) {
     const child = oldChildren[i];
     if (!child) continue;
     const el = oldMap.get(child);
-    if (!el) return { kind: "unmapped", index: i, childKind: child.kind };
-    if (el.parentNode !== parentEl) return { kind: "wrapped", index: i, childKind: child.kind };
+    if (el && el.parentNode !== parentEl) return { index: i, childKind: child.kind };
   }
   return undefined;
 }
@@ -2832,7 +2823,7 @@ function keyedPassBlocker(
  * Keyed child reconcile — mutates `parentEl` in place to match `newChildren`.
  *
  * **Precondition, enforced by the caller.** Every old child's element is a
- * direct child of `parentEl` (`keyedPassBlocker` gates this). The
+ * direct child of `parentEl` (`firstWrappedChild` gates this). The
  * moves and removals below address `parentEl` itself, so under a renderer that
  * wraps its children they would tear elements out of their wrappers and strand
  * the emptied wrappers. Fresh mounts have the same limit from the other side:

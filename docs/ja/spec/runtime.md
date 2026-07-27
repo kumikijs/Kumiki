@@ -218,14 +218,18 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 - keyed matching はさらに、**親のレンダラが子を自分の要素の直下に配置している**
   ことを要求する。key で対応付けるのは半分でしかなく、その後 reconciler は
   生存した子の移動と消えた子の削除を親要素に対して行う — これは親要素が
-  保持しているスロットにしか働かない。組み込みで唯一これを満たさないのが
-  `overlay` で、2 番目以降の子を配置用レイヤーで包むため、map された要素は
-  overlay の孫になる。この場合 reconciler は keyed matching を辞退して
-  `wrapped-children`（§10.3.12）を報告し、構造 diff に降りる。構造 diff は
-  要素を一切移動させないので、包むレンダラの下でも正しく動く。ホスト製
-  レンダラも「返した要素以外に子を append する」と同じ扱いになる — 並べ替える
-  keyed リストは素の container（`column` / `row` / `list`）の下に置き、ホスト
-  レンダラの子は root 要素の直下に置くこと。
+  保持しているスロットにしか働かない。現行の組み込みでこれを満たさないのは
+  `overlay` だけで、2 番目以降の子を配置用レイヤーで包むため、それらの子の
+  要素は overlay の 1 段下にマウントされる。この場合 reconciler は keyed
+  matching を辞退して `wrapped-children`（§10.3.12）を報告し、構造 diff に
+  降りる。構造 diff は要素を一切移動させないので、包むレンダラの下でも正しく
+  動く。ホスト製レンダラも「返した要素以外に子を append する」と同じ扱いに
+  なる — 並べ替える keyed リストは素の container（`column` / `row` / `list`）
+  の下に置き、ホストレンダラの子は root 要素の直下に置くこと。
+- 1 つの親について 2 つの diagnostic が同一レンダで出ることがある。包む親の
+  keyed 子リストの長さも変わった場合、`wrapped-children`（key が使われなかった）
+  に続いて `child-count-change`（結局構造 diff が親を再構築した）が出る。両者は
+  別の事実を述べており、前者を直せば後者は問題にならなくなる。
 
 **コンパイラの emit**
 
