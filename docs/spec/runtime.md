@@ -407,6 +407,58 @@ failure; `SmokeOptions.diagnosticsAsIssues` — `kumiki smoke --diagnostics-as-i
 action triggered the re-render, and `kumiki run` prints them under that step.
 `kumiki smoke` prints a per-reason summary.
 
+### 10.3.13 Data-prop equality
+
+§10.3.10 and §10.3.11 both turn on "the tile's data props did not change".
+This is the rule that decides it. It is the runtime's single reuse predicate:
+a false positive keeps a stale element mounted with no symptom, a false
+negative rebuilds a subtree that did not change.
+
+**Scope.** The comparison walks a `TileNode`'s own fields *except* `kind`,
+`children`, and `key`. `kind` is the discriminant and is settled before the
+predicate runs (§10.3.12). `children` is the walker's own business — each
+child is reconciled on its own, so a changed grandchild must not rebuild every
+ancestor. `key` is identity metadata consumed by the keyed child matcher
+(§10.3.10); by the time a pair reaches the predicate they have already been
+established as the same instance.
+
+**Values.** Two values are equal when:
+
+- they are the same value (`===`), or
+- both are functions — closure identity is deliberately ignored, since codegen
+  mints fresh handlers every render (see the `stale-closure-risk` diagnostic in
+  §10.3.12 for the hazard this creates for host renderers), or
+- both are arrays of the same length whose elements are pairwise equal, or
+- both are **plain data bags** — prototype `Object.prototype` or `null` — whose
+  union of own keys maps to pairwise-equal values.
+
+Consequences worth stating outright:
+
+- **An absent key and an explicit `undefined` are equal.** `{a: 1}` and
+  `{a: 1, b: undefined}` are the same tile; codegen omits optional fields, and
+  a conditional spread produces either form for the same authored tile.
+- **`null` is not `undefined`, `0` is not `false`, `""` is not `0`.**
+  Comparison is `===`-based, never `==`.
+- **`NaN` is not equal to `NaN`.** A tile carrying one rebuilds on every
+  render. `NaN` in a prop means a computation already failed; rebuilding is the
+  safe side, and the churn is a visible symptom rather than a frozen tile.
+- **A non-plain object is never equal to anything but itself.** `Date`, `Map`,
+  `Set`, `RegExp`, DOM nodes, and class instances hold their state outside
+  their own enumerable keys, so key-wise comparison would report a changed
+  value as unchanged. Kumiki codegen emits only plain data, so this is
+  unreachable from a `.kumiki` source; a host renderer handed one gets a
+  rebuild rather than silent reuse. The same instance passed twice still
+  compares equal through `===`. "Plain" is decided by prototype identity, which
+  is realm-local: an object built in another realm (an `<iframe>`, a `vm`
+  context) is treated as exotic and rebuilds — the safe direction, and the
+  reason this is not relaxed into a `toString`-tag check.
+
+Cycles are outside the contract. Two structurally cyclic but distinct bags
+recurse until the stack runs out; the throw lands in the reconcile bailout,
+which rebuilds the tree wholesale and records a `location: "reconcile"` panic.
+Unsupported, but contained and visible — codegen cannot produce a cycle, and a
+visited set would cost every render to defend against one.
+
 ---
 
 ## 10.4 Effect Dispatcher

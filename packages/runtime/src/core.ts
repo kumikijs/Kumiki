@@ -3014,15 +3014,36 @@ function tileValueEqual(a: unknown, b: unknown): boolean {
     for (let i = 0; i < a.length; i++) if (!tileValueEqual(a[i], b[i])) return false;
     return true;
   }
-  // Plain object — key-wise compare. Anything exotic (Date, Map, DOM node)
-  // should NOT appear inside TileNode props (the compiler emits only data);
-  // conservatively treat two exotic instances as unequal so a caller who does
-  // smuggle one gets a rebuild rather than silent reuse.
+  // Only plain data bags are compared key-wise. Anything exotic (Date, Map,
+  // Set, RegExp, DOM node, class instance) holds its state OUTSIDE its own
+  // enumerable keys, so the comparison below would see two empty bags and
+  // report a changed value as unchanged — the worst outcome for this
+  // predicate, since it leaves a stale element mounted with no symptom. The
+  // compiler emits only plain data, so this is unreachable from a `.kumiki`
+  // source; a host renderer that smuggles one in gets a rebuild rather than
+  // silent reuse.
+  if (!isPlainDataBag(a) || !isPlainDataBag(b)) return false;
   const oa = a as Record<string, unknown>;
   const ob = b as Record<string, unknown>;
   const keys = new Set<string>([...Object.keys(oa), ...Object.keys(ob)]);
   for (const k of keys) if (!tileValueEqual(oa[k], ob[k])) return false;
   return true;
+}
+
+/**
+ * An object whose entire state IS its own enumerable properties, so key-wise
+ * comparison is complete. Object literals — what codegen and `JSON.parse`
+ * produce — qualify via `Object.prototype`, and `Object.create(null)` bags via
+ * the null prototype; anything else does not.
+ *
+ * The prototype identity is realm-local, so a plain object built in another
+ * realm (an `<iframe>`, a `vm` context) is treated as exotic and rebuilds. That
+ * is the safe direction and deliberately not "fixed" with a `toString` tag
+ * check, which would let a genuinely exotic cross-realm value back through.
+ */
+function isPlainDataBag(v: object): boolean {
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
 // Per-element slot for the universally-lifted UI handlers (onKeyDown /
