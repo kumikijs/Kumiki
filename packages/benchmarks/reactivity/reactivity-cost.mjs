@@ -27,10 +27,14 @@ import { pathToFileURL } from "node:url";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
+import { isUnstable, median, summarize } from "./stats.mjs";
 
 const TILE_COUNTS = [10, 50, 200, 500];
 const WARMUP = 20;
 const ITERATIONS = 200;
+// A row whose p90 exceeds its median by this factor is reported as untrustworthy
+// (see `isUnstable` in ./stats.mjs for why the tail, not the stddev, is the test).
+const UNSTABLE_TAIL_FACTOR = 3;
 
 // Register happy-dom onto globalThis (window/document/Event/…), exactly like
 // `packages/cli/src/smoke.ts:ensureDom`. Elements only accept events built from
@@ -89,13 +93,6 @@ async function loadApp(source) {
   const app = globalThis.__kumikiApp;
   if (!app) throw new Error("compiled module did not expose __kumikiApp");
   return app;
-}
-
-/** Median of a numeric array (mutates a copy). @param {number[]} xs */
-function median(xs) {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = s.length >> 1;
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 /**
@@ -159,7 +156,11 @@ async function measure(rows) {
   handle.dispose();
   root.remove();
 
-  const medMs = median(samples);
+  // Timings get the full distribution (median + tail + spread): they are a
+  // small-N wall-clock measurement, so a median alone cannot say whether the
+  // run is trustworthy. `created` stays median-only — it is an integer
+  // invariant of the diff, not a timing statistic.
+  const timing = summarize(samples);
   const medCreated = median(created);
   // #190 identity-preserving patch: a single-slot leaf-text change lands as
   // an in-place `.textContent = ...` on the mounted `<h1>` — no
@@ -179,8 +180,12 @@ async function measure(rows) {
     nodesCreatedPerUpdate: medCreated,
     nodesChanged,
     wasteRatio: medCreated / nodesChanged,
-    renderMedianMs: medMs,
-    usPerCreated: medCreated > 0 ? (medMs * 1000) / medCreated : 0,
+    renderMedianMs: timing.median,
+    renderP90Ms: timing.p90,
+    renderStddevMs: timing.stddev,
+    renderMinMs: timing.min,
+    renderMaxMs: timing.max,
+    usPerCreated: medCreated > 0 ? (timing.median * 1000) / medCreated : 0,
   };
 }
 
@@ -202,6 +207,10 @@ const headers = [
   "changed",
   "waste×",
   "median ms",
+  "p90 ms",
+  "stddev",
+  "min ms",
+  "max ms",
   "µs/created",
 ];
 const cells = rows.map((r) => [
@@ -211,6 +220,10 @@ const cells = rows.map((r) => [
   String(r.nodesChanged),
   `${r.wasteRatio.toFixed(1)}×`,
   r.renderMedianMs.toFixed(3),
+  r.renderP90Ms.toFixed(3),
+  r.renderStddevMs.toFixed(3),
+  r.renderMinMs.toFixed(3),
+  r.renderMaxMs.toFixed(3),
   r.usPerCreated.toFixed(2),
 ]);
 const widths = headers.map((h, i) => Math.max(h.length, ...cells.map((c) => c[i].length)));
@@ -223,13 +236,33 @@ console.log(widths.map((w) => "-".repeat(w)).join("  "));
 for (const c of cells) console.log(line(c));
 console.log("\n`created/upd` = Elements added to the DOM per single-slot update, measured");
 console.log("by MutationObserver. `changed` is the semantic minimum (one text node).");
-console.log("`waste×` = created ÷ changed; a perfect fine-grained model would land at 1×.\n");
+console.log("`waste×` = created ÷ changed; a perfect fine-grained model would land at 1×.");
+console.log("`median ms` / `p90 ms` / `stddev` / `min ms` / `max ms` all describe the same sample");
+console.log("of per-update timings. Read them together: a real regression moves the median and");
+console.log("p90 together, while a busy machine moves only the tail. `stddev` is dominated by");
+console.log("isolated GC pauses — a single one is enough to swamp it, so treat it as a tail");
+console.log("indicator, not as an error bar around the median.\n");
+
+// A run whose tail has detached from its body measured the machine, not the
+// runtime. Say so on stderr rather than letting the reader trust the numbers:
+// stdout stays a clean report + JSON blob even when this fires.
+const unstable = rows.filter((r) =>
+  isUnstable({ median: r.renderMedianMs, p90: r.renderP90Ms }, UNSTABLE_TAIL_FACTOR),
+);
+if (unstable.length > 0) {
+  const where = unstable.map((r) => r.tiles).join(", ");
+  console.warn(
+    `⚠ unstable timings at tiles ${where}: p90 is more than ${UNSTABLE_TAIL_FACTOR}× the median, ` +
+      `so this run measured machine noise as much as runtime work. Re-run on an idle machine, ` +
+      `or raise ITERATIONS (currently ${ITERATIONS}).`,
+  );
+}
 
 console.log(
   JSON.stringify(
     {
       benchmark: "reactivity-cost",
-      model: "keyed diff (structural fallback, #187)",
+      model: "tile-level keyed diff + identity-preserving patch",
       warmup: WARMUP,
       iterations: ITERATIONS,
       rows,
