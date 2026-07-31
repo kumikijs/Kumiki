@@ -2857,6 +2857,13 @@ function adoptFreshChildren(
   } else {
     // Same granularity as a keyed fresh insert: each new child is the root of a
     // subtree that was just mounted.
+    //
+    // An empty slot is skipped rather than reported. The positional walk emits
+    // `child-hole` because a hole desynchronises it from the old list and costs
+    // a rebuild — here the whole list went through the renderer, which drops
+    // nils itself, so nothing was lost and there is no fallback to name. What a
+    // hole means for this loop is only that no element was mounted for it, and
+    // therefore that it has nothing to contribute.
     for (const child of newChildren) if (child) touched.push(tileTouchedId(child));
   }
   return oldEl;
@@ -2869,18 +2876,31 @@ function adoptFreshChildren(
  * theirs in a content div beside the surface's own chrome.
  *
  * This is a declaration rather than a measurement because a measurement can
- * only speak for slots that already exist (see `keyedPassBlocker`). It is kept
- * honest by a test that mounts every container kind and compares the DOM its
- * renderer produced against this set. Host renderers are absent on purpose: the
- * spec asks them to place their children directly, so an unknown kind is taken
- * at its word.
+ * only speak for slots that already exist (see `keyedPassBlocker`), and only
+ * `overlay` actually needs it — a renderer that wraps EVERY child is caught by
+ * the measurement as soon as one is mounted. The other three are listed anyway
+ * so the set means what it says, which is what lets it be checked against the
+ * DOM those renderers produce.
+ *
+ * Host renderers are absent on purpose: §10.3.10 asks them to place their
+ * children directly under the element they return, so an unknown kind is taken
+ * at its word — declining for every unknown kind would cost every well-behaved
+ * host integration its keyed inserts. A host renderer shaped like `overlay`
+ * (first child direct, rest wrapped) is therefore the one remaining blind spot,
+ * and it needs a seam of its own rather than a guess here.
+ *
+ * Frozen because it is exported: the reconcile path reads it on every keyed
+ * render under a wrapping parent, and a caller mutating it would silently
+ * redefine the contract.
  */
-export const WRAPPING_TILE_KINDS: ReadonlySet<string> = new Set([
+export const WRAPPING_TILE_KINDS: readonly string[] = Object.freeze([
   "overlay",
   "modal",
   "drawer",
   "popover",
 ]);
+
+const WRAPPING_TILE_KIND_SET: ReadonlySet<string> = new Set(WRAPPING_TILE_KINDS);
 
 /**
  * Why the keyed child pass may not run for this parent — `undefined` when it
@@ -2911,7 +2931,7 @@ function keyedPassBlocker(
   if (wrapped) {
     return { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind };
   }
-  if (!WRAPPING_TILE_KINDS.has(parentNode.kind)) return undefined;
+  if (!WRAPPING_TILE_KIND_SET.has(parentNode.kind)) return undefined;
   const newcomer = firstUnmatchedChild(oldChildren, newChildren);
   if (!newcomer) return undefined;
   return {
@@ -2921,7 +2941,13 @@ function keyedPassBlocker(
   };
 }
 
-/** The first new child whose key no old sibling carries — i.e. a fresh mount. */
+/**
+ * The first new child whose key no old sibling carries — the newcomer that the
+ * keyed pass would have to mount, and therefore the one thing it needs a slot
+ * for that no mounted child can vouch for. `undefined` means this render only
+ * moves and drops children that already exist, which addresses slots the parent
+ * demonstrably holds.
+ */
 function firstUnmatchedChild(
   oldChildren: TileNode[],
   newChildren: TileNode[],

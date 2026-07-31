@@ -561,6 +561,61 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
+  it.each([
+    "modal",
+    "drawer",
+    "popover",
+  ] as const)("reports a %s's growth from the measurement, not from the declaration", (kind) => {
+    // The surfaces wrap every child, so one mounted child is already enough
+    // for the placement measurement to answer — and a measurement that can
+    // answer always wins. Their entry in the declared set is redundant for
+    // these renders, and this pins that it stays redundant rather than
+    // producing a second, competing diagnostic.
+    let order = ["a"];
+    const app = appOf(() => ({
+      kind,
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["a", "b"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["wrapped-children", "child-count-change"]);
+    dispose();
+  });
+
+  it("stays quiet for an empty slot in a list that grows from empty", () => {
+    // `child-hole` exists because a hole desynchronises the positional walk
+    // from the old list and costs a rebuild. Growing from empty has no old list
+    // to desynchronise from, and the renderer drops nils itself — so the DOM is
+    // right and there is no fallback to report. Deliberate, not an oversight:
+    // the same tree on a same-length render still reports.
+    let filled = false;
+    const app = appOf(() => ({
+      kind: "column",
+      children: filled
+        ? ([
+            { kind: "text" as const, text: "a", key: "a" },
+            null,
+            { kind: "text" as const, text: "b", key: "b" },
+          ] as unknown as TileNode[])
+        : [],
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+    const column = root.firstElementChild as HTMLElement;
+
+    filled = true;
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    expect(root.firstElementChild).toBe(column);
+    expect(Array.from(column.children).map((e) => e.textContent)).toEqual(["a", "b"]);
+    dispose();
+  });
+
   it("says the newcomer could not be placed, not that the child was wrapped", () => {
     // `wrapped-children` names a child that IS wrapped right now;
     // `unplaceable-insert` names one that cannot be mounted at all. Conflating

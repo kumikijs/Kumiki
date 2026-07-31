@@ -1823,6 +1823,31 @@ describe("runtime: child lists that are empty on one side", () => {
     dispose();
   });
 
+  it.each([
+    "modal",
+    "drawer",
+    "popover",
+  ] as const)("fills a %s through its content wrapper, not onto the surface itself", (kind) => {
+    // The surfaces wrap ALL of their children, so unlike `overlay` they are
+    // caught by the placement measurement the moment one child is mounted —
+    // but at zero there is nothing to measure, and this is the path that
+    // decides where the first ones land.
+    let order: string[] = [];
+    const app = rowsApp(() => order, kind);
+    const { dispose } = mount(app, root);
+    const surface = root.firstElementChild as HTMLElement;
+
+    order = ["a", "b"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(surface);
+    const content = surface.children[0] as HTMLElement;
+    expect(content.dataset.kumikiTile).toBe(`${kind}-content`);
+    expect(surface.children.length).toBe(1);
+    expect(Array.from(content.children).map((e) => e.textContent)).toEqual(["row a", "row b"]);
+    dispose();
+  });
+
   it("rebuilds the renderer's own interior alongside the children", () => {
     // `details` owns a `<summary>` that is not a tile child. Emptying `oldEl`
     // and appending the new children would drop it; re-entering the renderer
@@ -2042,6 +2067,45 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
     dispose();
   });
 
+  it("takes a host renderer at its word when it places children directly", () => {
+    // The declaration covers built-ins only. Declining for every unknown kind
+    // would be the safe-looking choice and would cost every well-behaved host
+    // integration its keyed inserts — so an unknown kind is trusted, and the
+    // measurement still catches one that wraps as soon as a child is mounted.
+    // Pinned because "unknown ⇒ unsafe" is a tempting future tightening.
+    let order = ["a"];
+    const hostTiles: TileRenderers = {
+      ...layoutTiles,
+      "host-shelf": (node, ctx) => {
+        const el = document.createElement("section");
+        el.dataset.kumikiTile = "host-shelf";
+        for (const child of (node as { children: TileNode[] }).children) {
+          if (child) el.appendChild(ctx.render(child));
+        }
+        return el;
+      },
+    } as TileRenderers;
+    const app = emptySideApp(
+      () =>
+        ({
+          kind: "host-shelf",
+          children: order.map((id) => ({ kind: "text", text: `row ${id}`, key: id })),
+        }) as unknown as TileNode,
+    );
+    const { dispose } = mount(app, root, { tiles: hostTiles });
+    const shelf = root.firstElementChild as HTMLElement;
+    const first = shelf.children[0] as HTMLElement;
+
+    order = ["a", "b"];
+    app._rerender?.();
+
+    // Keyed insert: the survivor kept its element and the newcomer joined it.
+    expect(root.firstElementChild).toBe(shelf);
+    expect(shelf.children[0]).toBe(first);
+    expect(Array.from(shelf.children).map((e) => e.textContent)).toEqual(["row a", "row b"]);
+    dispose();
+  });
+
   it("agrees with what the built-in renderers actually do with their children", () => {
     // `WRAPPING_TILE_KINDS` is a declaration, and a declaration can drift from
     // the renderers it describes. Mount every container kind with two children
@@ -2111,7 +2175,7 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
         // is what this test is about.
         const direct = new Set(Array.from(parent.children));
         const allDirect = kids.every((k) => direct.has(k));
-        if (allDirect === WRAPPING_TILE_KINDS.has(kind)) {
+        if (allDirect === WRAPPING_TILE_KINDS.includes(kind)) {
           mismatches.push(
             allDirect
               ? `${kind}: places its children directly but is listed as wrapping`
