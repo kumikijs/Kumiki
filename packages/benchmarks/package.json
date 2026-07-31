@@ -11,6 +11,7 @@
     "measure:ops": "tsx size-comparison/scripts/measure-ops.mjs",
     "measure:reactivity": "tsx reactivity/reactivity-cost.mjs",
     "eval": "tsx learning-cost/eval.mjs",
+    "test": "vitest run",
     "lint": "biome check ."
   },
   "devDependencies": {
@@ -20,6 +21,7 @@
     "@kumikijs/runtime": "workspace:*",
     "gpt-tokenizer": "catalog:",
     "tsx": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
