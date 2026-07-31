@@ -21,6 +21,7 @@ import type {
 } from "@kumikijs/runtime";
 import {
   describeDiagnostic,
+  layoutTiles,
   mount,
   mountCore,
   runScenario,
@@ -204,6 +205,105 @@ describe("runtime: reconcile diagnostics", () => {
     expect(seen).toContainEqual(
       expect.objectContaining({ reason: "child-unmapped", index: 0, childKind: "text" }),
     );
+    dispose();
+  });
+
+  it("reports the same evidence when the bail follows a sibling that would have reconciled", () => {
+    // #216 pre-scan: the two bail conditions are now decided for the whole
+    // child list before any of it is applied. The decision walks the list in
+    // the same order and asks the same questions per index, so a bail at
+    // index 1 still names index 1 — and, for `child-unmapped`, the kind of the
+    // child whose element went missing.
+    let label = "a";
+    let holed = false;
+    const holeApp = appOf(() => ({
+      kind: "column",
+      children: holed
+        ? ([{ kind: "text", text: label }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: label },
+            { kind: "text", text: "b" },
+          ],
+    }));
+    const hole = collector();
+    const holeMount = mount(holeApp, root, { onDiagnostic: hole.sink });
+
+    label = "a2";
+    holed = true;
+    holeApp._rerender?.();
+
+    expect(hole.seen).toContainEqual(expect.objectContaining({ reason: "child-hole", index: 1 }));
+    holeMount.dispose();
+
+    // Same shape, other bail: a renderer that maps its first child through
+    // `ctx.render` and hand-builds the rest.
+    const firstChildMappedColumn = (node: TileNode, ctx: TileCtx): HTMLElement => {
+      const el = document.createElement("div");
+      const children = (node as { children?: TileNode[] }).children ?? [];
+      children.forEach((child, i) => {
+        if (i === 0) {
+          el.appendChild(ctx.render(child));
+          return;
+        }
+        const span = document.createElement("span");
+        span.textContent = (child as { text?: string }).text ?? "";
+        el.appendChild(span);
+      });
+      return el;
+    };
+    let text = "a";
+    const unmappedApp = appOf(() => ({
+      kind: "column",
+      children: [
+        { kind: "text", text },
+        { kind: "text", text: "hand-built" },
+      ],
+    }));
+    const unmapped = collector();
+    const unmappedMount = mount(unmappedApp, root, {
+      tiles: { column: firstChildMappedColumn } as TileRenderers,
+      onDiagnostic: unmapped.sink,
+    });
+
+    text = "a2";
+    unmappedApp._rerender?.();
+
+    expect(unmapped.seen).toContainEqual(
+      expect.objectContaining({ reason: "child-unmapped", index: 1, childKind: "text" }),
+    );
+    unmappedMount.dispose();
+  });
+
+  it("says nothing about the siblings a bail no longer applies", () => {
+    // With no patcher registered, reconciling the child at index 0 reports
+    // `no-patcher` and rebuilds its subtree — and then the hole at index 1
+    // rebuilds the parent, discarding that subtree. Reporting a fallback for a
+    // subtree that was thrown away is the same falsehood as listing it in
+    // `binds-updated`: the pre-scan decides the parent's fate first, so the
+    // only thing named is the rebuild that actually happened.
+    let label = "a";
+    let holed = false;
+    const app = appOf(() => ({
+      kind: "column",
+      children: holed
+        ? ([{ kind: "text", text: label }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: label },
+            { kind: "text", text: "b" },
+          ],
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mountCore(app, root, {
+      tiles: { ...textTiles, ...layoutTiles },
+      tilePatchers: {},
+      onDiagnostic: sink,
+    });
+
+    label = "a2";
+    holed = true;
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["child-hole"]);
     dispose();
   });
 
