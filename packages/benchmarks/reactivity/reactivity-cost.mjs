@@ -1,21 +1,21 @@
-// Reactivity re-render cost (issue #159 AC2 → #187 keyed diff → #190 patch).
+// Reactivity re-render cost.
 //
 // Measures how many DOM element nodes the runtime CREATES per single-slot
-// update. Under the pre-#187 model this was the whole tree every time (a
-// `target.replaceChild` swap); under the current tile-level keyed diff
+// update. The original runtime rebuilt the whole tree every time (a
+// `target.replaceChild` swap); the tile-level keyed diff that replaced it
 // (walker + prop equality kernel live inline in `packages/runtime/src/core.ts`
 // under the `// ---- tile-level keyed diff ----` section — see
-// docs/design/reactivity-v2.md §2 Decision 1(a)) only rebuilt subtrees create
-// new nodes. #190's identity-preserving patch drops the rebuild for tiles
-// whose kind is unchanged, so a leaf-only text change now creates ZERO new
-// elements — the mounted `<h1>` gets `.textContent = "Count: N"` in place
-// instead of a fresh `createElement`. `waste×` is `created ÷ changed`; the
-// #190 target is 0× (nothing added, one text node mutated).
+// docs/design/reactivity-v2.md §2 Decision 1(a)) rebuilds only changed
+// subtrees, and the identity-preserving patch layered on top drops even that
+// for tiles whose kind is unchanged: a leaf-only text change creates ZERO new
+// elements, because the mounted `<h1>` gets `.textContent = "Count: N"` in
+// place instead of a fresh `createElement`. `waste×` is `created ÷ changed`;
+// the target is 0× (nothing added, one text node mutated).
 //
 // happy-dom is cheaper than a real browser (no layout/style recalc, no
 // listener reattach), so absolute wall-clock here is a floor — the shape
-// (waste× drops sharply, µs/node drops as unnecessary work disappears) is
-// what matters, not the absolute numbers.
+// (waste× drops sharply, render time decouples from tile count) is what
+// matters, not the absolute numbers.
 //
 // Run:
 //   pnpm --filter @kumikijs/benchmarks measure:reactivity
@@ -47,8 +47,8 @@ const doc = /** @type {Document} */ (globalThis.document);
 /**
  * Generate a Kumiki app whose `App` tile is a column of `rows` static text
  * tiles plus one heading bound to the `count` slot. Bumping `count` changes a
- * single text node — the theoretical minimum — so the diff should rebuild
- * only the heading subtree and leave every sibling row untouched.
+ * single text node — the theoretical minimum — so the reconcile should touch
+ * the heading's text and leave every sibling row untouched.
  * @param {number} rows
  */
 function makeSource(rows) {
@@ -98,8 +98,8 @@ async function loadApp(source) {
 /**
  * Mount an app of `rows` size, then time single-slot updates and count DOM
  * element additions per update via a MutationObserver on the mount root. The
- * observer sees only nodes the diff actually created — under the current
- * keyed-diff model, that's just the rebuilt subtree of the changed tile.
+ * observer sees only nodes the reconcile actually created: subtrees it had to
+ * rebuild, and nothing at all when it can patch a mounted node in place.
  * @param {number} rows
  */
 async function measure(rows) {
@@ -109,6 +109,13 @@ async function measure(rows) {
   const handle = mount(app, root);
 
   const initialNodes = root.querySelectorAll("*").length;
+  // An app that mounts nothing would still produce a full table of timings for
+  // a benchmark measuring nothing at all. The generated tree carries one
+  // element per row plus the heading and the button, so anything under `rows`
+  // means the mount, not the diff, is what broke.
+  if (initialNodes < rows) {
+    throw new Error(`mount rendered ${initialNodes} elements for ${rows} rows — app did not mount`);
+  }
 
   const rerender = app._rerender;
   if (typeof rerender !== "function") throw new Error("app._rerender missing after mount");
@@ -162,17 +169,14 @@ async function measure(rows) {
   // invariant of the diff, not a timing statistic.
   const timing = summarize(samples);
   const medCreated = median(created);
-  // #190 identity-preserving patch: a single-slot leaf-text change lands as
-  // an in-place `.textContent = ...` on the mounted `<h1>` — no
-  // `createElement`, no `replaceChild`, so `medCreated === 0` is now the
-  // expected outcome. Pre-#190 the invariant was `>= 1` (the rebuilt
-  // heading subtree); reverting to that would fail the very optimization
-  // this benchmark exists to demonstrate. Regressions we still want to
-  // catch loudly show up as `medCreated >> 0` on the WASTE side, and as a
-  // rerender ms that decouples from tile count — both still surfaced.
-  // One update changes exactly one text node ("Count: N"): the semantic
-  // minimum. Under the keyed diff this manifests as rebuilding the heading
-  // subtree (heading element + its inner text container) — a small constant.
+  // The semantic minimum: one update changes exactly one text node
+  // ("Count: N"). This is the constant `created` is measured against, not a
+  // measurement itself. Under the identity-preserving patch the update lands
+  // as an in-place `.textContent = ...` on the mounted `<h1>` — no
+  // `createElement`, no `replaceChild` — so a healthy run creates FEWER nodes
+  // than the minimum it changes (`medCreated === 0`, `waste× === 0`). A
+  // regression shows up as `medCreated` climbing back above zero, and as a
+  // render time that recouples to tile count.
   const nodesChanged = 1;
   return {
     tiles: rows,
@@ -185,7 +189,10 @@ async function measure(rows) {
     renderStddevMs: timing.stddev,
     renderMinMs: timing.min,
     renderMaxMs: timing.max,
-    usPerCreated: medCreated > 0 ? (timing.median * 1000) / medCreated : 0,
+    // Undefined, not zero, when the update creates nothing: `0.00` in the
+    // report would read as "infinitely cheap per node" when the truth is that
+    // there are no created nodes to divide by.
+    usPerCreated: medCreated > 0 ? (timing.median * 1000) / medCreated : null,
   };
 }
 
@@ -224,37 +231,47 @@ const cells = rows.map((r) => [
   r.renderStddevMs.toFixed(3),
   r.renderMinMs.toFixed(3),
   r.renderMaxMs.toFixed(3),
-  r.usPerCreated.toFixed(2),
+  r.usPerCreated === null ? "—" : r.usPerCreated.toFixed(2),
 ]);
 const widths = headers.map((h, i) => Math.max(h.length, ...cells.map((c) => c[i].length)));
 const line = (c) => c.map((v, i) => v.padStart(widths[i])).join("  ");
-console.log(
-  "\nReactivity re-render cost — tile-level keyed diff (#187) + identity-preserving patch (#190)\n",
-);
+console.log("\nReactivity re-render cost — tile-level keyed diff + identity-preserving patch\n");
 console.log(line(headers));
 console.log(widths.map((w) => "-".repeat(w)).join("  "));
 for (const c of cells) console.log(line(c));
 console.log("\n`created/upd` = Elements added to the DOM per single-slot update, measured");
 console.log("by MutationObserver. `changed` is the semantic minimum (one text node).");
 console.log("`waste×` = created ÷ changed; a perfect fine-grained model would land at 1×.");
+console.log("`µs/created` is undefined — printed `—` — when an update creates no nodes at all,");
+console.log("which is the current model's expected outcome.");
 console.log("`median ms` / `p90 ms` / `stddev` / `min ms` / `max ms` all describe the same sample");
-console.log("of per-update timings. Read them together: a real regression moves the median and");
-console.log("p90 together, while a busy machine moves only the tail. `stddev` is dominated by");
-console.log("isolated GC pauses — a single one is enough to swamp it, so treat it as a tail");
-console.log("indicator, not as an error bar around the median.\n");
+console.log(
+  "of per-update timings. Read them together: a regression that slows every update moves",
+);
+console.log("the median and the tail together, while a busy machine moves only the tail. `stddev`");
+console.log("is dominated by isolated GC pauses — a single one is enough to swamp it, so treat it");
+console.log("as a tail indicator, not as an error bar around the median.\n");
 
-// A run whose tail has detached from its body measured the machine, not the
-// runtime. Say so on stderr rather than letting the reader trust the numbers:
-// stdout stays a clean report + JSON blob even when this fires.
+// A detached tail is reported, not diagnosed: this harness cannot tell a busy
+// machine from a slow path that only a minority of updates take, and saying
+// "noise" would train the reader to dismiss the second. Goes to stderr so
+// stdout stays a clean report + JSON blob even when it fires.
 const unstable = rows.filter((r) =>
   isUnstable({ median: r.renderMedianMs, p90: r.renderP90Ms }, UNSTABLE_TAIL_FACTOR),
 );
 if (unstable.length > 0) {
-  const where = unstable.map((r) => r.tiles).join(", ");
+  const detail = unstable
+    .map(
+      (r) =>
+        `${r.tiles} tiles (p90 ${r.renderP90Ms.toFixed(3)} ms = ` +
+        `${(r.renderP90Ms / r.renderMedianMs).toFixed(1)}×)`,
+    )
+    .join(", ");
   console.warn(
-    `⚠ unstable timings at tiles ${where}: p90 is more than ${UNSTABLE_TAIL_FACTOR}× the median, ` +
-      `so this run measured machine noise as much as runtime work. Re-run on an idle machine, ` +
-      `or raise ITERATIONS (currently ${ITERATIONS}).`,
+    `⚠ tail detached from the body — p90 over ${UNSTABLE_TAIL_FACTOR}× the median at ${detail}. ` +
+      `Either the machine was busy, or a minority of updates genuinely takes that long. ` +
+      `Re-run on an idle machine (or raise ITERATIONS, currently ${ITERATIONS}) to tell them ` +
+      `apart: a ratio that survives an idle re-run is a real slow path, not noise.`,
   );
 }
 

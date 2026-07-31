@@ -24,6 +24,30 @@ describe("median", () => {
     median(xs);
     expect(xs).toEqual([3, 1, 2]);
   });
+
+  it("rejects an empty sample", () => {
+    expect(() => median([])).toThrow();
+  });
+});
+
+describe("sample validation", () => {
+  // A NaN also makes the sort comparator inconsistent, so silently continuing
+  // would produce an arbitrary order rather than a merely wrong number.
+  it.each([
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
+  ])("rejects a sample holding %s", (_label, bad) => {
+    const xs = [1, 2, bad, 4];
+    expect(() => median(xs)).toThrow(/finite/);
+    expect(() => percentile(xs, 0.9)).toThrow(/finite/);
+    expect(() => stddev(xs)).toThrow(/finite/);
+    expect(() => summarize(xs)).toThrow(/finite/);
+  });
+
+  it("names the offending index and value", () => {
+    expect(() => median([1, 2, Number.NaN])).toThrow("sample[2] is NaN");
+  });
 });
 
 describe("percentile", () => {
@@ -43,6 +67,10 @@ describe("percentile", () => {
   it("returns the maximum at p=1 and the minimum for the smallest rank", () => {
     expect(percentile(range(10), 1)).toBe(10);
     expect(percentile(range(10), 0.01)).toBe(1);
+  });
+
+  it("stays in range for a p far below the first rank", () => {
+    expect(percentile(range(200), 1e-12)).toBe(1);
   });
 
   it("returns the only value for a single-element sample at any p", () => {
@@ -140,6 +168,11 @@ describe("isUnstable", () => {
     const s = summarize(xs);
     expect(s.stddev / s.median).toBeGreaterThan(5);
     expect(isUnstable(s)).toBe(false);
+  });
+
+  it("puts the default boundary at exactly 3× — strictly above it fires", () => {
+    expect(isUnstable({ median: 0.1, p90: 0.3 })).toBe(false);
+    expect(isUnstable({ median: 0.1, p90: 0.30001 })).toBe(true);
   });
 
   it("takes the factor from the caller", () => {

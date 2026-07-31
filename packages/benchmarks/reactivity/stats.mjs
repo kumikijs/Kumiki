@@ -7,12 +7,21 @@
 // real regression moves the median and the tail together, while a busy machine
 // moves only the tail.
 //
-// Every function here is pure and total: an empty sample throws rather than
-// returning a silent NaN that would print as `NaN` in the report.
+// Every function here is pure, and every one rejects a sample it cannot
+// describe — empty, or holding a NaN / Infinity — rather than returning a
+// silent NaN that would print as `NaN` in the middle of the report. A NaN
+// sample would also make the sort comparator inconsistent, so the order (and
+// therefore the median and the percentile) would be arbitrary rather than
+// merely wrong.
 
 /** @param {number[]} xs */
 function sortedCopy(xs) {
   if (xs.length === 0) throw new Error("statistics require a non-empty sample");
+  for (let i = 0; i < xs.length; i++) {
+    if (!Number.isFinite(xs[i])) {
+      throw new Error(`statistics require finite samples; sample[${i}] is ${xs[i]}`);
+    }
+  }
   return [...xs].sort((a, b) => a - b);
 }
 
@@ -70,8 +79,10 @@ function stddevOfSorted(s) {
  *
  * Summed over the *sorted* sample: floating-point addition is not associative,
  * so summing in arrival order would make the reported spread depend on the
- * order the timings happened to come out in — accumulating smallest-first is
- * both deterministic and the more numerically stable of the two.
+ * order the timings happened to come out in. Sorting first pins one order.
+ * (It also makes the mean's sum ascending, which is the better-conditioned
+ * one; the sum of squared deviations is only ordered by `x`, not by
+ * `(x - mean)²`, so no stability claim is made for it.)
  * @param {number[]} xs
  */
 export function stddev(xs) {
@@ -96,8 +107,10 @@ export function summarize(xs) {
 }
 
 /**
- * Whether a sample's timings are too unstable to read: its p90 is more than
- * `factor`× its median, i.e. the tail has detached from the body.
+ * Whether a sample's tail has detached from its body: its p90 is more than
+ * `factor`× its median. This is a report, not a diagnosis — a detached tail is
+ * what both a busy machine and a slow path taken by a minority of updates look
+ * like from inside a single run, and telling those apart needs a second run.
  *
  * The obvious test — `stddev / median` over some threshold — does not work on
  * this data. One GC pause of 5 ms among 200 samples of 0.04 ms drags the
@@ -111,6 +124,10 @@ export function summarize(xs) {
  * p90/median of roughly 1.5–2 (the smallest app size, where one update costs
  * tens of microseconds, sits at the top of that band), while a row from a run
  * whose median had itself doubled measured 4.3.
+ *
+ * A median of 0 (the timer could not resolve a single update) counts as
+ * detached whenever the tail is above 0, since a body of zero cannot be
+ * compared against anything — those timings are unreadable either way.
  * @param {{median: number, p90: number}} timing
  * @param {number} factor
  */
