@@ -1204,15 +1204,17 @@ export function mountCore(
     currentTree = panicked ? null : renderedTree;
     currentMap = newMap;
 
-    // #190: on the happy patch path element identity is preserved, so this
-    // `focus()` degrades to a no-op — the browser cursor is already on the
-    // still-mounted control. Restoration still fires unconditionally to
-    // cover: (a) reconcile-bailout / panic recovery, where DOM was rebuilt
-    // wholesale; (b) keyed reorder, where the child element is moved via
-    // `parentEl.appendChild` (browsers, and happy-dom, blur a moved element
-    // even when its identity survives). The `.focus()` + setSelection calls
-    // are idempotent and cheap on the happy path, so keeping the layer
-    // active is a strict simplification win over per-path gating.
+    // On the happy patch path element identity is preserved, so this `focus()`
+    // degrades to a no-op — the browser cursor is already on the still-mounted
+    // control. Restoration still fires unconditionally to cover: (a)
+    // reconcile-bailout / panic recovery, where DOM was rebuilt wholesale; (b)
+    // a keyed reorder that moves the focused element itself, which a browser
+    // blurs even though its identity survives. What (b) no longer covers is a
+    // focused child that a reorder left alone: the keyed pass places only the
+    // children that must move (§10.3.10), so the common case reaches here with
+    // the cursor never having left. The `.focus()` + setSelection calls are
+    // idempotent and cheap on the happy path, so keeping the layer active is a
+    // strict simplification win over per-path gating.
     if (snap) {
       // `snap.bind` comes from `data-kumiki-bind`, which is set from Kumiki
       // slot / bind-path syntax — a whitelisted identifier grammar without
@@ -3000,10 +3002,19 @@ function firstWrappedChild(
  *
  * Strategy: (1) build key→oldChild lookup, (2) for each new child either
  * reconcile against its keyed old counterpart or mount fresh, (3) drop
- * unmatched old children from the DOM, (4) reorder the parent's children to
- * match the target sequence. `appendChild` on an already-attached element
- * moves it, and `unmount` / `mount` lifecycle firing is centralised in the
- * outer render pass so no per-node hooks are needed here.
+ * unmatched old children from the DOM, (4) place the children that are not
+ * already where they belong. `unmount` / `mount` lifecycle firing is
+ * centralised in the outer render pass so no per-node hooks are needed here.
+ *
+ * **Step (4) touches the minimum.** Replaying the whole target sequence with
+ * `appendChild` also produces the right order and is one line, but it detaches
+ * and re-attaches every child on every render that reaches here — including a
+ * render where nothing moved. Re-attaching a node blurs it, and focus, the
+ * caret, an open `<select>` and an in-flight IME composition are exactly the
+ * state this path exists to keep. So the survivors whose relative order already
+ * matches — the longest increasing run of their old positions — stay untouched,
+ * and everything else is inserted against its successor. A stable list costs
+ * nothing; one item moving costs one move.
  *
  * Throws — never silently falls back — on: duplicate sibling keys, and any
  * invariant break (an old keyed tile missing its element mapping). The outer
@@ -3038,14 +3049,31 @@ function reconcileKeyedChildren(
     }
     seenNew.add(k);
   }
-  const byKey = new Map<string, TileNode>();
-  for (const oc of oldChildren) if (typeof oc.key === "string") byKey.set(oc.key, oc);
+  // The node the mounted child list ends against. Everything this pass places
+  // goes BEFORE it, so a renderer that keeps content of its own after its
+  // children keeps it there — `appendChild` would walk the children past it.
+  //
+  // Read here, before anything else runs, because this is the last moment the
+  // children's DOM order is known to match `oldChildren`: from the next loop on,
+  // `replaceWithFreshTile` may swap a child's element and the removal pass drops
+  // the departures. Taken from the LAST old child, the anchor is never a child
+  // itself, so neither of those can invalidate it.
+  const tailAnchor = childListEnd(parentEl, oldChildren, oldMap);
+  const byKey = new Map<string, { node: TileNode; index: number }>();
+  for (let i = 0; i < oldChildren.length; i++) {
+    const oc = oldChildren[i] as TileNode;
+    if (typeof oc.key === "string") byKey.set(oc.key, { node: oc, index: i });
+  }
   const targetEls: HTMLElement[] = [];
+  // Per new child, the position its match held in the old list — `-1` for a
+  // newcomer. This is what says which survivors are already in relative order.
+  const oldIndexOf: number[] = [];
   const matched = new Set<TileNode>();
   for (const newChild of newChildren) {
     const key = newChild.key as string;
-    const oldChild = byKey.get(key);
-    if (oldChild) {
+    const pairing = byKey.get(key);
+    if (pairing) {
+      const oldChild = pairing.node;
       matched.add(oldChild);
       const oldChildEl = oldMap.get(oldChild);
       if (!oldChildEl) {
@@ -3070,18 +3098,23 @@ function reconcileKeyedChildren(
         diag,
       );
       targetEls.push(el);
+      // The rebuilt element `reconcileNode` may hand back was spliced into the
+      // slot the old one held, so a survivor's DOM position is its old index
+      // either way.
+      oldIndexOf.push(pairing.index);
     } else {
       // Fresh mount: `ctx.render` records the new node → element mapping into
       // newMap via `makeMappingTileCtx`, so the next pass sees this child in
       // its map lookup.
       touched.push(tileTouchedId(newChild));
       targetEls.push(ctx.render(newChild));
+      oldIndexOf.push(-1);
     }
   }
-  // Remove unmatched old children from the DOM before reordering — otherwise
-  // `appendChild` calls below would leave them stranded ahead of the moved
-  // survivors. `tile.unmount(X)` lifecycle firing is name-based and driven
-  // by the outer render pass's tree walk, so no per-node unmount hook here.
+  // Remove unmatched old children from the DOM before placing anything —
+  // otherwise a departing child could be the anchor an insert is measured
+  // against. `tile.unmount(X)` lifecycle firing is name-based and driven by the
+  // outer render pass's tree walk, so no per-node unmount hook here.
   for (const oldChild of oldChildren) {
     if (matched.has(oldChild)) continue;
     const oldChildEl = oldMap.get(oldChild);
@@ -3089,11 +3122,89 @@ function reconcileKeyedChildren(
       parentEl.removeChild(oldChildEl);
     }
   }
-  // Reorder: `parentEl.appendChild(el)` moves already-attached elements to
-  // the end and appends fresh ones. Iterating targetEls in order therefore
-  // yields the exact new sequence. Elements already in the correct trailing
-  // position get a no-op move.
-  for (const el of targetEls) parentEl.appendChild(el);
+  const stays = childrenAlreadyInOrder(oldIndexOf);
+  // Right to left, so the anchor for each placement — the child that follows it
+  // — is already final: it either never moved, or it was placed one step ago.
+  // `insertBefore(el, null)` appends, which is what the last child gets when the
+  // parent keeps nothing after its children.
+  for (let i = targetEls.length - 1; i >= 0; i--) {
+    if (stays.has(i)) continue;
+    parentEl.insertBefore(targetEls[i] as HTMLElement, targetEls[i + 1] ?? tailAnchor);
+  }
+}
+
+/**
+ * The node the mounted child list ends against — the first sibling after the
+ * last old child that `parentEl` holds directly, or `null` when the children
+ * run to the end. Inserting before it keeps the list where the renderer put it.
+ *
+ * Reads from the LAST old child on purpose: whatever follows it is by
+ * definition not one of the children, so no rebuild or removal in this pass can
+ * turn the anchor into a stale reference.
+ */
+function childListEnd(
+  parentEl: HTMLElement,
+  oldChildren: TileNode[],
+  oldMap: TileElementMap,
+): ChildNode | null {
+  for (let i = oldChildren.length - 1; i >= 0; i--) {
+    const child = oldChildren[i];
+    if (!child) continue;
+    const el = oldMap.get(child);
+    if (el && el.parentNode === parentEl) return el.nextSibling;
+  }
+  return null;
+}
+
+/**
+ * The positions in the new child list that need no DOM placement: the survivors
+ * whose old positions already ascend, taken as the longest such run so that the
+ * fewest children are left to move. Newcomers (`-1`) are never in the set —
+ * they are not mounted yet, so they always need placing.
+ *
+ * Any increasing run would be correct; the LONGEST one is what makes the move
+ * count minimal, and computing it is the whole reason this is not a sweep.
+ * Patience sorting, O(n log n): `runEnds[l]` holds the index of the smallest
+ * tail among the increasing runs of length `l + 1` seen so far, and `predecessor`
+ * threads each element back through the run it extended.
+ */
+function childrenAlreadyInOrder(oldIndexOf: number[]): Set<number> {
+  const survivors: number[] = [];
+  let ascending = true;
+  let highest = -1;
+  for (let i = 0; i < oldIndexOf.length; i++) {
+    const old = oldIndexOf[i] as number;
+    if (old < 0) continue;
+    if (old < highest) ascending = false;
+    else highest = old;
+    survivors.push(i);
+  }
+  // Already in order — every survivor stays, and the search below would only
+  // arrive at the same answer more slowly. This is the shape of a list that is
+  // re-rendered because something else changed, which is most of them.
+  if (ascending) return new Set(survivors);
+
+  const predecessor = new Array<number>(survivors.length).fill(-1);
+  const runEnds: number[] = [];
+  for (let s = 0; s < survivors.length; s++) {
+    const value = oldIndexOf[survivors[s] as number] as number;
+    let lo = 0;
+    let hi = runEnds.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((oldIndexOf[survivors[runEnds[mid] as number] as number] as number) < value) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) predecessor[s] = runEnds[lo - 1] as number;
+    runEnds[lo] = s;
+  }
+  const stays = new Set<number>();
+  let cursor = runEnds.length > 0 ? (runEnds[runEnds.length - 1] as number) : -1;
+  while (cursor >= 0) {
+    stays.add(survivors[cursor] as number);
+    cursor = predecessor[cursor] as number;
+  }
+  return stays;
 }
 
 function replaceWithFreshTile(
