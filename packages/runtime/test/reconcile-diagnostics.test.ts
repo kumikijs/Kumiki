@@ -483,6 +483,109 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
+  it("stays quiet when a list grows from empty", () => {
+    // Nothing was lost: the parent kept its element and every child is new, so
+    // there was no identity to preserve in the first place. Reporting
+    // `child-count-change` here used to send authors looking for keys they had
+    // already added.
+    let order: string[] = [];
+    const app = appOf(() => ({
+      kind: "column",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("stays quiet when a list is cleared to empty", () => {
+    let order = ["a", "b", "c"];
+    const app = appOf(() => ({
+      kind: "column",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = [];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("stays quiet for a wrapping parent whose list grows from empty", () => {
+    // `overlay` cannot key-match, but the empty boundary never asks it to: the
+    // renderer is re-entered for the interior, so neither the placement decline
+    // nor the length rebuild happened.
+    let order: string[] = [];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("reports a newcomer the parent renderer has nowhere to put", () => {
+    // With one mounted child the placement probe truthfully reports "nothing is
+    // wrapped" — `overlay` places its first child directly. It cannot speak for
+    // the slot the SECOND child would get, so the walker reads the renderer's
+    // declared placement instead, declines, and the structural walk rebuilds.
+    let order = ["solo"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["solo", "b"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["unplaceable-insert", "child-count-change"]);
+    expect(seen).toContainEqual(
+      expect.objectContaining({ reason: "unplaceable-insert", index: 1, childKind: "text" }),
+    );
+    dispose();
+  });
+
+  it("says the newcomer could not be placed, not that the child was wrapped", () => {
+    // `wrapped-children` names a child that IS wrapped right now;
+    // `unplaceable-insert` names one that cannot be mounted at all. Conflating
+    // them would point the author at the wrong element.
+    let order = ["solo"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      props: { _tile: "Stack" },
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["solo", "b"];
+    app._rerender?.();
+
+    const d = seen.find(
+      (x) => x.kind === "reconcile-fallback" && x.reason === "unplaceable-insert",
+    ) as RuntimeDiagnostic;
+    expect(describeDiagnostic(d)).toBe(
+      "reconcile could not key-match Stack (overlay)'s children: unplaceable-insert (children[1], a text, is new, and this parent's renderer does not place every child directly under its own element, so the keyed matcher could not mount it into the slot the renderer would have given it)",
+    );
+    dispose();
+  });
+
   it("stays quiet when the parent places its keyed children directly", () => {
     // The placement check must not fire for the ordinary containers, or every
     // keyed list in the app would report a fallback it did not take.

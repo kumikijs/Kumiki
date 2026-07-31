@@ -212,10 +212,11 @@ export function describeDiagnostic(d: RuntimeDiagnostic): string {
   if (d.kind === "stale-closure-risk") {
     return `${where} was reused with the PREVIOUS render's ${d.field} — the new one will never fire`;
   }
-  // `wrapped-children` is the one fallback that does not rebuild anything: the
-  // keyed matcher stood down and the positional walk took over, so saying
-  // "rebuilt" would send the reader looking for churn that is not there.
-  if (d.reason === "wrapped-children") {
+  // The two placement fallbacks rebuild nothing on their own: the keyed matcher
+  // stood down and the positional walk took over, so saying "rebuilt" would
+  // send the reader looking for churn that is not there. (A length change on
+  // the same parent still reports `child-count-change` separately.)
+  if (d.reason === "wrapped-children" || d.reason === "unplaceable-insert") {
     return `reconcile could not key-match ${where}'s children: ${describeFallback(d)}`;
   }
   return `reconcile rebuilt ${where} instead of reusing it: ${describeFallback(d)}`;
@@ -233,6 +234,8 @@ function describeFallback(f: ReconcileFallback): string {
       return `child-unmapped (children[${f.index}], a ${f.childKind}, was built outside ctx.render)`;
     case "wrapped-children":
       return `wrapped-children (children[${f.index}], a ${f.childKind}, is wrapped by its parent's renderer instead of sitting directly under it, so reorder fell back to positional matching)`;
+    case "unplaceable-insert":
+      return `unplaceable-insert (children[${f.index}], a ${f.childKind}, is new, and this parent's renderer does not place every child directly under its own element, so the keyed matcher could not mount it into the slot the renderer would have given it)`;
     default:
       // Exhaustiveness: a new reason must be given wording here, not silently
       // fall through to a message that names none of its evidence.

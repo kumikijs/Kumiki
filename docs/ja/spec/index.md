@@ -160,4 +160,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `57-editable-preserves-focus.kumiki` | tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
 | `58-unkeyed-conditional-rebuild.kumiki` | tile | コア | [§10.3.12](./runtime.md#_10-3-12-reconcile-の診断) |
 | `59-overlay-keyed-layers.kumiki` | tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
+| `60-empty-state-keyed-list.kumiki` | tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 <!-- examples:end -->
