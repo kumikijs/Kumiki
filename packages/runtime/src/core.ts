@@ -393,7 +393,18 @@ export type ReconcileFallback =
    * renderer hits this by appending children to anything other than the
    * element it returns.
    */
-  | { reason: "wrapped-children"; index: number; childKind: string };
+  | { reason: "wrapped-children"; index: number; childKind: string }
+  /**
+   * Every child carried a `key` and every mounted one sits directly under the
+   * parent element — but the new child at `index` is a newcomer, and this
+   * parent's renderer does not place every child directly (`overlay` wraps all
+   * but the first; the surfaces wrap all of theirs in a content div). The
+   * mounted children can only testify about the slots that already exist, so a
+   * short list looks placeable right up until it grows. The keyed matcher
+   * declined rather than append the newcomer bare, and the positional walk ran
+   * instead. `childKind` names the newcomer.
+   */
+  | { reason: "unplaceable-insert"; index: number; childKind: string };
 
 /**
  * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
@@ -2696,22 +2707,22 @@ function reconcileNode(
     newMap.set(newNode, oldEl);
     return oldEl;
   }
+  if (oldChildren.length === 0 || newChildren.length === 0) {
+    return adoptFreshChildren(oldEl, newNode, newChildren, ctx, newMap, touched);
+  }
   // Keyed path — all-or-nothing per parent. When every child on both sides
   // carries a `key`, we match children by key across renders and survive
   // reorder / insert / remove without rebuilding the subtree. Mixed or
   // absent keys fall through to the structural walk below.
   //
   // Second condition: that pass MOVES and REMOVES child elements addressed
-  // against `oldEl`, so it may only run when `oldEl` is the node that actually
-  // holds those slots. A renderer that wraps its children owns their placement
-  // and the walker must not reach past it.
+  // against `oldEl`, and MOUNTS newcomers there, so it may only run when
+  // `oldEl` is the node that actually holds those slots. A renderer that wraps
+  // its children owns their placement and the walker must not reach past it.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    const wrapped = firstWrappedChild(oldEl, oldChildren, oldMap);
-    if (wrapped) {
-      diag?.fallback(
-        { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind },
-        newNode,
-      );
+    const blocker = keyedPassBlocker(oldEl, newNode, oldChildren, newChildren, oldMap);
+    if (blocker) {
+      diag?.fallback(blocker, newNode);
       // Fall through to the structural walk: it never repositions anything, so
       // it stays correct under a wrapping renderer. When the length also
       // changed it then rebuilds the parent and reports `child-count-change`
@@ -2788,9 +2799,166 @@ function reconcileNode(
 }
 
 function allChildrenKeyed(nodes: TileNode[]): boolean {
+  // An empty list never reaches here — `reconcileNode` peels both the
+  // both-empty and the one-side-empty cases off ahead of the keyed gate — so
+  // the `false` below is about totality, not about a decision.
   if (nodes.length === 0) return false;
   for (const n of nodes) if (!n || typeof n.key !== "string") return false;
   return true;
+}
+
+/**
+ * Rebuild the interior of a tile whose child list is empty on exactly one side
+ * of this render, keeping the mounted element itself.
+ *
+ * With one side empty there is nothing to match — not by key, not by position.
+ * Every new child is a fresh mount and every old child departs, so the only
+ * question left is WHERE the new children go, and that answer belongs to the
+ * parent's renderer: `overlay` wraps every child after the first in a
+ * positioning layer, the surfaces wrap all of theirs in a content div, and a
+ * host renderer may wrap arbitrarily. `firstWrappedChild` normally answers it
+ * by looking at where the mounted children sit — but with none left it has
+ * nothing to testify with, and appending the newcomers straight onto `oldEl`
+ * would strip a wrapping renderer's structure.
+ *
+ * So re-enter the renderer for the whole node and move only its interior into
+ * the element we are keeping. The result is what a full render would have
+ * produced, minus the one thing this exists to save: the parent's own element,
+ * with the browser-owned state and listeners it was mounted with. The
+ * decision needs no key on either side, because keys had nothing to match.
+ *
+ * Known limitation: a renderer's non-child interior is rebuilt too (`details`'
+ * `<summary>`, a surface's content wrapper and title). That is strictly less
+ * than the whole-parent rebuild this replaces, but it is not nothing — the
+ * complete answer is a `ctx` seam that lets a renderer refill its own child
+ * slots, which does not exist yet.
+ */
+function adoptFreshChildren(
+  oldEl: HTMLElement,
+  newNode: TileNode,
+  newChildren: TileNode[],
+  ctx: TileCtx,
+  newMap: TileElementMap,
+  touched: string[],
+): HTMLElement {
+  // Render BEFORE touching `oldEl`: a renderer that throws must leave the
+  // mounted element exactly as it was, so the only thing that rewrites the DOM
+  // is the outer bailout's full rebuild.
+  const fresh = ctx.render(newNode);
+  oldEl.replaceChildren(...Array.from(fresh.childNodes));
+  // `ctx.render` mapped `newNode` onto the element we just discarded; the
+  // descendants it mapped are the ones we adopted, so only this entry is wrong.
+  newMap.set(newNode, oldEl);
+  if (newChildren.length === 0) {
+    // Per-child would report nothing at all for a render that visibly emptied
+    // the DOM. The parent is what changed, and it is what the rebuild path this
+    // replaces used to name.
+    touched.push(tileTouchedId(newNode));
+  } else {
+    // Same granularity as a keyed fresh insert: each new child is the root of a
+    // subtree that was just mounted.
+    //
+    // An empty slot is skipped rather than reported. The positional walk emits
+    // `child-hole` because a hole desynchronises it from the old list and costs
+    // a rebuild — here the whole list went through the renderer, which drops
+    // nils itself, so nothing was lost and there is no fallback to name. What a
+    // hole means for this loop is only that no element was mounted for it, and
+    // therefore that it has nothing to contribute.
+    for (const child of newChildren) if (child) touched.push(tileTouchedId(child));
+  }
+  return oldEl;
+}
+
+/**
+ * Built-in kinds whose renderer does NOT place every child directly under the
+ * element it returns. `overlay` puts child[0] in normal flow and wraps the rest
+ * in absolutely-positioned layers; `modal` / `drawer` / `popover` wrap all of
+ * theirs in a content div beside the surface's own chrome.
+ *
+ * This is a declaration rather than a measurement because a measurement can
+ * only speak for slots that already exist (see `keyedPassBlocker`), and only
+ * `overlay` actually needs it — a renderer that wraps EVERY child is caught by
+ * the measurement as soon as one is mounted. The other three are listed anyway
+ * so the set means what it says, which is what lets it be checked against the
+ * DOM those renderers produce.
+ *
+ * Host renderers are absent on purpose: §10.3.10 asks them to place their
+ * children directly under the element they return, so an unknown kind is taken
+ * at its word — declining for every unknown kind would cost every well-behaved
+ * host integration its keyed inserts. A host renderer shaped like `overlay`
+ * (first child direct, rest wrapped) is therefore the one remaining blind spot,
+ * and it needs a seam of its own rather than a guess here.
+ *
+ * Frozen because it is exported: the reconcile path reads it on every keyed
+ * render under a wrapping parent, and a caller mutating it would silently
+ * redefine the contract.
+ */
+export const WRAPPING_TILE_KINDS: readonly string[] = Object.freeze([
+  "overlay",
+  "modal",
+  "drawer",
+  "popover",
+]);
+
+const WRAPPING_TILE_KIND_SET: ReadonlySet<string> = new Set(WRAPPING_TILE_KINDS);
+
+/**
+ * Why the keyed child pass may not run for this parent — `undefined` when it
+ * may. Two independent things can stand in its way, and they answer different
+ * questions:
+ *
+ * - **Where the mounted children are.** Measured, because the DOM knows.
+ *   Survivors are moved and departures removed by addressing `parentEl`, so a
+ *   child mounted below a renderer-owned wrapper puts the whole pass out of
+ *   reach.
+ * - **Where a newcomer would go.** Declared, because nothing can measure a slot
+ *   that does not exist yet. `overlay` places its first child directly, so a
+ *   one-child overlay measures as fully placeable right up until it grows — and
+ *   the keyed pass would then append the second child bare, with no layer
+ *   around it and no complaint.
+ *
+ * The declaration only bites when there IS a newcomer: a render that keeps the
+ * same membership has nothing to place, so it still takes the keyed path.
+ */
+function keyedPassBlocker(
+  parentEl: HTMLElement,
+  parentNode: TileNode,
+  oldChildren: TileNode[],
+  newChildren: TileNode[],
+  oldMap: TileElementMap,
+): ReconcileFallback | undefined {
+  const wrapped = firstWrappedChild(parentEl, oldChildren, oldMap);
+  if (wrapped) {
+    return { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind };
+  }
+  if (!WRAPPING_TILE_KIND_SET.has(parentNode.kind)) return undefined;
+  const newcomer = firstUnmatchedChild(oldChildren, newChildren);
+  if (!newcomer) return undefined;
+  return {
+    reason: "unplaceable-insert",
+    index: newcomer.index,
+    childKind: newcomer.childKind,
+  };
+}
+
+/**
+ * The first new child whose key no old sibling carries — the newcomer that the
+ * keyed pass would have to mount, and therefore the one thing it needs a slot
+ * for that no mounted child can vouch for. `undefined` means this render only
+ * moves and drops children that already exist, which addresses slots the parent
+ * demonstrably holds.
+ */
+function firstUnmatchedChild(
+  oldChildren: TileNode[],
+  newChildren: TileNode[],
+): { index: number; childKind: string } | undefined {
+  const oldKeys = new Set<string>();
+  for (const child of oldChildren) if (typeof child?.key === "string") oldKeys.add(child.key);
+  for (let i = 0; i < newChildren.length; i++) {
+    const child = newChildren[i];
+    if (child && !oldKeys.has(child.key as string)) return { index: i, childKind: child.kind };
+  }
+  return undefined;
 }
 
 /**

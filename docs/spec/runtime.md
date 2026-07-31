@@ -221,24 +221,55 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   parent's subtree). When any child is missing a `key`, the reconciler falls
   back to the pre-#188 structural walk (position + `kind` + data-prop
   equality; length change → rebuild).
+- **A child list that is empty on exactly one side of a render is decided
+  before keys are consulted at all.** With nothing on the old side there is no
+  pairing to attempt — every new child is a fresh mount, every old child
+  departs — so keys have nothing to match and the rule above has nothing to
+  say. What is left is *where* the new children go, which only the parent's
+  renderer knows, so the runtime re-enters that renderer for a fresh interior
+  and moves it into the mounted element. The parent keeps its own element (and
+  the browser-owned state on it) and neither `child-count-change` nor
+  `wrapped-children` is reported, for a keyed and an unkeyed list alike. Two
+  consequences worth knowing: a wrapping renderer stays correct here, because
+  the renderer itself did the placing; and the renderer's non-child interior
+  (a `details`' `<summary>`, a surface's content wrapper and title) is rebuilt
+  along with the children.
+  This is the "empty state → first item" transition — an empty todo list, a
+  result set before the first query, an empty cart — and it only reaches this
+  path when the container's children are **only** the loop. A `for` sharing a
+  parent with static siblings never empties that parent's child list.
 - Keyed matching additionally requires that the parent's renderer **place its
   children directly under its own element**. Matching by key is only half the
-  work: the reconciler then moves survivors and drops departures by addressing
-  the parent element, which it can only do for slots the parent element holds.
-  Of the current built-ins only `overlay` fails this: it puts every child
-  after the first in a positioning layer, so those children's elements are
-  mounted a level below the overlay. There the reconciler declines the keyed
-  match, reports `wrapped-children` (§10.3.12), and runs the structural walk,
-  which never repositions anything and stays correct under a wrapping
-  renderer. A host renderer opts out the same way by appending children to
-  anything other than the element it returns — so put a reorderable keyed list
-  under a plain container (`column` / `row` / `list`), and keep host
-  renderers' children directly under their root element.
-- The two diagnostics can both fire for one parent in the same render: a
-  wrapping parent whose keyed child list also changed length reports
-  `wrapped-children` (the keys went unused) and then `child-count-change` (the
-  structural walk rebuilt it anyway). They name different facts, and fixing
-  the first is what makes the second stop mattering.
+  work: the reconciler then moves survivors, drops departures, and mounts
+  newcomers by addressing the parent element, which it can only do for slots
+  the parent element holds. Two independent checks answer that, because they
+  answer different questions:
+  - **Where the mounted children are** is measured from the DOM. A child
+    mounted below a renderer-owned wrapper puts the pass out of reach; the
+    reconciler declines and reports `wrapped-children` (§10.3.12).
+  - **Where a newcomer would go** is read from the renderer's declared
+    placement, because nothing can measure a slot that does not exist yet.
+    `overlay` places its first child directly and wraps the rest, so a
+    one-layer overlay measures as fully placeable right up until it grows —
+    and the keyed pass would then append the second layer bare. When a keyed
+    list under such a parent gains a member the reconciler declines and
+    reports `unplaceable-insert` (§10.3.12). A same-membership render has
+    nothing to place and still takes the keyed path.
+
+  Of the current built-ins, `overlay` wraps every child after the first in a
+  positioning layer, and `modal` / `drawer` / `popover` wrap all of theirs in a
+  content div. A host renderer opts out the same way by appending children to
+  anything other than the element it returns; the declared set covers built-ins
+  only, so a host renderer is taken at its word and must place its children
+  directly. Put a reorderable or growing keyed list under a plain container
+  (`column` / `row` / `list`), and keep host renderers' children directly under
+  their root element.
+- The diagnostics can both fire for one parent in the same render: a wrapping
+  parent whose keyed child list also changed length reports the placement
+  decline (`wrapped-children` or `unplaceable-insert` — the keys went unused)
+  and then `child-count-change` (the structural walk rebuilt it anyway). They
+  name different facts, and fixing the first is what makes the second stop
+  mattering.
 
 **What the compiler emits.**
 
@@ -358,10 +389,11 @@ actionable without re-deriving it from the source:
 | reason | evidence | what was lost |
 |---|---|---|
 | `no-patcher` | — | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
-| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. |
+| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. Never fires when one side of the change is empty — that boundary keeps the parent regardless of keys (§10.3.10). |
 | `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. |
 | `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. |
-| `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly (§10.3.10), so the keyed matcher stood down and the positional walk ran. The only reason that rebuilds nothing: what is lost is reorder-stable element identity, not the subtree. |
+| `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly (§10.3.10), so the keyed matcher stood down and the positional walk ran. Rebuilds nothing on its own: what is lost is reorder-stable element identity, not the subtree. |
+| `unplaceable-insert` | `index`, `childKind` | Every child carried a `key` and every mounted one sits directly under the parent — but the new child at `index` is a newcomer under a renderer that does not place every child directly (§10.3.10), so there is no slot the keyed matcher may mount it into. A short list measures as placeable right up until it grows, which is why this is read from the renderer rather than from the DOM. Rebuilds nothing on its own; the positional walk that follows reports `child-count-change` if the length changed. |
 
 Two rebuild paths are deliberately **not** reported. A `kind` change means a
 different thing occupies that position, so there is no identity to preserve.

@@ -483,6 +483,164 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
+  it("stays quiet when a list grows from empty", () => {
+    // Nothing was lost: the parent kept its element and every child is new, so
+    // there was no identity to preserve in the first place. Reporting
+    // `child-count-change` here used to send authors looking for keys they had
+    // already added.
+    let order: string[] = [];
+    const app = appOf(() => ({
+      kind: "column",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("stays quiet when a list is cleared to empty", () => {
+    let order = ["a", "b", "c"];
+    const app = appOf(() => ({
+      kind: "column",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = [];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("stays quiet for a wrapping parent whose list grows from empty", () => {
+    // `overlay` cannot key-match, but the empty boundary never asks it to: the
+    // renderer is re-entered for the interior, so neither the placement decline
+    // nor the length rebuild happened.
+    let order: string[] = [];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("reports a newcomer the parent renderer has nowhere to put", () => {
+    // With one mounted child the placement probe truthfully reports "nothing is
+    // wrapped" — `overlay` places its first child directly. It cannot speak for
+    // the slot the SECOND child would get, so the walker reads the renderer's
+    // declared placement instead, declines, and the structural walk rebuilds.
+    let order = ["solo"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["solo", "b"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["unplaceable-insert", "child-count-change"]);
+    expect(seen).toContainEqual(
+      expect.objectContaining({ reason: "unplaceable-insert", index: 1, childKind: "text" }),
+    );
+    dispose();
+  });
+
+  it.each([
+    "modal",
+    "drawer",
+    "popover",
+  ] as const)("reports a %s's growth from the measurement, not from the declaration", (kind) => {
+    // The surfaces wrap every child, so one mounted child is already enough
+    // for the placement measurement to answer — and a measurement that can
+    // answer always wins. Their entry in the declared set is redundant for
+    // these renders, and this pins that it stays redundant rather than
+    // producing a second, competing diagnostic.
+    let order = ["a"];
+    const app = appOf(() => ({
+      kind,
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["a", "b"];
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["wrapped-children", "child-count-change"]);
+    dispose();
+  });
+
+  it("stays quiet for an empty slot in a list that grows from empty", () => {
+    // `child-hole` exists because a hole desynchronises the positional walk
+    // from the old list and costs a rebuild. Growing from empty has no old list
+    // to desynchronise from, and the renderer drops nils itself — so the DOM is
+    // right and there is no fallback to report. Deliberate, not an oversight:
+    // the same tree on a same-length render still reports.
+    let filled = false;
+    const app = appOf(() => ({
+      kind: "column",
+      children: filled
+        ? ([
+            { kind: "text" as const, text: "a", key: "a" },
+            null,
+            { kind: "text" as const, text: "b", key: "b" },
+          ] as unknown as TileNode[])
+        : [],
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+    const column = root.firstElementChild as HTMLElement;
+
+    filled = true;
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual([]);
+    expect(root.firstElementChild).toBe(column);
+    expect(Array.from(column.children).map((e) => e.textContent)).toEqual(["a", "b"]);
+    dispose();
+  });
+
+  it("says the newcomer could not be placed, not that the child was wrapped", () => {
+    // `wrapped-children` names a child that IS wrapped right now;
+    // `unplaceable-insert` names one that cannot be mounted at all. Conflating
+    // them would point the author at the wrong element.
+    let order = ["solo"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      props: { _tile: "Stack" },
+      children: order.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    order = ["solo", "b"];
+    app._rerender?.();
+
+    const d = seen.find(
+      (x) => x.kind === "reconcile-fallback" && x.reason === "unplaceable-insert",
+    ) as RuntimeDiagnostic;
+    expect(describeDiagnostic(d)).toBe(
+      "reconcile could not key-match Stack (overlay)'s children: unplaceable-insert (children[1], a text, is new, and this parent's renderer does not place every child directly under its own element, so the keyed matcher could not mount it into the slot the renderer would have given it)",
+    );
+    dispose();
+  });
+
   it("stays quiet when the parent places its keyed children directly", () => {
     // The placement check must not fire for the ordinary containers, or every
     // keyed list in the app would report a fallback it did not take.

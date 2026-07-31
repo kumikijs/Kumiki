@@ -6,9 +6,28 @@
 // through the snapshot-restore fallback (which only exists as a safety net for
 // tiles that DID change).
 
-import type { AppShape, Episode, EpisodeLogger, ReducerSpec, TileNode } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import type {
+  AppShape,
+  Episode,
+  EpisodeLogger,
+  ReducerSpec,
+  TileNode,
+  TileRenderers,
+} from "@kumikijs/runtime";
+import {
+  collectionTiles,
+  createEpisodeLogger,
+  inputTiles,
+  layoutTiles,
+  mediaTiles,
+  mount,
+  mountCore,
+  overlayTiles,
+  statusTiles,
+  textTiles,
+} from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { WRAPPING_TILE_KINDS } from "../src/core.ts";
 
 function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpec {
   return {
@@ -1082,6 +1101,60 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
     expect(lastBindsUpdated(committed)).toEqual(["text"]);
     dispose();
   });
+
+  /** A keyed column whose whole child list is swapped by one dispatch. */
+  function listSwapApp(before: string[], after: string[]): AppShape {
+    let items = before;
+    return {
+      slots: { rev: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "swap",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            items = after;
+            return { slots: { rev: ((s.rev as number) ?? 0) + 1 }, emits: [] };
+          },
+        },
+      ],
+      root: (): TileNode => ({
+        kind: "column",
+        children: items.map((id): TileNode => ({ kind: "text", text: id, key: id })),
+      }),
+    };
+  }
+
+  it("emits each freshly mounted child when a list grows from empty", () => {
+    // Same granularity as a keyed insert: each new child is the root of a
+    // subtree that was just mounted, and the parent kept its element.
+    const app = listSwapApp([], ["a", "b", "c"]);
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    (app as unknown as DispatchApp)._dispatch("swap", {});
+
+    expect(lastBindsUpdated(committed)).toEqual(["a", "b", "c"]);
+    dispose();
+  });
+
+  it("emits the parent when a list is cleared to empty", () => {
+    // Per-child would give `[]` here — indistinguishable from "the diff found
+    // nothing to do", for a render that visibly emptied the DOM. The parent is
+    // what changed, and it is what the rebuild path used to report.
+    const app = listSwapApp(["a", "b"], []);
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+    expect(root.firstElementChild?.children.length).toBe(2);
+
+    (app as unknown as DispatchApp)._dispatch("swap", {});
+
+    expect(root.firstElementChild?.children.length).toBe(0);
+    expect(lastBindsUpdated(committed)).toEqual(["column"]);
+    dispose();
+  });
 });
 
 // Per-kind identity-preserving patch (#190). These lock in the invariant
@@ -1608,5 +1681,515 @@ describe("runtime: reconcile child-placement contract", () => {
 
     expect(Array.from(column.children)).toEqual([ec, ea, eb]);
     dispose();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Empty-side child lists. A parent whose child list is empty on exactly one side
+// of a render has nothing to match — not by key, not by position. Every new
+// child is a fresh mount and every old child departs, so the only question left
+// is WHERE the new children go, and the answer belongs to the parent's renderer
+// (`overlay` wraps every child after the first in a positioning layer; the
+// surfaces wrap all of theirs in a content div). With no mounted child left, the
+// placement probe that normally answers that has nothing to testify with — which
+// is why the walker re-enters the renderer for a fresh interior and moves that
+// into the element it is keeping, instead of rebuilding the parent.
+
+function emptySideApp(root: () => TileNode): AppShape {
+  return { slots: {}, caps: [], effects: {}, init: [], reducers: [], root };
+}
+
+const overlayLayerDivs = (el: HTMLElement): HTMLElement[] =>
+  Array.from(el.children).filter(
+    (c) => (c as HTMLElement).dataset.kumikiTile === "overlay-layer",
+  ) as HTMLElement[];
+
+describe("runtime: child lists that are empty on one side", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  function rowsApp(getOrder: () => string[], kind: TileNode["kind"] = "column"): AppShape {
+    return emptySideApp(
+      () =>
+        ({
+          kind,
+          summary: "disclosure",
+          children: getOrder().map((id) => ({ kind: "text", text: `row ${id}`, key: id })),
+        }) as TileNode,
+    );
+  }
+
+  it("keeps the parent element and mounts only the new children when a list grows from empty", () => {
+    let order: string[] = [];
+    const app = rowsApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    expect(column.children.length).toBe(0);
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(column);
+    expect(Array.from(column.children).map((e) => e.textContent)).toEqual([
+      "row a",
+      "row b",
+      "row c",
+    ]);
+    dispose();
+  });
+
+  it("keeps the parent element when a keyed list is cleared to empty", () => {
+    let order = ["a", "b", "c"];
+    const app = rowsApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    expect(column.children.length).toBe(3);
+
+    order = [];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(column);
+    expect(column.children.length).toBe(0);
+    dispose();
+  });
+
+  it("preserves the parent's browser-owned state across a clear and a refill", () => {
+    // happy-dom has no layout, so `scrollTop` cannot stand in for "the element
+    // survived". A seeded expando can: it lives on the instance and dies with
+    // it, which is exactly the thing the rebuild path used to take away.
+    let order = ["a", "b"];
+    const app = rowsApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    column.dataset.probe = "seeded";
+
+    order = [];
+    app._rerender?.();
+    order = ["c"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(column);
+    expect(column.dataset.probe).toBe("seeded");
+    expect(column.textContent).toBe("row c");
+    dispose();
+  });
+
+  it("wraps the new children through the parent's renderer when the old list was empty", () => {
+    // The hazard the whole design turns on. `overlay` places child[0] in normal
+    // flow and wraps the rest in absolutely-positioned layers. Appending the new
+    // children straight onto the overlay — which is what the keyed pass does,
+    // and what an "empty lists are keyed" one-liner would have let it do here —
+    // produces three bare siblings and no stacking at all.
+    let order: string[] = [];
+    const app = rowsApp(() => order, "overlay");
+    const { dispose } = mount(app, root);
+    const overlay = root.firstElementChild as HTMLElement;
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(overlay);
+    expect(overlay.children.length).toBe(3);
+    const layers = overlayLayerDivs(overlay);
+    expect(layers.length).toBe(2);
+    for (const layer of layers) {
+      expect(layer.children.length).toBe(1);
+      expect(layer.style.position).toBe("absolute");
+    }
+    expect((overlay.children[0] as HTMLElement).dataset.kumikiTile).toBe("text");
+    expect(overlay.textContent).toBe("row arow brow c");
+    dispose();
+  });
+
+  it("clears a wrapped list without stranding its layers", () => {
+    let order = ["a", "b", "c"];
+    const app = rowsApp(() => order, "overlay");
+    const { dispose } = mount(app, root);
+    const overlay = root.firstElementChild as HTMLElement;
+    expect(overlayLayerDivs(overlay).length).toBe(2);
+
+    order = [];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(overlay);
+    expect(overlay.children.length).toBe(0);
+    dispose();
+  });
+
+  it.each([
+    "modal",
+    "drawer",
+    "popover",
+  ] as const)("fills a %s through its content wrapper, not onto the surface itself", (kind) => {
+    // The surfaces wrap ALL of their children, so unlike `overlay` they are
+    // caught by the placement measurement the moment one child is mounted —
+    // but at zero there is nothing to measure, and this is the path that
+    // decides where the first ones land.
+    let order: string[] = [];
+    const app = rowsApp(() => order, kind);
+    const { dispose } = mount(app, root);
+    const surface = root.firstElementChild as HTMLElement;
+
+    order = ["a", "b"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(surface);
+    const content = surface.children[0] as HTMLElement;
+    expect(content.dataset.kumikiTile).toBe(`${kind}-content`);
+    expect(surface.children.length).toBe(1);
+    expect(Array.from(content.children).map((e) => e.textContent)).toEqual(["row a", "row b"]);
+    dispose();
+  });
+
+  it("rebuilds the renderer's own interior alongside the children", () => {
+    // `details` owns a `<summary>` that is not a tile child. Emptying `oldEl`
+    // and appending the new children would drop it; re-entering the renderer
+    // brings it back, and `open` rides on the retained element itself.
+    let order = ["a", "b"];
+    const app = rowsApp(() => order, "details");
+    const { dispose } = mount(app, root);
+    const det = root.firstElementChild as HTMLDetailsElement;
+    det.open = true;
+
+    order = [];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(det);
+    expect(det.open).toBe(true);
+    expect(det.querySelector("summary")?.textContent).toBe("disclosure");
+
+    order = ["c"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(det);
+    expect(det.open).toBe(true);
+    expect(det.querySelector("summary")?.textContent).toBe("disclosure");
+    expect(det.textContent).toBe("disclosurerow c");
+    dispose();
+  });
+
+  it("keeps a <ul> across a list that fills from empty", () => {
+    let order: string[] = [];
+    const app = emptySideApp(() => ({
+      kind: "list",
+      children: order.map((id) => ({ kind: "list-item", children: [], key: id })),
+    }));
+    const { dispose } = mount(app, root);
+    const ul = root.firstElementChild as HTMLElement;
+    expect(ul.tagName).toBe("UL");
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(ul);
+    expect(ul.querySelectorAll("li").length).toBe(3);
+    dispose();
+  });
+
+  it("keeps the parent when an UNKEYED list grows from empty", () => {
+    // The empty boundary is key-agnostic: with nothing on the old side there is
+    // nothing keys could have matched against. `column(when(open, X))` is the
+    // commonest shape this reaches, and it carries no key at all.
+    let open = false;
+    const app = emptySideApp(() => ({
+      kind: "column",
+      children: open ? [{ kind: "text", text: "hint" }] : [],
+    }));
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    column.dataset.probe = "seeded";
+
+    open = true;
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(column);
+    expect(column.dataset.probe).toBe("seeded");
+    expect(column.textContent).toBe("hint");
+    dispose();
+  });
+
+  it("does not re-enter the renderer when both sides are empty", () => {
+    // Ordering guard: the both-empty early return must stay ahead of the new
+    // branch, or every render of a childless container would rebuild its
+    // interior for nothing.
+    let heading = "one";
+    let renders = 0;
+    const counting: TileRenderers = {
+      ...layoutTiles,
+      column(node, ctx) {
+        renders++;
+        return (layoutTiles as Required<TileRenderers>).column(node, ctx);
+      },
+    };
+    const app = emptySideApp(() => ({
+      kind: "column",
+      children: [
+        { kind: "heading", text: heading },
+        { kind: "column", children: [] },
+      ],
+    }));
+    const { dispose } = mount(app, root, { tiles: counting });
+    const inner = (root.firstElementChild as HTMLElement).children[1] as HTMLElement;
+    const before = renders;
+
+    heading = "two";
+    app._rerender?.();
+
+    expect(renders).toBe(before);
+    expect((root.firstElementChild as HTMLElement).children[1]).toBe(inner);
+    dispose();
+  });
+
+  it("hands the refilled list back to the ordinary keyed pass on the next render", () => {
+    // The new branch overwrites the node→element mapping the fresh render made.
+    // If it did not, the following render would look its children up in the map,
+    // miss, and throw the keyed pass's invariant error.
+    let order: string[] = [];
+    const app = rowsApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+
+    order = ["a", "b", "c"];
+    app._rerender?.();
+    const [ea, eb, ec] = Array.from(column.children) as HTMLElement[];
+
+    order = ["c", "a", "b"];
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(column);
+    expect(Array.from(column.children)).toEqual([ec, ea, eb]);
+    dispose();
+  });
+
+  it("leaves the old element untouched when the renderer throws mid-transition", () => {
+    // `ctx.render` runs before `replaceChildren` on purpose: a renderer that
+    // throws must leave the mounted element exactly as it was, so the outer
+    // bailout's full rebuild is the only thing that changes the DOM.
+    let armed = true;
+    let order = ["a", "b", "c"];
+    const oneShot: TileRenderers = {
+      ...layoutTiles,
+      column(node, ctx) {
+        if (armed && (node as { children: TileNode[] }).children.length === 0) {
+          armed = false;
+          throw new Error("renderer refused an empty column");
+        }
+        return (layoutTiles as Required<TileRenderers>).column(node, ctx);
+      },
+    };
+    const app = rowsApp(() => order);
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, { tiles: oneShot });
+      const column = root.firstElementChild as HTMLElement;
+
+      order = [];
+      app._rerender?.();
+
+      // The throw landed in the reconcile bailout, and the element the walker
+      // was holding still carries the children it had before the attempt.
+      expect(errors.flat().map(String).join(" ")).toContain("renderer refused an empty column");
+      expect(column.children.length).toBe(3);
+      expect(root.firstElementChild).not.toBe(column);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+});
+
+describe("runtime: keyed inserts under a renderer that wraps its children", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  it("re-wraps a newcomer that joins a one-child overlay", () => {
+    // `overlay` places its FIRST child directly, so with exactly one mounted
+    // child the placement probe truthfully reports "nothing is wrapped" — and
+    // the keyed pass then appends the newcomer bare, with no layer around it.
+    // The probe can only speak for slots that already exist; whether a NEW child
+    // can be placed is a property of the renderer, not of the current DOM.
+    let order = ["solo"];
+    const app = emptySideApp(() => ({
+      kind: "overlay",
+      children: order.map((id) => ({ kind: "text", text: `layer ${id}`, key: id })),
+    }));
+    const { dispose } = mount(app, root);
+    expect(overlayLayerDivs(root.firstElementChild as HTMLElement).length).toBe(0);
+
+    order = ["solo", "b"];
+    app._rerender?.();
+
+    const overlay = root.firstElementChild as HTMLElement;
+    expect(overlay.children.length).toBe(2);
+    const layers = overlayLayerDivs(overlay);
+    expect(layers.length).toBe(1);
+    expect(layers[0]?.children.length).toBe(1);
+    expect(layers[0]?.textContent).toBe("layer b");
+    expect((overlay.children[0] as HTMLElement).dataset.kumikiTile).toBe("text");
+    dispose();
+  });
+
+  it("still takes the keyed path for a one-child overlay with no newcomer", () => {
+    // The declaration must only bite when there is something to place. A
+    // same-membership render of a single-layer overlay has nothing to insert, so
+    // the keyed pass runs and the mounted element is reused.
+    let text = "one";
+    const app = emptySideApp(() => ({
+      kind: "overlay",
+      children: [{ kind: "text", text, key: "solo" }],
+    }));
+    const { dispose } = mount(app, root);
+    const overlay = root.firstElementChild as HTMLElement;
+    const solo = overlay.children[0] as HTMLElement;
+
+    text = "two";
+    app._rerender?.();
+
+    expect(root.firstElementChild).toBe(overlay);
+    expect(overlay.children[0]).toBe(solo);
+    expect(solo.textContent).toBe("two");
+    dispose();
+  });
+
+  it("takes a host renderer at its word when it places children directly", () => {
+    // The declaration covers built-ins only. Declining for every unknown kind
+    // would be the safe-looking choice and would cost every well-behaved host
+    // integration its keyed inserts — so an unknown kind is trusted, and the
+    // measurement still catches one that wraps as soon as a child is mounted.
+    // Pinned because "unknown ⇒ unsafe" is a tempting future tightening.
+    let order = ["a"];
+    const hostTiles: TileRenderers = {
+      ...layoutTiles,
+      "host-shelf": (node, ctx) => {
+        const el = document.createElement("section");
+        el.dataset.kumikiTile = "host-shelf";
+        for (const child of (node as { children: TileNode[] }).children) {
+          if (child) el.appendChild(ctx.render(child));
+        }
+        return el;
+      },
+    } as TileRenderers;
+    const app = emptySideApp(
+      () =>
+        ({
+          kind: "host-shelf",
+          children: order.map((id) => ({ kind: "text", text: `row ${id}`, key: id })),
+        }) as unknown as TileNode,
+    );
+    const { dispose } = mount(app, root, { tiles: hostTiles });
+    const shelf = root.firstElementChild as HTMLElement;
+    const first = shelf.children[0] as HTMLElement;
+
+    order = ["a", "b"];
+    app._rerender?.();
+
+    // Keyed insert: the survivor kept its element and the newcomer joined it.
+    expect(root.firstElementChild).toBe(shelf);
+    expect(shelf.children[0]).toBe(first);
+    expect(Array.from(shelf.children).map((e) => e.textContent)).toEqual(["row a", "row b"]);
+    dispose();
+  });
+
+  it("agrees with what the built-in renderers actually do with their children", () => {
+    // `WRAPPING_TILE_KINDS` is a declaration, and a declaration can drift from
+    // the renderers it describes. Mount every container kind with two children
+    // and compare the DOM the renderer produced against what the set claims.
+    const containers: Array<TileNode["kind"]> = [
+      "page",
+      "column",
+      "row",
+      "card",
+      "box",
+      "form",
+      "grid",
+      "stack",
+      "region",
+      "scroll",
+      "panel",
+      "fieldset",
+      "overlay",
+      "list",
+      "list-item",
+      "table",
+      "table-head",
+      "table-body",
+      "table-row",
+      "table-cell",
+      "modal",
+      "drawer",
+      "popover",
+      "tooltip",
+      "route-outlet",
+      "details",
+    ];
+    const allTiles: TileRenderers = {
+      ...layoutTiles,
+      ...textTiles,
+      ...inputTiles,
+      ...collectionTiles,
+      ...overlayTiles,
+      ...mediaTiles,
+      ...statusTiles,
+    };
+    const mismatches: string[] = [];
+    for (const kind of containers) {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const app = emptySideApp(
+        () =>
+          ({
+            kind,
+            summary: "s",
+            open: true,
+            children: [
+              { kind: "text", text: "one", key: "a" },
+              { kind: "text", text: "two", key: "b" },
+            ],
+          }) as TileNode,
+      );
+      const { dispose } = mountCore(app, host, { tiles: allTiles });
+      const parent = host.firstElementChild as HTMLElement;
+      const kids = Array.from(parent.querySelectorAll('[data-kumiki-tile="text"]'));
+      if (kids.length !== 2) {
+        mismatches.push(`${kind}: rendered ${kids.length} of its 2 children — update the list`);
+      } else {
+        // Membership, not `child.parentElement === parent`: happy-dom hands out
+        // `<form>` behind a Proxy (for named-item access), so the identity
+        // comparison reports a wrapper that is not there. The structural answer
+        // is what this test is about.
+        const direct = new Set(Array.from(parent.children));
+        const allDirect = kids.every((k) => direct.has(k));
+        if (allDirect === WRAPPING_TILE_KINDS.includes(kind)) {
+          mismatches.push(
+            allDirect
+              ? `${kind}: places its children directly but is listed as wrapping`
+              : `${kind}: wraps its children but is missing from WRAPPING_TILE_KINDS`,
+          );
+        }
+      }
+      dispose();
+      host.remove();
+    }
+    expect(mismatches).toEqual([]);
+    // Nothing may be declared that is not a container at all.
+    expect(
+      [...WRAPPING_TILE_KINDS].filter((k) => !containers.includes(k as TileNode["kind"])),
+    ).toEqual([]);
   });
 });
