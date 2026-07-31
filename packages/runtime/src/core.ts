@@ -3006,10 +3006,10 @@ function firstWrappedChild(
  * already where they belong. `unmount` / `mount` lifecycle firing is
  * centralised in the outer render pass so no per-node hooks are needed here.
  *
- * **Step (4) touches the minimum.** Replaying the whole target sequence with
- * `appendChild` also produces the right order and is one line, but it detaches
- * and re-attaches every child on every render that reaches here — including a
- * render where nothing moved. Re-attaching a node blurs it, and focus, the
+ * **The placement step touches the minimum.** Replaying the whole target
+ * sequence with `appendChild` also produces the right order and is one line, but
+ * it detaches and re-attaches every child on every render that reaches here —
+ * including a render where nothing moved. Re-attaching a node blurs it, and focus, the
  * caret, an open `<select>` and an in-flight IME composition are exactly the
  * state this path exists to keep. So the survivors whose relative order already
  * matches — the longest increasing run of their old positions — stay untouched,
@@ -3111,10 +3111,14 @@ function reconcileKeyedChildren(
       oldIndexOf.push(-1);
     }
   }
-  // Remove unmatched old children from the DOM before placing anything —
-  // otherwise a departing child could be the anchor an insert is measured
-  // against. `tile.unmount(X)` lifecycle firing is name-based and driven by the
-  // outer render pass's tree walk, so no per-node unmount hook here.
+  // Remove unmatched old children from the DOM before placing anything. This is
+  // not load-bearing for the result — no departure can ever be an anchor, since
+  // an anchor is either another entry of `targetEls` or the node the list ends
+  // against — but it means the placement pass runs against the final membership,
+  // so "insert before the child that follows it" is true of the DOM and not only
+  // of the target array. `tile.unmount(X)` lifecycle firing is name-based and
+  // driven by the outer render pass's tree walk, so no per-node unmount hook
+  // here.
   for (const oldChild of oldChildren) {
     if (matched.has(oldChild)) continue;
     const oldChildEl = oldMap.get(oldChild);

@@ -2400,6 +2400,95 @@ describe("runtime: keyed reorder moves the minimum", () => {
     dispose();
   });
 
+  it("mounts, moves and drops in one render and still lands on the new order", () => {
+    // The three things the pass does, interleaved, so their orderings cannot be
+    // right only in isolation: `b` departs, `x` arrives, `d` moves to the front
+    // and `c` stays.
+    let order = ["a", "b", "c", "d"];
+    const app = rowsApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const [, , ec, ed] = Array.from(column.children) as HTMLElement[];
+    const placements = trackPlacements(column);
+
+    order = ["d", "x", "c"];
+    app._rerender?.();
+
+    const after = Array.from(column.children) as HTMLElement[];
+    expect(after.map((e) => e.textContent)).toEqual(["row d", "row x", "row c"]);
+    expect(after[0]).toBe(ed);
+    expect(after[2]).toBe(ec);
+    // `c` is the survivor that stays; `d` is the one move, `x` the one mount.
+    expect(placements.filter((p) => p.moved).length).toBe(1);
+    expect(placements.filter((p) => !p.moved).length).toBe(1);
+    dispose();
+  });
+
+  it("mounts a wholly new list without moving the departing one out of the way", () => {
+    // No key matches, so every child is a mount and every old one a removal.
+    // The survivors' relative order — the thing that normally decides what to
+    // leave alone — has nothing to say here, and the placements have to produce
+    // the order on their own.
+    let order = ["a", "b", "c"];
+    const app = rowsApp(() => order);
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+    const placements = trackPlacements(column);
+
+    order = ["x", "y", "z"];
+    app._rerender?.();
+
+    expect(Array.from(column.children).map((e) => e.textContent)).toEqual([
+      "row x",
+      "row y",
+      "row z",
+    ]);
+    expect(placements.length).toBe(3);
+    expect(placements.some((p) => p.moved)).toBe(false);
+    dispose();
+  });
+
+  it("anchors the tail on where the child list ended, not on a rebuilt child", () => {
+    // The last new child has no successor to insert against, so it takes the
+    // anchor read from the end of the mounted child list. That read has to
+    // happen before any child is rebuilt: `replaceWithFreshTile` splices a new
+    // element into the old one's slot, and the old element — still what the map
+    // holds — is left detached. An anchor derived after that walks back to the
+    // previous child, whose next sibling is now the rebuilt element, and the
+    // tail lands in front of it instead of at the end.
+    //
+    // `c` changes kind, which is the rebuild reconcile performs silently, and
+    // `a` moves to the tail in the same render.
+    let order = ["a", "b", "c"];
+    let cKind: "text" | "heading" = "text";
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "column",
+        children: order.map((id) => ({
+          kind: id === "c" ? cKind : "text",
+          text: `row ${id}`,
+          key: id,
+        })),
+      }),
+    };
+    const { dispose } = mount(app, root);
+    const column = root.firstElementChild as HTMLElement;
+
+    order = ["b", "c", "a"];
+    cKind = "heading";
+    app._rerender?.();
+
+    const after = Array.from(column.children) as HTMLElement[];
+    expect(after.map((e) => e.textContent)).toEqual(["row b", "row c", "row a"]);
+    expect(after[1]?.tagName).toBe("H1");
+    dispose();
+  });
+
   it("keeps a reordered list ahead of content the parent's renderer put after it", () => {
     // The keyed pass owns its children's slots, not the whole parent. A
     // renderer is free to keep its own content on either side of them, and a
@@ -2407,6 +2496,10 @@ describe("runtime: keyed reorder moves the minimum", () => {
     // built-in that places its children directly happens to keep its own
     // content in front of them, so this is written with a host renderer — the
     // integration the placement contract explicitly admits.
+    //
+    // The order moves `a` to the TAIL on purpose: only the last new child
+    // reaches for the end-of-list anchor, so any other permutation would leave
+    // that branch — the one this test exists for — unexercised.
     const hostCard: TileRenderer<"card"> = (node, ctx) => {
       const el = document.createElement("div");
       el.appendChild(document.createElement("header"));
@@ -2431,11 +2524,48 @@ describe("runtime: keyed reorder moves the minimum", () => {
     const shape = (): string[] => Array.from(card.children).map((c) => c.tagName);
     expect(shape()).toEqual(["HEADER", "SPAN", "SPAN", "SPAN", "FOOTER"]);
 
-    order = ["c", "a", "b"];
+    order = ["b", "c", "a"];
     app._rerender?.();
 
     expect(shape()).toEqual(["HEADER", "SPAN", "SPAN", "SPAN", "FOOTER"]);
-    expect(card.textContent).toBe("row crow arow b");
+    expect(card.textContent).toBe("row brow crow a");
+    dispose();
+  });
+
+  it("mounts a newcomer at the tail ahead of the renderer's own trailing content", () => {
+    // The same anchor, reached by a mount rather than a move: a list that grows
+    // at the end has nothing to insert its newcomer against either.
+    const hostCard: TileRenderer<"card"> = (node, ctx) => {
+      const el = document.createElement("div");
+      for (const child of node.children) el.appendChild(ctx.render(child));
+      el.appendChild(document.createElement("footer"));
+      return el;
+    };
+    let order = ["a", "b"];
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => ({
+        kind: "card",
+        children: order.map((id) => ({ kind: "text", text: `row ${id}`, key: id })),
+      }),
+    };
+    const { dispose } = mount(app, root, { tiles: { card: hostCard } as TileRenderers });
+    const card = root.firstElementChild as HTMLElement;
+
+    order = ["a", "b", "x"];
+    app._rerender?.();
+
+    expect(Array.from(card.children).map((c) => c.tagName)).toEqual([
+      "SPAN",
+      "SPAN",
+      "SPAN",
+      "FOOTER",
+    ]);
+    expect(card.textContent).toBe("row arow brow x");
     dispose();
   });
 });

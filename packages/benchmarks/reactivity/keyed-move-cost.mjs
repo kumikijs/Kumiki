@@ -28,10 +28,10 @@
 // by scanning its child array for the reference node — O(n) per call where
 // `appendChild` is a push. A transition that has to move nearly everything
 // (`reverse`) therefore reads SLOWER here than the sweep it replaced, while
-// making one fewer move. That is a property of the fake DOM's child storage,
-// not of the algorithm; browsers index their children. Read the timings for the
-// transitions that got cheaper by not touching untouched children, and read
-// `moves` for the rest.
+// making one fewer move. That is a property of the fake DOM's child storage
+// rather than of the algorithm — a real browser does not pay a scan of the
+// sibling list on each call. Read the timings for the transitions that got
+// cheaper by not touching untouched children, and read `moves` for the rest.
 //
 // Run:
 //   pnpm --filter @kumikijs/benchmarks measure:keyed-moves

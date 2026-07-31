@@ -285,8 +285,11 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   an open `<select>` dropdown and an in-flight IME composition — the state keyed
   matching exists to keep. A focused child that a reorder leaves alone therefore
   keeps it natively, without the snapshot/restore fallback of §10.3.9.
-  Placements are made against the node the mounted child list ends on, so a
-  renderer that keeps content of its own after its children keeps it there.
+  Every placement is made *before* an existing node: the child that follows it
+  in the new order, or — for the last child, which has no successor — the
+  sibling that follows the whole mounted child list (the end of the parent when
+  there is none). So a renderer that keeps content of its own after its children
+  keeps it there.
 
 **What the compiler emits.**
 
