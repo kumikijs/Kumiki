@@ -188,10 +188,12 @@ Since #190 (identity-preserving reconciliation, §10.3.11) the runtime patches e
 same-kind tile in place instead of tearing it down on a data-prop change, so the
 still-mounted `<input>` / `<textarea>` / `<select>` retains browser focus naturally.
 The snapshot/restore layer described below is retained as a **fallback for the
-wholesale-swap paths** — reconcile bailout, panic recovery, keyed reorder that
-moves a focused element between DOM positions — where element identity is
-either lost or the element itself is physically moved and blurred by the
-browser.
+wholesale-swap paths** — reconcile bailout, panic recovery, and a keyed reorder
+that moves the focused element itself — where element identity is either lost or
+the element is physically moved and blurred by the browser. A focused child that
+a reorder leaves in place does not reach the fallback at all: the keyed pass
+places only the children that have to move (§10.3.10), so the cursor never
+leaves.
 
 It maintains the focus and cursor position of an input/textarea being edited even after re-rendering:
 - Elements with `bind=`: re-identified by the `data-kumiki-bind` attribute (a nested path is a full path string)
@@ -270,6 +272,24 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   and then `child-count-change` (the structural walk rebuilt it anyway). They
   name different facts, and fixing the first is what makes the second stop
   mattering.
+- **A keyed reorder moves the minimum.** Matching by key says which old element
+  belongs to which new child; it does not by itself say how many of them have to
+  be touched to produce the new sequence. The reconciler leaves the survivors
+  whose old positions already ascend exactly where they are — the longest such
+  run, so the fewest children are left over — and inserts everything else
+  against its successor. Concretely: a render that does not change the order
+  performs **no DOM placement at all**, a single item moving costs **one**, and
+  the worst case (no two children keeping their relative order) costs N−1.
+  This is a correctness guarantee, not only a throughput one. Re-attaching a
+  node blurs it, so a child that is moved for no reason loses focus, the caret,
+  an open `<select>` dropdown and an in-flight IME composition — the state keyed
+  matching exists to keep. A focused child that a reorder leaves alone therefore
+  keeps it natively, without the snapshot/restore fallback of §10.3.9.
+  Every placement is made *before* an existing node: the child that follows it
+  in the new order, or — for the last child, which has no successor — the
+  sibling that follows the whole mounted child list (the end of the parent when
+  there is none). So a renderer that keeps content of its own after its children
+  keeps it there.
 
 **What the compiler emits.**
 

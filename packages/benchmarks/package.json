@@ -10,6 +10,7 @@
     "measure:scenarios": "tsx size-comparison/scripts/measure-scenarios.mjs",
     "measure:ops": "tsx size-comparison/scripts/measure-ops.mjs",
     "measure:reactivity": "tsx reactivity/reactivity-cost.mjs",
+    "measure:keyed-moves": "tsx reactivity/keyed-move-cost.mjs",
     "eval": "tsx learning-cost/eval.mjs",
     "test": "vitest run",
     "lint": "biome check ."

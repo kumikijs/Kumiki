@@ -188,7 +188,10 @@ app App ... theme = themeName    ; ← slot 名を渡す
 タイルを data prop 変更時に「その場で patch」するので、mount 中の `<input>` /
 `<textarea>` / `<select>` は自然に browser focus を保つ。以下の snapshot / restore
 層は、**丸ごと DOM を swap するパス（reconcile bailout、panic recovery、
-focus 対象要素が DOM 位置を跨ぐ keyed reorder）専用の fallback** として残す。
+focus 対象要素そのものを動かす keyed reorder）専用の fallback** として残す。
+並べ替えで動かなかった focus 中の子はそもそもこの fallback に届かない。keyed
+pass は動かす必要のある子だけを配置するので（§10.3.10）、カーソルはその要素を
+離れない。
 
 再レンダリング後も入力中の input/textarea の focus とカーソル位置を維持する:
 - `bind=` がある要素: `data-kumiki-bind` 属性（nested path は full path 文字列）で再特定
@@ -258,6 +261,22 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   `unplaceable-insert`。key が使われなかった）に続いて `child-count-change`
   （結局構造 diff が親を再構築した）が出る。両者は別の事実を述べており、
   前者を直せば後者は問題にならなくなる。
+- **keyed な並べ替えは最小しか動かさない。** key による対応付けが答えるのは
+  「どの古い要素がどの新しい子のものか」だけで、「新しい並びを作るのに何個
+  触る必要があるか」は答えない。reconciler は、古い位置が既に昇順に並んで
+  いる生存子をその場に残し（残りが最小になるよう最長の並びを取る）、それ
+  以外だけを後続要素の手前に挿入する。具体的には、並び順が変わらないレンダは
+  DOM 配置を **1 回も行わず**、1 要素の移動は **1 回**、最悪ケース（どの 2 つも
+  相対順を保たない）でも N−1 回である。
+  これはスループットだけでなく正しさの保証でもある。ノードを付け直すと
+  blur するので、動く理由の無かった子は focus・キャレット・開いている
+  `<select>` のドロップダウン・変換中の IME を失う — keyed matching が守る
+  ために存在する状態そのものである。したがって並べ替えで動かなかった
+  focus 中の子は、§10.3.9 の snapshot / restore fallback に頼らずネイティブに
+  それらを保つ。配置は必ず既存ノードの**手前**に対して行う。アンカーは
+  新しい並びでその子の次に来る子であり、次が無い最後の子については
+  「マウント済み子リスト全体の直後にある兄弟」（無ければ親の末尾）である。
+  したがって子の後ろに自前の内容を置くレンダラでも、その内容は後ろに残る。
 
 **コンパイラの emit**
 
