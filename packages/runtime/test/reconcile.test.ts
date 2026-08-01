@@ -28,6 +28,7 @@ import {
 } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WRAPPING_TILE_KINDS } from "../src/core.ts";
+import { firstChildMappedColumn } from "./fixtures/host-renderers.ts";
 
 function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpec {
   return {
@@ -1099,6 +1100,111 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
     (app as unknown as DispatchApp)._dispatch("bump", {});
 
     expect(lastBindsUpdated(committed)).toEqual(["text"]);
+    dispose();
+  });
+
+  /**
+   * An app whose root column re-renders `children()` on every dispatch of
+   * `"advance"`. The child list is what each #216 case varies.
+   */
+  function childListApp(children: () => TileNode[]): AppShape {
+    return {
+      slots: { rev: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "advance",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => ({ slots: { rev: ((s.rev as number) ?? 0) + 1 }, emits: [] }),
+        },
+      ],
+      root: (): TileNode => ({ kind: "column", children: children() }),
+    };
+  }
+
+  it("names only the rebuilt parent when a hole abandons the positional walk", () => {
+    // #216. The walk reaches the hole at index 1 only after reconciling index
+    // 0 — which patched "a" in place and pushed its identifier — and then
+    // rebuilds the parent, throwing that patch away. The episode is the
+    // author-facing causal record, so it may only name what survived the
+    // render: the parent, and nothing else.
+    let holed = false;
+    const app = childListApp(() =>
+      holed
+        ? ([{ kind: "text", text: "a2", key: "a" }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: "a", key: "a" },
+            { kind: "text", text: "b", key: "b" },
+          ],
+    );
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    holed = true;
+    (app as unknown as DispatchApp)._dispatch("advance", {});
+
+    expect(lastBindsUpdated(committed)).toEqual(["column"]);
+    dispose();
+  });
+
+  it("names only the rebuilt parent when an unmapped child abandons the walk", () => {
+    // Same shape, other bail. The host renderer maps its first child through
+    // `ctx.render` and hand-builds the rest, so index 0 reconciles and index 1
+    // has no element to reconcile against. Unkeyed on purpose: fully keyed
+    // children would take the keyed pass, which throws on a missing mapping
+    // instead of falling back.
+    let label = "a";
+    const app = childListApp(() => [
+      { kind: "text", text: label },
+      { kind: "text", text: "hand-built" },
+    ]);
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, {
+      tiles: { column: firstChildMappedColumn } as TileRenderers,
+      episodeLogger: logger,
+    });
+
+    label = "a2";
+    (app as unknown as DispatchApp)._dispatch("advance", {});
+
+    expect(lastBindsUpdated(committed)).toEqual(["column"]);
+    dispose();
+  });
+
+  it("leaves the element map describing only what is mounted after a bail", () => {
+    // The walk used to write `newMap` entries for the children it applied
+    // before giving up, and relied on the parent's rebuild walking the same
+    // child nodes to overwrite them. True of every renderer that goes through
+    // `ctx.render`, but never a stated rule. Now nothing is written at all, so
+    // the map the NEXT render reads describes only mounted elements.
+    //
+    // A regression guard rather than a reproduction: a stale entry would hand
+    // the next walk a detached element, `replaceWithFreshTile` would throw on
+    // the missing parent, and the bailout would record a panic.
+    let holed = false;
+    const app = childListApp(() =>
+      holed
+        ? ([{ kind: "text", text: "a2" }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: "a" },
+            { kind: "text", text: "b" },
+          ],
+    );
+    const { logger, committed } = makeLogger();
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    holed = true;
+    (app as unknown as DispatchApp)._dispatch("advance", {});
+    holed = false;
+    (app as unknown as DispatchApp)._dispatch("advance", {});
+
+    // Listed rather than counted so a failure names the panic that happened.
+    expect(committed.flatMap((ep) => ep.steps.filter((s) => s.kind === "panic"))).toEqual([]);
+    expect(
+      Array.from(root.querySelectorAll('[data-kumiki-tile="text"]')).map((el) => el.textContent),
+    ).toEqual(["a", "b"]);
     dispose();
   });
 

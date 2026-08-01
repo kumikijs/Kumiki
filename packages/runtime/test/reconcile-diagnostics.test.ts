@@ -21,6 +21,7 @@ import type {
 } from "@kumikijs/runtime";
 import {
   describeDiagnostic,
+  layoutTiles,
   mount,
   mountCore,
   runScenario,
@@ -28,6 +29,7 @@ import {
   textTiles,
 } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { firstChildMappedColumn } from "./fixtures/host-renderers.ts";
 
 /** A bare app whose root tile is produced by `root` on every render pass. */
 function appOf(root: () => TileNode): AppShape {
@@ -204,6 +206,186 @@ describe("runtime: reconcile diagnostics", () => {
     expect(seen).toContainEqual(
       expect.objectContaining({ reason: "child-unmapped", index: 0, childKind: "text" }),
     );
+    dispose();
+  });
+
+  /**
+   * A column whose child at index 0 changes on every render and whose child at
+   * index 1 is the one a bail trips over. The shape every case below shares:
+   * the bail sits behind a sibling that would otherwise have reconciled.
+   */
+  function bailBehindSiblingApp(children: () => TileNode[]): AppShape {
+    return appOf(() => ({ kind: "column", children: children() }));
+  }
+
+  it("reports the same evidence when the bail follows a sibling that would have reconciled", () => {
+    // The parent's fate is settled for the whole child list before any of it
+    // is applied. That decision asks the same two questions at every index, in
+    // index order, so a bail at index 1 still names index 1 — and, for
+    // `child-unmapped`, the kind of the child whose element went missing.
+    let label = "a";
+    let holed = false;
+    const holeApp = bailBehindSiblingApp(() =>
+      holed
+        ? ([{ kind: "text", text: label }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: label },
+            { kind: "text", text: "b" },
+          ],
+    );
+    const hole = collector();
+    const holeMount = mount(holeApp, root, { onDiagnostic: hole.sink });
+
+    label = "a2";
+    holed = true;
+    holeApp._rerender?.();
+
+    expect(hole.seen).toContainEqual(expect.objectContaining({ reason: "child-hole", index: 1 }));
+    holeMount.dispose();
+
+    // Same shape, other bail: a renderer that maps its first child through
+    // `ctx.render` and hand-builds the rest.
+    let text = "a";
+    const unmappedApp = bailBehindSiblingApp(() => [
+      { kind: "text", text },
+      { kind: "text", text: "hand-built" },
+    ]);
+    const unmapped = collector();
+    const unmappedMount = mount(unmappedApp, root, {
+      tiles: { column: firstChildMappedColumn } as TileRenderers,
+      onDiagnostic: unmapped.sink,
+    });
+
+    text = "a2";
+    unmappedApp._rerender?.();
+
+    expect(unmapped.seen).toContainEqual(
+      expect.objectContaining({ reason: "child-unmapped", index: 1, childKind: "text" }),
+    );
+    unmappedMount.dispose();
+  });
+
+  it("calls an index that is both a hole and unmapped a hole", () => {
+    // Both questions are asked at the same index and the hole is asked first,
+    // which is the order the walk used before the decision was lifted out of
+    // it. Pinned because the two are not interchangeable to a reader: a hole
+    // says the tree handed the walker an empty slot, `child-unmapped` says a
+    // renderer skipped `ctx.render`. The nil child cannot be looked up at all,
+    // so only one of them can be the truth here.
+    let holed = false;
+    const app = bailBehindSiblingApp(() =>
+      holed
+        ? ([{ kind: "text", text: "a2" }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: "a" },
+            { kind: "text", text: "hand-built" },
+          ],
+    );
+    const { sink, seen } = collector();
+    // The renderer leaves index 1 unmapped, so without the hole this render
+    // would report `child-unmapped` at that same index — see the case above.
+    const { dispose } = mount(app, root, {
+      tiles: { column: firstChildMappedColumn } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    holed = true;
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["child-hole"]);
+    dispose();
+  });
+
+  it("says nothing about the siblings a bail no longer applies", () => {
+    // With no patcher registered, reconciling the child at index 0 reports
+    // `no-patcher` and rebuilds its subtree — and then the hole at index 1
+    // rebuilds the parent, discarding that subtree. Reporting a fallback for a
+    // subtree that was thrown away is the same falsehood as listing it in
+    // `binds-updated`: the parent's fate is settled first, so the only thing
+    // named is the rebuild that actually happened.
+    let label = "a";
+    let holed = false;
+    const app = bailBehindSiblingApp(() =>
+      holed
+        ? ([{ kind: "text", text: label }, undefined] as unknown as TileNode[])
+        : [
+            { kind: "text", text: label },
+            { kind: "text", text: "b" },
+          ],
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mountCore(app, root, {
+      tiles: { ...textTiles, ...layoutTiles },
+      tilePatchers: {},
+      onDiagnostic: sink,
+    });
+
+    label = "a2";
+    holed = true;
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["child-hole"]);
+    dispose();
+  });
+
+  it("says nothing about the siblings an unmapped-child bail no longer applies", () => {
+    // The `child-unmapped` half of the case above, so neither bail is pinned
+    // by the other's test. The renderer maps index 0 and hand-builds index 1;
+    // with no patcher registered, index 0 would report `no-patcher` and be
+    // rebuilt before index 1 stopped the pass.
+    let label = "a";
+    const app = bailBehindSiblingApp(() => [
+      { kind: "text", text: label },
+      { kind: "text", text: "hand-built" },
+    ]);
+    const { sink, seen } = collector();
+    const { dispose } = mountCore(app, root, {
+      tiles: { ...textTiles, ...layoutTiles, column: firstChildMappedColumn },
+      tilePatchers: {},
+      hostTileKinds: ["column"],
+      onDiagnostic: sink,
+    });
+
+    label = "a2";
+    app._rerender?.();
+
+    expect(fallbackReasons(seen)).toEqual(["child-unmapped"]);
+    dispose();
+  });
+
+  it("says nothing about a stale closure on a sibling a bail no longer applies", () => {
+    // The other diagnostic a child can raise. The host tile at index 0 keeps
+    // identical data props and swaps only its handler, so the walk would reuse
+    // its element and report `stale-closure-risk` — a warning about code that
+    // is about to run. It is not about to run: the hole at index 1 rebuilds
+    // the parent, and the element that would have kept the stale closure goes
+    // with it. Reporting it would send a reader after a bug that cannot fire.
+    const hostCard = (node: TileNode, _ctx: TileCtx): HTMLElement => {
+      const el = document.createElement("div");
+      el.textContent = (node as { text?: string }).text ?? "";
+      return el;
+    };
+    let handler = () => {};
+    let holed = false;
+    const card = (): TileNode =>
+      ({ kind: "card", text: "steady", props: { onPick: handler } }) as unknown as TileNode;
+    const app = bailBehindSiblingApp(() =>
+      holed
+        ? ([card(), undefined] as unknown as TileNode[])
+        : [card(), { kind: "text", text: "b" }],
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    handler = () => {};
+    holed = true;
+    app._rerender?.();
+
+    expect(seen.map((d) => d.kind)).toEqual(["reconcile-fallback"]);
+    expect(fallbackReasons(seen)).toEqual(["child-hole"]);
     dispose();
   });
 

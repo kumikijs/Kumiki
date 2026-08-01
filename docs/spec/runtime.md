@@ -223,6 +223,14 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   parent's subtree). When any child is missing a `key`, the reconciler falls
   back to the pre-#188 structural walk (position + `kind` + data-prop
   equality; length change → rebuild).
+- **The structural walk is all-or-nothing per parent too.** Its two remaining
+  give-up conditions — a hole in the child list, and an old child with no
+  element mapping — are decided for the whole list *before* any of it is
+  applied. So a parent either reconciles every child or rebuilds without
+  having touched one, and never leaves half a pass behind for the rebuild to
+  discard. What this buys is truthful reporting: `binds-updated` (§10.3.11)
+  and the diagnostics (§10.3.12) describe the render that happened, and no
+  `newMap` entry is written for a subtree that was abandoned.
 - **A child list that is empty on exactly one side of a render is decided
   before keys are consulted at all.** With nothing on the old side there is no
   pairing to attempt — every new child is a fresh mount, every old child
@@ -381,6 +389,11 @@ subtree rebuild does, so the causal chain "slot `X` changed → tiles/binds
 `A`, `B` patched" continues to land on `signal-update.binds-updated` (#189)
 regardless of whether reconcile ended up rebuilding or patching.
 
+**Only what survived the render is named.** A render that gave up on a parent
+and rebuilt it lists that parent and nothing under it — the walk decides the
+parent's fate before applying any of its children (§10.3.10), so there is no
+partly-applied pass whose identifiers could outlive the work they describe.
+
 ### 10.3.12 Reconcile diagnostics
 
 Keyed diff (§10.3.10) and in-place patching (§10.3.11) both **degrade
@@ -410,8 +423,8 @@ actionable without re-deriving it from the source:
 |---|---|---|
 | `no-patcher` | — | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
 | `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. Never fires when one side of the change is empty — that boundary keeps the parent regardless of keys (§10.3.10). |
-| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. |
-| `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. |
+| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. Reported before any sibling is applied (§10.3.10), so the parent's rebuild is the only thing this render did. |
+| `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. Reported before any sibling is applied, same as `child-hole`. |
 | `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly (§10.3.10), so the keyed matcher stood down and the positional walk ran. Rebuilds nothing on its own: what is lost is reorder-stable element identity, not the subtree. |
 | `unplaceable-insert` | `index`, `childKind` | Every child carried a `key` and every mounted one sits directly under the parent — but the new child at `index` is a newcomer under a renderer that does not place every child directly (§10.3.10), so there is no slot the keyed matcher may mount it into. A short list measures as placeable right up until it grows, which is why this is read from the renderer rather than from the DOM. Rebuilds nothing on its own; the positional walk that follows reports `child-count-change` if the length changed. |
 
@@ -419,6 +432,21 @@ Two rebuild paths are deliberately **not** reported. A `kind` change means a
 different thing occupies that position, so there is no identity to preserve.
 And a patcher that declines in place via `PatchRequiresRebuild` (§10.3.11) is a
 normal, expected outcome that the sentinel exists to keep out of the log.
+
+**A rebuilt parent reports for itself alone.** The four reasons that rebuild a
+parent — `no-patcher`, `child-count-change`, `child-hole`, `child-unmapped` —
+are all decided before any of its children are reconciled (§10.3.10), so
+nothing below it is examined and nothing below it is reported: no
+`reconcile-fallback` and no `stale-closure-risk` from that subtree, on that
+render. Same rule `binds-updated` follows (§10.3.11) — what the render
+discarded is not described. (`wrapped-children` and `unplaceable-insert`
+rebuild nothing, so the walk that follows them reports normally.)
+
+Know the cost. A `no-patcher` is a *configuration* fact — that kind has no
+patcher registered, and will not on the next render either — so a child sitting
+under a parent that rebuilds every render stays invisible for as long as that
+lasts. The parent's own reason is the one to read first: fix the rebuild, and
+the subtree's diagnostics start arriving.
 
 **Stale closures on host tiles.** The prop-equality kernel treats any two
 functions as equal — codegen mints fresh closures every render, and a reused

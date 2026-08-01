@@ -2760,35 +2760,27 @@ function reconcileNode(
     );
     return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
-  // Same length: walk in parallel, reconcile each child pair. The old child's
-  // live element is looked up in `oldMap`; if it's missing (defensive — could
-  // happen if a tile renderer built children outside the mapping ctx, but the
-  // built-in renderers all go through `ctx.render`), conservatively rebuild
-  // the parent subtree.
-  for (let i = 0; i < newChildren.length; i++) {
-    const oldChildNode = oldChildren[i];
-    const newChildNode = newChildren[i];
-    if (!oldChildNode || !newChildNode) {
-      diag?.fallback({ reason: "child-hole", index: i }, newNode);
-      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
-    }
-    const oldChildEl = oldMap.get(oldChildNode);
-    if (!oldChildEl) {
-      diag?.fallback({ reason: "child-unmapped", index: i, childKind: oldChildNode.kind }, newNode);
-      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
-    }
+  // Same length: pair the children by position and reconcile each pair. Both
+  // ways this can fail are settled for the WHOLE list first, so the walk that
+  // follows either runs to the end or never starts.
+  const resolved = resolvePositionalChildren(oldChildren, newChildren, oldMap);
+  if (!resolved.paired) {
+    diag?.fallback(resolved.fallback, newNode);
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+  }
+  for (const pair of resolved.pairs) {
     // The returned element is deliberately discarded: on this path no child
     // ever changes slot, so there is nothing for the parent to place. A
     // rebuilt child was already spliced into the slot it held — by
-    // `replaceWithFreshTile`, anchored on `oldChildEl.parentNode`, which is
+    // `replaceWithFreshTile`, anchored on `pair.oldEl.parentNode`, which is
     // the only node that knows where the slot is when the renderer wraps its
     // children. Re-inserting it here against `oldEl` would be wrong for
     // exactly those renderers. `newMap` is likewise populated inside the call.
     reconcileNode(
-      oldChildNode,
-      oldChildEl,
+      pair.oldNode,
+      pair.oldEl,
       oldMap,
-      newChildNode,
+      pair.newNode,
       newMap,
       ctx,
       patchers,
@@ -2941,6 +2933,81 @@ function keyedPassBlocker(
     index: newcomer.index,
     childKind: newcomer.childKind,
   };
+}
+
+/** One positional child pair, with the live element the old side is mounted as. */
+type PositionalChildPair = {
+  readonly oldNode: TileNode;
+  readonly oldEl: HTMLElement;
+  readonly newNode: TileNode;
+};
+
+/**
+ * The two ways positional pairing can fail. Spelled as the subset of
+ * `ReconcileFallback` this decision can actually produce, so the return type
+ * says which reasons a caller has to be ready for.
+ */
+type PositionalChildFallback = Extract<
+  ReconcileFallback,
+  { reason: "child-hole" | "child-unmapped" }
+>;
+
+/** Either the whole child list paired up, or the reason none of it did. */
+type PositionalChildResult =
+  | { readonly paired: true; readonly pairs: readonly PositionalChildPair[] }
+  | { readonly paired: false; readonly fallback: PositionalChildFallback };
+
+/**
+ * Pair an equal-length child list by position — every pair, or none of them
+ * and the reason the parent must be rebuilt instead.
+ *
+ * **The parent's fate is settled here, before any of the list is applied.**
+ * The walk that consumes these pairs patches elements in place, rebuilds
+ * subtrees, and records an identifier per subtree it touched. A parent that
+ * gave up partway would be rebuilt on top of work already done, and the
+ * identifiers of the children it discarded would outlive them — so both
+ * give-up conditions are answered for the whole list first. A parent that
+ * rebuilds therefore leaves nothing behind about this subtree: no DOM change,
+ * no `touched` identifier, no `newMap` entry, and no diagnostic from any child
+ * (§10.3.12). What the episode log and the diagnostics describe is the render
+ * that happened.
+ *
+ * The `newMap` half of that is a property of this function, not of the
+ * renderers. A rebuild does re-map the same child nodes when the renderer
+ * routes them through `ctx.render` — but a host renderer is never asked to,
+ * so the walker must not need it, and it does not: there is nothing written
+ * for a rebuild to overwrite.
+ *
+ * The pairing asks the same two questions at every index, in index order,
+ * which is what fixes the evidence a bail carries: the `index` it names, and
+ * for `child-unmapped` the kind of the child whose element went missing.
+ */
+function resolvePositionalChildren(
+  oldChildren: TileNode[],
+  newChildren: TileNode[],
+  oldMap: TileElementMap,
+): PositionalChildResult {
+  const pairs: PositionalChildPair[] = [];
+  for (let i = 0; i < newChildren.length; i++) {
+    const oldNode = oldChildren[i];
+    const newNode = newChildren[i];
+    if (!oldNode || !newNode) {
+      return { paired: false, fallback: { reason: "child-hole", index: i } };
+    }
+    // The one source of `child-unmapped`: a host renderer built this child
+    // without going through `ctx.render`, which is what records the mapping.
+    // What cannot be found cannot be reused, so the parent rebuilds — on this
+    // render and on every later one that renderer produces.
+    const oldEl = oldMap.get(oldNode);
+    if (!oldEl) {
+      return {
+        paired: false,
+        fallback: { reason: "child-unmapped", index: i, childKind: oldNode.kind },
+      };
+    }
+    pairs.push({ oldNode, oldEl, newNode });
+  }
+  return { paired: true, pairs };
 }
 
 /**
