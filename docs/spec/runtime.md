@@ -433,6 +433,21 @@ different thing occupies that position, so there is no identity to preserve.
 And a patcher that declines in place via `PatchRequiresRebuild` (§10.3.11) is a
 normal, expected outcome that the sentinel exists to keep out of the log.
 
+**A rebuilt parent reports for itself alone.** The four reasons that rebuild a
+parent — `no-patcher`, `child-count-change`, `child-hole`, `child-unmapped` —
+are all decided before any of its children are reconciled (§10.3.10), so
+nothing below it is examined and nothing below it is reported: no
+`reconcile-fallback` and no `stale-closure-risk` from that subtree, on that
+render. Same rule `binds-updated` follows (§10.3.11) — what the render
+discarded is not described. (`wrapped-children` and `unplaceable-insert`
+rebuild nothing, so the walk that follows them reports normally.)
+
+Know the cost. A `no-patcher` is a *configuration* fact — that kind has no
+patcher registered, and will not on the next render either — so a child sitting
+under a parent that rebuilds every render stays invisible for as long as that
+lasts. The parent's own reason is the one to read first: fix the rebuild, and
+the subtree's diagnostics start arriving.
+
 **Stale closures on host tiles.** The prop-equality kernel treats any two
 functions as equal — codegen mints fresh closures every render, and a reused
 built-in keeps working because its handlers dispatch through the per-element

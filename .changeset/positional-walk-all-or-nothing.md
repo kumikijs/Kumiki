@@ -34,6 +34,14 @@ than restated. The evidence a bail carries is unchanged: the scan asks the same
 questions in the same order, and still reports the same `reason`, `index` and
 `childKind`.
 
+One consequence is worth stating rather than discovering: the diagnostics the
+abandoned siblings would have raised are no longer raised either — neither a
+`reconcile-fallback` nor a `stale-closure-risk` from a subtree the render threw
+away. That is the same rule `binds-updated` follows, and it has a cost. A
+`no-patcher` is a configuration fact, not a per-render one, so a child under a
+parent that rebuilds every render stays unreported for as long as that lasts;
+the parent's own reason is the one to fix first. §10.3.12 now says so.
+
 Reachable only from a host-built tile tree — Kumiki codegen flattens nils away
 and routes every child through `ctx.render` — so no authored app changes
 behaviour. What changes is that the log an author reads is true for the ones

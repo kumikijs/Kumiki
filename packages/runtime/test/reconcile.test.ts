@@ -11,7 +11,6 @@ import type {
   Episode,
   EpisodeLogger,
   ReducerSpec,
-  TileCtx,
   TileNode,
   TileRenderers,
 } from "@kumikijs/runtime";
@@ -29,27 +28,7 @@ import {
 } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WRAPPING_TILE_KINDS } from "../src/core.ts";
-
-/**
- * A `column` renderer that maps only its FIRST child through `ctx.render` and
- * hand-builds the rest — the compat shape that leaves later children out of
- * the node → element map. The positional walk therefore reconciles index 0 and
- * finds nothing to reconcile against at index 1.
- */
-function firstChildMappedColumn(node: TileNode, ctx: TileCtx): HTMLElement {
-  const el = document.createElement("div");
-  const children = (node as { children?: TileNode[] }).children ?? [];
-  children.forEach((child, i) => {
-    if (i === 0) {
-      el.appendChild(ctx.render(child));
-      return;
-    }
-    const span = document.createElement("span");
-    span.textContent = (child as { text?: string }).text ?? "";
-    el.appendChild(span);
-  });
-  return el;
-}
+import { firstChildMappedColumn } from "./fixtures/host-renderers.ts";
 
 function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpec {
   return {
@@ -1221,7 +1200,8 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
     holed = false;
     (app as unknown as DispatchApp)._dispatch("advance", {});
 
-    expect(committed.every((ep) => !ep.steps.some((s) => s.kind === "panic"))).toBe(true);
+    // Listed rather than counted so a failure names the panic that happened.
+    expect(committed.flatMap((ep) => ep.steps.filter((s) => s.kind === "panic"))).toEqual([]);
     expect(
       Array.from(root.querySelectorAll('[data-kumiki-tile="text"]')).map((el) => el.textContent),
     ).toEqual(["a", "b"]);

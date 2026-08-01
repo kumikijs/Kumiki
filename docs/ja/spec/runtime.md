@@ -409,6 +409,19 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 （§10.3.11）で in-place を辞退するのも正常で期待された結果であり、そのセンチネルは
 まさにログを汚さないために存在する。
 
+**再構築された親は自分の分しか報告しない。** 親を再構築する 4 つの理由 —
+`no-patcher` / `child-count-change` / `child-hole` / `child-unmapped` — はいずれも
+子を 1 件も reconcile する前に決まる（§10.3.10）ので、配下は検査されず、したがって
+そのレンダで配下から報告されるものは何も無い（`reconcile-fallback` も
+`stale-closure-risk` も）。`binds-updated`（§10.3.11）と同じ規則である —
+そのレンダが捨てたものは記述しない。（`wrapped-children` と `unplaceable-insert` は
+何も再構築しないので、続く構造 diff は通常どおり報告する。）
+
+代償は把握しておくこと。`no-patcher` は**設定**の事実であり — その kind に patcher が
+登録されていない、そして次のレンダでも登録されていない — 毎レンダ再構築される親の
+配下にある子は、その状態が続く限り見えないままになる。先に読むべきは親自身の理由で
+ある。再構築を直せば、その subtree の診断は届き始める。
+
 **ホストタイルの stale closure**  prop 等値カーネルは任意の 2 つの関数を等値として
 扱う — codegen は毎レンダ新しいクロージャを作るし、再利用された built-in が動き続ける
 のは §10.3.11 の要素ごとのハンドラスロット経由で dispatch しているからである。
