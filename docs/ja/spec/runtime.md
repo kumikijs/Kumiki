@@ -389,6 +389,16 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 何も計算せず何も出力しない。ビルド時フラグは存在しない — 本番マウントが無音なのは
 バンドラが削ったからではなく、opt-in していないからである。
 
+**観測は観測対象を変えない**  throw する sink は握り潰される。それを呼ぶ走査自体も
+同様である — ホストタイルのフィールドを読む行為は `Object.keys` / プロパティ getter /
+`Object.getPrototypeOf` をホスト所有の値に対して走らせることであり、等値カーネルは
+最初の差分で短絡するので、カーネルが到達しなかった箇所で `Proxy` トラップや
+アクセサが throw しうる。これらはすべて reconcile の bailout の内側で起きるため、
+throw が漏れれば `location: "reconcile"` の panic として記録されツリー全体が
+再構築される — このチャネルが報告するはずの identity 喪失を、報告自体が引き起こす
+ことになる。走査が throw したタイルは診断されないまま、sink が無かった場合と同じ
+ように描画される。sink 自身の失敗に気付くのはホストの責務である。
+
 **報告される fallback**
 
 全ての diagnostic は identity 保証を失ったタイルを特定する情報（`tileKind`、作者定義

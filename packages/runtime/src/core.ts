@@ -439,16 +439,8 @@ export type NeverEqualCause =
  * these to a console should route them to different levels.
  */
 export type RuntimeDiagnostic =
-  | ({
-      kind: "reconcile-fallback";
-      /** The built-in primitive that was rebuilt. */
-      tileKind: string;
-      /** Same identifier the episode log uses: bind path, else key, else kind. */
-      id: string;
-      /** The authored tile this node came from, when it came from one. */
-      tile?: string | undefined;
-    } & ReconcileFallback)
-  | {
+  | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)
+  | (DiagnosticSite & {
       /**
        * A prop whose function identity changed was treated as equal, so the
        * tile was reused with the previous render's closure still attached.
@@ -457,14 +449,14 @@ export type RuntimeDiagnostic =
        * re-minted closure is not a hazard there.
        */
       kind: "stale-closure-risk";
-      tileKind: string;
-      /** Same identifier as the fallback variant, so the two can be correlated. */
-      id: string;
-      /** Dotted path of the offending field, e.g. `props.onClick`. */
+      /**
+       * Dotted path of the offending field — `props.onClick` for the
+       * conventional placement, a bare `onClick` for a handler the host hung
+       * off the node itself.
+       */
       field: string;
-      tile?: string | undefined;
-    }
-  | {
+    })
+  | (DiagnosticSite & {
       /**
        * A data prop holds a value that cannot compare equal to a structurally
        * identical counterpart, so this tile's props are unequal on every render
@@ -478,14 +470,24 @@ export type RuntimeDiagnostic =
        * cause, so a built-in tile carrying one came from a host-built tree.
        */
       kind: "never-equal-prop";
-      tileKind: string;
-      /** Same identifier as the other variants, so the three can be correlated. */
-      id: string;
-      /** Dotted path of the offending field, e.g. `props.at`. */
+      /** Dotted path of the offending field, e.g. `props.at` or a bare `at`. */
       field: string;
       cause: NeverEqualCause;
-      tile?: string | undefined;
-    };
+    });
+
+/**
+ * The tile every diagnostic is about. Shared by all three variants so a host
+ * can log, group and correlate them without narrowing first — and so a fourth
+ * variant cannot quietly report something the reader can't locate.
+ */
+export type DiagnosticSite = {
+  /** The tile kind the walker was deciding about. */
+  tileKind: string;
+  /** Same identifier the episode log uses: bind path, else key, else kind. */
+  id: string;
+  /** The authored tile this node came from, when it came from one. */
+  tile?: string | undefined;
+};
 
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
@@ -2589,6 +2591,46 @@ function makeReconcileDiag(
       // deliberately ignored — see above
     }
   };
+  /**
+   * One per-field host-tile scan, run so it cannot disturb the render it is
+   * observing. `hazard` looks at a single old/new pair and returns what to
+   * report about it, if anything.
+   *
+   * The guard covers the whole walk, not just the sink. Reading a host node's
+   * fields is not inert: `Object.keys`, a property getter and
+   * `Object.getPrototypeOf` all run against values the host owns, and a Proxy
+   * trap or an accessor may throw where the equality kernel — which
+   * short-circuits at the first difference — never reached. That throw would
+   * land in the reconcile bailout as a `location: "reconcile"` panic and
+   * rebuild the whole tree, so the observation would inflict the exact identity
+   * loss this channel exists to report. Abandoning the scan is the only outcome
+   * that leaves the render alone.
+   */
+  const scan = (
+    oldNode: TileNode,
+    newNode: TileNode,
+    hazard: (
+      site: DiagnosticSite,
+      field: string,
+      oldValue: unknown,
+      newValue: unknown,
+    ) => RuntimeDiagnostic | undefined,
+  ): void => {
+    if (!hostKinds?.has(newNode.kind)) return;
+    try {
+      const site: DiagnosticSite = {
+        tileKind: newNode.kind,
+        id: tileTouchedId(newNode),
+        tile: authored(newNode),
+      };
+      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
+        const d = hazard(site, field, oldValue, newValue);
+        if (d) emit(d);
+      }
+    } catch {
+      // deliberately ignored — see above
+    }
+  };
   return {
     fallback(fallback, node) {
       emit({
@@ -2600,24 +2642,17 @@ function makeReconcileDiag(
       });
     },
     staleClosure(oldNode, newNode) {
-      if (!hostKinds?.has(newNode.kind)) return;
-      const tile = authored(newNode);
-      const id = tileTouchedId(newNode);
-      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
-        if (typeof oldValue !== "function" || typeof newValue !== "function") continue;
-        if (oldValue === newValue) continue;
-        emit({ kind: "stale-closure-risk", tileKind: newNode.kind, id, field, tile });
-      }
+      scan(oldNode, newNode, (site, field, oldValue, newValue) =>
+        typeof oldValue === "function" && typeof newValue === "function" && oldValue !== newValue
+          ? { ...site, kind: "stale-closure-risk", field }
+          : undefined,
+      );
     },
     neverEqual(oldNode, newNode) {
-      if (!hostKinds?.has(newNode.kind)) return;
-      const tile = authored(newNode);
-      const id = tileTouchedId(newNode);
-      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
+      scan(oldNode, newNode, (site, field, oldValue, newValue) => {
         const cause = neverEqualCause(oldValue, newValue);
-        if (!cause) continue;
-        emit({ kind: "never-equal-prop", tileKind: newNode.kind, id, field, cause, tile });
-      }
+        return cause ? { ...site, kind: "never-equal-prop", field, cause } : undefined;
+      });
     },
   };
 }

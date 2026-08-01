@@ -510,6 +510,45 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
+  it("survives a host value that throws while the reuse scan reads it", () => {
+    // Reading a host node's fields is not inert. Here `props` is the same
+    // object on both sides, so the equality kernel short-circuits on `===` and
+    // never enumerates it — and then the scan does, hitting a trap the kernel
+    // proved nothing about. Unguarded that throw lands in the reconcile bailout
+    // as a panic and rebuilds the whole tree: the observation inflicting the
+    // identity loss it exists to report.
+    const hostCard = (): HTMLElement => document.createElement("div");
+    const props = new Proxy(
+      { onClick: () => undefined },
+      {
+        ownKeys() {
+          throw new Error("host props refuse enumeration");
+        },
+      },
+    );
+    const app = appOf(() => ({ kind: "card", props }) as unknown as TileNode);
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        tiles: { card: hostCard } as TileRenderers,
+        onDiagnostic: sink,
+      });
+      const card = root.firstElementChild as HTMLElement;
+
+      app._rerender?.();
+
+      expect(errors).toEqual([]);
+      expect(root.firstElementChild).toBe(card);
+      expect(seen).toEqual([]);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   // ---- props that can never compare equal ----
   //
   // The mirror image of the stale-closure scan, on the other side of the same
@@ -663,6 +702,110 @@ describe("runtime: reconcile diagnostics", () => {
       expect.objectContaining({ field: "props.at", cause: "non-plain-object" }),
     ]);
     dispose();
+  });
+
+  it.each([
+    ["a Map", () => new Map([["k", 1]])],
+    ["a RegExp", () => /x/g],
+    ["a DOM node", () => document.createElement("span")],
+  ])("names %s, since the rule is about the prototype and not the type", (_label, make) => {
+    // Every exotic the spec and `describeDiagnostic` list runs through the one
+    // `isPlainDataBag` check. Spot-checked here so narrowing that check to
+    // object literals would fail loudly instead of silently exempting the rest.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { value: make() } }) as unknown as TileNode,
+      inPlaceCardPatch,
+    );
+
+    expect(neverEqual(seen)).toEqual([
+      expect.objectContaining({ field: "props.value", cause: "non-plain-object" }),
+    ]);
+  });
+
+  it("says nothing about a tile the parent's bail is about to discard", () => {
+    // Same rule the stale-closure scan follows, and the same reason: the hole
+    // at index 1 settles the parent's fate before any child is applied, so the
+    // host card at index 0 is never reconciled and the props that would have
+    // churned are about to be thrown away with it. Reporting them would point
+    // a reader at churn this render did not pay for.
+    let holed = false;
+    const card = (): TileNode =>
+      ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode;
+    const app = bailBehindSiblingApp(() =>
+      holed
+        ? ([card(), undefined] as unknown as TileNode[])
+        : [card(), { kind: "text", text: "b" }],
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    holed = true;
+    app._rerender?.();
+
+    expect(seen.map((d) => d.kind)).toEqual(["reconcile-fallback"]);
+    expect(fallbackReasons(seen)).toEqual(["child-hole"]);
+    dispose();
+  });
+
+  it("survives a host value that throws while the unequal scan reads it", () => {
+    // The kernel short-circuits at the FIRST unequal field, so a later prop can
+    // hold something it never touched — here a proxy whose prototype is
+    // unreadable, exactly what `neverEqualCause` asks for. The scan abandons
+    // the tile and the render carries on: `no-patcher` still reports, the
+    // rebuild still happens, and no reconcile panic is recorded.
+    const hostile = () =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("host value refuses its prototype");
+          },
+        },
+      );
+    let label = "one";
+    const app = appOf(
+      () => ({ kind: "card", label, props: { value: hostile() } }) as unknown as TileNode,
+    );
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mountCore(app, root, {
+        tiles: { card: hostCard } as TileRenderers,
+        tilePatchers: {},
+        hostTileKinds: ["card"],
+        onDiagnostic: sink,
+      });
+
+      label = "two";
+      app._rerender?.();
+
+      expect(errors).toEqual([]);
+      expect(neverEqual(seen)).toEqual([]);
+      expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it("stays quiet for an exotic buried in an array", () => {
+    // The kernel takes arrays element-wise, so an array is never itself the
+    // never-equal value — and descending into one to find the `Date` inside is
+    // the deep walk this scan refuses on the same grounds as `props.meta.at`.
+    // The tile still churns; what is missing is a name for why, which is the
+    // documented cost of keeping the scan bounded.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { tags: [new Date(0)] } }) as unknown as TileNode,
+      {},
+    );
+
+    expect(neverEqual(seen)).toEqual([]);
+    expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
   });
 
   it("stays quiet for the same instance handed over twice", () => {

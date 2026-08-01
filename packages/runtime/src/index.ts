@@ -39,6 +39,7 @@ export {
   type CapabilityProvider,
   type CapabilityRegistry,
   currentTheme,
+  type DiagnosticSite,
   type EffectResult,
   type EffectSpec,
   type EmitSpec,

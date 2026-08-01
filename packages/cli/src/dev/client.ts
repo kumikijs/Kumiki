@@ -53,9 +53,21 @@ const panel = installDevPanel({ logger, getApp: () => currentApp });
 const mountOptions = {
   episodeLogger: logger,
   onDiagnostic: (d: RuntimeDiagnostic) => {
-    if (d.kind === "stale-closure-risk") console.error("[kumiki] stale closure", d);
-    else if (d.kind === "never-equal-prop") console.warn("[kumiki] never-equal prop", d);
-    else console.warn("[kumiki] reconcile fallback", d);
+    switch (d.kind) {
+      case "stale-closure-risk":
+        return console.error("[kumiki] stale closure", d);
+      case "never-equal-prop":
+        return console.warn("[kumiki] never-equal prop", d);
+      case "reconcile-fallback":
+        return console.warn("[kumiki] reconcile fallback", d);
+      default: {
+        // Exhaustiveness: a new kind must be given its own level and label
+        // here. An `else` would inherit whichever branch came last and label
+        // it as a different problem — silently, since narrowing hides it.
+        const unlabelled: never = d;
+        return console.warn("[kumiki] diagnostic", unlabelled);
+      }
+    }
   },
 };
 

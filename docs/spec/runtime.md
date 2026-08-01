@@ -412,6 +412,17 @@ fallback; nothing is computed and nothing is emitted. There is no build-time
 flag — a production mount is silent because it does not opt in, not because a
 bundler stripped anything.
 
+**Observing never changes what is observed.** A sink that throws is swallowed,
+and so is the scan that feeds it: reading a host tile's fields runs
+`Object.keys`, property getters and `Object.getPrototypeOf` against values the
+host owns, and the equality kernel short-circuits at the first difference, so a
+`Proxy` trap or an accessor may throw where the kernel never reached. All of
+this happens inside the reconcile bailout, so an escaping throw would be
+recorded as a `location: "reconcile"` panic and rebuild the whole tree — the
+exact identity loss this channel reports, caused by the reporting. A tile whose
+scan throws is left undiagnosed and rendered as it would have been without a
+sink; the sink's own failures are the host's to notice.
+
 **Reported fallbacks.**
 
 Every diagnostic names the tile that lost its identity guarantee (`tileKind`,

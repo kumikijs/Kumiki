@@ -19,13 +19,21 @@ re-applying the same attributes forever.
 **`never-equal-prop`** is the mirror image of `stale-closure-risk` on the other
 side of the equality fork. It reads the unequal decision for a value that could
 not have compared equal however identical the two renders were, and names the
-field: a non-plain object (`Date`, `Map`, `Set`, `RegExp`, class instance, or a
-cross-realm object — only `===` can make two of those equal) or `NaN`. Same
-`hostTileKinds` scope and the same one-level-into-`props` bound as the
-stale-closure scan, so a built-in never produces one and the walk stays bounded
-on the render path. Neither cause can come out of codegen; the whole class is
-reachable only through `MountOptions.tiles` or a host-built tree, which is
-exactly the audience this channel exists for.
+field: a non-plain object (`Date`, `Map`, `Set`, `RegExp`, a DOM node, a class
+instance, or a cross-realm object — only `===` can make two of those equal) or
+`NaN`. Same `hostTileKinds` scope and the same one-level-into-`props` bound as
+the stale-closure scan, so a built-in never produces one and the walk stays
+bounded on the render path. Neither cause can come out of codegen; the whole
+class is reachable only through `MountOptions.tiles` or a host-built tree, which
+is exactly the audience this channel exists for.
+
+Both host-tile scans are now guarded as a whole rather than only at the sink.
+Reading a host node's fields runs `Object.keys`, property getters and
+`Object.getPrototypeOf` against values the host owns, and the equality kernel
+short-circuits at the first difference — so a Proxy trap or an accessor can
+throw where the kernel never reached. That throw would have landed in the
+reconcile bailout as a panic and rebuilt the whole tree, which is the identity
+loss the channel exists to report. The scan is abandoned instead.
 
 - Fires whether or not a patcher is registered. With one it is the only signal
   that the tile churns; without one the rebuild is already reported as
