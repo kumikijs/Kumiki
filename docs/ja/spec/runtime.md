@@ -413,8 +413,8 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 `no-patcher` / `child-count-change` / `child-hole` / `child-unmapped` — はいずれも
 子を 1 件も reconcile する前に決まる（§10.3.10）ので、配下は検査されず、したがって
 そのレンダで配下から報告されるものは何も無い（`reconcile-fallback` も
-`stale-closure-risk` も）。`binds-updated`（§10.3.11）と同じ規則である —
-そのレンダが捨てたものは記述しない。（`wrapped-children` と `unplaceable-insert` は
+`stale-closure-risk` も `never-equal-prop` も）。`binds-updated`（§10.3.11）と
+同じ規則である — そのレンダが捨てたものは記述しない。（`wrapped-children` と `unplaceable-insert` は
 何も再構築しないので、続く構造 diff は通常どおり報告する。）
 
 代償は把握しておくこと。`no-patcher` は**設定**の事実であり — その kind に patcher が
@@ -439,10 +439,36 @@ mount(app, root, { onDiagnostic: (d) => console.warn(d) });
 ホストタイル（`props.handlers.onClick`）は検査されない。カバーされ続けるために
 ハンドラは `props` 直下に置くこと。
 
-2 つの diagnostic kind は severity が異なる。`reconcile-fallback` はアプリが正しいまま
-パフォーマンスとブラウザ所有の要素状態を失う。`stale-closure-risk` は作者が既に
-差し替えたコードをアプリが実行し続けているという意味である。`kumiki dev` は前者を
-`console.warn`、後者を `console.error` に振り分ける。
+**決して等値になり得ない prop**  同じ分岐の反対側である。data prop が*毎レンダ*
+必ず不等値になるタイルは、その kind に patcher が登録されていれば walker から見て
+identity を保った成功パスそのものになる — patcher が走り、要素は生き残り、何も
+degrade しない。したがって fallback は 1 件も報告されず、アプリは同じ属性を永久に
+再適用し続けながら完全に健全に見える。再利用判断を読むのが `stale-closure-risk`
+なら、不等値判断を読んで「2 つのレンダがどれだけ同一でも等値になり得なかった値」を
+`never-equal-prop` として報告するのがこちらである。
+
+| `cause` | ぶつかっている規則 |
+|---|---|
+| `non-plain-object` | `Date` / `Map` / `Set` / `RegExp` / DOM ノード / クラスインスタンス、および別 realm のオブジェクト。状態が自身の列挙可能キーの外にあるため、2 つを等値にできるのは `===` だけ（§10.3.13）— 毎レンダ作り直される値が満たすことはない。 |
+| `nan` | `NaN`。定義上、自分自身と等しくない（§10.3.13）。 |
+
+対象範囲は `hostTileKinds`、走査の深さは `props` 1 階層まで。いずれも
+stale closure の走査と同じで、理由も同じである。加えてどちらの cause も codegen
+からは出ないので、報告は常にホストが組んだツリーを指す。patcher の有無に関わらず
+発火する — patcher があればタイルが churn していることを伝える唯一の信号であり、
+無ければ再構築は既に `no-patcher` として報告されているので、こちらはその reason が
+名指しできないフィールドを埋める。両方が出る場合の順序は「原因 → 結果」。
+
+報告されるのは両側が同じ never-equal な形になってからである。plain な bag が
+`Date` になった、数値が `NaN` になった、というのはそのレンダにおいては通常の変化で
+あり、報告は次のレンダで出る。同一インスタンスを二度渡した場合は `===` で等値に
+なるので決して報告されない。
+
+3 つの diagnostic kind は severity が異なる。`reconcile-fallback` はパフォーマンスと
+ブラウザ所有の要素状態を失い、`never-equal-prop` は毎レンダ分の diff と patch を
+払うが、どちらもアプリは正しいままである。`stale-closure-risk` は作者が既に
+差し替えたコードをアプリが実行し続けているという意味である。`kumiki dev` は前 2 者を
+`console.warn`、`stale-closure-risk` を `console.error` に振り分ける。
 
 **episode log との関係**  episode は「アプリが何をしたか」という作者向けの因果記録で、
 subtree が再レンダされた**こと自体**は既に `signal-update.binds-updated`（§10.3.11）に
@@ -456,6 +482,60 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
 = `kumiki smoke --diagnostics-as-issues` で失敗扱いにできる）。`runScenario` は
 再レンダを引き起こしたアクションのステップに紐付け、`kumiki run` はそのステップの下に
 出力する。`kumiki smoke` は reason ごとの要約を出力する。
+
+### 10.3.13 data prop の等値判定
+
+§10.3.10 も §10.3.11 も「タイルの data prop が変わっていない」を起点にしている。
+それを決めるのがこの規則であり、ランタイム唯一の再利用述語である。false positive は
+症状の出ないまま古い要素をマウントし続け、false negative は変わっていない subtree を
+再構築する。
+
+**範囲**  比較は `TileNode` 自身のフィールドのうち `kind` / `children` / `key` を
+*除いた*ものを走査する。`kind` は判別子であり、述語が走る前に決着している
+（§10.3.12）。`children` は walker 自身の担当で、子はそれぞれ独立に reconcile される
+ので、孫の変化が全ての祖先を再構築してはならない。`key` は keyed child matcher が
+消費する identity メタデータ（§10.3.10）で、ペアが述語に届く時点で既に「同じ
+インスタンス」だと確定している。
+
+**値**  2 つの値が等値なのは次のいずれかのとき:
+
+- 同一の値である（`===`）
+- 両方が関数である — クロージャ同一性は意図的に無視する。codegen は毎レンダ新しい
+  ハンドラを作るからである（これがホストレンダラに生む危険については §10.3.12 の
+  `stale-closure-risk` を参照）
+- 両方が同じ長さの配列で、要素同士が等値である
+- 両方が **plain な data bag**（prototype が `Object.prototype` または `null`）で、
+  own キーの和集合が等値な値に対応している
+
+明記しておくべき帰結:
+
+- **キーが無いことと明示的な `undefined` は等値である。** `{a: 1}` と
+  `{a: 1, b: undefined}` は同じタイルである。codegen は省略可能なフィールドを
+  出力しないし、条件付き spread は同じ作者定義タイルからどちらの形も生む。
+- **`null` は `undefined` ではなく、`0` は `false` ではなく、`""` は `0` ではない。**
+  比較は常に `===` ベースであり、`==` は使わない。
+- **`NaN` は `NaN` と等値ではない。** それを持つタイルは毎レンダ再構築される。
+  prop の中の `NaN` は既に計算が失敗しているという意味であり、再構築が安全側で、
+  churn は凍り付いたタイルより見える症状である — ホストタイルであれば
+  §10.3.12 の `never-equal-prop` がフィールドを名指しする。patcher が登録されて
+  いれば churn は他のどのチャネルからも見えないからである。
+- **plain でないオブジェクトは自分自身以外の何とも等値にならない。** `Date` /
+  `Map` / `Set` / `RegExp` / DOM ノード / クラスインスタンスは状態を自身の列挙可能
+  キーの外に持つので、キー単位の比較では変わった値を「変わっていない」と報告して
+  しまう。Kumiki の codegen は plain なデータしか出力しないため `.kumiki` ソース
+  からは到達不能であり、ホストレンダラが渡した場合は静かな再利用ではなく再構築に
+  なる。同一インスタンスを二度渡した場合は `===` で等値のままである。「plain」の
+  判定は prototype 同一性で行われ、これは realm ローカルである — 別 realm
+  （`<iframe>`、`vm` コンテキスト）で作られたオブジェクトは exotic として扱われ
+  再構築される。安全側であり、`toString` タグ検査に緩めない理由でもある。毎レンダ
+  同じタイルに渡し続けるホストは、決して勝てない diff の代償を払う。それを報告する
+  のが `never-equal-prop`（§10.3.12）である。
+
+循環は契約の外である。構造的に循環していて互いに別物の bag 2 つは、スタックが尽きる
+まで再帰する。その throw は reconcile の bailout に落ち、ツリー全体を再構築して
+`location: "reconcile"` の panic を記録する。サポート外だが、封じ込められていて可視で
+ある — codegen は循環を作れないし、visited セットは 1 つの循環を防ぐために毎レンダ
+コストを払うことになる。
 
 ---
 

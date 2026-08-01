@@ -7,7 +7,7 @@
 // NOT verify behavioral correctness (a wrong-but-non-throwing result) — that is
 // the job of example-specific assertions.
 
-import type { AppShape, ReconcileFallback, RuntimeDiagnostic } from "./index.ts";
+import type { AppShape, NeverEqualCause, ReconcileFallback, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 
 export type SmokePhase = "mount" | "initial-render" | "interaction" | "async";
@@ -39,8 +39,9 @@ export type SmokeReport = {
   issues: SmokeIssue[];
   /**
    * Reconcile observations collected while driving the app: subtrees the
-   * runtime rebuilt instead of reusing, and reuse decisions that ignored a
-   * changed closure on a host tile. These are performance and integration
+   * runtime rebuilt instead of reusing, reuse decisions that ignored a changed
+   * closure on a host tile, and host-tile props that can never compare equal
+   * however identical two renders are. These are performance and integration
    * signals, not failures, so they do NOT affect `ok` — an app that rebuilds
    * more than it needs to still works. Set `diagnosticsAsIssues` to treat them
    * as failures instead.
@@ -212,6 +213,9 @@ export function describeDiagnostic(d: RuntimeDiagnostic): string {
   if (d.kind === "stale-closure-risk") {
     return `${where} was reused with the PREVIOUS render's ${d.field} — the new one will never fire`;
   }
+  if (d.kind === "never-equal-prop") {
+    return `${where}'s ${d.field} ${describeNeverEqualCause(d.cause)} — this tile re-applies its props on every render`;
+  }
   // The two placement fallbacks rebuild nothing on their own: the keyed matcher
   // stood down and the positional walk took over, so saying "rebuilt" would
   // send the reader looking for churn that is not there. (A length change on
@@ -220,6 +224,19 @@ export function describeDiagnostic(d: RuntimeDiagnostic): string {
     return `reconcile could not key-match ${where}'s children: ${describeFallback(d)}`;
   }
   return `reconcile rebuilt ${where} instead of reusing it: ${describeFallback(d)}`;
+}
+
+function describeNeverEqualCause(cause: NeverEqualCause): string {
+  switch (cause) {
+    case "non-plain-object":
+      return "holds a non-plain object (Date / Map / Set / class instance), which never compares equal to a freshly built one";
+    case "nan":
+      return "is NaN, which never compares equal to itself";
+    default:
+      // Exhaustiveness, same as `describeFallback`: a new cause must be given
+      // wording here rather than degrade into a sentence that names none.
+      return ((c: never) => String(c))(cause);
+  }
 }
 
 function describeFallback(f: ReconcileFallback): string {
