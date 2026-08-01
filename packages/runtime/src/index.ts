@@ -39,6 +39,7 @@ export {
   type CapabilityProvider,
   type CapabilityRegistry,
   currentTheme,
+  type DiagnosticSite,
   type EffectResult,
   type EffectSpec,
   type EmitSpec,
@@ -49,6 +50,7 @@ export {
   type MountOptions,
   mountCore,
   type NavContext,
+  type NeverEqualCause,
   overridableInvoke,
   type PanicCategory,
   type PanicCauseLink,
@@ -209,7 +211,7 @@ export function mount(
     // includes OVERRIDES of built-in kinds, which is intended: a host that
     // replaces the `card` renderer loses the per-element handler slots that
     // make closure reuse safe, exactly like a brand-new kind would. Scopes the
-    // stale-closure diagnostic; see `MountOptions`.
+    // per-field host-tile scans; see `MountOptions`.
     hostTileKinds: options.hostTileKinds ?? Object.keys(options.tiles ?? {}),
     tiles: options.tiles ? { ...allTiles, ...options.tiles } : allTiles,
     tilePatchers: options.tilePatchers

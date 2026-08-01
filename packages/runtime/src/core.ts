@@ -407,6 +407,23 @@ export type ReconcileFallback =
   | { reason: "unplaceable-insert"; index: number; childKind: string };
 
 /**
+ * Why a pair of data-prop values can never compare equal, however identical the
+ * two renders that produced them are. Both are settled rules of the equality
+ * kernel rather than bugs in it — the point of naming them is that a tile
+ * carrying one pays for a diff it can never win.
+ */
+export type NeverEqualCause =
+  /**
+   * A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or an object
+   * from another realm. Their state lives outside their own enumerable keys, so
+   * the kernel refuses to compare them key-wise and only `===` can make two of
+   * them equal — which a value rebuilt each render never is.
+   */
+  | "non-plain-object"
+  /** `NaN`, which is not equal to itself by definition. */
+  | "nan";
+
+/**
  * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
  *
  * Distinct from the episode log on purpose: an episode is the author-facing
@@ -415,22 +432,15 @@ export type ReconcileFallback =
  * *why* the runtime made that choice — useful when tuning an app or a host
  * integration, noise in a behavioural trace.
  *
- * The two variants differ in severity, not just in shape. A
+ * The three variants differ in severity, not just in shape. A
  * `reconcile-fallback` costs performance and browser-owned element state; a
+ * `never-equal-prop` costs a diff and a patch on every render; a
  * `stale-closure-risk` means the app is running the wrong code. A host wiring
  * these to a console should route them to different levels.
  */
 export type RuntimeDiagnostic =
-  | ({
-      kind: "reconcile-fallback";
-      /** The built-in primitive that was rebuilt. */
-      tileKind: string;
-      /** Same identifier the episode log uses: bind path, else key, else kind. */
-      id: string;
-      /** The authored tile this node came from, when it came from one. */
-      tile?: string | undefined;
-    } & ReconcileFallback)
-  | {
+  | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)
+  | (DiagnosticSite & {
       /**
        * A prop whose function identity changed was treated as equal, so the
        * tile was reused with the previous render's closure still attached.
@@ -439,13 +449,45 @@ export type RuntimeDiagnostic =
        * re-minted closure is not a hazard there.
        */
       kind: "stale-closure-risk";
-      tileKind: string;
-      /** Same identifier as the fallback variant, so the two can be correlated. */
-      id: string;
-      /** Dotted path of the offending field, e.g. `props.onClick`. */
+      /**
+       * Dotted path of the offending field — `props.onClick` for the
+       * conventional placement, a bare `onClick` for a handler the host hung
+       * off the node itself.
+       */
       field: string;
-      tile?: string | undefined;
-    };
+    })
+  | (DiagnosticSite & {
+      /**
+       * A data prop holds a value that cannot compare equal to a structurally
+       * identical counterpart, so this tile's props are unequal on every render
+       * from now on. With a patcher registered that is invisible through every
+       * other channel — the element keeps its identity and nothing degrades, it
+       * just re-applies the same attributes forever. Without one the rebuild is
+       * already reported as `no-patcher`, and this names the field that reason
+       * cannot.
+       *
+       * Reported only for host-registered renderers: codegen emits neither
+       * cause, so a built-in tile carrying one came from a host-built tree.
+       */
+      kind: "never-equal-prop";
+      /** Dotted path of the offending field, e.g. `props.at` or a bare `at`. */
+      field: string;
+      cause: NeverEqualCause;
+    });
+
+/**
+ * The tile every diagnostic is about. Shared by all three variants so a host
+ * can log, group and correlate them without narrowing first — and so a fourth
+ * variant cannot quietly report something the reader can't locate.
+ */
+export type DiagnosticSite = {
+  /** The tile kind the walker was deciding about. */
+  tileKind: string;
+  /** Same identifier the episode log uses: bind path, else key, else kind. */
+  id: string;
+  /** The authored tile this node came from, when it came from one. */
+  tile?: string | undefined;
+};
 
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
@@ -535,19 +577,21 @@ export type MountOptions = {
   episodeLogger?: EpisodeLogger | null;
   /**
    * Development-time observation channel for the reconcile diff. When present,
-   * every rebuild the walker performs instead of preserving element identity —
-   * and every function-identity change the prop-equality check waved through on
-   * a host-registered tile — is reported here. Omit it (the default) and the
-   * checks never run: production mounts pay one optional-call check per
-   * fallback and nothing else.
+   * every rebuild the walker performs instead of preserving element identity is
+   * reported here, along with the two host-tile hazards the prop-equality check
+   * creates: a function identity it waved through, and a value it can never
+   * call equal. Omit it (the default) and the checks never run: production
+   * mounts pay one optional-call check per decision and nothing else.
    */
   onDiagnostic?: (d: RuntimeDiagnostic) => void;
   /**
    * Tile kinds whose renderer came from the host rather than the built-in set.
-   * Scopes the stale-closure check in `onDiagnostic`, which would otherwise
-   * fire once per handler per render on every built-in tile — the built-ins
-   * route handlers through per-element slots and are not at risk. The package
-   * entry's `mount` derives this from the `tiles` override map; callers using
+   * Scopes the two per-field scans in `onDiagnostic` — stale closures on the
+   * reuse decision, never-equal props on the unequal one — which would
+   * otherwise fire once per field per render on every built-in tile. The
+   * built-ins route handlers through per-element slots and carry only the plain
+   * data codegen emits, so neither hazard reaches them. The package entry's
+   * `mount` derives this from the `tiles` override map; callers using
    * `mountCore` with their own renderers pass it themselves. Ignored without
    * `onDiagnostic`.
    */
@@ -2517,6 +2561,12 @@ type ReconcileDiag = {
    * kinds are inspected.
    */
   staleClosure: (oldNode: TileNode, newNode: TileNode) => void;
+  /**
+   * Called on the unequal decision — the props differed, so this tile is about
+   * to be patched or rebuilt. Names the fields that will differ again on every
+   * render after this one. Only host-registered kinds are inspected.
+   */
+  neverEqual: (oldNode: TileNode, newNode: TileNode) => void;
 };
 
 function makeReconcileDiag(
@@ -2541,6 +2591,46 @@ function makeReconcileDiag(
       // deliberately ignored — see above
     }
   };
+  /**
+   * One per-field host-tile scan, run so it cannot disturb the render it is
+   * observing. `hazard` looks at a single old/new pair and returns what to
+   * report about it, if anything.
+   *
+   * The guard covers the whole walk, not just the sink. Reading a host node's
+   * fields is not inert: `Object.keys`, a property getter and
+   * `Object.getPrototypeOf` all run against values the host owns, and a Proxy
+   * trap or an accessor may throw where the equality kernel — which
+   * short-circuits at the first difference — never reached. That throw would
+   * land in the reconcile bailout as a `location: "reconcile"` panic and
+   * rebuild the whole tree, so the observation would inflict the exact identity
+   * loss this channel exists to report. Abandoning the scan is the only outcome
+   * that leaves the render alone.
+   */
+  const scan = (
+    oldNode: TileNode,
+    newNode: TileNode,
+    hazard: (
+      site: DiagnosticSite,
+      field: string,
+      oldValue: unknown,
+      newValue: unknown,
+    ) => RuntimeDiagnostic | undefined,
+  ): void => {
+    if (!hostKinds?.has(newNode.kind)) return;
+    try {
+      const site: DiagnosticSite = {
+        tileKind: newNode.kind,
+        id: tileTouchedId(newNode),
+        tile: authored(newNode),
+      };
+      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
+        const d = hazard(site, field, oldValue, newValue);
+        if (d) emit(d);
+      }
+    } catch {
+      // deliberately ignored — see above
+    }
+  };
   return {
     fallback(fallback, node) {
       emit({
@@ -2552,25 +2642,32 @@ function makeReconcileDiag(
       });
     },
     staleClosure(oldNode, newNode) {
-      if (!hostKinds?.has(newNode.kind)) return;
-      const tile = authored(newNode);
-      const id = tileTouchedId(newNode);
-      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
-        if (typeof oldValue !== "function" || typeof newValue !== "function") continue;
-        if (oldValue === newValue) continue;
-        emit({ kind: "stale-closure-risk", tileKind: newNode.kind, id, field, tile });
-      }
+      scan(oldNode, newNode, (site, field, oldValue, newValue) =>
+        typeof oldValue === "function" && typeof newValue === "function" && oldValue !== newValue
+          ? { ...site, kind: "stale-closure-risk", field }
+          : undefined,
+      );
+    },
+    neverEqual(oldNode, newNode) {
+      scan(oldNode, newNode, (site, field, oldValue, newValue) => {
+        const cause = neverEqualCause(oldValue, newValue);
+        return cause ? { ...site, kind: "never-equal-prop", field, cause } : undefined;
+      });
     },
   };
 }
 
 /**
  * Own data fields paired old-to-new, one level deep into `props` — where a
- * renderer's handlers conventionally live (`props.onClick`, `props.onChange`).
+ * renderer's handlers and data conventionally live (`props.onClick`,
+ * `props.value`). Shared by both host-tile scans, on either side of the
+ * equality fork.
+ *
  * This is NOT the full set `tileFieldsEqual` compares: that one recurses to
  * the bottom of arrays and nested objects, while this stops at `props.x` on
- * purpose. A handler buried deeper than that is past the point where a generic
- * warning helps, and the shallow walk keeps the scan bounded.
+ * purpose. A value buried deeper than that is past the point where a generic
+ * warning helps, and the shallow walk keeps the scan bounded — it runs per
+ * decision, on the render path.
  */
 function* ownFieldPairs(
   oldNode: TileNode,
@@ -2664,6 +2761,12 @@ function reconcileNode(
   // Without a patcher, fall back to the full subtree rebuild (correct but
   // discards browser-internal state — pre-#190 behaviour).
   if (!tileFieldsEqual(oldNode, newNode)) {
+    // Why they differed, when the answer is "they always will". Before the
+    // patcher lookup on purpose: with a patcher this is the ONLY signal that
+    // the tile re-applies its props forever (the patch path is otherwise a
+    // silent success), and without one it names the field `no-patcher` cannot.
+    // Cause before consequence, so a reader meets the fixable fact first.
+    diag?.neverEqual(oldNode, newNode);
     const patcher = (patchers as Record<string, TilePatcher | undefined>)[newNode.kind];
     if (patcher) {
       // Throws land in the outer `reconcileTree` bailout, which records a
@@ -3394,6 +3497,36 @@ function tileValueEqual(a: unknown, b: unknown): boolean {
 function isPlainDataBag(v: object): boolean {
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Why `tileValueEqual` had to call this pair unequal, when the answer is "it
+ * always will". Mirrors that predicate's branch order, and answers only for the
+ * cases where a structurally identical counterpart would fare no better — a
+ * genuine value change is not this function's business.
+ *
+ * Read by the `never-equal-prop` diagnostic, so it runs only for a mount that
+ * opted into `onDiagnostic` AND declared the kind in `hostTileKinds`.
+ */
+function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
+  // Two NaNs describe the same failed computation and still compare unequal —
+  // no later branch rescues them, since `typeof NaN` is neither function nor
+  // object. Checked before `===` because `NaN === NaN` is already false.
+  if (Number.isNaN(a) && Number.isNaN(b)) return "nan";
+  // The same instance handed over twice compares equal through `===`. Only a
+  // value rebuilt per render is a hazard, so a stable one is not reported.
+  if (a === b) return undefined;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return undefined;
+  // The kernel takes arrays element-wise, so an array is not itself a
+  // never-equal value. Descending into one to find an exotic element is the
+  // deep walk this scan deliberately does not do (see `ownFieldPairs`).
+  if (Array.isArray(a) || Array.isArray(b)) return undefined;
+  // BOTH sides exotic: two counterparts describing the same thing that the
+  // kernel still has to call unequal. One side exotic and the other a plain bag
+  // is an ordinary type change — it reports on the following render, when both
+  // sides are exotic, which is one render late but never wrong.
+  if (!isPlainDataBag(a) && !isPlainDataBag(b)) return "non-plain-object";
+  return undefined;
 }
 
 // Per-element slot for the universally-lifted UI handlers (onKeyDown /

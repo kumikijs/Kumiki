@@ -156,8 +156,11 @@ function printDiagnostics(report: SmokeReport, write: (line: string) => void): v
   if (report.diagnostics.length === 0) return;
   const byReason = new Map<string, number>();
   for (const { diagnostic } of report.diagnostics) {
-    const label =
-      diagnostic.kind === "reconcile-fallback" ? diagnostic.reason : "stale-closure-risk";
+    // A fallback is summarised by its reason — the kind alone would collapse
+    // six distinct causes into one row. Every other kind IS its own reason, and
+    // reading the kind rather than naming them keeps a new one from being
+    // silently counted as an existing one.
+    const label = diagnostic.kind === "reconcile-fallback" ? diagnostic.reason : diagnostic.kind;
     byReason.set(label, (byReason.get(label) ?? 0) + 1);
   }
   const summary = [...byReason]

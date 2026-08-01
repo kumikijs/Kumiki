@@ -412,6 +412,17 @@ fallback; nothing is computed and nothing is emitted. There is no build-time
 flag — a production mount is silent because it does not opt in, not because a
 bundler stripped anything.
 
+**Observing never changes what is observed.** A sink that throws is swallowed,
+and so is the scan that feeds it: reading a host tile's fields runs
+`Object.keys`, property getters and `Object.getPrototypeOf` against values the
+host owns, and the equality kernel short-circuits at the first difference, so a
+`Proxy` trap or an accessor may throw where the kernel never reached. All of
+this happens inside the reconcile bailout, so an escaping throw would be
+recorded as a `location: "reconcile"` panic and rebuild the whole tree — the
+exact identity loss this channel reports, caused by the reporting. A tile whose
+scan throws is left undiagnosed and rendered as it would have been without a
+sink; the sink's own failures are the host's to notice.
+
 **Reported fallbacks.**
 
 Every diagnostic names the tile that lost its identity guarantee (`tileKind`,
@@ -437,10 +448,11 @@ normal, expected outcome that the sentinel exists to keep out of the log.
 parent — `no-patcher`, `child-count-change`, `child-hole`, `child-unmapped` —
 are all decided before any of its children are reconciled (§10.3.10), so
 nothing below it is examined and nothing below it is reported: no
-`reconcile-fallback` and no `stale-closure-risk` from that subtree, on that
-render. Same rule `binds-updated` follows (§10.3.11) — what the render
-discarded is not described. (`wrapped-children` and `unplaceable-insert`
-rebuild nothing, so the walk that follows them reports normally.)
+`reconcile-fallback`, no `stale-closure-risk` and no `never-equal-prop` from
+that subtree, on that render. Same rule `binds-updated` follows (§10.3.11) —
+what the render discarded is not described. (`wrapped-children` and
+`unplaceable-insert` rebuild nothing, so the walk that follows them reports
+normally.)
 
 Know the cost. A `no-patcher` is a *configuration* fact — that kind has no
 patcher registered, and will not on the next render either — so a child sitting
@@ -466,10 +478,38 @@ convention every built-in renderer follows (`props.onClick`, `props.onChange`).
 A host tile that buries its handlers deeper (`props.handlers.onClick`) is not
 inspected; keep handlers directly under `props` to stay covered.
 
-The two diagnostic kinds carry different severity. A `reconcile-fallback` costs
-performance and browser-owned element state while the app stays correct; a
+**Props that can never compare equal.** The other side of the same fork. A tile
+whose data props compare unequal on *every* render, with a patcher registered
+for its kind, is the identity-preserving happy path as far as the walker is
+concerned: the patcher runs, the element survives, nothing degraded — so no
+fallback is reported and the app looks perfectly healthy while re-applying the
+same attributes forever. Reuse decisions are what `stale-closure-risk` reads;
+unequal ones are read for a value that could not have compared equal however
+identical the two renders were, and reported as `never-equal-prop`:
+
+| `cause` | the rule it runs into |
+|---|---|
+| `non-plain-object` | A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or a cross-realm object. Their state lives outside their own enumerable keys, so only `===` can make two of them equal (§10.3.13) — which a value rebuilt each render never is. |
+| `nan` | `NaN`, which is not equal to itself by definition (§10.3.13). |
+
+Same `hostTileKinds` scope and same one-level-into-`props` bound as the
+stale-closure scan, for the same reasons — and neither cause can come out of
+codegen, so a report always names a host-built tree. It fires whether or not a
+patcher is registered: with one it is the only signal that the tile churns,
+without one the rebuild is already reported as `no-patcher` and this names the
+field that reason cannot. Both are emitted, cause before consequence.
+
+A value only reports once both sides are of the same never-equal shape — a
+plain bag that becomes a `Date`, or a number that becomes `NaN`, is an ordinary
+change on the render it happens and is reported on the next one. The same
+instance handed over twice compares equal through `===` and is never reported.
+
+The three diagnostic kinds carry different severity. A `reconcile-fallback`
+costs performance and browser-owned element state, and a `never-equal-prop`
+costs a diff and a patch on every render, but in both the app stays correct; a
 `stale-closure-risk` means the app is running code the author already replaced.
-`kumiki dev` routes them to `console.warn` and `console.error` respectively.
+`kumiki dev` routes the first two to `console.warn` and the last to
+`console.error`.
 
 **Relationship to the episode log.** An episode is the author-facing causal
 record of what the app did, and already reports *that* a subtree was
@@ -521,7 +561,9 @@ Consequences worth stating outright:
   Comparison is `===`-based, never `==`.
 - **`NaN` is not equal to `NaN`.** A tile carrying one rebuilds on every
   render. `NaN` in a prop means a computation already failed; rebuilding is the
-  safe side, and the churn is a visible symptom rather than a frozen tile.
+  safe side, and the churn is a visible symptom rather than a frozen tile — and
+  on a host tile the `never-equal-prop` diagnostic in §10.3.12 names the field,
+  since with a patcher registered the churn is otherwise invisible.
 - **A non-plain object is never equal to anything but itself.** `Date`, `Map`,
   `Set`, `RegExp`, DOM nodes, and class instances hold their state outside
   their own enumerable keys, so key-wise comparison would report a changed
@@ -531,7 +573,9 @@ Consequences worth stating outright:
   compares equal through `===`. "Plain" is decided by prototype identity, which
   is realm-local: an object built in another realm (an `<iframe>`, a `vm`
   context) is treated as exotic and rebuilds — the safe direction, and the
-  reason this is not relaxed into a `toString`-tag check.
+  reason this is not relaxed into a `toString`-tag check. A host handing one to
+  the same tile every render pays for a diff it can never win; that is what
+  `never-equal-prop` (§10.3.12) reports.
 
 Cycles are outside the contract. Two structurally cyclic but distinct bags
 recurse until the stack runs out; the throw lands in the reconcile bailout,

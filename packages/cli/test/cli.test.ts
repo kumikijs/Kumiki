@@ -102,10 +102,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // Adds the `details` + `editable` tiles too. Payoff: `<select>` open
     // dropdown, `<video>` currentTime, `<details>` open, `contenteditable`
     // caret all survive a reducer-triggered re-render mid-interaction.
+    // Bumped to 56KB with the `never-equal-prop` reconcile diagnostic: the
+    // scan that names a host-tile prop the equality kernel can never call
+    // equal, so a tile patched on every render stops being invisible. Rides in
+    // core.ts because the diagnostics channel is opt-in at RUNTIME, not at
+    // build time — a production mount is silent because it passed no
+    // `onDiagnostic`, which is what keeps the sink a supported seam in a built
+    // artifact rather than a dev-only affordance a bundler strips.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(55_000);
+    expect(total).toBeLessThan(56_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

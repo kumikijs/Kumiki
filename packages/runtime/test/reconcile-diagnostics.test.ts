@@ -3,20 +3,24 @@
 // The diff has several full-rebuild escape hatches that are correctness-
 // preserving but hide behind an ordinary `return`: an app can be re-mounting
 // every subtree on every render while the benchmark still reports a waste
-// ratio of 1×. And because the prop-equality kernel treats any two functions
-// as equal, a host that registers its own renderer can keep a stale closure
-// alive with no signal at all.
+// ratio of 1×. The prop-equality kernel adds two more, on either side of its
+// own verdict: it treats any two functions as equal, so a host renderer can
+// keep a stale closure alive, and it can never call a `Date` or a `NaN` equal,
+// so a host tile carrying one is patched every render with nothing reported at
+// all.
 //
 // These tests lock in that each of those paths reports through the opt-in
 // `onDiagnostic` sink, and — just as importantly — that a mount without a
-// sink behaves exactly as before and that built-in tiles never produce
-// stale-closure noise (they route handlers through per-element slots).
+// sink behaves exactly as before and that built-in tiles produce neither kind
+// of host-tile noise (they route handlers through per-element slots and carry
+// only the plain data codegen emits).
 
 import type {
   AppShape,
   RuntimeDiagnostic,
   TileCtx,
   TileNode,
+  TilePatchers,
   TileRenderers,
 } from "@kumikijs/runtime";
 import {
@@ -504,6 +508,404 @@ describe("runtime: reconcile diagnostics", () => {
 
     expect(seen.filter((d) => d.kind === "stale-closure-risk")).toEqual([]);
     dispose();
+  });
+
+  it("survives a host value that throws while the reuse scan reads it", () => {
+    // Reading a host node's fields is not inert. Here `props` is the same
+    // object on both sides, so the equality kernel short-circuits on `===` and
+    // never enumerates it — and then the scan does, hitting a trap the kernel
+    // proved nothing about. Unguarded that throw lands in the reconcile bailout
+    // as a panic and rebuilds the whole tree: the observation inflicting the
+    // identity loss it exists to report.
+    const hostCard = (): HTMLElement => document.createElement("div");
+    const props = new Proxy(
+      { onClick: () => undefined },
+      {
+        ownKeys() {
+          throw new Error("host props refuse enumeration");
+        },
+      },
+    );
+    const app = appOf(() => ({ kind: "card", props }) as unknown as TileNode);
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        tiles: { card: hostCard } as TileRenderers,
+        onDiagnostic: sink,
+      });
+      const card = root.firstElementChild as HTMLElement;
+
+      app._rerender?.();
+
+      expect(errors).toEqual([]);
+      expect(root.firstElementChild).toBe(card);
+      expect(seen).toEqual([]);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  // ---- props that can never compare equal ----
+  //
+  // The mirror image of the stale-closure scan, on the other side of the same
+  // fork. A tile whose props compare unequal on EVERY render while a patcher is
+  // registered is the identity-preserving happy path as far as the walker is
+  // concerned — the element survives, nothing fell back, nothing is reported —
+  // and it re-applies the same attributes forever. Both causes are unreachable
+  // from a `.kumiki` source, so a host tree is the only way in and the only
+  // audience.
+
+  /** Ignores its node: these cases are about the kernel's verdict, not paint. */
+  const hostCard = (): HTMLElement => document.createElement("div");
+
+  /** Registered so the unequal decision is PATCHED rather than rebuilt. */
+  const inPlaceCardPatch = { card: () => undefined } as TilePatchers;
+
+  /**
+   * Mounts a host-registered `card` and re-renders it once. `patchers` picks
+   * which of the two shapes is under test: with a patcher the walker preserves
+   * the element and reports no fallback at all, without one it rebuilds and
+   * reports `no-patcher` on top.
+   */
+  function hostCardRun(tree: () => TileNode, patchers: TilePatchers): RuntimeDiagnostic[] {
+    const app = appOf(tree);
+    const { sink, seen } = collector();
+    const { dispose } = mountCore(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      tilePatchers: patchers,
+      hostTileKinds: ["card"],
+      onDiagnostic: sink,
+    });
+    // Never `?.`: a missing seam would re-render nothing and turn every case
+    // below green regardless of what the scan does.
+    const rerender = app._rerender;
+    if (!rerender)
+      throw new Error("mount did not attach `_rerender` — the harness cannot re-render");
+    rerender();
+    dispose();
+    return seen;
+  }
+
+  function neverEqual(seen: RuntimeDiagnostic[]): RuntimeDiagnostic[] {
+    return seen.filter((d) => d.kind === "never-equal-prop");
+  }
+
+  it("names the field holding a fresh Date, and the rebuild it caused", () => {
+    // Without a patcher the churn is already audible as `no-patcher` — but that
+    // reason names the kind, not the field, so it cannot say WHICH prop made
+    // two structurally identical renders compare unequal. This does.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode,
+      {},
+    );
+
+    // Cause before consequence: the field is what the host can fix, the rebuild
+    // is what it cost this render.
+    expect(seen.map((d) => d.kind)).toEqual(["never-equal-prop", "reconcile-fallback"]);
+    expect(seen[0]).toMatchObject({
+      tileKind: "card",
+      id: "card",
+      field: "props.at",
+      cause: "non-plain-object",
+    });
+    expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
+  });
+
+  it("names it when a patcher makes the churn invisible", () => {
+    // The case this whole scan exists for. A patcher runs, the element keeps its
+    // identity, nothing degraded — so the fallback channel is silent and the app
+    // looks perfectly healthy while patching the same attributes forever.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode,
+      inPlaceCardPatch,
+    );
+
+    expect(seen.map((d) => d.kind)).toEqual(["never-equal-prop"]);
+    expect(seen[0]).toMatchObject({ field: "props.at", cause: "non-plain-object" });
+  });
+
+  it("names a NaN prop, which is unequal to itself by design", () => {
+    // §10.3.13 makes `NaN` unequal to `NaN` on purpose — a failed computation
+    // should churn visibly rather than freeze a tile. The churn was the visible
+    // part; this makes the reason for it visible too.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { total: Number.NaN } }) as unknown as TileNode,
+      inPlaceCardPatch,
+    );
+
+    expect(neverEqual(seen)).toEqual([
+      expect.objectContaining({ field: "props.total", cause: "nan" }),
+    ]);
+  });
+
+  it("names a class instance, not only the built-in exotics", () => {
+    // "Plain" is decided by prototype identity, so anything whose state lives
+    // outside its own enumerable keys lands here — a domain class as much as a
+    // `Date`, and a cross-realm object through the very same check.
+    class Span {
+      constructor(
+        readonly from: number,
+        readonly to: number,
+      ) {}
+    }
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { range: new Span(0, 1) } }) as unknown as TileNode,
+      inPlaceCardPatch,
+    );
+
+    expect(neverEqual(seen)).toEqual([
+      expect.objectContaining({ field: "props.range", cause: "non-plain-object" }),
+    ]);
+  });
+
+  it("catches an exotic on the node itself, not only under props", () => {
+    // Same two conventions the stale-closure scan covers: a host may hang data
+    // off the node rather than `props`.
+    const seen = hostCardRun(() => ({ kind: "card", at: new Date(0) }) as unknown as TileNode, {});
+
+    expect(neverEqual(seen)).toEqual([
+      expect.objectContaining({ field: "at", cause: "non-plain-object" }),
+    ]);
+  });
+
+  it("stays quiet while only one side is exotic", () => {
+    // A plain bag becoming a `Date` is an ordinary type change: this render's
+    // inequality is real, and nothing yet says the next one will repeat it. The
+    // report arrives on the following render, when two exotics that describe the
+    // same value still compare unequal — one render late, never wrong.
+    let exotic = false;
+    const app = appOf(
+      () =>
+        ({
+          kind: "card",
+          props: { at: exotic ? new Date(0) : { ms: 0 } },
+        }) as unknown as TileNode,
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mountCore(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      tilePatchers: inPlaceCardPatch,
+      hostTileKinds: ["card"],
+      onDiagnostic: sink,
+    });
+
+    exotic = true;
+    app._rerender?.();
+    expect(neverEqual(seen)).toEqual([]);
+
+    app._rerender?.();
+    expect(neverEqual(seen)).toEqual([
+      expect.objectContaining({ field: "props.at", cause: "non-plain-object" }),
+    ]);
+    dispose();
+  });
+
+  it.each([
+    ["a Map", () => new Map([["k", 1]])],
+    ["a RegExp", () => /x/g],
+    ["a DOM node", () => document.createElement("span")],
+  ])("names %s, since the rule is about the prototype and not the type", (_label, make) => {
+    // Every exotic the spec and `describeDiagnostic` list runs through the one
+    // `isPlainDataBag` check. Spot-checked here so narrowing that check to
+    // object literals would fail loudly instead of silently exempting the rest.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { value: make() } }) as unknown as TileNode,
+      inPlaceCardPatch,
+    );
+
+    expect(neverEqual(seen)).toEqual([
+      expect.objectContaining({ field: "props.value", cause: "non-plain-object" }),
+    ]);
+  });
+
+  it("says nothing about a tile the parent's bail is about to discard", () => {
+    // Same rule the stale-closure scan follows, and the same reason: the hole
+    // at index 1 settles the parent's fate before any child is applied, so the
+    // host card at index 0 is never reconciled and the props that would have
+    // churned are about to be thrown away with it. Reporting them would point
+    // a reader at churn this render did not pay for.
+    let holed = false;
+    const card = (): TileNode =>
+      ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode;
+    const app = bailBehindSiblingApp(() =>
+      holed
+        ? ([card(), undefined] as unknown as TileNode[])
+        : [card(), { kind: "text", text: "b" }],
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    holed = true;
+    app._rerender?.();
+
+    expect(seen.map((d) => d.kind)).toEqual(["reconcile-fallback"]);
+    expect(fallbackReasons(seen)).toEqual(["child-hole"]);
+    dispose();
+  });
+
+  it("survives a host value that throws while the unequal scan reads it", () => {
+    // The kernel short-circuits at the FIRST unequal field, so a later prop can
+    // hold something it never touched — here a proxy whose prototype is
+    // unreadable, exactly what `neverEqualCause` asks for. The scan abandons
+    // the tile and the render carries on: `no-patcher` still reports, the
+    // rebuild still happens, and no reconcile panic is recorded.
+    const hostile = () =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("host value refuses its prototype");
+          },
+        },
+      );
+    let label = "one";
+    const app = appOf(
+      () => ({ kind: "card", label, props: { value: hostile() } }) as unknown as TileNode,
+    );
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mountCore(app, root, {
+        tiles: { card: hostCard } as TileRenderers,
+        tilePatchers: {},
+        hostTileKinds: ["card"],
+        onDiagnostic: sink,
+      });
+
+      label = "two";
+      app._rerender?.();
+
+      expect(errors).toEqual([]);
+      expect(neverEqual(seen)).toEqual([]);
+      expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it("stays quiet for an exotic buried in an array", () => {
+    // The kernel takes arrays element-wise, so an array is never itself the
+    // never-equal value — and descending into one to find the `Date` inside is
+    // the deep walk this scan refuses on the same grounds as `props.meta.at`.
+    // The tile still churns; what is missing is a name for why, which is the
+    // documented cost of keeping the scan bounded.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { tags: [new Date(0)] } }) as unknown as TileNode,
+      {},
+    );
+
+    expect(neverEqual(seen)).toEqual([]);
+    expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
+  });
+
+  it("stays quiet for the same instance handed over twice", () => {
+    // `===` rescues a stable instance, so an exotic value is only a hazard when
+    // a fresh one is minted per render. Reporting the stable case would fire on
+    // every unequal decision of every tile that happens to carry one.
+    const at = new Date(0);
+    let renders = 0;
+    const seen = hostCardRun(() => {
+      renders++;
+      return { kind: "card", props: { at, label: `render ${renders}` } } as unknown as TileNode;
+    }, {});
+
+    expect(neverEqual(seen)).toEqual([]);
+    // The unequal branch really did run — otherwise this case proves nothing.
+    expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
+  });
+
+  it("does not chase exotics nested deeper than props", () => {
+    // The scan stops at `props.x`, exactly like the stale-closure one: it runs
+    // on every unequal decision of every host tile, and an unbounded walk to
+    // find an exotic three levels down would be a per-render cost on the hot
+    // path. Locked in so the shallow contract cannot silently widen.
+    const seen = hostCardRun(
+      () => ({ kind: "card", props: { meta: { at: new Date(0) } } }) as unknown as TileNode,
+      {},
+    );
+
+    expect(neverEqual(seen)).toEqual([]);
+    expect(fallbackReasons(seen)).toEqual(["no-patcher"]);
+  });
+
+  it("stays silent about an exotic prop on a built-in tile", () => {
+    // Same gate the stale-closure scan uses. `card` is registered by the host
+    // here, so `hostTileKinds` is non-empty and the check is live — the `heading`
+    // beside it must still produce nothing.
+    let at = new Date(0);
+    const app = appOf(
+      () =>
+        ({
+          kind: "column",
+          children: [
+            { kind: "heading", text: "title", at },
+            { kind: "card", children: [] },
+          ],
+        }) as unknown as TileNode,
+    );
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      onDiagnostic: sink,
+    });
+
+    at = new Date(0);
+    app._rerender?.();
+
+    expect(neverEqual(seen)).toEqual([]);
+    dispose();
+  });
+
+  it("changes nothing about the render when no sink is registered", () => {
+    // The scan is opt-in like the rest of the channel: without `onDiagnostic`
+    // the walker takes the pre-existing path, patcher and all.
+    let patched = 0;
+    const app = appOf(() => ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode);
+    const { dispose } = mountCore(app, root, {
+      tiles: { card: hostCard } as TileRenderers,
+      tilePatchers: {
+        card: () => {
+          patched++;
+        },
+      } as TilePatchers,
+      hostTileKinds: ["card"],
+    });
+    const card = root.firstElementChild as HTMLElement;
+
+    app._rerender?.();
+
+    expect(patched).toBe(1);
+    expect(root.firstElementChild).toBe(card);
+    dispose();
+  });
+
+  it("says which value can never be equal, in words a host can act on", () => {
+    const seen = hostCardRun(
+      () =>
+        ({
+          kind: "card",
+          props: { _tile: "Panel", at: new Date(0), total: Number.NaN },
+        }) as unknown as TileNode,
+      inPlaceCardPatch,
+    );
+    const [exotic, nan] = neverEqual(seen);
+
+    expect(describeDiagnostic(exotic as RuntimeDiagnostic)).toBe(
+      "Panel (card)'s props.at holds a non-plain object (Date / Map / Set / class instance), which never compares equal to a freshly built one — this tile re-applies its props on every render",
+    );
+    expect(describeDiagnostic(nan as RuntimeDiagnostic)).toBe(
+      "Panel (card)'s props.total is NaN, which never compares equal to itself — this tile re-applies its props on every render",
+    );
   });
 
   it("names the authored tile and the bind so a report points back at the source", () => {
