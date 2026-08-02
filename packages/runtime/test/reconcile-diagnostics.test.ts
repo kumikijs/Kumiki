@@ -1134,6 +1134,44 @@ describe("runtime: reconcile diagnostics", () => {
     }
   });
 
+  it("does not let a later reason to decline swallow the missing mapping", () => {
+    // The placement gate asks two questions, and only the first one steps over
+    // an unmapped child. If the second — "this renderer has nowhere to put a
+    // newcomer" — could still decline afterwards, the invariant would ride the
+    // decline down into the structural walk and come out as an opt-in
+    // `child-unmapped`, or as nothing at all once the length change rebuilt the
+    // parent. So the mapping is answered in between.
+    //
+    // `overlay` is in the declared set, and the renderer here places its first
+    // child directly and hand-builds the rest — so the measurement comes back
+    // clean, the second question has a newcomer to object to, and the unmapped
+    // child sits between them.
+    let members = ["a", "hand-built"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: members.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        tiles: { overlay: firstChildMappedColumn } as TileRenderers,
+        onDiagnostic: sink,
+      });
+
+      members = ["a", "hand-built", "newcomer"];
+      app._rerender?.();
+
+      expect(errors.flat().map(String).join(" ")).toContain("has no live element mapping");
+      expect(fallbackReasons(seen)).not.toContain("unplaceable-insert");
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   it("stays quiet for a one-child overlay, which wraps nothing", () => {
     // `overlay` places its FIRST child directly and only wraps the rest, so a
     // single-layer overlay has nothing out of reach and the keyed path must

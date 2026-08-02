@@ -2825,9 +2825,9 @@ function reconcileNode(
   // `oldEl` is the node that actually holds those slots. A renderer that wraps
   // its children owns their placement and the walker must not reach past it.
   if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
-    const blocker = keyedPassBlocker(oldEl, newNode, oldChildren, newChildren, oldMap);
-    if (blocker) {
-      diag?.fallback(blocker, newNode);
+    const decision = decideKeyedPass(oldEl, newNode, oldChildren, newChildren, oldMap);
+    if (!decision.run) {
+      diag?.fallback(decision.fallback, newNode);
       // Fall through to the structural walk: it never repositions anything, so
       // it stays correct under a wrapping renderer. When the length also
       // changed it then rebuilds the parent and reports `child-count-change`
@@ -2837,6 +2837,7 @@ function reconcileNode(
       reconcileKeyedChildren(
         oldEl,
         oldChildren,
+        decision.oldEls,
         newChildren,
         oldMap,
         newMap,
@@ -3000,7 +3001,17 @@ export const WRAPPING_TILE_KINDS: readonly string[] = Object.freeze([
 const WRAPPING_TILE_KIND_SET: ReadonlySet<string> = new Set(WRAPPING_TILE_KINDS);
 
 /**
- * Why the keyed child pass may not run for this parent — `undefined` when it
+ * Either the keyed child pass may run for this parent, with every old child's
+ * live element resolved for it, or the reason it may not. Shaped as a union
+ * rather than an optional blocker so the pass cannot be entered without the
+ * elements the decision already had to look up.
+ */
+type KeyedPassDecision =
+  | { readonly run: true; readonly oldEls: readonly HTMLElement[] }
+  | { readonly run: false; readonly fallback: ReconcileFallback };
+
+/**
+ * Whether the keyed child pass may run for this parent, and what it needs if it
  * may. Two independent things can stand in its way, and they answer different
  * questions:
  *
@@ -3016,25 +3027,56 @@ const WRAPPING_TILE_KIND_SET: ReadonlySet<string> = new Set(WRAPPING_TILE_KINDS)
  *
  * The declaration only bites when there IS a newcomer: a render that keeps the
  * same membership has nothing to place, so it still takes the keyed path.
+ *
+ * Between the two sits a question that is not a reason to decline at all: an
+ * old child with no entry in the element map is a broken invariant, and it
+ * throws. It is answered HERE, the moment the measurement has let the list
+ * through, because the measurement is what steps over such a child — deciding
+ * it is not a placement style — and a later decline would inherit that silence
+ * and hand the child to the structural walk, where only an opted-in host would
+ * ever hear about it. Before anything is applied either way, so a throw leaves
+ * the parent exactly as the render found it.
  */
-function keyedPassBlocker(
+function decideKeyedPass(
   parentEl: HTMLElement,
   parentNode: TileNode,
   oldChildren: TileNode[],
   newChildren: TileNode[],
   oldMap: TileElementMap,
-): ReconcileFallback | undefined {
+): KeyedPassDecision {
   const wrapped = firstWrappedChild(parentEl, oldChildren, oldMap);
   if (wrapped) {
-    return { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind };
+    return {
+      run: false,
+      fallback: { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind },
+    };
   }
-  if (!WRAPPING_TILE_KIND_SET.has(parentNode.kind)) return undefined;
+  const oldEls: HTMLElement[] = [];
+  for (const oldChild of oldChildren) {
+    const el = oldMap.get(oldChild);
+    if (!el) {
+      // Invariant violation — an old keyed tile should always be in the element
+      // map because every tile passes through `makeMappingTileCtx`. Throw so the
+      // outer reconcile bailout records this as a panic, audible to a host that
+      // never opted into a diagnostic sink, rather than silently forcing a
+      // subtree rebuild (which would erase focus, scroll, and any other DOM
+      // state on the whole parent).
+      throw new Error(
+        `reconcile: keyed old tile "${oldChild.key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
+      );
+    }
+    oldEls.push(el);
+  }
+  if (!WRAPPING_TILE_KIND_SET.has(parentNode.kind)) return { run: true, oldEls };
   const newcomer = firstUnmatchedChild(oldChildren, newChildren);
-  if (!newcomer) return undefined;
+  if (!newcomer) return { run: true, oldEls };
   return {
-    reason: "unplaceable-insert",
-    index: newcomer.index,
-    childKind: newcomer.childKind,
+    run: false,
+    fallback: {
+      reason: "unplaceable-insert",
+      index: newcomer.index,
+      childKind: newcomer.childKind,
+    },
   };
 }
 
@@ -3140,9 +3182,10 @@ function firstUnmatchedChild(
  * slot `parentEl` can address, so moving and removing them there is sound.
  *
  * A child with no entry in the map is NOT treated as blocking. That is a
- * broken invariant, not a placement style, and the keyed pass throws on any
- * unmapped old child — the ones it reuses and the ones it removes alike, before
- * it applies anything — so the reconcile bailout records a panic, visible
+ * broken invariant, not a placement style, so `decideKeyedPass` throws on it
+ * the moment this scan comes back clean — for the children it would have reused
+ * and the ones it would have removed alike, and before any later reason to
+ * decline can be reached. The reconcile bailout then records a panic, visible
  * without a diagnostic sink. Diverting it to the structural walk would trade
  * that for a `child-unmapped` only an opted-in host ever sees.
  */
@@ -3187,17 +3230,18 @@ function firstWrappedChild(
  * and everything else is inserted against its successor. A stable list costs
  * nothing; one item moving costs one move.
  *
- * Throws — never silently falls back — on: duplicate sibling keys, and any
- * invariant break (an old keyed tile missing its element mapping). The outer
- * reconcile bailout catches the throw, records the panic, and does a full
- * rebuild so the failure is visible in the episode log rather than silently
- * degrading DOM state. Both are answered for the whole list up front, so what
- * a child is about to be — reused, moved, removed — never decides whether its
- * broken invariant is heard.
+ * Throws — never silently falls back — on duplicate sibling keys, and passes on
+ * anything a DOM operation here rejects. The outer reconcile bailout catches the
+ * throw, records the panic, and does a full rebuild so the failure is visible in
+ * the episode log rather than silently degrading DOM state. The other invariant
+ * a keyed list can break — an old child with no element mapping — is settled by
+ * `decideKeyedPass` before this is entered, which is why `oldEls` arrives
+ * resolved rather than being looked up per use.
  */
 function reconcileKeyedChildren(
   parentEl: HTMLElement,
   oldChildren: TileNode[],
+  oldEls: readonly HTMLElement[],
   newChildren: TileNode[],
   oldMap: TileElementMap,
   newMap: TileElementMap,
@@ -3222,34 +3266,11 @@ function reconcileKeyedChildren(
     }
     seenNew.add(k);
   }
-  // Every old child's live element, resolved for the WHOLE list before any of
-  // it is applied. A child with no entry is an invariant violation — every tile
-  // passes through `makeMappingTileCtx`, which is what records the mapping — so
-  // this throws and the outer bailout records a panic rather than silently
-  // forcing a subtree rebuild (which would erase focus, scroll, and any other
-  // DOM state on the whole parent).
-  //
-  // Resolved up front because the two things this pass does with an old child
-  // — reconcile it against its keyed counterpart, or remove it — must not
-  // answer the same broken invariant differently. Looked up per use, a
-  // departure's failed lookup reads as "nothing to remove" and passes in
-  // silence, which is exactly the arrangement `firstWrappedChild` steps over on
-  // the promise that this pass is loud about it.
-  const oldEls: HTMLElement[] = [];
-  for (const oldChild of oldChildren) {
-    const el = oldMap.get(oldChild);
-    if (!el) {
-      throw new Error(
-        `reconcile: keyed old tile "${oldChild.key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
-      );
-    }
-    oldEls.push(el);
-  }
   // The node the mounted child list ends against. Everything this pass places
   // goes BEFORE it, so a renderer that keeps content of its own after its
   // children keeps it there — `appendChild` would walk the children past it.
   //
-  // Read here, before anything else runs, because this is the last moment the
+  // Read here, before anything is applied, because this is the last moment the
   // children's DOM order is known to match `oldChildren`: from the next loop on,
   // `replaceWithFreshTile` may swap a child's element and the removal pass drops
   // the departures. Taken from the LAST old child, the anchor is never a child
@@ -3305,13 +3326,15 @@ function reconcileKeyedChildren(
   // driven by the outer render pass's tree walk, so no per-node unmount hook
   // here.
   //
-  // Removed unconditionally: that the element exists was settled by the
-  // resolution above, and that `parentEl` is the node holding it by the
+  // Removed unconditionally: that the element exists was settled by
+  // `decideKeyedPass`, and that `parentEl` is the node holding it by the
   // `firstWrappedChild` gate, which declines this whole pass for any mapped old
-  // child sitting elsewhere. Neither can turn false in between — reconciling a
-  // survivor only ever splices within that survivor's own slot. If one ever
-  // did, `removeChild` throws it onto the same panic path as the resolution,
-  // where a guarded skip would have left the departure mounted for good.
+  // child sitting elsewhere. Nothing this pass does itself can undo either —
+  // reconciling a survivor only ever splices within that survivor's own slot.
+  // Host code runs in between (a patcher, and a newcomer's renderer), and it
+  // could reach anywhere; if it ever moved a departure out, `removeChild`
+  // throws that onto the same panic path, where the guard this replaces would
+  // have left the departure mounted for good.
   for (let i = 0; i < oldChildren.length; i++) {
     if (matched.has(oldChildren[i] as TileNode)) continue;
     parentEl.removeChild(oldEls[i] as HTMLElement);
@@ -3339,10 +3362,14 @@ function reconcileKeyedChildren(
  * Takes the resolved elements rather than the nodes and the map, so there is no
  * unmapped child to search past: an old child list that reaches here has one
  * element each, and every one of them sits directly under the parent.
+ *
+ * Never called with an empty list — `reconcileNode` peels off a child list that
+ * is empty on either side before the keyed gate — so there is no "no children
+ * to anchor on" case to answer. Answering one with `null` would mean appending,
+ * which is the one thing this exists to avoid.
  */
 function childListEnd(oldEls: readonly HTMLElement[]): ChildNode | null {
-  const last = oldEls[oldEls.length - 1];
-  return last ? last.nextSibling : null;
+  return (oldEls[oldEls.length - 1] as HTMLElement).nextSibling;
 }
 
 /**
