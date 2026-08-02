@@ -1,5 +1,24 @@
 # @kumikijs/e2e
 
+## 0.1.12
+
+### Patch Changes
+
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+  - @kumikijs/compiler@0.11.0
+
 ## 0.1.11
 
 ### Patch Changes

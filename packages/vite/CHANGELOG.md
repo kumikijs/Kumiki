@@ -1,5 +1,55 @@
 # @kumikijs/vite
 
+## 0.5.0
+
+### Minor Changes
+
+- 07e9c6b: feat(compiler,cli,vite): `--strict-icons` to flag unknown `icon(name=...)` at check time (#127).
+
+  Kumiki ships a built-in icon set but rendering an unknown `name=` silently fell back to an empty placeholder. `--strict-icons` promotes the runtime silence into a compile-time error so typos and dropped icons are caught during `kumiki check`.
+
+  - compiler: `check()` gains a `strictIcons` option; `E02xx strict-icon-unknown` is emitted when `name=` is not a member of the built-in set.
+  - cli: `kumiki check --strict-icons` and `kumiki build --strict-icons`.
+  - vite: `strictIcons: true` plugin option.
+  - spec: `docs/spec/errors.md` and `docs/spec/style.md` document the strict gate.
+
+- 07e9c6b: feat(compiler,cli,vite): `--strict-selector-id` to flag `TileName#id` typos at check time (#149).
+
+  `E0212 selector-id-mismatch` is now emitted (opt-in via `strictSelectorId`) when a reducer subscribes to `Tile#id` but every declaration of `Tile` has a **literal** `{id: "..."}` that does not match the selector's id — the reducer would otherwise silently never fire at runtime. Tiles whose `{id}` is computed are deliberately exempt so the runtime filter remains the authority for dynamic ids.
+
+  - compiler: `check()` gains `strictSelectorId`; `E0212` mirrors the existing `strictIcons` / `strictA11y` gate pattern.
+  - cli: `kumiki check --strict-selector-id` and `kumiki build --strict-selector-id`.
+  - vite: `strictSelectorId: true` plugin option.
+  - spec: `docs/spec/errors.md` documents `E0212` alongside the runtime-filter fallback for dynamic ids.
+
+### Patch Changes
+
+- 07e9c6b: feat(compiler): `W0212 ui-event-subscription-mismatch` — warn on `ui-event` subscriptions that cannot fire (#143).
+
+  When a reducer subscribes to a `ui-event` on a tile that cannot emit it (e.g. `ui.submit(DivTile)` or `ui.focus(NonFocusableTile)`), the compiler now emits `W0212` instead of silently generating a handler the DOM will never invoke. The rule consults the ui-event implicit-lift table (single source of truth in `packages/compiler/src/ui-lifts.ts`) to decide whether the subscription is admissible.
+
+  - compiler: `checkReducer` cross-references the target tile's kind against the ui-event's admissible tile set.
+  - runtime / cli / vite: no behavioural change; the diagnostic surfaces through the standard `check` gate and Vite overlay.
+  - spec: `docs/spec/errors.md` and `docs/spec/stdlib.md` document `W0212`; `docs/spec/language.md` cross-links to the ui-event lift table.
+
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+  - @kumikijs/runtime@0.11.0
+  - @kumikijs/compiler@0.11.0
+
 ## 0.4.6
 
 ### Patch Changes

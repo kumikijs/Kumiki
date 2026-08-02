@@ -1,5 +1,27 @@
 # @kumikijs/site
 
+## 0.1.13
+
+### Patch Changes
+
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+- Updated dependencies [07e9c6b]
+  - @kumikijs/runtime@0.11.0
+  - @kumikijs/compiler@0.11.0
+
 ## 0.1.12
 
 ### Patch Changes
