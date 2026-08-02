@@ -1,6 +1,6 @@
 {
   "name": "kumiki",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "type": "module",
   "description": "Kumiki — the convenient `kumiki` CLI entry for the AI-first web framework language. Wraps @kumikijs/cli.",
   "license": "Apache-2.0",
