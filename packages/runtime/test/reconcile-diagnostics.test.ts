@@ -1047,6 +1047,131 @@ describe("runtime: reconcile diagnostics", () => {
     }
   });
 
+  it("puts a DEPARTING keyed child with no element mapping on that same path", () => {
+    // The half the gate's reasoning has to cover too. A child on its way out is
+    // looked up for removal rather than for reuse, and the invariant it breaks
+    // is the same one — so it answers to the same channel, and the pass settles
+    // that for the whole old list before it applies anything.
+    //
+    // The renderer maps index 0 through `ctx.render` and hand-builds index 1,
+    // so the survivor is mapped and only the departure is not: the gate is
+    // reached and steps over it exactly as it says it does.
+    let members = ["a", "b"];
+    const app = appOf(() => ({
+      kind: "column",
+      children: members.map((id) => ({
+        kind: "text" as const,
+        text: id === "b" ? "hand-built" : id,
+        key: id,
+      })),
+    }));
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        tiles: { column: firstChildMappedColumn } as TileRenderers,
+        onDiagnostic: sink,
+      });
+
+      members = ["a"];
+      app._rerender?.();
+
+      expect(errors.flat().map(String).join(" ")).toContain("has no live element mapping");
+      // The gate let it through rather than declining, and no diagnostic stood
+      // in for the panic — the two channels this could have gone to instead.
+      expect(fallbackReasons(seen)).not.toContain("wrapped-children");
+      expect(fallbackReasons(seen)).not.toContain("child-unmapped");
+      // What a silent skip leaves behind: the departure's hand-built element is
+      // never removed, because the removal it was meant to get was the lookup
+      // that failed. The panic's full rebuild is what clears it.
+      expect(root.textContent).not.toContain("hand-built");
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it("answers the missing mapping before it mounts a newcomer", () => {
+    // The panic is not a late discovery dressed up as an early one. A departure
+    // is looked at last — after every survivor is reconciled and every newcomer
+    // built — so resolving the old list up front is what makes the pass leave
+    // nothing behind when it throws.
+    //
+    // The newcomer's renderer counts its own calls, and the keyed pass is the
+    // only thing that would ever call it: the parent hand-builds every child
+    // after the first, so the full rebuild the panic falls back to does not.
+    let mounted = 0;
+    const badge = (): HTMLElement => {
+      mounted++;
+      return document.createElement("b");
+    };
+    let members = ["a", "gone"];
+    const app = appOf(() => ({
+      kind: "column",
+      children: members.map((id) => ({ kind: id === "a" ? "text" : "badge", text: id, key: id })),
+    }));
+    const { sink } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        tiles: { column: firstChildMappedColumn, badge } as TileRenderers,
+        onDiagnostic: sink,
+      });
+      expect(mounted).toBe(0);
+
+      members = ["a", "new"];
+      app._rerender?.();
+
+      expect(errors.flat().map(String).join(" ")).toContain("has no live element mapping");
+      expect(mounted).toBe(0);
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it("does not let a later reason to decline swallow the missing mapping", () => {
+    // The placement gate asks two questions, and only the first one steps over
+    // an unmapped child. If the second — "this renderer has nowhere to put a
+    // newcomer" — could still decline afterwards, the invariant would ride the
+    // decline down into the structural walk and come out as an opt-in
+    // `child-unmapped`, or as nothing at all once the length change rebuilt the
+    // parent. So the mapping is answered in between.
+    //
+    // `overlay` is in the declared set, and the renderer here places its first
+    // child directly and hand-builds the rest — so the measurement comes back
+    // clean, the second question has a newcomer to object to, and the unmapped
+    // child sits between them.
+    let members = ["a", "hand-built"];
+    const app = appOf(() => ({
+      kind: "overlay",
+      children: members.map((id) => ({ kind: "text" as const, text: id, key: id })),
+    }));
+    const { sink, seen } = collector();
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { dispose } = mount(app, root, {
+        tiles: { overlay: firstChildMappedColumn } as TileRenderers,
+        onDiagnostic: sink,
+      });
+
+      members = ["a", "hand-built", "newcomer"];
+      app._rerender?.();
+
+      expect(errors.flat().map(String).join(" ")).toContain("has no live element mapping");
+      expect(fallbackReasons(seen)).not.toContain("unplaceable-insert");
+      dispose();
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   it("stays quiet for a one-child overlay, which wraps nothing", () => {
     // `overlay` places its FIRST child directly and only wraps the rest, so a
     // single-layer overlay has nothing out of reach and the keyed path must
