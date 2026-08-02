@@ -231,6 +231,16 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   discard. What this buys is truthful reporting: `binds-updated` (§10.3.11)
   and the diagnostics (§10.3.12) describe the render that happened, and no
   `newMap` entry is written for a subtree that was abandoned.
+- **The keyed pass answers the mapping question with a panic, not a
+  diagnostic.** An old child with no element mapping stops that pass too, and
+  the same way for every child in the list: the pass resolves each old child's
+  element before it reconciles, mounts, or removes anything, and a missing one
+  throws — recorded as a `location: "reconcile"` panic and rebuilt wholesale,
+  which is audible to a host that never opted into `onDiagnostic`. The
+  placement check above deliberately steps over an unmapped child rather than
+  declining on it (an unmapped child is a broken invariant, not a placement
+  style), so this is the only thing that reports it, and what a child was about
+  to be — reused, moved, or removed — does not decide whether it is heard.
 - **A child list that is empty on exactly one side of a render is decided
   before keys are consulted at all.** With nothing on the old side there is no
   pairing to attempt — every new child is a fresh mount, every old child
