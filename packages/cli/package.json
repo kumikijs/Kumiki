@@ -5,13 +5,13 @@
   "description": "Kumiki CLI — build, check, and AI-edit (list/view/add/replace/remove/rename/fix) Kumiki sources.",
   "license": "Apache-2.0",
   "author": "kage1020",
-  "homepage": "https://github.com/kage1020/Kumiki/tree/main/packages/cli#readme",
+  "homepage": "https://github.com/kumikijs/Kumiki/tree/main/packages/cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kage1020/Kumiki.git",
+    "url": "git+https://github.com/kumikijs/Kumiki.git",
     "directory": "packages/cli"
   },
-  "bugs": "https://github.com/kage1020/Kumiki/issues",
+  "bugs": "https://github.com/kumikijs/Kumiki/issues",
   "keywords": [
     "kumiki",
     "ai-first",
