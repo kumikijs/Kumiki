@@ -1,6 +1,6 @@
 # @kumikijs/cli
 
-The `kumiki` command — build, check, and AI-edit (list/view/add/replace/remove/rename/fix) Kumiki sources. Part of [Kumiki](https://github.com/kage1020/Kumiki), an AI-first web framework language.
+The `kumiki` command — build, check, and AI-edit (list/view/add/replace/remove/rename/fix) Kumiki sources. Part of [Kumiki](https://github.com/kumikijs/Kumiki), an AI-first web framework language.
 
 ## Install
 

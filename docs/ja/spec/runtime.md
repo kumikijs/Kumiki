@@ -796,4 +796,4 @@ app.unmount()
 
 ## 10.13 次
 
-- 完全例 → [examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples)
+- 完全例 → [examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples)

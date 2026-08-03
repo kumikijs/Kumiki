@@ -395,4 +395,4 @@ project.kumiki/
 ## 9.12 次
 
 - ランタイム実装の詳細 → [ランタイム](./runtime.md)
-- 完全例 → [examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples)
+- 完全例 → [examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples)

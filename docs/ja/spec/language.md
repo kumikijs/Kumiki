@@ -743,4 +743,4 @@ app Counter
     init   = []
 ```
 
-→ [標準ライブラリ](./stdlib.md), [ルーティング](./routing.md), [01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
+→ [標準ライブラリ](./stdlib.md), [ルーティング](./routing.md), [01-counter](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)

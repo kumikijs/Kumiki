@@ -453,7 +453,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 各エントリは `group.action` 形式（小文字・ドット区切り）の capability 名で、裸の文字列でも `description` を持つオブジェクトでもよい。登録された名前は `app.caps` で受理され、それに紐づく effect（`effect track cap=telemetry.track …`）は emit 可能になり、capability 境界で dispatch される — 標準 effect と全く同様に scenario でモックできる。標準集合に既にある名前は再宣言してはならない。
 
-これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[27-custom-capability](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
+これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
 
 **未処理の effect エラーは surface され、決して silent にならない。** `err` に解決した effect は、対応するすべての `.err` reducer へ配送される。プログラムがその effect に `.err` reducer を**一切**配線していない場合、捨てられたエラーは `console.error`（`[kumiki] effect "<name>" returned an error with no .err reducer: …`）で報告され、検証 tier（`console.error` を捕捉する `smoke` / `runScenario`）が検知する — live panic モデル（[エラー処理](./lifecycle.md#_7-2-error-handling)）と整合する。失敗した capability が no-op に見えてはならない：storage 利用不可ケース（opaque-origin サンドボックス、プライベートモード）がまさにこれで、`storage.read` / `storage.write` は `err` を返し、`.ok` だけを扱うアプリは黙って何もしないことになる。よってデフォルト契約は **`err` + surface された報告**であり、プログラムは `.err` reducer（空でもよい）を配線してエラーを処理（または意図的に無視）することを選ぶ。in-memory storage フォールバックはデフォルト挙動では**ない**（契約を覆い隠すため）；欲しいホストは `storage.*` provider で明示的に供給する。
 

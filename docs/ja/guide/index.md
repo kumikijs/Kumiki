@@ -10,4 +10,4 @@
 6. [ベンチマーク](./benchmarks.md) — サイズ比較と学習コストの実測
 7. [Playground](./playground.md) — ブラウザ内で編集→コンパイル→プレビュー
 
-動く実例は [../examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples) を併読すること。
+動く実例は [../examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) を併読すること。

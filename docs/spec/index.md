@@ -2,7 +2,7 @@
 
 This is the **normative specification** of the Kumiki language and runtime. When the implementation (`packages/`) and this specification disagree, this specification is, as a rule, taken as authoritative, and which side to fix is recorded as a design decision in the PR.
 
-Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/). Working examples are in [Kumiki Examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples).
+Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/). Working examples are in [Kumiki Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples).
 
 ## Table of Contents
 
@@ -96,7 +96,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 
 ## Feature Examples Index
 
-Each file under [`packages/examples/features/`](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features) demonstrates one matrix cell (or a small cluster). Layers name the definitions the example centers on; Spec links the section it demonstrates.
+Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumiki/tree/main/packages/examples/features) demonstrates one matrix cell (or a small cluster). Layers name the definitions the example centers on; Spec links the section it demonstrates.
 
 <!-- examples:start -->
 | Example | Layers | Feature | Spec |

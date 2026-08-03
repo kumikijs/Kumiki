@@ -26,7 +26,7 @@ app Counter
     init   = []
 ```
 
-これがメンタルモデルの全体である。完成版は [app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)、7 レイヤの解説は [Kumiki の考え方](./thinking-in-kumiki.md) にある。
+これがメンタルモデルの全体である。完成版は [app.kumiki](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)、7 レイヤの解説は [Kumiki の考え方](./thinking-in-kumiki.md) にある。
 
 ## ローカル環境を用意する
 
@@ -41,7 +41,7 @@ npx @kumikijs/cli --help
 example・benchmarks・playground までソースを触りたい場合は、リポジトリを clone してワークスペースの `kumiki` スクリプトを使う:
 
 ```sh
-git clone https://github.com/kage1020/Kumiki.git
+git clone https://github.com/kumikijs/Kumiki.git
 cd Kumiki
 pnpm install        # ワークスペースのパッケージをリンク（どのコマンドより先に必須）
 pnpm build          # 全パッケージをビルド
@@ -90,11 +90,11 @@ E0103 undef-ref at 3:39: Reference to undefined name "total"
 
 ## エディタ / AI 連携（MCP）
 
-`@kumikijs/mcp` は check・build・編集・仕様検索を MCP ツールとして公開し、AI エージェントが Kumiki を一気通貫で操作できる。クライアント設定例は [README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md) を参照。
+`@kumikijs/mcp` は check・build・編集・仕様検索を MCP ツールとして公開し、AI エージェントが Kumiki を一気通貫で操作できる。クライアント設定例は [README.md](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) を参照。
 
 ## 次へ
 
 - [最初のアプリ](./your-first-app.md) — Counter を 1 レイヤずつ一から書く。
 - [Kumiki の考え方](./thinking-in-kumiki.md) — 7 レイヤと React との違い。
-- [Examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples) — 機能別の最小例と完成アプリ。
+- [Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) — 機能別の最小例と完成アプリ。
 - [Playground](./playground.md) — ブラウザで引き続き実験する。

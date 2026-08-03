@@ -969,4 +969,4 @@ To meet these, the runtime is Rust → WASM (optional) or hand-written JS (defau
 
 ## 10.13 Next
 
-- Complete examples → [examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples)
+- Complete examples → [examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples)

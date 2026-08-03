@@ -393,4 +393,4 @@ This allows coexistence with existing Git-based workflows. However, **the true s
 ## 9.12 Next
 
 - Runtime implementation details → [Runtime](./runtime.md)
-- Complete examples → [examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples)
+- Complete examples → [examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples)

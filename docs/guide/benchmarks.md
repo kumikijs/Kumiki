@@ -1,13 +1,13 @@
 # Benchmarks
 
-Kumiki's claims — "fewer tokens than React" and "an LLM can learn it from the spec alone" — are measured, not asserted. Two suites live in [`benchmarks`](https://github.com/kage1020/Kumiki/tree/main/packages/benchmarks).
+Kumiki's claims — "fewer tokens than React" and "an LLM can learn it from the spec alone" — are measured, not asserted. Two suites live in [`benchmarks`](https://github.com/kumikijs/Kumiki/tree/main/packages/benchmarks).
 
 - **Size comparison** — how compact is a Kumiki app, and a Kumiki *edit*, versus the equivalent React? Deterministic.
 - **Learning cost** — given only the spec, can an LLM write a program that parses, typechecks, and builds in a single pass?
 
 ## Size comparison (Kumiki vs React)
 
-Baselines: the same TodoMVC written twice — [`02-todomvc/app.kumiki`](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/02-todomvc/app.kumiki) and a plain React [`App.tsx`](https://github.com/kage1020/Kumiki/blob/main/packages/benchmarks/size-comparison/todomvc-react/src/App.tsx). Tokenized with `gpt-tokenizer`.
+Baselines: the same TodoMVC written twice — [`02-todomvc/app.kumiki`](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/02-todomvc/app.kumiki) and a plain React [`App.tsx`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/size-comparison/todomvc-react/src/App.tsx). Tokenized with `gpt-tokenizer`.
 
 ### Whole file
 
@@ -44,7 +44,7 @@ Kumiki's AI-editing verbs (`add` / `replace` / `remove`) send whole definitions.
 
 ## Learning cost (writing Kumiki from the spec alone)
 
-Each task gives a model **only `docs/spec/` + a task spec** and asks for a single-pass `.kumiki` program — no example apps, no compiler in the loop, no retries. The harness then scores parse / typecheck / build. Protocol details and fairness notes (including why an earlier 4/4 Claude run was discarded) are in [`learning-cost/summary.md`](https://github.com/kage1020/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md).
+Each task gives a model **only `docs/spec/` + a task spec** and asks for a single-pass `.kumiki` program — no example apps, no compiler in the loop, no retries. The harness then scores parse / typecheck / build. Protocol details and fairness notes (including why an earlier 4/4 Claude run was discarded) are in [`learning-cost/summary.md`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md).
 
 | Task | Vendor | LOC | cl100k | parse | typecheck | build |
 |---|---|---:|---:|:--:|:--:|:--:|
@@ -63,7 +63,7 @@ What the table says:
 
 - **Mid-size apps build from the spec alone, in one pass.** Every vendor builds v2; two of three build the ~600-LOC v3.
 - **Codex builds everything it attempted, including the ~880-LOC v4** — the only vendor to survive the largest task. Claude holds through v3, then trips on an unsupported `match` pattern at v4 scale; Gemini degrades earliest.
-- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build ([#61](https://github.com/kage1020/Kumiki/issues/61)) and rules the spec stated only by example ([#62](https://github.com/kage1020/Kumiki/issues/62)). Both are fixed, and the table above is scored against the patched compiler. The three remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
+- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build ([#61](https://github.com/kumikijs/Kumiki/issues/61)) and rules the spec stated only by example ([#62](https://github.com/kumikijs/Kumiki/issues/62)). Both are fixed, and the table above is scored against the patched compiler. The three remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
 
 ## Reproducing
 

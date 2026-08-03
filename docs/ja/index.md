@@ -35,7 +35,7 @@ features:
 
 ## 同じUI、違う思想
 
-同じアプリを 2 つの世界で。左は Kumiki での [fetch example](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki)、右はその慣用的な React 等価実装。
+同じアプリを 2 つの世界で。左は Kumiki での [fetch example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki)、右はその慣用的な React 等価実装。
 
 <div class="home-compare">
 <div class="home-compare-col">
