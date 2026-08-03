@@ -1,0 +1,18 @@
+slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+reducer dec on=ui.click(DecBtn) do= count := count - 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile DecBtn = button(text="-1", onClick=dec)
+tile App = column(heading("Count: " + count.show), IncBtn, DecBtn)
+app CounterTests
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}
+test dec-works =
+    reducer-test dec
+        given  = {slots: {count: 5}, event: {type: ui.click, target: DecBtn}}
+        expect = {slots: {count: 4}, effects: []}

@@ -4,7 +4,7 @@
 // `kumiki build` output never ships them. `index.ts` merges this back into the
 // classic `_stdlib` export for the inlining (full-bundle) path.
 
-import type { ReducerSpec } from "./core.ts";
+import { type PanicCategory, type PanicCauseLink, panicInfo, type ReducerSpec } from "./core.ts";
 
 /**
  * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
@@ -31,7 +31,16 @@ type EpisodeStepLite =
   | { kind: "effect-start"; name: string; args?: unknown; ts?: number }
   | EpisodeEffectEndStep
   | { kind: "signal-update"; "dirty-slots"?: string[]; "binds-updated"?: string[]; ts?: number }
-  | { kind: "panic"; message: string; location?: string; ts?: number };
+  | {
+      kind: "panic";
+      message: string;
+      location?: string;
+      /** Root-cause devtools trail — optional so older logs still parse. */
+      stack?: string;
+      cause?: PanicCauseLink[];
+      category?: PanicCategory;
+      ts?: number;
+    };
 
 export type EpisodeLogEntry = {
   id: string;
@@ -517,7 +526,17 @@ export type ReplayEvent =
       source: "from-log" | "fixed" | "ignored";
     }
   | { kind: "signal-update"; episodeId: string; stepIndex: number; dirty: string[] }
-  | { kind: "panic"; episodeId: string; stepIndex: number; message: string }
+  | {
+      kind: "panic";
+      episodeId: string;
+      stepIndex: number;
+      message: string;
+      /** Propagate root-cause fields so the replay CLI can render them. */
+      location?: string;
+      stack?: string;
+      cause?: PanicCauseLink[];
+      category?: PanicCategory;
+    }
   | { kind: "episode-end"; episodeId: string };
 
 /**
@@ -529,7 +548,15 @@ export type ReplayEvent =
 export type ReplayObserver = (event: ReplayEvent) => "continue" | "stop";
 
 export type ReplayReport = {
-  panics: { episodeId: string; message: string }[];
+  panics: {
+    episodeId: string;
+    message: string;
+    /** Keep root-cause fields on the aggregate report too. Optional for back-compat with older callers. */
+    location?: string;
+    stack?: string;
+    cause?: PanicCauseLink[];
+    category?: PanicCategory;
+  }[];
   /**
    * Effect emits whose `.err` outcome had no `.err` reducer to catch. Carries
    * the source `episodeId` so multi-episode replays can pinpoint which one
@@ -554,8 +581,24 @@ function executeEpisode(
   observer: ReplayObserver,
   stepCounter: { n: number },
   untilStep: number | undefined,
-): { panics: { message: string }[]; unhandledErrors: { effect: string }[]; stopped: boolean } {
-  const panics: { message: string }[] = [];
+): {
+  panics: {
+    message: string;
+    location?: string;
+    stack?: string;
+    cause?: PanicCauseLink[];
+    category?: PanicCategory;
+  }[];
+  unhandledErrors: { effect: string }[];
+  stopped: boolean;
+} {
+  const panics: {
+    message: string;
+    location?: string;
+    stack?: string;
+    cause?: PanicCauseLink[];
+    category?: PanicCategory;
+  }[] = [];
   const unhandledErrors: { effect: string }[] = [];
 
   // Apply a reducer's slot writes, honouring §6.4 refine() gates: a reject is
@@ -640,9 +683,36 @@ function executeEpisode(
     try {
       res = job.reducer.apply(app.live, job.payload);
     } catch (e) {
-      const msg = e && (e as Error).message ? (e as Error).message : String(e);
-      panics.push({ message: msg });
-      if (emit({ kind: "panic", episodeId: ep.id, stepIndex: 0, message: msg })) {
+      // Derive the record via panicInfo so stack + Error.cause reach the
+      // replay CLI unchanged. The runner treats this catch site as `reducer`
+      // — it's replaying the initial reducer of a recorded episode. If the
+      // thrown KumikiPanic didn't stamp its own location, fall back to the
+      // reducer name we're replaying so the CLI can render "reducer "foo""
+      // instead of leaving the location blank.
+      const rec = panicInfo(e, "reducer");
+      const location = rec.location ?? `reducer "${job.reducer.name}"`;
+      const panicEntry: {
+        message: string;
+        location?: string;
+        stack?: string;
+        cause?: PanicCauseLink[];
+        category?: PanicCategory;
+      } = { message: rec.message, location, category: rec.category };
+      if (rec.stack !== undefined) panicEntry.stack = rec.stack;
+      if (rec.cause !== undefined) panicEntry.cause = rec.cause;
+      panics.push(panicEntry);
+      if (
+        emit({
+          kind: "panic",
+          episodeId: ep.id,
+          stepIndex: 0,
+          message: rec.message,
+          location,
+          ...(rec.stack !== undefined ? { stack: rec.stack } : {}),
+          ...(rec.cause !== undefined ? { cause: rec.cause } : {}),
+          category: rec.category,
+        })
+      ) {
         return { panics, unhandledErrors, stopped: true };
       }
       continue;
@@ -794,7 +864,7 @@ export function replayEpisodes(input: {
   let stopped = false;
   for (const ep of episodes) {
     const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep);
-    for (const p of r.panics) panics.push({ episodeId: ep.id, message: p.message });
+    for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
     for (const u of r.unhandledErrors) unhandledErrors.push({ episodeId: ep.id, effect: u.effect });
     if (r.stopped) {
       stopped = true;
@@ -1038,7 +1108,7 @@ export const _stdlibTest = {
 
     for (const ep of episodes) {
       const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined);
-      for (const p of r.panics) panics.push({ episodeId: ep.id, message: p.message });
+      for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
       for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
     }
 

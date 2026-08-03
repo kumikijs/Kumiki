@@ -12,6 +12,8 @@ out/
 # Test artifacts
 coverage/
 test-tmp/
+playwright-report/
+test-results/
 *.kumiki-ops.jsonl
 *.kumiki-episodes.jsonl
 *.kumiki-locks.json

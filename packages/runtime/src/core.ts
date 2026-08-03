@@ -5,7 +5,9 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
-import type { Episode, EpisodeLogger, SlotDiff } from "./episode.ts";
+import type { Episode, EpisodeLogger, PanicCategory, PanicCauseLink, SlotDiff } from "./episode.ts";
+
+export type { PanicCategory, PanicCauseLink } from "./episode.ts";
 
 /**
  * SSR slot snapshot — the non-`volatile` slot values an SSR pass produces.
@@ -30,8 +32,11 @@ export type EventHandler = (el: Record<string, unknown>) => void;
 export class KumikiPanic extends Error {
   readonly isKumikiPanic = true as const;
   readonly location: string | undefined;
-  constructor(message: string, location?: string) {
-    super(message);
+  constructor(message: string, location?: string, options?: { cause?: unknown }) {
+    // Forward `cause` to the native Error(message, options) so root-cause
+    // information survives on the standard `.cause` field. Older callsites
+    // that pass only (message, location?) keep working unchanged.
+    super(message, options);
     this.name = "KumikiPanic";
     this.location = location;
   }
@@ -47,7 +52,7 @@ function isPanic(e: unknown): e is KumikiPanic {
   );
 }
 
-export type TileNode =
+export type TileNode = (
   | { kind: "page" | "column" | "row" | "card" | "box"; children: TileNode[]; props?: TileProps }
   | { kind: "heading" | "text"; text: string; props?: TileProps }
   | { kind: "button"; text: string; props?: TileProps; loading?: boolean; disabled?: boolean }
@@ -148,7 +153,51 @@ export type TileNode =
     }
   | { kind: "switch"; checked: boolean; props?: TileProps }
   | { kind: "error"; field: string; props?: TileProps }
-  | { kind: "route-outlet"; children: TileNode[]; props?: TileProps };
+  | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
+  | {
+      /**
+       * Native `<details>` disclosure (§10 built-in tile catalog, #190).
+       * `open` maps to the DOM property of the same name; toggling it via a
+       * data-prop change hits the tile's patcher (element identity is
+       * preserved so the browser keeps the disclosure's animation state and
+       * any inner focus).
+       */
+      kind: "details";
+      summary: string;
+      children: TileNode[];
+      open?: boolean;
+      props?: TileProps;
+    }
+  | {
+      /**
+       * `contenteditable` text field (§10 built-in tile catalog, #190). Emits
+       * a `<div contenteditable="true">`; `bind=` writes back the plain
+       * `textContent` on every `input` event. The tile patcher preserves the
+       * live caret by skipping the `textContent` overwrite when the DOM
+       * already matches the new node's text (the common case during typing,
+       * where the bind loop keeps slot and DOM in sync). An in-flight IME
+       * composition is also skipped so the browser's candidate window is not
+       * dismissed mid-glyph; the trailing `compositionend` picks up the
+       * committed text via the normal `input` event.
+       */
+      kind: "editable";
+      text: string;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: string[];
+      id?: string;
+    }
+) & {
+  /**
+   * Stable per-instance identity for keyed reconcile. Optional and additive:
+   * when every child at a given level carries a `key`, the runtime matches
+   * children by key across renders (survives reorder / insert / remove
+   * without rebuilding the parent subtree). When any child at that level is
+   * missing a `key`, the reconciler falls back to structural identity
+   * (position + `kind` + data-prop equality).
+   */
+  readonly key?: string;
+};
 
 export type TileProps = Record<string, unknown> & {
   onClick?: EventHandler;
@@ -248,6 +297,198 @@ export type TileRenderer<K extends TileNode["kind"] = TileNode["kind"]> = (
 /** A registry of tile renderers, keyed by `TileNode["kind"]`. */
 export type TileRenderers = { [K in TileNode["kind"]]?: TileRenderer<K> };
 
+/**
+ * Mutates an already-mounted DOM element to reflect a new `TileNode` of the
+ * same kind, preserving element identity (and thus browser-internal state:
+ * `<select>` open dropdown / selection, `<input>` focus / caret,
+ * `<video>` playback position, `<details>` open, `contenteditable` caret and
+ * IME composition). Called by the reconcile diff whenever `oldNode.kind ===
+ * newNode.kind` and any own data prop differs; when no patcher is registered
+ * for a kind, the reconcile falls back to a full subtree rebuild (which
+ * discards internal state — hence #190). Container tile children are still
+ * walked by the reconcile after `patch` returns; a container patcher's job
+ * is to reconcile just this element's own attributes.
+ */
+export type TilePatcher<K extends TileNode["kind"] = TileNode["kind"]> = (
+  el: HTMLElement,
+  oldNode: TileNode & { kind: K },
+  newNode: TileNode & { kind: K },
+  ctx: TileCtx,
+) => void;
+
+/** A registry of tile patchers, keyed by `TileNode["kind"]`. */
+export type TilePatchers = { [K in TileNode["kind"]]?: TilePatcher<K> };
+
+/**
+ * Controlled escape hatch a `TilePatcher` throws when it discovers the new
+ * `TileNode` cannot be applied in place — for example a `list` whose
+ * `ordered` flip changes the underlying tag between `<ul>` and `<ol>`. The
+ * reconcile catches this specifically and falls back to a same-kind subtree
+ * rebuild (`replaceWithFreshTile`) without recording it as a panic. Any
+ * OTHER throw from a patcher is treated as a real fault and lands in the
+ * outer `reconcileTree` bailout.
+ */
+export class PatchRequiresRebuild extends Error {
+  readonly isPatchRequiresRebuild = true as const;
+  constructor(reason: string) {
+    super(`patcher declined in-place update: ${reason}`);
+    this.name = "PatchRequiresRebuild";
+  }
+}
+
+/**
+ * Why the reconcile gave up identity preservation for a subtree — either
+ * rebuilding it wholesale, or declining the keyed matcher and dropping to the
+ * weaker positional walk. Each one is correctness-preserving, so none of them
+ * throws — which is exactly the problem: an app can be re-mounting every
+ * subtree on every render while looking perfectly healthy from the outside.
+ *
+ * Two rebuild paths are deliberately absent. A `kind` change means a different
+ * thing is in that position, so there is no identity to preserve. And a
+ * patcher that declines in place (a `list` flipping `<ul>` ↔ `<ol>`) is a
+ * normal, expected outcome that `PatchRequiresRebuild` exists to keep out of
+ * the log.
+ */
+export type ReconcileFallbackReason = ReconcileFallback["reason"];
+
+/**
+ * The reason a subtree was rebuilt, together with the evidence only that reason
+ * has. The walker knows the counts / positions / kinds at each decision point,
+ * and a bare reason string would throw them away — "an unkeyed list changed
+ * length" is a fact, "3 children became 4" is something to act on.
+ */
+export type ReconcileFallback =
+  /**
+   * The tile's own data props changed and no patcher is registered for its
+   * kind (`tileKind` on the enclosing diagnostic), so the whole subtree was
+   * rebuilt — discarding focus, caret, `<select>` open state and `<video>`
+   * playback on that element.
+   */
+  | { reason: "no-patcher" }
+  /**
+   * An unkeyed sibling list changed length, so the parent was rebuilt. Giving
+   * every child a `key` lifts this: the keyed matcher then survives insert,
+   * remove and reorder without touching the untouched siblings.
+   */
+  | { reason: "child-count-change"; oldCount: number; newCount: number }
+  /**
+   * A children array had an empty slot at `index`. Kumiki codegen flattens
+   * nils away, so this only reaches the walker from a host-built tile tree.
+   */
+  | { reason: "child-hole"; index: number }
+  /**
+   * The old child at `index` had no entry in the node → element map, which
+   * means its parent's renderer built it without going through `ctx.render`.
+   * The walker cannot reuse what it cannot find, so that parent rebuilds on
+   * every render. `childKind` names the child whose element went missing.
+   */
+  | { reason: "child-unmapped"; index: number; childKind: string }
+  /**
+   * Every child carried a `key`, but the parent's renderer does not place its
+   * children directly under its own element — the child at `index` sits inside
+   * a renderer-owned wrapper (`overlay` puts every child after the first in a
+   * positioning layer). Moving and removing children is addressed against the
+   * parent element, so the keyed matcher declined and the positional walk ran
+   * instead: correct, but reorder no longer preserves element identity. A host
+   * renderer hits this by appending children to anything other than the
+   * element it returns.
+   */
+  | { reason: "wrapped-children"; index: number; childKind: string }
+  /**
+   * Every child carried a `key` and every mounted one sits directly under the
+   * parent element — but the new child at `index` is a newcomer, and this
+   * parent's renderer does not place every child directly (`overlay` wraps all
+   * but the first; the surfaces wrap all of theirs in a content div). The
+   * mounted children can only testify about the slots that already exist, so a
+   * short list looks placeable right up until it grows. The keyed matcher
+   * declined rather than append the newcomer bare, and the positional walk ran
+   * instead. `childKind` names the newcomer.
+   */
+  | { reason: "unplaceable-insert"; index: number; childKind: string };
+
+/**
+ * Why a pair of data-prop values can never compare equal, however identical the
+ * two renders that produced them are. Both are settled rules of the equality
+ * kernel rather than bugs in it — the point of naming them is that a tile
+ * carrying one pays for a diff it can never win.
+ */
+export type NeverEqualCause =
+  /**
+   * A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or an object
+   * from another realm. Their state lives outside their own enumerable keys, so
+   * the kernel refuses to compare them key-wise and only `===` can make two of
+   * them equal — which a value rebuilt each render never is.
+   */
+  | "non-plain-object"
+  /** `NaN`, which is not equal to itself by definition. */
+  | "nan";
+
+/**
+ * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
+ *
+ * Distinct from the episode log on purpose: an episode is the author-facing
+ * causal record of what the app did, and already reports *that* a subtree was
+ * re-rendered through `signal-update.binds-updated`. A diagnostic reports
+ * *why* the runtime made that choice — useful when tuning an app or a host
+ * integration, noise in a behavioural trace.
+ *
+ * The three variants differ in severity, not just in shape. A
+ * `reconcile-fallback` costs performance and browser-owned element state; a
+ * `never-equal-prop` costs a diff and a patch on every render; a
+ * `stale-closure-risk` means the app is running the wrong code. A host wiring
+ * these to a console should route them to different levels.
+ */
+export type RuntimeDiagnostic =
+  | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)
+  | (DiagnosticSite & {
+      /**
+       * A prop whose function identity changed was treated as equal, so the
+       * tile was reused with the previous render's closure still attached.
+       * Reported only for host-registered renderers: the built-ins dispatch
+       * every handler through a per-element slot the patcher refreshes, so a
+       * re-minted closure is not a hazard there.
+       */
+      kind: "stale-closure-risk";
+      /**
+       * Dotted path of the offending field — `props.onClick` for the
+       * conventional placement, a bare `onClick` for a handler the host hung
+       * off the node itself.
+       */
+      field: string;
+    })
+  | (DiagnosticSite & {
+      /**
+       * A data prop holds a value that cannot compare equal to a structurally
+       * identical counterpart, so this tile's props are unequal on every render
+       * from now on. With a patcher registered that is invisible through every
+       * other channel — the element keeps its identity and nothing degrades, it
+       * just re-applies the same attributes forever. Without one the rebuild is
+       * already reported as `no-patcher`, and this names the field that reason
+       * cannot.
+       *
+       * Reported only for host-registered renderers: codegen emits neither
+       * cause, so a built-in tile carrying one came from a host-built tree.
+       */
+      kind: "never-equal-prop";
+      /** Dotted path of the offending field, e.g. `props.at` or a bare `at`. */
+      field: string;
+      cause: NeverEqualCause;
+    });
+
+/**
+ * The tile every diagnostic is about. Shared by all three variants so a host
+ * can log, group and correlate them without narrowing first — and so a fourth
+ * variant cannot quietly report something the reader can't locate.
+ */
+export type DiagnosticSite = {
+  /** The tile kind the walker was deciding about. */
+  tileKind: string;
+  /** Same identifier the episode log uses: bind path, else key, else kind. */
+  id: string;
+  /** The authored tile this node came from, when it came from one. */
+  tile?: string | undefined;
+};
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -313,6 +554,15 @@ export type MountOptions = {
    * full built-in set.
    */
   tiles?: TileRenderers;
+  /**
+   * Tile patchers (#190). When present for a kind, the reconcile diff calls
+   * `patch(el, oldNode, newNode, ctx)` to mutate the mounted element in place
+   * rather than tearing down and rebuilding — preserving browser-internal
+   * element state (`<select>` open / `<video>` playback / focus / caret /
+   * `<details>` open / `contenteditable`) across a data-prop change. A kind
+   * with no registered patcher continues to fall back to a full rebuild.
+   */
+  tilePatchers?: TilePatchers;
   /** The routing feature module (`routing` from `router.ts`), when the app routes. */
   routing?: RoutingImpl;
   /** Built-in effect installers (e.g. `installToast`) this app can emit. */
@@ -325,6 +575,27 @@ export type MountOptions = {
    * production mounts that don't care about episode capture.
    */
   episodeLogger?: EpisodeLogger | null;
+  /**
+   * Development-time observation channel for the reconcile diff. When present,
+   * every rebuild the walker performs instead of preserving element identity is
+   * reported here, along with the two host-tile hazards the prop-equality check
+   * creates: a function identity it waved through, and a value it can never
+   * call equal. Omit it (the default) and the checks never run: production
+   * mounts pay one optional-call check per decision and nothing else.
+   */
+  onDiagnostic?: (d: RuntimeDiagnostic) => void;
+  /**
+   * Tile kinds whose renderer came from the host rather than the built-in set.
+   * Scopes the two per-field scans in `onDiagnostic` — stale closures on the
+   * reuse decision, never-equal props on the unequal one — which would
+   * otherwise fire once per field per render on every built-in tile. The
+   * built-ins route handlers through per-element slots and carry only the plain
+   * data codegen emits, so neither hazard reaches them. The package entry's
+   * `mount` derives this from the `tiles` override map; callers using
+   * `mountCore` with their own renderers pass it themselves. Ignored without
+   * `onDiagnostic`.
+   */
+  hostTileKinds?: readonly string[];
   /**
    * SSR slot snapshot to overlay on `app.live` before the first render
    * (docs/spec/runtime.md §10.6.2). Keyed by slot name; values come straight
@@ -407,13 +678,9 @@ export type AppShape = {
    * `icon(name="<literal>")` in the source. `theme.icons[name]` (when set)
    * overrides any entry here.
    *
-   * The renderer reads `icons` off `globalThis.__kumikiApp`, which holds the
-   * most-recently-mounted instance. When several Kumiki apps share a page
-   * (Web Component, micro-frontend), the last mount wins for unrelated apps
-   * too. The compiled icon set is normally identical across mounts of the
-   * same source, so this is only a hazard when two distinct apps with
-   * different icon registries share the document — wrap one in a closed
-   * shadow root, or pre-merge their `theme.icons`, to avoid cross-talk.
+   * The renderer resolves `icons` off the app whose render pass is running
+   * (see the multi-mount app registry above `mountCore`), so several apps
+   * with different icon registries can share a document without cross-talk.
    */
   icons?: Record<string, string>;
   /** reusable scoped animations by name (closed-grammar keyframes + timing). */
@@ -558,6 +825,127 @@ export function computeSlotDiffs(
   return { diffs, dirty };
 }
 
+// ---------------------------------------------------------------------------
+// Multi-mount app registry: answers "which app owns this element?" without a
+// shared global. Each mount stamps its target with `data-kumiki-root` and
+// registers itself in a WeakMap keyed by that element, so several Kumiki apps
+// (Web Components, micro-frontends, Storybook previews) can share a page
+// without cross-wiring. Event-time consumers (bind write-back, link nav,
+// prefetch) resolve through `resolveApp(el)`; render-time consumers (theme
+// tokens, icon lookup) run while the tree is still detached — `closest()`
+// cannot work there — so every render pass is bracketed with
+// `withRenderingApp` and they read `getRenderingApp()` instead.
+
+const ROOT_ATTR = "data-kumiki-root";
+
+/**
+ * An app that has been through `mountCore`: the mount attaches the imperative
+ * seams (`_dispatch` / `_setSlot` / `_navigate` / `_prefetch` / `_rerender`)
+ * and initializes `live`, so registry consumers can rely on them without
+ * per-call-site casts.
+ */
+export type MountedApp = AppShape & {
+  _dispatch: (name: string, el: Record<string, unknown>) => void;
+  _setSlot: (name: string, value: unknown) => void;
+  _navigate: (path: string, replace?: boolean) => void;
+  _prefetch: (name: string, args: Record<string, string>, to: string) => void;
+  _rerender: () => void;
+  /** Prefetch dedupe set (§3.8), lazily created on first link prefetch. */
+  _prefetched?: Set<string>;
+  live: Record<string, unknown>;
+};
+
+const appByRoot = new WeakMap<Element, MountedApp>();
+
+/** Non-null only while a mount's synchronous render pass is running. */
+let renderingApp: MountedApp | null = null;
+
+// Registration happens at the top of `mountCore`, BEFORE the imperative seams
+// are attached — safe because nothing can resolve through the registry until
+// the first render attaches the tree, and by then the seams exist. That
+// ordering is why the producer casts to `MountedApp` here instead of the
+// consumers casting on every read.
+function registerAppRoot(target: Element, app: AppShape): void {
+  appByRoot.set(target, app as MountedApp);
+  target.setAttribute(ROOT_ATTR, "");
+}
+
+/** No-op unless `app` is the current registrant, so disposing an older mount
+ *  of the same target never unhooks a newer one. */
+function unregisterAppRoot(target: Element, app: AppShape): void {
+  if (appByRoot.get(target) !== app) return;
+  appByRoot.delete(target);
+  target.removeAttribute(ROOT_ATTR);
+}
+
+/**
+ * Resolve the app owning `el` by walking up to the nearest registered mount
+ * root, hopping shadow boundaries via the host element. Returns undefined for
+ * elements outside any live mount (e.g. a stale listener firing after
+ * dispose) — deliberately NOT the most-recently-mounted app, which would
+ * reintroduce the last-write-wins cross-talk this registry exists to remove.
+ * One exception: during a synchronous render pass, unresolvable elements fall
+ * back to the app currently rendering (its tree may still be detached);
+ * outside a render pass there is no fallback.
+ */
+export function resolveApp(el: Element | null | undefined): MountedApp | undefined {
+  let node: Element | null = el ?? null;
+  while (node) {
+    const root = node.closest(`[${ROOT_ATTR}]`);
+    if (root) {
+      const app = appByRoot.get(root);
+      if (app) return app;
+      // Marker without a registration — a stale attribute (e.g. a cloned or
+      // serialized subtree copies the attribute but never the WeakMap entry).
+      // Keep climbing this tree so a live ancestor root is not shadowed.
+      node = root.parentElement ?? shadowHost(root);
+      continue;
+    }
+    node = shadowHost(node);
+  }
+  return renderingApp ?? undefined;
+}
+
+function shadowHost(el: Element): Element | null {
+  const rootNode = el.getRootNode();
+  return typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot ? rootNode.host : null;
+}
+
+/** The app whose synchronous render pass is currently executing, if any. */
+export function getRenderingApp(): MountedApp | undefined {
+  return renderingApp ?? undefined;
+}
+
+/**
+ * Bracket a render pass. Saved/restored (not just cleared) because a custom
+ * element inside the tree can synchronously mount a nested Kumiki app while
+ * the outer render is still on the stack.
+ */
+function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+  const prev = renderingApp;
+  // Renders only run from mountCore, after the imperative seams are attached.
+  renderingApp = app as MountedApp;
+  try {
+    return fn();
+  } finally {
+    renderingApp = prev;
+  }
+}
+
+const warnedUnresolved = new WeakSet<Element>();
+
+/**
+ * Once-per-element diagnostic for event-time consumers whose `resolveApp`
+ * came back empty: the event is dropped by design (no last-mount fallback),
+ * but silently-dead controls are miserable to debug — and the smoke tier
+ * watches console output, so this makes the drop observable there too.
+ */
+export function warnUnresolvedEvent(el: Element, what: string): void {
+  if (warnedUnresolved.has(el)) return;
+  warnedUnresolved.add(el);
+  console.warn(`kumiki: ${what} fired on an element outside any mount root; ignored`, el);
+}
+
 /**
  * The granular mount (#71): renders with exactly the tile renderers / routing /
  * builtin effects passed via options. Generated apps from `kumiki build` call
@@ -573,10 +961,14 @@ export function mountCore(
   // call below short-circuits via the `?.` optional chain, so the no-logger
   // path stays zero-cost.
   const episode: EpisodeLogger | null = options.episodeLogger ?? null;
+  // Reconcile diagnostics — same opt-in shape as the episode logger, and built
+  // once per mount so the render path only ever sees `diag?.…`.
+  const diag = options.onDiagnostic ? makeReconcileDiag(options.onDiagnostic, options) : undefined;
   if (!app.live) {
     app.live = {};
     for (const [k, v] of Object.entries(app.slots)) app.live[k] = v.value;
   }
+  registerAppRoot(target, app);
   // SSR hydration overlay (§10.6.2 step 2): drop the server snapshot onto
   // `app.live` BEFORE wiring the route / effect dispatcher, so the first
   // render already reflects the SSR-final values. `volatile` slots are not in
@@ -601,7 +993,15 @@ export function mountCore(
   ensureMotionStyles(app);
   const slotValues = app.live;
 
-  const tileCtx = makeTileCtx(options.tiles ?? {});
+  // Tile-level keyed diff (#187). Each render pass builds a fresh mapping ctx
+  // whose `render` populates a per-pass `TileNode → HTMLElement` map. The
+  // reconcile step diffs the new tree against the previous pass's tree +
+  // map, so unchanged tiles keep their live DOM node (and its focus / caret /
+  // <select> state / event listeners) — only changed subtrees are rebuilt.
+  const tiles = options.tiles ?? {};
+  const tilePatchers = options.tilePatchers ?? {};
+  const ctxWrap = { applyMotion, applyUiEventHandlers, renderMissingTile };
+  let currentMap: TileElementMap = new WeakMap();
 
   // Routing source: provided by the router feature module. A mount without
   // `options.routing` has no router at all — route-slot reads stay static and
@@ -648,6 +1048,16 @@ export function mountCore(
   let lastNavSource: "push" | "replace" | "pop" = "push";
 
   let currentRoot: HTMLElement | null = null;
+  // Previously rendered tile tree, kept as the "old" side of the next
+  // reconcile. Cleared to null after a panic-fallback render so the following
+  // pass restarts from a full mount rather than diffing against a discarded
+  // tree.
+  let currentTree: TileNode | null = null;
+  // #189: identifiers the most recent reconcile pass freshly built. Consumed
+  // by `applyReducer` when it fires the trailing `signal-update` step so
+  // `binds-updated` lists the tiles/binds the diff actually patched. Empty
+  // after a full-render / panic-fallback pass (those are not a diff).
+  let lastRenderTouched: string[] = [];
   let disposed = false;
   // Named timers (`timer(d, name=N)`) are addressable so a reducer can
   // `stop-timer(N)`. Anonymous timers have no handle exposed to the app.
@@ -662,36 +1072,133 @@ export function mountCore(
     // was disposed) must not touch the DOM — `currentRoot` has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
     if (disposed) return;
+    withRenderingApp(app, renderPass);
+  };
+  // The full render pass, bracketed by `withRenderingApp` so render-time app
+  // resolution (theme tokens, icon lookup — the tree is still detached, so
+  // `resolveApp` cannot walk it) lands on this mount's app.
+  const renderPass = (): void => {
+    // Focus / caret snapshot — kept as a fallback for panic / reconcile-
+    // bailout paths that swap DOM wholesale via `target.replaceChild` (or
+    // route-error retry). On the reconcile happy path (#187 keyed diff +
+    // #190 per-kind patch), element identity is preserved and this restore
+    // step degrades to a no-op — the browser cursor never left the still-
+    // mounted control.
+    //
+    // Scope: INPUT / TEXTAREA / SELECT / contenteditable. These are the
+    // focusable form controls Kumiki emits (input, textarea, select, editable
+    // — the `details` disclosure receives focus on its `<summary>` and is
+    // NOT included; refocusing summary after a full rebuild is out of scope
+    // for this fallback and browser-native tab order handles the common
+    // case). For SELECT the dropdown-open state is browser-owned and
+    // unrecoverable through snapshot; only the focus / kbd-nav position is
+    // restored. For contenteditable the caret position is not captured
+    // either — the equivalent of `setSelectionRange` for a text-node offset
+    // across an arbitrary DOM rebuild is out of scope for #190.
     type FocusSnap = {
       bind?: string | undefined;
       id?: string | undefined;
       path?: number[] | undefined;
       selStart: number | null;
       selEnd: number | null;
+      /** True when the snapshot target is a form control with `.selectionStart`. */
+      hasSelection: boolean;
     } | null;
     let snap: FocusSnap = null;
     const active = document.activeElement;
-    if (
-      active &&
-      (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
-      target.contains(active)
-    ) {
+    const isSnapshottable = (el: Element): boolean =>
+      el.tagName === "INPUT" ||
+      el.tagName === "TEXTAREA" ||
+      el.tagName === "SELECT" ||
+      (el as HTMLElement).isContentEditable === true;
+    if (active && isSnapshottable(active) && target.contains(active)) {
       const el = active as HTMLInputElement;
+      const hasSelection = el.tagName === "INPUT" || el.tagName === "TEXTAREA";
       snap = {
         bind: el.dataset.kumikiBind ?? undefined,
         id: el.id || undefined,
         path: domPath(el, target),
-        selStart: el.selectionStart,
-        selEnd: el.selectionEnd,
+        selStart: hasSelection ? el.selectionStart : null,
+        selEnd: hasSelection ? el.selectionEnd : null,
+        hasSelection,
       };
     }
 
     maybeReapplyTheme(app);
-    let dom: HTMLElement;
+    // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
+    // `newMap` (and recursively for its children). Reconcile also writes into
+    // `newMap` when it decides to *reuse* an old element (bypassing render).
+    // Either way, `newMap` becomes `currentMap` at the end of the pass so
+    // next round can find each mounted node's live element in O(1).
+    let newMap: TileElementMap = new WeakMap();
+    let tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
+    let dom: HTMLElement | null = null;
     let renderedTree: TileNode | null = null;
+    let panicked = false;
+    // Rebuild the tree from scratch (used by initial mount, panic fallback,
+    // and reconcile-bailout paths). Rebinds the local `newMap` + `tileCtx`
+    // so partially-populated entries from an aborted attempt are dropped.
+    const fullRender = (tree: TileNode): HTMLElement => {
+      newMap = new WeakMap();
+      tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
+      return tileCtx.render(tree);
+    };
+    // Reset for this pass. The reconcile branch overwrites with the diff's
+    // touched set; every other branch (full-render, panic recovery) leaves it
+    // empty — those paths intentionally do not carry per-tile attribution.
+    lastRenderTouched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
-      dom = tileCtx.render(renderedTree);
+      if (currentTree && currentRoot) {
+        // Diff path: reuse unchanged tile DOM in place, rebuild only changed
+        // subtrees. `reconcileTree` returns the (possibly new) root — it can
+        // differ from `currentRoot` if the root tile itself was rebuilt.
+        try {
+          const rec = reconcileTree({
+            oldNode: currentTree,
+            oldEl: currentRoot,
+            oldMap: currentMap,
+            newNode: renderedTree,
+            newMap,
+            ctx: tileCtx,
+            patchers: tilePatchers,
+            diag,
+          });
+          dom = rec.el;
+          lastRenderTouched = rec.touched;
+        } catch (reconcileErr) {
+          // Reconcile itself broke — safety net: rebuild the whole tree and
+          // swap wholesale, recording the panic so the failure is visible in
+          // the episode log / smoke report rather than silently degrading.
+          // `location: "reconcile"` distinguishes this from a user tile-render
+          // throw (`location: "render"`) so debugging points at the diff kernel
+          // (or a detached-parent invariant) rather than a tile renderer.
+          reportPanic("reconcile", reconcileErr);
+          episode?.recordPanic({
+            ...panicInfo(reconcileErr, "tile-render"),
+            location: "reconcile",
+          });
+          dom = fullRender(renderedTree);
+          target.replaceChild(dom, currentRoot);
+        }
+      } else {
+        // Initial mount, or first render after a panic reset — no old tree
+        // to diff against.
+        dom = tileCtx.render(renderedTree);
+        if (currentRoot) {
+          target.replaceChild(dom, currentRoot);
+        } else if (options.hydrate && target.firstChild) {
+          // §10.6.2: the SSR HTML is already in `target` (the host injected it
+          // before calling `hydrate`). Replace it with the CSR-rendered tree
+          // wholesale so we never end up with SSR + CSR DOM as siblings. True
+          // identity-preserving hydration (re-using SSR nodes in place) is
+          // out of scope for v1 — the SSR pass exists for first-paint/SEO,
+          // not for DOM stability across the boundary.
+          target.replaceChildren(dom);
+        } else {
+          target.appendChild(dom);
+        }
+      }
     } catch (e) {
       // A render panic NOT caught by a per-tile `error-boundary` (e.g. one under
       // the root) lands here: surface it to a per-route `route.error(<pattern>)`
@@ -699,40 +1206,65 @@ export function mountCore(
       // otherwise render a top-level panic fallback so the exception does not
       // escape and leave the DOM stale. Logged via console.error so the smoke /
       // scenario tiers still flag it (#24).
+      const renderRec = panicInfo(e, "tile-render");
       reportPanic("render", e);
-      episode?.recordPanic(panicInfo(e).message, "render");
-      if (!fireRouteError(e)) {
+      episode?.recordPanic({ ...renderRec, location: "render" });
+      if (!fireRouteError(renderRec)) {
         dom = renderPanicFallback(e);
+        panicked = true;
       } else {
         // route.error handlers ran — they may have navigated. Re-render once
         // (without retrying the broken tile) and use whatever the next pick
-        // produces. If the re-render still throws, fall back to the panic UI.
+        // produces. Always full-render on the retry: the previous tree is now
+        // suspect. If the re-render still throws, fall back to the panic UI.
         try {
           renderedTree = pickRootTile(app, slotValues);
-          dom = tileCtx.render(renderedTree);
+          dom = fullRender(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
+          // The second render also panicked; keep the episode-log honest by
+          // recording that too, so replays surface both failures.
+          episode?.recordPanic({ ...panicInfo(e2, "tile-render"), location: "render" });
           renderedTree = null;
           dom = renderPanicFallback(e2);
+          panicked = true;
         }
       }
-    }
-    if (currentRoot) {
-      target.replaceChild(dom, currentRoot);
-    } else if (options.hydrate && target.firstChild) {
-      // §10.6.2: the SSR HTML is already in `target` (the host injected it
-      // before calling `hydrate`). Replace it with the CSR-rendered tree
-      // wholesale so we never end up with SSR + CSR DOM as siblings. True
-      // identity-preserving hydration (re-using SSR nodes in place) is out
-      // of scope for v1 — the SSR pass exists for first-paint/SEO, not for
-      // DOM stability across the boundary.
-      target.replaceChildren(dom);
-    } else {
-      target.appendChild(dom);
+      // Panic path always swaps wholesale (never diffs against a possibly-
+      // corrupt tree).
+      if (currentRoot) {
+        target.replaceChild(dom, currentRoot);
+      } else if (options.hydrate && target.firstChild) {
+        target.replaceChildren(dom);
+      } else {
+        target.appendChild(dom);
+      }
     }
     currentRoot = dom;
+    // On panic (either the primary render threw and no route.error recovered
+    // it, or the recovery render also threw), abandon the diff baseline so the
+    // next render starts from a clean full mount. Otherwise carry the fresh
+    // tree + map forward as the next pass's `old` side.
+    currentTree = panicked ? null : renderedTree;
+    currentMap = newMap;
 
+    // On the happy patch path element identity is preserved, so this `focus()`
+    // degrades to a no-op — the browser cursor is already on the still-mounted
+    // control. Restoration still fires unconditionally to cover: (a)
+    // reconcile-bailout / panic recovery, where DOM was rebuilt wholesale; (b)
+    // a keyed reorder that moves the focused element itself, which a browser
+    // blurs even though its identity survives. What (b) no longer covers is a
+    // focused child that a reorder left alone: the keyed pass places only the
+    // children that must move (§10.3.10), so the common case reaches here with
+    // the cursor never having left. The `.focus()` + setSelection calls are
+    // idempotent and cheap on the happy path, so keeping the layer active is a
+    // strict simplification win over per-path gating.
     if (snap) {
+      // `snap.bind` comes from `data-kumiki-bind`, which is set from Kumiki
+      // slot / bind-path syntax — a whitelisted identifier grammar without
+      // ", ], or backslash — so it does not need attribute-value escaping
+      // here. `snap.id` may be user-authored (`{id: "..."}`) and IS routed
+      // through `CSS.escape` below.
       let sel: Element | null = snap.bind
         ? target.querySelector(`[data-kumiki-bind="${snap.bind}"]`)
         : snap.id
@@ -741,14 +1273,22 @@ export function mountCore(
       // Fall back to DOM-path restore for inputs without bind/id (e.g.
       // `value=`-only search boxes). Identifies the element by its position.
       if (!sel && snap.path) sel = elementAtPath(snap.path, target);
-      if (sel && (sel.tagName === "INPUT" || sel.tagName === "TEXTAREA")) {
-        const el = sel as HTMLInputElement;
+      if (
+        sel &&
+        (sel.tagName === "INPUT" ||
+          sel.tagName === "TEXTAREA" ||
+          sel.tagName === "SELECT" ||
+          (sel as HTMLElement).isContentEditable === true)
+      ) {
+        const el = sel as HTMLElement;
         el.focus();
-        if (snap.selStart !== null && snap.selEnd !== null) {
+        if (snap.hasSelection && snap.selStart !== null && snap.selEnd !== null) {
           try {
-            el.setSelectionRange(snap.selStart, snap.selEnd);
+            (el as HTMLInputElement).setSelectionRange(snap.selStart, snap.selEnd);
           } catch {
-            // some input types don't support selection
+            // Some input types (`type=file` / `email` / `number` / ...) reject
+            // setSelectionRange with an InvalidStateError. Focus already
+            // landed, which is the load-bearing part of the fallback.
           }
         }
       }
@@ -777,7 +1317,14 @@ export function mountCore(
     }
   }
 
-  function fireRouteError(e: unknown): boolean {
+  /**
+   * Fire the `route.error(<pattern>)` reducer chain. Takes the already-derived
+   * PanicRecord from the caller so category / stack aren't recomputed and —
+   * more importantly — the $event category matches the recording site's
+   * category. The one caller today is the tile render catch, so a route.error
+   * from a render panic reports `category: "tile-render"`, not `"reducer"`.
+   */
+  function fireRouteError(rec: PanicRecord): boolean {
     if (!app.routes || app.routes.length === 0) return false;
     const cur = slotValues.route as ParsedRoute | undefined;
     const pattern = cur?.pattern;
@@ -787,7 +1334,17 @@ export function mountCore(
       (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
     );
     if (handlers.length === 0) return false;
-    const info = { ...panicInfo(e), pattern };
+    // User-facing $event stays limited to the fields the Kumiki PanicInfo
+    // type documents (message / location + category). `stack` and `cause`
+    // are intentionally NOT splatted — a raw devtools stack in production UI
+    // is a footgun; those fields live in the episode-log only.
+    const info: {
+      message: string;
+      location?: string;
+      category: PanicCategory;
+      pattern: string;
+    } = { message: rec.message, category: rec.category, pattern };
+    if (rec.location !== undefined) info.location = rec.location;
     for (const h of handlers) {
       try {
         applyReducer(h, { $event: info, $route: cur });
@@ -811,13 +1368,16 @@ export function mountCore(
    */
   function handleLivePanic(location: string, e: unknown): void {
     reportPanic(location, e);
-    episode?.recordPanic(panicInfo(e).message, location);
+    const rec = panicInfo(e, "reducer");
+    episode?.recordPanic({ ...rec, location });
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
     );
     if (handlers.length === 0) return;
-    const info = { message: panicInfo(e).message, location };
+    // User-facing $event is limited to fields the spec's PanicInfo type
+    // documents; `stack` / `cause` stay in the episode-log only.
+    const info = { message: rec.message, location, category: rec.category };
     inPanicHandler = true;
     try {
       for (const h of handlers) applyReducer(h, { $event: info });
@@ -890,7 +1450,15 @@ export function mountCore(
       }
     }
     render();
-    if (dirty.length > 0) episode?.recordSignalUpdate(dirty);
+    // #189: attach the tiles/binds reconcile actually patched during this
+    // render so the causal chain "slots X → tiles/binds A, B" lands in the
+    // episode log. `render()` populates `lastRenderTouched` from the diff;
+    // full-render / panic paths leave it empty (they carry no per-tile
+    // attribution). Set-dedup preserves first-seen order and collapses to
+    // `[]` when the array is empty.
+    if (dirty.length > 0) {
+      episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched)));
+    }
     if (opened) episode?.endTrigger();
   }
 
@@ -1084,9 +1652,9 @@ export function mountCore(
   routing?.installNavEffects(app, nav);
   for (const installer of options.builtins ?? []) installer(app, nav);
 
-  // Apply theme defaults to <body> and inject base CSS for tile primitives.
-  // Reset the cache so subsequent mounts (e.g. across parallel tests) always
-  // re-bind the global `__kumikiApp` reference, even if the theme name matches.
+  // Apply theme defaults to the style host and inject base CSS for tile
+  // primitives. Reset the cache so subsequent mounts (e.g. across parallel
+  // tests) always re-apply this app's theme, even if the name matches.
   lastAppliedThemeName = null;
   applyThemeDefaults(app);
   lastAppliedThemeName =
@@ -1237,6 +1805,7 @@ export function mountCore(
       routerUnsub?.();
       for (const unsub of lifecycleUnsubs) unsub();
       target.replaceChildren();
+      unregisterAppRoot(target, app);
       dispatcher.dispose();
     },
     /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
@@ -1649,21 +2218,193 @@ export function _setPathHelper(obj: unknown, path: string[], value: unknown): un
   return { ...cur, [head!]: _setPathHelper(cur[head!], rest, value) };
 }
 
-/** Message + optional source location for a caught throw (panic or otherwise). */
-export function panicInfo(e: unknown): { message: string; location: string | undefined } {
-  if (isPanic(e)) return { message: e.message, location: e.location };
-  if (e instanceof Error) return { message: e.message, location: undefined };
-  return { message: String(e), location: undefined };
+/**
+ * Full-fidelity record extracted from a caught throw for episode-log capture
+ * (docs/spec/runtime.md §10.5.1). `message` / `location` are the fields the
+ * user-facing `PanicInfo` type exposes; `stack` / `cause` / `category` are
+ * dev-tooling grade — retained inside the episode-log and shown by
+ * `kumiki replay` / `kumiki_episode_tail`, but NOT splatted into user reducer
+ * `$event` payloads (raw stack traces would leak to production UI).
+ */
+export type PanicRecord = {
+  message: string;
+  location: string | undefined;
+  stack: string | undefined;
+  cause: PanicCauseLink[] | undefined;
+  category: PanicCategory;
+};
+
+/**
+ * Safety cap for `Error.cause` chain traversal — pathological or intentionally
+ * cyclic cause pointers must not lock the runtime. Depth 8 is far beyond any
+ * real-world wrap depth we've seen (2–3 typical) yet cheap to allocate.
+ */
+const PANIC_CAUSE_MAX_DEPTH = 8;
+
+/**
+ * Read `.message` / `.stack` / `.cause` off an arbitrary caught throw without
+ * ever letting a hostile getter / Proxy / `toString` re-throw. `panicInfo` is
+ * called from inside every panic-catch site, so a secondary throw here would
+ * escape the dispatch handler and defeat the "no uncaught panic reaches the
+ * DOM event loop" contract.
+ */
+function safeErrorField(e: unknown, field: "message" | "stack"): string | undefined {
+  try {
+    const v = (e as Record<string, unknown> | null | undefined)?.[field];
+    return typeof v === "string" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeString(v: unknown): string {
+  try {
+    return String(v);
+  } catch {
+    return "<unstringifiable>";
+  }
+}
+
+function safeCauseOf(e: unknown): unknown {
+  try {
+    return (e as { cause?: unknown } | null | undefined)?.cause;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Walk `Error.cause` iteratively into a flat, JSON-safe list. `seen` seeds
+ * with the root object so a cause pointer that loops back to the root is
+ * caught, and every field read runs through the safe helpers so a hostile
+ * getter can never leak a fresh throw. Order: nearest cause first, root-most
+ * last. Capped at {@link PANIC_CAUSE_MAX_DEPTH} links.
+ */
+function collectCauseChain(root: unknown): PanicCauseLink[] {
+  const chain: PanicCauseLink[] = [];
+  const seen = new Set<unknown>();
+  if (root !== null && (typeof root === "object" || typeof root === "function")) seen.add(root);
+  let cur: unknown = safeCauseOf(root);
+  while (cur !== undefined && cur !== null && chain.length < PANIC_CAUSE_MAX_DEPTH) {
+    if (seen.has(cur)) break;
+    seen.add(cur);
+    const link: PanicCauseLink = { message: "" };
+    try {
+      if (cur instanceof Error) {
+        link.message = safeErrorField(cur, "message") ?? "";
+        const stack = safeErrorField(cur, "stack");
+        if (stack !== undefined) link.stack = stack;
+      } else {
+        link.message = safeString(cur);
+      }
+    } catch {
+      link.message = "<cause unavailable>";
+    }
+    chain.push(link);
+    cur = cur instanceof Error ? safeCauseOf(cur) : undefined;
+  }
+  return chain;
+}
+
+/**
+ * Full-fidelity extraction of a caught throw for the episode-log / devtools
+ * path. Preserves `message` + optional `location` (the fields the user-facing
+ * `PanicInfo` type exposes) and additionally captures `.stack`, the flattened
+ * `Error.cause` chain (nearest cause first, root-most last), and the caller-
+ * supplied `category`. Never throws — a secondary exception inside a getter
+ * or a Proxy is caught and downgraded to a "details unavailable" record so
+ * the outer catch (which already committed to handling the primary panic)
+ * always gets a value.
+ */
+export function panicInfo(e: unknown, category: PanicCategory = "unknown"): PanicRecord {
+  try {
+    const cause = collectCauseChain(e);
+    const chain = cause.length > 0 ? cause : undefined;
+    if (isPanic(e)) {
+      return {
+        message: safeErrorField(e, "message") ?? "",
+        location: e.location,
+        stack: safeErrorField(e, "stack"),
+        cause: chain,
+        category,
+      };
+    }
+    if (e instanceof Error) {
+      return {
+        message: safeErrorField(e, "message") ?? "",
+        location: undefined,
+        stack: safeErrorField(e, "stack"),
+        cause: chain,
+        category,
+      };
+    }
+    return {
+      message: safeString(e),
+      location: undefined,
+      stack: undefined,
+      cause: chain,
+      category,
+    };
+  } catch {
+    return {
+      message: "panic (details unavailable)",
+      location: undefined,
+      stack: undefined,
+      cause: undefined,
+      category,
+    };
+  }
 }
 
 /**
  * Surface a caught live panic so the verification tiers still see it: smoke()
  * and runScenario() both patch console.error into their issue/error buffers, so
  * a controlled panic is reported as a failure rather than silently swallowed.
+ *
+ * The first line format (`[kumiki] panic in <where>: <message>`) is stable —
+ * `packages/tests/scenario.test.ts` greps for it (via the console.error buffer
+ * that `runScenario` collects) to distinguish a controlled panic from a
+ * generic console.error. Stack trace + Error.cause chain are appended as
+ * indented continuation lines so devtools show a full root-cause trail without
+ * breaking that grep.
  */
 function reportPanic(where: string, e: unknown): void {
-  const { message } = panicInfo(e);
-  console.error(`[kumiki] ${isPanic(e) ? "panic" : "error"} in ${where}: ${message}`);
+  const rec = panicInfo(e);
+  const lines: string[] = [
+    `[kumiki] ${isPanic(e) ? "panic" : "error"} in ${where}: ${rec.message}`,
+  ];
+  if (rec.stack !== undefined) {
+    for (const line of formatStackForConsole(rec.stack, rec.message)) lines.push(line);
+  }
+  if (rec.cause !== undefined) {
+    for (const link of rec.cause) {
+      lines.push(`  Caused by: ${link.message}`);
+      if (link.stack !== undefined) {
+        for (const line of formatStackForConsole(link.stack, link.message)) lines.push(line);
+      }
+    }
+  }
+  console.error(lines.join("\n"));
+}
+
+/**
+ * Convert a raw `Error.stack` string into the continuation lines
+ * `reportPanic` appends after the "[kumiki] panic in ..." header. V8-style
+ * stacks include the message on the first line ("Error: boom\n    at ...");
+ * strip it so the header is not duplicated. Any remaining lines are
+ * two-space-indented so devtools group them under the header.
+ */
+function formatStackForConsole(stack: string, message: string): string[] {
+  const raw = stack.split("\n");
+  const trimmed =
+    raw.length > 0 && raw[0] !== undefined && raw[0].includes(message) ? raw.slice(1) : raw;
+  const out: string[] = [];
+  for (const line of trimmed) {
+    const l = line.replace(/\s+$/, "");
+    if (l.length === 0) continue;
+    out.push(l.startsWith(" ") || l.startsWith("\t") ? `  ${l.trim()}` : `  ${l}`);
+  }
+  return out;
 }
 
 /**
@@ -1748,7 +2489,9 @@ export function reportUnhandledEffectError(effect: string, value: unknown): void
 
 /** A minimal top-level fallback for a render panic with no enclosing boundary. */
 function renderPanicFallback(e: unknown): HTMLElement {
-  const { message, location } = panicInfo(e);
+  // Deliberately narrow: only `message` / `location` reach user-visible DOM.
+  // `stack` / `cause` would leak internals; keep them in the episode-log.
+  const { message, location } = panicInfo(e, "tile-render");
   const div = document.createElement("div");
   div.dataset.kumikiPanic = location ?? "";
   div.setAttribute("role", "alert");
@@ -1756,8 +2499,37 @@ function renderPanicFallback(e: unknown): HTMLElement {
   return div;
 }
 
-/** Build the recursion context that resolves tile kinds through `tiles`. */
-function makeTileCtx(tiles: TileRenderers): TileCtx {
+// ---- tile-level keyed diff ----
+// The reconcile pass keeps `core.ts` as the single value-owner of the render
+// path (tsdown's modules build treats every non-entry file as an anonymous
+// shared chunk, which the CLI test asserts must never appear — see
+// `packages/runtime/tsdown.config.ts`). Types stay local; code is nested
+// here rather than split into a peer module for that reason.
+//
+// Design: docs/design/reactivity-v2.md §2 Decision 1(a). Walk new vs. mounted
+// `TileNode` in parallel, keep the DOM node for tiles whose data props did
+// not change (natively preserving focus / caret / `<select>` open state /
+// event listeners), rebuild only changed subtrees. Identity is structural
+// (position + `kind`) unless the tile carries a `TileNode.key`, in which
+// case the keyed child-list path pairs children across renders by key.
+//
+// Reused tiles are NEVER re-touched: `applyMotion` restarts animations, and
+// `applyUiEventHandlers` uses `addEventListener` and would multiply-register
+// on every reuse. Because our equality check compares DATA props (ignoring
+// function-valued fields), the OLD closure on a reused element is
+// behaviourally equivalent to what a fresh render would install.
+
+type TileElementMap = WeakMap<TileNode, HTMLElement>;
+
+function makeMappingTileCtx(
+  tiles: TileRenderers,
+  map: TileElementMap,
+  wrap: {
+    applyMotion: (el: HTMLElement, props: TileProps | undefined) => void;
+    applyUiEventHandlers: (el: HTMLElement, props: TileProps | undefined) => void;
+    renderMissingTile: (node: TileNode) => HTMLElement;
+  },
+): TileCtx {
   const lookup = tiles as Record<
     string,
     ((node: TileNode, ctx: TileCtx) => HTMLElement) | undefined
@@ -1765,48 +2537,1106 @@ function makeTileCtx(tiles: TileRenderers): TileCtx {
   const ctx: TileCtx = {
     render(node: TileNode): HTMLElement {
       const renderer = lookup[node.kind];
-      const el = renderer ? renderer(node, ctx) : renderMissingTile(node);
-      // A `motion` prop applies to any tile uniformly (M5). The keyframes/classes
-      // are injected once at mount by ensureMotionStyles.
-      applyMotion(el, node.props);
-      // ui.key / ui.hover / ui.focus / ui.blur handlers (§1.6.1) — codegen
-      // lifts these into onKeyDown / onMouseEnter / onFocus / onBlur props.
-      // Wiring them once on the universal render output keeps every tile
-      // uniform (no per-renderer plumbing).
-      applyUiEventHandlers(el, node.props);
+      const el = renderer ? renderer(node, ctx) : wrap.renderMissingTile(node);
+      wrap.applyMotion(el, node.props);
+      wrap.applyUiEventHandlers(el, node.props);
+      map.set(node, el);
       return el;
     },
   };
   return ctx;
 }
 
+/**
+ * Reports the walker's identity-losing decisions to the host's `onDiagnostic`.
+ * Built once per mount by `makeReconcileDiag`; the render path holds it as an
+ * optional value so a mount without a sink runs the pre-existing code plus one
+ * `?.` check per fallback.
+ */
+type ReconcileDiag = {
+  fallback: (fallback: ReconcileFallback, node: TileNode) => void;
+  /**
+   * Called on the reuse decision — the props compared equal, so the mounted
+   * element keeps whatever closures it was created with. Only host-registered
+   * kinds are inspected.
+   */
+  staleClosure: (oldNode: TileNode, newNode: TileNode) => void;
+  /**
+   * Called on the unequal decision — the props differed, so this tile is about
+   * to be patched or rebuilt. Names the fields that will differ again on every
+   * render after this one. Only host-registered kinds are inspected.
+   */
+  neverEqual: (oldNode: TileNode, newNode: TileNode) => void;
+};
+
+function makeReconcileDiag(
+  report: (d: RuntimeDiagnostic) => void,
+  options: MountOptions,
+): ReconcileDiag {
+  const hostKinds = options.hostTileKinds?.length ? new Set(options.hostTileKinds) : undefined;
+  const authored = (node: TileNode): string | undefined => {
+    const name = (node as { props?: Record<string, unknown> }).props?._tile;
+    return typeof name === "string" ? name : undefined;
+  };
+  // A diagnostic must never be able to change the render it is observing. The
+  // walker runs inside the reconcile bailout's try/catch, so a host sink that
+  // throws would otherwise be recorded as a reconcile panic and trigger a
+  // full-tree rebuild — the exact identity loss this channel exists to report,
+  // caused by the reporting itself. The sink's own failures are the host's to
+  // notice; swallowing them here keeps the app correct.
+  const emit = (d: RuntimeDiagnostic): void => {
+    try {
+      report(d);
+    } catch {
+      // deliberately ignored — see above
+    }
+  };
+  /**
+   * One per-field host-tile scan, run so it cannot disturb the render it is
+   * observing. `hazard` looks at a single old/new pair and returns what to
+   * report about it, if anything.
+   *
+   * The guard covers the whole walk, not just the sink. Reading a host node's
+   * fields is not inert: `Object.keys`, a property getter and
+   * `Object.getPrototypeOf` all run against values the host owns, and a Proxy
+   * trap or an accessor may throw where the equality kernel — which
+   * short-circuits at the first difference — never reached. That throw would
+   * land in the reconcile bailout as a `location: "reconcile"` panic and
+   * rebuild the whole tree, so the observation would inflict the exact identity
+   * loss this channel exists to report. Abandoning the scan is the only outcome
+   * that leaves the render alone.
+   */
+  const scan = (
+    oldNode: TileNode,
+    newNode: TileNode,
+    hazard: (
+      site: DiagnosticSite,
+      field: string,
+      oldValue: unknown,
+      newValue: unknown,
+    ) => RuntimeDiagnostic | undefined,
+  ): void => {
+    if (!hostKinds?.has(newNode.kind)) return;
+    try {
+      const site: DiagnosticSite = {
+        tileKind: newNode.kind,
+        id: tileTouchedId(newNode),
+        tile: authored(newNode),
+      };
+      for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
+        const d = hazard(site, field, oldValue, newValue);
+        if (d) emit(d);
+      }
+    } catch {
+      // deliberately ignored — see above
+    }
+  };
+  return {
+    fallback(fallback, node) {
+      emit({
+        kind: "reconcile-fallback",
+        tileKind: node.kind,
+        id: tileTouchedId(node),
+        tile: authored(node),
+        ...fallback,
+      });
+    },
+    staleClosure(oldNode, newNode) {
+      scan(oldNode, newNode, (site, field, oldValue, newValue) =>
+        typeof oldValue === "function" && typeof newValue === "function" && oldValue !== newValue
+          ? { ...site, kind: "stale-closure-risk", field }
+          : undefined,
+      );
+    },
+    neverEqual(oldNode, newNode) {
+      scan(oldNode, newNode, (site, field, oldValue, newValue) => {
+        const cause = neverEqualCause(oldValue, newValue);
+        return cause ? { ...site, kind: "never-equal-prop", field, cause } : undefined;
+      });
+    },
+  };
+}
+
+/**
+ * Own data fields paired old-to-new, one level deep into `props` — where a
+ * renderer's handlers and data conventionally live (`props.onClick`,
+ * `props.value`). Shared by both host-tile scans, on either side of the
+ * equality fork.
+ *
+ * This is NOT the full set `tileFieldsEqual` compares: that one recurses to
+ * the bottom of arrays and nested objects, while this stops at `props.x` on
+ * purpose. A value buried deeper than that is past the point where a generic
+ * warning helps, and the shallow walk keeps the scan bounded — it runs per
+ * decision, on the render path.
+ */
+function* ownFieldPairs(
+  oldNode: TileNode,
+  newNode: TileNode,
+): Generator<[string, unknown, unknown]> {
+  const oa = oldNode as unknown as Record<string, unknown>;
+  const ob = newNode as unknown as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(oa), ...Object.keys(ob)])) {
+    if (TILE_SKIP_TOP.has(k)) continue;
+    if (k === "props") {
+      const pa = (oa.props ?? {}) as Record<string, unknown>;
+      const pb = (ob.props ?? {}) as Record<string, unknown>;
+      for (const pk of new Set([...Object.keys(pa), ...Object.keys(pb)])) {
+        yield [`props.${pk}`, pa[pk], pb[pk]];
+      }
+      continue;
+    }
+    yield [k, oa[k], ob[k]];
+  }
+}
+
+function reconcileTree(args: {
+  oldNode: TileNode;
+  oldEl: HTMLElement;
+  oldMap: TileElementMap;
+  newNode: TileNode;
+  newMap: TileElementMap;
+  ctx: TileCtx;
+  patchers: TilePatchers;
+  diag?: ReconcileDiag | undefined;
+}): { el: HTMLElement; touched: string[] } {
+  // #189: collect an identifier per subtree that reconcile actually rebuilt or
+  // freshly mounted (or patched in place, #190). Consumed by `renderPass` →
+  // `recordSignalUpdate`, filling the episode `signal-update` step's
+  // `binds-updated` field. Only the ROOT of each rebuilt / patched subtree is
+  // pushed (no descent) to keep the log tight — per the learning-cost guard in
+  // docs/design/reactivity-v2.md §4.
+  const touched: string[] = [];
+  const el = reconcileNode(
+    args.oldNode,
+    args.oldEl,
+    args.oldMap,
+    args.newNode,
+    args.newMap,
+    args.ctx,
+    args.patchers,
+    touched,
+    args.diag,
+  );
+  return { el, touched };
+}
+
+/**
+ * Reconciles one mounted tile against its next render and returns **the element
+ * that now occupies this node's slot** — `oldEl` when the tile was reused or
+ * patched in place, a fresh element when the subtree was rebuilt.
+ *
+ * **Who owns placement.** A rebuilt subtree is spliced into the live DOM by
+ * `replaceWithFreshTile`, anchored on the OLD element's own parent. That is
+ * deliberate and not an implementation detail the caller may work around: where
+ * a child element sits is decided by the parent tile's *renderer*, not by this
+ * walker. `overlay` puts every child after the first in a positioning layer,
+ * and a host renderer may wrap arbitrarily — so the anchor is whatever node
+ * actually holds the slot, which is not necessarily the parent tile's element.
+ *
+ * A caller may therefore only place the returned element itself when it has
+ * established that it owns the slots. Exactly one does — `reconcileKeyedChildren`,
+ * behind the `firstWrappedChild` gate.
+ */
+function reconcileNode(
+  oldNode: TileNode,
+  oldEl: HTMLElement,
+  oldMap: TileElementMap,
+  newNode: TileNode,
+  newMap: TileElementMap,
+  ctx: TileCtx,
+  patchers: TilePatchers,
+  touched: string[],
+  diag?: ReconcileDiag | undefined,
+): HTMLElement {
+  // Different kind → whole subtree is a different thing. Build fresh, splice.
+  if (oldNode.kind !== newNode.kind) {
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+  }
+  // Same kind, differing own data props (`children` / `key` / functions
+  // excluded — see `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
+  // preserving path: if a per-kind patcher is registered, mutate the mounted
+  // element in place (preserving `<select>` open state / focus / caret /
+  // `<video>` playback / `<details>` open / `contenteditable`), then continue
+  // into the children walk below so container-shaped changes still reconcile.
+  // Without a patcher, fall back to the full subtree rebuild (correct but
+  // discards browser-internal state — pre-#190 behaviour).
+  if (!tileFieldsEqual(oldNode, newNode)) {
+    // Why they differed, when the answer is "they always will". Before the
+    // patcher lookup on purpose: with a patcher this is the ONLY signal that
+    // the tile re-applies its props forever (the patch path is otherwise a
+    // silent success), and without one it names the field `no-patcher` cannot.
+    // Cause before consequence, so a reader meets the fixable fact first.
+    diag?.neverEqual(oldNode, newNode);
+    const patcher = (patchers as Record<string, TilePatcher | undefined>)[newNode.kind];
+    if (patcher) {
+      // Throws land in the outer `reconcileTree` bailout, which records a
+      // `location: "reconcile"` panic and does a full `target.replaceChild`.
+      // Patchers should therefore be side-effect-safe up to the throw point.
+      try {
+        patcher(oldEl, oldNode as never, newNode as never, ctx);
+      } catch (e) {
+        // `PatchRequiresRebuild` is a controlled escape hatch a patcher throws
+        // when it discovers the new node cannot be applied in place (e.g. a
+        // `list` whose `ordered` flip changes `<ul>` ↔ `<ol>`). Fall through
+        // to the same-kind rebuild path without polluting the episode log
+        // with a "reconcile panic" — this is a normal, expected outcome.
+        if (e instanceof PatchRequiresRebuild) {
+          return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+        }
+        throw e;
+      }
+      // Reused elements must dispatch through their handler-slot lookups with
+      // the *current* render's closures, not the create-time ones. INPUT_STATE
+      // (`tiles-input.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
+      // (`tiles-text.ts`) are refreshed by their per-kind patchers; the
+      // universal onKeyDown / onFocus / onBlur / onMouseEnter handlers, which
+      // `applyUiEventHandlers` wires on every tile via the create ctx, live in
+      // this shared UI_HANDLER_STATE and are refreshed here.
+      refreshUiHandlerSlot(oldEl, (newNode as { props?: TileProps }).props);
+      touched.push(tileTouchedId(newNode));
+      // Fall through to the children reconcile below — a container tile may
+      // have both attribute AND child changes in the same render.
+    } else {
+      diag?.fallback({ reason: "no-patcher" }, newNode);
+      return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+    }
+  } else {
+    // Reuse decision: this element stays mounted with the closures it was
+    // created with. Safe for the built-ins, a stale-closure hazard for a
+    // host renderer that captured a per-render handler.
+    diag?.staleClosure(oldNode, newNode);
+  }
+  const oldChildren = getTileChildren(oldNode);
+  const newChildren = getTileChildren(newNode);
+  if (oldChildren.length === 0 && newChildren.length === 0) {
+    newMap.set(newNode, oldEl);
+    return oldEl;
+  }
+  if (oldChildren.length === 0 || newChildren.length === 0) {
+    return adoptFreshChildren(oldEl, newNode, newChildren, ctx, newMap, touched);
+  }
+  // Keyed path — all-or-nothing per parent. When every child on both sides
+  // carries a `key`, we match children by key across renders and survive
+  // reorder / insert / remove without rebuilding the subtree. Mixed or
+  // absent keys fall through to the structural walk below.
+  //
+  // Second condition: that pass MOVES and REMOVES child elements addressed
+  // against `oldEl`, and MOUNTS newcomers there, so it may only run when
+  // `oldEl` is the node that actually holds those slots. A renderer that wraps
+  // its children owns their placement and the walker must not reach past it.
+  if (allChildrenKeyed(oldChildren) && allChildrenKeyed(newChildren)) {
+    const decision = decideKeyedPass(oldEl, newNode, oldChildren, newChildren, oldMap);
+    if (!decision.run) {
+      diag?.fallback(decision.fallback, newNode);
+      // Fall through to the structural walk: it never repositions anything, so
+      // it stays correct under a wrapping renderer. When the length also
+      // changed it then rebuilds the parent and reports `child-count-change`
+      // on top — two diagnostics for one parent, naming two different facts
+      // (the keys went unused; the rebuild happened anyway).
+    } else {
+      reconcileKeyedChildren(
+        oldEl,
+        oldChildren,
+        decision.oldEls,
+        newChildren,
+        oldMap,
+        newMap,
+        ctx,
+        patchers,
+        touched,
+        diag,
+      );
+      newMap.set(newNode, oldEl);
+      return oldEl;
+    }
+  }
+  // Structural length change without keys → subtree rebuild. Preserves
+  // correctness at the cost of reuse; keyed children above lift this
+  // restriction when the compiler emits identity.
+  if (oldChildren.length !== newChildren.length) {
+    diag?.fallback(
+      {
+        reason: "child-count-change",
+        oldCount: oldChildren.length,
+        newCount: newChildren.length,
+      },
+      newNode,
+    );
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+  }
+  // Same length: pair the children by position and reconcile each pair. Both
+  // ways this can fail are settled for the WHOLE list first, so the walk that
+  // follows either runs to the end or never starts.
+  const resolved = resolvePositionalChildren(oldChildren, newChildren, oldMap);
+  if (!resolved.paired) {
+    diag?.fallback(resolved.fallback, newNode);
+    return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+  }
+  for (const pair of resolved.pairs) {
+    // The returned element is deliberately discarded: on this path no child
+    // ever changes slot, so there is nothing for the parent to place. A
+    // rebuilt child was already spliced into the slot it held — by
+    // `replaceWithFreshTile`, anchored on `pair.oldEl.parentNode`, which is
+    // the only node that knows where the slot is when the renderer wraps its
+    // children. Re-inserting it here against `oldEl` would be wrong for
+    // exactly those renderers. `newMap` is likewise populated inside the call.
+    reconcileNode(
+      pair.oldNode,
+      pair.oldEl,
+      oldMap,
+      pair.newNode,
+      newMap,
+      ctx,
+      patchers,
+      touched,
+      diag,
+    );
+  }
+  newMap.set(newNode, oldEl);
+  return oldEl;
+}
+
+function allChildrenKeyed(nodes: TileNode[]): boolean {
+  // An empty list never reaches here — `reconcileNode` peels both the
+  // both-empty and the one-side-empty cases off ahead of the keyed gate — so
+  // the `false` below is about totality, not about a decision.
+  if (nodes.length === 0) return false;
+  for (const n of nodes) if (!n || typeof n.key !== "string") return false;
+  return true;
+}
+
+/**
+ * Rebuild the interior of a tile whose child list is empty on exactly one side
+ * of this render, keeping the mounted element itself.
+ *
+ * With one side empty there is nothing to match — not by key, not by position.
+ * Every new child is a fresh mount and every old child departs, so the only
+ * question left is WHERE the new children go, and that answer belongs to the
+ * parent's renderer: `overlay` wraps every child after the first in a
+ * positioning layer, the surfaces wrap all of theirs in a content div, and a
+ * host renderer may wrap arbitrarily. `firstWrappedChild` normally answers it
+ * by looking at where the mounted children sit — but with none left it has
+ * nothing to testify with, and appending the newcomers straight onto `oldEl`
+ * would strip a wrapping renderer's structure.
+ *
+ * So re-enter the renderer for the whole node and move only its interior into
+ * the element we are keeping. The result is what a full render would have
+ * produced, minus the one thing this exists to save: the parent's own element,
+ * with the browser-owned state and listeners it was mounted with. The
+ * decision needs no key on either side, because keys had nothing to match.
+ *
+ * Known limitation: a renderer's non-child interior is rebuilt too (`details`'
+ * `<summary>`, a surface's content wrapper and title). That is strictly less
+ * than the whole-parent rebuild this replaces, but it is not nothing — the
+ * complete answer is a `ctx` seam that lets a renderer refill its own child
+ * slots, which does not exist yet.
+ */
+function adoptFreshChildren(
+  oldEl: HTMLElement,
+  newNode: TileNode,
+  newChildren: TileNode[],
+  ctx: TileCtx,
+  newMap: TileElementMap,
+  touched: string[],
+): HTMLElement {
+  // Render BEFORE touching `oldEl`: a renderer that throws must leave the
+  // mounted element exactly as it was, so the only thing that rewrites the DOM
+  // is the outer bailout's full rebuild.
+  const fresh = ctx.render(newNode);
+  oldEl.replaceChildren(...Array.from(fresh.childNodes));
+  // `ctx.render` mapped `newNode` onto the element we just discarded; the
+  // descendants it mapped are the ones we adopted, so only this entry is wrong.
+  newMap.set(newNode, oldEl);
+  if (newChildren.length === 0) {
+    // Per-child would report nothing at all for a render that visibly emptied
+    // the DOM. The parent is what changed, and it is what the rebuild path this
+    // replaces used to name.
+    touched.push(tileTouchedId(newNode));
+  } else {
+    // Same granularity as a keyed fresh insert: each new child is the root of a
+    // subtree that was just mounted.
+    //
+    // An empty slot is skipped rather than reported. The positional walk emits
+    // `child-hole` because a hole desynchronises it from the old list and costs
+    // a rebuild — here the whole list went through the renderer, which drops
+    // nils itself, so nothing was lost and there is no fallback to name. What a
+    // hole means for this loop is only that no element was mounted for it, and
+    // therefore that it has nothing to contribute.
+    for (const child of newChildren) if (child) touched.push(tileTouchedId(child));
+  }
+  return oldEl;
+}
+
+/**
+ * Built-in kinds whose renderer does NOT place every child directly under the
+ * element it returns. `overlay` puts child[0] in normal flow and wraps the rest
+ * in absolutely-positioned layers; `modal` / `drawer` / `popover` wrap all of
+ * theirs in a content div beside the surface's own chrome.
+ *
+ * This is a declaration rather than a measurement because a measurement can
+ * only speak for slots that already exist (see `keyedPassBlocker`), and only
+ * `overlay` actually needs it — a renderer that wraps EVERY child is caught by
+ * the measurement as soon as one is mounted. The other three are listed anyway
+ * so the set means what it says, which is what lets it be checked against the
+ * DOM those renderers produce.
+ *
+ * Host renderers are absent on purpose: §10.3.10 asks them to place their
+ * children directly under the element they return, so an unknown kind is taken
+ * at its word — declining for every unknown kind would cost every well-behaved
+ * host integration its keyed inserts. A host renderer shaped like `overlay`
+ * (first child direct, rest wrapped) is therefore the one remaining blind spot,
+ * and it needs a seam of its own rather than a guess here.
+ *
+ * Frozen because it is exported: the reconcile path reads it on every keyed
+ * render under a wrapping parent, and a caller mutating it would silently
+ * redefine the contract.
+ */
+export const WRAPPING_TILE_KINDS: readonly string[] = Object.freeze([
+  "overlay",
+  "modal",
+  "drawer",
+  "popover",
+]);
+
+const WRAPPING_TILE_KIND_SET: ReadonlySet<string> = new Set(WRAPPING_TILE_KINDS);
+
+/**
+ * Either the keyed child pass may run for this parent, with every old child's
+ * live element resolved for it, or the reason it may not. Shaped as a union
+ * rather than an optional blocker so the pass cannot be entered without the
+ * elements the decision already had to look up.
+ */
+type KeyedPassDecision =
+  | { readonly run: true; readonly oldEls: readonly HTMLElement[] }
+  | { readonly run: false; readonly fallback: ReconcileFallback };
+
+/**
+ * Whether the keyed child pass may run for this parent, and what it needs if it
+ * may. Two independent things can stand in its way, and they answer different
+ * questions:
+ *
+ * - **Where the mounted children are.** Measured, because the DOM knows.
+ *   Survivors are moved and departures removed by addressing `parentEl`, so a
+ *   child mounted below a renderer-owned wrapper puts the whole pass out of
+ *   reach.
+ * - **Where a newcomer would go.** Declared, because nothing can measure a slot
+ *   that does not exist yet. `overlay` places its first child directly, so a
+ *   one-child overlay measures as fully placeable right up until it grows — and
+ *   the keyed pass would then append the second child bare, with no layer
+ *   around it and no complaint.
+ *
+ * The declaration only bites when there IS a newcomer: a render that keeps the
+ * same membership has nothing to place, so it still takes the keyed path.
+ *
+ * Between the two sits a question that is not a reason to decline at all: an
+ * old child with no entry in the element map is a broken invariant, and it
+ * throws. It is answered HERE, the moment the measurement has let the list
+ * through, because the measurement is what steps over such a child — deciding
+ * it is not a placement style — and a later decline would inherit that silence
+ * and hand the child to the structural walk, where only an opted-in host would
+ * ever hear about it. Before anything is applied either way, so a throw leaves
+ * the parent exactly as the render found it.
+ */
+function decideKeyedPass(
+  parentEl: HTMLElement,
+  parentNode: TileNode,
+  oldChildren: TileNode[],
+  newChildren: TileNode[],
+  oldMap: TileElementMap,
+): KeyedPassDecision {
+  const wrapped = firstWrappedChild(parentEl, oldChildren, oldMap);
+  if (wrapped) {
+    return {
+      run: false,
+      fallback: { reason: "wrapped-children", index: wrapped.index, childKind: wrapped.childKind },
+    };
+  }
+  const oldEls: HTMLElement[] = [];
+  for (const oldChild of oldChildren) {
+    const el = oldMap.get(oldChild);
+    if (!el) {
+      // Invariant violation — an old keyed tile should always be in the element
+      // map because every tile passes through `makeMappingTileCtx`. Throw so the
+      // outer reconcile bailout records this as a panic, audible to a host that
+      // never opted into a diagnostic sink, rather than silently forcing a
+      // subtree rebuild (which would erase focus, scroll, and any other DOM
+      // state on the whole parent).
+      throw new Error(
+        `reconcile: keyed old tile "${oldChild.key}" has no live element mapping — invariant violation in makeMappingTileCtx`,
+      );
+    }
+    oldEls.push(el);
+  }
+  if (!WRAPPING_TILE_KIND_SET.has(parentNode.kind)) return { run: true, oldEls };
+  const newcomer = firstUnmatchedChild(oldChildren, newChildren);
+  if (!newcomer) return { run: true, oldEls };
+  return {
+    run: false,
+    fallback: {
+      reason: "unplaceable-insert",
+      index: newcomer.index,
+      childKind: newcomer.childKind,
+    },
+  };
+}
+
+/** One positional child pair, with the live element the old side is mounted as. */
+type PositionalChildPair = {
+  readonly oldNode: TileNode;
+  readonly oldEl: HTMLElement;
+  readonly newNode: TileNode;
+};
+
+/**
+ * The two ways positional pairing can fail. Spelled as the subset of
+ * `ReconcileFallback` this decision can actually produce, so the return type
+ * says which reasons a caller has to be ready for.
+ */
+type PositionalChildFallback = Extract<
+  ReconcileFallback,
+  { reason: "child-hole" | "child-unmapped" }
+>;
+
+/** Either the whole child list paired up, or the reason none of it did. */
+type PositionalChildResult =
+  | { readonly paired: true; readonly pairs: readonly PositionalChildPair[] }
+  | { readonly paired: false; readonly fallback: PositionalChildFallback };
+
+/**
+ * Pair an equal-length child list by position — every pair, or none of them
+ * and the reason the parent must be rebuilt instead.
+ *
+ * **The parent's fate is settled here, before any of the list is applied.**
+ * The walk that consumes these pairs patches elements in place, rebuilds
+ * subtrees, and records an identifier per subtree it touched. A parent that
+ * gave up partway would be rebuilt on top of work already done, and the
+ * identifiers of the children it discarded would outlive them — so both
+ * give-up conditions are answered for the whole list first. A parent that
+ * rebuilds therefore leaves nothing behind about this subtree: no DOM change,
+ * no `touched` identifier, no `newMap` entry, and no diagnostic from any child
+ * (§10.3.12). What the episode log and the diagnostics describe is the render
+ * that happened.
+ *
+ * The `newMap` half of that is a property of this function, not of the
+ * renderers. A rebuild does re-map the same child nodes when the renderer
+ * routes them through `ctx.render` — but a host renderer is never asked to,
+ * so the walker must not need it, and it does not: there is nothing written
+ * for a rebuild to overwrite.
+ *
+ * The pairing asks the same two questions at every index, in index order,
+ * which is what fixes the evidence a bail carries: the `index` it names, and
+ * for `child-unmapped` the kind of the child whose element went missing.
+ */
+function resolvePositionalChildren(
+  oldChildren: TileNode[],
+  newChildren: TileNode[],
+  oldMap: TileElementMap,
+): PositionalChildResult {
+  const pairs: PositionalChildPair[] = [];
+  for (let i = 0; i < newChildren.length; i++) {
+    const oldNode = oldChildren[i];
+    const newNode = newChildren[i];
+    if (!oldNode || !newNode) {
+      return { paired: false, fallback: { reason: "child-hole", index: i } };
+    }
+    // The one source of `child-unmapped`: a host renderer built this child
+    // without going through `ctx.render`, which is what records the mapping.
+    // What cannot be found cannot be reused, so the parent rebuilds — on this
+    // render and on every later one that renderer produces.
+    const oldEl = oldMap.get(oldNode);
+    if (!oldEl) {
+      return {
+        paired: false,
+        fallback: { reason: "child-unmapped", index: i, childKind: oldNode.kind },
+      };
+    }
+    pairs.push({ oldNode, oldEl, newNode });
+  }
+  return { paired: true, pairs };
+}
+
+/**
+ * The first new child whose key no old sibling carries — the newcomer that the
+ * keyed pass would have to mount, and therefore the one thing it needs a slot
+ * for that no mounted child can vouch for. `undefined` means this render only
+ * moves and drops children that already exist, which addresses slots the parent
+ * demonstrably holds.
+ */
+function firstUnmatchedChild(
+  oldChildren: TileNode[],
+  newChildren: TileNode[],
+): { index: number; childKind: string } | undefined {
+  const oldKeys = new Set<string>();
+  for (const child of oldChildren) if (typeof child?.key === "string") oldKeys.add(child.key);
+  for (let i = 0; i < newChildren.length; i++) {
+    const child = newChildren[i];
+    if (child && !oldKeys.has(child.key as string)) return { index: i, childKind: child.kind };
+  }
+  return undefined;
+}
+
+/**
+ * The first old child mounted somewhere other than directly under `parentEl` —
+ * the signal that the parent's renderer owns its children's placement and the
+ * keyed pass must not reach past it. `undefined` means every child sits in a
+ * slot `parentEl` can address, so moving and removing them there is sound.
+ *
+ * A child with no entry in the map is NOT treated as blocking. That is a
+ * broken invariant, not a placement style, so `decideKeyedPass` throws on it
+ * the moment this scan comes back clean — for the children it would have reused
+ * and the ones it would have removed alike, and before any later reason to
+ * decline can be reached. The reconcile bailout then records a panic, visible
+ * without a diagnostic sink. Diverting it to the structural walk would trade
+ * that for a `child-unmapped` only an opted-in host ever sees.
+ */
+function firstWrappedChild(
+  parentEl: HTMLElement,
+  oldChildren: TileNode[],
+  oldMap: TileElementMap,
+): { index: number; childKind: string } | undefined {
+  for (let i = 0; i < oldChildren.length; i++) {
+    const child = oldChildren[i];
+    if (!child) continue;
+    const el = oldMap.get(child);
+    if (el && el.parentNode !== parentEl) return { index: i, childKind: child.kind };
+  }
+  return undefined;
+}
+
+/**
+ * Keyed child reconcile — mutates `parentEl` in place to match `newChildren`.
+ *
+ * **Precondition, enforced by the caller.** Every old child's element is a
+ * direct child of `parentEl` (`firstWrappedChild` gates this). The
+ * moves and removals below address `parentEl` itself, so under a renderer that
+ * wraps its children they would tear elements out of their wrappers and strand
+ * the emptied wrappers. Fresh mounts have the same limit from the other side:
+ * `ctx.render` returns a bare child element and only the renderer knows what
+ * to wrap it in.
+ *
+ * Strategy: (1) build key→oldChild lookup, (2) for each new child either
+ * reconcile against its keyed old counterpart or mount fresh, (3) drop
+ * unmatched old children from the DOM, (4) place the children that are not
+ * already where they belong. `unmount` / `mount` lifecycle firing is
+ * centralised in the outer render pass so no per-node hooks are needed here.
+ *
+ * **The placement step touches the minimum.** Replaying the whole target
+ * sequence with `appendChild` also produces the right order and is one line, but
+ * it detaches and re-attaches every child on every render that reaches here —
+ * including a render where nothing moved. Re-attaching a node blurs it, and focus, the
+ * caret, an open `<select>` and an in-flight IME composition are exactly the
+ * state this path exists to keep. So the survivors whose relative order already
+ * matches — the longest increasing run of their old positions — stay untouched,
+ * and everything else is inserted against its successor. A stable list costs
+ * nothing; one item moving costs one move.
+ *
+ * Throws — never silently falls back — on duplicate sibling keys, and passes on
+ * anything a DOM operation here rejects. The outer reconcile bailout catches the
+ * throw, records the panic, and does a full rebuild so the failure is visible in
+ * the episode log rather than silently degrading DOM state. The other invariant
+ * a keyed list can break — an old child with no element mapping — is settled by
+ * `decideKeyedPass` before this is entered, which is why `oldEls` arrives
+ * resolved rather than being looked up per use.
+ */
+function reconcileKeyedChildren(
+  parentEl: HTMLElement,
+  oldChildren: TileNode[],
+  oldEls: readonly HTMLElement[],
+  newChildren: TileNode[],
+  oldMap: TileElementMap,
+  newMap: TileElementMap,
+  ctx: TileCtx,
+  patchers: TilePatchers,
+  touched: string[],
+  diag?: ReconcileDiag | undefined,
+): void {
+  // Detect duplicate keys among the new children. Silently letting a
+  // duplicate through would collapse N tiles onto one DOM element (the
+  // second `parentEl.appendChild(el)` moves the same element to the end
+  // again). Throw so the outer reconcile bailout records a panic and does
+  // a full rebuild — a loud, recoverable failure rather than a silent
+  // DOM-loss bug.
+  const seenNew = new Set<string>();
+  for (const nc of newChildren) {
+    const k = nc.key as string;
+    if (seenNew.has(k)) {
+      throw new Error(
+        `reconcile: duplicate TileNode.key "${k}" among sibling tiles — keys must be unique within a parent's children list`,
+      );
+    }
+    seenNew.add(k);
+  }
+  // The node the mounted child list ends against. Everything this pass places
+  // goes BEFORE it, so a renderer that keeps content of its own after its
+  // children keeps it there — `appendChild` would walk the children past it.
+  //
+  // Read here, before anything is applied, because this is the last moment the
+  // children's DOM order is known to match `oldChildren`: from the next loop on,
+  // `replaceWithFreshTile` may swap a child's element and the removal pass drops
+  // the departures. Taken from the LAST old child, the anchor is never a child
+  // itself, so neither of those can invalidate it.
+  const tailAnchor = childListEnd(oldEls);
+  const byKey = new Map<string, { node: TileNode; index: number }>();
+  for (let i = 0; i < oldChildren.length; i++) {
+    const oc = oldChildren[i] as TileNode;
+    if (typeof oc.key === "string") byKey.set(oc.key, { node: oc, index: i });
+  }
+  const targetEls: HTMLElement[] = [];
+  // Per new child, the position its match held in the old list — `-1` for a
+  // newcomer. This is what says which survivors are already in relative order.
+  const oldIndexOf: number[] = [];
+  const matched = new Set<TileNode>();
+  for (const newChild of newChildren) {
+    const key = newChild.key as string;
+    const pairing = byKey.get(key);
+    if (pairing) {
+      const oldChild = pairing.node;
+      matched.add(oldChild);
+      const el = reconcileNode(
+        oldChild,
+        oldEls[pairing.index] as HTMLElement,
+        oldMap,
+        newChild,
+        newMap,
+        ctx,
+        patchers,
+        touched,
+        diag,
+      );
+      targetEls.push(el);
+      // The rebuilt element `reconcileNode` may hand back was spliced into the
+      // slot the old one held, so a survivor's DOM position is its old index
+      // either way.
+      oldIndexOf.push(pairing.index);
+    } else {
+      // Fresh mount: `ctx.render` records the new node → element mapping into
+      // newMap via `makeMappingTileCtx`, so the next pass sees this child in
+      // its map lookup.
+      touched.push(tileTouchedId(newChild));
+      targetEls.push(ctx.render(newChild));
+      oldIndexOf.push(-1);
+    }
+  }
+  // Remove unmatched old children from the DOM before placing anything. This is
+  // not load-bearing for the result — no departure can ever be an anchor, since
+  // an anchor is either another entry of `targetEls` or the node the list ends
+  // against — but it means the placement pass runs against the final membership,
+  // so "insert before the child that follows it" is true of the DOM and not only
+  // of the target array. `tile.unmount(X)` lifecycle firing is name-based and
+  // driven by the outer render pass's tree walk, so no per-node unmount hook
+  // here.
+  //
+  // Removed unconditionally: that the element exists was settled by
+  // `decideKeyedPass`, and that `parentEl` is the node holding it by the
+  // `firstWrappedChild` gate, which declines this whole pass for any mapped old
+  // child sitting elsewhere. Nothing this pass does itself can undo either —
+  // reconciling a survivor only ever splices within that survivor's own slot.
+  // Host code runs in between (a patcher, and a newcomer's renderer), and it
+  // could reach anywhere; if it ever moved a departure out, `removeChild`
+  // throws that onto the same panic path, where the guard this replaces would
+  // have left the departure mounted for good.
+  for (let i = 0; i < oldChildren.length; i++) {
+    if (matched.has(oldChildren[i] as TileNode)) continue;
+    parentEl.removeChild(oldEls[i] as HTMLElement);
+  }
+  const stays = childrenAlreadyInOrder(oldIndexOf);
+  // Right to left, so the anchor for each placement — the child that follows it
+  // — is already final: it either never moved, or it was placed one step ago.
+  // `insertBefore(el, null)` appends, which is what the last child gets when the
+  // parent keeps nothing after its children.
+  for (let i = targetEls.length - 1; i >= 0; i--) {
+    if (stays.has(i)) continue;
+    parentEl.insertBefore(targetEls[i] as HTMLElement, targetEls[i + 1] ?? tailAnchor);
+  }
+}
+
+/**
+ * The node the mounted child list ends against — the first sibling after the
+ * last old child, or `null` when the children run to the end of their parent.
+ * Inserting before it keeps the list where the renderer put it.
+ *
+ * Reads from the LAST old child on purpose: whatever follows it is by
+ * definition not one of the children, so no rebuild or removal in this pass can
+ * turn the anchor into a stale reference.
+ *
+ * Takes the resolved elements rather than the nodes and the map, so there is no
+ * unmapped child to search past: an old child list that reaches here has one
+ * element each, and every one of them sits directly under the parent.
+ *
+ * Never called with an empty list — `reconcileNode` peels off a child list that
+ * is empty on either side before the keyed gate — so there is no "no children
+ * to anchor on" case to answer. Answering one with `null` would mean appending,
+ * which is the one thing this exists to avoid.
+ */
+function childListEnd(oldEls: readonly HTMLElement[]): ChildNode | null {
+  return (oldEls[oldEls.length - 1] as HTMLElement).nextSibling;
+}
+
+/**
+ * The positions in the new child list that need no DOM placement: the survivors
+ * whose old positions already ascend, taken as the longest such run so that the
+ * fewest children are left to move. Newcomers (`-1`) are never in the set —
+ * they are not mounted yet, so they always need placing.
+ *
+ * Any increasing run would be correct; the LONGEST one is what makes the move
+ * count minimal, and computing it is the whole reason this is not a sweep.
+ * Patience sorting, O(n log n): `runEnds[l]` holds the index of the smallest
+ * tail among the increasing runs of length `l + 1` seen so far, and `predecessor`
+ * threads each element back through the run it extended.
+ */
+function childrenAlreadyInOrder(oldIndexOf: number[]): Set<number> {
+  const survivors: number[] = [];
+  let ascending = true;
+  let highest = -1;
+  for (let i = 0; i < oldIndexOf.length; i++) {
+    const old = oldIndexOf[i] as number;
+    if (old < 0) continue;
+    if (old < highest) ascending = false;
+    else highest = old;
+    survivors.push(i);
+  }
+  // Already in order — every survivor stays, and the search below would only
+  // arrive at the same answer more slowly. This is the shape of a list that is
+  // re-rendered because something else changed, which is most of them.
+  if (ascending) return new Set(survivors);
+
+  const predecessor = new Array<number>(survivors.length).fill(-1);
+  const runEnds: number[] = [];
+  for (let s = 0; s < survivors.length; s++) {
+    const value = oldIndexOf[survivors[s] as number] as number;
+    let lo = 0;
+    let hi = runEnds.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((oldIndexOf[survivors[runEnds[mid] as number] as number] as number) < value) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) predecessor[s] = runEnds[lo - 1] as number;
+    runEnds[lo] = s;
+  }
+  const stays = new Set<number>();
+  let cursor = runEnds.length > 0 ? (runEnds[runEnds.length - 1] as number) : -1;
+  while (cursor >= 0) {
+    stays.add(survivors[cursor] as number);
+    cursor = predecessor[cursor] as number;
+  }
+  return stays;
+}
+
+function replaceWithFreshTile(
+  oldEl: HTMLElement,
+  newNode: TileNode,
+  ctx: TileCtx,
+  touched: string[],
+): HTMLElement {
+  touched.push(tileTouchedId(newNode));
+  const fresh = ctx.render(newNode);
+  const parent = oldEl.parentNode;
+  // No parent → the caller's `oldEl` is detached from the live tree. If we
+  // silently returned `fresh` the caller would install a floating subtree as
+  // `currentRoot` and every subsequent `_rerender` would run against DOM the
+  // user cannot see. Throw so the outer reconcile catch bails to a full
+  // rebuild + `target.replaceChild(...)` and the failure is recorded.
+  if (!parent) {
+    throw new Error(
+      `reconcile: cannot splice new tile "${newNode.kind}" — old element has no parent (subtree detached from live DOM)`,
+    );
+  }
+  parent.replaceChild(fresh, oldEl);
+  return fresh;
+}
+
+/**
+ * Identifier for a tile the reconcile diff freshly built (subtree rebuild or
+ * keyed-diff insert). Consumed by episode `signal-update.binds-updated` (#189).
+ * Priority: `bind` (with `bindPath` joined) → `key` → `kind`. The bind form
+ * matches `data-kumiki-bind` in `tiles-input.ts` (`bindDataset`) so an authored
+ * `bind=todo.title` shows up as the same `"todo.title"` string in the log.
+ */
+function tileTouchedId(node: TileNode): string {
+  const asBindable = node as { bind?: unknown; bindPath?: unknown };
+  if (typeof asBindable.bind === "string") {
+    const bind = asBindable.bind;
+    if (Array.isArray(asBindable.bindPath) && asBindable.bindPath.length > 0) {
+      return `${bind}.${(asBindable.bindPath as string[]).join(".")}`;
+    }
+    return bind;
+  }
+  if (typeof node.key === "string") return node.key;
+  return node.kind;
+}
+
+// Every TileNode variant that carries a subtree spells it `children`
+// (`TileNode[]`); variants without children just have the property absent.
+const EMPTY_TILES: TileNode[] = [];
+function getTileChildren(node: TileNode): TileNode[] {
+  const c = (node as { children?: TileNode[] }).children;
+  return Array.isArray(c) ? c : EMPTY_TILES;
+}
+
+// Top-level TileNode keys the equality check ignores. `kind` is the
+// discriminant (already handled by the caller); `children` is walked
+// separately (each child is reconciled recursively). `key` is identity
+// metadata — a change in `key` means "different instance", handled by the
+// child-list matcher, not by data-prop equality.
+const TILE_SKIP_TOP: ReadonlySet<string> = new Set(["kind", "children", "key"]);
+
+function tileFieldsEqual(a: TileNode, b: TileNode): boolean {
+  const oa = a as unknown as Record<string, unknown>;
+  const ob = b as unknown as Record<string, unknown>;
+  // Union of keys — a field present on only one side is a difference unless
+  // both values are equal (and `undefined === undefined`, so an absent key
+  // and an explicit-undefined key compare equal — matches TileNode usage
+  // where optional fields are simply not emitted).
+  const keys = new Set<string>();
+  for (const k of Object.keys(oa)) if (!TILE_SKIP_TOP.has(k)) keys.add(k);
+  for (const k of Object.keys(ob)) if (!TILE_SKIP_TOP.has(k)) keys.add(k);
+  for (const k of keys) if (!tileValueEqual(oa[k], ob[k])) return false;
+  return true;
+}
+
+function tileValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  // Ignore closure identity for handler-shaped fields — codegen mints new
+  // closures per render, but a same-data reused tile keeps working with the
+  // old closure (which references the same stable dispatch seam).
+  if (typeof a === "function" && typeof b === "function") return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!tileValueEqual(a[i], b[i])) return false;
+    return true;
+  }
+  // Only plain data bags are compared key-wise. Anything exotic (Date, Map,
+  // Set, RegExp, DOM node, class instance) holds its state OUTSIDE its own
+  // enumerable keys, so the comparison below would see two empty bags and
+  // report a changed value as unchanged — the worst outcome for this
+  // predicate, since it leaves a stale element mounted with no symptom. The
+  // compiler emits only plain data, so this is unreachable from a `.kumiki`
+  // source; a host renderer that smuggles one in gets a rebuild rather than
+  // silent reuse.
+  if (!isPlainDataBag(a) || !isPlainDataBag(b)) return false;
+  const oa = a as Record<string, unknown>;
+  const ob = b as Record<string, unknown>;
+  const keys = new Set<string>([...Object.keys(oa), ...Object.keys(ob)]);
+  for (const k of keys) if (!tileValueEqual(oa[k], ob[k])) return false;
+  return true;
+}
+
+/**
+ * An object whose entire state IS its own enumerable properties, so key-wise
+ * comparison is complete. Object literals — what codegen and `JSON.parse`
+ * produce — qualify via `Object.prototype`, and `Object.create(null)` bags via
+ * the null prototype; anything else does not.
+ *
+ * The prototype identity is realm-local, so a plain object built in another
+ * realm (an `<iframe>`, a `vm` context) is treated as exotic and rebuilds. That
+ * is the safe direction and deliberately not "fixed" with a `toString` tag
+ * check, which would let a genuinely exotic cross-realm value back through.
+ */
+function isPlainDataBag(v: object): boolean {
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Why `tileValueEqual` had to call this pair unequal, when the answer is "it
+ * always will". Mirrors that predicate's branch order, and answers only for the
+ * cases where a structurally identical counterpart would fare no better — a
+ * genuine value change is not this function's business.
+ *
+ * Read by the `never-equal-prop` diagnostic, so it runs only for a mount that
+ * opted into `onDiagnostic` AND declared the kind in `hostTileKinds`.
+ */
+function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
+  // Two NaNs describe the same failed computation and still compare unequal —
+  // no later branch rescues them, since `typeof NaN` is neither function nor
+  // object. Checked before `===` because `NaN === NaN` is already false.
+  if (Number.isNaN(a) && Number.isNaN(b)) return "nan";
+  // The same instance handed over twice compares equal through `===`. Only a
+  // value rebuilt per render is a hazard, so a stable one is not reported.
+  if (a === b) return undefined;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return undefined;
+  // The kernel takes arrays element-wise, so an array is not itself a
+  // never-equal value. Descending into one to find an exotic element is the
+  // deep walk this scan deliberately does not do (see `ownFieldPairs`).
+  if (Array.isArray(a) || Array.isArray(b)) return undefined;
+  // BOTH sides exotic: two counterparts describing the same thing that the
+  // kernel still has to call unequal. One side exotic and the other a plain bag
+  // is an ordinary type change — it reports on the following render, when both
+  // sides are exotic, which is one render late but never wrong.
+  if (!isPlainDataBag(a) && !isPlainDataBag(b)) return "non-plain-object";
+  return undefined;
+}
+
+// Per-element slot for the universally-lifted UI handlers (onKeyDown /
+// onMouseEnter / onFocus / onBlur). Same pattern as tiles-input.ts INPUT_STATE
+// and tiles-text.ts LINK_STATE: native listeners are registered once at
+// create-time and dispatch through the slot; `refreshUiHandlerSlot` overwrites
+// the slot when a patch runs so the new node's handler + `el` payload reach
+// subsequent events. Without this, `applyUiEventHandlers` used to close over
+// the create-time `props` — and because `tileValueEqual` treats function
+// values as always-equal, a changed handler or `el` payload would never even
+// trigger a subtree rebuild, silently firing the stale closure on every event.
+type UiHandlerSlot = {
+  onKeyDown?: EventHandler;
+  onMouseEnter?: EventHandler;
+  onFocus?: EventHandler;
+  onBlur?: EventHandler;
+  el?: Record<string, unknown>;
+};
+const UI_HANDLER_STATE = new WeakMap<HTMLElement, UiHandlerSlot>();
+
+function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
+  const slot: UiHandlerSlot = {};
+  if (!props) return slot;
+  if (props.onKeyDown) slot.onKeyDown = props.onKeyDown;
+  if (props.onMouseEnter) slot.onMouseEnter = props.onMouseEnter;
+  if (props.onFocus) slot.onFocus = props.onFocus;
+  if (props.onBlur) slot.onBlur = props.onBlur;
+  if (props.el !== undefined) slot.el = props.el;
+  return slot;
+}
+
+/**
+ * Overwrite an element's UI-handler slot from the current-render props. Called
+ * by `reconcileNode` whenever a patch runs, so re-used elements dispatch
+ * `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` through the LATEST closure
+ * instead of the create-time one.
+ */
+function refreshUiHandlerSlot(el: HTMLElement, props?: TileProps): void {
+  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+}
+
 function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  if (props.onKeyDown) {
-    const handler = props.onKeyDown;
-    el.addEventListener("keydown", (e) => {
-      const ke = e as KeyboardEvent;
-      handler({ ...(props.el ?? {}), key: ke.key, code: ke.code });
-    });
-  }
-  if (props.onMouseEnter) {
-    const handler = props.onMouseEnter;
-    el.addEventListener("mouseenter", () => {
-      handler(props.el ?? {});
-    });
-  }
-  if (props.onFocus) {
-    const handler = props.onFocus;
-    el.addEventListener("focus", () => {
-      handler(props.el ?? {});
-    });
-  }
-  if (props.onBlur) {
-    const handler = props.onBlur;
-    el.addEventListener("blur", () => {
-      handler(props.el ?? {});
-    });
-  }
+  const hasAny =
+    Boolean(props.onKeyDown) ||
+    Boolean(props.onMouseEnter) ||
+    Boolean(props.onFocus) ||
+    Boolean(props.onBlur);
+  if (!hasAny) return;
+  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  el.addEventListener("keydown", (e) => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (!state?.onKeyDown) return;
+    const ke = e as KeyboardEvent;
+    state.onKeyDown({ ...(state.el ?? {}), key: ke.key, code: ke.code });
+  });
+  el.addEventListener("mouseenter", () => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (state?.onMouseEnter) state.onMouseEnter(state.el ?? {});
+  });
+  el.addEventListener("focus", () => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (state?.onFocus) state.onFocus(state.el ?? {});
+  });
+  el.addEventListener("blur", () => {
+    const state = UI_HANDLER_STATE.get(el);
+    if (state?.onBlur) state.onBlur(state.el ?? {});
+  });
 }
 
 /**
@@ -2028,7 +3858,33 @@ function applyMotion(el: HTMLElement, props?: TileProps): void {
 let stateStyleSeq = 0;
 let stateStylesEl: HTMLStyleElement | null = null;
 
+// #190 idempotency: `applyStateStyles` used to run once per element per mount,
+// so a monotonically-growing `stateStyleSeq` was harmless. With patchers
+// re-running `applyContainerProps` (and therefore `applyStateStyles`) on every
+// data-prop change, a call whose state props are unchanged would still append
+// a fresh `data-kumiki-state` token + a duplicate CSS rule on every render —
+// unbounded growth on both the element attribute and the shared stylesheet.
+// Cache the last-applied state signature per element and short-circuit an
+// unchanged re-application. When state props DO change, we still leak the old
+// stylesheet rule (its `data-kumiki-state` token is retired from the element),
+// but that's bounded by "unique state combos per element" rather than "render
+// count" — a genuine and rare change, not a per-render cost.
+const STATE_STYLE_SIG = new WeakMap<HTMLElement, string>();
+
 function applyStateStyles(el: HTMLElement, props: TileProps): void {
+  const sig = JSON.stringify([
+    props.hover,
+    props.focus,
+    props.active,
+    props.disabled,
+    props.selected,
+  ]);
+  if (STATE_STYLE_SIG.get(el) === sig) return;
+  // Retire any tokens the previous render installed on this element — the
+  // rules stay in the shared stylesheet (harmless dead rules) but the element
+  // stops matching them.
+  if (STATE_STYLE_SIG.has(el)) delete el.dataset.kumikiState;
+  STATE_STYLE_SIG.set(el, sig);
   for (const state of ["hover", "focus", "active", "disabled", "selected"] as const) {
     const sub = props[state];
     if (!sub || typeof sub !== "object" || Array.isArray(sub)) continue;
@@ -2077,6 +3933,13 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   applyStateStyles(el, props);
 }
 
+// Module-global by design (one style host per document in the common case),
+// which means it is shared ACROSS mounts: two co-mounted apps whose themes
+// share a NAME but differ in content will cache-hit each other and skip
+// re-injection — the shared style host keeps whichever applied last. That is
+// part of the style-root contention this registry deliberately does not solve
+// (see the multi-mount changeset); give co-mounted apps distinct theme names
+// or isolate them in shadow roots.
 let lastAppliedThemeName: string | null = null;
 function maybeReapplyTheme(app: AppShape): void {
   // Resolve the current theme name (could be slot-driven via `app.theme = slotName`).
@@ -2096,9 +3959,7 @@ function maybeReapplyTheme(app: AppShape): void {
 }
 
 function applyThemeDefaults(app: AppShape): void {
-  // We need __kumikiApp set before currentTheme() works.
-  (window as unknown as { __kumikiApp?: AppShape }).__kumikiApp = app;
-  const theme = currentTheme();
+  const theme = currentThemeOf(app);
   if (!theme) return;
   const colors = (theme.colors ?? {}) as Record<string, ThemeValue>;
   const typography = (theme.typography ?? {}) as Record<string, ThemeValue>;
@@ -2192,10 +4053,20 @@ function resolveToken(group: string, name: string): string {
   return name;
 }
 
+/**
+ * Theme of the app whose render pass is currently running; null outside a
+ * render pass (including during mount before the first render — theme setup
+ * there goes through `currentThemeOf` with an explicit app). Hosts that need
+ * a theme outside a render pass should resolve the app themselves, e.g. via
+ * `resolveApp(el)`.
+ */
 export function currentTheme(): Theme | null {
-  const win = window as unknown as { __kumikiApp?: AppShape };
-  const app = win.__kumikiApp;
-  if (!app?.themes) return null;
+  const app = getRenderingApp();
+  return app ? currentThemeOf(app) : null;
+}
+
+function currentThemeOf(app: AppShape): Theme | null {
+  if (!app.themes) return null;
   let name = app.themeName;
   // If `app.theme = someSlot` was used in source, app.themeName holds the slot
   // NAME (e.g. "themeName"). Resolve through the live slot value so theme

@@ -1,0 +1,57 @@
+# Feature: which parents can key-match their children (spec/runtime.md §10.3.10).
+#
+# Keys are necessary but not sufficient. `overlay` stacks its layers by putting
+# every child after the first inside a positioning wrapper, so the reconciler
+# does not hold those slots — it cannot move a layer without tearing the child
+# out of its wrapper. It notices, declines the keyed match, and diffs the layers
+# by position instead. Correct either way; what is lost is reorder-stable
+# element identity, which is why `kumiki dev` reports one `wrapped-children`
+# diagnostic per flip here and none for the keyed `column` in
+# `unkeyed-conditional-rebuild`.
+#
+# `Solo` is the same fact seen from its blind side. `overlay` puts its FIRST
+# child in normal flow, so a one-layer overlay has nothing wrapped and looking
+# at the DOM says "this parent places its children directly" — truthfully, right
+# up until a second layer arrives and needs a wrapper that does not exist yet.
+# What a mounted child can testify to is where IT sits, never where a newcomer
+# would go, so the reconciler reads the renderer's declared placement for that
+# and reports `unplaceable-insert` when it declines. The positional walk it
+# falls into then rebuilds, because the length changed — two diagnostics for one
+# toggle, naming the cause and what it cost.
+#
+# The takeaway for authoring: put a keyed list under a plain container
+# (`column` / `row` / `list`), and use `overlay` for stacking a fixed set of
+# layers rather than a reorderable or growing one.
+
+slot layers : List(Text) = ["backdrop", "sheet", "badge"]
+slot solo   : List(Text) = ["base"]
+
+reducer flip on=ui.click(FlipBtn) do= layers := layers.reverse
+
+reducer toggleBadge on=ui.click(BadgeBtn)
+    do= solo := if solo.size == 1 then ["base", "badge"] else ["base"]
+
+tile FlipBtn  = button(text="flip stacking order", onClick=flip)
+tile BadgeBtn = button(text="add or drop the second layer", onClick=toggleBadge)
+tile Layer in=Text = card(text($1)) {pad: "sm"}
+
+# Every child carries a key (the `for` binding supplies it), yet the layers
+# after the first sit inside overlay-owned wrappers.
+tile Stack = overlay(for l in layers Layer(l)) {align: "center"}
+
+# One keyed layer, which grows to two. Nothing is wrapped while it is alone.
+tile Solo = overlay(for s in solo Layer(s)) {align: "end"}
+
+tile App = column(
+             heading("keyed layers under a wrapping parent"),
+             FlipBtn,
+             Stack,
+             heading("a wrapping parent gaining its second layer"),
+             BadgeBtn,
+             Solo)
+           {pad: "lg", gap: "md"}
+
+app OverlayKeyedLayers
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

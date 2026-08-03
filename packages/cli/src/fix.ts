@@ -1,11 +1,17 @@
 // kumiki fix — propose auto-patches for repairable typecheck errors.
 
-import { readFileSync, writeFileSync } from "node:fs";
-import type { KumikiError } from "@kumikijs/compiler";
-import { check, lex, parse } from "@kumikijs/compiler";
+// `writeFileSync` is dereferenced through the `node:fs` namespace so tests can
+// intercept it — a plain named import would be resolved as a snapshot binding
+// by Vitest's mock spread, defeating `vi.spyOn(fs, "writeFileSync")`. Property
+// access on the namespace goes through the live slot every call. `readFileSync`
+// stays named — no test needs to mock reads.
+import * as fs from "node:fs";
+import { readFileSync } from "node:fs";
+import type { KumikiError, TestDef } from "@kumikijs/compiler";
+import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
-import { listDefs, load, type Store } from "./store.ts";
+import { directDeps, listDefs, load, type Store } from "./store.ts";
 
 export type AutoPatch = {
   code: string;
@@ -14,6 +20,47 @@ export type AutoPatch = {
   description: string;
   apply: (text: string) => string;
 };
+
+/**
+ * Reason a `planFixes` branch declined to emit a patch. Every silent `continue`
+ * inside `planFixesExplained` maps to one of these — the AI iteration loop uses
+ * the identifiers to diagnose why auto-repair stopped landing without having to
+ * re-derive the branch from the compiler message. `code` is the diagnostic that
+ * would have been repaired (`E0301`, `E0209`, ...); `reason` is a stable
+ * kebab-case slug (never a free-form sentence) so tests can pin the classifier.
+ */
+export type SkipReason = {
+  code: string;
+  reason: string;
+  message: string;
+};
+
+/**
+ * True when the caller opted in to skip-diagnostics via `KUMIKI_DEBUG=fix`
+ * (comma-separated so scopes can compose: `KUMIKI_DEBUG=fix,smoke`). The
+ * parse is intentionally forgiving on whitespace but exact-token match on
+ * `fix` — a substring match would mis-fire on scope names sharing a prefix
+ * (`fix-verbose`, `not-fix`) or containing `fix` as a fragment.
+ */
+function debugFixEnabled(): boolean {
+  const v = process.env.KUMIKI_DEBUG;
+  if (!v) return false;
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .includes("fix");
+}
+
+/**
+ * Emit a single `console.warn` line for a skip decision when `KUMIKI_DEBUG=fix`
+ * is set. Deliberately warn (not log) so it lands on stderr and won't pollute
+ * machine-parsable stdout of `kumiki fix`. No-op otherwise, so callers can
+ * sprinkle this at every skip site without a guarded `if` around each.
+ */
+function debugSkip(where: string, reason: string, detail?: string): void {
+  if (!debugFixEnabled()) return;
+  console.warn(`[kumiki fix] skip ${where}: ${reason}${detail ? ` — ${detail}` : ""}`);
+}
 
 function levenshtein(a: string, b: string): number {
   const m = a.length;
@@ -35,37 +82,161 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function suggestName(store: Store, missing: string): string | null {
-  const all = listDefs(store).map((e) => e.name);
+/**
+ * Write a file such that a failure (EACCES / ENOSPC / EBUSY) leaves the target
+ * byte-identical to before the call. Node's `writeFileSync` opens with
+ * `O_TRUNC`, so a mid-write ENOSPC produces a truncated file — unsafe for a
+ * repair tool whose contract is "cleaner or unchanged". We stage the content
+ * to a sibling temp file first, then `renameSync` it over the target.
+ * `renameSync` is atomic on the same filesystem on both POSIX and Windows
+ * (via `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`). On any throw the temp
+ * file is best-effort unlinked so a subsequent retry sees a clean directory.
+ */
+function atomicWriteFileSync(path: string, content: string): void {
+  const tmp = `${path}.kumiki-tmp`;
+  try {
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, path);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // Temp file may not exist (throw happened before create) or belong to a
+      // concurrent invocation. Best-effort cleanup — swallow.
+    }
+    throw e;
+  }
+}
+
+/**
+ * Closest candidate name for `missing` under the same threshold used by every
+ * name-suggest branch (Levenshtein ≤ 2 edits or ≤ 25% of the missing name's
+ * length). Takes candidates as an iterable so callers can supply a scoped
+ * set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
+ * names for E0106, variant tags for E0209.
+ */
+function suggestNameFrom(candidates: Iterable<string>, missing: string): string | null {
   let best: string | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
-  for (const cand of all) {
+  for (const cand of candidates) {
     const d = levenshtein(missing, cand);
+    // Skip self-matches so `missing === cand` never dominates a genuinely close
+    // alternative. Relying on the `applied ⇔ source changed` invariant to
+    // suppress `replace X with X` downstream is fragile: a candidate at
+    // distance 1 that would otherwise win never gets a chance if the loop
+    // latches onto the self-match first.
+    if (d === 0) continue;
     if (d < bestScore) {
       bestScore = d;
       best = cand;
     }
   }
-  // Accept the suggestion only if the names are close enough (≤ 2 edits or ≤ 25%).
   if (best === null) return null;
   if (bestScore <= 2 || bestScore <= Math.ceil(missing.length * 0.25)) return best;
   return null;
 }
 
-export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
+function suggestName(store: Store, missing: string): string | null {
+  return suggestNameFrom(
+    listDefs(store).map((e) => e.name),
+    missing,
+  );
+}
+
+/**
+ * Append a capability name to an app's `caps = [...]` array, constrained to
+ * the given line range so the search cannot accidentally hit a same-name field
+ * elsewhere in the source. Returns:
+ *   - a rewritten source when the caller's cap was added
+ *   - `null` when no `caps = [...]` field exists in the range OR the cap was
+ *     already present (no-op — nothing to patch)
+ * A null return means "no patch was made"; the caller must not present the
+ * patch as `applied`. The regex tolerates arbitrary whitespace around `caps`
+ * / `=` and either empty (`[]`) or populated (`[a, b]`) arrays.
+ */
+function appendAppCap(text: string, cap: string, appRange: [number, number] | null): string | null {
+  const lines = text.split(/\r?\n/);
+  const start = appRange ? appRange[0] - 1 : 0;
+  const end = appRange ? Math.min(appRange[1], lines.length) : lines.length;
+  const scoped = lines.slice(start, end).join("\n");
+  const re = /(caps\s*=\s*\[)([^\]]*)(\])/;
+  const match = re.exec(scoped);
+  if (!match) return null;
+  const items = match[2]!
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (items.includes(cap)) return null;
+  items.push(cap);
+  const patchedScoped = `${scoped.slice(0, match.index)}${match[1]}${items.join(", ")}${match[3]}${scoped.slice(match.index + match[0].length)}`;
+  return [...lines.slice(0, start), ...patchedScoped.split("\n"), ...lines.slice(end)].join("\n");
+}
+
+/**
+ * Diagnostic codes whose message shape is `... "<name>" ...` and whose repair
+ * is "replace the misspelled name with a close top-level definition name".
+ * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
+ * from `listDefs(store)`) for every code in this set.
+ *
+ * Handled with a *scoped* candidate set in their own branch below (not in this
+ * set, because top-level defs would produce wrong suggestions):
+ *   - **E0106** (undef-timer) — timer names live in `SymbolTable.timerNames`;
+ *     we mirror them via `collectTimerNames(program)` and never fall back to
+ *     top-level defs.
+ *   - **E0209** (pat-unknown-variant) — variant tags live inside the union
+ *     type's payload list; we resolve them via `variantTagsOf(typeName,
+ *     program)` (built-in `Option` / `Result` plus user `TypeDef` bodies).
+ * Adding either code back to *this* set silently corrupts the source: the
+ * shared candidate list has no timer / variant entries, so `suggestName`
+ * would propose an unrelated tile or reducer whose name happens to be close.
+ */
+const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
+  "E0102", // undef-reducer
+  "E0103", // undef-ref / undef-slot
+  "E0104", // undef-effect
+  "E0105", // undef-tile
+  "E0107", // undef-motion
+  "E0211", // undef-tile-in-selector
+]);
+
+/**
+ * Explained variant of `planFixes`: returns the same auto-patches plus a
+ * parallel `skipped` list carrying a stable kebab-case reason per silent
+ * `continue`. The AI iteration loop consumes `skipped` to explain "why no
+ * patch landed" and to detect compiler-message-format drift (all quoted-name
+ * branches share a `*-quoted-name-extract-failed` reason — a sudden spike is
+ * the signal). The plain `planFixes` is a thin wrapper for backward
+ * compatibility; every silent skip now also flows through `debugSkip` so
+ * `KUMIKI_DEBUG=fix` surfaces the same reasons at runtime.
+ */
+export function planFixesExplained(
+  store: Store,
+  errors: KumikiError[],
+): { patches: AutoPatch[]; skipped: SkipReason[] } {
   const patches: AutoPatch[] = [];
+  const skipped: SkipReason[] = [];
+  const skip = (code: string, reason: string, message: string): void => {
+    skipped.push({ code, reason, message });
+    debugSkip(`planFixes:${code}`, reason, message);
+  };
   for (const err of errors) {
-    if (
-      err.code === "E0103" ||
-      err.code === "E0105" ||
-      err.code === "E0102" ||
-      err.code === "E0104"
-    ) {
-      const match = /"([^"]+)"/.exec(err.message);
-      if (!match) continue;
-      const missing = match[1]!;
+    const beforePatches = patches.length;
+    const beforeSkipped = skipped.length;
+    if (NAME_SUGGEST_CODES.has(err.code)) {
+      // Most diagnostics quote a single name; E0211 quotes the reducer name
+      // *and then* the tile name — the tile is what needs suggesting, so pick
+      // the last quoted name for that code specifically.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = err.code === "E0211" ? quoted[quoted.length - 1]! : quoted[0]!;
       const suggested = suggestName(store, missing);
-      if (!suggested) continue;
+      if (!suggested) {
+        skip(err.code, "no-close-name-suggestion", err.message);
+        continue;
+      }
       patches.push({
         code: err.code,
         message: err.message,
@@ -78,6 +249,114 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
           lines[idx] = line.replace(re, suggested);
           return lines.join("\n");
         },
+      });
+    }
+    if (err.code === "E0106") {
+      // Message shape: `stop-timer refers to undefined timer name "<name>"`.
+      // The candidate set is the timer namespace, not top-level defs — see
+      // NAME_SUGGEST_CODES doc-comment for why this branch is separate.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0106-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const timers = collectTimerNames(store.program);
+      if (timers.size === 0) {
+        skip(err.code, "e0106-empty-timer-namespace", err.message);
+        continue;
+      }
+      const suggested = suggestNameFrom(timers, missing);
+      if (!suggested) {
+        skip(err.code, "e0106-no-close-timer", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => {
+          const lines = text.split(/\r?\n/);
+          const idx = err.pos.line - 1;
+          const line = lines[idx] ?? "";
+          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+          lines[idx] = line.replace(re, suggested);
+          return lines.join("\n");
+        },
+      });
+    }
+    if (err.code === "E0209") {
+      // Message shape: `Variant "<tag>" is not a member of scrutinee type "<T>"`.
+      // Candidates are the union's tag list, not top-level defs. `<T>` may be
+      // rendered as `Option(Int)` / `Result(Ok, Err)` / a plain `TypeRef` name;
+      // `variantTagsOf` strips the generic argument list and resolves aliases.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length < 2) {
+        // Same family as the other `*-quoted-name-extract-failed` reasons —
+        // a sudden spike across the family signals compiler message drift.
+        skip(err.code, "e0209-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const typeName = quoted[1]!;
+      const tags = variantTagsOf(typeName, store.program);
+      if (!tags || tags.length === 0) {
+        skip(err.code, "e0209-unresolved-variant-type", err.message);
+        continue;
+      }
+      const suggested = suggestNameFrom(tags, missing);
+      if (!suggested) {
+        skip(err.code, "e0209-no-close-tag", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => {
+          const lines = text.split(/\r?\n/);
+          const idx = err.pos.line - 1;
+          const line = lines[idx] ?? "";
+          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+          lines[idx] = line.replace(re, suggested);
+          return lines.join("\n");
+        },
+      });
+    }
+    if (err.code === "E0301") {
+      // "Effect "<effect>" requires capability "<cap>" which is not declared in app.caps"
+      // — extract <cap> and append it to the app's `caps = [...]` array. Only
+      // emit a patch when the app def is reachable AND `appendAppCap` produced
+      // a mutated source. A no-op patch (silent unchanged input) would be
+      // reported as `applied: 1` despite doing nothing, which the regression
+      // gate can't catch on its own (nothing changed ⇒ same errors ⇒ same
+      // count) — the pre-check here keeps the "applied ⇔ source changed"
+      // invariant.
+      const capMatch = /requires capability "([^"]+)"/.exec(err.message);
+      if (!capMatch) {
+        // Named for the shared drift-detection family, even though this
+        // branch parses a fixed phrase rather than a quoted name — a spike
+        // across all `*-quoted-name-extract-failed` reasons is the signal.
+        skip(err.code, "e0301-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const cap = capMatch[1]!;
+      const appEntry = store.defs.find((e) => e.def.kind === "AppDef");
+      if (!appEntry) {
+        skip(err.code, "e0301-no-app-def", err.message);
+        continue;
+      }
+      const appRange: [number, number] = [appEntry.range.startLine, appEntry.range.endLine];
+      const dryRun = appendAppCap(store.source, cap, appRange);
+      if (dryRun === null) {
+        skip(err.code, "e0301-cap-already-present-or-no-caps-field", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `add capability "${cap}" to app.caps`,
+        apply: (text: string) => appendAppCap(text, cap, appRange) ?? text,
       });
     }
     if (err.code === "E0001") {
@@ -100,9 +379,194 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
         },
       });
     }
+    // Default classifier: this diagnostic code has no repair branch at all.
+    // Distinct from `*-quoted-name-extract-failed` (which means "a branch
+    // fired but the message shape didn't match") — `no-repair-branch` means
+    // "planFixes doesn't know how to repair this code yet". AI loops can use
+    // the difference to decide "extend the branch set" vs "compiler drift".
+    if (patches.length === beforePatches && skipped.length === beforeSkipped) {
+      skip(err.code, "no-repair-branch", err.message);
+    }
   }
-  return patches;
+  return { patches, skipped };
 }
+
+export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
+  return planFixesExplained(store, errors).patches;
+}
+
+/**
+ * Pure planner: read + typecheck + planFixes (filtered by `onlyCode` when set).
+ * No I/O beyond reading the file. Returned `patches` is empty when nothing is
+ * repairable; `errors` carries the raw diagnostics either way so the caller can
+ * distinguish "clean file" from "errors but nothing to auto-fix".
+ */
+export function planFix(
+  path: string,
+  onlyCode: string | undefined,
+  capabilities: string[] = [],
+): FixPlan {
+  const store = load(path);
+  const errors = check(store.program, { capabilities });
+  if (errors.length === 0) return { errors, patches: [] };
+  const all = planFixes(store, errors);
+  const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
+  return { errors, patches };
+}
+
+export type FixPlan = {
+  /** Raw typecheck errors on `path`. Empty when the file is clean. */
+  errors: KumikiError[];
+  /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
+  patches: AutoPatch[];
+};
+
+/**
+ * Apply the planned patches to `path`, re-typecheck the result, and return
+ * before/after source plus the residual diagnostic set.
+ *
+ * The result carries three mutually-exclusive failure modifiers, each of which
+ * pins `applied: 0` and leaves the on-disk file byte-identical:
+ *  - `parseError`: the composed patches produced source the lexer/parser
+ *    cannot accept. Nothing is written; `remaining` includes a synthetic
+ *    `E0000` so the empty-⇔-clean invariant holds without a caller inspecting
+ *    `parseError` first.
+ *  - `regressionBlocked`: the composed patches would introduce a diagnostic
+ *    the pre-patch file did not have, or fail to resolve any pre-patch error.
+ *  - `writeError`: the composed patches passed both gates but the atomic
+ *    write threw (EACCES / ENOSPC / EBUSY, …). Raw message preserved for the
+ *    caller to render.
+ *
+ * Callers that need a dry preview should use `planFix` and apply
+ * `patches[i].apply` themselves.
+ */
+export function applyFixPlan(
+  path: string,
+  onlyCode: string | undefined,
+  capabilities: string[] = [],
+): FixApplyResult {
+  const plan = planFix(path, onlyCode, capabilities);
+  const before = readFileSync(path, "utf8");
+  if (plan.patches.length === 0) {
+    return { applied: 0, before, after: before, remaining: plan.errors };
+  }
+  let after = before;
+  for (const p of plan.patches) after = p.apply(after);
+  // Regression gate. Every path that would touch disk first re-parses and
+  // re-typechecks the composed source, then compares diagnostic *sets* (code
+  // + position) rather than counts. Rollback triggers when any of:
+  //   1. The composed source no longer parses at all — a *parse-error* is
+  //      strictly worse than the original type errors, so we discard even
+  //      though the pre-patch file had errors.
+  //   2. Any diagnostic exists in `after` but not `before` — introduced a
+  //      new failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
+  //      count-only guard would miss.
+  //   3. No diagnostic from `before` was resolved — the patch either did
+  //      nothing (silent noop) or replaced errors position-for-position
+  //      with different codes (still a swap).
+  // Invariant: "apply => file is either strictly cleaner or unchanged".
+  // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
+  const key = (e: KumikiError): string => `${e.code}@${e.pos.line}:${e.pos.col}`;
+  const beforeSet = new Set(plan.errors.map(key));
+  // Parse and typecheck have distinct failure semantics: a parse-error is a
+  // rollback (case 1), a `check()` throw is an internal typechecker bug that
+  // must surface, not be silently reported as `parseError`. Keep the catches
+  // separate — `check()` is not in the try.
+  let parsed: ReturnType<typeof parse>;
+  try {
+    parsed = parse(lex(after));
+  } catch (e) {
+    // Parse-error rollback (case 1). Do NOT write. The synthetic E0000 in
+    // `remaining` and the `parseError` string surface the parser's message
+    // for callers rendering diagnostics; `regressionBlocked` distinguishes
+    // this from "genuinely no patch available".
+    const message = e instanceof Error ? e.message : String(e);
+    const pe = e as { pos?: { line: number; col: number } };
+    const synthetic: KumikiError = {
+      code: "E0000",
+      kind: "parse-error",
+      message,
+      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    };
+    return {
+      applied: 0,
+      before,
+      after: before,
+      remaining: [...plan.errors, synthetic],
+      regressionBlocked: true,
+      parseError: message,
+    };
+  }
+  const dryRemaining = check(parsed, { capabilities });
+  const afterSet = new Set(dryRemaining.map(key));
+  const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
+  const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
+  if (introduced.length > 0 || resolved.length === 0) {
+    return {
+      applied: 0,
+      before,
+      after: before,
+      remaining: plan.errors,
+      regressionBlocked: true,
+    };
+  }
+  try {
+    atomicWriteFileSync(path, after);
+  } catch (e) {
+    // Symmetric with the `parseError` / `regressionBlocked` short-circuit
+    // above: I/O failure is a structured return, not a raw stack. The atomic
+    // helper guarantees the on-disk file is unchanged on throw, so
+    // `remaining` echoes the pre-patch diagnostics.
+    return {
+      applied: 0,
+      before,
+      after: before,
+      remaining: plan.errors,
+      writeError: e instanceof Error ? e.message : String(e),
+    };
+  }
+  return { applied: plan.patches.length, before, after, remaining: dryRemaining };
+}
+
+export type FixApplyResult = {
+  /** Number of patches actually applied. `0` when the file was already clean or nothing was auto-fixable. */
+  applied: number;
+  /** Source before writing. Equal to `after` when `applied === 0`. */
+  before: string;
+  /** Source after writing (already on disk). */
+  after: string;
+  /**
+   * Residual diagnostics after the write. Empty ⇔ file is clean. When the
+   * write produced unparseable source, this contains a synthetic `E0000`
+   * parse-error so the empty-⇔-clean invariant holds without callers needing
+   * to inspect `parseError` first.
+   */
+  remaining: KumikiError[];
+  /**
+   * Raw parser message when the composed patches broke syntax. Duplicated by
+   * the `E0000` entry in `remaining`; kept as a convenience field for
+   * callers rendering a human message.
+   */
+  parseError?: string;
+  /**
+   * True when the composed patch would have introduced *more* diagnostics
+   * than the pre-patch file had — the regression gate rolled the write back
+   * and `applied` is `0`. Absent means either the patch cleanly applied or
+   * there was nothing to apply.
+   */
+  regressionBlocked?: boolean;
+  /**
+   * Raw filesystem error message when the composed patches passed the
+   * regression gate but the write threw (EACCES / ENOSPC / EBUSY, …). When
+   * set, `applied === 0`, `after === before`, `remaining` carries the
+   * pre-patch diagnostics, and the on-disk target file is byte-identical to
+   * `before` — `atomicWriteFileSync` stages content in a sibling tmp file and
+   * atomically renames it into place, so a throw at any stage leaves the
+   * target untouched. Mutually exclusive with `parseError` and
+   * `regressionBlocked` — those short-circuit before the write.
+   */
+  writeError?: string;
+};
 
 export function fixCmd(
   path: string,
@@ -110,42 +574,54 @@ export function fixCmd(
   onlyCode?: string,
   capabilities: string[] = [],
 ): void {
-  const store = load(path);
-  // Thread manifest capabilities so a file using a registered cap is not falsely
-  // reported as E0302 (and so the planned patches match what `check`/`build` see).
-  const errors = check(store.program, { capabilities });
-  if (errors.length === 0) {
-    console.log("no errors");
-    return;
-  }
-  let patches = planFixes(store, errors);
-  if (onlyCode) patches = patches.filter((p) => p.code === onlyCode);
-  if (patches.length === 0) {
-    console.log("(no auto-patches available)");
-    for (const e of errors) console.error(`${e.code} ${e.message}`);
-    return;
-  }
   if (!apply) {
+    const { errors, patches } = planFix(path, onlyCode, capabilities);
+    if (errors.length === 0) {
+      console.log("no errors");
+      return;
+    }
+    if (patches.length === 0) {
+      console.log("(no auto-patches available)");
+      for (const e of errors) console.error(`${e.code} ${e.message}`);
+      return;
+    }
     for (const p of patches) {
       console.log(`${p.code} ${p.message}`);
       console.log(`  fix: ${p.description}`);
     }
     return;
   }
-  let text = readFileSync(path, "utf8");
-  for (const p of patches) {
-    text = p.apply(text);
+  const result = applyFixPlan(path, onlyCode, capabilities);
+  if (result.applied === 0) {
+    if (result.writeError) {
+      // The plan passed the regression gate but the on-disk write threw. Fail
+      // loudly on stderr and exit non-zero — the pre-patch diagnostics survive
+      // so scripts inspecting `remaining` still get the compile state, but the
+      // I/O failure itself must not silently look like "no auto-patches".
+      console.error(`could not write fixes to ${path}: ${result.writeError}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (result.remaining.length === 0) {
+      console.log("no errors");
+      return;
+    }
+    if (result.regressionBlocked) {
+      console.log("(auto-patch rolled back — it would have introduced new errors)");
+    } else {
+      console.log("(no auto-patches available)");
+    }
+    for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+    return;
   }
-  writeFileSync(path, text);
-  // Re-validate
-  try {
-    const next = parse(lex(text));
-    const after = check(next, { capabilities });
-    if (after.length === 0) console.log(`applied ${patches.length} fix(es) — file now clean`);
-    else console.log(`applied ${patches.length} fix(es) — ${after.length} error(s) remain`);
-  } catch (e) {
-    console.error(`fixes broke the file: ${String(e)}`);
+  if (result.parseError) {
+    console.error(`fixes broke the file: ${result.parseError}`);
+    return;
   }
+  if (result.remaining.length === 0)
+    console.log(`applied ${result.applied} fix(es) — file now clean`);
+  else
+    console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
 }
 
 // ----- `kumiki fix --auto-patch <test-name>` (M4b) -----
@@ -156,26 +632,137 @@ export function fixCmd(
 //   2. behavioral — the file compiles but the test fails; apply a deterministic
 //      literal repair when one is provable (see `planTestPatch`), else report.
 
-export type FixFromTestOutcome = {
-  /** true when the named test ends up passing, or a fix is available in dry-run. */
-  ok: boolean;
-  status:
-    | "not-found"
-    | "already-pass"
-    | "proposed"
-    | "applied"
-    | "no-patch"
-    | "compile-proposed"
-    | "compile-remaining";
-  /** Post-apply status of the named test, when an apply happened. */
-  pass?: boolean;
-  /** The behavioral patch proposed or applied. */
-  patch?: AutoPatch;
-  /** Count of Tier-1 compile fixes proposed or applied. */
-  compileFixes?: number;
-  /** Names of other tests that regressed after applying. */
-  regressed?: string[];
-};
+/**
+ * Two-tier fix-from-test outcome as a discriminated union on `status`. Each
+ * variant carries only the fields it defines, so callers can narrow with
+ * `switch (outcome.status)` and get exact-shape TypeScript. `ok: true` means
+ * the named test either already passes, will pass after applying, or a fix is
+ * available in dry-run; every other case is `ok: false`.
+ *
+ * Tier-1 failures short-circuit before the test can run:
+ *   `no-patch` (compile-blocked, nothing repairable) |
+ *   `compile-proposed` (dry-run: repairable compile errors) |
+ *   `compile-remaining` (apply: still broken after Tier-1 write).
+ *
+ * Tier-2 covers the compiling file:
+ *   `not-found` | `already-pass` | `no-patch` (no deterministic patch) |
+ *   `proposed` (dry-run patch) | `applied` (patch written; carries `regressed`).
+ *
+ * Independent of tier: `write-failed` fires when a patch was chosen but
+ * `atomicWriteFileSync` threw. `phase` (`compile` | `test`) picks the site,
+ * `patch` is preserved on `phase: "test"` for retry / display, and the
+ * on-disk file is byte-identical to before the call.
+ */
+export type FixFromTestOutcome =
+  | {
+      ok: false;
+      status: "no-patch";
+      /** Compile-tier blockage: file has errors and none are auto-repairable. */
+      compileErrors?: KumikiError[];
+      /** Test runner threw before any test could execute. */
+      testRunError?: string;
+      /** Behavioral tier: the target test failed but no deterministic literal repair exists. */
+      failingTest?: TestResult;
+      /**
+       * Stable kebab-case classifier for the silent-skip that produced the
+       * no-patch outcome. Compile-tier: the first `planFixesExplained.skipped`
+       * entry's reason when `patches.length === 0` (this includes the new
+       * default `no-repair-branch` reason, so it's populated for every
+       * compile-tier no-patch outcome). Behavioral tier: the tier planner's
+       * bail reason. Test-runner threw: `test-runner-threw`.
+       */
+      reason?: string;
+      compileFixes?: number;
+    }
+  | {
+      ok: true;
+      status: "compile-proposed";
+      compileFixes: number;
+      compilePatches: AutoPatch[];
+    }
+  | {
+      ok: false;
+      status: "compile-remaining";
+      compileFixes: number;
+      compileErrors?: KumikiError[];
+      parseError?: string;
+    }
+  | {
+      ok: false;
+      status: "not-found";
+      availableTests: string[];
+      compileFixes?: number;
+    }
+  | {
+      ok: true;
+      status: "already-pass";
+      pass: true;
+      compileFixes?: number;
+    }
+  | {
+      ok: true;
+      status: "proposed";
+      patch: AutoPatch;
+      compileFixes?: number;
+    }
+  | {
+      ok: boolean;
+      status: "applied";
+      pass: boolean;
+      patch: AutoPatch;
+      /** Names of other tests that were passing before the write and now fail. Always populated (may be []). */
+      regressed: string[];
+      compileFixes?: number;
+    }
+  | {
+      /**
+       * A patch was chosen but `writeFileSync` threw before it could land.
+       * `phase` distinguishes the two write sites in `runFixFromTest`:
+       *  - `"compile"`: Tier-1 compile patches were about to be written.
+       *    `compileFixes` is the *proposed* count (nothing landed); the
+       *    on-disk file is byte-identical to before the call.
+       *  - `"test"`: Tier-2 behavioral patch was selected. `patch` carries
+       *    the proposed `AutoPatch` that never landed; `compileFixes` is
+       *    present only when Tier-1 wrote successfully first.
+       */
+      ok: false;
+      status: "write-failed";
+      phase: "compile" | "test";
+      writeError: string;
+      compileFixes?: number;
+      patch?: AutoPatch;
+    };
+
+/**
+ * Inverse of the lexer's string-body decoding
+ * (packages/compiler/src/lexer.ts:123-147). Accepts the RAW inner body of a
+ * `"..."` source literal (no surrounding quotes) and returns the decoded
+ * runtime value. Escape set matches the lexer exactly: `\n \t \r \" \\`.
+ *
+ * Returns `null` when the body contains an escape sequence the lexer would
+ * reject — defensive; the file has already been lexed so this branch is
+ * unreachable in practice, but the caller treats `null` as "skip this literal
+ * candidate" rather than throwing so a future refactor that breaks the
+ * invariant fails soft (falling through to the tier's other bail paths).
+ */
+function decodeKumikiStringBody(raw: string): string | null {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const esc = raw[++i];
+    if (esc === "n") out += "\n";
+    else if (esc === "t") out += "\t";
+    else if (esc === "r") out += "\r";
+    else if (esc === '"') out += '"';
+    else if (esc === "\\") out += "\\";
+    else return null;
+  }
+  return out;
+}
 
 /**
  * Render a string as a Kumiki source literal, or null if it needs an escape the
@@ -208,51 +795,34 @@ function lineOfOffset(source: string, offset: number): number {
 }
 
 /**
- * A deterministic patch from a failing test, when one is provable: the failing
- * leaf is a string whose *actual* value appears verbatim, exactly once, as a
- * source string literal **in implementation code** (tile / reducer), not in a
- * `test` body. `excludedLineRanges` are the 1-based inclusive line spans of the
- * file's `test` definitions; a match inside one is skipped, because patching a
- * test's own `given` / `expect` data would mutate the fixture into passing
- * without touching any production definition. Returns null when no such patch
- * exists — the caller reports the diff instead.
+ * Longest common prefix + suffix decomposition. Returns the two divergent
+ * middles: `actual = P + midA + S`, `expected = P + midE + S`. When one side
+ * is a strict prefix/suffix of the other, one middle is empty. Used by the
+ * string-partial-repair path in `planTestPatch` to isolate the smallest
+ * substring to swap inside a shared literal.
  */
-export function planTestPatch(
-  source: string,
-  r: TestResult,
-  excludedLineRanges: Array<[number, number]> = [],
-): AutoPatch | null {
-  if (r.pass || !r.leaf) return null;
-  const { expected, actual } = r.leaf;
-  if (typeof actual !== "string" || typeof expected !== "string" || actual === expected) {
-    return null;
-  }
-  const actualLit = kumikiStringLit(actual);
-  const expectedLit = kumikiStringLit(expected);
-  if (actualLit === null || expectedLit === null) return null;
-
-  // Collect occurrences outside any `test` body. Determinism requires exactly
-  // one: assembled text (concatenation) is never found; a fixture-only literal
-  // yields zero implementation hits; duplicates are ambiguous — all → null.
-  const inExcluded = (offset: number): boolean => {
-    const line = lineOfOffset(source, offset);
-    return excludedLineRanges.some(([lo, hi]) => line >= lo && line <= hi);
-  };
-  const hits: number[] = [];
-  for (let idx = source.indexOf(actualLit); idx !== -1; idx = source.indexOf(actualLit, idx + 1)) {
-    if (!inExcluded(idx)) hits.push(idx);
-  }
-  if (hits.length !== 1) return null;
-  const hit = hits[0]!;
-  const at = r.diffAt ?? "(leaf)";
+function affixDiff(a: string, b: string): { pfx: string; midA: string; midE: string; sfx: string } {
+  let p = 0;
+  const minLen = Math.min(a.length, b.length);
+  while (p < minLen && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < minLen - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
   return {
-    code: "TEST",
-    message: `test "${r.name}" failed at ${at}`,
-    description: `replace ${actualLit} with ${expectedLit} (from failing test "${r.name}" @ ${at})`,
-    // Positional splice at the proven offset — avoids String.replace's first-
-    // match-anywhere (which could hit a test body) and `$`-substitution.
-    apply: (text: string) => text.slice(0, hit) + expectedLit + text.slice(hit + actualLit.length),
+    pfx: a.slice(0, p),
+    midA: a.slice(p, a.length - s),
+    midE: b.slice(p, b.length - s),
+    sfx: a.slice(a.length - s),
   };
+}
+
+/**
+ * Render a number as a Kumiki numeric literal source form (`Int` or fractional).
+ * Rejects NaN / Infinity — those cannot be spelled as literals and would break
+ * `.kumiki` parsing.
+ */
+function kumikiNumberLit(n: number): string | null {
+  if (!Number.isFinite(n)) return null;
+  return String(n);
 }
 
 /** 1-based inclusive line spans of every `test` definition in `store`. */
@@ -262,7 +832,492 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
     .map((e): [number, number] => [e.range.startLine, e.range.endLine]);
 }
 
-export async function fixFromTest(
+/**
+ * Line ranges of the target def and every def it transitively references, used
+ * to constrain a literal search to code the failing test can actually reach.
+ * Returned as (target-range, dependency-ranges) so the caller can prefer a hit
+ * in the target itself before falling back to its dependencies. Returns null
+ * when the target can't be resolved — the caller falls back to whole-file
+ * search.
+ */
+function scopeOfTest(
+  store: Store,
+  testName: string,
+): { target: [number, number]; deps: Array<[number, number]> } | null {
+  const testEntry = store.defs.find((e) => e.def.kind === "TestDef" && e.name === testName);
+  if (!testEntry) return null;
+  const td = testEntry.def as TestDef;
+  if (!td.target) return null;
+  // Explicit switch — `property-test` / `episode-test` do not have a scope
+  // to disambiguate against, so return null instead of silently falling into
+  // the reducer namespace (which would misresolve a same-name reducer).
+  let targetQname: string;
+  switch (td.testKind) {
+    case "tile-test":
+      targetQname = `tile.${td.target}`;
+      break;
+    case "reducer-test":
+      targetQname = `reducer.${td.target}`;
+      break;
+    default:
+      return null;
+  }
+  const target = store.byQName.get(targetQname);
+  if (!target) return null;
+  const deps: Array<[number, number]> = [];
+  for (const dq of directDeps(store, targetQname)) {
+    const dep = store.byQName.get(dq);
+    if (dep) deps.push([dep.range.startLine, dep.range.endLine]);
+  }
+  return { target: [target.range.startLine, target.range.endLine], deps };
+}
+
+/**
+ * Reducers that write to `slot.<slotName>`. Returned as line ranges plus each
+ * def's raw source so the arithmetic-pattern search can inspect the body
+ * directly without re-slicing lines. Used by `planTestPatch` when the failing
+ * leaf is a numeric slot mismatch.
+ */
+function reducersWritingSlot(
+  store: Store,
+  slotName: string,
+): Array<{ range: [number, number]; body: string; name: string }> {
+  const out: Array<{ range: [number, number]; body: string; name: string }> = [];
+  const assignRe = new RegExp(`\\b${escapeRegex(slotName)}\\s*:=`);
+  for (const e of store.defs) {
+    if (e.def.kind !== "ReducerDef") continue;
+    const body = store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
+    if (assignRe.test(body))
+      out.push({ range: [e.range.startLine, e.range.endLine], name: e.name, body });
+  }
+  return out;
+}
+
+/**
+ * A deterministic patch from a failing test. Three tiers of relaxation over the
+ * naive "actual appears exactly once as a source literal" rule:
+ *
+ * 1. Exact-literal repair — `actual` appears verbatim. Scope-aware
+ *    disambiguation (via `store`): prefer a hit inside the target def's line
+ *    range, then a dependency of the target, before rejecting ambiguity.
+ *    Handles string / number / boolean leaves.
+ * 2. Prefix-suffix repair — `actual` and `expected` share a common prefix and
+ *    suffix; the divergent middle is a substring of an implementation literal.
+ *    Swap the middle only.
+ * 3. Arithmetic repair — a numeric slot mismatch where the responsible reducer
+ *    body has a `slot := slot ± N` shape. Reproduce the actual/expected delta
+ *    to pick the corrected operator/operand.
+ *
+ * The Explained form returns either the same `AutoPatch` or a stable
+ * kebab-case `reason` explaining why no tier produced a patch — the AI
+ * iteration loop consumes it to distinguish "no deterministic repair exists"
+ * from "compiler diagnostic format drifted". Every silent `return null` inside
+ * the tier planners maps to one identifier here, and each early exit also
+ * flows through `debugSkip` so `KUMIKI_DEBUG=fix` surfaces the same reason at
+ * runtime. `excludedLineRanges` are the 1-based inclusive line spans of the
+ * file's `test` definitions; matches inside them are skipped so a fixture
+ * literal is never patched into passing. `store` is optional — without it,
+ * the function degrades to the pre-relax exactly-one behavior for backward
+ * compatibility with the existing external API.
+ */
+export function planTestPatchExplained(
+  source: string,
+  r: TestResult,
+  excludedLineRanges: Array<[number, number]> = [],
+  store?: Store,
+): { patch: AutoPatch } | { patch: null; reason: string } {
+  const bail = (reason: string): { patch: null; reason: string } => {
+    debugSkip("planTestPatch", reason, r.name);
+    return { patch: null, reason };
+  };
+  if (r.pass || !r.leaf) return bail("test-passes-or-no-leaf");
+  const { expected, actual } = r.leaf;
+  if (actual === expected) return bail("leaf-equal-no-diff");
+  const at = r.diffAt ?? "(leaf)";
+  const inExcluded = (offset: number): boolean => {
+    const line = lineOfOffset(source, offset);
+    return excludedLineRanges.some(([lo, hi]) => line >= lo && line <= hi);
+  };
+  const scope = store ? scopeOfTest(store, r.name) : null;
+
+  // ----- Tier 1: exact-literal repair (string / number / boolean) -----
+
+  const exact = planExactLiteralPatchExplained(source, r, actual, expected, at, inExcluded, scope);
+  if (exact.patch) return { patch: exact.patch };
+  const tier1Reason = exact.reason;
+
+  // ----- Tier 2: string prefix/suffix partial repair -----
+
+  let tier2Reason: string | null = null;
+  if (typeof actual === "string" && typeof expected === "string") {
+    const partial = planPartialStringPatchExplained(
+      source,
+      r,
+      actual,
+      expected,
+      at,
+      inExcluded,
+      scope,
+    );
+    if (partial.patch) return { patch: partial.patch };
+    tier2Reason = partial.reason;
+  }
+
+  // ----- Tier 3: numeric slot delta → reducer arithmetic pattern -----
+
+  let tier3Reason: string | null = null;
+  if (
+    store &&
+    typeof actual === "number" &&
+    typeof expected === "number" &&
+    typeof r.diffAt === "string" &&
+    r.diffAt.startsWith("slots.")
+  ) {
+    const slotName = r.diffAt.slice("slots.".length);
+    const arith = planArithmeticPatchExplained(
+      source,
+      r,
+      slotName,
+      actual,
+      expected,
+      at,
+      store,
+      inExcluded,
+    );
+    if (arith.patch) return { patch: arith.patch };
+    tier3Reason = arith.reason;
+  }
+
+  // Prefer the most specific tier's reason: Tier-3 (arithmetic) if it ran,
+  // then Tier-2 (partial string), else Tier-1 (exact-literal). This surfaces
+  // *why the deepest tier declined* rather than the coarse first-line signal.
+  const reason = tier3Reason ?? tier2Reason ?? tier1Reason;
+  debugSkip("planTestPatch", reason, r.name);
+  return { patch: null, reason };
+}
+
+/**
+ * Backward-compatible wrapper returning only the patch (or `null`); new callers
+ * that need the skip classifier should prefer `planTestPatchExplained`.
+ */
+export function planTestPatch(
+  source: string,
+  r: TestResult,
+  excludedLineRanges: Array<[number, number]> = [],
+  store?: Store,
+): AutoPatch | null {
+  return planTestPatchExplained(source, r, excludedLineRanges, store).patch;
+}
+
+/**
+ * Render a leaf value as a Kumiki source literal for the exact-match tier.
+ * String / number / boolean are supported; anything else returns null.
+ */
+function leafLit(v: unknown): string | null {
+  if (typeof v === "string") return kumikiStringLit(v);
+  if (typeof v === "number") return kumikiNumberLit(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return null;
+}
+
+/**
+ * Locate hits of a literal outside any test body, then rank them: hits inside
+ * the target's line range win; hits inside a dependency range are runners-up;
+ * everything else is last. Returns the single winner offset when unambiguous,
+ * or null when the top rank has more than one hit (still ambiguous). Used by
+ * exact-literal and partial-string patches; encapsulates the shared
+ * disambiguation policy so both paths behave identically.
+ */
+function pickScopedHit(
+  source: string,
+  needle: string,
+  inExcluded: (offset: number) => boolean,
+  scope: { target: [number, number]; deps: Array<[number, number]> } | null,
+): number | null {
+  const hits: number[] = [];
+  for (let idx = source.indexOf(needle); idx !== -1; idx = source.indexOf(needle, idx + 1)) {
+    if (!inExcluded(idx)) hits.push(idx);
+  }
+  if (hits.length === 0) return null;
+  if (hits.length === 1) return hits[0]!;
+  if (!scope) return null;
+  const inRange = (offset: number, range: [number, number]): boolean => {
+    const line = lineOfOffset(source, offset);
+    return line >= range[0] && line <= range[1];
+  };
+  const inTarget = hits.filter((h) => inRange(h, scope.target));
+  if (inTarget.length === 1) return inTarget[0]!;
+  if (inTarget.length > 1) return null;
+  const inDeps = hits.filter((h) => scope.deps.some((r) => inRange(h, r)));
+  if (inDeps.length === 1) return inDeps[0]!;
+  return null;
+}
+
+/**
+ * Every `"..."` string literal in `source`, one pass. `start` / `end` are the
+ * quote-inclusive source offsets; `body` is the raw inner slice (no quotes,
+ * no decoding — callers that need the runtime string must call
+ * `decodeKumikiStringBody`). Shared by `stringLiteralSpans` (needs only the
+ * spans, to reject numeric hits landing inside a string) and the partial-
+ * string tier (needs the decoded body to match the divergent middle), so the
+ * `"(?:[^"\\]|\\.)*"` regex lives in exactly one place.
+ */
+export function iterStringLiterals(
+  source: string,
+): Array<{ start: number; end: number; body: string }> {
+  const out: Array<{ start: number; end: number; body: string }> = [];
+  const re = /"(?:[^"\\]|\\.)*"/g;
+  let m: RegExpExecArray | null = re.exec(source);
+  while (m !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    out.push({ start, end, body: m[0].slice(1, -1) });
+    m = re.exec(source);
+  }
+  return out;
+}
+
+/**
+ * True at offsets that sit inside a `"..."` string literal. Number / boolean
+ * exact-literal searches must reject these so a leaf like `-1` doesn't get
+ * matched against the substring `-1` inside a source string like `text="-1"`.
+ * Cached per call via a closure — pre-scanning the whole source once beats
+ * re-checking every candidate hit.
+ */
+function stringLiteralSpans(source: string): Array<[number, number]> {
+  return iterStringLiterals(source).map((l) => [l.start, l.end]);
+}
+
+type PatchOrReason = { patch: AutoPatch } | { patch: null; reason: string };
+
+function planExactLiteralPatchExplained(
+  source: string,
+  r: TestResult,
+  actual: unknown,
+  expected: unknown,
+  at: string,
+  inExcluded: (offset: number) => boolean,
+  scope: { target: [number, number]; deps: Array<[number, number]> } | null,
+): PatchOrReason {
+  const actualLit = leafLit(actual);
+  const expectedLit = leafLit(expected);
+  if (actualLit === null || expectedLit === null)
+    return { patch: null, reason: "leaf-not-a-kumiki-literal" };
+  // For non-string leaves, hits inside string literals are false positives
+  // (e.g. numeric `-1` matching inside `text="-1"`). Build a rejection filter
+  // that composes with `inExcluded`. The `[lo, hi]` span is quote-inclusive,
+  // so we reject only when the candidate sits *strictly* between the quotes
+  // (`offset > lo && offset + len < hi`) — landing on a quote itself is
+  // impossible for a numeric/boolean actualLit but the strict form documents
+  // the "inside the body, not the quotes" intent for future readers.
+  const isStringLeaf = typeof actual === "string";
+  const spans = isStringLeaf ? null : stringLiteralSpans(source);
+  const combinedExcluded = spans
+    ? (offset: number): boolean =>
+        inExcluded(offset) ||
+        spans.some(([lo, hi]) => offset > lo && offset + actualLit.length < hi)
+    : inExcluded;
+  const hit = pickScopedHit(source, actualLit, combinedExcluded, scope);
+  if (hit === null) return { patch: null, reason: "no-scoped-literal-hit" };
+  return {
+    patch: {
+      code: "TEST",
+      message: `test "${r.name}" failed at ${at}`,
+      description: `replace ${actualLit} with ${expectedLit} (from failing test "${r.name}" @ ${at})`,
+      apply: (text: string) =>
+        text.slice(0, hit) + expectedLit + text.slice(hit + actualLit.length),
+    },
+  };
+}
+
+function planPartialStringPatchExplained(
+  source: string,
+  r: TestResult,
+  actual: string,
+  expected: string,
+  at: string,
+  inExcluded: (offset: number) => boolean,
+  scope: { target: [number, number]; deps: Array<[number, number]> } | null,
+): PatchOrReason {
+  const { midA, midE } = affixDiff(actual, expected);
+  // If either side has an empty middle we're in the exact-literal tier and it
+  // already ran; skip so the two paths don't compete.
+  if (midA.length === 0 || midE.length === 0) return { patch: null, reason: "affix-empty-middle" };
+  // The exact-literal search would've been used if `actual` itself appeared;
+  // here we look for a string literal whose *decoded* body contains `midA`
+  // as a substring. `midA` comes from `affixDiff` over `TestResult.leaf`,
+  // which is already decoded (`\n` → real NL, `\"` → `"`, …), so we must
+  // decode each literal body before comparing — otherwise a raw source
+  // `"a\nb"` mismatches a `midA` containing a real newline and the tier
+  // silently bails. The splice and re-encode also happen in decoded space
+  // to keep un-touched escapes canonical (raw source `\n` round-trips as a
+  // single `\n`, not as `\\n`).
+  type Match = { start: number; end: number; body: string }; // body is DECODED
+  const matches: Match[] = [];
+  for (const lit of iterStringLiterals(source)) {
+    if (inExcluded(lit.start)) continue;
+    const decoded = decodeKumikiStringBody(lit.body);
+    // `decoded === null` is defensively unreachable (source already lexed).
+    // Skip such candidates rather than throw so the tier's other bail paths
+    // still get considered if the invariant ever breaks. Emit a debug line
+    // under `KUMIKI_DEBUG=fix` so a broken decoder is loud, not silent —
+    // matches how the other tiers report their bail paths.
+    if (decoded === null) {
+      // Slice within the literal's own bounds so the debug payload never
+      // spills past the closing quote into unrelated source.
+      const snippet = source.slice(lit.start, Math.min(lit.end, lit.start + 40));
+      debugSkip("planPartialStringPatch", "decoder-returned-null", snippet);
+      continue;
+    }
+    if (decoded.includes(midA)) {
+      matches.push({ start: lit.start, end: lit.end, body: decoded });
+    }
+  }
+  if (matches.length === 0) return { patch: null, reason: "no-string-literal-contains-mida" };
+  const rank = (offset: number): number => {
+    if (!scope) return 2;
+    const line = lineOfOffset(source, offset);
+    if (line >= scope.target[0] && line <= scope.target[1]) return 0;
+    if (scope.deps.some(([lo, hi]) => line >= lo && line <= hi)) return 1;
+    return 2;
+  };
+  const ranked = matches.map((mm) => ({ mm, rank: rank(mm.start) }));
+  const minRank = Math.min(...ranked.map((x) => x.rank));
+  const top = ranked.filter((x) => x.rank === minRank).map((x) => x.mm);
+  if (top.length !== 1) return { patch: null, reason: "ambiguous-string-literal-match" };
+  const target = top[0]!;
+  // Rebuild the literal with `midA` swapped for `midE`, keeping the rest of
+  // the string exactly as authored (so any escape sequences the developer
+  // typed pass through untouched).
+  const bodyIdx = target.body.indexOf(midA);
+  // Defensive — `matches` was filtered by `m[0].includes(midA)`, so `midA` is
+  // guaranteed to be a substring of `target.body`. Kept so a future refactor
+  // that breaks that invariant lights up under `KUMIKI_DEBUG=fix` instead of
+  // returning a silently-wrong patch.
+  if (bodyIdx < 0) return { patch: null, reason: "internal-body-not-found" };
+  const patchedBody =
+    target.body.slice(0, bodyIdx) + midE + target.body.slice(bodyIdx + midA.length);
+  // Guard: the new body must still be spellable as a Kumiki literal (no raw
+  // control chars via `midE`).
+  const patchedLit = kumikiStringLit(patchedBody);
+  if (patchedLit === null) return { patch: null, reason: "patched-body-unspellable" };
+  return {
+    patch: {
+      code: "TEST",
+      message: `test "${r.name}" failed at ${at}`,
+      description: `replace "${midA}" with "${midE}" inside "${target.body}" (from failing test "${r.name}" @ ${at})`,
+      apply: (text: string) => text.slice(0, target.start) + patchedLit + text.slice(target.end),
+    },
+  };
+}
+
+function planArithmeticPatchExplained(
+  source: string,
+  r: TestResult,
+  slotName: string,
+  actual: number,
+  expected: number,
+  at: string,
+  store: Store,
+  inExcluded: (offset: number) => boolean,
+): PatchOrReason {
+  // Find reducers writing to this slot. When more than one exists, we can't
+  // pick — the caller falls back to no-patch.
+  const reducers = reducersWritingSlot(store, slotName);
+  if (reducers.length !== 1) return { patch: null, reason: "ambiguous-reducer-set" };
+  const red = reducers[0]!;
+  // Match `<slot> := <slot> <op> <N>` where <op> is `+` / `-` / `*`. `N` is
+  // an Int literal (the arithmetic tier deliberately doesn't handle mixed
+  // expressions — those are out of scope by AC).
+  const stmtRe = new RegExp(
+    `\\b${escapeRegex(slotName)}\\s*:=\\s*${escapeRegex(slotName)}\\s*([+\\-*])\\s*(-?\\d+)\\b`,
+  );
+  const bodyMatch = stmtRe.exec(red.body);
+  if (!bodyMatch) return { patch: null, reason: "no-additive-multiplicative-shape" };
+  const op = bodyMatch[1] as "+" | "-" | "*";
+  const n = Number.parseInt(bodyMatch[2]!, 10);
+  // `stmtRe` requires `-?\d+`, so `parseInt` is always finite — but the lexer
+  // accepts arbitrary-length digit sequences, so a source like `count + <20
+  // digits>` reaches here with a non-safe integer that the JS number
+  // arithmetic below (`actual - delta`, `expected / base`) would silently
+  // round, producing a garbage splice. This bail is genuinely reachable from
+  // the top-level API (see the corresponding test) and keeps the "cleaner or
+  // unchanged" invariant intact.
+  if (!Number.isSafeInteger(n)) return { patch: null, reason: "non-safe-integer-operand" };
+  // Reproduce what the reducer added: `+ N` → delta = +N, `- N` → delta = -N.
+  // The initial `<slot>` value at test time is `actual - delta`. Solve for the
+  // new op/N whose delta equals `expected - (actual - delta)`.
+  let newLine: string | null = null;
+  let newDesc = "";
+  if (op === "+" || op === "-") {
+    const delta = op === "+" ? n : -n;
+    const base = actual - delta;
+    const wantedDelta = expected - base;
+    if (wantedDelta === 0) return { patch: null, reason: "additive-zero-delta" };
+    const newOp = wantedDelta > 0 ? "+" : "-";
+    const newN = Math.abs(wantedDelta);
+    // Defensive — `newOp+newN === op+n` implies `wantedDelta === delta` which
+    // implies `expected === actual`, already rejected by the top-level guard.
+    // Kept so a future path that skips the guard trips this instead of writing
+    // an identity patch.
+    if (newOp === op && newN === n) return { patch: null, reason: "additive-noop-solution" };
+    newLine = `${slotName} := ${slotName} ${newOp} ${newN}`;
+    newDesc = `reducer "${red.name}": ${slotName} := ${slotName} ${op} ${n} → ${newLine}`;
+  } else {
+    // Multiplicative — solve N' from expected = base * N' where base = actual / n.
+    if (n === 0 || actual === 0) return { patch: null, reason: "multiplicative-zero-guard" };
+    const base = actual / n;
+    if (!Number.isInteger(base) || base === 0)
+      return { patch: null, reason: "multiplicative-nonintegral-base" };
+    const newN = expected / base;
+    if (!Number.isInteger(newN) || newN === n)
+      return { patch: null, reason: "multiplicative-nonintegral-solution" };
+    newLine = `${slotName} := ${slotName} * ${newN}`;
+    newDesc = `reducer "${red.name}": ${slotName} := ${slotName} * ${n} → ${newLine}`;
+  }
+  // Positional splice — locate the match within source (not just the body).
+  const globalRe = new RegExp(stmtRe.source, "g");
+  let sourceMatch: RegExpExecArray | null = null;
+  let running: RegExpExecArray | null = globalRe.exec(source);
+  while (running !== null) {
+    if (
+      !inExcluded(running.index) &&
+      lineOfOffset(source, running.index) >= red.range[0] &&
+      lineOfOffset(source, running.index) <= red.range[1]
+    ) {
+      sourceMatch = running;
+      break;
+    }
+    running = globalRe.exec(source);
+  }
+  // Defensive — the same `stmtRe` matched inside `red.body` (a slice of
+  // `store.lines`), so a walk over `source` must find it again within the
+  // reducer's line range. Kept as a `debugSkip` site in case the line-range
+  // computation drifts from what `reducersWritingSlot` used.
+  if (!sourceMatch) return { patch: null, reason: "arithmetic-splice-target-lost" };
+  const start = sourceMatch.index;
+  const end = start + sourceMatch[0].length;
+  return {
+    patch: {
+      code: "TEST",
+      message: `test "${r.name}" failed at ${at}`,
+      description: newDesc,
+      apply: (text: string) => text.slice(0, start) + newLine + text.slice(end),
+    },
+  };
+}
+
+/**
+ * Two-tier fix-from-test. Tier 1 clears compile errors with `planFixes` so the
+ * test can run; Tier 2 applies a deterministic literal repair from the failing
+ * test with `planTestPatch`. Every branch returns via the `FixFromTestOutcome`
+ * discriminated union — no stdout side effects. `fixFromTest` wraps this and
+ * adds the CLI printer. The outcome carries compile-tier errors
+ * (`compileErrors`), the failing test
+ * itself (`failingTest`), and the current set of test results (`tests`) so
+ * MCP callers can render diagnostics without stdout scraping.
+ */
+export async function runFixFromTest(
   path: string,
   testName: string,
   apply: boolean,
@@ -273,44 +1328,59 @@ export async function fixFromTest(
   const compileErrors = check(store.program, { capabilities });
   let compileFixes = 0;
   if (compileErrors.length > 0) {
-    const patches = planFixes(store, compileErrors);
+    const { patches, skipped } = planFixesExplained(store, compileErrors);
     if (patches.length === 0) {
-      console.log(
-        `(no auto-patch available) — test "${testName}" is blocked by ${compileErrors.length} compile error(s):`,
-      );
-      for (const e of compileErrors) console.error(`  ${e.code} ${e.message}`);
-      return { ok: false, status: "no-patch" };
+      // Surface the first skip reason so the AI loop can distinguish
+      // "no auto-repairable code fired" from "the compiler message drifted
+      // and every quoted-name branch fell through". Absent when the compile
+      // errors didn't match any repair branch at all (no skip recorded).
+      const reason = skipped[0]?.reason;
+      return { ok: false, status: "no-patch", compileErrors, ...(reason ? { reason } : {}) };
     }
     if (!apply) {
-      console.log(`test "${testName}" is blocked by compile errors; proposed fixes (dry-run):`);
-      for (const p of patches) {
-        console.log(`  ${p.code} ${p.message}`);
-        console.log(`    fix: ${p.description}`);
-      }
-      return { ok: true, status: "compile-proposed", compileFixes: patches.length };
+      return {
+        ok: true,
+        status: "compile-proposed",
+        compileFixes: patches.length,
+        compilePatches: patches,
+      };
     }
     let text = readFileSync(path, "utf8");
     for (const p of patches) text = p.apply(text);
-    writeFileSync(path, text);
-    compileFixes = patches.length;
-    // Guard the re-check: a patch could (defensively) yield invalid syntax, and
-    // the file is already written — surface that instead of throwing.
-    let remaining: ReturnType<typeof check>;
     try {
-      remaining = check(parse(lex(text)), { capabilities });
+      atomicWriteFileSync(path, text);
     } catch (e) {
-      console.log(
-        `applied ${compileFixes} compile fix(es) but they broke the file (${String(e)}); cannot run "${testName}"`,
-      );
-      return { ok: false, status: "compile-remaining", compileFixes };
+      // Tier-1 write failed. `compileFixes` here is the *proposed* count —
+      // nothing landed. The `write-failed` variant + `phase: "compile"` tells
+      // the printer / MCP serializer to avoid the misleading "applied N
+      // compile fix(es)" header.
+      return {
+        ok: false,
+        status: "write-failed",
+        phase: "compile",
+        writeError: e instanceof Error ? e.message : String(e),
+        compileFixes: patches.length,
+      };
     }
+    compileFixes = patches.length;
+    // Split the catches: only `parse(lex(text))` may legitimately throw with
+    // a caller-facing parse-error. `check()` throwing is an internal
+    // typechecker bug and must NOT be laundered into a `parseError` string.
+    let parsed: ReturnType<typeof parse>;
+    try {
+      parsed = parse(lex(text));
+    } catch (e) {
+      return {
+        ok: false,
+        status: "compile-remaining",
+        compileFixes,
+        parseError: e instanceof Error ? e.message : String(e),
+      };
+    }
+    const remaining = check(parsed, { capabilities });
     if (remaining.length > 0) {
-      console.log(
-        `applied ${compileFixes} compile fix(es) — ${remaining.length} error(s) remain; cannot run "${testName}"`,
-      );
-      return { ok: false, status: "compile-remaining", compileFixes };
+      return { ok: false, status: "compile-remaining", compileFixes, compileErrors: remaining };
     }
-    console.log(`applied ${compileFixes} compile fix(es) — file now compiles`);
   }
 
   // Run the tests on the (now-compiling) file.
@@ -318,17 +1388,27 @@ export async function fixFromTest(
   try {
     before = await testFile(path, capabilities);
   } catch (e) {
-    console.error(`could not run tests: ${String(e)}`);
-    return { ok: false, status: "no-patch", ...(compileFixes ? { compileFixes } : {}) };
+    return {
+      ok: false,
+      status: "no-patch",
+      testRunError: e instanceof Error ? e.message : String(e),
+      // Classify test-run failures under the same family as Tier-3 skips so
+      // an AI loop tallying `outcome.reason` can distinguish "the runner
+      // itself blew up" from "the file compiles but no patch applies".
+      reason: "test-runner-threw",
+      ...(compileFixes ? { compileFixes } : {}),
+    };
   }
   const target = before.find((r) => r.name === testName);
   if (!target) {
-    const have = before.map((r) => r.name).join(", ") || "none";
-    console.error(`no test named "${testName}" (have: ${have})`);
-    return { ok: false, status: "not-found", ...(compileFixes ? { compileFixes } : {}) };
+    return {
+      ok: false,
+      status: "not-found",
+      availableTests: before.map((r) => r.name),
+      ...(compileFixes ? { compileFixes } : {}),
+    };
   }
   if (target.pass) {
-    console.log(`test "${testName}" passes — nothing to fix`);
     return {
       ok: true,
       status: "already-pass",
@@ -338,38 +1418,183 @@ export async function fixFromTest(
   }
 
   // Tier 2: behavioral, deterministic literal repair. Re-load from the current
-  // (possibly Tier-1-patched) file so the source and the `test` body line ranges
-  // used to exclude fixture literals are consistent.
+  // (possibly Tier-1-patched) file so the source, the `test` body line ranges
+  // used to exclude fixture literals, and the scope-aware disambiguation store
+  // are all consistent.
   const curSource = readFileSync(path, "utf8");
-  const patch = planTestPatch(curSource, target, testBodyLineRanges(load(path)));
-  if (!patch) {
-    console.log(`(no auto-patch available) for failing test "${testName}":`);
-    if (target.expected !== undefined) console.log(`  expected: ${target.expected}`);
-    if (target.actual !== undefined) console.log(`  actual:   ${target.actual}`);
-    if (target.diffAt !== undefined) console.log(`  diff at:  ${target.diffAt}`);
-    return { ok: false, status: "no-patch", ...(compileFixes ? { compileFixes } : {}) };
+  const curStore = load(path);
+  const attempt = planTestPatchExplained(curSource, target, testBodyLineRanges(curStore), curStore);
+  if (!attempt.patch) {
+    return {
+      ok: false,
+      status: "no-patch",
+      failingTest: target,
+      reason: attempt.reason,
+      ...(compileFixes ? { compileFixes } : {}),
+    };
   }
+  const patch = attempt.patch;
   if (!apply) {
-    console.log(`proposed fix for "${testName}" (dry-run):`);
-    console.log(`  ${patch.description}`);
     return { ok: true, status: "proposed", patch, ...(compileFixes ? { compileFixes } : {}) };
   }
-  writeFileSync(path, patch.apply(curSource));
+  // Apply the patch OUTSIDE the try — a throw from `patch.apply` (codegen /
+  // slice-index bug in the tier planner, or a downstream regression in
+  // `kumikiStringLit`) is a program bug, not an I/O failure. It must not
+  // land in the `write-failed` variant, which is reserved for filesystem
+  // errors the caller can act on (retry, elevate permissions, free space).
+  const patched = patch.apply(curSource);
+  try {
+    atomicWriteFileSync(path, patched);
+  } catch (e) {
+    return {
+      ok: false,
+      status: "write-failed",
+      phase: "test",
+      writeError: e instanceof Error ? e.message : String(e),
+      patch,
+      ...(compileFixes ? { compileFixes } : {}),
+    };
+  }
   const after = await testFile(path, capabilities);
   const nowPass = after.find((r) => r.name === testName)?.pass === true;
   const regressed = after
     .filter((r) => !r.pass && before.find((b) => b.name === r.name)?.pass === true)
     .map((r) => r.name);
-  console.log(`applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`);
-  if (regressed.length > 0) {
-    console.log(`  WARNING: ${regressed.length} other test(s) regressed: ${regressed.join(", ")}`);
-  }
   return {
     ok: nowPass && regressed.length === 0,
     status: "applied",
     pass: nowPass,
     patch,
+    // Always populated: `[]` means "checked, none regressed" — never absent
+    // on the `applied` branch. Baked into the type by the discriminated union.
+    regressed,
     ...(compileFixes ? { compileFixes } : {}),
-    ...(regressed.length ? { regressed } : {}),
   };
+}
+
+export async function fixFromTest(
+  path: string,
+  testName: string,
+  apply: boolean,
+  capabilities: string[] = [],
+): Promise<FixFromTestOutcome> {
+  const outcome = await runFixFromTest(path, testName, apply, capabilities);
+  printFixFromTest(outcome, testName, path);
+  return outcome;
+}
+
+/**
+ * Human-readable print of a `runFixFromTest` outcome. `path` is only used by
+ * the `write-failed` branch so a user staring at "could not write compile fix"
+ * can identify the affected file at a glance.
+ */
+function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: string): void {
+  // Applied-tier-1 header: only when Tier-1 patches were *written* — i.e. the
+  // apply path. `compile-proposed` also carries `compileFixes` (the count of
+  // proposed patches), but printing "applied N" for it would lie about a
+  // dry-run.
+  if (
+    outcome.compileFixes !== undefined &&
+    outcome.compileFixes > 0 &&
+    outcome.status !== "compile-remaining" &&
+    outcome.status !== "compile-proposed" &&
+    // `write-failed` with `phase: "compile"` carries the *proposed* count —
+    // nothing landed on disk, so the "applied N" header would lie. On
+    // `phase: "test"` the Tier-1 write did land; header is honest.
+    !(outcome.status === "write-failed" && outcome.phase === "compile")
+  ) {
+    console.log(`applied ${outcome.compileFixes} compile fix(es) — file now compiles`);
+  }
+  switch (outcome.status) {
+    case "no-patch": {
+      // Unified `  reason: <slug>` output across all three sub-branches so
+      // machine parsers can grep one shape. Historical form ` [reason]` was
+      // dropped to avoid three-way format skew.
+      if (outcome.compileErrors && outcome.compileErrors.length > 0) {
+        console.log(
+          `(no auto-patch available) — test "${testName}" is blocked by ${outcome.compileErrors.length} compile error(s):`,
+        );
+        if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
+        for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+        return;
+      }
+      if (outcome.testRunError) {
+        console.error(`could not run tests: ${outcome.testRunError}`);
+        if (outcome.reason) console.error(`  reason: ${outcome.reason}`);
+        return;
+      }
+      if (outcome.failingTest) {
+        const t = outcome.failingTest;
+        console.log(`(no auto-patch available) for failing test "${testName}":`);
+        if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
+        if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
+        if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
+        if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
+        return;
+      }
+      console.log(`(no auto-patch available) for "${testName}"`);
+      if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
+      return;
+    }
+    case "compile-proposed": {
+      console.log(`test "${testName}" is blocked by compile errors; proposed fixes (dry-run):`);
+      for (const p of outcome.compilePatches ?? []) {
+        console.log(`  ${p.code} ${p.message}`);
+        console.log(`    fix: ${p.description}`);
+      }
+      return;
+    }
+    case "compile-remaining": {
+      const n = outcome.compileFixes ?? 0;
+      if (outcome.parseError) {
+        console.log(
+          `applied ${n} compile fix(es) but they broke the file (${outcome.parseError}); cannot run "${testName}"`,
+        );
+        return;
+      }
+      const rem = outcome.compileErrors?.length ?? 0;
+      console.log(
+        `applied ${n} compile fix(es) — ${rem} error(s) remain; cannot run "${testName}"`,
+      );
+      return;
+    }
+    case "not-found": {
+      const have = (outcome.availableTests ?? []).join(", ") || "none";
+      console.error(`no test named "${testName}" (have: ${have})`);
+      return;
+    }
+    case "already-pass": {
+      console.log(`test "${testName}" passes — nothing to fix`);
+      return;
+    }
+    case "proposed": {
+      if (outcome.patch) {
+        console.log(`proposed fix for "${testName}" (dry-run):`);
+        console.log(`  ${outcome.patch.description}`);
+      }
+      return;
+    }
+    case "applied": {
+      const nowPass = outcome.pass === true;
+      console.log(`applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`);
+      if (outcome.regressed && outcome.regressed.length > 0) {
+        console.log(
+          `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,
+        );
+      }
+      return;
+    }
+    case "write-failed": {
+      const what = outcome.phase === "compile" ? "compile fix" : "test patch";
+      const where = path ? ` (${path})` : "";
+      console.error(`could not write ${what} for "${testName}"${where}: ${outcome.writeError}`);
+      return;
+    }
+    default: {
+      // Exhaustiveness guard: adding a new variant to `FixFromTestOutcome`
+      // without a matching case here is a TS compile error.
+      const _exhaustive: never = outcome;
+      throw new Error(`unhandled FixFromTestOutcome status: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
 }

@@ -58,6 +58,7 @@
     "@kumikijs/compiler": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
     "@kumikijs/vite": "workspace:*",
+    "commander": "^15.0.0",
     "vite": "catalog:"
   },
   "devDependencies": {

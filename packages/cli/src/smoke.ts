@@ -16,6 +16,7 @@ import {
 import {
   type AppShape,
   createEpisodeLogger,
+  describeDiagnostic,
   type EpisodeLogger,
   runScenario,
   type Scenario,
@@ -95,7 +96,7 @@ export async function loadApp(
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
-  opts: { sourcePath?: string } = {},
+  opts: { sourcePath?: string; diagnosticsAsIssues?: boolean } = {},
 ): Promise<SmokeReport> {
   ensureDom();
   const app = await loadApp(source, capabilities, opts);
@@ -103,21 +104,33 @@ export async function smokeSource(
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    return await smoke(app, root, { settleMs: 20 });
+    return await smoke(app, root, {
+      settleMs: 20,
+      diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
+    });
   } finally {
     root.remove();
   }
 }
 
-export async function smokeFile(path: string, capabilities: string[] = []): Promise<SmokeReport> {
-  return smokeSource(readFileSync(path, "utf8"), capabilities, { sourcePath: path });
+export async function smokeFile(
+  path: string,
+  capabilities: string[] = [],
+  opts: { diagnosticsAsIssues?: boolean } = {},
+): Promise<SmokeReport> {
+  return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
-export async function smokeCmd(path: string, capabilities: string[] = []): Promise<void> {
-  const report = await smokeFile(path, capabilities);
+export async function smokeCmd(
+  path: string,
+  capabilities: string[] = [],
+  opts: { diagnosticsAsIssues?: boolean } = {},
+): Promise<void> {
+  const report = await smokeFile(path, capabilities, opts);
   if (report.ok) {
     console.log(`ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`);
+    printDiagnostics(report, console.log);
     return;
   }
   console.error(
@@ -126,7 +139,35 @@ export async function smokeCmd(path: string, capabilities: string[] = []): Promi
   for (const i of report.issues) {
     console.error(`  [${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`);
   }
+  // Same stream as the failure it accompanies, so a caller reading stderr sees
+  // the whole picture and stdout stays parseable.
+  printDiagnostics(report, console.error);
   process.exit(1);
+}
+
+/**
+ * Reconcile churn observed while driving the app. Advisory, never fatal — an
+ * app that rebuilds more than it needs to still works — so this leaves the exit
+ * code alone (pass `--diagnostics-as-issues` to make them count). Summarised by
+ * reason rather than listed one per occurrence: a single unkeyed list produces
+ * one entry per interaction.
+ */
+function printDiagnostics(report: SmokeReport, write: (line: string) => void): void {
+  if (report.diagnostics.length === 0) return;
+  const byReason = new Map<string, number>();
+  for (const { diagnostic } of report.diagnostics) {
+    // A fallback is summarised by its reason — the kind alone would collapse
+    // six distinct causes into one row. Every other kind IS its own reason, and
+    // reading the kind rather than naming them keeps a new one from being
+    // silently counted as an existing one.
+    const label = diagnostic.kind === "reconcile-fallback" ? diagnostic.reason : diagnostic.kind;
+    byReason.set(label, (byReason.get(label) ?? 0) + 1);
+  }
+  const summary = [...byReason]
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, n]) => `${reason} ×${n}`)
+    .join(", ");
+  write(`  reconcile diagnostics: ${summary}`);
 }
 
 /** Compile + mount + drive a scenario; return the structured trace. */
@@ -181,6 +222,10 @@ export async function runCmd(
     console.log(`[${status}] ${head}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
+    // Advisory, and attributed to the action above it — that pairing is the
+    // whole reason the runner buffers diagnostics per step. Listed rather than
+    // summarised here (unlike `kumiki smoke`) because a step produces few.
+    for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
   if (episodeLogger && logFile) {
@@ -235,12 +280,10 @@ function matchesFilter(name: string, filter: string | undefined): boolean {
 }
 
 type CoverageCat = { total: string[]; used: string[] };
-type Coverage = { reducers: CoverageCat; tiles: CoverageCat; effects: CoverageCat };
+export type Coverage = { reducers: CoverageCat; tiles: CoverageCat; effects: CoverageCat };
 
 /** Print the §8.7 coverage report (per reducer / effect / tile), listing the uncovered. */
-function printCoverage(): void {
-  const cov = (globalThis as unknown as { __kumikiCoverage?: Coverage }).__kumikiCoverage;
-  if (!cov) return;
+function printCoverage(cov: Coverage): void {
   console.log("\ncoverage");
   for (const [label, cat] of [
     ["reducers", cov.reducers],
@@ -253,21 +296,57 @@ function printCoverage(): void {
   }
 }
 
-/** Run the suite once, print the §8.7.1 report (+ optional coverage). Returns the failure count. */
-async function runAndReport(
+export type TestReport = {
+  /** Test results after applying `filter`. */
+  results: TestResult[];
+  /** Filter that produced `results`, verbatim (for callers rendering "no tests match …"). */
+  filter: string | undefined;
+  /** Sum of `results` (post-filter). */
+  total: number;
+  /** Count of `results[i].pass === true`. */
+  passed: number;
+  /** `total - passed`. */
+  failed: number;
+  /** §8.7 coverage snapshot, populated only when `opts.coverage === true`. */
+  coverage?: Coverage;
+};
+
+/**
+ * Pure test runner: compile + mount + run every `test` in `path`, filter by
+ * name/prefix, return a structured report. No stdout — printer lives in
+ * `testCmd`. `coverage: true` snapshots the runtime coverage bookkeeping
+ * (§8.7) that `testFile` populates on the global.
+ */
+export async function runTests(
   path: string,
   filter: string | undefined,
-  capabilities: string[],
-  coverage: boolean,
-): Promise<number> {
+  capabilities: string[] = [],
+  opts: { coverage?: boolean } = {},
+): Promise<TestReport> {
   const all = await testFile(path, capabilities);
   const results = all.filter((r) => matchesFilter(r.name, filter));
-  if (results.length === 0) {
-    console.log(filter ? `no tests match "${filter}"` : "no tests found");
+  const passed = results.filter((r) => r.pass).length;
+  const cov =
+    opts.coverage === true
+      ? (globalThis as unknown as { __kumikiCoverage?: Coverage }).__kumikiCoverage
+      : undefined;
+  return {
+    results,
+    filter,
+    total: results.length,
+    passed,
+    failed: results.length - passed,
+    ...(cov ? { coverage: cov } : {}),
+  };
+}
+
+/** Print a `TestReport` in the §8.7.1 format. Returns the failure count. */
+function printTestReport(report: TestReport): number {
+  if (report.results.length === 0) {
+    console.log(report.filter ? `no tests match "${report.filter}"` : "no tests found");
     return 0;
   }
-  let failed = 0;
-  for (const r of results) {
+  for (const r of report.results) {
     // §8.7.1 tag: `(1ms)`, or `(100 cases, 23ms)` for a property-test.
     const bits: string[] = [];
     if (r.cases !== undefined) bits.push(`${r.cases} cases`);
@@ -277,20 +356,17 @@ async function runAndReport(
       console.log(`PASS  ${r.name}${tag}`);
       continue;
     }
-    failed++;
     console.log(`FAIL  ${r.name}${tag}`);
     if (r.expected !== undefined) console.log(`  expected: ${r.expected}`);
     if (r.actual !== undefined) console.log(`  actual:   ${r.actual}`);
     if (r.diffAt !== undefined) {
-      // §8.7.1 value arrow: append the scalar leaf values when the runner
-      // isolated them (e.g. `[0].text  "Count: 5" -> "Count: 0"`).
       const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
       console.log(`  diff at:  ${r.diffAt}${arrow}`);
     }
   }
-  console.log(`\n${results.length - failed}/${results.length} passed`);
-  if (coverage) printCoverage();
-  return failed;
+  console.log(`\n${report.passed}/${report.total} passed`);
+  if (report.coverage) printCoverage(report.coverage);
+  return report.failed;
 }
 
 /** CLI entry: run `test` definitions, print the §8.7.1 report, exit non-zero on any failure. */
@@ -300,12 +376,16 @@ export async function testCmd(
   capabilities: string[] = [],
   opts: { coverage?: boolean; watch?: boolean } = {},
 ): Promise<void> {
+  const runOnce = async (): Promise<number> => {
+    const report = await runTests(path, filter, capabilities, { coverage: opts.coverage ?? false });
+    return printTestReport(report);
+  };
   if (opts.watch) {
     // §8.7: re-run on change. Errors are caught so a transient compile failure
     // doesn't kill the watcher; SIGINT exits cleanly.
     const runSafe = async (): Promise<void> => {
       try {
-        await runAndReport(path, filter, capabilities, opts.coverage ?? false);
+        await runOnce();
       } catch (e) {
         console.error(`test run failed: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -315,7 +395,6 @@ export async function testCmd(
     const { watch } = await import("node:fs");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watcher = watch(path, () => {
-      // fs.watch can fire several events per save — debounce.
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         console.log("\n— change detected —");
@@ -330,6 +409,6 @@ export async function testCmd(
     await new Promise<never>(() => {});
     return;
   }
-  const failed = await runAndReport(path, filter, capabilities, opts.coverage ?? false);
+  const failed = await runOnce();
   if (failed > 0) process.exit(1);
 }

@@ -1,6 +1,6 @@
 # @kumikijs/benchmarks
 
-Two benchmark suites for Kumiki. Private workspace package; run via `pnpm --filter @kumikijs/benchmarks <script>`.
+Three benchmark suites for Kumiki. Private workspace package; run via `pnpm --filter @kumikijs/benchmarks <script>`.
 
 ```
 benchmarks/
@@ -8,6 +8,10 @@ benchmarks/
 │   ├── todomvc-react/      #   React baseline (App.tsx)
 │   ├── scenarios/          #   4 edit scenarios (kumiki-modified / react-modified)
 │   └── scripts/            #   measure.mjs · measure-scenarios.mjs · measure-ops.mjs
+├── reactivity/             # How costly is a re-render? (runtime baseline)
+│   ├── reactivity-cost.mjs #   nodes created + render time across app sizes
+│   ├── keyed-move-cost.mjs #   children moved per reorder of a keyed list
+│   └── stats.mjs           #   median / p90 / stddev of the timing sample (+ stats.test.mjs)
 └── learning-cost/          # Can an LLM write Kumiki from the spec alone?
     ├── summary.md          #   cross-vendor results + methodology (read this)
     ├── eval.mjs            #   scores one .kumiki file: parse / typecheck / build + LOC / tokens
@@ -31,6 +35,26 @@ pnpm --filter @kumikijs/benchmarks measure:ops        # Kumiki edit cost: full-f
 ```
 
 Tokenized with `gpt-tokenizer` (cl100k_base / o200k_base). Latest headline: a Kumiki app is ~1.4× fewer tokens and ~2.0× fewer lines than the equivalent React.
+
+## Reactivity cost (runtime re-render baseline)
+
+Quantifies how much work a state change costs. The original runtime tore the whole tile tree down and rebuilt it on every update, so a single-slot change recreated every DOM node even though one text node semantically changed; the tile-level keyed diff and the identity-preserving patch that replaced it now leave the mounted nodes in place and mutate the one text node. The harness mounts generated apps of increasing size in happy-dom and times single-slot updates, so the report shows both sides of that: `waste×` (nodes created ÷ nodes semantically changed) and the render-time distribution per app size (see `docs/design/reactivity-v2.md`).
+
+```sh
+pnpm --filter @kumikijs/benchmarks measure:reactivity   # render ms (median / p90 / stddev / min / max) + nodes-recreated / waste× per app size
+```
+
+Requires the runtime + compiler dist bundles (`pnpm build` upstream, which Turborepo's `^build` handles). happy-dom is far faster than a real browser, so the absolute times are a floor, not a ceiling; what matters is the **shape** — whether the per-update cost stays decoupled from tile count. Read `median ms` next to `p90 ms`: a real regression moves both, a busy machine moves only the tail, and the run says so itself (a warning on stderr) when its tail detaches from its median. `stddev` is included but is dominated by isolated GC pauses, so it reads as a tail indicator rather than an error bar.
+
+## Keyed reorder cost (how many children a new order costs)
+
+The companion question for lists: keyed matching (`docs/spec/runtime.md` §10.3.10) says which mounted element belongs to which new child, but not how many of them have to be touched to produce the new order. Re-attaching a node blurs it, so a child moved for no reason loses focus, the caret, an open `<select>` and an in-flight IME composition — the state keyed matching exists to keep. The harness drives a keyed list through five transitions (unchanged / move one / insert at head / remove from the middle / reverse) and counts the container's own child mutations, separating **moves** (an element that was already on the page) from mounts and removals.
+
+```sh
+pnpm --filter @kumikijs/benchmarks measure:keyed-moves   # moves vs the hand-derived minimum vs the whole-sequence sweep, per list size
+```
+
+`minimum` is what the transition costs at best; `sweep` is what replaying the entire target sequence costs (one placement per child), which is what the runtime used to do. The run warns on stderr if any row sits above its minimum, and refuses to report at all if the keyed path was declined mid-measurement (it reads `onDiagnostic`, so a silent fallback cannot masquerade as a result). Note the timings are happy-dom's: its `insertBefore` scans the child array for the reference node where `appendChild` pushes, so a transition that moves nearly everything reads slower there than the sweep did while making one fewer move. That is the fake DOM's child storage, not the algorithm — `moves` is the number to read.
 
 ## Learning cost (LLM writes Kumiki from spec)
 

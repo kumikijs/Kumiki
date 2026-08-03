@@ -46,8 +46,9 @@
   },
   "scripts": {
     "build": "tsdown",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "biome check src",
+    "lint": "biome check src test",
     "start": "tsx src/server.ts"
   },
   "dependencies": {
@@ -58,7 +59,9 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "happy-dom": "catalog:",
     "tsx": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

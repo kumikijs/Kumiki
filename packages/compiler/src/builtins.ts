@@ -47,6 +47,7 @@ export const BUILTIN_TILES = new Set<string>([
   "select",
   "slider",
   "switch",
+  "editable",
   // §2.3.5 Forms
   "form",
   "label",
@@ -66,6 +67,7 @@ export const BUILTIN_TILES = new Set<string>([
   "tooltip",
   "popover",
   "toast",
+  "details",
   // §2.3.8 Feedback
   "spinner",
   "progress",
@@ -122,6 +124,7 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   slider: "input",
   switch: "input",
   form: "input",
+  editable: "input",
   // tiles-collection
   list: "collection",
   "list-item": "collection",
@@ -136,6 +139,7 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   drawer: "overlay",
   tooltip: "overlay",
   popover: "overlay",
+  details: "overlay",
   // tiles-media
   image: "media",
   video: "media",
@@ -162,4 +166,5 @@ export const VALUE_ARG_BUILTINS = new Set<string>([
   "image",
   "icon",
   "code",
+  "editable",
 ]);

@@ -51,13 +51,18 @@ kumiki list                         # 全定義名（layer prefix 付き）
 
 ```bash
 kumiki add <layer> <name> <body>            # 新規定義追加
+kumiki add ... --body-file <path>           # body をファイルから読む（'-' で stdin）— 空白を保持
 kumiki replace <layer>.<name> <body>        # 定義差し替え
+kumiki replace ... --body-file <path>       # body をファイルから読む（'-' で stdin）— 空白を保持
 kumiki edit <layer>.<name> <patch>          # 部分編集（reducer の do= 内など）
+kumiki edit ... --patch-file <path>         # patch JSON をファイルから読む（'-' で stdin）
 kumiki rename <layer>.<old> <new>           # リネーム（hash 不変）
 kumiki remove <layer>.<name>                # 削除（参照があれば失敗）
 kumiki patch apply <file>                   # CRDT op バンドルを適用
 kumiki patch revert <op-id>                 # 特定 op を取り消し
 ```
+
+複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
 ### 9.2.3 検証系
 

@@ -237,6 +237,45 @@ describe("renderToString §10.6.1", () => {
     expect(panicStep).toBeDefined();
     expect((panicStep as { message: string }).message).toContain("boom");
     expect(result.bootstrapEpisode.status).toBe("panic");
+    // SSR panics travel through the same panicInfo pipeline as the live path —
+    // stack + category must survive into the bootstrap episode.
+    const enriched = panicStep as {
+      message: string;
+      location?: string;
+      stack?: string;
+      category?: string;
+    };
+    expect(enriched.location).toBe(`reducer "userLoaded"`);
+    expect(enriched.category).toBe("hydrate");
+    expect(enriched.stack).toMatch(/at .+/);
+    consoleErr.mockRestore();
+  });
+
+  it("SSR reducer panic preserves the Error.cause chain in the bootstrap episode", async () => {
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { app } = makeSsrApp();
+    app.reducers = app.reducers.map((r) =>
+      r.name === "userLoaded"
+        ? {
+            ...r,
+            apply: () => {
+              const root = new Error("root disk");
+              throw new Error("boom from userLoaded", { cause: root });
+            },
+          }
+        : r,
+    );
+    const result = await renderToString(app, {
+      providers: {
+        "http.get": async () => ({ kind: "ok", value: { id: "u_1", name: "Yui" } }),
+      },
+    });
+    const panicStep = result.bootstrapEpisode.steps.find((s) => s.kind === "panic") as
+      | { cause?: Array<{ message: string }> }
+      | undefined;
+    expect(panicStep).toBeDefined();
+    expect(panicStep!.cause).toBeDefined();
+    expect(panicStep!.cause![0]!.message).toBe("root disk");
     consoleErr.mockRestore();
   });
 

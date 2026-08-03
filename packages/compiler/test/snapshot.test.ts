@@ -41,7 +41,7 @@ describe("compile output snapshots", () => {
     expect(result.js).toContain('"count": { value: 0, refine:');
     expect(result.js).toContain('selector: { tile: "IncBtn" }');
     expect(result.js).toContain('event: { kind: "ui", ev: "click" }');
-    expect(result.js).toContain('__kumikiApp._dispatch("inc"');
+    expect(result.js).toContain('App._dispatch("inc"');
     expect(result.js).toContain('_next["count"]');
   });
 

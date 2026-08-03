@@ -1,0 +1,14 @@
+# Multi-mount fixture: minimal bind-driven input, co-mounted with
+# counter.kumiki. Typing here must never leak into the other app.
+
+slot name : Text = ""
+
+tile NameInput = input(bind=name, placeholder="Your name")
+tile App = column(
+             NameInput,
+             heading(if name == "" then "Hello, stranger" else "Hello, " + name))
+
+app MultiBinder
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

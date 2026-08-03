@@ -20,6 +20,8 @@ type KumikiError = {
 
 A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
 
+Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. The lexer throws `LexError` and the parser throws `ParseError` — both carry `message` + `pos` but no `code`, by design (single-shot; no recovery). The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) therefore extracts implementation-side codes from `typecheck.ts` only.
+
 ## The Code System
 
 | Band | Domain |
@@ -30,9 +32,47 @@ A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the par
 | `E03xx` | Capabilities and purity |
 | `E04xx` | Motion |
 | `E06xx` | reducer write rules |
-| `E07xx` | Accessibility (a11y), strict-icons |
+| `E07xx` | Opt-in checks: accessibility (a11y), strict-icons, testing-DSL invariants |
 | `E08xx` | Runtime hazards (code that compiles but breaks at runtime) |
 | `W02xx` | Non-fatal warnings (build still succeeds) |
+
+## Auto-patch Coverage
+
+`kumiki fix` (and `kumiki fix --apply`) rewrites source deterministically for a
+subset of diagnostics. All applied patches pass through a regression gate:
+the composed source is re-parsed and re-typechecked before the write commits,
+and the write is rolled back whenever the resulting diagnostic set introduces
+a new failure OR fails to resolve any pre-existing one (the comparison is by
+`code@line:col`, not raw count, so a 1-for-1 swap like `E0301 → E0302 via a
+typo` is caught rather than accepted).
+
+| Code | Auto-patch | Strategy |
+|---|---|---|
+| `E0001` | yes | Inject a `NotFound` tile and add `"/404" -> NotFound` to `app.routes`. |
+| `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
+| `E0103` | yes | Close-name suggestion against known slot / binding names. |
+| `E0104` | yes | Close-name suggestion against known effect names. |
+| `E0105` | yes | Close-name suggestion against known tile names. |
+| `E0107` | yes | Close-name suggestion against declared motion names. |
+| `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
+| `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
+| `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
+| `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
+| `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
+| Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
+
+Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
+is a separate tier and works whenever the failing leaf can be traced to a
+unique source position:
+
+- Exact literal match on string / number / boolean, with **scope-aware
+  disambiguation**: the target tile / reducer's own line range is preferred
+  over its dependencies, which are preferred over unrelated code.
+- **String prefix/suffix repair**: swap only the divergent middle when
+  `actual` and `expected` share a common prefix and suffix.
+- **Reducer arithmetic repair**: rewrite `slot := slot ± N` to match the
+  expected delta (sign flip and/or operand change) when exactly one reducer
+  writes the failing slot.
 
 ## E00xx — Structure
 
@@ -83,7 +123,7 @@ A `stop-timer(N)` statement refers to a timer name `N` that no `timer(d, name=N)
 
 > `stop-timer refers to undefined timer name "<name>"`
 
-**Fix**: Check the spelling, or declare the timer with `timer(d, name=N)`. See [timer](./lifecycle.md#_7-1-5-timer).
+**Fix**: Check the spelling, or declare the timer with `timer(d, name=N)`. `kumiki fix` can suggest a close name (→ [AI Editing](./ai-edit.md)). See [timer](./lifecycle.md#_7-1-5-timer).
 
 ### E0105 `undef-tile`
 
@@ -124,14 +164,6 @@ A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `exp
 
 **Fix**: Remove the wildcard, or move it into the `reducer-test` `expect`.
 
-### E0110 `sub-routes-without-wildcard-parent`
-
-A tile declares `sub-routes` but its parent route in `app.routes` is not a wildcard (`/*`) pattern. Without a wildcard parent the runtime never reaches the nested matcher, so the sub-routes can never apply. See [Nested Routes](./routing.md#_3-6-nested-routes).
-
-> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
-
-**Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
-
 ### E0111 `orphan-sub-routes`
 
 A tile declares `sub-routes` but no entry in `app.routes` targets that tile. The nested route table cannot be reached.
@@ -156,6 +188,14 @@ A tile declares `sub-routes` but its body never calls `route-outlet`. The matche
 
 **Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
 
+### E0114 `sub-routes-without-wildcard-parent`
+
+A tile declares `sub-routes` but its parent route in `app.routes` is not a wildcard (`/*`) pattern. Without a wildcard parent the runtime never reaches the nested matcher, so the sub-routes can never apply. See [Nested Routes](./routing.md#_3-6-nested-routes).
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -164,6 +204,16 @@ An event handler argument / prop must be a reducer name, but was a different kin
 
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+
+### E0202 `emit-arg-type-mismatch`
+
+An `emit` targets an effect whose declared input type is `EffectId`, but the argument's statically-inferred type is not `EffectId`. This is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Without this check, codegen would pass through a non-`EffectId` runtime value and the cancel path would silently no-op, indistinguishable from a successful cancel.
+
+> `emit "<effect>" expects an EffectId argument`
+
+The check is best-effort: it only fires when the `emit` has at least one argument AND the argument's type can be statically inferred. A zero-argument `emit`, or an argument whose type is unresolvable at check time, is left to the runtime.
+
+**Fix**: Pass a slot / binding of type `EffectId` (the value returned by an earlier fire-and-track of the same effect), or — if the effect really should accept a scalar — change its `in=` type in the `effect` declaration. See [EffectId](./stdlib.md#_2-1-1-1-effectid) and [emit](./lifecycle.md).
 
 ### E0204 `effect-id-misuse`
 
@@ -363,9 +413,9 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 **Note**: The granularity is **path shape**. `issues[id].status` and `issues[id].updatedAt` are considered different shapes and can coexist, but double assignment to `count` is forbidden.
 
-## E07xx — Accessibility (a11y) and strict-icons
+## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 
-A band for checks that ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in. `check()` filters these codes out unless the matching flag is set.
+A band for checks that either ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in, or that guard invariants of the testing DSL itself. `check()` filters the `strict*` codes out unless the matching flag is set; testing-DSL codes are always active because they only fire inside `test`/`episode-test`/`property-test` bodies.
 
 a11y checking is enabled via `check(program, { strictA11y: true })`.
 
@@ -392,6 +442,16 @@ Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNa
 A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
+
+Testing-DSL invariants (currently E0712; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+
+### E0712 `episode-mock-invalid`
+
+An `episode-test` `mocks` record binds an effect to a policy value that is not one of the four accepted forms: the bare identifiers `from-log` (replay recorded outcomes) and `ignore` (skip the effect entirely), or the constructor calls `ok(...)` (return a canned success payload) and `err(...)` (return a canned failure). Any other value — a typo like `from_log`, an arbitrary expression, or a bare reducer name — has no defined lowering in codegen and will trigger a loud `Error` at build time. The purpose of E0712 is to surface that failure earlier, at `check` time, with a source position that points at the offending value — instead of a codegen-stage throw whose stack points at the compiler.
+
+> `Mock for "<name>" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``
+
+**Fix**: Replace the mock value with one of the four accepted forms. Use `from-log` to replay from the recorded episode, `ignore` to no-op the effect, `ok(<value>)` to force a success payload, or `err(<value>)` to force a failure. See [episode-test](./testing.md).
 
 ## E08xx — Runtime Hazards
 

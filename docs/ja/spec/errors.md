@@ -20,6 +20,8 @@ type KumikiError = {
 
 パースエラーは `ParseError`（`message` + `pos`）として `throw` される。パース段は最初のエラーで停止するため、コードは付与されない。
 
+コード付き診断は `packages/compiler/src/typecheck.ts` からのみ発行される。lexer は `LexError` を、parser は `ParseError` を throw する — どちらも `message` + `pos` は持つが `code` は持たない設計（single-shot、リカバリ無し）。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は実装側のコード集合をこの `typecheck.ts` からのみ抽出する。
+
 ## コード体系
 
 | 帯 | 領域 |
@@ -30,7 +32,7 @@ type KumikiError = {
 | `E03xx` | ケイパビリティと純粋性 |
 | `E04xx` | モーション |
 | `E06xx` | reducer の書き込み規則 |
-| `E07xx` | アクセシビリティ（a11y）／strict-icons |
+| `E07xx` | オプトイン検査：a11y／strict-icons／テスト DSL 不変条件 |
 | `E08xx` | ランタイムハザード（コンパイルは通るが実行で壊れる書き方） |
 | `W02xx` | 非致命的な警告（ビルドは成功する） |
 
@@ -108,13 +110,21 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 
-### E0110 `sub-routes-without-wildcard-parent`
+### E0110 `unknown-token-group`
 
-`sub-routes` を宣言した tile を `app.routes` から指している親エントリの pattern が wildcard（`/*`）で終わっていない。親が wildcard でないと runtime はネストマッチャに到達せず、sub-routes は永遠に発火しない。詳細は [Nested Routes](./routing.md#_3-6-nested-routes)。
+`@<group>.<name>` 形式のテーマトークン参照（[スタイル §4.3](./style.md#_4-3-トークン参照)）の `<group>` が、閉じたテーマ名前空間（`colors`・`spacing`・`radius`・`shadow`・`typography`・`breakpoints`）のいずれでもない。
 
-> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+> `Unknown theme token group "@<group>" (allowed: …)`
 
-**修正**：親 pattern を `/*` で終わるように変える（`/settings` → `/settings/*`）か、`sub-routes` ブロックを外す。
+**修正**：列挙されたグループを使う（`@colors.surface`、`@spacing.md` など）。素の識別子のつもりだったなら `@` 接頭辞を外す。
+
+### E0109 `test-wildcard-misuse`
+
+テスト用ワイルドカード（`<any-id>` / `<slots.X>`）が `reducer-test` の `expect` 以外の場所 — reducer / tile / fn / app の本体、あるいはテストの `given` — に出現している。ワイルドカードは期待結果側の照合構文（[ワイルドカード](./testing.md#_8-2-2-wildcards)）であり、計算する値としても、入力として与える値としても意味を持たない。
+
+> `Test wildcard "<any-id>" is only valid inside a reducer-test \`expect\``
+
+**修正**：ワイルドカードを削除するか、`reducer-test` の `expect` 内に移す。
 
 ### E0111 `orphan-sub-routes`
 
@@ -140,6 +150,14 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：子を表示したい場所に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
+### E0114 `sub-routes-without-wildcard-parent`
+
+`sub-routes` を宣言した tile を `app.routes` から指している親エントリの pattern が wildcard（`/*`）で終わっていない。親が wildcard でないと runtime はネストマッチャに到達せず、sub-routes は永遠に発火しない。詳細は [Nested Routes](./routing.md#_3-6-nested-routes)。
+
+> `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
+
+**修正**：親 pattern を `/*` で終わるように変える（`/settings` → `/settings/*`）か、`sub-routes` ブロックを外す。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -148,6 +166,16 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+
+### E0202 `emit-arg-type-mismatch`
+
+`emit` の対象 effect が `in=EffectId` を宣言しているのに、渡した引数の静的推論型が `EffectId` ではない。キャンセルの配線ミスの典型形で、`emit stopSearch(searchId)`（`searchId : EffectId`）は正しく、`emit stopSearch(42)` や `emit stopSearch("id")` は誤り。この検査が無いと codegen は `EffectId` でないランタイム値をそのまま渡し、cancel パスは静かに no-op となる — 成功したキャンセルと見分けがつかなくなる。
+
+> `emit "<effect>" expects an EffectId argument`
+
+検査は best-effort：`emit` が引数を 1 つ以上持ち、かつその第 1 引数の型が静的に推論できる場合にのみ発火する。引数無しの `emit` や、型が check 時に解決できない式は対象外で、runtime に委ねる。
+
+**修正**：以前に fire-and-track した同じ effect が返した値のような、`EffectId` 型の slot / 束縛を渡す。もしくは — その effect が本当にスカラーを受けるべきなら — `effect` 宣言の `in=` 型を実態に合わせる。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid) と [emit](./lifecycle.md)。
 
 ### E0204 `effect-id-misuse`
 
@@ -186,6 +214,40 @@ slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 ```
+
+### E0207 `pat-arity-mismatch`
+
+`match` の arm パターンの要素数が、scrutinee の静的型と食い違っている。tuple パターンは `Tuple(...)` scrutinee と同じ arity でなければならず、variant パターンはその variant のペイロード arity と同じ bind 数でなければならない。この検査が無いと codegen は常に false のガードを吐き、その arm が実行時に一度も発火しない（「コンパイルは通るが誤った分岐が走る」）静かな失敗になる。
+
+> `Tuple pattern has <m> item(s) but scrutinee type "Tuple(<…>)" has <n>`
+> `Variant "<tag>" pattern has <m> bind(s) but the variant carries <n> payload(s)`
+
+**修正**：パターン要素数を型に合わせて増減する。`Tuple(Int, Int)` なら `(a, b)`、`Some(T)` なら `Some(x)`（1 bind）にする。
+
+### E0208 `pat-type-mismatch`
+
+`match` の arm パターンの形状が、scrutinee の静的型と食い違っている — 例えば `Int` scrutinee に対する tuple パターン `(a, b)`、record 型に対する variant パターン `Some(x)`。パターンが構造的にどうやっても一致しないため、その arm はコンパイル時点で dead。
+
+> `Tuple pattern cannot match scrutinee of type "<T>"`
+> `Variant pattern "<tag>" cannot match scrutinee of type "<T>"`
+
+**修正**：scrutinee 型に合うパターン形状に直す。scrutinee 側が本当に union / tuple であるべきなら、宣言型を先に直す。
+
+### E0209 `pat-unknown-variant`
+
+`match` の arm が、scrutinee union 型に宣言されていない variant tag を指している。組み込み union（`Option(T)` は `Some` / `None`、`Result(T, E)` は `Ok` / `Err`）とユーザ宣言の `type X = A | B(…) | …` の両方が対象。
+
+> `Variant "<tag>" is not a member of scrutinee type "<T>"`
+
+**修正**：tag の綴りを直すか、union 定義に variant を追加する。`kumiki fix` が近い名前を提案できる（→ [AI 編集](./ai-edit.md)）。
+
+### E0210 `type-arity-mismatch`
+
+ユーザ宣言のジェネリック型の型レベル適用 `T(...)` が、宣言側パラメータと異なる数の型引数を受けている。この検査が無いと、後段の型パラメータ置換が短い写像しか作らずペイロードに未解決 `TypeRef` を残し、パターン検査は no-op に劣化する — まさにこの帯（と静的検査全般）が捕まえたい「静かな失敗」形。
+
+> `Type "<name>" expects <m> type argument(s) but got <n>`
+
+**修正**：呼び出し側で宣言の型引数数に合わせるか、宣言側パラメータリストを変える。
 
 ### E0211 `undef-tile-in-selector`
 
@@ -313,9 +375,9 @@ keyframe ストップが閉じたアニメ可能集合（`opacity`, `translate-x
 
 **補足**：粒度は**パス形状**である。`issues[id].status` と `issues[id].updatedAt` は別形状とみなされ共存できるが、`count` への二重代入は禁止される。
 
-## E07xx — アクセシビリティ（a11y）／strict-icons
+## E07xx — オプトイン検査（a11y／strict-icons／テスト DSL 不変条件）
 
-既定では警告として扱われ、明示的な `strict*` オプトインで初めてエラーに昇格する検査の帯。対応するフラグが立っていない限り `check()` がこれらのコードを出力から除去する。
+既定では警告として扱われ明示的な `strict*` オプトインで初めてエラーに昇格する検査、あるいはテスト DSL 自身の不変条件を守る検査の帯。`strict*` 系のコードは対応するフラグが立っていない限り `check()` が出力から除去する。テスト DSL 系のコードは `test` / `episode-test` / `property-test` 定義の内部でのみ発火するので、常時アクティブでよい。
 
 a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
@@ -342,6 +404,16 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
 
 **修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
+
+テスト DSL 不変条件（現時点では E0712 のみ。E0710–E0719 はこの用途のために予約）は test 系定義の内部でのみ発火し、オプトインフラグを必要としない。
+
+### E0712 `episode-mock-invalid`
+
+`episode-test` の `mocks` レコードで、ある effect に対するモック値が受理される 4 形式のいずれでもない。受理されるのは、bare 識別子の `from-log`（記録済みの結果をリプレイ）と `ignore`（effect 全体をスキップ）、およびコンストラクタ呼び出しの `ok(...)`（成功ペイロードを固定）と `err(...)`（失敗ペイロードを固定）。他の値 — `from_log` のようなタイポ、任意の式、bare な reducer 名など — は codegen 側で降ろし方が定義されておらず、build 時に loud な `Error` として throw される。E0712 の役割は、その失敗をより早い `check` 段で、offending value を指す `pos` 付きの診断として浮かび上がらせること — codegen 段の throw（スタックが compiler を指す）ではなく、ソース位置を指した診断で受け取れるようにする。
+
+> `Mock for "<name>" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``
+
+**修正**：モック値を 4 形式のいずれかに置換する。記録済みエピソードから再生するなら `from-log`、effect を no-op にするなら `ignore`、成功結果を固定するなら `ok(<value>)`、失敗結果を固定するなら `err(<value>)`。詳細は [episode-test](./testing.md)。
 
 ## E08xx — ランタイムハザード
 

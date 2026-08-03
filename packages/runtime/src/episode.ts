@@ -27,6 +27,27 @@ export type EpisodeTrigger = {
 
 export type SlotDiff = { name: string; before: unknown; after: unknown };
 
+/**
+ * Where a caught throw originated in the runtime's staging (docs/spec/runtime.md
+ * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, and `hydrate`;
+ * `effect` / `capability` / `unknown` are reserved values so consumers can
+ * exhaustive-switch without a fallthrough case as future callsites are wired in.
+ */
+export type PanicCategory =
+  | "reducer"
+  | "effect"
+  | "capability"
+  | "tile-render"
+  | "hydrate"
+  | "unknown";
+
+/**
+ * One link in a flattened `Error.cause` chain. Only shape sufficient to trace
+ * root cause across a devtools / `kumiki replay` session — no runtime object
+ * references, so it round-trips through JSON without loss.
+ */
+export type PanicCauseLink = { message: string; stack?: string };
+
 export type EpisodeStep =
   | {
       kind: "reducer";
@@ -50,7 +71,23 @@ export type EpisodeStep =
       "binds-updated": string[];
       ts: number;
     }
-  | { kind: "panic"; message: string; location?: string; ts: number };
+  | {
+      kind: "panic";
+      message: string;
+      /** Human-readable source label (`reducer "addTodo"`, `"render"`, ...). */
+      location?: string;
+      /** `Error.stack` of the caught throw, when available. */
+      stack?: string;
+      /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
+      cause?: PanicCauseLink[];
+      /**
+       * Where the runtime caught the throw. Omitted in episode logs written
+       * before this field existed; readers should treat absence as
+       * {@link PanicCategory} `"unknown"`.
+       */
+      category?: PanicCategory;
+      ts: number;
+    };
 
 export type EpisodeStatus = "completed" | "panic" | "cancelled" | "ongoing";
 
@@ -154,8 +191,19 @@ export type EpisodeLogger = {
   cancelPendingEffect(token: string, name: string): void;
   /** Append a `{kind: "signal-update", ...}` step to the open episode. */
   recordSignalUpdate(dirtySlots: string[], bindsUpdated?: string[]): void;
-  /** Record a panic; the episode commits with `status = "panic"`. */
-  recordPanic(message: string, location?: string): void;
+  /**
+   * Record a panic; the episode commits with `status = "panic"`. The `info`
+   * object is written as-is to the `panic` step (except for the `ts`, which the
+   * logger stamps). `stack` / `cause` / `category` are optional so callers on
+   * older paths (or ad-hoc tests) can keep passing only `{message, location?}`.
+   */
+  recordPanic(info: {
+    message: string;
+    location?: string | undefined;
+    stack?: string | undefined;
+    cause?: PanicCauseLink[] | undefined;
+    category?: PanicCategory | undefined;
+  }): void;
   /**
    * Inject an already-completed episode at the tail of the memory ring (and
    * the localStorage mirror, when enabled). Used by SSR hydration to seat
@@ -364,13 +412,14 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       persistLocalStorage();
       opts.onEpisode?.(ep);
     },
-    recordPanic(message, location) {
+    recordPanic(info) {
       const ep = topEpisode();
       if (!ep) return;
-      const step: EpisodeStep =
-        location === undefined
-          ? { kind: "panic", message, ts: now() }
-          : { kind: "panic", message, location, ts: now() };
+      const step: EpisodeStep = { kind: "panic", message: info.message, ts: now() };
+      if (info.location !== undefined) step.location = info.location;
+      if (info.stack !== undefined) step.stack = info.stack;
+      if (info.cause !== undefined && info.cause.length > 0) step.cause = info.cause;
+      if (info.category !== undefined) step.category = info.category;
       ep.steps.push(step);
       ep.status = "panic";
     },

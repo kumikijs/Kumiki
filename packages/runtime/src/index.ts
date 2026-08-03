@@ -7,7 +7,13 @@
 // unchanged. `kumiki build` instead imports the feature modules directly
 // (dist/modules/*) and ships only what the compiled app uses.
 
-import { type AppShape, type MountOptions, mountCore, type TileRenderers } from "./core.ts";
+import {
+  type AppShape,
+  type MountOptions,
+  mountCore,
+  type TilePatchers,
+  type TileRenderers,
+} from "./core.ts";
 import { installConfirm } from "./effects-confirm.ts";
 import { httpFetch } from "./effects-http.ts";
 import { indexedDelete, indexedQuery, indexedRead, indexedWrite } from "./effects-indexed.ts";
@@ -17,13 +23,13 @@ import { routing } from "./router.ts";
 import { type RenderToStringResult, renderToString } from "./ssr.ts";
 import { _stdlibCore } from "./stdlib.ts";
 import { _stdlibTest } from "./testkit.ts";
-import { collectionTiles } from "./tiles-collection.ts";
-import { inputTiles } from "./tiles-input.ts";
-import { layoutTiles } from "./tiles-layout.ts";
-import { mediaTiles } from "./tiles-media.ts";
-import { overlayTiles } from "./tiles-overlay.ts";
-import { statusTiles } from "./tiles-status.ts";
-import { textTiles } from "./tiles-text.ts";
+import { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
+import { inputPatchers, inputTiles } from "./tiles-input.ts";
+import { layoutPatchers, layoutTiles } from "./tiles-layout.ts";
+import { mediaPatchers, mediaTiles } from "./tiles-media.ts";
+import { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
+import { statusPatchers, statusTiles } from "./tiles-status.ts";
+import { textPatchers, textTiles } from "./tiles-text.ts";
 
 export {
   type AppShape,
@@ -33,29 +39,42 @@ export {
   type CapabilityProvider,
   type CapabilityRegistry,
   currentTheme,
+  type DiagnosticSite,
   type EffectResult,
   type EffectSpec,
   type EmitSpec,
   type EventHandler,
   KumikiPanic,
   type LocationLike,
+  type MountedApp,
   type MountOptions,
   mountCore,
   type NavContext,
+  type NeverEqualCause,
   overridableInvoke,
+  type PanicCategory,
+  type PanicCauseLink,
+  type PanicRecord,
   type ParsedRoute,
+  panicInfo,
+  type ReconcileFallback,
+  type ReconcileFallbackReason,
   type RedirectEntry,
   type ReducerSpec,
   type RefinementCheck,
   type RouteEntry,
   type Router,
   type RoutingImpl,
+  type RuntimeDiagnostic,
+  resolveApp,
   type SlotMeta,
   type SsrSnapshot,
   type Theme,
   type ThemeValue,
   type TileCtx,
   type TileNode,
+  type TilePatcher,
+  type TilePatchers,
   type TileProps,
   type TileRenderer,
   type TileRenderers,
@@ -107,6 +126,8 @@ export {
   type StepResult,
 } from "./scenario.ts";
 export {
+  describeDiagnostic,
+  type SmokeDiagnostic,
   type SmokeIssue,
   type SmokeOptions,
   type SmokePhase,
@@ -133,13 +154,13 @@ export {
   replayEpisodes,
   type TestResult,
 } from "./testkit.ts";
-export { collectionTiles } from "./tiles-collection.ts";
-export { inputTiles } from "./tiles-input.ts";
-export { layoutTiles } from "./tiles-layout.ts";
-export { mediaTiles } from "./tiles-media.ts";
-export { overlayTiles } from "./tiles-overlay.ts";
-export { statusTiles } from "./tiles-status.ts";
-export { textTiles } from "./tiles-text.ts";
+export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
+export { inputPatchers, inputTiles } from "./tiles-input.ts";
+export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";
+export { mediaPatchers, mediaTiles } from "./tiles-media.ts";
+export { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
+export { statusPatchers, statusTiles } from "./tiles-status.ts";
+export { textPatchers, textTiles } from "./tiles-text.ts";
 
 /** Every built-in tile renderer, keyed by `TileNode["kind"]`. */
 const allTiles: TileRenderers = {
@@ -150,6 +171,24 @@ const allTiles: TileRenderers = {
   ...overlayTiles,
   ...mediaTiles,
   ...statusTiles,
+};
+
+/**
+ * Every built-in tile patcher (#190), keyed by `TileNode["kind"]`. When a kind
+ * appears here, the reconcile diff mutates the mounted element in place on a
+ * data-prop change (preserving `<select>` open / focus / caret / `<video>`
+ * playback / `<details>` open / `contenteditable`). A kind absent from this
+ * map continues to fall back to a full subtree rebuild — patching remains
+ * incrementally adoptable rather than an all-or-nothing runtime rewrite.
+ */
+const allTilePatchers: TilePatchers = {
+  ...layoutPatchers,
+  ...textPatchers,
+  ...inputPatchers,
+  ...collectionPatchers,
+  ...overlayPatchers,
+  ...mediaPatchers,
+  ...statusPatchers,
 };
 
 /**
@@ -167,7 +206,17 @@ export function mount(
 ): ReturnType<typeof mountCore> {
   return mountCore(app, target, {
     ...options,
+    // Whatever the host put in `tiles` here is by definition its own renderer
+    // for that kind — this entry supplies the built-ins itself. Note this
+    // includes OVERRIDES of built-in kinds, which is intended: a host that
+    // replaces the `card` renderer loses the per-element handler slots that
+    // make closure reuse safe, exactly like a brand-new kind would. Scopes the
+    // per-field host-tile scans; see `MountOptions`.
+    hostTileKinds: options.hostTileKinds ?? Object.keys(options.tiles ?? {}),
     tiles: options.tiles ? { ...allTiles, ...options.tiles } : allTiles,
+    tilePatchers: options.tilePatchers
+      ? { ...allTilePatchers, ...options.tilePatchers }
+      : allTilePatchers,
     routing: options.routing ?? routing,
     builtins: [installToast, installConfirm, ...(options.builtins ?? [])],
   });

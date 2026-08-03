@@ -2,7 +2,13 @@
 // route-outlet placeholder. Children recurse through `ctx.render`, so this
 // module never needs to know which other tile families are loaded.
 
-import { applyContainerProps, type TileCtx, type TileNode, type TileRenderers } from "./core.ts";
+import {
+  applyContainerProps,
+  type TileCtx,
+  type TileNode,
+  type TilePatchers,
+  type TileRenderers,
+} from "./core.ts";
 
 type Node<K extends TileNode["kind"]> = TileNode & { kind: K };
 
@@ -90,5 +96,45 @@ export const layoutTiles: TileRenderers = {
     div.dataset.kumikiTile = "route-outlet";
     appendChildren(div, node.children, ctx);
     return div;
+  },
+};
+
+/**
+ * Re-apply container-shaped props to an already-mounted element. `apply-
+ * ContainerProps` is idempotent for the properties it sets (each is a plain
+ * `el.style.X = value` or `setAttribute`), so calling it again on the same
+ * element with new props overwrites the previously-set values and returns
+ * the element to a coherent state. Children are walked by the outer
+ * reconcile.
+ */
+function patchContainer(el: HTMLElement, _oldNode: TileNode, newNode: TileNode): void {
+  applyContainerProps(el, (newNode as { props?: import("./core.ts").TileProps }).props);
+}
+
+export const layoutPatchers: TilePatchers = {
+  page: patchContainer,
+  column: patchContainer,
+  row: patchContainer,
+  card: patchContainer,
+  box: patchContainer,
+  panel: patchContainer,
+  fieldset: patchContainer,
+  stack: patchContainer,
+  region: patchContainer,
+  scroll: patchContainer,
+  grid(el, _oldNode, newNode) {
+    const div = el as HTMLDivElement;
+    const cols = newNode.props?.cols;
+    if (typeof cols === "number") div.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    else if (typeof cols === "string") div.style.gridTemplateColumns = cols;
+    else div.style.gridTemplateColumns = "repeat(3, 1fr)";
+    applyContainerProps(div, newNode.props);
+  },
+  divider() {
+    // Nothing patchable — an <hr> with no data props. Present so the reconcile
+    // takes the patch path (identity-preserving) instead of a full rebuild.
+  },
+  "route-outlet"() {
+    // No own data — subtree children reconcile handles the inner routing.
   },
 };

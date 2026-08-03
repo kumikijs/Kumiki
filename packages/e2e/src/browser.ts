@@ -5,7 +5,7 @@
 
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
-import { chromium, type Page } from "playwright";
+import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
 
 export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
@@ -15,7 +15,13 @@ export type Action =
   | { blur: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
-  | { navigate: string };
+  | { navigate: string }
+  /**
+   * Set a live DOM property on the element matched by `selector`. Used by
+   * #190 fixtures to seed browser-owned state a Kumiki reducer has no way
+   * to produce (e.g. `<video>.currentTime = 3` before triggering a re-render).
+   */
+  | { setProperty: string; property: string; value: unknown };
 
 export type Expect = {
   noErrors?: boolean;
@@ -34,6 +40,15 @@ export type Expect = {
    * it's the verification tier for the `motion` layer.
    */
   animating?: string[];
+  /**
+   * Browser-only: assert on live element properties, keyed by CSS selector.
+   * Each value is a `{ property: expectedValue }` map read via
+   * `document.querySelector(sel)[property]`. Used by #190 to prove that
+   * `<select>` open state / `<video>` currentTime / `<details>` open /
+   * `contenteditable` textContent survive a re-render mid-interaction —
+   * behaviour a state-only oracle cannot see.
+   */
+  elementState?: Record<string, Record<string, unknown>>;
 };
 
 export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
@@ -52,15 +67,92 @@ export type BrowserReport = { ok: boolean; steps: StepResult[] };
 
 export type BrowserOptions = { headed?: boolean; settleMs?: number };
 
+// Escape any literal `</script` so it can't terminate the inline module.
+const escapeScript = (js: string): string => js.replace(/<\/script/gi, "<\\/script");
+
 function buildHtml(js: string): string {
-  // Escape any literal `</script` so it can't terminate the inline module.
-  const safe = js.replace(/<\/script/gi, "<\\/script");
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
-<body><div id="root"></div><script type="module">${safe}</script></body></html>`;
+<body><div id="root"></div><script type="module">${escapeScript(js)}</script></body></html>`;
 }
 
+/** Root `i` is `#kumiki-root-<i>`; inline module scripts execute in document order. */
+function buildHtmlMulti(bundles: string[]): string {
+  const body = bundles
+    .map(
+      (js, i) =>
+        `<div id="kumiki-root-${i}"></div><script type="module">${escapeScript(js)}</script>`,
+    )
+    .join("\n");
+  return `<!doctype html><html><head><meta charset="utf-8">
+<style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
+<body>${body}</body></html>`;
+}
+
+/**
+ * Re-target one compiled bundle for co-mounting: auto-mount into its own root
+ * div, and register the instance in `window.__kumikiApps` (the single
+ * `__kumikiApp` oracle is last-write-wins by construction, so the multi runner
+ * reads the array instead). Both replaces are verbatim matches against codegen
+ * output; a silent miss would surface as a bewildering mount-into-nothing or a
+ * ready-wait timeout, so an unmatched pattern throws instead.
+ */
+function patchBundleForMulti(js: string, index: number): string {
+  const retargeted = replaceOrThrow(
+    js,
+    'document.getElementById("root")',
+    `document.getElementById("kumiki-root-${index}")`,
+    "auto-mount root lookup",
+  );
+  return replaceOrThrow(
+    retargeted,
+    "globalThis.__kumikiApp = App;",
+    "globalThis.__kumikiApp = App;\n(globalThis.__kumikiApps = globalThis.__kumikiApps || []).push(App);",
+    "state-oracle assignment",
+  );
+}
+
+function replaceOrThrow(js: string, search: string, replacement: string, what: string): string {
+  const out = js.replace(search, replacement);
+  if (out === js) {
+    throw new Error(
+      `patchBundleForMulti: ${what} (${JSON.stringify(search)}) not found in the compiled bundle — codegen output drifted; update the patch patterns`,
+    );
+  }
+  return out;
+}
+
+// A synthetic origin the tier-3 runner serves the built app under. The default
+// history-based router uses `history.pushState`, which throws a SecurityError on
+// the null origin returned by page.setContent (about:blank) and data: URLs.
+// Serving from a real (intercepted) HTTP origin lets `navigate` actions round-
+// trip through `pushState` the way a shipped page would.
+const KUMIKI_HOST = "http://kumiki.local";
+const KUMIKI_DOC_URL = `${KUMIKI_HOST}/`;
+const KUMIKI_ROUTE_GLOB = `${KUMIKI_HOST}/**`;
+
 export async function runScenarioInBrowser(
+  source: string,
+  scenario: Scenario,
+  opts: BrowserOptions = {},
+): Promise<BrowserReport> {
+  const browser = await chromium.launch({ headless: !opts.headed });
+  try {
+    const page = await browser.newPage();
+    return await runOnPage(page, source, scenario, opts);
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Drive a scenario against an already-open Playwright `Page`. Console / pageerror
+ * listeners and the route interceptor installed here are removed before return,
+ * so the same `Page` can be reused for another `runOnPage` call without leaking
+ * handlers or having the first invocation's HTML shadow the second.
+ */
+export async function runOnPage(
+  page: Page,
   source: string,
   scenario: Scenario,
   opts: BrowserOptions = {},
@@ -72,32 +164,108 @@ export async function runScenarioInBrowser(
     readRuntimeBundle: nodeRuntimeBundleReader,
   });
   if (compiled.kind !== "ok") {
-    return {
-      ok: false,
-      steps: [
-        {
-          action: "compile",
-          errors: compiled.errors.map((e) => `${e.code} ${e.message}`),
-          state: {},
-          visibleText: "",
-          failures: ["did not compile"],
-        },
-      ],
-    };
+    return compileFailure(
+      "compile",
+      compiled.errors.map((e) => `${e.code} ${e.message}`),
+    );
   }
+  return serveScenario(
+    page,
+    buildHtml(compiled.js),
+    scenario,
+    settleMs,
+    "window.__kumikiApp !== undefined",
+    snapshotStateFn,
+  );
+}
 
-  const browser = await chromium.launch({ headless: !opts.headed });
+/**
+ * Drive one scenario against SEVERAL compiled apps co-mounted on a single page
+ * (the multi-mount isolation tier). App `i` auto-mounts into `#kumiki-root-<i>`
+ * and registers in `window.__kumikiApps`; state keys in `expect.state` are
+ * namespaced by app index (`"0.count"`, `"1.name"`). Scope DOM actions to a
+ * root (`{"click": "#kumiki-root-0 button"}`); `dispatch` / `navigate` go
+ * through the single-app `__kumikiApp` oracle (last bundle wins) — avoid them
+ * in multi fixtures.
+ */
+export async function runMultiOnPage(
+  page: Page,
+  sources: string[],
+  scenario: Scenario,
+  opts: BrowserOptions = {},
+): Promise<BrowserReport> {
+  const settleMs = opts.settleMs ?? 60;
+  const bundles: string[] = [];
+  for (const [i, source] of sources.entries()) {
+    const compiled = compile(source, {
+      runtimeSpecifier: "",
+      bundle: true,
+      readRuntimeBundle: nodeRuntimeBundleReader,
+    });
+    if (compiled.kind !== "ok") {
+      return compileFailure(
+        `compile app ${i}`,
+        compiled.errors.map((e) => `${e.code} ${e.message}`),
+      );
+    }
+    bundles.push(patchBundleForMulti(compiled.js, i));
+  }
+  return serveScenario(
+    page,
+    buildHtmlMulti(bundles),
+    scenario,
+    settleMs,
+    `window.__kumikiApps !== undefined && window.__kumikiApps.length === ${sources.length}`,
+    snapshotMultiStateFn,
+  );
+}
+
+function compileFailure(action: string, errors: string[]): BrowserReport {
+  return {
+    ok: false,
+    steps: [{ action, errors, state: {}, visibleText: "", failures: ["did not compile"] }],
+  };
+}
+
+/**
+ * Serve `html` at the synthetic origin and drive the scenario. `readyExpr`
+ * gates the first step; `stateFn` is the serialized state-oracle read.
+ */
+async function serveScenario(
+  page: Page,
+  html: string,
+  scenario: Scenario,
+  settleMs: number,
+  readyExpr: string,
+  stateFn: string,
+): Promise<BrowserReport> {
   const steps: StepResult[] = [];
   let errorBuf: string[] = [];
-  try {
-    const page = await browser.newPage();
-    page.on("console", (m) => {
-      if (m.type() === "error") errorBuf.push(m.text());
-    });
-    page.on("pageerror", (e) => errorBuf.push(String(e)));
+  const onConsole = (m: ConsoleMessage): void => {
+    if (m.type() === "error") errorBuf.push(m.text());
+  };
+  const onPageError = (e: Error): void => {
+    errorBuf.push(String(e));
+  };
+  // Serve only the app document at the synthetic origin. Any other request
+  // under that origin (subresources, `fetch("/api/...")` from a capability)
+  // must NOT get the HTML shell back — that would surface as a confusing JSON
+  // parse error inside the app. Abort them so the app sees a real network
+  // failure instead of a silently mislabelled response.
+  const onRoute = (route: Route): Promise<void> => {
+    if (route.request().url() === KUMIKI_DOC_URL) {
+      return route.fulfill({ contentType: "text/html; charset=utf-8", body: html });
+    }
+    return route.abort();
+  };
 
-    await page.setContent(buildHtml(compiled.js), { waitUntil: "load" });
-    await page.waitForFunction("window.__kumikiApp !== undefined", null, { timeout: 5000 });
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
+
+  try {
+    await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
+    await page.waitForFunction(readyExpr, null, { timeout: 5000 });
     await page.waitForTimeout(settleMs);
 
     for (const step of scenario.steps) {
@@ -111,10 +279,7 @@ export async function runScenarioInBrowser(
         }
         await page.waitForTimeout(settleMs);
       }
-      const state = (await page.evaluate(snapshotStateFn).catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
+      const state = (await page.evaluate(stateFn).catch(() => ({}))) as Record<string, unknown>;
       const visibleText = await page
         .locator("body")
         .innerText()
@@ -126,9 +291,16 @@ export async function runScenarioInBrowser(
       steps.push(r);
     }
   } finally {
-    await browser.close();
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
   }
 
+  // The browser tier is strict on uncaught errors by design: a JS exception or
+  // console error in the app is a real defect that must not slip through as
+  // "green with warnings". `expect.noErrors` in a fixture is therefore
+  // redundant here — accepted for scenario-format compatibility, but not
+  // load-bearing.
   const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);
   return { ok, steps };
 }
@@ -151,6 +323,30 @@ const snapshotStateFn = `(() => {
   return out;
 })()`;
 
+// Multi-mount variant: `{"0": {...app0 slots...}, "1": {...}}` — `readPath`
+// then resolves namespaced expect keys like `"0.count"` with no extra glue.
+const snapshotMultiStateFn = `(() => {
+  const apps = window.__kumikiApps || [];
+  const seen = new WeakSet();
+  const san = (v) => {
+    if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
+    if (seen.has(v)) return "[circular]";
+    seen.add(v);
+    if (Array.isArray(v)) return v.map(san);
+    const o = {};
+    for (const k of Object.keys(v)) { if (typeof v[k] !== "function") o[k] = san(v[k]); }
+    return o;
+  };
+  const out = {};
+  apps.forEach((app, i) => {
+    const live = (app && app.live) || {};
+    const o = {};
+    for (const k of Object.keys(live)) { if (k !== "route") o[k] = san(live[k]); }
+    out[String(i)] = o;
+  });
+  return out;
+})()`;
+
 function describeAction(a: Action): string {
   if ("dispatch" in a) return `dispatch ${a.dispatch}`;
   if ("clickText" in a) return `clickText "${a.clickText}"`;
@@ -159,6 +355,8 @@ function describeAction(a: Action): string {
   if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
+  if ("setProperty" in a)
+    return `setProperty ${a.setProperty}.${a.property}=${JSON.stringify(a.value)}`;
   return `navigate ${a.navigate}`;
 }
 
@@ -197,6 +395,28 @@ async function performAction(page: Page, a: Action): Promise<void> {
   }
   if ("fill" in a) {
     await page.locator(a.fill).first().fill(a.value, { timeout: 3000 });
+    return;
+  }
+  if ("setProperty" in a) {
+    await page.evaluate(
+      (arg: { sel: string; prop: string; val: unknown }) => {
+        const el = document.querySelector(arg.sel);
+        if (!el) return;
+        // Dotted paths land on nested holders like `dataset.foo` or
+        // `style.color`. Walk everything but the last segment (must exist),
+        // then assign the last segment. Non-existent intermediate props are
+        // a no-op (a common test-author mistake worth staying silent about).
+        const segs = arg.prop.split(".");
+        let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
+        for (let i = 0; i < segs.length - 1; i++) {
+          const nextRaw = host[segs[i] as string];
+          if (nextRaw == null || typeof nextRaw !== "object") return;
+          host = nextRaw as Record<string, unknown>;
+        }
+        host[segs[segs.length - 1] as string] = arg.val;
+      },
+      { sel: a.setProperty, prop: a.property, val: a.value },
+    );
     return;
   }
   // choose
@@ -261,6 +481,29 @@ async function evaluateExpect(
       .catch(() => false);
     if (!isAnimating) failures.push(`"${sel}" should carry a running animation`);
   }
+  for (const [sel, props] of Object.entries(expect.elementState ?? {})) {
+    const got = await page
+      .evaluate(
+        (arg: { s: string; ks: string[] }) => {
+          const el = document.querySelector(arg.s) as Record<string, unknown> | null;
+          if (!el) return null;
+          const out: Record<string, unknown> = {};
+          for (const k of arg.ks) out[k] = el[k];
+          return out;
+        },
+        { s: sel, ks: Object.keys(props) },
+      )
+      .catch(() => null);
+    if (!got) {
+      failures.push(`elementState ${sel}: element not found`);
+      continue;
+    }
+    for (const [prop, want] of Object.entries(props)) {
+      if (!matches(want, got[prop])) {
+        failures.push(`elementState ${sel}.${prop}: expected ${j(want)}, got ${j(got[prop])}`);
+      }
+    }
+  }
   return failures;
 }
 
@@ -299,5 +542,7 @@ declare global {
       _dispatch?: (n: string, p: Record<string, unknown>) => void;
       _navigate?: (path: string) => void;
     };
+    /** Co-mounted instances, in document order (multi-mount runner). */
+    __kumikiApps?: Array<{ live?: Record<string, unknown> }>;
   }
 }

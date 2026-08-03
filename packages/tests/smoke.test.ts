@@ -65,3 +65,82 @@ describe("app examples — runtime smoke", () => {
     it(`runs ${label}`, () => smokeFile(file));
   }
 });
+
+describe("reconcile diagnostics reach the smoke report", () => {
+  // The one example authored to trip an identity-losing rebuild: its `Notes`
+  // column holds an unkeyed `when` child, so toggling the hint changes the
+  // sibling count and the whole column is rebuilt. Two things are asserted
+  // together on purpose — the diagnostic must actually surface end to end
+  // (compile → mount → drive → report), AND it must not fail the run, because
+  // every example above shares this harness and unkeyed siblings are ordinary
+  // Kumiki.
+  it("reports the unkeyed sibling rebuild without failing the run", async () => {
+    const file = join(examplesDir, "features", "58-unkeyed-conditional-rebuild.kumiki");
+    const app = await loadApp(file);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const report = await smoke(app, root, { settleMs: 20 });
+      expect(report.ok).toBe(true);
+      const fallbacks = report.diagnostics
+        .map((d) => d.diagnostic)
+        .filter((d) => d.kind === "reconcile-fallback");
+      // The unkeyed `Notes` column rebuilds when its `when` child appears.
+      expect(fallbacks.map((d) => d.reason)).toContain("child-count-change");
+      // …and the keyed `Tags` column beside it does NOT, even though smoke's
+      // "add tag" click grows it. That contrast is the example's whole point,
+      // so it is asserted rather than left to the reader: every reported
+      // rebuild must be the unkeyed column.
+      for (const d of fallbacks) {
+        expect(d.id).not.toBe("Tags");
+        expect(d.tile).not.toBe("Tags");
+      }
+    } finally {
+      root.remove();
+    }
+  });
+
+  // The empty boundary is the counter-example: a container whose child list
+  // goes 0 → N → 0 keeps its element, so nothing is reported at all. Asserted
+  // end to end because the runtime unit tests build their tile trees by hand —
+  // only this tier proves the compiler emits the shape that reaches the path
+  // (a container whose children are ONLY the `for`; a loop sharing the parent
+  // with static siblings never empties).
+  it("reports nothing for a keyed list that fills and empties", async () => {
+    const file = join(examplesDir, "features", "60-empty-state-keyed-list.kumiki");
+    const app = await loadApp(file);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const report = await smoke(app, root, { settleMs: 20 });
+      expect(report.ok).toBe(true);
+      const fallbacks = report.diagnostics
+        .map((d) => d.diagnostic)
+        .filter((d) => d.kind === "reconcile-fallback");
+      expect(fallbacks.map((d) => d.reason)).toEqual([]);
+    } finally {
+      root.remove();
+    }
+  });
+
+  // And the blind side of the placement probe: `Solo` is a one-layer overlay,
+  // which measures as "places its children directly" until it grows. The pair
+  // of diagnostics is the fix being visible — before it, the second layer was
+  // appended bare and nothing was said.
+  it("reports the newcomer a one-layer overlay cannot place", async () => {
+    const file = join(examplesDir, "features", "59-overlay-keyed-layers.kumiki");
+    const app = await loadApp(file);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const report = await smoke(app, root, { settleMs: 20 });
+      expect(report.ok).toBe(true);
+      const solo = report.diagnostics
+        .map((d) => d.diagnostic)
+        .filter((d) => d.kind === "reconcile-fallback" && d.tile === "Solo");
+      expect(solo.map((d) => d.reason)).toEqual(["unplaceable-insert", "child-count-change"]);
+    } finally {
+      root.remove();
+    }
+  });
+});

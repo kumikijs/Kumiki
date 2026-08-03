@@ -9,6 +9,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
     "check": "turbo run check",
     "typecheck": "turbo run typecheck",
     "lint": "biome check .",

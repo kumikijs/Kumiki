@@ -1,0 +1,47 @@
+# Feature: what an unkeyed sibling list costs on re-render (spec/runtime.md §10.3.12).
+#
+# `Notes` is a column whose second child appears and disappears with `open`.
+# None of its children carry a `key`, so the reconciler cannot tell "the hint
+# was inserted" from "everything moved" — it rebuilds the whole column and the
+# text field inside it loses its DOM node. Type into the field, toggle the
+# hint, and the caret is gone.
+#
+# Toggling `Tags` does the same thing to a list whose children DO carry keys:
+# the reconciler matches them across renders, so the untouched rows keep their
+# elements. Compare the two in `kumiki dev` — the console reports one
+# `child-count-change` diagnostic per Notes toggle and none for Tags.
+
+slot open : Bool = false
+slot draft : Text = ""
+slot tags : List(Text) = ["alpha", "beta"]
+
+reducer toggle on=ui.click(ToggleBtn) do= open := not open
+reducer addTag on=ui.click(AddTagBtn) do= tags := tags.push("gamma")
+
+tile ToggleBtn = button(text=if open then "hide hint" else "show hint", onClick=toggle)
+tile AddTagBtn = button(text="add tag", onClick=addTag)
+
+# Unkeyed: the `when` child changes the sibling count, so the reconciler
+# rebuilds this column and the input's caret goes with it.
+tile Notes = column(
+               input(bind=draft),
+               when(open, text("Notes are saved as you type.")))
+             {gap: "sm"}
+
+# Keyed: each row declares its identity, so adding one leaves the others in
+# place. This is the fix for the shape above.
+tile Tags = column(
+              for t in tags text(t) {key: t})
+            {gap: "sm"}
+
+tile App = column(
+             heading("unkeyed vs keyed re-render"),
+             row(ToggleBtn, AddTagBtn) {gap: "sm"},
+             Notes,
+             Tags)
+           {pad: "lg", gap: "md"}
+
+app UnkeyedConditionalRebuild
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -1,0 +1,62 @@
+# Feature: the empty boundary of a child list (spec/runtime.md §10.3.10).
+#
+# `Results` is a column whose only children come from a `for` over a list that
+# STARTS EMPTY — the shape every list-flavoured app opens on: no todos yet, no
+# search results yet, an empty cart. Filling it and clearing it again used to
+# be the one transition the reconciler refused to reuse anything across: with
+# nothing on the old side there was no key to match, so the whole column was
+# rebuilt and whatever the container held — its scroll offset, anything the
+# browser owned — went with it.
+#
+# There is genuinely nothing to match at an empty boundary, so the reconciler
+# stopped trying: it re-enters the column's renderer for a fresh interior and
+# moves that into the element it already has. The container survives, and
+# `kumiki dev` reports no `child-count-change` for either direction. Compare
+# with `unkeyed-conditional-rebuild`, where a list that changes length WITHOUT
+# passing through empty still needs keys to avoid the rebuild.
+#
+# `Filter` is that contrast in one app: it never empties, so dropping a row
+# there is an ordinary keyed removal, and the same rows keep their elements.
+
+slot query   : Text       = ""
+slot results : List(Text) = []
+slot filter  : List(Text) = ["alpha", "beta", "gamma"]
+
+reducer search on=ui.click(SearchBtn)
+    do= results := ["alpha", "beta", "gamma"]
+
+reducer clear on=ui.click(ClearBtn)
+    do= results := []
+        query   := ""
+
+reducer dropFirst on=ui.click(DropBtn)
+    do= filter := filter.tail
+
+tile QueryInput = input(bind=query, placeholder="search")
+tile SearchBtn  = button(text="search", onClick=search)
+tile ClearBtn   = button(text="clear", onClick=clear)
+tile DropBtn    = button(text="drop first", onClick=dropFirst)
+
+# The subject: a container whose children are ONLY the loop, so its child list
+# really does go 0 -> 3 -> 0. A `for` inside a container that also holds static
+# siblings never reaches empty, and never reaches this path.
+tile Results = column(for r in results text(r) {key: r}) {gap: "sm"}
+
+# The contrast: same shape, but it never empties. Removing a row here is a
+# plain keyed removal — the survivors keep their elements.
+tile Filter = column(for f in filter text(f) {key: f}) {gap: "sm"}
+
+tile App = column(
+             heading("empty state to first result"),
+             row(QueryInput, SearchBtn, ClearBtn) {gap: "sm"},
+             text("results: " + results.size.show),
+             Results,
+             heading("a list that never empties"),
+             DropBtn,
+             Filter)
+           {pad: "lg", gap: "md"}
+
+app EmptyStateKeyedList
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -140,4 +140,38 @@ describe("runtime: route.error fallback (#81)", () => {
     expect(root.textContent).toContain("recovered");
     dispose();
   });
+
+  it("route.error $event carries the tile-render category, not reducer", () => {
+    // Regression cover: earlier the fireRouteError helper hard-coded
+    // `category: \"reducer\"`, so a render panic would show up in the reducer
+    // handler with a wrong category tag while the same episode-log step was
+    // tagged tile-render. Both sides must agree.
+    const captured: { event?: Record<string, unknown> } = {};
+    let mode: "boom" | "ok" = "boom";
+    const app: AppShape = baseApp({
+      reducers: [
+        lifecycleReducer('route.error("/")', (s, payload) => {
+          captured.event = payload.$event as Record<string, unknown>;
+          mode = "ok";
+          return { slots: s, emits: [] };
+        }),
+      ],
+      routes: [
+        {
+          pattern: "/",
+          tile: (): TileNode => {
+            if (mode === "boom") throw new Error("kaboom");
+            return { kind: "text", text: "recovered" };
+          },
+        },
+      ],
+    });
+    const { dispose } = mount(app, root);
+    expect(captured.event?.category).toBe("tile-render");
+    // Dev-only fields must never bleed into a user reducer payload —
+    // spreading the raw PanicRecord would leak stack to production UI.
+    expect(captured.event).not.toHaveProperty("stack");
+    expect(captured.event).not.toHaveProperty("cause");
+    dispose();
+  });
 });

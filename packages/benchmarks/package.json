@@ -9,14 +9,20 @@
     "measure": "tsx size-comparison/scripts/measure.mjs",
     "measure:scenarios": "tsx size-comparison/scripts/measure-scenarios.mjs",
     "measure:ops": "tsx size-comparison/scripts/measure-ops.mjs",
+    "measure:reactivity": "tsx reactivity/reactivity-cost.mjs",
+    "measure:keyed-moves": "tsx reactivity/keyed-move-cost.mjs",
     "eval": "tsx learning-cost/eval.mjs",
+    "test": "vitest run",
     "lint": "biome check ."
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "catalog:",
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
+    "@kumikijs/runtime": "workspace:*",
     "gpt-tokenizer": "catalog:",
     "tsx": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

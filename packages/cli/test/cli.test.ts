@@ -9,6 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const ROUTING_PATH = resolve(here, "../../examples/features/18-routing.kumiki");
 const STORAGE_PATH = resolve(here, "../../examples/features/20-effect-storage.kumiki");
+const INPUT_BIND_PATH = resolve(here, "../../examples/features/13-text-input-bind.kumiki");
 const CLI_PATH = resolve(here, "../src/kumiki.ts");
 const REPLAY_COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
 const REPLAY_COUNTER_LOG = resolve(here, "fixtures/replay/counter.log.jsonl");
@@ -66,7 +67,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const app = readFileSync(join(outDir, "app.js"), "utf8");
     expect(app).toContain('import { mountCore } from "./runtime/core.js"');
     expect(app).toContain('tile: "IncBtn"');
-    expect(app).toContain('__kumikiApp._dispatch("inc"');
+    expect(app).toContain('App._dispatch("inc"');
 
     // Size acceptance (#71): the counter runtime payload is well below the
     // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).
@@ -81,10 +82,37 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // Bumped to 39.5KB with the per-tile onChange wirings on check/radio/
     // switch in tiles-input (#143 — needed so `ui.change(<Toggle>)` reducers
     // fire; the counter rides on tiles-input via `button`).
+    // Bumped to 40.5KB with the multi-mount app registry in core.ts
+    // (WeakMap root registry + render-pass bracketing replacing the
+    // `__kumikiApp` global, so co-mounted apps never cross-wire).
+    // Bumped to 41.5KB when panicInfo grew to walk Error.cause into a
+    // JSON-safe chain, KumikiPanic gained a `cause` option, and reportPanic
+    // started emitting multi-line stack + cause output so devtools see the
+    // root cause instead of just the message.
+    // Bumped to 44KB with the tile-level keyed diff (#187) landed in core.ts:
+    // the reconcile walker + prop equality kernel + per-render mapping ctx
+    // replace the pre-existing full-teardown swap. Payoff is measurable in
+    // `packages/benchmarks/reactivity/reactivity-cost.mjs` (waste× drops from
+    // 503× to 1× on the 500-tile case).
+    // Bumped to 55KB with #190 identity-preserving reconciliation: every
+    // tile module exports a companion `patch(el, oldNode, newNode)` alongside
+    // its create renderer, plus per-element handler slots on tiles-input /
+    // tiles-text (link) / tiles-overlay so `bind` / `to` / `onClose` changes
+    // reroute the still-mounted element's listener without add/remove churn.
+    // Adds the `details` + `editable` tiles too. Payoff: `<select>` open
+    // dropdown, `<video>` currentTime, `<details>` open, `contenteditable`
+    // caret all survive a reducer-triggered re-render mid-interaction.
+    // Bumped to 56KB with the `never-equal-prop` reconcile diagnostic: the
+    // scan that names a host-tile prop the equality kernel can never call
+    // equal, so a tile patched on every render stops being invisible. Rides in
+    // core.ts because the diagnostics channel is opt-in at RUNTIME, not at
+    // build time — a production mount is silent because it passed no
+    // `onDiagnostic`, which is what keeps the sink a supported seam in a built
+    // artifact rather than a dev-only affordance a bundler strips.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(39_500);
+    expect(total).toBeLessThan(56_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
@@ -101,6 +129,65 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
       // so this exercises the exact artifact set `kumiki build` ships.
       await import(pathToFileURL(join(outDir, "app.js")).href);
       expect(root.textContent).toContain("Count: 0");
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("the built counter patches in place — the heading element survives a bump", {
+    timeout: 30000,
+  }, async () => {
+    // Runtime truth for the identity-preserving reconcile in a REAL build
+    // artifact. Every test that mounts through the monolith `mount()` gets the
+    // full patcher registry merged in for free, so only an artifact produced by
+    // `kumiki build` can prove the granular mount options carry it. Without
+    // patchers the heading is torn down and replaced on every count change.
+    build(COUNTER_PATH);
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    try {
+      await import(pathToFileURL(join(outDir, "app.js")).href);
+      const heading = root.querySelector("h1") as HTMLElement;
+      expect(heading.textContent).toContain("Count: 0");
+      // A marker the runtime never writes: it survives a patch, not a rebuild.
+      heading.dataset.probe = "seeded";
+      const incBtn = [...root.querySelectorAll("button")].find((b) => b.textContent === "+");
+      incBtn?.click();
+      expect(root.textContent).toContain("Count: 1");
+      expect(root.querySelector("h1")).toBe(heading);
+      expect((root.querySelector("h1") as HTMLElement).dataset.probe).toBe("seeded");
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("the built input keeps its element across a bound-value change", {
+    timeout: 30000,
+  }, async () => {
+    // The heading case above proves the patcher registry is wired at all; this
+    // one covers the tile kind where it actually matters, and where a rebuild
+    // is hardest to notice. Focus and caret are NOT asserted deliberately: the
+    // §10.3.9 snapshot layer restores both even when the element was destroyed
+    // and replaced (verified — a patcher-less rebuild still ends with the new
+    // input focused at the same offset), so they cannot distinguish a patch
+    // from a rebuild. Element identity is the only observable that can in a
+    // headless DOM; `<select>` open state and `<video>` playback are the
+    // browser-tier concerns identity protects.
+    build(INPUT_BIND_PATH);
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    try {
+      await import(pathToFileURL(join(outDir, "app.js")).href);
+      const input = root.querySelector("input") as HTMLInputElement;
+      input.dataset.probe = "seeded";
+      input.value = "ada";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      // The heading re-renders from the same slot, so the whole tree diffed.
+      expect(root.textContent).toContain("Hello, ada");
+      expect(root.querySelector("input")).toBe(input);
+      expect((root.querySelector("input") as HTMLElement).dataset.probe).toBe("seeded");
     } finally {
       root.remove();
     }
@@ -529,10 +616,10 @@ test inc-works =
     expect(verify.out).toContain("PASS  inc-works");
   });
 
-  it("reports 'no auto-patch available' for a non-literal mismatch (AC1)", {
+  it("auto-patches a numeric slot mismatch by flipping the reducer operator (issue #156)", {
     timeout: 30000,
   }, () => {
-    const file = join(dir, "no-patch.kumiki");
+    const file = join(dir, "arith-patch.kumiki");
     const source = `slot count : Int = 0
 reducer dec on=ui.click(DecBtn) do= count := count - 1
 tile DecBtn = button(text="-1", onClick=dec)
@@ -547,11 +634,13 @@ test dec-should-add =
         expect = {slots: {count: 1}, effects: []}
 `;
     writeFileSync(file, source);
-    const { out, code } = runCli(["fix", file, "--auto-patch", "dec-should-add", "--apply"]);
-    expect(code).toBe(1);
-    expect(out).toContain("no auto-patch available");
-    // File untouched — no guessing.
-    expect(readFileSync(file, "utf8")).toBe(source);
+    // Pre-#156 this returned `no auto-patch available`; the expanded literal /
+    // arithmetic tier now rewrites the reducer body so the test passes.
+    const { code } = runCli(["fix", file, "--auto-patch", "dec-should-add", "--apply"]);
+    expect(code).toBe(0);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("count := count + 1");
+    expect(after).not.toContain("count := count - 1");
   });
 
   // Regression (PR #18 review, Codex P2): when the failing text comes from the

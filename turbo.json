@@ -9,7 +9,27 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docs/spec/errors.md",
+        "$TURBO_ROOT$/docs/ja/spec/errors.md"
+      ]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "env": ["CI"],
+      "inputs": [
+        "src/**",
+        "tests/**",
+        "playwright.config.ts",
+        "package.json",
+        "../examples/features/**/*.browser.json",
+        "../examples/features/**/*.kumiki",
+        "../examples/apps/**/*.browser.json",
+        "../examples/apps/**/*.kumiki"
+      ],
+      "outputs": ["playwright-report/**", "test-results/**"]
     },
     "lint": {},
     "typecheck": {

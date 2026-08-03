@@ -1,0 +1,53 @@
+# Feature (#190): a `<select>` whose options change is patched in place —
+# the DOM element identity is preserved so browser-internal state
+# (open dropdown, focus, keyboard-nav position) survives a re-render
+# triggered by a reducer while the user is mid-interaction.
+#
+# Setup: `filter` slot flips between "all" and "hot". Options list is a
+# function of `filter`, so toggling the filter mutates `select.options` —
+# the exact prop that pre-#190 caused the tile to be torn down and
+# rebuilt (losing any active dropdown / focus state on the control).
+
+type Filter = All | Hot
+type Item   = Milk | Bread | Eggs | Chili | Ginger
+
+slot filter : Filter = All
+# Pick an item that stays in BOTH the All and Hot filters, so toggling the
+# filter cannot invalidate the current selection — the fixture then measures
+# element identity, not option-set validity.
+slot pick   : Item   = Chili
+
+fn allItems() -> List({label: Text, value: Item})
+   = [{label: "milk",   value: Milk},
+      {label: "bread",  value: Bread},
+      {label: "eggs",   value: Eggs},
+      {label: "chili",  value: Chili},
+      {label: "ginger", value: Ginger}]
+
+fn hotItems() -> List({label: Text, value: Item})
+   = [{label: "chili",  value: Chili},
+      {label: "ginger", value: Ginger}]
+
+fn optionsFor(f: Filter) -> List({label: Text, value: Item})
+   = match f with
+       | All -> allItems()
+       | Hot -> hotItems()
+
+reducer showHot on=ui.click(HotBtn) do= filter := Hot
+reducer showAll on=ui.click(AllBtn) do= filter := All
+
+tile HotBtn  = button(text="hot only")
+tile AllBtn  = button(text="all")
+
+tile Picker  = select(bind=pick, options=optionsFor(filter)) {id: "picker"}
+tile App     = column(
+                 heading("select preserves state (#190)"),
+                 row(AllBtn, HotBtn) {gap: "sm"},
+                 Picker,
+                 text("chosen: " + pick.show))
+               {pad: "lg", gap: "md"}
+
+app SelectPreservesState
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

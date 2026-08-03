@@ -1,0 +1,28 @@
+# Feature (#190): a `<details>` disclosure whose summary / children props
+# change is patched in place. The user opens the disclosure; a reducer
+# then updates the summary text; the panel stays open (native browser
+# state on the DOM element itself, which pre-#190 was torn down alongside
+# the tile).
+
+slot count : Int = 0
+
+reducer bump on=ui.click(BumpBtn) do= count := count + 1
+
+tile BumpBtn = button(text="bump")
+tile Disc
+    = details(summary="clicks: " + count.show,
+              text("panel body — stays visible after the summary label refreshes"))
+      {id: "disc"}
+
+
+tile App
+    = column(
+        heading("details preserves open (#190)"),
+        BumpBtn,
+        Disc)
+      {pad: "lg", gap: "md"}
+
+app DetailsPreservesOpen
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -184,10 +184,417 @@ app App ... theme = themeName    ; ← pass the slot name
 
 ### 10.3.9 Focus Restoration
 
+Since #190 (identity-preserving reconciliation, §10.3.11) the runtime patches every
+same-kind tile in place instead of tearing it down on a data-prop change, so the
+still-mounted `<input>` / `<textarea>` / `<select>` retains browser focus naturally.
+The snapshot/restore layer described below is retained as a **fallback for the
+wholesale-swap paths** — reconcile bailout, panic recovery, and a keyed reorder
+that moves the focused element itself — where element identity is either lost or
+the element is physically moved and blurred by the browser. A focused child that
+a reorder leaves in place does not reach the fallback at all: the keyed pass
+places only the children that have to move (§10.3.10), so the cursor never
+leaves.
+
 It maintains the focus and cursor position of an input/textarea being edited even after re-rendering:
 - Elements with `bind=`: re-identified by the `data-kumiki-bind` attribute (a nested path is a full path string)
 - Elements with `id=`: re-identified by id
 - Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
+- `<select>` is included in the snapshot set so the reorder / bailout paths can restore focus on the picker (its native open-dropdown state is unrecoverable here — that guarantee comes from the patch path in §10.3.11)
+
+### 10.3.10 Stable tile identity
+
+The compiler↔runtime tile-tree contract carries an optional per-tile identity
+field for keyed reconcile (introduced in #187 as the diff kernel, wired end to
+end in #188):
+
+```ts
+type TileNode = (/* … kind variants … */) & { readonly key?: string };
+```
+
+**Contract.**
+
+- The field is **additive and optional**. A tile without `key` is a legal
+  `TileNode`; old compiled output (no keys anywhere) still mounts on a new
+  runtime, and a new compiler's keyed output still mounts on the old runtime
+  (which simply ignores the field).
+- The reconciler uses **all-or-nothing keyed matching per parent**: when every
+  child at a given level carries a `key`, the runtime pairs children across
+  renders by key (survives reorder, insert, and remove without rebuilding the
+  parent's subtree). When any child is missing a `key`, the reconciler falls
+  back to the pre-#188 structural walk (position + `kind` + data-prop
+  equality; length change → rebuild).
+- **The structural walk is all-or-nothing per parent too.** Its two remaining
+  give-up conditions — a hole in the child list, and an old child with no
+  element mapping — are decided for the whole list *before* any of it is
+  applied. So a parent either reconciles every child or rebuilds without
+  having touched one, and never leaves half a pass behind for the rebuild to
+  discard. What this buys is truthful reporting: `binds-updated` (§10.3.11)
+  and the diagnostics (§10.3.12) describe the render that happened, and no
+  `newMap` entry is written for a subtree that was abandoned.
+- **The keyed pass answers the mapping question with a panic, not a
+  diagnostic.** An old child with no element mapping stops that pass too, and
+  the same way for every child in the list: each old child's element is resolved
+  before anything is reconciled, mounted, or removed, and a missing one throws —
+  recorded as a `location: "reconcile"` panic and rebuilt wholesale, which is
+  audible to a host that never opted into `onDiagnostic`. The measured placement
+  check below deliberately steps over an unmapped child rather than declining on
+  it (an unmapped child is a broken invariant, not a placement style), so this
+  panic is the only thing that reports it — which is why it is raised the moment
+  that measurement comes back clean, ahead of the declared-placement check that
+  could otherwise decline first and carry the invariant, unheard, into the
+  structural walk. What a child was about to be — reused or removed — does not
+  decide whether it is heard either.
+- **A child list that is empty on exactly one side of a render is decided
+  before keys are consulted at all.** With nothing on the old side there is no
+  pairing to attempt — every new child is a fresh mount, every old child
+  departs — so keys have nothing to match and the rule above has nothing to
+  say. What is left is *where* the new children go, which only the parent's
+  renderer knows, so the runtime re-enters that renderer for a fresh interior
+  and moves it into the mounted element. The parent keeps its own element (and
+  the browser-owned state on it) and neither `child-count-change` nor
+  `wrapped-children` is reported, for a keyed and an unkeyed list alike. Two
+  consequences worth knowing: a wrapping renderer stays correct here, because
+  the renderer itself did the placing; and the renderer's non-child interior
+  (a `details`' `<summary>`, a surface's content wrapper and title) is rebuilt
+  along with the children.
+  This is the "empty state → first item" transition — an empty todo list, a
+  result set before the first query, an empty cart — and it only reaches this
+  path when the container's children are **only** the loop. A `for` sharing a
+  parent with static siblings never empties that parent's child list.
+- Keyed matching additionally requires that the parent's renderer **place its
+  children directly under its own element**. Matching by key is only half the
+  work: the reconciler then moves survivors, drops departures, and mounts
+  newcomers by addressing the parent element, which it can only do for slots
+  the parent element holds. Two independent checks answer that, because they
+  answer different questions:
+  - **Where the mounted children are** is measured from the DOM. A child
+    mounted below a renderer-owned wrapper puts the pass out of reach; the
+    reconciler declines and reports `wrapped-children` (§10.3.12).
+  - **Where a newcomer would go** is read from the renderer's declared
+    placement, because nothing can measure a slot that does not exist yet.
+    `overlay` places its first child directly and wraps the rest, so a
+    one-layer overlay measures as fully placeable right up until it grows —
+    and the keyed pass would then append the second layer bare. When a keyed
+    list under such a parent gains a member the reconciler declines and
+    reports `unplaceable-insert` (§10.3.12). A same-membership render has
+    nothing to place and still takes the keyed path.
+
+  Of the current built-ins, `overlay` wraps every child after the first in a
+  positioning layer, and `modal` / `drawer` / `popover` wrap all of theirs in a
+  content div. A host renderer opts out the same way by appending children to
+  anything other than the element it returns; the declared set covers built-ins
+  only, so a host renderer is taken at its word and must place its children
+  directly. Put a reorderable or growing keyed list under a plain container
+  (`column` / `row` / `list`), and keep host renderers' children directly under
+  their root element.
+- The diagnostics can both fire for one parent in the same render: a wrapping
+  parent whose keyed child list also changed length reports the placement
+  decline (`wrapped-children` or `unplaceable-insert` — the keys went unused)
+  and then `child-count-change` (the structural walk rebuilt it anyway). They
+  name different facts, and fixing the first is what makes the second stop
+  mattering.
+- **A keyed reorder moves the minimum.** Matching by key says which old element
+  belongs to which new child; it does not by itself say how many of them have to
+  be touched to produce the new sequence. The reconciler leaves the survivors
+  whose old positions already ascend exactly where they are — the longest such
+  run, so the fewest children are left over — and inserts everything else
+  against its successor. Concretely: a render that does not change the order
+  performs **no DOM placement at all**, a single item moving costs **one**, and
+  the worst case (no two children keeping their relative order) costs N−1.
+  This is a correctness guarantee, not only a throughput one. Re-attaching a
+  node blurs it, so a child that is moved for no reason loses focus, the caret,
+  an open `<select>` dropdown and an in-flight IME composition — the state keyed
+  matching exists to keep. A focused child that a reorder leaves alone therefore
+  keeps it natively, without the snapshot/restore fallback of §10.3.9.
+  Every placement is made *before* an existing node: the child that follows it
+  in the new order, or — for the last child, which has no successor — the
+  sibling that follows the whole mounted child list (the end of the parent when
+  there is none). So a renderer that keeps content of its own after its children
+  keeps it there.
+
+**What the compiler emits.**
+
+1. **Author-supplied `{key: <expr>}`** on a tile-call's props block is lifted
+   to the emitted `TileNode`'s top-level `key` field. The value is coerced to
+   a string via `_s.show(...)`. It does **not** also flow into `props.el`.
+2. **Inside `for` iteration**, tile calls that do not declare their own
+   `{key: ...}` receive an implicit key derived from the loop variable —
+   `_s.show(<loopVar>)`. Explicit keys always win. Nested `for` loops
+   overwrite the enclosing implicit key with the inner loop's binding, so a
+   tile call under `for i in inner` gets `_s.show(i)` regardless of any
+   outer `for o in outer`.
+3. **User-tile boundaries** do not propagate the enclosing implicit key into
+   the tile's body — the `_wk` wrap sits on the outer boundary node, and the
+   body composes its own identity if it iterates internally.
+4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
+   flows through the branch that emits the tile.
+
+**Runtime consumption.** The reconciler in `packages/runtime/src/core.ts`
+reads `oldNode.key` and `newNode.key` at the child-list level. `key` is
+included in `TILE_SKIP_TOP` so a key change alone does not trigger
+`replaceWithFreshTile` on the parent — key drives which old child pairs with
+which new child, not whether the tile itself is rebuilt.
+
+**Migration.** Runtime and compiler ship the key contract as a matched pair
+(both in the same minor version bump). Each side degrades gracefully alone,
+but the reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
+focus and caret, and event listeners across insert/remove/reorder) require
+both.
+
+### 10.3.11 Identity-preserving reconciliation (#190)
+
+Keyed diff (§10.3.10) preserves DOM identity for tiles whose data props did
+**not** change. #190 extends the guarantee to tiles whose data props **did**
+change but which the runtime can update in place, so browser-owned state
+(`<select>` open dropdown, `<video>` playback position, `<details>` open,
+`contenteditable` caret and IME composition) survives a re-render mid-
+interaction.
+
+**Contract.** Every tile-renderer module exports two maps: `TileRenderers`
+(create) and `TilePatchers` (update):
+
+```ts
+export type TilePatcher<K> = (
+  el: HTMLElement,
+  oldNode: TileNode & { kind: K },
+  newNode: TileNode & { kind: K },
+  ctx: TileCtx,
+) => void;
+```
+
+When reconcile sees `oldNode.kind === newNode.kind` and any own data prop
+differs, it looks up a patcher for the kind. If one is registered, the mounted
+element is mutated in place and the reconcile then walks the children as
+usual (a container tile may have both attribute and child changes in the same
+render). Without a patcher, reconcile falls back to the pre-#190 subtree
+rebuild — patchers remain **incrementally adoptable**, not an all-or-nothing
+runtime rewrite.
+
+**Handler-slot pattern.** Reused elements must not multiply-register
+listeners (the runtime uses `addEventListener` and holds no listener refs),
+and a listener registered at create time closes over the create-time node.
+For controls whose `bind` / `onChange` / `onClose` / `to` may change between
+renders, each renderer stores the current handlers in a per-element
+`WeakMap<HTMLElement, Handlers>` slot. Native listeners registered by
+`create` dispatch through the slot; `patch` overwrites the slot with the new
+node's handlers. This applies to `input`, `textarea`, `select`, `check`,
+`radio`, `switch`, `slider`, `editable`, `form`, `button`, `link`, `modal`,
+`drawer`, and `popover`. `details` is intentionally excluded: it carries no
+Kumiki-level dynamic handler and browser-native `toggle` semantics do not
+need re-routing. The universal handlers `applyUiEventHandlers` lifts on every
+tile (`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur`) share a single
+`UI_HANDLER_STATE` slot that the reconcile refreshes on every patch, so a
+closure change reaches the next event regardless of tile kind.
+
+**Value-write guards.** Text inputs (`input`, `textarea`, `editable`) skip
+the `.value` / `.textContent` assignment when it already matches
+`newNode.value` / `newNode.text` (so typing does not reset the caret) and
+skip it entirely while an IME composition is in flight (`compositionstart`
+→ `compositionend`) so the browser's JP/CN/KR candidate window is not
+dismissed mid-glyph. Slider skips when `activeElement === el` (mid-drag
+guard). The reducer-driven "clear the field" case is picked up by the
+outer snapshot layer (§10.3.9), which captures selection ranges before the
+patch runs.
+
+**Consequences for `binds-updated` (episode log).** The patch path pushes
+`tileTouchedId(newNode)` onto the reconcile-touched set exactly like a
+subtree rebuild does, so the causal chain "slot `X` changed → tiles/binds
+`A`, `B` patched" continues to land on `signal-update.binds-updated` (#189)
+regardless of whether reconcile ended up rebuilding or patching.
+
+**Only what survived the render is named.** A render that gave up on a parent
+and rebuilt it lists that parent and nothing under it — the walk decides the
+parent's fate before applying any of its children (§10.3.10), so there is no
+partly-applied pass whose identifiers could outlive the work they describe.
+
+### 10.3.12 Reconcile diagnostics
+
+Keyed diff (§10.3.10) and in-place patching (§10.3.11) both **degrade
+silently**: when the reconciler cannot preserve a subtree's identity it
+rebuilds it, or drops to a weaker matching strategy — always correct, never
+throws. An app can therefore be re-mounting its whole tree on every render and
+look perfectly healthy from the outside. `MountOptions.onDiagnostic` opts into
+seeing those decisions.
+
+```ts
+mount(app, root, { onDiagnostic: (d) => console.warn(d) });
+```
+
+**Contract.** Omitting the sink is the default and costs one optional call per
+fallback; nothing is computed and nothing is emitted. There is no build-time
+flag — a production mount is silent because it does not opt in, not because a
+bundler stripped anything.
+
+**Observing never changes what is observed.** A sink that throws is swallowed,
+and so is the scan that feeds it: reading a host tile's fields runs
+`Object.keys`, property getters and `Object.getPrototypeOf` against values the
+host owns, and the equality kernel short-circuits at the first difference, so a
+`Proxy` trap or an accessor may throw where the kernel never reached. All of
+this happens inside the reconcile bailout, so an escaping throw would be
+recorded as a `location: "reconcile"` panic and rebuild the whole tree — the
+exact identity loss this channel reports, caused by the reporting. A tile whose
+scan throws is left undiagnosed and rendered as it would have been without a
+sink; the sink's own failures are the host's to notice.
+
+**Reported fallbacks.**
+
+Every diagnostic names the tile that lost its identity guarantee (`tileKind`,
+the authored `tile` name when there is one, and the same `id` the episode log
+uses). Each reason additionally carries the evidence only it has, so a report is
+actionable without re-deriving it from the source:
+
+| reason | evidence | what was lost |
+|---|---|---|
+| `no-patcher` | — | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
+| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. Never fires when one side of the change is empty — that boundary keeps the parent regardless of keys (§10.3.10). |
+| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. Reported before any sibling is applied (§10.3.10), so the parent's rebuild is the only thing this render did. |
+| `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. Reported before any sibling is applied, same as `child-hole`. |
+| `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly (§10.3.10), so the keyed matcher stood down and the positional walk ran. Rebuilds nothing on its own: what is lost is reorder-stable element identity, not the subtree. |
+| `unplaceable-insert` | `index`, `childKind` | Every child carried a `key` and every mounted one sits directly under the parent — but the new child at `index` is a newcomer under a renderer that does not place every child directly (§10.3.10), so there is no slot the keyed matcher may mount it into. A short list measures as placeable right up until it grows, which is why this is read from the renderer rather than from the DOM. Rebuilds nothing on its own; the positional walk that follows reports `child-count-change` if the length changed. |
+
+Two rebuild paths are deliberately **not** reported. A `kind` change means a
+different thing occupies that position, so there is no identity to preserve.
+And a patcher that declines in place via `PatchRequiresRebuild` (§10.3.11) is a
+normal, expected outcome that the sentinel exists to keep out of the log.
+
+**A rebuilt parent reports for itself alone.** The four reasons that rebuild a
+parent — `no-patcher`, `child-count-change`, `child-hole`, `child-unmapped` —
+are all decided before any of its children are reconciled (§10.3.10), so
+nothing below it is examined and nothing below it is reported: no
+`reconcile-fallback`, no `stale-closure-risk` and no `never-equal-prop` from
+that subtree, on that render. Same rule `binds-updated` follows (§10.3.11) —
+what the render discarded is not described. (`wrapped-children` and
+`unplaceable-insert` rebuild nothing, so the walk that follows them reports
+normally.)
+
+Know the cost. A `no-patcher` is a *configuration* fact — that kind has no
+patcher registered, and will not on the next render either — so a child sitting
+under a parent that rebuilds every render stays invisible for as long as that
+lasts. The parent's own reason is the one to read first: fix the rebuild, and
+the subtree's diagnostics start arriving.
+
+**Stale closures on host tiles.** The prop-equality kernel treats any two
+functions as equal — codegen mints fresh closures every render, and a reused
+built-in keeps working because its handlers dispatch through the per-element
+slots of §10.3.11. A renderer supplied through `MountOptions.tiles` has no such
+slot: if it captured a handler at create time, a props-equal reuse leaves the
+first render's closure firing forever. Reuse decisions on those kinds are
+scanned for a changed function identity and reported as
+`stale-closure-risk`. The scope comes from `MountOptions.hostTileKinds`, which
+the package-entry `mount` derives from the `tiles` override map — including
+overrides of built-in kinds, since replacing a built-in renderer discards the
+handler slots that made reuse safe. A host calling `mountCore` with its own
+renderers passes the set directly.
+
+The scan reads the node's own fields and one level into `props` — the
+convention every built-in renderer follows (`props.onClick`, `props.onChange`).
+A host tile that buries its handlers deeper (`props.handlers.onClick`) is not
+inspected; keep handlers directly under `props` to stay covered.
+
+**Props that can never compare equal.** The other side of the same fork. A tile
+whose data props compare unequal on *every* render, with a patcher registered
+for its kind, is the identity-preserving happy path as far as the walker is
+concerned: the patcher runs, the element survives, nothing degraded — so no
+fallback is reported and the app looks perfectly healthy while re-applying the
+same attributes forever. Reuse decisions are what `stale-closure-risk` reads;
+unequal ones are read for a value that could not have compared equal however
+identical the two renders were, and reported as `never-equal-prop`:
+
+| `cause` | the rule it runs into |
+|---|---|
+| `non-plain-object` | A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or a cross-realm object. Their state lives outside their own enumerable keys, so only `===` can make two of them equal (§10.3.13) — which a value rebuilt each render never is. |
+| `nan` | `NaN`, which is not equal to itself by definition (§10.3.13). |
+
+Same `hostTileKinds` scope and same one-level-into-`props` bound as the
+stale-closure scan, for the same reasons — and neither cause can come out of
+codegen, so a report always names a host-built tree. It fires whether or not a
+patcher is registered: with one it is the only signal that the tile churns,
+without one the rebuild is already reported as `no-patcher` and this names the
+field that reason cannot. Both are emitted, cause before consequence.
+
+A value only reports once both sides are of the same never-equal shape — a
+plain bag that becomes a `Date`, or a number that becomes `NaN`, is an ordinary
+change on the render it happens and is reported on the next one. The same
+instance handed over twice compares equal through `===` and is never reported.
+
+The three diagnostic kinds carry different severity. A `reconcile-fallback`
+costs performance and browser-owned element state, and a `never-equal-prop`
+costs a diff and a patch on every render, but in both the app stays correct; a
+`stale-closure-risk` means the app is running code the author already replaced.
+`kumiki dev` routes the first two to `console.warn` and the last to
+`console.error`.
+
+**Relationship to the episode log.** An episode is the author-facing causal
+record of what the app did, and already reports *that* a subtree was
+re-rendered through `signal-update.binds-updated` (§10.3.11). A diagnostic
+reports *why* the runtime chose to rebuild rather than reuse — framework
+internals, useful when tuning an app or a host integration, noise inside a
+behavioural trace. They are complementary channels, which is why this is not a
+new episode step kind.
+
+**Consumers.** `smoke()` collects them into a non-fatal `SmokeReport.diagnostics`,
+each wrapped with the same phase / trigger a `SmokeIssue` carries so the
+provoking interaction is identifiable (rebuilding more than necessary is not a
+failure; `SmokeOptions.diagnosticsAsIssues` — `kumiki smoke --diagnostics-as-issues`
+— opts into treating it as one). `runScenario` attaches them to the step whose
+action triggered the re-render, and `kumiki run` prints them under that step.
+`kumiki smoke` prints a per-reason summary.
+
+### 10.3.13 Data-prop equality
+
+§10.3.10 and §10.3.11 both turn on "the tile's data props did not change".
+This is the rule that decides it. It is the runtime's single reuse predicate:
+a false positive keeps a stale element mounted with no symptom, a false
+negative rebuilds a subtree that did not change.
+
+**Scope.** The comparison walks a `TileNode`'s own fields *except* `kind`,
+`children`, and `key`. `kind` is the discriminant and is settled before the
+predicate runs (§10.3.12). `children` is the walker's own business — each
+child is reconciled on its own, so a changed grandchild must not rebuild every
+ancestor. `key` is identity metadata consumed by the keyed child matcher
+(§10.3.10); by the time a pair reaches the predicate they have already been
+established as the same instance.
+
+**Values.** Two values are equal when:
+
+- they are the same value (`===`), or
+- both are functions — closure identity is deliberately ignored, since codegen
+  mints fresh handlers every render (see the `stale-closure-risk` diagnostic in
+  §10.3.12 for the hazard this creates for host renderers), or
+- both are arrays of the same length whose elements are pairwise equal, or
+- both are **plain data bags** — prototype `Object.prototype` or `null` — whose
+  union of own keys maps to pairwise-equal values.
+
+Consequences worth stating outright:
+
+- **An absent key and an explicit `undefined` are equal.** `{a: 1}` and
+  `{a: 1, b: undefined}` are the same tile; codegen omits optional fields, and
+  a conditional spread produces either form for the same authored tile.
+- **`null` is not `undefined`, `0` is not `false`, `""` is not `0`.**
+  Comparison is `===`-based, never `==`.
+- **`NaN` is not equal to `NaN`.** A tile carrying one rebuilds on every
+  render. `NaN` in a prop means a computation already failed; rebuilding is the
+  safe side, and the churn is a visible symptom rather than a frozen tile — and
+  on a host tile the `never-equal-prop` diagnostic in §10.3.12 names the field,
+  since with a patcher registered the churn is otherwise invisible.
+- **A non-plain object is never equal to anything but itself.** `Date`, `Map`,
+  `Set`, `RegExp`, DOM nodes, and class instances hold their state outside
+  their own enumerable keys, so key-wise comparison would report a changed
+  value as unchanged. Kumiki codegen emits only plain data, so this is
+  unreachable from a `.kumiki` source; a host renderer handed one gets a
+  rebuild rather than silent reuse. The same instance passed twice still
+  compares equal through `===`. "Plain" is decided by prototype identity, which
+  is realm-local: an object built in another realm (an `<iframe>`, a `vm`
+  context) is treated as exotic and rebuilds — the safe direction, and the
+  reason this is not relaxed into a `toString`-tag check. A host handing one to
+  the same tile every render pays for a diff it can never win; that is what
+  `never-equal-prop` (§10.3.12) reports.
+
+Cycles are outside the contract. Two structurally cyclic but distinct bags
+recurse until the stack runs out; the throw lands in the reconcile bailout,
+which rebuilds the tree wholesale and records a `location: "reconcile"` panic.
+Unsupported, but contained and visible — codegen cannot produce a cycle, and a
+visited set would cost every render to defend against one.
 
 ---
 
@@ -261,11 +668,28 @@ The causal sequence derived from a single trigger is recorded as one **episode**
     {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"], "ts": ...},
     {"kind": "effect-start", "name": "persist", "args": {...}, "ts": ...},
     {"kind": "effect-end", "name": "persist", "result": "ok", "value": "()", "ts": ...},
-    {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...}
+    {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...},
+    {
+      "kind": "panic",
+      "message": "boom",
+      "location": "reducer \"addTodo\"",
+      "stack": "Error: boom\n    at ...",
+      "cause": [{"message": "root", "stack": "..."}],
+      "category": "reducer",
+      "ts": ...
+    }
   ],
   "status": "completed" | "panic" | "cancelled" | "ongoing"
 }
 ```
+
+A `panic` step additionally carries:
+
+- `stack`: the `Error.stack` of the caught throw, when available.
+- `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
+- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the throw was caught. Emitted by the reducer / tile-render / hydrate catch sites today; `effect` / `capability` / `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw currently surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step.
+
+`stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. `stack` / `cause` are dev-tooling — the runtime never splats them into user reducer `$event` payloads; only `message`, `location`, and `category` reach `app.error` / `route.error(<pattern>)`.
 
 Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see §10.6.2). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
@@ -317,6 +741,7 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 - An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
 - `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
 - Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
+- A `panic` step (§10.5.1) is rendered as a multi-line block: header `[panic:<category>] <message>  <location>` followed by indented `.stack` lines and, for each `cause` link, a `Caused by: <message>` line with the link's own indented stack. The replay executor derives `category` for every observed panic (an older episode log missing the field still gets a category assigned when its reducer re-throws during replay), so the multi-line form is what the CLI normally shows. The formatter also accepts a minimal `{kind, message}` panic event and prints it as the single-line `[panic] <message>` fallback — this only surfaces if a caller feeds `formatEvent` a hand-authored event outside the normal replay pipeline.
 - Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
 ---

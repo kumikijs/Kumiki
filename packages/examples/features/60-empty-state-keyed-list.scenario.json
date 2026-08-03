@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "the app opens on the empty state — the results container is mounted but holds nothing",
+      "expect": {
+        "noErrors": true,
+        "state": { "results": [] },
+        "domIncludes": ["empty state to first result", "results: 0"]
+      }
+    },
+    {
+      "label": "first result arrives: the child list goes 0 -> 3 and the container keeps its element",
+      "do": { "clickText": "search" },
+      "expect": {
+        "noErrors": true,
+        "state": { "results": ["alpha", "beta", "gamma"] },
+        "domIncludes": ["results: 3", "alpha", "beta", "gamma"]
+      }
+    },
+    {
+      "label": "back to empty: 3 -> 0 drops the rows without rebuilding the container",
+      "do": { "clickText": "clear" },
+      "expect": {
+        "noErrors": true,
+        "state": { "results": [], "query": "" },
+        "domIncludes": ["results: 0"]
+      }
+    },
+    {
+      "label": "refilling works the same way the second time — the empty boundary is not a one-shot",
+      "do": { "clickText": "search" },
+      "expect": {
+        "noErrors": true,
+        "state": { "results": ["alpha", "beta", "gamma"] },
+        "domIncludes": ["results: 3", "alpha"]
+      }
+    },
+    {
+      "label": "the list that never empties: a keyed removal, not an empty-boundary transition",
+      "do": { "clickText": "drop first" },
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": ["beta", "gamma"] },
+        "domIncludes": ["a list that never empties"]
+      }
+    }
+  ]
+}
