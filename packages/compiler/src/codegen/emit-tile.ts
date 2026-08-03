@@ -1,6 +1,6 @@
 import type { Expr, TileDef, TileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
-import { addBind, type EvalCtx, type GenCtx, jsName, makeEvalCtx } from "./context.ts";
+import { addBind, type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, tupleArm } from "./expr.ts";
 import { keyFor, propsFor } from "./selector.ts";
 
@@ -26,9 +26,9 @@ export function tileExprJs(
       const iter = jsOfExpr(t.iter, ctx);
       const inner = makeEvalCtx(gen, ctx.localBinds);
       inner.localBinds.add(t.bind);
-      const impl = `_s.show(${jsName(t.bind)})`;
+      const impl = `_s.show(${jsBinding(t.bind)})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${jsName(t.bind)}) => (${tileExprJs(t.body, gen, inner, enclosingTile, impl)}))`;
+      return `((${iter}) || []).map((${jsBinding(t.bind)}) => (${tileExprJs(t.body, gen, inner, enclosingTile, impl)}))`;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
@@ -44,7 +44,7 @@ export function tileExprJs(
             for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
             const binds = arm.pattern.binds
               .map((b, i) =>
-                b !== "_" ? `const ${jsName(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
+                b !== "_" ? `const ${jsBinding(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
               )
               .join(" ");
             return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTile, implicitKeyExpr)}; }`;
@@ -52,7 +52,7 @@ export function tileExprJs(
           if (arm.pattern.kind === "PBind") {
             const inner = makeEvalCtx(gen, ctx.localBinds);
             inner.localBinds.add(arm.pattern.name);
-            return `if (true) { const ${jsName(arm.pattern.name)} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTile, implicitKeyExpr)}; }`;
+            return `if (true) { const ${jsBinding(arm.pattern.name)} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTile, implicitKeyExpr)}; }`;
           }
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile, implicitKeyExpr)}; }`;
@@ -135,7 +135,7 @@ function tileCallJs(
       if (!fb) return body;
       const fbCtx = makeEvalCtx(gen, new Set(["$1"]));
       const fbBody = tileExprJs(fb.body, gen, fbCtx, fb.name);
-      return `((() => { try { return ${body}; } catch (_err) { const ${jsName("$1")} = { message: String(_err && _err.message || _err), location: ${JSON.stringify(def.name)} }; return ${fbBody}; } })())`;
+      return `((() => { try { return ${body}; } catch (_err) { const ${jsBinding("$1")} = { message: String(_err && _err.message || _err), location: ${JSON.stringify(def.name)} }; return ${fbBody}; } })())`;
     };
     // Each user-tile call site wraps its rendered output with `_named(…, "X")`
     // so the runtime can diff `tile.mount(X)` / `tile.unmount(X)` against the
@@ -159,7 +159,7 @@ function tileCallJs(
       const bodyJs = tileExprJs(def.body, gen, addBind(inner, "$1"), def.name);
       return wrap(
         wrapBoundary(
-          `((_arg, _propsOuter) => { const ${jsName("$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
+          `((_arg, _propsOuter) => { const ${jsBinding("$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
         ),
       );
     }

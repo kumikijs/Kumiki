@@ -27,7 +27,7 @@ Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. The 
 | Band | Domain |
 |---|---|
 | `E00xx` | App structure (such as mandatory routing requirements) |
-| `E01xx` | Name resolution (undefined references) |
+| `E01xx` | Name resolution (undefined references, reserved names) |
 | `E02xx` | Type mismatch |
 | `E03xx` | Capabilities and purity |
 | `E04xx` | Motion |
@@ -195,6 +195,14 @@ A tile declares `sub-routes` but its parent route in `app.routes` is not a wildc
 > `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
 
 **Fix**: Change the parent route's pattern to end with `/*` (e.g. `/settings` → `/settings/*`), or remove the `sub-routes` block.
+
+### E0115 `reserved-slot-name`
+
+A `slot` is declared with a name the compiler resolves before it consults the slot table, so nothing can ever read it. `route` is the router-maintained route slot ([Routing](./routing.md#_3-2-the-route-slot)); `now` lowers to the standard-library clock ([Standard Library](./stdlib.md)). Without this diagnostic the declaration compiles and the slot silently renders the reserved value instead of its own.
+
+> `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
+
+**Fix**: Rename the slot.
 
 ## E02xx — Types
 
