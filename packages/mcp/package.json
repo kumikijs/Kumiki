@@ -1,17 +1,17 @@
 {
   "name": "@kumikijs/mcp",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "type": "module",
   "description": "Kumiki MCP server — exposes the compiler (check/build/list/view/add/replace/remove/fix) and spec search as MCP tools.",
   "license": "Apache-2.0",
   "author": "kage1020",
-  "homepage": "https://github.com/kage1020/Kumiki/tree/main/packages/mcp#readme",
+  "homepage": "https://github.com/kumikijs/Kumiki/tree/main/packages/mcp#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kage1020/Kumiki.git",
+    "url": "git+https://github.com/kumikijs/Kumiki.git",
     "directory": "packages/mcp"
   },
-  "bugs": "https://github.com/kage1020/Kumiki/issues",
+  "bugs": "https://github.com/kumikijs/Kumiki/issues",
   "keywords": [
     "kumiki",
     "ai-first",

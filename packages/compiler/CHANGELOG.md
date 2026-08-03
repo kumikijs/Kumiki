@@ -1,5 +1,194 @@
 # @kumikijs/compiler
 
+## 0.12.0
+
+### Minor Changes
+
+- 46bee64: feat(cli,compiler): E0106 and E0209 are auto-patchable again, each from its own
+  scoped candidate set (#176).
+
+  Both were pulled out of `kumiki fix --auto-patch` when it turned out their
+  did-you-mean fell back to the top-level definition list — a scope that has
+  nothing to do with either diagnostic, and that could rewrite `stop-timer("x")`
+  to an unrelated identifier. They return with candidates drawn from the right
+  namespace instead:
+
+  - **compiler** exports two pure AST walkers, `collectTimerNames` and
+    `variantTagsOf`. Both read a `Program` without re-typechecking it.
+  - **cli** generalises `suggestName` to any candidate iterable, wires E0106 to
+    the timer names and E0209 to the scrutinee union's variant tags — `Option` and
+    `Result` built-ins plus user `TypeDef` bodies, resolved through alias, nominal
+    and refinement wrappers.
+
+  The auto-patch coverage table flips both back to `yes`, and the scope-safety
+  invariant (a top-level name is never picked when only a timer or variant scope
+  is valid) is pinned by tests rather than by the doc comment alone.
+
+- 5fb6fb6: feat(runtime,compiler): identity-preserving reconciliation for changed-but-reused tiles (#190).
+
+  Follow-up to #187 keyed diff and #188 stable tile identity. Extends the reconcile
+  kernel so a same-kind tile whose data props diverge is mutated in place instead
+  of torn down + rebuilt — browser-owned state (`<select>` open dropdown / value,
+  `<video>` playback position, `<details>` open, contenteditable caret / IME
+  composition) now survives a reducer-triggered re-render mid-interaction.
+
+  - **Runtime** — every `tiles-*.ts` module exports a companion `{X}Patchers:
+TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
+    data-prop divergences through the per-kind patcher; kinds without a patcher
+    fall back to the pre-#190 subtree rebuild. A per-element `WeakMap` handler
+    slot on input / textarea / select / check / radio / switch / slider /
+    editable / form / button / link / modal / drawer / popover reroutes
+    `bind` / `onChange` / `onClose` / `to` closure changes without add/remove-
+    listener churn. The `<select>` patcher does a keyed `<option>` diff by
+    serialized value key so the dropdown / selection state stays intact when
+    the options list shifts. Focus / caret snapshot layer is retained as the
+    fallback for wholesale-swap paths (reconcile bailout, panic recovery,
+    keyed reorder that moves a focused element between DOM positions), with
+    `<select>` added to its tag-name filter.
+
+  - **Compiler + runtime** — two new built-in tile kinds:
+
+    - `details(summary=..., open=...)` — native `<details>` disclosure.
+    - `editable(bind=..., text=...)` — `<div contenteditable="true">` with
+      plain-text `textContent` write-back on `input`. The patcher skips text
+      overwrites when the DOM already matches the target text (the common
+      case during typing, where the bind loop keeps slot and DOM in sync)
+      and skips them entirely while an IME composition is in flight so the
+      candidate window is not dismissed mid-glyph.
+    - `input`, `textarea`, and `editable` all install
+      `compositionstart` / `compositionend` listeners at create time so
+      JP/CN/KR IME users are not disrupted by a re-render mid-composition.
+
+  - **Spec** — `docs/spec/runtime.md` gains §10.3.11 documenting the patch
+    contract, handler-slot pattern, value-write guards, and the demoted role
+    of §10.3.9's snapshot layer. `docs/spec/stdlib.md` §2.3 catalog lists
+    `details` and `editable`.
+
+  - **Verification** — new e2e fixtures under
+    `packages/examples/features/{54,55,56,57}-*.browser.json` prove all four
+    acceptance elements (`<select>` / `<video>` / `<details>` /
+    `contenteditable`) survive a re-render mid-interaction under Chromium.
+    `packages/runtime/test/reconcile.test.ts` adds per-kind
+    identity-preserving unit coverage.
+
+  - **Benchmarks** — `packages/benchmarks/reactivity/reactivity-cost.mjs`
+    now reports `nodesCreatedPerUpdate: 0` for a leaf-only text change
+    across every tile-count sample (down from the #187 baseline of 1 element
+    per update): the mounted `<h1>` gets `.textContent = ...` in place.
+
+  Compiler + runtime ship together — the new `details` / `editable` tiles
+  require the matched runtime, and the runtime's `TilePatchers` registry is
+  consumed by any built bundle.
+
+- 3d89383: feat(runtime,compiler): replace the `__kumikiApp` global with a WeakMap mount-root registry for safe multi-mount.
+
+  Several Kumiki apps on one page (multiple Web Components, micro-frontends, Storybook previews) previously shared one `window.__kumikiApp` reference — the last mount captured every other app's bind write-back, link navigation, icon lookup, and generated event dispatch (last-write-wins).
+
+  **BREAKING (runtime)**
+
+  - `mount` / `mountCore` no longer write `window.__kumikiApp`. App resolution is keyed off the mount target: each mount stamps its target element with `data-kumiki-root` and registers in a WeakMap; the new public `resolveApp(el)` walks up to the nearest mount root (hopping shadow boundaries) to find the owning app. Compiled bundles still assign `globalThis.__kumikiApp = App` at module evaluation — that assignment is now a tooling-only state oracle (smoke / scenario / e2e / benchmarks) and nothing in the runtime reads it.
+  - `currentTheme()` returns the theme of the app whose render/mount pass is currently running, and `null` outside one (previously: the most-recently-mounted app's theme, at any time). Hosts that called `currentTheme()` outside a render pass must resolve the app themselves (e.g. via `resolveApp`).
+  - Events fired on elements detached from any mount (e.g. a node replaced by a re-render) are now a no-op instead of being delivered to the most-recently-mounted app. The runtime emits a once-per-element `console.warn` so the drop is observable (the smoke tier watches console output); a `link` click outside any mount degrades to the browser's native `href` navigation instead of dying silently.
+
+  **BREAKING (compiler)**
+
+  - Generated event handlers call `App._dispatch(...)` (the enclosing `createApp()` instance) instead of `globalThis.__kumikiApp._dispatch(...)`. Public API is unchanged; tools that string-match the generated JS must follow.
+
+  **New**
+
+  - runtime: `resolveApp(el)` public export, returning the new `MountedApp` type (an `AppShape` whose imperative seams — `_dispatch` / `_setSlot` / `_navigate` / `_prefetch` — are attached by the mount).
+  - `defineKumikiElement` instances are now DOM-event-safe under multi-mount for both `shadow: true` and `shadow: false`.
+  - e2e: `runMultiOnPage(page, sources, scenario)` co-mounts several compiled apps on one page with a per-app-index state oracle (`"0.count"`).
+
+  Out of scope: theme `<style>` node contention when several _themed_ apps share one style root (document head) — shadow DOM remains the isolation answer there.
+
+- 46bee64: fix(compiler): `sub-routes-without-wildcard-parent` reports **E0114**, not E0110
+  (#186).
+
+  E0110 named two unrelated diagnostics — `unknown-token-group` in the style band
+  and `sub-routes-without-wildcard-parent` in the routing band. One code standing
+  for two kinds makes a search ambiguous and gives auto-patch two incompatible
+  repairs to choose between. The routing diagnostic moves to the next free code in
+  its own band (E0111–E0113), so every code names one kind again and the
+  "kept as-is" caveat leaves the error index.
+
+  Anything matching on the literal `E0110` for this case needs updating; the style
+  diagnostic keeps the code.
+
+- 49cafdb: feat(reactivity): stable tile identity — `TileNode.key` end-to-end (#188).
+
+  Finishes the coordinated release started in #187. `TileNode` gains an optional `key?: string`, the compiler emits it, and the reconciler consumes it — so keyed children survive insert/remove/reorder without rebuilding the parent subtree, and `<select>` value, `<input>` focus and caret, and event listeners are preserved natively across those mutations.
+
+  - **runtime** (`packages/runtime/src/core.ts`): `TileNode` type extended additively via intersection with `{ readonly key?: string }`. `TILE_SKIP_TOP` now includes `"key"` so a key change alone does not trigger `replaceWithFreshTile`. `reconcileNode` gains an all-or-nothing keyed child-list path: when every child on both sides carries a key, `reconcileKeyedChildren` matches by key, recurses on paired children, mounts fresh children for new keys, drops the unmatched old children from the DOM, and reorders in place via `appendChild` moves. When any child is missing a key, the pre-#188 structural walk (position + `kind` + data-prop equality, rebuild-on-length-change) is preserved verbatim.
+  - **compiler** (`packages/compiler/src/codegen/`): `selector.keyFor` extracts an author-supplied `{key: <expr>}` from a tile call's props block (kept out of both `props.el` and top-level props). `emit-tile.tileExprJs` threads an `implicitKeyExpr` through `TileFor` / `TileWhen` / `TileIf` / `TileMatch`; `TileFor` sets it to `_s.show(<loopVar>)`, and user-tile boundaries reset it. `tileCallJs` wraps every emitted node with a new `_wk(node, key)` runtime helper when either an explicit or implicit key is available. Nested `for` correctly rebinds to the inner loop variable; non-iterated tiles emit no wrap.
+  - **spec**: new §10.3.10 in `docs/spec/runtime.md` (and JA mirror) documents the additive `TileNode.key` field, the all-or-nothing per-parent matching rule, compiler-emission rules, and the matched-pair migration story.
+
+  Old bundles (no keys) still mount cleanly on the new runtime — they just fall back to the structural walk. New compiler output still mounts on an old runtime — the field is ignored. Both packages must be upgraded together to get the reorder-stable-reuse guarantee.
+
+### Patch Changes
+
+- 687ae40: feat(runtime): dev-mode observability for the reconcile diff, and a fix for the
+  patcher registry that never reached built apps (#206).
+
+  **Fix, and the reason the rest of this exists.** The per-app DCE path in
+  codegen assembled the tile renderer registry (`_tiles`) but never the companion
+  patcher registry, so every `kumiki build` artifact mounted with
+  `tilePatchers` defaulting to `{}`. With no patcher for a kind the reconcile
+  rebuilds the whole subtree on any data-prop change, which discards exactly the
+  browser-owned state the in-place patch exists to keep: input focus and caret,
+  `<select>` open dropdown, `<video>` playback position, `<details>` open,
+  contenteditable caret. Nothing caught it because the verified corpus and the
+  reconcile suite all mount through the monolith entry, which merges the full
+  patcher set itself. The guard now drives a real build artifact and asserts
+  element identity survives a data change.
+
+  **`MountOptions.onDiagnostic`** opts into seeing the reconcile's
+  identity-losing decisions. Same shape as `episodeLogger`: absent by default, so
+  a production mount pays one optional call per fallback and never runs the
+  stale-closure scan. There is no build-time flag — a production mount is silent
+  because it did not opt in.
+
+  - Reported: `no-patcher`, `child-count-change` (with the old/new counts),
+    `child-hole` (with the index), `child-unmapped` (with the index and the
+    child's kind). Each also names the tile — kind, authored `tile` name, and
+    the same `id` the episode log uses.
+  - Deliberately not reported: a `kind` change (a different thing occupies that
+    position, so there is no identity to preserve) and a patcher declining via
+    `PatchRequiresRebuild` (a normal outcome that sentinel exists to keep out of
+    the log).
+  - `stale-closure-risk` fires on the _reuse_ decision for host-registered tile
+    kinds, where the prop-equality kernel's "any two functions are equal" rule
+    can leave a captured handler firing forever. Built-ins route handlers through
+    per-element slots and are exempt. A host sink that throws is swallowed: a
+    diagnostic must never be able to change the render it observes.
+
+  **Consumers.** `SmokeReport.diagnostics` (new, non-fatal — each entry carries
+  the phase and trigger that provoked it) plus `SmokeOptions.diagnosticsAsIssues`
+  and `kumiki smoke --diagnostics-as-issues` for the strict reading.
+  `StepResult.diagnostics` (new) attributes churn to the scenario step that
+  caused it, and `kumiki run` prints it under that step. `kumiki dev` warns on
+  fallbacks and errors on stale closures — they are different severities.
+
+  **Spec** — `docs/spec/runtime.md` §10.3.12 with a JA mirror, and
+  `packages/examples/features/58-unkeyed-conditional-rebuild.kumiki` showing the
+  unkeyed shape that pays for a rebuild next to the keyed one that does not.
+
+- Updated dependencies [5fb6fb6]
+- Updated dependencies [353cd5c]
+- Updated dependencies [46bee64]
+- Updated dependencies [027a8af]
+- Updated dependencies [3d89383]
+- Updated dependencies [cad3f0c]
+- Updated dependencies [46bee64]
+- Updated dependencies [4a58f8f]
+- Updated dependencies [32dd683]
+- Updated dependencies [687ae40]
+- Updated dependencies [92ca76d]
+- Updated dependencies [6f3f3e3]
+- Updated dependencies [9ae4327]
+- Updated dependencies [49cafdb]
+  - @kumikijs/runtime@0.12.0
+
 ## 0.11.0
 
 ### Minor Changes

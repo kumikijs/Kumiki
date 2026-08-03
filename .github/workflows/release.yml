@@ -34,10 +34,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-
 
-      # Trusted publishing (OIDC) needs npm CLI >= 11.5.1; Node 24 ships an
-      # older 11.x, so pin to latest to be safe. No NPM_TOKEN — the id-token
-      # below authenticates the publish and signs provenance automatically.
-      - run: npm install -g npm@latest
+      # Trusted publishing (OIDC) needs npm CLI >= 11.5.1 and Node 24 ships an
+      # older 11.x, so npm is upgraded here — but held on the 11 line, not
+      # `@latest`. `changeset publish` detects the pnpm workspace and runs
+      # `pnpm publish --no-git-checks`, and pnpm 10 shells out to npm, passing
+      # `--git-checks` down with it. npm 11 answers that with a warning ("this
+      # will stop working in the next major version of npm"); npm 12 made good
+      # on it, and `EUNKNOWNCONFIG Unknown cli flag: --git-checks` failed every
+      # package in the v0.12 publish. pnpm 11 publishes natively without
+      # shelling out to npm at all, which retires this pin — but only once its
+      # native path is confirmed to do OIDC trusted publishing.
+      #
+      # No NPM_TOKEN — the id-token permission above authenticates the publish
+      # and signs provenance automatically.
+      - run: npm install -g npm@11
 
       - run: pnpm install --frozen-lockfile
 
