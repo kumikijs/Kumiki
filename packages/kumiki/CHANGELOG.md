@@ -1,5 +1,22 @@
 # kumiki
 
+## 0.3.10
+
+### Patch Changes
+
+- Updated dependencies [35df48f]
+- Updated dependencies [46bee64]
+- Updated dependencies [46bee64]
+- Updated dependencies [75a809b]
+- Updated dependencies [46bee64]
+- Updated dependencies [46bee64]
+- Updated dependencies [88bd531]
+- Updated dependencies [fb02913]
+- Updated dependencies [cad3f0c]
+- Updated dependencies [46bee64]
+- Updated dependencies [687ae40]
+  - @kumikijs/cli@0.7.0
+
 ## 0.3.9
 
 ### Patch Changes

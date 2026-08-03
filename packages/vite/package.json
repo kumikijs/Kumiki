@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/vite",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "description": "Vite plugin for Kumiki — import .kumiki files as modules in any Vite/Next project.",
   "license": "Apache-2.0",
