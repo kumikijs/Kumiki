@@ -781,4 +781,4 @@ app Counter
     init   = []
 ```
 
-→ [Standard Library](./stdlib.md), [Routing](./routing.md), [apps/01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
+→ [Standard Library](./stdlib.md), [Routing](./routing.md), [apps/01-counter](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)

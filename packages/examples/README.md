@@ -4,7 +4,7 @@ English · [日本語](./README.ja.md)
 
 This directory is the set of working examples for Kumiki. As an operating policy, every time a question, issue, or bug report comes in, an example is added here, keeping the state where "looking at the repository resolves your question".
 
-All examples have parsing, type checking, and build verified in CI (→ [Tests](https://github.com/kage1020/Kumiki/tree/main/tests)). Broken examples are not merged.
+All examples have parsing, type checking, and build verified in CI (→ [Tests](https://github.com/kumikijs/Kumiki/tree/main/tests)). Broken examples are not merged.
 
 ## Structure
 

@@ -2,7 +2,7 @@
 
 ここは Kumiki 言語とランタイムの**正規（normative）仕様**である。実装（`packages/`）と本仕様が食い違った場合、原則として本仕様を正とし、どちらを直すかを設計判断として PR に記録する。
 
-チュートリアルや how-to は仕様ではなく [Kumiki ガイド](../guide/) に置く。動作する実例は [Kumiki Examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples) にある。
+チュートリアルや how-to は仕様ではなく [Kumiki ガイド](../guide/) に置く。動作する実例は [Kumiki Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) にある。
 
 ## 目次
 
@@ -96,7 +96,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 
 ## examples 索引
 
-[`packages/examples/features/`](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features) の各ファイルは、マトリクスの 1 セル（または近接する数セル）を実演する。「層」はその例の中心となる定義、「仕様」は実演対象のセクション。
+[`packages/examples/features/`](https://github.com/kumikijs/Kumiki/tree/main/packages/examples/features) の各ファイルは、マトリクスの 1 セル（または近接する数セル）を実演する。「層」はその例の中心となる定義、「仕様」は実演対象のセクション。
 
 <!-- examples:start -->
 | Example | 層 | 機能 | 仕様 |

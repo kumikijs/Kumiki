@@ -4,7 +4,7 @@
 
 このディレクトリは Kumiki の実例集である。運用方針として、質問・issue・バグ報告があるたびにここへ例を追加し、「リポジトリを見れば疑問が解決する」状態を維持する。
 
-すべての例は CI でパース・型検査・ビルドが検証される（→ [Tests](https://github.com/kage1020/Kumiki/tree/main/tests)）。壊れた例はマージされない。
+すべての例は CI でパース・型検査・ビルドが検証される（→ [Tests](https://github.com/kumikijs/Kumiki/tree/main/tests)）。壊れた例はマージされない。
 
 ## 構成
 

@@ -28,7 +28,7 @@ For programmatic use, install the scoped packages directly:
 - [`@kumikijs/cli`](https://www.npmjs.com/package/@kumikijs/cli) — the CLI as a library
 - [`@kumikijs/mcp`](https://www.npmjs.com/package/@kumikijs/mcp) — MCP server
 
-See <https://github.com/kage1020/Kumiki>.
+See <https://github.com/kumikijs/Kumiki>.
 
 ## License
 

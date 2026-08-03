@@ -455,7 +455,7 @@ A project can extend the accepted set with a **`kumiki.caps.json`** manifest pla
 
 Each entry is a capability name in `group.action` form (lowercase, dot-separated) — either a bare string or an object with a `description`. A registered name is then accepted in `app.caps`, and an effect bound to it (`effect track cap=telemetry.track …`) becomes emittable and is dispatched at the capability boundary — and is mockable in scenarios exactly like a standard effect. A name already in the standard set must not be re-declared.
 
-This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [27-custom-capability](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
+This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
 
 #### Supplying the implementation (host capability providers)
 

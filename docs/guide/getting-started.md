@@ -26,7 +26,7 @@ app Counter
     init   = []
 ```
 
-That is the whole mental model. The full example is [app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki), and the seven layers are covered in [Thinking in Kumiki](./thinking-in-kumiki.md).
+That is the whole mental model. The full example is [app.kumiki](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki), and the seven layers are covered in [Thinking in Kumiki](./thinking-in-kumiki.md).
 
 ## Set up locally
 
@@ -41,7 +41,7 @@ npx @kumikijs/cli --help
 If you want to explore the source — examples, benchmarks, and the playground — clone the repository instead and use the workspace `kumiki` script:
 
 ```sh
-git clone https://github.com/kage1020/Kumiki.git
+git clone https://github.com/kumikijs/Kumiki.git
 cd Kumiki
 pnpm install        # links the workspace packages — required before any command
 pnpm build          # build all packages
@@ -90,11 +90,11 @@ If a command itself errors out:
 
 ## Editor / AI integration (MCP)
 
-`@kumikijs/mcp` exposes check, build, edit, and spec-search as MCP tools, so an AI agent can drive Kumiki end to end. For an example client configuration, see [README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md).
+`@kumikijs/mcp` exposes check, build, edit, and spec-search as MCP tools, so an AI agent can drive Kumiki end to end. For an example client configuration, see [README.md](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md).
 
 ## Next
 
 - [Your First App](./your-first-app.md) — write a Counter from scratch, one layer at a time.
 - [Thinking in Kumiki](./thinking-in-kumiki.md) — the 7 layers and how they differ from React.
-- [Examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples) — minimal per-feature samples and complete apps.
+- [Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) — minimal per-feature samples and complete apps.
 - [Playground](./playground.md) — keep experimenting in the browser.

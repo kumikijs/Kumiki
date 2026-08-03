@@ -35,7 +35,7 @@ features:
 
 ## Same UI, different philosophy
 
-The same app in two worlds: [fetch example](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
+The same app in two worlds: [fetch example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
 
 <div class="home-compare">
 <div class="home-compare-col">

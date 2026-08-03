@@ -10,4 +10,4 @@ While the specification ([../spec/](../spec/)) defines "what is correct," this g
 6. [Benchmarks](./benchmarks.md) — Measured size comparison and learning cost
 7. [Playground](./playground.md) — Edit → compile → preview in the browser
 
-Read alongside the working examples in [../examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples).
+Read alongside the working examples in [../examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples).
