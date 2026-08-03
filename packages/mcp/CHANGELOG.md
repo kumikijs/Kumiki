@@ -1,5 +1,63 @@
 # @kumikijs/mcp
 
+## 0.4.0
+
+### Minor Changes
+
+- 46bee64: feat(cli,mcp): `kumiki fix` says why it produced no patch, instead of collapsing
+  20+ distinct dead ends into one message (#177).
+
+  `planTestPatch`'s third tier and `planFixes` between them had over twenty silent
+  `return null` / `continue` branches, all of which surfaced as
+  `(no auto-patch available)`. An AI iteration loop could not tell "no repair
+  exists for this" from "the compiler's message format moved and the extractor
+  stopped matching" — so a change to the quoted-name shape would have disabled
+  every auto-patch with no signal at all.
+
+  `planFixesExplained` / `planTestPatchExplained` return a stable kebab-case reason
+  per skip. It reaches `FixFromTestOutcome`'s `no-patch` result, is printed by the
+  CLI, and is exposed to the MCP bridge, with the whole chain available under
+  `KUMIKI_DEBUG=fix`. Message-format drift now reads as an anomaly in the reason
+  distribution rather than as silence. `planFixes` and `planTestPatch` remain as
+  wrappers, so no existing caller changes.
+
+- fb02913: feat(mcp): add apply / auto-patch / test / episode bridges to close the AI fix loop (#155).
+
+  - mcp: `kumiki_fix` gains `apply` / `only` / `capabilities` options. With `apply: true`, patches are written to disk and the tool returns `{ applied, before, after, remaining }` (plus `parseError` when the composed patches broke syntax). Default remains dry-run so existing agents keep their safe default.
+  - mcp: new `kumiki_auto_patch` tool wraps `kumiki fix --auto-patch <test-name>`. Returns a structured `FixFromTestOutcome` (`status` in `{already-pass | proposed | applied | compile-proposed | compile-remaining | no-patch | not-found}`). On `apply: true` runs, the `regressed` field is always populated so regression detection is baked into the tool output.
+  - mcp: new `kumiki_test` tool wraps `kumiki test`, returning `{ total, passed, failed, results }` with optional `filter` (name or `prefix*`).
+  - mcp: new `kumiki_episode_list` / `kumiki_episode_tail` tools read `<file>.kumiki-episodes.jsonl` sidecars. `list` returns compact summaries (`id`, `trigger.kind`, `trigger.target`, `status`, `steps`), newest first; `tail` returns full episode JSON, newest first.
+  - mcp: `kumiki_check` gains `strictA11y` / `strictIcons` / `strictSelectorId` toggles (the same set the CLI's `--strict-*` flags surface). With `path` + `strictIcons`, `@kumikijs/icons` is resolved to widen the icon-name domain.
+  - mcp: `kumiki_run_scenario` description updated to name the loop-closing tools (`kumiki_auto_patch` and `kumiki_fix` with `apply: true`), so the generate → run → observe → **fix** loop is fully documented at the tool surface.
+  - cli: `fix.ts` and `smoke.ts` split into pure computation (`planFix` / `applyFixPlan` / `runFixFromTest` / `runTests`) and CLI printers (`fixCmd` / `fixFromTest` / `testCmd`). MCP handlers reuse the pure variants so stdio protocol is never polluted by CLI stdout. Existing CLI behavior is unchanged.
+
+### Patch Changes
+
+- 75a809b: fix(cli, mcp): escape-normalized partial-string repair + structured `writeError` surfacing.
+
+  Robustness follow-ups from the prior review round.
+
+  - **Escape normalization.** `planPartialStringPatchExplained` compared decoded `TestResult.leaf` values (`\n` as a real newline, `\"` as a quote, …) against raw source-literal bodies (`\n` as two chars). Any Kumiki source literal spelling an escape — `\n \t \r \" \\` — could either silently bail with `no-string-literal-contains-mida` or, worse, splice the divergent middle into the raw body and re-encode, corrupting untouched escapes (e.g. an existing `\n` doubled to `\\n`). The tier now decodes each literal body via a private `decodeKumikiStringBody` helper (lockstep with the lexer's escape set) and does its `midA` comparison, splice, and `kumikiStringLit` re-encode entirely in decoded space, so escapes round-trip canonically.
+  - **I/O error surface.** The three `writeFileSync` sites in `applyFixPlan` / `runFixFromTest` used to leak EACCES / ENOSPC / EBUSY as raw stacks — asymmetric with the same file's `parseError` / `regressionBlocked` / `testRunError` structured returns. Every write now goes through a new `atomicWriteFileSync` helper (`.kumiki-tmp` staging + `renameSync`) so a mid-write ENOSPC leaves the target byte-identical instead of truncating it. `FixApplyResult` gains an optional `writeError?: string` modifier; `FixFromTestOutcome` gains a `write-failed` variant with `phase: "compile" | "test"` discriminating the two write sites (and preserving the proposed `patch` on `phase: "test"`). `fixCmd` fails loudly on stderr and sets `process.exitCode = 1` on write failure. `kumiki_fix` (MCP) surfaces `writeError` / `regressionBlocked` on the wire alongside `parseError`. `kumiki_auto_patch` documents the new status. Both consumer switches gain `default: never` exhaustiveness guards.
+
+- Updated dependencies [35df48f]
+- Updated dependencies [46bee64]
+- Updated dependencies [46bee64]
+- Updated dependencies [75a809b]
+- Updated dependencies [46bee64]
+- Updated dependencies [46bee64]
+- Updated dependencies [88bd531]
+- Updated dependencies [5fb6fb6]
+- Updated dependencies [fb02913]
+- Updated dependencies [3d89383]
+- Updated dependencies [cad3f0c]
+- Updated dependencies [46bee64]
+- Updated dependencies [687ae40]
+- Updated dependencies [46bee64]
+- Updated dependencies [49cafdb]
+  - @kumikijs/cli@0.7.0
+  - @kumikijs/compiler@0.12.0
+
 ## 0.3.9
 
 ### Patch Changes

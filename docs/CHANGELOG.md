@@ -1,5 +1,28 @@
 # @kumikijs/site
 
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [46bee64]
+- Updated dependencies [5fb6fb6]
+- Updated dependencies [353cd5c]
+- Updated dependencies [46bee64]
+- Updated dependencies [027a8af]
+- Updated dependencies [3d89383]
+- Updated dependencies [cad3f0c]
+- Updated dependencies [46bee64]
+- Updated dependencies [4a58f8f]
+- Updated dependencies [32dd683]
+- Updated dependencies [687ae40]
+- Updated dependencies [92ca76d]
+- Updated dependencies [6f3f3e3]
+- Updated dependencies [9ae4327]
+- Updated dependencies [46bee64]
+- Updated dependencies [49cafdb]
+  - @kumikijs/compiler@0.12.0
+  - @kumikijs/runtime@0.12.0
+
 ## 0.1.13
 
 ### Patch Changes
