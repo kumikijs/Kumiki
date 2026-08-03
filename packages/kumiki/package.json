@@ -5,13 +5,13 @@
   "description": "Kumiki — the convenient `kumiki` CLI entry for the AI-first web framework language. Wraps @kumikijs/cli.",
   "license": "Apache-2.0",
   "author": "kage1020",
-  "homepage": "https://github.com/kage1020/Kumiki#readme",
+  "homepage": "https://github.com/kumikijs/Kumiki#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kage1020/Kumiki.git",
+    "url": "git+https://github.com/kumikijs/Kumiki.git",
     "directory": "packages/kumiki"
   },
-  "bugs": "https://github.com/kage1020/Kumiki/issues",
+  "bugs": "https://github.com/kumikijs/Kumiki/issues",
   "keywords": [
     "kumiki",
     "ai-first",

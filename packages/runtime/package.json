@@ -5,13 +5,13 @@
   "description": "Kumiki DOM runtime — mounts compiled Kumiki apps, dispatches effects, manages the signal graph.",
   "license": "Apache-2.0",
   "author": "kage1020",
-  "homepage": "https://github.com/kage1020/Kumiki/tree/main/packages/runtime#readme",
+  "homepage": "https://github.com/kumikijs/Kumiki/tree/main/packages/runtime#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kage1020/Kumiki.git",
+    "url": "git+https://github.com/kumikijs/Kumiki.git",
     "directory": "packages/runtime"
   },
-  "bugs": "https://github.com/kage1020/Kumiki/issues",
+  "bugs": "https://github.com/kumikijs/Kumiki/issues",
   "keywords": [
     "kumiki",
     "ai-first",
