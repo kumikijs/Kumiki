@@ -1,4 +1,5 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
+import { TILE_FAMILY, type TileFamily } from "../builtins.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -35,17 +36,80 @@ export function addBind(ctx: EvalCtx, name: string): EvalCtx {
   return out;
 }
 
-export function jsName(name: string): string {
-  // Map kebab-case and Kumiki-special names to safe JS identifiers.
+/**
+ * The raw character mapping. `$…` is the compiler's own bind namespace ($1,
+ * $event, effect binds) and lands in `_d_…`; `-` and `.` are legal in Kumiki
+ * names but not in JS ones.
+ */
+function mapSpecialChars(name: string): string {
   return name.replace(/^\$/, "_d_").replace(/-/g, "_").replace(/\./g, "_");
 }
 
 /**
- * Words that cannot appear as a JS binding name. Reserved words proper, plus
- * the strict-mode reserved set and `arguments` / `eval`, which are illegal as
- * binding names under the `"use strict"` semantics of an ES module.
+ * Map a Kumiki name for a *property* position — `recv.method()`, an object
+ * literal key. Reserved words are legal there, and the emitted name has to be
+ * exactly what the runtime defines, so nothing is escaped.
+ *
+ * For anything that becomes a JS binding, use {@link jsBinding} instead. The
+ * two are deliberately named so the wrong one reads as wrong at the call site.
  */
-const JS_RESERVED: ReadonlySet<string> = new Set([
+export function jsProperty(name: string): string {
+  return mapSpecialChars(name);
+}
+
+/**
+ * The generated identifier holding one tile family's renderer map. It lives
+ * here rather than next to the import header because the reserved-name list
+ * below has to enumerate it, and `imports.ts` is downstream of this module.
+ */
+export function tileFamilyVar(f: TileFamily): string {
+  return `${f}Tiles`;
+}
+
+/**
+ * The generated identifier holding one tile family's patcher map — the
+ * companion to `tileFamilyVar`. The reconcile mutates a mounted element in
+ * place only when it finds a patcher for the tile's kind; a mount without them
+ * falls back to rebuilding every changed subtree, discarding focus, caret,
+ * `<select>` open state and `<video>` playback on every data-prop change.
+ */
+export function tilePatcherFamilyVar(f: TileFamily): string {
+  return `${f}Patchers`;
+}
+
+/**
+ * Identifiers the emitted module binds at its own top level: the two it
+ * declares, plus every name `emitImportHeader` can import. Names starting with
+ * `_` are omitted — {@link jsBinding} already keeps user names out of that
+ * namespace. `packages/compiler/test/js-identifier-safety.test.ts` asserts this
+ * list still covers what codegen actually emits.
+ */
+export const EMITTED_MODULE_BINDINGS: readonly string[] = [
+  "App",
+  "createApp",
+  "mountCore",
+  "routing",
+  "httpFetch",
+  "installToast",
+  "installConfirm",
+  "storageRead",
+  "storageWrite",
+  "sessionRead",
+  "sessionWrite",
+  "indexedRead",
+  "indexedWrite",
+  "indexedDelete",
+  ...new Set(
+    Object.values(TILE_FAMILY).flatMap((f) => [tileFamilyVar(f), tilePatcherFamilyVar(f)]),
+  ),
+];
+
+/**
+ * Reserved words proper, plus the strict-mode reserved set and
+ * `arguments` / `eval`, which are illegal as binding names under the
+ * `"use strict"` semantics of an ES module.
+ */
+const JS_RESERVED_WORDS: readonly string[] = [
   "arguments",
   "await",
   "break",
@@ -94,33 +158,91 @@ const JS_RESERVED: ReadonlySet<string> = new Set([
   "while",
   "with",
   "yield",
+];
+
+/**
+ * Globals the emitted code and the runtime it calls into rely on. Binding one
+ * of these does not throw at load time — it shadows the global, so the failure
+ * surfaces later as `String is not a function` inside an unrelated stdlib call.
+ * The list is deliberately wider than what codegen emits today: the cost of an
+ * extra entry is one `$` in a name nobody writes, and the cost of a missing one
+ * is a silent miscompile.
+ */
+const JS_GLOBALS: readonly string[] = [
+  "AbortController",
+  "Array",
+  "Boolean",
+  "Date",
+  "Error",
+  "Function",
+  "Infinity",
+  "Intl",
+  "JSON",
+  "Map",
+  "Math",
+  "NaN",
+  "Number",
+  "Object",
+  "Promise",
+  "RangeError",
+  "RegExp",
+  "Set",
+  "String",
+  "Symbol",
+  "TypeError",
+  "URL",
+  "WeakMap",
+  "WeakSet",
+  "clearInterval",
+  "clearTimeout",
+  "console",
+  "document",
+  "fetch",
+  "globalThis",
+  "isFinite",
+  "isNaN",
+  "parseFloat",
+  "parseInt",
+  "queueMicrotask",
+  "setInterval",
+  "setTimeout",
+  "structuredClone",
+  "undefined",
+  "window",
+];
+
+/** Every name a user binding must not become. */
+const JS_UNSAFE_BINDINGS: ReadonlySet<string> = new Set([
+  ...JS_RESERVED_WORDS,
+  ...JS_GLOBALS,
+  ...EMITTED_MODULE_BINDINGS,
 ]);
 
 /**
  * Map a Kumiki identifier to a JS identifier for a *binding* position — a
  * declaration (`const x`, a parameter, a `for … of` head) or a reference to
- * one. Unlike {@link jsName}, the result is guaranteed to be
+ * one. The result is guaranteed to be
  *
- *  - a legal binding name, so a slot or `let` called `new` still emits;
+ *  - a legal binding name that shadows nothing the emitted module depends on,
+ *    so a slot or `let` called `new`, `String` or `httpFetch` still works;
  *  - outside the `_`-prefixed namespace that codegen and the runtime use for
  *    their own symbols (`_live`, `_s`, `_next`, …), so an author-chosen name
  *    can never shadow one and silently compute against the wrong value;
- *  - injective, so two distinct Kumiki names never converge on one JS name
- *    (`a-b` and `a_b` used to).
- *
- * {@link jsName} remains correct for *property* positions (`recv.method()`),
- * where reserved words are legal and the emitted name has to match what the
- * runtime actually defines.
+ *  - injective over the identifiers the lexer can produce
+ *    (`[A-Za-z_][A-Za-z0-9_-]*`), so two distinct Kumiki names never converge
+ *    on one JS name — `a-b` and `a_b` used to. Qualified builtin references
+ *    such as `Decoder.Json` also reach this function as a callee; `.` and `-`
+ *    share a mapping, which is unambiguous only because the lexer cannot put a
+ *    `.` inside an identifier.
  */
 export function jsBinding(name: string): string {
-  // `$…` is the compiler's own bind namespace ($1, $event, effect binds); it
-  // already maps into `_d_…`, which no user identifier can reach.
-  if (name.startsWith("$")) return jsName(name);
+  // The `$…` namespace is the compiler's own and already lands in `_d_…`.
+  if (name.startsWith("$")) return mapSpecialChars(name);
   // Escape `_` first so the following `-` → `_` cannot collide with it. Every
   // user `_` therefore becomes `_$`, which is also what keeps names that start
   // with `_` clear of the runtime's symbols.
   const mapped = name.replace(/_/g, "_$").replace(/[-.]/g, "_");
-  // A reserved word contains no `_`, so `mapped === name` here and the `$`
-  // suffix cannot be produced by any other input.
-  return JS_RESERVED.has(mapped) ? `${mapped}$` : mapped;
+  // No unsafe name contains `_`, so `mapped === name` here and the `$` suffix
+  // cannot be produced by any other input.
+  return JS_UNSAFE_BINDINGS.has(mapped) ? `${mapped}$` : mapped;
 }

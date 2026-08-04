@@ -160,7 +160,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0115 `reserved-slot-name`
 
-コンパイラが slot テーブルを参照する前に解決してしまう名前で `slot` を宣言している。そのため、その slot は誰からも読めない。`route` は router が管理する route slot（[Routing](./routing.md#_3-2-the-route-slot)）、`now` は標準ライブラリの時計に lower される。この診断がないと宣言はコンパイルを通り、slot は自分の値ではなく予約側の値を黙って描画する。
+コンパイラが slot テーブルを参照する前に解決してしまう名前で `slot` を宣言している。そのため、その slot は誰からも読めない。該当するのは router が管理する route slot（[Routing](./routing.md#_3-2-the-route-slot)）の `route` のみ — `now` や `self` など他の予約名は lexer が先に弾く。この診断がないと宣言はコンパイルを通り、slot は自分の値ではなく route オブジェクトを黙って描画する。
 
 > `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
 

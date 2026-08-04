@@ -320,12 +320,13 @@ function checkMotion(def: import("./ast.ts").MotionDef, errors: KumikiError[]): 
 
 /**
  * Names codegen resolves before it ever consults the slot table, so a slot
- * declared with one of them is unreachable: `route` is the router-maintained
- * slot (docs/spec/routing.md §3.2) and `now` lowers to the stdlib clock.
+ * declared with one of them is unreachable. Only `route` reaches this check:
+ * the lexer's keyword set already rejects `now`, `self` and the rest before
+ * the parser can build a SlotDef out of them, and `route` is the one such name
+ * that is a plain identifier (docs/spec/routing.md §3.2).
  */
 const RESERVED_SLOT_NAMES: ReadonlyMap<string, string> = new Map([
   ["route", "the router-maintained route slot"],
-  ["now", "the standard-library clock"],
 ]);
 
 function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {

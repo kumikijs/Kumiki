@@ -1,5 +1,5 @@
 import type { Expr, Pattern } from "../ast.ts";
-import { addBind, type EvalCtx, jsBinding, jsName, makeEvalCtx } from "./context.ts";
+import { addBind, type EvalCtx, jsBinding, jsProperty, makeEvalCtx } from "./context.ts";
 
 /** Extract the reducer name from a `run-reducer(name)` argument (a bare ref). */
 export function reducerNameArg(e: Expr | undefined): string {
@@ -578,8 +578,8 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `Math.trunc(${recvJs})`;
     default:
       // generic fallback: receiver.method(...args). A property position, so the
-      // name must stay exactly what the runtime defines — jsName, not jsBinding.
-      return `(${recvJs}).${jsName(method)}(${args.map(argRaw).join(", ")})`;
+      // name must stay exactly what the runtime defines — jsProperty, not jsBinding.
+      return `(${recvJs}).${jsProperty(method)}(${args.map(argRaw).join(", ")})`;
   }
 }
 

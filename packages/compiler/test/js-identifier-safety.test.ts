@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { jsBinding } from "../src/codegen/context.ts";
+import { EMITTED_MODULE_BINDINGS, jsBinding } from "../src/codegen/context.ts";
 
 const TMP_ROOT = resolve(__dirname, "test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
@@ -27,7 +27,20 @@ type ReducerShape = {
     payload: Record<string, unknown>,
   ) => { slots: Record<string, unknown> };
 };
-type GeneratedApp = { live: Record<string, unknown>; reducers: ReducerShape[] };
+type Provider = (req: { url: string }) => { kind: string; value: unknown };
+type EffectShape = {
+  name: string;
+  invoke: (
+    input: unknown,
+    caps: { provider: (cap: string) => Provider | undefined },
+    signal: AbortSignal | undefined,
+  ) => Promise<{ kind: string; value: unknown }>;
+};
+type GeneratedApp = {
+  live: Record<string, unknown>;
+  reducers: ReducerShape[];
+  effects: Record<string, EffectShape>;
+};
 
 /** Compile, load the emitted module, and hand back a fresh app instance. */
 async function build(src: string): Promise<{ js: string; app: GeneratedApp }> {
@@ -162,6 +175,110 @@ describe("runtime-internal names used as Kumiki identifiers", () => {
   });
 });
 
+describe("names the emitted module depends on", () => {
+  // Escaping only the `_` namespace is not enough: the emitted code also calls
+  // JS globals and binds the runtime helpers it imports, none of which are
+  // `_`-prefixed. Binding one of those does not throw at load time — it shadows
+  // the real one and fails later, somewhere else.
+  it("does not let a fn parameter shadow a JS global", async () => {
+    const { app } = await build(`
+      slot res : Text = ""
+      fn norm(String: Text, s: Text) -> Text = s.upper
+      reducer go on=ui.click(Btn) do= res := norm("ignored", "abc")
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn, text(res))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `);
+    expect(fire(app, "go").res).toBe("ABC");
+  });
+
+  it("does not let a fn name collide with a runtime helper the module imports", async () => {
+    const { app } = await build(`
+      slot res : Text = ""
+      fn httpFetch(x: Text) -> Text = x + "!"
+      effect fetchIt cap=http.get in=Text out=Result(Text, Text)
+                     map-request={url: "/x", decode: Decoder.Text}
+      reducer go on=ui.click(Btn) do= res := httpFetch("a")
+      reducer ok on=fetchIt.ok($v, _) do= res := $v
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn, text(res))
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+    `);
+    expect(fire(app, "go").res).toBe("a!");
+  });
+
+  // The effect invoke lambda used to bind `input` / `caps` / `signal` / `req`
+  // and `const p = caps.provider(...)`. A user fn named `p` referenced from
+  // `map-request` then landed in that `const`'s temporal dead zone, so every
+  // dispatch threw — with check and build both green.
+  it("does not let the effect invoke lambda shadow a user fn", async () => {
+    const { app } = await build(`
+      slot res : Text = ""
+      fn p(x: Text) -> Text = x + "!"
+      effect fetchIt cap=http.get in=Text out=Result(Text, Text)
+                     map-request={url: p($1), decode: Decoder.Text}
+      reducer go on=ui.click(Btn) do= emit fetchIt("a")
+      reducer ok on=fetchIt.ok($v, _) do= res := $v
+      tile Btn = button(text="go", onClick=go)
+      tile App = column(Btn, text(res))
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+    `);
+    const caps = { provider: () => (req: { url: string }) => ({ kind: "ok", value: req.url }) };
+    const result = await app.effects.fetchIt?.invoke("a", caps, undefined);
+    expect(result).toEqual({ kind: "ok", value: "a!" });
+  });
+
+  // Structural guard: the reserved-name list has to keep pace with whatever
+  // codegen actually binds at module scope, or the two tests above only prove
+  // that today's names are covered.
+  it("EMITTED_MODULE_BINDINGS covers every non-underscore top-level binding", () => {
+    const src = `
+      slot n : Int = 0
+      slot txt : Text = ""
+      effect load cap=http.get in=Text out=Result(Text, Text)
+                  map-request={url: "/x", decode: Decoder.Text}
+      effect save cap=storage.write in=Text out=Unit map-request={key: "k", value: $1}
+      reducer go on=ui.click(Btn) do= emit load("a")
+      reducer ok on=load.ok($v, _) do= txt := $v
+      reducer note on=ui.click(Btn) do= emit toast({kind: "info", text: "hi"})
+      tile Btn  = button(text="go", onClick=go)
+      tile Home = column(Btn, text(txt), heading("h"), link(text="x", to="/other"))
+      tile Other = column(text("other"))
+      app A caps=[http.get, storage.write, notification.show, nav.push]
+            routes={"/" -> Home, "/other" -> Other, "/404" -> Home}
+            init=[]
+    `;
+    const result = compile(src, {
+      runtimeSpecifier: "./runtime.js",
+      runtimeModulesDir: "./runtime",
+    });
+    if (result.kind !== "ok") {
+      expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
+    }
+    const bound: string[] = [];
+    for (const line of result.js.split("\n")) {
+      const imported = /^import \{([^}]*)\} from /.exec(line);
+      if (imported) {
+        bound.push(...imported[1]!.split(",").map((s) => s.trim().split(" as ").pop()!.trim()));
+        continue;
+      }
+      const declared = /^(?:export )?(?:function|const|let|var|class) ([A-Za-z_$][\w$]*)/.exec(
+        line,
+      );
+      if (declared) bound.push(declared[1]!);
+    }
+    // The import header is what makes this test worth running, and an empty
+    // `uncovered` proves nothing if the scan silently collected nothing.
+    expect(bound).toContain("mountCore");
+    expect(bound).toContain("httpFetch");
+    expect(bound).toContain("layoutTiles");
+    expect(bound).toContain("createApp");
+    const known = new Set(EMITTED_MODULE_BINDINGS);
+    const uncovered = bound.filter((name) => !name.startsWith("_") && !known.has(name));
+    expect(uncovered).toEqual([]);
+  });
+});
+
 describe("runtime-managed slot names", () => {
   // `route` is maintained by the runtime (docs/spec/routing.md §3.2). Codegen
   // reads it straight from the live map, so a user slot of the same name is
@@ -178,5 +295,12 @@ describe("runtime-managed slot names", () => {
     );
     const found = errors.find((e) => e.code === "E0115");
     expect(found?.kind).toBe("reserved-slot-name");
+  });
+
+  // `route` is the only such name that reaches the checker. Every other name
+  // codegen resolves ahead of the slot table (`now`, `self`, …) is a keyword,
+  // so the lexer rejects it first — which is why E0115 lists just the one.
+  it("leaves the keyword-shaped reserved names to the lexer", () => {
+    expect(() => parse(lex(`slot now : Text = "x"`))).toThrow(/Expected ident, got kw\(now\)/);
   });
 });

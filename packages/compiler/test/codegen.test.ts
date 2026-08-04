@@ -154,7 +154,7 @@ describe("codegen", () => {
     // A custom cap (registered via kumiki.caps.json → `capabilities`) has no
     // built-in implementation. Instead of the old "not implemented" stub, the
     // generated invoke resolves the host-supplied provider at the capability
-    // boundary (caps.provider(cap)) and errors clearly when none is registered.
+    // boundary (_caps.provider(cap)) and errors clearly when none is registered.
     const src = `
       slot sent : Int = 0
       effect track cap=telemetry.track in={name: Text} out=Unit
@@ -170,7 +170,7 @@ describe("codegen", () => {
     });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('caps.provider("telemetry.track")');
+    expect(result.js).toContain('_caps.provider("telemetry.track")');
     expect(result.js).toContain("Capability telemetry.track has no provider");
     expect(result.js).not.toContain("not implemented");
     // The auto-mount call threads host providers through.
@@ -193,8 +193,8 @@ describe("codegen", () => {
     });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('caps.provider("telemetry.track")');
-    expect(result.js).toMatch(/const req = .*;\s*const p = caps\.provider/s);
+    expect(result.js).toContain('_caps.provider("telemetry.track")');
+    expect(result.js).toMatch(/const _req = .*;\s*const _provider = _caps\.provider/s);
   });
 
   it("emits a default-exported App module instead of auto-mounting when exportApp is set", () => {
@@ -232,7 +232,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('caps.provider("http.get")');
+    expect(result.js).toContain('_caps.provider("http.get")');
     expect(result.js).toContain("httpFetch(");
     // the handler is imported (modular: its feature module; monolith: the runtime entry)
     expect(result.js).toMatch(/import \{[^}]*httpFetch[^}]*\}/);
@@ -285,7 +285,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     // request is mapped, THEN the provider is consulted with the mapped req
-    expect(result.js).toMatch(/const req = [\s\S]*caps\.provider\("storage\.write"\)/);
+    expect(result.js).toMatch(/const _req = [\s\S]*_caps\.provider\("storage\.write"\)/);
     expect(result.js).toContain("storageWrite(");
     expect(result.js).toMatch(/import \{[^}]*storageWrite[^}]*\}/);
   });

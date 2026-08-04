@@ -198,7 +198,7 @@ A tile declares `sub-routes` but its parent route in `app.routes` is not a wildc
 
 ### E0115 `reserved-slot-name`
 
-A `slot` is declared with a name the compiler resolves before it consults the slot table, so nothing can ever read it. `route` is the router-maintained route slot ([Routing](./routing.md#_3-2-the-route-slot)); `now` lowers to the standard-library clock ([Standard Library](./stdlib.md)). Without this diagnostic the declaration compiles and the slot silently renders the reserved value instead of its own.
+A `slot` is declared with a name the compiler resolves before it consults the slot table, so nothing can ever read it. The name is `route`, the router-maintained route slot ([Routing](./routing.md#_3-2-the-route-slot)) — every other such name (`now`, `self`, …) is a reserved word the lexer rejects first. Without this diagnostic the declaration compiles and the slot silently renders the route object instead of its own value.
 
 > `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
 

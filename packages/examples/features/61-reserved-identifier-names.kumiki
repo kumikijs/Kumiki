@@ -26,12 +26,12 @@ reducer inc on=ui.click(IncBtn)
 reducer double on=ui.click(DoubleBtn)
     do= count := twice(count)
 
-# `var` as a loop bind, and `_live` — the name of the runtime's slot map —
-# as another. Reading `count` inside the loop is what breaks when a user
-# binding shadows the slot map.
+# `var` as a loop bind.
 reducer sum on=ui.click(SumBtn)
     do= for var in [1, 2, 3] { count := count + var }
 
+# `_live` — the name of the runtime's slot map — as a loop bind. Reading
+# `count` inside the loop is what breaks when a user binding shadows it.
 reducer join on=ui.click(JoinBtn)
     do= for _live in items { joined := joined + _live + "/" + count.show }
 
