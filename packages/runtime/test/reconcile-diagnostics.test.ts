@@ -393,10 +393,11 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
-  it("reports a function-identity change the equality check ignored on a host tile", () => {
-    // The heisenbug this exists for: the host's renderer captured the handler
-    // at create time, the data props are identical, so the tile is reused and
-    // keeps firing the first render's closure forever.
+  it("reports a handler the host rebuilds on every render", () => {
+    // The kernel compares handlers by identity, so a host that mints one inline
+    // per render never compares equal to itself and pays a patch — or, with no
+    // patcher, a rebuild — forever. It used to be reused instead, silently
+    // firing the first render's closure.
     let generation = 0;
     const hostCard = (node: TileNode, _ctx: TileCtx): HTMLElement => {
       const el = document.createElement("div");
@@ -419,9 +420,14 @@ describe("runtime: reconcile diagnostics", () => {
 
     app._rerender?.();
 
-    const stale = seen.filter((d) => d.kind === "stale-closure-risk");
-    expect(stale).toHaveLength(1);
-    expect(stale[0]).toMatchObject({ tileKind: "card", id: "card", field: "props.onClick" });
+    const churn = seen.filter((d) => d.kind === "never-equal-prop");
+    expect(churn).toHaveLength(1);
+    expect(churn[0]).toMatchObject({
+      tileKind: "card",
+      id: "card",
+      field: "props.onClick",
+      cause: "function-identity",
+    });
     dispose();
   });
 
@@ -439,7 +445,11 @@ describe("runtime: reconcile diagnostics", () => {
     app._rerender?.();
 
     expect(seen).toContainEqual(
-      expect.objectContaining({ kind: "stale-closure-risk", field: "onSelect" }),
+      expect.objectContaining({
+        kind: "never-equal-prop",
+        field: "onSelect",
+        cause: "function-identity",
+      }),
     );
     dispose();
   });
@@ -1487,10 +1497,9 @@ describe("smoke: reconcile diagnostics", () => {
     ).toBe(true);
   });
 
-  it("spells out a stale closure as the correctness problem it is", async () => {
-    // "reused X" reads as success; the wording has to say the new handler will
-    // never fire. This is the only diagnostic that means the app is running
-    // the wrong code rather than merely rebuilding too much.
+  it("spells out a per-render handler as the churn it causes", async () => {
+    // The wording has to name the cost and the fix. A host reading "never-equal
+    // prop" alone would not know that memoising the handler is what stops it.
     const hostCard = (): HTMLElement => document.createElement("div");
     const app = appOf(
       () =>
@@ -1510,7 +1519,7 @@ describe("smoke: reconcile diagnostics", () => {
 
     expect(seen).toHaveLength(1);
     expect(describeDiagnostic(seen[0] as RuntimeDiagnostic)).toBe(
-      "Panel (card) was reused with the PREVIOUS render's props.onClick — the new one will never fire",
+      "Panel (card)'s props.onClick holds a function rebuilt on every render, which never compares equal to the previous one — memoise it — this tile re-applies its props on every render",
     );
     dispose();
   });

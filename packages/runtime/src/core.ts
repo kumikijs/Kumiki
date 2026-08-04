@@ -421,7 +421,14 @@ export type NeverEqualCause =
    */
   | "non-plain-object"
   /** `NaN`, which is not equal to itself by definition. */
-  | "nan";
+  | "nan"
+  /**
+   * A function rebuilt per render. Codegen memoises one closure per reducer
+   * list, so a compiled app never reports this; a host that mints a handler
+   * inline on every render does, and pays a patch (or, with no patcher
+   * registered, a rebuild) for it forever. Memoise the handler to stop it.
+   */
+  | "function-identity";
 
 /**
  * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
@@ -432,30 +439,14 @@ export type NeverEqualCause =
  * *why* the runtime made that choice — useful when tuning an app or a host
  * integration, noise in a behavioural trace.
  *
- * The three variants differ in severity, not just in shape. A
+ * The two variants differ in severity, not just in shape. A
  * `reconcile-fallback` costs performance and browser-owned element state; a
- * `never-equal-prop` costs a diff and a patch on every render; a
- * `stale-closure-risk` means the app is running the wrong code. A host wiring
- * these to a console should route them to different levels.
+ * `never-equal-prop` costs a diff and a patch on every render. Both leave the
+ * app correct, so a host wiring these to a console should route them to
+ * different levels but neither to an error.
  */
 export type RuntimeDiagnostic =
   | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)
-  | (DiagnosticSite & {
-      /**
-       * A prop whose function identity changed was treated as equal, so the
-       * tile was reused with the previous render's closure still attached.
-       * Reported only for host-registered renderers: the built-ins dispatch
-       * every handler through a per-element slot the patcher refreshes, so a
-       * re-minted closure is not a hazard there.
-       */
-      kind: "stale-closure-risk";
-      /**
-       * Dotted path of the offending field — `props.onClick` for the
-       * conventional placement, a bare `onClick` for a handler the host hung
-       * off the node itself.
-       */
-      field: string;
-    })
   | (DiagnosticSite & {
       /**
        * A data prop holds a value that cannot compare equal to a structurally
@@ -2560,7 +2551,6 @@ type ReconcileDiag = {
    * element keeps whatever closures it was created with. Only host-registered
    * kinds are inspected.
    */
-  staleClosure: (oldNode: TileNode, newNode: TileNode) => void;
   /**
    * Called on the unequal decision — the props differed, so this tile is about
    * to be patched or rebuilt. Names the fields that will differ again on every
@@ -2640,13 +2630,6 @@ function makeReconcileDiag(
         tile: authored(node),
         ...fallback,
       });
-    },
-    staleClosure(oldNode, newNode) {
-      scan(oldNode, newNode, (site, field, oldValue, newValue) =>
-        typeof oldValue === "function" && typeof newValue === "function" && oldValue !== newValue
-          ? { ...site, kind: "stale-closure-risk", field }
-          : undefined,
-      );
     },
     neverEqual(oldNode, newNode) {
       scan(oldNode, newNode, (site, field, oldValue, newValue) => {
@@ -2800,12 +2783,12 @@ function reconcileNode(
       diag?.fallback({ reason: "no-patcher" }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
-  } else {
-    // Reuse decision: this element stays mounted with the closures it was
-    // created with. Safe for the built-ins, a stale-closure hazard for a
-    // host renderer that captured a per-render handler.
-    diag?.staleClosure(oldNode, newNode);
   }
+  // No `else`: when every own field compares equal the element stays mounted
+  // untouched, and that is now unconditionally safe. Handlers are compared by
+  // identity, so reaching here means the handlers are the same ones — the
+  // `stale-closure-risk` diagnostic this branch used to raise described a
+  // state the kernel can no longer produce.
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
   if (oldChildren.length === 0 && newChildren.length === 0) {
@@ -3497,10 +3480,20 @@ function tileFieldsEqual(a: TileNode, b: TileNode): boolean {
 
 function tileValueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // Ignore closure identity for handler-shaped fields — codegen mints new
-  // closures per render, but a same-data reused tile keeps working with the
-  // old closure (which references the same stable dispatch seam).
-  if (typeof a === "function" && typeof b === "function") return true;
+  // Two *different* functions are a real difference. This used to report them
+  // as equal, because codegen minted a fresh closure per render and comparing
+  // by identity would have marked every tile as changed forever. The reason
+  // that was tolerable — "the old closure references the same stable dispatch
+  // seam" — held only while both closures dispatched to the same reducer. A
+  // conditional swapping two inline tiles that differ *only* in their handler
+  // therefore reused the element untouched and kept dispatching to the reducer
+  // it was created with, silently and with no diagnostic.
+  //
+  // Codegen now memoises one closure per reducer list, so a handler that has
+  // not changed compares equal by reference on the line above and the reuse
+  // fast path is unaffected. A host renderer that still mints per-render
+  // closures gets the patch path instead of silent reuse — the outcome the
+  // `stale-closure-risk` diagnostic was warning about.
   if (a === null || b === null) return false;
   if (typeof a !== "object" || typeof b !== "object") return false;
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -3558,6 +3551,10 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
   // The same instance handed over twice compares equal through `===`. Only a
   // value rebuilt per render is a hazard, so a stable one is not reported.
   if (a === b) return undefined;
+  // Two different functions. The kernel compares these by identity (a handler
+  // that changed is a real change), so a per-render closure makes this tile
+  // unequal to itself forever.
+  if (typeof a === "function" && typeof b === "function") return "function-identity";
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return undefined;
   // The kernel takes arrays element-wise, so an array is not itself a
   // never-equal value. Descending into one to find an exotic element is the

@@ -210,9 +210,6 @@ export async function smoke(
  */
 export function describeDiagnostic(d: RuntimeDiagnostic): string {
   const where = d.tile ? `${d.tile} (${d.tileKind})` : d.tileKind;
-  if (d.kind === "stale-closure-risk") {
-    return `${where} was reused with the PREVIOUS render's ${d.field} — the new one will never fire`;
-  }
   if (d.kind === "never-equal-prop") {
     return `${where}'s ${d.field} ${describeNeverEqualCause(d.cause)} — this tile re-applies its props on every render`;
   }
@@ -228,6 +225,8 @@ export function describeDiagnostic(d: RuntimeDiagnostic): string {
 
 function describeNeverEqualCause(cause: NeverEqualCause): string {
   switch (cause) {
+    case "function-identity":
+      return "holds a function rebuilt on every render, which never compares equal to the previous one — memoise it";
     case "non-plain-object":
       return "holds a non-plain object (Date / Map / Set / class instance), which never compares equal to a freshly built one";
     case "nan":

@@ -1,6 +1,6 @@
 import type { Expr, TileExpr, UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, UI_LIFTS } from "../ui-lifts.ts";
-import { type EvalCtx, jsProperty } from "./context.ts";
+import { type EvalCtx, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -84,12 +84,13 @@ export function propsFor(
       return true;
     });
     if (names.length === 0) return;
-    // Dispatch through the enclosing `createApp()` scope's own `App` (a lazy
-    // reference — tiles are emitted inside `() =>` thunks that run after the
-    // instance exists), so several compiled apps on one page never cross-wire
-    // through a shared global.
-    const body = names.map((n) => `App._dispatch(${JSON.stringify(n)}, el)`).join("; ");
-    entries.push(`${handlerName}: (el) => { ${body} }`);
+    // `_h` memoises one closure per reducer list inside the enclosing
+    // `createApp()` scope, so re-rendering the same tile yields the *same*
+    // function reference and the reconciler's field comparison can tell "same
+    // handler" from "different handler" by identity. It also dispatches
+    // through that scope's own `App`, so several compiled apps on one page
+    // never cross-wire through a shared global.
+    entries.push(`${handlerName}: ${handlerRef(names)}`);
     emittedHandlers.add(handlerName);
   };
   // Implicit-lift: every ui-event whose tile-kind gate matches `t.name` lifts
@@ -105,8 +106,7 @@ export function propsFor(
   // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
   for (const [handlerName, names] of explicitByHandler) {
     if (emittedHandlers.has(handlerName)) continue;
-    const body = names.map((n) => `App._dispatch(${JSON.stringify(n)}, el)`).join("; ");
-    entries.push(`${handlerName}: (el) => { ${body} }`);
+    entries.push(`${handlerName}: ${handlerRef(names)}`);
   }
   // Build `el` from explicit {name: expr} that aren't handlers
   const elProps: string[] = [];

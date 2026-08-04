@@ -46,16 +46,14 @@ const panel = installDevPanel({ logger, getApp: () => currentApp });
 
 // The dev server is where a Kumiki app is developed, so it is where the
 // reconcile's identity-losing decisions should be visible. The diagnostic kinds
-// get different levels because they are different problems: a fallback costs
-// performance and browser-owned element state, and a never-equal prop costs a
-// patch on every render, but in both the app stays correct — whereas a stale
-// closure means the app is running code the author already replaced.
+// get different levels because they cost different things: a fallback costs
+// performance and browser-owned element state, a never-equal prop costs a diff
+// and a patch on every render. Neither is a correctness problem, so neither is
+// an error.
 const mountOptions = {
   episodeLogger: logger,
   onDiagnostic: (d: RuntimeDiagnostic) => {
     switch (d.kind) {
-      case "stale-closure-risk":
-        return console.error("[kumiki] stale closure", d);
       case "never-equal-prop":
         return console.warn("[kumiki] never-equal prop", d);
       case "reconcile-fallback":

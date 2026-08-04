@@ -49,5 +49,6 @@
 | [23-lifecycle-route-enter](https://github.com/kumikijs/Kumiki/blob/main/examples/features/23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
 | [46-stdlib-paren-methods](https://github.com/kumikijs/Kumiki/blob/main/examples/features/46-stdlib-paren-methods.kumiki) | stdlib メソッドの括弧付き形（`is-ok()` / `values()` / `lower()` / `sort()` 等）と `Bytes.from-text/base64/bytes` 構築子 |
 | [61-reserved-identifier-names](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/61-reserved-identifier-names.kumiki) | JS の予約語（`new` / `class` / `var`）やランタイム内部名（`_live` / `_s`）と衝突する識別子 |
+| [62-conditional-inline-tile-handlers](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/62-conditional-inline-tile-handlers.kumiki) | ハンドラだけが異なる 2 つのインラインタイルを条件分岐で入れ替える |
 
 新しい質問・バグには、まずここへ最小再現例を足すことで答える。

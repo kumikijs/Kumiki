@@ -23,7 +23,7 @@ import type {
   TypeDef,
 } from "./ast.ts";
 import type { GenCtx } from "./codegen/context.ts";
-import { jsBinding } from "./codegen/context.ts";
+import { HANDLER_MEMO_PREAMBLE, jsBinding } from "./codegen/context.ts";
 import {
   appAnalyticsJson,
   appMetaJson,
@@ -139,6 +139,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // mounts / Web Component instances therefore never share state. Pure module
   // data (`_s`) stays outside.
   lines.push("function createApp() {");
+  lines.push(HANDLER_MEMO_PREAMBLE);
 
   // fn definitions
   for (const fn of fns) {
