@@ -12,7 +12,7 @@ export function registerSmoke(program: Command): void {
     .argument("[input]", "input .kumiki file")
     .option(
       "--diagnostics-as-issues",
-      "fail the run on any reconcile fallback (unkeyed list rebuilds, stale closures)",
+      "fail the run on any reconcile diagnostic (rebuilds that lose element identity, props that can never compare equal)",
     )
     .allowExcessArguments(false)
     .action(async (input: string | undefined, opts: { diagnosticsAsIssues?: boolean }) => {

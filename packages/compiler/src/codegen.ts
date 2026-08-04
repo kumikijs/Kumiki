@@ -285,7 +285,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   }
 
   // In-language test tile factories close over this instance's live state, so
-  // they are built inside the factory and attached to the app.
+  // they are built inside the factory and attached to the app. The test bodies
+  // themselves go here for the same reason and one more: a `tile-test`'s
+  // `expect` is lowered through the full tile pipeline, so it can emit `_h(...)`
+  // — and `_h` is this scope's handler memo. Emitting the tests at module scope
+  // put those calls where the memo does not exist.
   if (opts.includeTests && tests.length > 0) {
     lines.push("const _tilesById = {");
     for (const tile of tiles) {
@@ -293,6 +297,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     }
     lines.push("};");
     lines.push("App._tilesById = _tilesById;");
+    lines.push("App._tests = [");
+    for (const t of tests) lines.push(genTest(t, ctx, opts));
+    lines.push("];");
+    // Static coverage for `kumiki test --coverage` (§8.7).
+    lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 
   lines.push("  return App;");
@@ -308,15 +317,13 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("const App = createApp();");
   lines.push("globalThis.__kumikiApp = App;");
 
-  // In-language tests (`kumiki test`) run against the default instance.
+  // In-language tests (`kumiki test`) run against the default instance — the
+  // bodies are built inside `createApp()` above, so this only publishes the
+  // default instance's copy.
   if (opts.includeTests && tests.length > 0) {
     lines.push("");
-    lines.push("const __kumikiTests = [");
-    for (const t of tests) lines.push(genTest(t, ctx, opts));
-    lines.push("];");
-    lines.push("globalThis.__kumikiTests = __kumikiTests;");
-    // Static coverage for `kumiki test --coverage` (§8.7).
-    lines.push(`globalThis.__kumikiCoverage = ${coverageJs(tests, reducers, tiles, effects)};`);
+    lines.push("globalThis.__kumikiTests = App._tests;");
+    lines.push("globalThis.__kumikiCoverage = App._coverage;");
   }
   lines.push("");
 

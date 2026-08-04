@@ -45,11 +45,11 @@ const logger = createEpisodeLogger({
 const panel = installDevPanel({ logger, getApp: () => currentApp });
 
 // The dev server is where a Kumiki app is developed, so it is where the
-// reconcile's identity-losing decisions should be visible. The diagnostic kinds
-// get different levels because they cost different things: a fallback costs
-// performance and browser-owned element state, a never-equal prop costs a diff
-// and a patch on every render. Neither is a correctness problem, so neither is
-// an error.
+// reconcile's identity-losing decisions should be visible. Both kinds warn: a
+// fallback costs performance and browser-owned element state, a never-equal
+// prop costs a diff and a patch on every render, and neither leaves the app
+// wrong. They stay separate branches so the labels differ and a third kind
+// cannot inherit one of theirs by accident.
 const mountOptions = {
   episodeLogger: logger,
   onDiagnostic: (d: RuntimeDiagnostic) => {

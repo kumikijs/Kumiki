@@ -226,7 +226,7 @@ export function describeDiagnostic(d: RuntimeDiagnostic): string {
 function describeNeverEqualCause(cause: NeverEqualCause): string {
   switch (cause) {
     case "function-identity":
-      return "holds a function rebuilt on every render, which never compares equal to the previous one — memoise it";
+      return "holds a function whose identity changed (a handler rebuilt per render never compares equal; memoising it fixes that)";
     case "non-plain-object":
       return "holds a non-plain object (Date / Map / Set / class instance), which never compares equal to a freshly built one";
     case "nan":

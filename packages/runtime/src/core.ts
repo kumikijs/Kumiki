@@ -408,8 +408,8 @@ export type ReconcileFallback =
 
 /**
  * Why a pair of data-prop values can never compare equal, however identical the
- * two renders that produced them are. Both are settled rules of the equality
- * kernel rather than bugs in it — the point of naming them is that a tile
+ * two renders that produced them are. Each is a settled rule of the equality
+ * kernel rather than a bug in it — the point of naming them is that a tile
  * carrying one pays for a diff it can never win.
  */
 export type NeverEqualCause =
@@ -423,10 +423,13 @@ export type NeverEqualCause =
   /** `NaN`, which is not equal to itself by definition. */
   | "nan"
   /**
-   * A function rebuilt per render. Codegen memoises one closure per reducer
-   * list, so a compiled app never reports this; a host that mints a handler
-   * inline on every render does, and pays a patch (or, with no patcher
-   * registered, a rebuild) for it forever. Memoise the handler to stop it.
+   * A function whose identity changed. The scan keeps no history, so this
+   * fires on any two distinct closures — including the one-off swap a
+   * conditional makes between two properly memoised handlers. What it always
+   * means is that this pair could not compare equal; whether it repeats
+   * depends on whether the host rebuilds the handler per render, which is the
+   * case worth fixing. Codegen memoises one closure per reducer list, so a
+   * compiled app only reports this on a genuine change.
    */
   | "function-identity";
 
@@ -439,11 +442,10 @@ export type NeverEqualCause =
  * *why* the runtime made that choice — useful when tuning an app or a host
  * integration, noise in a behavioural trace.
  *
- * The two variants differ in severity, not just in shape. A
- * `reconcile-fallback` costs performance and browser-owned element state; a
- * `never-equal-prop` costs a diff and a patch on every render. Both leave the
- * app correct, so a host wiring these to a console should route them to
- * different levels but neither to an error.
+ * The two variants differ in cost, not in correctness. A `reconcile-fallback`
+ * costs performance and browser-owned element state; a `never-equal-prop` costs
+ * a diff and a patch on every render. Both leave the app correct, so a host
+ * wiring these to a console should warn on each and error on neither.
  */
 export type RuntimeDiagnostic =
   | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)
@@ -457,8 +459,8 @@ export type RuntimeDiagnostic =
        * already reported as `no-patcher`, and this names the field that reason
        * cannot.
        *
-       * Reported only for host-registered renderers: codegen emits neither
-       * cause, so a built-in tile carrying one came from a host-built tree.
+       * Reported only for host-registered renderers: codegen emits no cause,
+       * so a built-in tile carrying one came from a host-built tree.
        */
       kind: "never-equal-prop";
       /** Dotted path of the offending field, e.g. `props.at` or a bare `at`. */
@@ -569,22 +571,21 @@ export type MountOptions = {
   /**
    * Development-time observation channel for the reconcile diff. When present,
    * every rebuild the walker performs instead of preserving element identity is
-   * reported here, along with the two host-tile hazards the prop-equality check
-   * creates: a function identity it waved through, and a value it can never
-   * call equal. Omit it (the default) and the checks never run: production
-   * mounts pay one optional-call check per decision and nothing else.
+   * reported here, along with the host-tile cost the prop-equality check
+   * exposes: a value — a per-render closure, a `Date`, a `NaN` — that can never
+   * compare equal to its counterpart. Omit it (the default) and the checks
+   * never run: production mounts pay one optional-call check per decision and
+   * nothing else.
    */
   onDiagnostic?: (d: RuntimeDiagnostic) => void;
   /**
    * Tile kinds whose renderer came from the host rather than the built-in set.
-   * Scopes the two per-field scans in `onDiagnostic` — stale closures on the
-   * reuse decision, never-equal props on the unequal one — which would
-   * otherwise fire once per field per render on every built-in tile. The
-   * built-ins route handlers through per-element slots and carry only the plain
-   * data codegen emits, so neither hazard reaches them. The package entry's
-   * `mount` derives this from the `tiles` override map; callers using
-   * `mountCore` with their own renderers pass it themselves. Ignored without
-   * `onDiagnostic`.
+   * Scopes the per-field `never-equal-prop` scan in `onDiagnostic`, which would
+   * otherwise fire once per field per render on every built-in tile. Codegen
+   * carries only plain data and memoises every handler, so no built-in tile can
+   * hold a never-equal value in the first place. The package entry's `mount`
+   * derives this from the `tiles` override map; callers using `mountCore` with
+   * their own renderers pass it themselves. Ignored without `onDiagnostic`.
    */
   hostTileKinds?: readonly string[];
   /**
@@ -2547,11 +2548,6 @@ function makeMappingTileCtx(
 type ReconcileDiag = {
   fallback: (fallback: ReconcileFallback, node: TileNode) => void;
   /**
-   * Called on the reuse decision — the props compared equal, so the mounted
-   * element keeps whatever closures it was created with. Only host-registered
-   * kinds are inspected.
-   */
-  /**
    * Called on the unequal decision — the props differed, so this tile is about
    * to be patched or rebuilt. Names the fields that will differ again on every
    * render after this one. Only host-registered kinds are inspected.
@@ -2643,8 +2639,7 @@ function makeReconcileDiag(
 /**
  * Own data fields paired old-to-new, one level deep into `props` — where a
  * renderer's handlers and data conventionally live (`props.onClick`,
- * `props.value`). Shared by both host-tile scans, on either side of the
- * equality fork.
+ * `props.value`). Feeds the host-tile `never-equal-prop` scan.
  *
  * This is NOT the full set `tileFieldsEqual` compares: that one recurses to
  * the bottom of arrays and nested objects, while this stops at `props.x` on
@@ -2735,8 +2730,8 @@ function reconcileNode(
   if (oldNode.kind !== newNode.kind) {
     return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
-  // Same kind, differing own data props (`children` / `key` / functions
-  // excluded — see `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
+  // Same kind, differing own data props (`children` / `key` excluded — see
+  // `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
   // preserving path: if a per-kind patcher is registered, mutate the mounted
   // element in place (preserving `<select>` open state / focus / caret /
   // `<video>` playback / `<details>` open / `contenteditable`), then continue
@@ -2785,10 +2780,9 @@ function reconcileNode(
     }
   }
   // No `else`: when every own field compares equal the element stays mounted
-  // untouched, and that is now unconditionally safe. Handlers are compared by
-  // identity, so reaching here means the handlers are the same ones — the
-  // `stale-closure-risk` diagnostic this branch used to raise described a
-  // state the kernel can no longer produce.
+  // untouched, and that is unconditionally safe — handlers compare by identity
+  // (§10.3.13), so reaching here means the mounted element already holds the
+  // handlers this render produced.
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
   if (oldChildren.length === 0 && newChildren.length === 0) {
@@ -3478,22 +3472,23 @@ function tileFieldsEqual(a: TileNode, b: TileNode): boolean {
   return true;
 }
 
+/**
+ * Functions are compared by identity here, like every other value.
+ *
+ * They were once exempt — any two functions counted as equal — because codegen
+ * minted a fresh closure per render, so identity comparison would have marked
+ * every interactive tile as changed forever. That was sound only while both
+ * closures dispatched to the same reducer. A conditional swapping two inline
+ * tiles that differ *only* in their handler reused the element untouched and
+ * kept dispatching to the reducer it was created with, silently.
+ *
+ * Codegen memoises one closure per reducer list, so an unchanged handler is the
+ * same reference and still takes the reuse fast path. A host that mints one per
+ * render pays a patch — or, with no patcher registered, a rebuild — and is told
+ * so through `never-equal-prop` / `function-identity`.
+ */
 function tileValueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // Two *different* functions are a real difference. This used to report them
-  // as equal, because codegen minted a fresh closure per render and comparing
-  // by identity would have marked every tile as changed forever. The reason
-  // that was tolerable — "the old closure references the same stable dispatch
-  // seam" — held only while both closures dispatched to the same reducer. A
-  // conditional swapping two inline tiles that differ *only* in their handler
-  // therefore reused the element untouched and kept dispatching to the reducer
-  // it was created with, silently and with no diagnostic.
-  //
-  // Codegen now memoises one closure per reducer list, so a handler that has
-  // not changed compares equal by reference on the line above and the reuse
-  // fast path is unaffected. A host renderer that still mints per-render
-  // closures gets the patch path instead of silent reuse — the outcome the
-  // `stale-closure-risk` diagnostic was warning about.
   if (a === null || b === null) return false;
   if (typeof a !== "object" || typeof b !== "object") return false;
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -3573,10 +3568,10 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
 // and tiles-text.ts LINK_STATE: native listeners are registered once at
 // create-time and dispatch through the slot; `refreshUiHandlerSlot` overwrites
 // the slot when a patch runs so the new node's handler + `el` payload reach
-// subsequent events. Without this, `applyUiEventHandlers` used to close over
-// the create-time `props` — and because `tileValueEqual` treats function
-// values as always-equal, a changed handler or `el` payload would never even
-// trigger a subtree rebuild, silently firing the stale closure on every event.
+// subsequent events. Without it, `applyUiEventHandlers` would close over the
+// create-time `props`: the patch path exists precisely so a changed handler
+// lands on an element that keeps its identity, and a listener bound to the old
+// `props` would keep firing the previous render's closure instead.
 type UiHandlerSlot = {
   onKeyDown?: EventHandler;
   onMouseEnter?: EventHandler;

@@ -490,8 +490,7 @@ A host renderer that still mints a handler inline on every render never
 compares equal to itself. That is reported — see `function-identity` below —
 rather than silently reused.
 
-**Props that can never compare equal.** The other side of the same fork. A tile
-whose data props compare unequal on *every* render, with a patcher registered
+**Props that can never compare equal.** A tile whose data props compare unequal on *every* render, with a patcher registered
 for its kind, is the identity-preserving happy path as far as the walker is
 concerned: the patcher runs, the element survives, nothing degraded — so no
 fallback is reported and the app looks perfectly healthy while re-applying the
@@ -503,13 +502,13 @@ not have compared equal however identical the two renders were, and reported as
 |---|---|
 | `non-plain-object` | A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or a cross-realm object. Their state lives outside their own enumerable keys, so only `===` can make two of them equal (§10.3.13) — which a value rebuilt each render never is. |
 | `nan` | `NaN`, which is not equal to itself by definition (§10.3.13). |
-| `function-identity` | A function rebuilt per render. Codegen memoises one closure per reducer list, so a compiled app never reports this; a host that mints a handler inline pays a patch — or, with no patcher registered, a rebuild — on every render. Memoise the handler. |
+| `function-identity` | A function whose identity changed. The scan keeps no history, so this fires on any two distinct closures — including the one-off swap a conditional makes between two memoised handlers. What it always means is that the pair could not compare equal; whether it repeats depends on whether the host rebuilds the handler per render, which is the case worth fixing by memoising it. |
 
 The scope comes from `MountOptions.hostTileKinds`, which the package-entry
 `mount` derives from the `tiles` override map — including overrides of built-in
-kinds, since replacing a built-in renderer discards the handler slots that made
-reuse safe. A host calling `mountCore` with its own renderers passes the set
-directly. The scan reads the node's own fields and one level into `props`, the
+kinds, since a host renderer put in a built-in's place brings the host's own
+prop conventions with it. A host calling `mountCore` with its own renderers
+passes the set directly. The scan reads the node's own fields and one level into `props`, the
 convention every built-in renderer follows (`props.onClick`, `props.onChange`);
 a host tile that buries its handlers deeper (`props.handlers.onClick`) is not
 inspected. No cause can come out of codegen, so a report always names a

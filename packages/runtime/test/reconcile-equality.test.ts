@@ -120,7 +120,7 @@ function decide(oldNode: TileNode, newNode: TileNode): Decision {
   dispose();
 
   // Every diagnostic this harness can provoke is a reconcile fallback: no
-  // `hostTileKinds` are declared, so the stale-closure scan never runs. A new
+  // `hostTileKinds` are declared, so the never-equal scan never runs. A new
   // kind arriving here means the walker started reporting something these
   // cases do not account for — look at it rather than filter it away.
   const unexpected = seen.filter((d) => d.kind !== "reconcile-fallback");

@@ -230,7 +230,14 @@ const JS_UNSAFE_BINDINGS: ReadonlySet<string> = new Set([
  * property the comparison needs: same handler ⇒ same reference.
  *
  * `App` is the enclosing `createApp()` scope's own instance, resolved at click
- * time, so several compiled apps on one page never cross-wire.
+ * time, so several compiled apps on one page never cross-wire. Emitting this at
+ * module scope instead would bind every instance's handlers to the first one.
+ *
+ * The cache key is the reducer list joined on `|`. That is injective because
+ * the lexer restricts identifiers to `[A-Za-z_][A-Za-z0-9_-]*`, so no reducer
+ * name can contain the separator — load-bearing, since two distinct handler
+ * chains collapsing onto one entry is the same class of bug the memo exists to
+ * fix.
  */
 export const HANDLER_MEMO_PREAMBLE = [
   "const _handlerCache = new Map();",
