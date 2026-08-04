@@ -1,0 +1,52 @@
+# Feature: a Kumiki name is a Kumiki name, whatever JS thinks of it.
+#
+# Two hazards used to hide here. `new` / `class` / `var` are ordinary Kumiki
+# identifiers but reserved words in JS, so they produced a bundle that could not
+# be parsed — and `check` and `build` both reported success. Names that look
+# like runtime internals (`_live`, `_s`) were worse: they compiled, ran, and
+# silently computed against the wrong value.
+#
+# Everything below is deliberately named to collide. The rendered output is the
+# assertion: if the escaping regresses, the numbers change or the app fails to
+# load at all.
+
+slot count : Int        = 0
+slot items : List(Text) = ["a", "b"]
+slot joined : Text      = ""
+
+# `class` as a parameter name, `_s` (the stdlib handle) as another.
+fn bump(class: Int) -> Int = class + 1
+fn twice(_s: Int) -> Int = _s + _s
+
+# `new` as a let binding.
+reducer inc on=ui.click(IncBtn)
+    do= let new = bump(count)
+        count := new
+
+reducer double on=ui.click(DoubleBtn)
+    do= count := twice(count)
+
+# `var` as a loop bind.
+reducer sum on=ui.click(SumBtn)
+    do= for var in [1, 2, 3] { count := count + var }
+
+# `_live` — the name of the runtime's slot map — as a loop bind. Reading
+# `count` inside the loop is what breaks when a user binding shadows it.
+reducer join on=ui.click(JoinBtn)
+    do= for _live in items { joined := joined + _live + "/" + count.show }
+
+tile IncBtn    = button(text="inc", onClick=inc)
+tile DoubleBtn = button(text="double", onClick=double)
+tile SumBtn    = button(text="sum", onClick=sum)
+tile JoinBtn   = button(text="join", onClick=join)
+
+tile App = column(
+             text("count=" + count.show),
+             text("joined=" + joined),
+             IncBtn, DoubleBtn, SumBtn, JoinBtn)
+           {pad: "lg", gap: "sm"}
+
+app ReservedIdentifierNames
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

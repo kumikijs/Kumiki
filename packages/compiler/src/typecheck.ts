@@ -318,7 +318,27 @@ function checkMotion(def: import("./ast.ts").MotionDef, errors: KumikiError[]): 
   }
 }
 
+/**
+ * Names codegen resolves before it ever consults the slot table, so a slot
+ * declared with one of them is unreachable. Only `route` reaches this check:
+ * the lexer's keyword set already rejects `now`, `self` and the rest before
+ * the parser can build a SlotDef out of them, and `route` is the one such name
+ * that is a plain identifier (docs/spec/routing.md §3.2).
+ */
+const RESERVED_SLOT_NAMES: ReadonlyMap<string, string> = new Map([
+  ["route", "the router-maintained route slot"],
+]);
+
 function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const reserved = RESERVED_SLOT_NAMES.get(slot.name);
+  if (reserved !== undefined) {
+    errors.push({
+      code: "E0115",
+      kind: "reserved-slot-name",
+      message: `Slot "${slot.name}" collides with ${reserved}; reads of it never see this slot`,
+      pos: slot.pos,
+    });
+  }
   resolveType(slot.type, sym, errors);
   checkExpr(slot.init, sym, errors, { kind: "slot-init", localBinds: new Set() });
 }

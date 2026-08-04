@@ -1,5 +1,5 @@
 import type { Expr, Pattern } from "../ast.ts";
-import { addBind, type EvalCtx, jsName, makeEvalCtx } from "./context.ts";
+import { addBind, type EvalCtx, jsBinding, jsProperty, makeEvalCtx } from "./context.ts";
 
 /** Extract the reducer name from a `run-reducer(name)` argument (a bare ref). */
 export function reducerNameArg(e: Expr | undefined): string {
@@ -19,7 +19,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     case "Unit":
       return "null";
     case "Ref": {
-      if (ctx.localBinds.has(e.name)) return jsName(e.name);
+      if (ctx.localBinds.has(e.name)) return jsBinding(e.name);
       if (e.name === "now") return `_s.now()`;
       // `route` is an auto-managed slot maintained by the runtime.
       if (e.name === "route") {
@@ -34,7 +34,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
           ? `((_next[${key}] !== undefined) ? _next[${key}] : _live[${key}])`
           : `_live[${key}]`;
       }
-      return jsName(e.name);
+      return jsBinding(e.name);
     }
     case "BinOp": {
       const l = jsOfExpr(e.lhs, ctx);
@@ -178,7 +178,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       }
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
-      return `${jsName(cn)}(${args})`;
+      return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
       return methodCallJs(e.receiver, e.method, e.args, ctx);
@@ -215,7 +215,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `((${jsOfExpr(e.cond, ctx)}) ? (${jsOfExpr(e.consequent, ctx)}) : (${jsOfExpr(e.alternate, ctx)}))`;
     case "LetIn": {
       const inner = addBind(ctx, e.name);
-      return `(() => { const ${jsName(e.name)} = ${jsOfExpr(e.value, ctx)}; return ${jsOfExpr(e.body, inner)}; })()`;
+      return `(() => { const ${jsBinding(e.name)} = ${jsOfExpr(e.value, ctx)}; return ${jsOfExpr(e.body, inner)}; })()`;
     }
     case "Variant":
       return variantJs(e.name, e.payload, ctx);
@@ -387,7 +387,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
   // Generate a lambda that binds `$1` and `$2` accordingly: for a 2-tuple we
   // bind ($1=k, $2=v); for any other element we bind $1=elem, $2=undefined.
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${jsName("$1")} = _isPair ? __x[0] : __x; const ${jsName("$2")} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
+    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${jsBinding("$1")} = _isPair ? __x[0] : __x; const ${jsBinding("$2")} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {
@@ -402,7 +402,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${jsName("$1")}) => ${jsOfExpr(args[0]!, inner)}))`;
+      return `_s.flatMapOption(${recvJs}, ((${jsBinding("$1")}) => ${jsOfExpr(args[0]!, inner)}))`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -432,7 +432,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "fold":
       // List(T).fold(init, expr) — expr binds $1=acc, $2=elem (distinct from the
       // $1=elem/$2=value convention of filter/map), so emit its own lambda.
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${jsName("$1")}, ${jsName("$2")}) => ${jsOfExpr(args[1]!, inner)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${jsBinding("$1")}, ${jsBinding("$2")}) => ${jsOfExpr(args[1]!, inner)})`;
     case "show":
       return `_s.show(${recvJs})`;
     case "is-some":
@@ -504,7 +504,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Map(K,V).update(k, expr) — within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${jsName("$1")}) => (${jsOfExpr(args[1]!, inner)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${jsBinding("$1")}) => (${jsOfExpr(args[1]!, inner)})))`;
     case "add":
       // Set(T).add(x)
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
@@ -519,7 +519,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${jsName("$1")}) => (${jsOfExpr(args[0]!, inner)})))`;
+      return `_s.mapErr(${recvJs}, ((${jsBinding("$1")}) => (${jsOfExpr(args[0]!, inner)})))`;
     case "replace":
       // Text.replace(from, to) — replaces every occurrence.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
@@ -577,8 +577,9 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "to-int":
       return `Math.trunc(${recvJs})`;
     default:
-      // generic fallback: receiver.method(...args)
-      return `(${recvJs}).${jsName(method)}(${args.map(argRaw).join(", ")})`;
+      // generic fallback: receiver.method(...args). A property position, so the
+      // name must stay exactly what the runtime defines — jsProperty, not jsBinding.
+      return `(${recvJs}).${jsProperty(method)}(${args.map(argRaw).join(", ")})`;
   }
 }
 
@@ -617,7 +618,7 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
   let keyJs: string;
   if (eff?.policy?.kind === "PolLatestKey") {
     const keyCtx = { gen: ctx.gen, localBinds: new Set(["$1"]) };
-    keyJs = `String((((${jsName("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
+    keyJs = `String((((${jsBinding("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
   } else {
     keyJs = `"_"`;
   }
@@ -637,7 +638,7 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
   }
   if (p.kind === "PBind") {
     const inner = addBind(ctx, p.name);
-    return `if (true) { const ${jsName(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
+    return `if (true) { const ${jsBinding(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
   if (p.kind === "PTuple") {
     const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
@@ -651,7 +652,7 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     const name = p.binds[i]!;
     if (name === "_") continue;
     inner.localBinds.add(name);
-    bindAssigns.push(`const ${jsName(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
+    bindAssigns.push(`const ${jsBinding(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
   }
   return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
 }
@@ -692,7 +693,7 @@ export function walkPatternForTupleArm(
       return;
     case "PBind":
       inner.localBinds.add(p.name);
-      binds.push(`const ${jsName(p.name)} = ${accessor};`);
+      binds.push(`const ${jsBinding(p.name)} = ${accessor};`);
       return;
     case "PVariant":
       guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
@@ -700,7 +701,7 @@ export function walkPatternForTupleArm(
         const name = p.binds[i]!;
         if (name === "_") continue;
         inner.localBinds.add(name);
-        binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+        binds.push(`const ${jsBinding(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
       }
       return;
     case "PTuple":

@@ -66,6 +66,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0112](./errors.md#e0112-duplicate-sub-route) | `duplicate-sub-route` | tile | ルーティング |
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | ルーティング |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
+| [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -161,4 +162,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `58-unkeyed-conditional-rebuild.kumiki` | tile | コア | [§10.3.12](./runtime.md#_10-3-12-reconcile-の診断) |
 | `59-overlay-keyed-layers.kumiki` | tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `60-empty-state-keyed-list.kumiki` | tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
+| `61-reserved-identifier-names.kumiki` | fn, reducer | コア | [§1.2](./language.md#_1-2-字句) |
 <!-- examples:end -->

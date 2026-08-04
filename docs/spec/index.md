@@ -66,6 +66,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0112](./errors.md#e0112-duplicate-sub-route) | `duplicate-sub-route` | tile | routing |
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | routing |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
+| [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -161,4 +162,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `58-unkeyed-conditional-rebuild.kumiki` | tile | core | [§10.3.12](./runtime.md#_10-3-12-reconcile-diagnostics) |
 | `59-overlay-keyed-layers.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `60-empty-state-keyed-list.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
+| `61-reserved-identifier-names.kumiki` | fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
 <!-- examples:end -->

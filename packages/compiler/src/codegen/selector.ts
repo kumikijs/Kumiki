@@ -1,6 +1,6 @@
 import type { Expr, TileExpr, UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, UI_LIFTS } from "../ui-lifts.ts";
-import { type EvalCtx, jsName } from "./context.ts";
+import { type EvalCtx, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -53,7 +53,7 @@ export function propsFor(
     // `key` is lifted to the TileNode's top level by `_wk` at the tile-call
     // boundary; it must not also flow into `props` or `el`.
     if (p.name === "key") continue;
-    entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+    entries.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
 
   // Combine explicit wirings with reducers subscribing to (enclosingTile, ev)
@@ -121,7 +121,7 @@ export function propsFor(
     if (p.name === "style") continue;
     // See the `key` note in the top-level props loop above.
     if (p.name === "key") continue;
-    elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+    elProps.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   // §1.6.2 — the `id` prop drives `TileName#id` selector matching at dispatch
   // time via the `el.id` payload. Tiles that lift `id` from positional args

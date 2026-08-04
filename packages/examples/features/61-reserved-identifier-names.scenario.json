@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "label": "the app loads at all — a reserved word in a binding position used to emit unparseable JS",
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 0, "joined": "" },
+        "domIncludes": ["count=0"]
+      }
+    },
+    {
+      "label": "`let new = bump(count)` with `class` as the parameter name",
+      "do": { "clickText": "inc" },
+      "expect": { "noErrors": true, "state": { "count": 1 }, "domIncludes": ["count=1"] }
+    },
+    {
+      "label": "`_s` as a parameter name does not shadow the stdlib handle",
+      "do": { "clickText": "double" },
+      "expect": { "noErrors": true, "state": { "count": 2 }, "domIncludes": ["count=2"] }
+    },
+    {
+      "label": "`var` as a loop bind sums 1+2+3 on top of the current count",
+      "do": { "clickText": "sum" },
+      "expect": { "noErrors": true, "state": { "count": 8 }, "domIncludes": ["count=8"] }
+    },
+    {
+      "label": "`_live` as a loop bind still lets the body read the real slot map",
+      "do": { "clickText": "join" },
+      "expect": {
+        "noErrors": true,
+        "state": { "joined": "a/8b/8" },
+        "domIncludes": ["joined=a/8b/8"]
+      }
+    }
+  ]
+}

@@ -27,7 +27,7 @@ type KumikiError = {
 | 帯 | 領域 |
 |---|---|
 | `E00xx` | アプリ構造（ルーティングの必須要件など） |
-| `E01xx` | 名前解決（未定義の参照） |
+| `E01xx` | 名前解決（未定義の参照・予約名との衝突） |
 | `E02xx` | 型の不一致 |
 | `E03xx` | ケイパビリティと純粋性 |
 | `E04xx` | モーション |
@@ -157,6 +157,14 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 > `Tile "<name>" declares sub-routes but its parent route "<path>" is not a wildcard pattern (must end with "/*")`
 
 **修正**：親 pattern を `/*` で終わるように変える（`/settings` → `/settings/*`）か、`sub-routes` ブロックを外す。
+
+### E0115 `reserved-slot-name`
+
+コンパイラが slot テーブルを参照する前に解決してしまう名前で `slot` を宣言している。そのため、その slot は誰からも読めない。該当するのは router が管理する route slot（[Routing](./routing.md#_3-2-the-route-slot)）の `route` のみ — `now` や `self` など他の予約名は lexer が先に弾く。この診断がないと宣言はコンパイルを通り、slot は自分の値ではなく route オブジェクトを黙って描画する。
+
+> `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
+
+**修正**：slot の名前を変える。
 
 ## E02xx — 型
 

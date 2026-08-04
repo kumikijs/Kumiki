@@ -1,5 +1,6 @@
 import type { AppDef, EffectDef, ReducerDef } from "../ast.ts";
 import { TILE_FAMILY, type TileFamily } from "../builtins.ts";
+import { tileFamilyVar, tilePatcherFamilyVar } from "./context.ts";
 import { collectEmits } from "./emit-reducer.ts";
 
 type IndexedHandler = "indexedRead" | "indexedWrite" | "indexedDelete";
@@ -31,22 +32,6 @@ export const TILE_FAMILY_ORDER: TileFamily[] = [
   "media",
   "status",
 ];
-
-/** The generated identifier holding one tile family's renderer map. */
-export function tileFamilyVar(f: TileFamily): string {
-  return `${f}Tiles`;
-}
-
-/**
- * The generated identifier holding one tile family's patcher map — the
- * companion to `tileFamilyVar`. The reconcile mutates a mounted element in
- * place only when it finds a patcher for the tile's kind; a mount without them
- * falls back to rebuilding every changed subtree, discarding focus, caret,
- * `<select>` open state and `<video>` playback on every data-prop change.
- */
-export function tilePatcherFamilyVar(f: TileFamily): string {
-  return `${f}Patchers`;
-}
 
 /**
  * Decide which runtime feature modules a compiled app needs (#71).

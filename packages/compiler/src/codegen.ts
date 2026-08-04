@@ -23,7 +23,7 @@ import type {
   TypeDef,
 } from "./ast.ts";
 import type { GenCtx } from "./codegen/context.ts";
-import { jsName } from "./codegen/context.ts";
+import { jsBinding } from "./codegen/context.ts";
 import {
   appAnalyticsJson,
   appMetaJson,
@@ -288,7 +288,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (opts.includeTests && tests.length > 0) {
     lines.push("const _tilesById = {");
     for (const tile of tiles) {
-      lines.push(`  ${JSON.stringify(tile.name)}: (${jsName("$1")}) => ${genTile(tile, ctx)},`);
+      lines.push(`  ${JSON.stringify(tile.name)}: (${jsBinding("$1")}) => ${genTile(tile, ctx)},`);
     }
     lines.push("};");
     lines.push("App._tilesById = _tilesById;");

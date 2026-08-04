@@ -1,6 +1,6 @@
 import type { EffectDef, Expr, ReducerDef, TestDef, TileDef, TileExpr } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
-import { type EvalCtx, type GenCtx, jsName, makeEvalCtx } from "./context.ts";
+import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
 import { typeToGenDesc } from "./emit-type.ts";
@@ -140,7 +140,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       )
       .join(", ");
     const binds = forAll
-      .map((f) => `const ${jsName(f.name)} = _b[${JSON.stringify(f.name)}];`)
+      .map((f) => `const ${jsBinding(f.name)} = _b[${JSON.stringify(f.name)}];`)
       .join(" ");
     const givenSlots = recordField(t.given, "slots");
     const initSlotsJs = givenSlots ? jsOfExpr(givenSlots, pctx) : "({})";
