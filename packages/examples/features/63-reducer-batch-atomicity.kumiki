@@ -1,0 +1,65 @@
+# Feature: a reducer batch commits all-or-nothing (spec/runtime.md §10.3.3).
+#
+# `count` is capped at 3. `bump` writes three slots in one batch, and the
+# second statement reads `count` back — a reducer body sees the batch under
+# construction, which is what makes successive writes in a `for` loop work.
+#
+# At the ceiling that same property is the danger: `count + 1` is a value the
+# slot cannot hold, and `mirror := count` would copy it somewhere with no
+# ceiling at all, making a value that never existed permanent. Skipping just
+# the rejected slot would also leave `log` bumped by a reducer that did not
+# otherwise run.
+#
+# So the whole batch is discarded — `count`, `mirror` and `log` all keep their
+# previous values — and the rejection is reported on console.error rather than
+# passing for a no-op. `guarded` below is the shape to write when a bound is
+# reachable.
+
+type Small = nominal Int where between(0, 3)
+
+slot count  : Small = 0
+slot mirror : Int   = 0
+slot log    : Text  = ""
+
+reducer bump on=ui.click(BumpBtn)
+    do= count  := count + 1
+        mirror := count
+        log    := log + "!"
+
+reducer guarded on=ui.click(GuardedBtn)
+    do= if count < 3 then count := count + 1
+
+reducer reset on=ui.click(ResetBtn)
+    do= count  := 0
+        mirror := 0
+        log    := ""
+
+tile BumpBtn    = button(text="bump", onClick=bump)
+tile GuardedBtn = button(text="guarded", onClick=guarded)
+tile ResetBtn   = button(text="reset", onClick=reset)
+
+tile App = column(
+             row(BumpBtn, GuardedBtn, ResetBtn) {gap: "sm"},
+             text("count=" + count.show + " mirror=" + mirror.show + " log=[" + log + "]"))
+           {pad: "lg", gap: "sm"}
+
+app ReducerBatchAtomicity
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+# The reducer-test tier applies the same rule, so a rejection is reproducible
+# without a DOM: at the ceiling the expected slots are the ones the reducer
+# started from.
+
+test bump-commits-whole =
+    reducer-test bump
+        given  = {slots: {count: 1, mirror: 0, log: ""},
+                  event: {type: ui.click, target: BumpBtn}}
+        expect = {slots: {count: 2, mirror: 2, log: "!"}, effects: []}
+
+test bump-at-ceiling-changes-nothing =
+    reducer-test bump
+        given  = {slots: {count: 3, mirror: 3, log: "!!!"},
+                  event: {type: ui.click, target: BumpBtn}}
+        expect = {slots: {count: 3, mirror: 3, log: "!!!"}, effects: []}

@@ -94,17 +94,22 @@ function makeCounterApp(): AppShape {
   // Provide `_live` so the root() closure can read count after mounts.
   (app as unknown as { _live: Record<string, unknown> })._live = { count: 0 };
   // Intercept the runtime's slot writes by patching apply functions to also
-  // write into our shadow `_live` mirror.
+  // write into our shadow `_live` mirror, under the same all-or-nothing rule
+  // the runtime applies (spec/runtime.md §10.3.3) — a mirror that diverged
+  // would make the DOM assertions below lie about what the app rendered.
   const originalReducers = app.reducers;
   app.reducers = originalReducers.map((r) => ({
     ...r,
     apply: (live, payload) => {
       const result = r.apply(live, payload);
-      const mirror = (app as unknown as { _live: Record<string, unknown> })._live;
-      for (const [k, v] of Object.entries(result.slots)) {
+      const entries = Object.entries(result.slots);
+      const rejected = entries.some(([k, v]) => {
         const meta = slots[k as keyof typeof slots];
-        if (meta?.refine && !meta.refine(v)) continue;
-        mirror[k] = v;
+        return meta?.refine !== undefined && !meta.refine(v);
+      });
+      if (!rejected) {
+        const mirror = (app as unknown as { _live: Record<string, unknown> })._live;
+        for (const [k, v] of entries) mirror[k] = v;
       }
       return result;
     },
@@ -142,7 +147,7 @@ describe("runtime", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 3");
   });
 
-  it("rejects values below refinement floor", () => {
+  it("refuses a write below the refinement floor", () => {
     mount(makeCounterApp(), root);
     const minus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "-");
     minus?.click();
@@ -161,7 +166,10 @@ describe("runtime", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
 
-  it("clamps at refinement ceiling 999", () => {
+  // Not a clamp — a refinement is a type constraint, so the write past 999 is
+  // refused (and reported) rather than saturating. The observable count is the
+  // same; a real app guards the edge instead of relying on this.
+  it("refuses a write past the refinement ceiling of 999", () => {
     mount(makeCounterApp(), root);
     const plus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "+");
     for (let i = 0; i < 1001; i++) plus?.click();

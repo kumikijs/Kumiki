@@ -138,6 +138,42 @@ on reducer execution:
 
 1 つの reducer 実行内のすべての slot 変更は **1 つのバッチ**として扱う。`for` ループ内の連続変更も同一バッチ。バッチ確定後に signal graph を 1 度だけ更新する。
 
+#### バッチは全部通るか全部通らないかのどちらか
+
+何かを書き込む前に、バッチ内のすべての slot をその型の refinement（[登録済み refinement 述語](./language.md#_1-3-3-登録済み-refinement-述語)）に照らして検査する。**いずれか 1 つでも**値が拒否された場合、その reducer 適用は丸ごと破棄される。slot は 1 つも書かれず、`emit` は 1 つも発行されず、`stop-timer` も走らず、再レンダリングも起きない。
+
+これは panic では**ない** — アプリは操作可能なまま、slot は無傷で、`app.error` も発火しない — が、決して沈黙しない。runtime は
+
+```
+[kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3)). No slot was written and no effect was emitted.
+```
+
+を `console.error` に報告する。未処理の effect エラー（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）と同じ経路・同じ契約であり、検証ティア（`smoke` / `runScenario` / e2e）がすべて拾う。
+
+このルールがあるのは、もう一方の選択肢 — 拒否された slot だけを飛ばして残りを書く — が reducer を半分だけ適用し、さらに slot が一度も取らなかった値を隣の slot へ逃がしてしまうからである。body の後続文は構築途中のバッチを読むためだ:
+
+```kumiki
+type Small = nominal Int where between(0, 3)
+slot count : Small = 0
+slot mirror : Int  = 0
+
+reducer bump on=ui.click(Btn)
+    do= count  := count + 1      ; 上限では、この値は拒否される
+        mirror := count          ; ...そしてここから読めてはならない
+```
+
+到達しうる境界はプログラム側の責任であって runtime の責任ではない。ガードは自分で書く:
+
+```kumiki
+reducer bump on=ui.click(Btn)
+    do= if count < 3 then count := count + 1
+```
+
+refinement が門番を**しない**ものが 2 つある:
+
+- **宣言時の初期値**。`slot email : Text where email = ""` は自身の refinement が拒否する値を最初から保持する。これこそが、手つかずのフォームで `error(field=email)` にメッセージを出させている仕組みである（[エラー表示](./forms.md#_5-7-1-個別フィールドの-refinement-違反)）。
+- **双方向 `bind`**。入力の拒否はフィールド単位で、slot はそのまま残り、報告も出ない（[refinement の扱い](./forms.md#_5-1-2-refinement-の扱い)）。入力途中の値は欠陥ではなく想定内だからである。
+
 ### 10.3.4 DOM レンダリングの不変条件
 
 - **null/undefined 子ノードは skip される**。`when(false, X)` のような偽分岐は `null` を子に渡すが、`renderTile` はそれを無視して兄弟だけを描画する

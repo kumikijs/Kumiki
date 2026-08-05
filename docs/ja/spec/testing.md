@@ -264,7 +264,7 @@ example コーパス（`packages/tests`）は「壊れた example は決して�
 
 - **操作（action）**: `{dispatch, payload?}`（reducer を名前で発火）/ `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{fill, value}` / `{choose, value}` / `{navigate}`。`{focus}` と `{blur}` はセレクタ一致要素に対し実際の DOM `FocusEvent` を dispatch するため、`ui.focus` / `ui.blur` reducer が依存する `addEventListener` 配線層をシナリオ単独で検証できる。
 - **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。
-- **アサーション（expect）**: `{ noErrors?, state?, domIncludes?, domExcludes? }`。`state` は **slot 状態への部分一致**（ドット区切りパス可）。DOM テキストではなく状態を検証できるため、「select が常に最後の選択肢になる」ような**非例外の振る舞いバグ**（人がクリックして気づくクラス）を機械的に検出できる。これは TDD の受け入れ基準（AC）を実行可能にしたものに等しい。
+- **アサーション（expect）**: `{ noErrors?, errorIncludes?, state?, domIncludes?, domExcludes? }`。`state` は **slot 状態への部分一致**（ドット区切りパス可）。`errorIncludes` は `noErrors` の対になるもので、各部分文字列がそのステップ中に報告されたいずれかのエラーに含まれることを要求する。refinement が拒否した reducer バッチ（[batching](./runtime.md#バッチは全部通るか全部通らないかのどちらか)）や、`.err` reducer が受け取らない effect エラーのように、runtime が*報告すること*自体が契約であるケース向けである。scenario ティア専用で、browser ティアは報告されたエラーをすべて致命として扱う。DOM テキストではなく状態を検証できるため、「select が常に最後の選択肢になる」ような**非例外の振る舞いバグ**（人がクリックして気づくクラス）を機械的に検出できる。これは TDD の受け入れ基準（AC）を実行可能にしたものに等しい。
 - **effect スクリプト**: `effects: { <name>: [{outcome, value}, ...] }` で HTTP / Storage の結果を順に差し替え、ループを決定論的・ネットワーク非依存に保つ。
 
 なぜ Kumiki でこれが綺麗に成立するか: 状態が明示的（slot）なので oracle が信頼でき、イベントが宣言的（reducer 名）なので正確に駆動でき、effect が capability 境界でモック可能なので再現性がある。エージェントが要件から「アプリ + シナリオ（AC）」を生成し、trace を読んで自己修正することで、人は要件を一度述べるだけでよい。ループの手順は `.claude/skills/kumiki-iterate` に記述。

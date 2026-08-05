@@ -138,6 +138,42 @@ Because dependencies are statically analyzed at compile time, the runtime tracki
 
 All slot changes within a single reducer execution are treated as **one batch**. Successive changes inside a `for` loop are also the same batch. After the batch is finalized, the signal graph is updated only once.
 
+#### A batch commits all-or-nothing
+
+Before anything is written, every slot in the batch is checked against its type's refinement ([Registered Refinement Predicates](./language.md#_1-3-3-registered-refinement-predicates)). If **any** value is rejected, the whole reducer application is discarded: no slot is written, no `emit` is dispatched, no `stop-timer` runs, and no re-render is triggered.
+
+This is **not** a panic — the app stays interactive, slots are untouched, and `app.error` does not fire — but it is never silent. The runtime reports
+
+```
+[kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3)). No slot was written and no effect was emitted.
+```
+
+via `console.error`, the same channel and contract as an unhandled effect error ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), so the verification tiers (`smoke` / `runScenario` / e2e) all flag it.
+
+The rule exists because the alternative — skipping only the rejected slot and writing the rest — half-applies the reducer, and lets a value the slot never took escape into a sibling slot, since statements later in the body read the batch under construction:
+
+```kumiki
+type Small = nominal Int where between(0, 3)
+slot count : Small = 0
+slot mirror : Int  = 0
+
+reducer bump on=ui.click(Btn)
+    do= count  := count + 1      ; at the ceiling, this value is rejected
+        mirror := count          ; ...and must not be readable here
+```
+
+A reachable bound is the program's business, not the runtime's. Write the guard:
+
+```kumiki
+reducer bump on=ui.click(Btn)
+    do= if count < 3 then count := count + 1
+```
+
+Two things a refinement does **not** gate:
+
+- **The declared default.** `slot email : Text where email = ""` starts out holding a value its own refinement rejects — that is what makes `error(field=email)` show a message on a pristine form ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+- **Two-way `bind`.** Input rejection is per field and leaves the slot alone, with no report ([Handling of refinement](./forms.md#_5-1-2-handling-of-refinement)) — a half-typed value is expected, not a defect.
+
 ### 10.3.4 Invariants of DOM Rendering
 
 - **null/undefined child nodes are skipped**. A false branch like `when(false, X)` passes `null` as a child, but `renderTile` ignores it and renders only the siblings

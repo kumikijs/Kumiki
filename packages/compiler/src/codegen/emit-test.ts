@@ -211,7 +211,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       let _res = null, _panic = null;
       try { _res = _r.apply(App.live, { $el: _el, $event: _el }); }
       catch (e) { _panic = (e && e.message) ? e.message : String(e); }
-      return _s.runReducerTest({ name: ${nameJs}, givenSlots: { ...App.live }, result: _res, panic: _panic, expect: ${expectJs} });
+      return _s.runReducerTest({ name: ${nameJs}, target: ${JSON.stringify(t.target)}, givenSlots: { ...App.live }, slotMetas: App.slots, result: _res, panic: _panic, expect: ${expectJs} });
     },
   },`;
   }

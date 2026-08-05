@@ -488,6 +488,22 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("7/7 passed");
   });
 
+  // The reducer-test tier has to refuse exactly what the running app refuses.
+  // It used to merge a reducer's returned slots over the given ones with no
+  // refinement check at all, so a batch the app discards passed here — the tier
+  // meant to catch the bug would have certified it.
+  it("refuses a batch the app's refinement rejects", { timeout: 30000 }, () => {
+    const file = resolve(here, "../../examples/features/63-reducer-batch-atomicity.kumiki");
+    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", file], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    expect(out).toContain("PASS  bump-commits-whole");
+    expect(out).toContain("PASS  bump-at-ceiling-changes-nothing");
+    expect(out).toContain("2/2 passed");
+  });
+
   it("filters by a name prefix", { timeout: 30000 }, () => {
     const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS, "inc-i*"], {
       stdio: "pipe",

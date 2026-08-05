@@ -4,7 +4,14 @@
 // `kumiki build` output never ships them. `index.ts` merges this back into the
 // classic `_stdlib` export for the inlining (full-bundle) path.
 
-import { type PanicCategory, type PanicCauseLink, panicInfo, type ReducerSpec } from "./core.ts";
+import {
+  type PanicCategory,
+  type PanicCauseLink,
+  panicInfo,
+  type ReducerSpec,
+  refinementRejections,
+  reportRejectedBatch,
+} from "./core.ts";
 
 /**
  * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
@@ -601,19 +608,23 @@ function executeEpisode(
   }[] = [];
   const unhandledErrors: { effect: string }[] = [];
 
-  // Apply a reducer's slot writes, honouring §6.4 refine() gates: a reject is
-  // silently dropped (mirrors the production runtime), so the slot keeps its
-  // prior value and that slot is NOT reported as a diff. Replay still emits
-  // the surrounding `reducer` event; a refine veto is invisible from the
-  // outside today — we surface it through an explicit observer kind only when
-  // a future debug pass needs it.
+  // Apply a reducer's slot writes under the runtime.md §10.3.3 all-or-nothing
+  // rule: if any slot's new value fails its refinement, nothing is written and
+  // the caller drops that reducer's emits too. Returns null in that case, so a
+  // rejected batch is distinguishable from one that legitimately changed
+  // nothing. Replay must match the live runtime here — the whole point of the
+  // tier is to reproduce what the app actually did.
   const writeSlots = (
+    reducerName: string,
     resSlots: Record<string, unknown> | undefined,
-  ): { name: string; before: unknown; after: unknown }[] => {
+  ): { name: string; before: unknown; after: unknown }[] | null => {
+    const rejected = refinementRejections(resSlots ?? {}, app.slots);
+    if (rejected.length > 0) {
+      reportRejectedBatch(reducerName, rejected);
+      return null;
+    }
     const diffs: { name: string; before: unknown; after: unknown }[] = [];
     for (const [k, v] of Object.entries(resSlots ?? {})) {
-      const meta = app.slots[k];
-      if (meta?.refine && !meta.refine(v)) continue;
       const before = app.live[k];
       app.live[k] = v;
       if (!deepEqualValue(before, v)) diffs.push({ name: k, before, after: v });
@@ -717,7 +728,8 @@ function executeEpisode(
       }
       continue;
     }
-    const diffs = writeSlots(res.slots);
+    const written = writeSlots(job.reducer.name, res.slots);
+    const diffs = written ?? [];
     for (const d of diffs) dirtyForEpisode.add(d.name);
     if (
       emit({
@@ -730,6 +742,9 @@ function executeEpisode(
     ) {
       return { panics, unhandledErrors, stopped: true };
     }
+    // A rejected batch produced its emits from state that never became real,
+    // so the effect chain below must not run (§10.3.3).
+    if (written === null) continue;
     for (const eEmit of res.emits ?? []) {
       const mock = mocks[eEmit.effect];
       if (
@@ -972,10 +987,17 @@ export const _stdlibTest = {
     for (const [k, v] of Object.entries(slots)) live[k] = v.value;
     Object.assign(live, given);
   },
-  /** Compare a reducer's resulting slots + emitted effects (or a panic) to `expect`. */
+  /**
+   * Compare a reducer's resulting slots + emitted effects (or a panic) to
+   * `expect`. `slotMetas` carries the refinements: without them this tier would
+   * accept a batch the running app refuses (runtime.md §10.3.3), which is the
+   * one thing a reducer-test must never do.
+   */
   runReducerTest(input: {
     name: string;
+    target: string;
     givenSlots: Record<string, unknown>;
+    slotMetas: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
     result: { slots: Record<string, unknown>; emits: { effect: string; args: unknown[] }[] } | null;
     panic: string | null;
     expect:
@@ -986,7 +1008,12 @@ export const _stdlibTest = {
           effects: { effect: string; args: unknown[]; argsSpecified?: boolean }[];
         };
   }): TestResult {
-    const { name, givenSlots, result, panic, expect } = input;
+    const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
+    const rejected = refinementRejections(result?.slots ?? {}, slotMetas ?? {});
+    if (rejected.length > 0) {
+      reportRejectedBatch(target, rejected);
+      return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
+    }
     const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
     return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
   },
@@ -1018,12 +1045,20 @@ export const _stdlibTest = {
     let panic: string | null = null;
     let unhandledErr: string | null = null;
 
-    const writeSlots = (resSlots: Record<string, unknown> | undefined): void => {
-      for (const [k, v] of Object.entries(resSlots ?? {})) {
-        const meta = slots[k];
-        if (meta?.refine && !meta.refine(v)) continue;
-        live[k] = v;
+    // §10.3.3 all-or-nothing, as on the live path. Returns false when the batch
+    // was rejected so the caller skips its emits — otherwise a reducer test
+    // would see effects the running app would never have dispatched.
+    const writeSlots = (
+      reducerName: string,
+      resSlots: Record<string, unknown> | undefined,
+    ): boolean => {
+      const rejected = refinementRejections(resSlots ?? {}, slots);
+      if (rejected.length > 0) {
+        reportRejectedBatch(reducerName, rejected);
+        return false;
       }
+      for (const [k, v] of Object.entries(resSlots ?? {})) live[k] = v;
+      return true;
     };
     const enqueue = (emits: { effect: string; args: unknown[] }[] | undefined): void => {
       for (const emit of emits ?? []) {
@@ -1037,8 +1072,7 @@ export const _stdlibTest = {
       const tr = app.reducers.find((r) => r.name === target);
       if (!tr) throw new Error(`reducer ${target} not found`);
       const res0 = tr.apply(live, { $el: el, $event: el });
-      writeSlots(res0.slots);
-      enqueue(res0.emits);
+      if (writeSlots(tr.name, res0.slots)) enqueue(res0.emits);
       let guard = 0;
       while (queue.length > 0 && guard++ < 10000) {
         const job = queue.shift();
@@ -1051,8 +1085,7 @@ export const _stdlibTest = {
             r.event.outcome === job.outcome
           ) {
             const res = r.apply(live, { $1: job.value, $2: undefined });
-            writeSlots(res.slots);
-            enqueue(res.emits);
+            if (writeSlots(r.name, res.slots)) enqueue(res.emits);
             matched++;
           }
         }

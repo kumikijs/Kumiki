@@ -1,12 +1,16 @@
 # Feature: nominal type with a refinement.
-# `between(lo, hi)` clamps the slot — writes outside the range are rejected.
+#
+# `between(lo, hi)` bounds the slot: a write outside the range is refused, and
+# it takes the rest of that reducer's batch with it (spec/runtime.md §10.3.3).
+# A refinement is a type constraint, not a saturating `+` — so a reducer that
+# can reach the bound guards itself, as both do here.
 
 type Volume = nominal Int where between(0, 11)
 
 slot volume : Volume = 5
 
-reducer up   on=ui.click(UpBtn)   do= volume := volume + 1
-reducer down on=ui.click(DownBtn) do= volume := volume - 1
+reducer up   on=ui.click(UpBtn)   do= if volume < 11 then volume := volume + 1
+reducer down on=ui.click(DownBtn) do= if volume > 0  then volume := volume - 1
 
 tile UpBtn   = button(text="louder", onClick=up)
 tile DownBtn = button(text="quieter", onClick=down)
