@@ -33,7 +33,8 @@ describe("codegen", () => {
     expect(result.js).toContain("_reducers");
     // Handlers dispatch through the instance's own `App`; the global stays as
     // a tooling state oracle only.
-    expect(result.js).toContain('App._dispatch("inc"');
+    expect(result.js).toContain('_h("inc")');
+    expect(result.js).toContain("App._dispatch(n, el)");
     expect(result.js).toContain("globalThis.__kumikiApp = App;");
   });
 
@@ -378,7 +379,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onKeyDown: \(el\) => \{ App._dispatch\("onKey"/);
+    expect(result.js).toMatch(/onKeyDown: _h\("onKey"\)/);
   });
 
   it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
@@ -392,7 +393,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onMouseEnter: \(el\) => \{ App._dispatch\("onHover"/);
+    expect(result.js).toMatch(/onMouseEnter: _h\("onHover"\)/);
   });
 
   // issue #122 — §1.6.1 ui.focus / ui.blur. Parser/AST already accepted
@@ -414,7 +415,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
+    expect(result.js).toMatch(/onFocus: _h\("recordFocus"\)/);
   });
 
   it("emits onBlur for ui.blur(EnclosingTile) on an input (§1.6.1)", () => {
@@ -428,7 +429,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => \{ App._dispatch\("markBlur"/);
+    expect(result.js).toMatch(/onBlur: _h\("markBlur"\)/);
   });
 
   it("emits onFocus on a textarea (one of the focusable tile gates) (§1.6.1)", () => {
@@ -442,7 +443,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
+    expect(result.js).toMatch(/onFocus: _h\("recordFocus"\)/);
   });
 
   // The "non-focusable" guard is a deliberate codegen design choice: a
@@ -505,7 +506,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
+    expect(result.js).toMatch(/onFocus: _h\("recordFocus"\)/);
   });
 
   it("emits onClick on a radio tile so `ui.click(Radio)` reducers fire (§1.6.1)", () => {
@@ -519,7 +520,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onClick: \(el\) => \{ App._dispatch\("pick"/);
+    expect(result.js).toMatch(/onClick: _h\("pick"\)/);
   });
 
   it("emits onChange on form-control tiles (check / radio / switch / slider) — `ui.change(Tile)` reducers fire (§1.6.1)", () => {
@@ -540,9 +541,7 @@ describe("codegen", () => {
       const result = compile(src, { runtimeSpecifier: "./runtime.js" });
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") continue;
-      expect(result.js).toMatch(
-        new RegExp(`onChange: \\(el\\) => \\{ App\\._dispatch\\("${reducer}"`),
-      );
+      expect(result.js).toMatch(new RegExp(`onChange: _h\\("${reducer}"\\)`));
     }
   });
 
@@ -558,7 +557,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => \{ App._dispatch\("markBlur"/);
+    expect(result.js).toMatch(/onBlur: _h\("markBlur"\)/);
   });
 
   it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
@@ -727,12 +726,9 @@ describe("codegen", () => {
     // Anchor on dispatch occurrences in the full emitted module (not a regex
     // slice — a `}` inside a future dispatch payload would cut the slice early
     // and silently pass even after a regression).
-    const iLog = result.js.indexOf('_dispatch("logHit"');
-    const iSave = result.js.indexOf('_dispatch("save"');
-    const iAudit = result.js.indexOf('_dispatch("audit"');
-    expect(iLog).toBeGreaterThanOrEqual(0);
-    expect(iSave).toBeGreaterThan(iLog);
-    expect(iAudit).toBeGreaterThan(iSave);
+    // The memoised handler's argument list is the dispatch order.
+    const chain = /onClick: _h\(([^)]*)\)/.exec(result.js)?.[1];
+    expect(chain).toBe('"logHit", "save", "audit"');
   });
 
   it("emits a single onClick that wraps the one dispatch when only one reducer matches", () => {
@@ -746,8 +742,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('_dispatch("inc", el)');
-    expect(result.js).toMatch(/onClick: \(el\) => \{ App._dispatch\("inc"/);
+    expect(result.js).toMatch(/onClick: _h\("inc"\)/);
   });
 
   it("chains explicit `onClick=fn` and a separate ui.click reducer on the same tile (§1.6.4)", () => {
@@ -767,17 +762,12 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // Both dispatches present, explicit before implicit.
-    const iExplicit = result.js.indexOf('_dispatch("onExplicit"');
-    const iImplicit = result.js.indexOf('_dispatch("onImplicit"');
-    expect(iExplicit).toBeGreaterThanOrEqual(0);
-    expect(iImplicit).toBeGreaterThan(iExplicit);
+    // Both dispatches present, explicit before implicit — the chained
+    // handler below carries them in that order.
     // Per element they collapse into one chained handler. Guards against a
     // duplicate-key object literal (`{ onClick: a, onClick: b }`) by checking
     // the explicit dispatch and the implicit dispatch land in the same body.
-    expect(result.js).toMatch(
-      /onClick: \(el\) => \{ App._dispatch\("onExplicit", el\); App._dispatch\("onImplicit", el\) \}/,
-    );
+    expect(result.js).toMatch(/onClick: _h\("onExplicit", "onImplicit"\)/);
   });
 
   it("dedupes overlapping explicit + implicit wiring of the same reducer (no double-fire)", () => {
@@ -795,10 +785,11 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // Exactly one dispatch of `inc` in the onClick body.
-    const matches = result.js.match(/_dispatch\("inc"/g) ?? [];
+    // `inc` is wired once, not twice, so the handler takes a single name.
+    const matches = result.js.match(/_h\("inc"\)/g) ?? [];
     // One per route (/, /404) — both renderings emit the same chain.
     expect(matches.length).toBe(2);
+    expect(result.js).not.toContain('_h("inc", "inc")');
   });
 
   it("dispatches every reducer subscribing to the same (tile, ui.submit) in source order (§1.6.4)", () => {
@@ -814,14 +805,8 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    const iSave = result.js.indexOf('_dispatch("save"');
-    const iAudit = result.js.indexOf('_dispatch("audit"');
-    expect(iSave).toBeGreaterThanOrEqual(0);
-    expect(iAudit).toBeGreaterThan(iSave);
-    // Both dispatches share a single chained handler body.
-    expect(result.js).toMatch(
-      /onSubmit: \(el\) => \{ App._dispatch\("save", el\); App._dispatch\("audit", el\) \}/,
-    );
+    // Source order, and a single chained handler rather than two props.
+    expect(result.js).toMatch(/onSubmit: _h\("save", "audit"\)/);
   });
 
   it("dispatches every reducer subscribing to the same (tile, ui.hover) in source order (§1.6.4)", () => {
@@ -839,13 +824,8 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    const iWake = result.js.indexOf('_dispatch("wake"');
-    const iNote = result.js.indexOf('_dispatch("note"');
-    expect(iWake).toBeGreaterThanOrEqual(0);
-    expect(iNote).toBeGreaterThan(iWake);
-    expect(result.js).toMatch(
-      /onMouseEnter: \(el\) => \{ App._dispatch\("wake", el\); App._dispatch\("note", el\) \}/,
-    );
+    // Source order, carried by the chained handler's argument list.
+    expect(result.js).toMatch(/onMouseEnter: _h\("wake", "note"\)/);
   });
 
   // Issue #188 — the compiler lifts author-written `{key: expr}` from tile

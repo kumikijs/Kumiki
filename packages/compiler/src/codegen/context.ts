@@ -219,6 +219,45 @@ const JS_UNSAFE_BINDINGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The emitted preamble backing {@link handlerRef}: one memoised closure per
+ * reducer list, per app instance.
+ *
+ * Handlers used to be minted fresh on every render, which made them impossible
+ * to compare — the reconciler's field comparison had to treat any two
+ * functions as equal, so a conditional swapping two inline tiles that differ
+ * only in their handler reused the element untouched and kept dispatching to
+ * the reducer it was created with. Memoising by reducer list restores the
+ * property the comparison needs: same handler ⇒ same reference.
+ *
+ * `App` is the enclosing `createApp()` scope's own instance, resolved at click
+ * time, so several compiled apps on one page never cross-wire. Emitting this at
+ * module scope instead would bind every instance's handlers to the first one.
+ *
+ * The cache key is the reducer list joined on `|`. That is injective because
+ * the lexer restricts identifiers to `[A-Za-z_][A-Za-z0-9_-]*`, so no reducer
+ * name can contain the separator — load-bearing, since two distinct handler
+ * chains collapsing onto one entry is the same class of bug the memo exists to
+ * fix.
+ */
+export const HANDLER_MEMO_PREAMBLE = [
+  "const _handlerCache = new Map();",
+  "function _h(...names) {",
+  '  const key = names.join("|");',
+  "  let fn = _handlerCache.get(key);",
+  "  if (fn === undefined) {",
+  "    fn = (el) => { for (const n of names) App._dispatch(n, el); };",
+  "    _handlerCache.set(key, fn);",
+  "  }",
+  "  return fn;",
+  "}",
+].join("\n");
+
+/** A reference to the memoised handler for `names`, as emitted in tile props. */
+export function handlerRef(names: readonly string[]): string {
+  return `_h(${names.map((n) => JSON.stringify(n)).join(", ")})`;
+}
+
+/**
  * Map a Kumiki identifier to a JS identifier for a *binding* position — a
  * declaration (`const x`, a parameter, a `for … of` head) or a reference to
  * one. The result is guaranteed to be

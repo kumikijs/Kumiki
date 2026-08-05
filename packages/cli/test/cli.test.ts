@@ -67,7 +67,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const app = readFileSync(join(outDir, "app.js"), "utf8");
     expect(app).toContain('import { mountCore } from "./runtime/core.js"');
     expect(app).toContain('tile: "IncBtn"');
-    expect(app).toContain('App._dispatch("inc"');
+    expect(app).toContain('_h("inc")');
 
     // Size acceptance (#71): the counter runtime payload is well below the
     // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).

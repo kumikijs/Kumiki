@@ -120,7 +120,7 @@ function decide(oldNode: TileNode, newNode: TileNode): Decision {
   dispose();
 
   // Every diagnostic this harness can provoke is a reconcile fallback: no
-  // `hostTileKinds` are declared, so the stale-closure scan never runs. A new
+  // `hostTileKinds` are declared, so the never-equal scan never runs. A new
   // kind arriving here means the walker started reporting something these
   // cases do not account for — look at it rather than filter it away.
   const unexpected = seen.filter((d) => d.kind !== "reconcile-fallback");
@@ -324,15 +324,24 @@ describe("runtime: reconcile prop-equality kernel", () => {
   });
 
   describe("function-valued fields", () => {
-    it("reuses across two different closures", () => {
-      // Codegen mints a fresh `onClick` on every render. Comparing closure
-      // identity would rebuild every interactive tile on every render — the
-      // whole point of the diff, lost. Safe because built-in renderers dispatch
-      // through per-element handler slots rather than the create-time closure.
+    it("reuses when the handler is the same reference", () => {
+      // Codegen memoises one closure per reducer list, so an unchanged handler
+      // arrives as the same reference on every render and the tile keeps the
+      // reuse fast path.
+      const onClick = () => undefined;
+      expectSameKind(leaf({ onClick }), leaf({ onClick }), "reuse");
+    });
+
+    it("does not reuse across two different closures", () => {
+      // Two closures that are not the same reference are a real difference:
+      // this is exactly the shape a conditional produces when it swaps two
+      // inline tiles differing only in which reducer they dispatch to. Treating
+      // them as equal reused the element with the branch's original handler and
+      // the other branch never fired.
       expectSameKind(
         leaf({ onClick: () => undefined }),
         leaf({ onClick: () => undefined }),
-        "reuse",
+        "rebuild",
       );
     });
 
@@ -343,8 +352,8 @@ describe("runtime: reconcile prop-equality kernel", () => {
     });
 
     it("rebuilds when a handler is replaced by a non-function", () => {
-      // The always-equal shortcut applies only when BOTH sides are functions;
-      // a handler swapped for data is a real change.
+      // A handler swapped for data is a real change, same as a handler swapped
+      // for another handler.
       expectSymmetric(leaf({ onClick: () => undefined }), leaf({ onClick: "noop" }), "rebuild");
     });
   });

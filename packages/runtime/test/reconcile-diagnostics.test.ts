@@ -3,11 +3,10 @@
 // The diff has several full-rebuild escape hatches that are correctness-
 // preserving but hide behind an ordinary `return`: an app can be re-mounting
 // every subtree on every render while the benchmark still reports a waste
-// ratio of 1×. The prop-equality kernel adds two more, on either side of its
-// own verdict: it treats any two functions as equal, so a host renderer can
-// keep a stale closure alive, and it can never call a `Date` or a `NaN` equal,
-// so a host tile carrying one is patched every render with nothing reported at
-// all.
+// ratio of 1×. The prop-equality kernel adds one more on the unequal side of
+// its own verdict: it can never call a per-render closure, a `Date` or a `NaN`
+// equal to its counterpart, so a host tile carrying one is patched every render
+// with nothing reported at all.
 //
 // These tests lock in that each of those paths reports through the opt-in
 // `onDiagnostic` sink, and — just as importantly — that a mount without a
@@ -357,13 +356,13 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
-  it("says nothing about a stale closure on a sibling a bail no longer applies", () => {
+  it("says nothing about a churning handler on a sibling a bail no longer applies", () => {
     // The other diagnostic a child can raise. The host tile at index 0 keeps
-    // identical data props and swaps only its handler, so the walk would reuse
-    // its element and report `stale-closure-risk` — a warning about code that
-    // is about to run. It is not about to run: the hole at index 1 rebuilds
-    // the parent, and the element that would have kept the stale closure goes
-    // with it. Reporting it would send a reader after a bug that cannot fire.
+    // identical data props and swaps only its handler, so the walk would patch
+    // its element and report `function-identity` — a cost about to be paid. It
+    // is not paid: the hole at index 1 rebuilds the parent, and the element
+    // that would have churned goes with it. Reporting it would send a reader
+    // after churn this render never incurred.
     const hostCard = (node: TileNode, _ctx: TileCtx): HTMLElement => {
       const el = document.createElement("div");
       el.textContent = (node as { text?: string }).text ?? "";
@@ -393,10 +392,11 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
-  it("reports a function-identity change the equality check ignored on a host tile", () => {
-    // The heisenbug this exists for: the host's renderer captured the handler
-    // at create time, the data props are identical, so the tile is reused and
-    // keeps firing the first render's closure forever.
+  it("reports a handler the host rebuilds on every render", () => {
+    // The kernel compares handlers by identity, so a host that mints one inline
+    // per render never compares equal to itself and pays a patch — or, with no
+    // patcher, a rebuild — forever. It used to be reused instead, silently
+    // firing the first render's closure.
     let generation = 0;
     const hostCard = (node: TileNode, _ctx: TileCtx): HTMLElement => {
       const el = document.createElement("div");
@@ -419,9 +419,14 @@ describe("runtime: reconcile diagnostics", () => {
 
     app._rerender?.();
 
-    const stale = seen.filter((d) => d.kind === "stale-closure-risk");
-    expect(stale).toHaveLength(1);
-    expect(stale[0]).toMatchObject({ tileKind: "card", id: "card", field: "props.onClick" });
+    const churn = seen.filter((d) => d.kind === "never-equal-prop");
+    expect(churn).toHaveLength(1);
+    expect(churn[0]).toMatchObject({
+      tileKind: "card",
+      id: "card",
+      field: "props.onClick",
+      cause: "function-identity",
+    });
     dispose();
   });
 
@@ -439,7 +444,11 @@ describe("runtime: reconcile diagnostics", () => {
     app._rerender?.();
 
     expect(seen).toContainEqual(
-      expect.objectContaining({ kind: "stale-closure-risk", field: "onSelect" }),
+      expect.objectContaining({
+        kind: "never-equal-prop",
+        field: "onSelect",
+        cause: "function-identity",
+      }),
     );
     dispose();
   });
@@ -465,14 +474,16 @@ describe("runtime: reconcile diagnostics", () => {
 
     app._rerender?.();
 
-    expect(seen.filter((d) => d.kind === "stale-closure-risk")).toEqual([]);
+    expect(seen.filter((d) => d.kind === "never-equal-prop")).toEqual([]);
     dispose();
   });
 
   it("stays silent about function identity on built-in tiles", () => {
-    // Built-ins route every handler through a per-element slot the patcher
-    // refreshes, so a re-minted closure is not a risk there. Reporting it
-    // would bury the host-tile signal under one entry per tile per render.
+    // Codegen memoises one closure per reducer list, so a built-in's handler is
+    // the same reference every render and never reaches the unequal fork. The
+    // per-kind gate keeps it that way even for a hand-built tree like this one,
+    // which does mint a fresh closure — reporting it would bury the host-tile
+    // signal under one entry per tile per render.
     const app = appOf(() => ({
       kind: "column",
       children: [{ kind: "button", text: "go", props: { onClick: () => undefined } }],
@@ -482,7 +493,7 @@ describe("runtime: reconcile diagnostics", () => {
 
     app._rerender?.();
 
-    expect(seen.filter((d) => d.kind === "stale-closure-risk")).toEqual([]);
+    expect(seen.filter((d) => d.kind === "never-equal-prop")).toEqual([]);
     dispose();
   });
 
@@ -506,27 +517,34 @@ describe("runtime: reconcile diagnostics", () => {
 
     app._rerender?.();
 
-    expect(seen.filter((d) => d.kind === "stale-closure-risk")).toEqual([]);
+    expect(seen.filter((d) => d.kind === "never-equal-prop")).toEqual([]);
     dispose();
   });
 
-  it("survives a host value that throws while the reuse scan reads it", () => {
-    // Reading a host node's fields is not inert. Here `props` is the same
-    // object on both sides, so the equality kernel short-circuits on `===` and
-    // never enumerates it — and then the scan does, hitting a trap the kernel
-    // proved nothing about. Unguarded that throw lands in the reconcile bailout
-    // as a panic and rebuilds the whole tree: the observation inflicting the
-    // identity loss it exists to report.
+  it("survives a host value that throws while the diagnostic scan reads it", () => {
+    // Reading a host node's fields is not inert. `props` is the same object on
+    // both sides, so the equality kernel short-circuits on `===` and never
+    // enumerates it; a sibling field that does differ sends the pair down the
+    // unequal fork, and the scan there enumerates what the kernel proved
+    // nothing about — hitting the trap. Unguarded that throw lands in the
+    // reconcile bailout as a panic and rebuilds the whole tree: the observation
+    // inflicting the identity loss it exists to report.
     const hostCard = (): HTMLElement => document.createElement("div");
+    let enumerated = 0;
     const props = new Proxy(
       { onClick: () => undefined },
       {
         ownKeys() {
+          enumerated++;
           throw new Error("host props refuse enumeration");
         },
       },
     );
-    const app = appOf(() => ({ kind: "card", props }) as unknown as TileNode);
+    let generation = 0;
+    const app = appOf(() => {
+      generation++;
+      return { kind: "card", text: String(generation), props } as unknown as TileNode;
+    });
     const { sink, seen } = collector();
     const errors: unknown[][] = [];
     const originalError = console.error;
@@ -540,6 +558,8 @@ describe("runtime: reconcile diagnostics", () => {
 
       app._rerender?.();
 
+      // The guard is only covered if the trap actually fired.
+      expect(enumerated).toBeGreaterThan(0);
       expect(errors).toEqual([]);
       expect(root.firstElementChild).toBe(card);
       expect(seen).toEqual([]);
@@ -551,8 +571,7 @@ describe("runtime: reconcile diagnostics", () => {
 
   // ---- props that can never compare equal ----
   //
-  // The mirror image of the stale-closure scan, on the other side of the same
-  // fork. A tile whose props compare unequal on EVERY render while a patcher is
+  // A tile whose props compare unequal on EVERY render while a patcher is
   // registered is the identity-preserving happy path as far as the walker is
   // concerned — the element survives, nothing fell back, nothing is reported —
   // and it re-applies the same attributes forever. Both causes are unreachable
@@ -663,8 +682,8 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("catches an exotic on the node itself, not only under props", () => {
-    // Same two conventions the stale-closure scan covers: a host may hang data
-    // off the node rather than `props`.
+    // Both conventions the scan covers: a host may hang data off the node
+    // rather than `props`.
     const seen = hostCardRun(() => ({ kind: "card", at: new Date(0) }) as unknown as TileNode, {});
 
     expect(neverEqual(seen)).toEqual([
@@ -723,7 +742,7 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says nothing about a tile the parent's bail is about to discard", () => {
-    // Same rule the stale-closure scan follows, and the same reason: the hole
+    // Same rule the sibling case above follows, and the same reason: the hole
     // at index 1 settles the parent's fate before any child is applied, so the
     // host card at index 0 is never reconciled and the props that would have
     // churned are about to be thrown away with it. Reporting them would point
@@ -825,8 +844,8 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("does not chase exotics nested deeper than props", () => {
-    // The scan stops at `props.x`, exactly like the stale-closure one: it runs
-    // on every unequal decision of every host tile, and an unbounded walk to
+    // The scan stops at `props.x`: it runs on every unequal decision of every
+    // host tile, and an unbounded walk to
     // find an exotic three levels down would be a per-render cost on the hot
     // path. Locked in so the shallow contract cannot silently widen.
     const seen = hostCardRun(
@@ -839,7 +858,7 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays silent about an exotic prop on a built-in tile", () => {
-    // Same gate the stale-closure scan uses. `card` is registered by the host
+    // Same per-kind gate. `card` is registered by the host
     // here, so `hostTileKinds` is non-empty and the check is live — the `heading`
     // beside it must still produce nothing.
     let at = new Date(0);
@@ -1487,10 +1506,9 @@ describe("smoke: reconcile diagnostics", () => {
     ).toBe(true);
   });
 
-  it("spells out a stale closure as the correctness problem it is", async () => {
-    // "reused X" reads as success; the wording has to say the new handler will
-    // never fire. This is the only diagnostic that means the app is running
-    // the wrong code rather than merely rebuilding too much.
+  it("spells out a per-render handler as the churn it causes", async () => {
+    // The wording has to name the cost and the fix. A host reading "never-equal
+    // prop" alone would not know that memoising the handler is what stops it.
     const hostCard = (): HTMLElement => document.createElement("div");
     const app = appOf(
       () =>
@@ -1510,7 +1528,7 @@ describe("smoke: reconcile diagnostics", () => {
 
     expect(seen).toHaveLength(1);
     expect(describeDiagnostic(seen[0] as RuntimeDiagnostic)).toBe(
-      "Panel (card) was reused with the PREVIOUS render's props.onClick — the new one will never fire",
+      "Panel (card)'s props.onClick holds a function whose identity changed (a handler rebuilt per render never compares equal; memoising it fixes that) — this tile re-applies its props on every render",
     );
     dispose();
   });

@@ -49,10 +49,15 @@ test dec-decrements =
         given  = {slots: {count: 5}, event: {type: ui.click, target: DecBtn}}
         expect = {slots: {count: 4}, effects: []}
 
+# The `expect` tile is lowered through the same pipeline as production tiles,
+# so naming the handlers here keeps `kumiki test` covering the handler-emission
+# path — a `tile-test` whose expect is handler-free exercises none of it.
 test app-renders-count =
     tile-test App
         given  = {slots: {count: 5}}
-        expect = column(heading("Count: 5"), row(button(text="-1"), button(text="+1")), form(input()))
+        expect = column(heading("Count: 5"),
+                        row(button(text="-1", onClick=dec), button(text="+1", onClick=inc)),
+                        form(input()))
 
 test greeting-renders-input =
     tile-test Greeting

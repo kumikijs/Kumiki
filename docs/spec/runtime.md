@@ -461,8 +461,8 @@ normal, expected outcome that the sentinel exists to keep out of the log.
 parent — `no-patcher`, `child-count-change`, `child-hole`, `child-unmapped` —
 are all decided before any of its children are reconciled (§10.3.10), so
 nothing below it is examined and nothing below it is reported: no
-`reconcile-fallback`, no `stale-closure-risk` and no `never-equal-prop` from
-that subtree, on that render. Same rule `binds-updated` follows (§10.3.11) —
+`reconcile-fallback` and no `never-equal-prop` from that subtree, on that
+render. Same rule `binds-updated` follows (§10.3.11) —
 what the render discarded is not described. (`wrapped-children` and
 `unplaceable-insert` rebuild nothing, so the walk that follows them reports
 normally.)
@@ -473,41 +473,46 @@ under a parent that rebuilds every render stays invisible for as long as that
 lasts. The parent's own reason is the one to read first: fix the rebuild, and
 the subtree's diagnostics start arriving.
 
-**Stale closures on host tiles.** The prop-equality kernel treats any two
-functions as equal — codegen mints fresh closures every render, and a reused
-built-in keeps working because its handlers dispatch through the per-element
-slots of §10.3.11. A renderer supplied through `MountOptions.tiles` has no such
-slot: if it captured a handler at create time, a props-equal reuse leaves the
-first render's closure firing forever. Reuse decisions on those kinds are
-scanned for a changed function identity and reported as
-`stale-closure-risk`. The scope comes from `MountOptions.hostTileKinds`, which
-the package-entry `mount` derives from the `tiles` override map — including
-overrides of built-in kinds, since replacing a built-in renderer discards the
-handler slots that made reuse safe. A host calling `mountCore` with its own
-renderers passes the set directly.
+**Handlers compare by identity.** The kernel once treated any two functions
+as equal, because codegen minted a fresh closure every render and comparing
+them by identity would have marked every tile as changed forever. That was only
+safe while both closures dispatched to the same reducer: a conditional swapping
+two inline tiles that differ *only* in their handler compared equal, was reused
+untouched, and kept dispatching to the reducer it was created with — silently.
 
-The scan reads the node's own fields and one level into `props` — the
-convention every built-in renderer follows (`props.onClick`, `props.onChange`).
-A host tile that buries its handlers deeper (`props.handlers.onClick`) is not
-inspected; keep handlers directly under `props` to stay covered.
+Codegen therefore memoises one closure per reducer list, per app instance
+(§10.3.13), and the kernel compares functions like any other value. An
+unchanged handler is the same reference and still takes the reuse path; a
+changed one is a difference, so the patcher runs and refreshes the per-element
+handler slots of §10.3.11.
 
-**Props that can never compare equal.** The other side of the same fork. A tile
-whose data props compare unequal on *every* render, with a patcher registered
+A host renderer that still mints a handler inline on every render never
+compares equal to itself. That is reported — see `function-identity` below —
+rather than silently reused.
+
+**Props that can never compare equal.** A tile whose data props compare unequal on *every* render, with a patcher registered
 for its kind, is the identity-preserving happy path as far as the walker is
 concerned: the patcher runs, the element survives, nothing degraded — so no
 fallback is reported and the app looks perfectly healthy while re-applying the
-same attributes forever. Reuse decisions are what `stale-closure-risk` reads;
-unequal ones are read for a value that could not have compared equal however
-identical the two renders were, and reported as `never-equal-prop`:
+same attributes forever. Unequal decisions are read for a value that could
+not have compared equal however identical the two renders were, and reported as
+`never-equal-prop`:
 
 | `cause` | the rule it runs into |
 |---|---|
 | `non-plain-object` | A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or a cross-realm object. Their state lives outside their own enumerable keys, so only `===` can make two of them equal (§10.3.13) — which a value rebuilt each render never is. |
 | `nan` | `NaN`, which is not equal to itself by definition (§10.3.13). |
+| `function-identity` | A function whose identity changed. The scan keeps no history, so this fires on any two distinct closures — including the one-off swap a conditional makes between two memoised handlers. What it always means is that the pair could not compare equal; whether it repeats depends on whether the host rebuilds the handler per render, which is the case worth fixing by memoising it. |
 
-Same `hostTileKinds` scope and same one-level-into-`props` bound as the
-stale-closure scan, for the same reasons — and neither cause can come out of
-codegen, so a report always names a host-built tree. It fires whether or not a
+The scope comes from `MountOptions.hostTileKinds`, which the package-entry
+`mount` derives from the `tiles` override map — including overrides of built-in
+kinds, since a host renderer put in a built-in's place brings the host's own
+prop conventions with it. A host calling `mountCore` with its own renderers
+passes the set directly. The scan reads the node's own fields and one level into `props`, the
+convention every built-in renderer follows (`props.onClick`, `props.onChange`);
+a host tile that buries its handlers deeper (`props.handlers.onClick`) is not
+inspected. No cause can come out of codegen, so a report always names a
+host-built tree. It fires whether or not a
 patcher is registered: with one it is the only signal that the tile churns,
 without one the rebuild is already reported as `no-patcher` and this names the
 field that reason cannot. Both are emitted, cause before consequence.
@@ -517,12 +522,10 @@ plain bag that becomes a `Date`, or a number that becomes `NaN`, is an ordinary
 change on the render it happens and is reported on the next one. The same
 instance handed over twice compares equal through `===` and is never reported.
 
-The three diagnostic kinds carry different severity. A `reconcile-fallback`
-costs performance and browser-owned element state, and a `never-equal-prop`
-costs a diff and a patch on every render, but in both the app stays correct; a
-`stale-closure-risk` means the app is running code the author already replaced.
-`kumiki dev` routes the first two to `console.warn` and the last to
-`console.error`.
+The two diagnostic kinds carry different cost, not different correctness. A
+`reconcile-fallback` costs performance and browser-owned element state; a
+`never-equal-prop` costs a diff and a patch on every render. `kumiki dev`
+routes both to `console.warn`.
 
 **Relationship to the episode log.** An episode is the author-facing causal
 record of what the app did, and already reports *that* a subtree was
@@ -558,9 +561,6 @@ established as the same instance.
 **Values.** Two values are equal when:
 
 - they are the same value (`===`), or
-- both are functions — closure identity is deliberately ignored, since codegen
-  mints fresh handlers every render (see the `stale-closure-risk` diagnostic in
-  §10.3.12 for the hazard this creates for host renderers), or
 - both are arrays of the same length whose elements are pairwise equal, or
 - both are **plain data bags** — prototype `Object.prototype` or `null` — whose
   union of own keys maps to pairwise-equal values.
@@ -589,6 +589,16 @@ Consequences worth stating outright:
   reason this is not relaxed into a `toString`-tag check. A host handing one to
   the same tile every render pays for a diff it can never win; that is what
   `never-equal-prop` (§10.3.12) reports.
+
+- **A function is equal only to itself.** Handlers are values like any other
+  here. Codegen emits every handler through a per-instance memo keyed by the
+  reducer list it dispatches, so the same wiring yields the same reference on
+  every render and an unchanged tile still takes the reuse path — while a
+  handler that genuinely changed, as when a conditional swaps two inline tiles
+  that differ only in `onClick`, is a difference the walker acts on. A host
+  renderer that mints a handler inline on every render never compares equal to
+  itself; it pays a patch (or, with no patcher, a rebuild) every render, which
+  `never-equal-prop` (§10.3.12) reports as `function-identity`.
 
 Cycles are outside the contract. Two structurally cyclic but distinct bags
 recurse until the stack runs out; the throw lands in the reconcile bailout,
