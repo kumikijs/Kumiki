@@ -51,7 +51,11 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
 
-### 8.2.3 Expecting a panic
+### 8.2.3 The batch rule applies here too
+
+A reducer-test asserts what the *running app* would do, so a batch a refinement rejects leaves every slot at its `given` value and emits nothing ([batching](./runtime.md#a-batch-commits-all-or-nothing)). The rejection is reported on `console.error`, not through `expect` — the tier has no `errorIncludes` counterpart, so an `expect` block alone cannot distinguish "the batch was refused" from "the reducer did nothing".
+
+### 8.2.4 Expecting a panic
 
 ```kumiki
 test addTodo-empty =

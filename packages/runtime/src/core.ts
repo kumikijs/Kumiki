@@ -232,7 +232,17 @@ export type ReducerSpec = {
   apply: (
     slots: Record<string, unknown>,
     payload: Record<string, unknown>,
-  ) => { slots: Record<string, unknown>; emits: EmitSpec[]; stopTimers?: string[] };
+  ) => {
+    slots: Record<string, unknown>;
+    emits: EmitSpec[];
+    stopTimers?: string[];
+    /**
+     * Refinements the body violated *while running* (runtime.md §10.3.3).
+     * Codegen fills this; a hand-written `apply` omits it and is covered by the
+     * final-value scan in {@link batchRejections} instead.
+     */
+    rejected?: RefinementRejection[];
+  };
 };
 
 export type EmitSpec = { effect: string; args: unknown[] };
@@ -798,12 +808,31 @@ export type RefinementRejection = {
   args?: (number | string)[];
 };
 
+/** Describe one rejected write, carrying the predicate when the slot names it. */
+export function refinementRejectionOf(
+  slot: string,
+  value: unknown,
+  meta: { refineKind?: string; refineArgs?: unknown },
+): RefinementRejection {
+  const rejection: RefinementRejection = { slot, value };
+  if (meta.refineKind !== undefined) rejection.kind = meta.refineKind;
+  if (Array.isArray(meta.refineArgs)) rejection.args = meta.refineArgs as (number | string)[];
+  return rejection;
+}
+
 /**
- * The slots in a reducer's returned map whose value fails their refinement
- * (runtime.md §10.3.3). Every path that applies a reducer batch — live mount,
- * SSR, replay, the reducer-test harness — asks this first and applies nothing
- * when the answer is non-empty, so "a batch commits all-or-nothing" cannot
- * drift between the tiers that are supposed to verify each other.
+ * The slots in a reducer's returned map whose *final* value fails their
+ * refinement (runtime.md §10.3.3).
+ *
+ * This is the backstop, not the primary check: a batch is a map, so it only
+ * remembers the last value written to each slot, and a `for` loop that leaves
+ * the range and comes back would look clean here. Codegen therefore wraps each
+ * individual write in `_s.slotWrite`, which reports as it happens. This pass
+ * still runs because a hand-written `AppShape` (tests, Web Component hosts,
+ * anything not produced by codegen) has no wrapped writes at all.
+ *
+ * {@link batchRejections} merges the two, and every path that applies a batch
+ * goes through it.
  */
 export function refinementRejections(
   next: Record<string, unknown>,
@@ -816,10 +845,39 @@ export function refinementRejections(
   for (const [k, v] of Object.entries(next)) {
     const meta = slotMetas[k];
     if (!meta?.refine || meta.refine(v)) continue;
-    const rejection: RefinementRejection = { slot: k, value: v };
-    if (meta.refineKind !== undefined) rejection.kind = meta.refineKind;
-    if (Array.isArray(meta.refineArgs)) rejection.args = meta.refineArgs as (number | string)[];
-    out.push(rejection);
+    out.push(refinementRejectionOf(k, v, meta));
+  }
+  return out;
+}
+
+/**
+ * Every refinement a reducer's result violated: the per-write rejections
+ * codegen collected during the body, plus the final-value scan for results that
+ * did not come from codegen. Deduplicated by slot, first occurrence winning —
+ * the first out-of-range value a loop produced is the one that explains the
+ * rejection, not the value the slot happened to end on.
+ *
+ * Every path that applies a reducer batch — live mount, SSR, episode replay,
+ * both reducer-test harnesses, `run-reducer` inside a property-test — calls
+ * this, so "a batch commits all-or-nothing" cannot drift between the tiers that
+ * are supposed to verify each other.
+ */
+export function batchRejections(
+  result: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | null | undefined,
+  slotMetas: Record<
+    string,
+    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
+  >,
+): RefinementRejection[] {
+  const out: RefinementRejection[] = [];
+  const seen = new Set<string>();
+  for (const r of [
+    ...(result?.rejected ?? []),
+    ...refinementRejections(result?.slots ?? {}, slotMetas),
+  ]) {
+    if (seen.has(r.slot)) continue;
+    seen.add(r.slot);
+    out.push(r);
   }
   return out;
 }
@@ -832,15 +890,26 @@ function describeRejection(r: RefinementRejection): string {
       : r.args && r.args.length > 0
         ? `${r.kind}(${r.args.join(", ")})`
         : r.kind;
-  // `JSON.stringify` returns undefined for a function or a bare `undefined`,
-  // and throws on a cycle — neither may swallow the report.
+  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred})`;
+}
+
+/**
+ * Render a rejected value for the report. Bounded, because the value came from
+ * app data: a `len-lt(280)` slot handed a 50 kB paste would otherwise put 50 kB
+ * on one console line. `JSON.stringify` also needs help at both ends — it
+ * returns undefined for a function or a bare `undefined`, throws on a cycle,
+ * and renders every non-finite number as `null`, which would point a reader at
+ * a missing value when the real cause is a division by zero.
+ */
+function showRejectedValue(value: unknown): string {
+  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
   let shown: string;
   try {
-    shown = JSON.stringify(r.value) ?? String(r.value);
+    shown = JSON.stringify(value) ?? String(value);
   } catch {
-    shown = String(r.value);
+    shown = String(value);
   }
-  return `slot ${JSON.stringify(r.slot)} cannot hold ${shown} (${pred})`;
+  return shown.length > 120 ? `${shown.slice(0, 117)}...` : shown;
 }
 
 /**
@@ -863,27 +932,28 @@ export function reportRejectedBatch(
 }
 
 /**
- * Apply a reducer's returned slot map and compute the `slot-diffs` an episode
- * step needs (docs/spec/language.md §175 — `volatile` slots get the new value
- * but are excluded from diffs / dirty signal-update). Pure: it mutates the
+ * Apply a reducer's result and compute the `slot-diffs` an episode step needs.
+ * A `volatile` slot takes its new value but is excluded from the diffs and the
+ * dirty signal-update (docs/spec/language.md §1.4.1). Pure: it mutates the
  * `prev` record (the live `app.live`) in place but otherwise has no side
  * effects, so both `applyReducer` (mount) and the SSR pseudo-reducer pipeline
- * can share the exact same volatile/refine semantics.
+ * share the exact same volatile/refine semantics.
  *
- * A non-empty `rejected` means nothing was written at all: the batch is
- * all-or-nothing, so the caller must also drop that reducer's emits and
- * stop-timers rather than treating this as "no slots changed".
+ * A non-empty `rejected` means nothing was written at all — not even a volatile
+ * slot, which rolls back with the rest. The batch is all-or-nothing, so the
+ * caller must also drop that reducer's emits and stop-timers rather than
+ * treating this as "no slots changed".
  */
 export function computeSlotDiffs(
   prev: Record<string, unknown>,
-  next: Record<string, unknown>,
+  result: { slots: Record<string, unknown>; rejected?: RefinementRejection[] },
   slotMetas: Record<string, SlotMeta>,
 ): { diffs: SlotDiff[]; dirty: string[]; rejected: RefinementRejection[] } {
-  const rejected = refinementRejections(next, slotMetas);
+  const rejected = batchRejections(result, slotMetas);
   if (rejected.length > 0) return { diffs: [], dirty: [], rejected };
   const diffs: SlotDiff[] = [];
   const dirty: string[] = [];
-  for (const [k, v] of Object.entries(next)) {
+  for (const [k, v] of Object.entries(result.slots)) {
     const meta = slotMetas[k];
     const before = prev[k];
     prev[k] = v;
@@ -1499,10 +1569,10 @@ export function mountCore(
       if (opened) episode?.endTrigger();
       return;
     }
-    // Compute slot diffs (excluding `volatile` slots per language.md §175):
+    // Compute slot diffs (excluding `volatile` slots per language.md §1.4.1):
     // shared with the SSR pseudo-reducer pipeline so volatile semantics never
     // drift across the hydration boundary.
-    const { diffs, dirty, rejected } = computeSlotDiffs(slotValues, result.slots, app.slots);
+    const { diffs, dirty, rejected } = computeSlotDiffs(slotValues, result, app.slots);
     if (rejected.length > 0) {
       // §10.3.3: a refinement rejects the whole batch, not just its own slot.
       // Nothing was written, so the emits and stop-timers that batch produced

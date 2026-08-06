@@ -14,6 +14,13 @@
 # previous values — and the rejection is reported on console.error rather than
 # passing for a no-op. `guarded` below is the shape to write when a bound is
 # reachable.
+#
+# `bump` is deliberately the only unguarded reducer, and the ceiling is 3 so
+# that `smoke` — which clicks each button once and treats any console.error as
+# fatal — stays under it. A fourth `bump` in one run is a real rejection and
+# will fail the smoke tier; the scenario next to this file is where that case
+# is exercised, because only the scenario tier can assert that an error *was*
+# reported (`errorIncludes`).
 
 type Small = nominal Int where between(0, 3)
 

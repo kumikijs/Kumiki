@@ -201,7 +201,7 @@ export async function runScenario(
         [...emitBuf],
         app,
         root,
-        evaluateExpect(step.expect, errorBuf, unexpected, app, root),
+        evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
         [...diagBuf],
         expected,
       );
@@ -322,8 +322,9 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
 
 function evaluateExpect(
   expect: Expect | undefined,
-  errors: string[],
-  unexpectedErrors: string[],
+  // One object rather than two adjacent `string[]`s: swapping them would still
+  // compile and would quietly invert what `noErrors` and `errorIncludes` mean.
+  reported: { all: string[]; unexpected: string[] },
   app: AppShape,
   root: HTMLElement,
 ): string[] {
@@ -331,13 +332,15 @@ function evaluateExpect(
   const failures: string[] = [];
   // `noErrors` means "nothing this step did not ask for", so it composes with
   // `errorIncludes`: a step can require one report and forbid every other.
-  if (expect.noErrors && unexpectedErrors.length > 0) {
-    failures.push(`expected no errors but got: ${unexpectedErrors.join("; ")}`);
+  if (expect.noErrors && reported.unexpected.length > 0) {
+    failures.push(`expected no errors but got: ${reported.unexpected.join("; ")}`);
   }
   for (const s of expect.errorIncludes ?? []) {
-    if (!errors.some((e) => e.includes(s))) {
+    if (!reported.all.some((e) => e.includes(s))) {
       failures.push(
-        `expected an error including "${s}" but got: ${errors.length > 0 ? errors.join("; ") : "none"}`,
+        `expected an error including "${s}" but got: ${
+          reported.all.length > 0 ? reported.all.join("; ") : "none"
+        }`,
       );
     }
   }

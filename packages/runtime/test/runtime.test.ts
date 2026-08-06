@@ -1,4 +1,4 @@
-import type { AppShape } from "@kumikijs/runtime";
+import type { AppShape, MountedApp } from "@kumikijs/runtime";
 import {
   _stdlib,
   builtinEffects,
@@ -148,9 +148,15 @@ describe("runtime", () => {
   });
 
   it("refuses a write below the refinement floor", () => {
-    mount(makeCounterApp(), root);
+    const app = makeCounterApp();
+    mount(app, root);
     const minus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "-");
     minus?.click();
+    // Assert the runtime's own state, not just the DOM: the fixture keeps a
+    // shadow mirror so `root()` can read the count, and that mirror applies the
+    // same rule — checking it alone would pass even against a runtime that
+    // wrote -1.
+    expect((app as MountedApp).live.count).toBe(0);
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
 
@@ -170,9 +176,11 @@ describe("runtime", () => {
   // refused (and reported) rather than saturating. The observable count is the
   // same; a real app guards the edge instead of relying on this.
   it("refuses a write past the refinement ceiling of 999", () => {
-    mount(makeCounterApp(), root);
+    const app = makeCounterApp();
+    mount(app, root);
     const plus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "+");
     for (let i = 0; i < 1001; i++) plus?.click();
+    expect((app as MountedApp).live.count).toBe(999);
     expect(root.querySelector("h1")?.textContent).toBe("Count: 999");
   });
 });
@@ -533,6 +541,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest passes when slots + effects match", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: { count: 0 },
       result: { slots: { count: 1 }, emits: [] },
       panic: null,
@@ -544,6 +554,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest reports the diff path on a slot mismatch", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: { count: 0 },
       result: { slots: { count: 1 }, emits: [] },
       panic: null,
@@ -556,6 +568,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest compares emitted effect names", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: {}, emits: [{ effect: "persist", args: [] }] },
       panic: null,
@@ -610,6 +624,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest: a parenthesised effect pins its args (so persist() rejects persist(x))", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: {}, emits: [{ effect: "persist", args: [1] }] },
       panic: null,
@@ -626,6 +642,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest: objects with different keys are not equal (undefined-value guard)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { s: { a: undefined } }, emits: [] },
       panic: null,
@@ -668,6 +686,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest exposes the leaf slot values on a slot mismatch", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: { msg: "Helo" },
       result: { slots: { msg: "Helo" }, emits: [] },
       panic: null,
@@ -693,6 +713,8 @@ describe("in-language test runner helpers", () => {
   it("wildcard <any-id> matches any value at a slot position", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { id: "9ab3-generated-uuid" }, emits: [] },
       panic: null,
@@ -704,6 +726,8 @@ describe("in-language test runner helpers", () => {
   it("wildcard <slots.X> in an effect arg matches the post-execution slot value", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: {
         slots: { todos: { a: { text: "Hi" } } },
@@ -724,6 +748,8 @@ describe("in-language test runner helpers", () => {
   it("a <slots.X> effect arg fails when it does not equal the slot value", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: {
         slots: { todos: { a: 1 } },
@@ -745,6 +771,8 @@ describe("in-language test runner helpers", () => {
   it("a <any-id> map key matches exactly one generated entry (value shape compared)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: {
         slots: {
@@ -776,6 +804,8 @@ describe("in-language test runner helpers", () => {
   it("a <any-id> map key fails when zero entries match (AC1)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { todos: {} }, emits: [] },
       panic: null,
@@ -792,6 +822,8 @@ describe("in-language test runner helpers", () => {
   it("a <any-id> map key fails when more than one entry is present (AC1)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { todos: { a: { text: "Hello" }, b: { text: "Hello" } } }, emits: [] },
       panic: null,

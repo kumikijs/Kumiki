@@ -366,7 +366,7 @@ issue.copy(status=Done, priority=High)
      - `if cond then x := 1 else x := 2; x := 3` ✗ (排他分岐合算後にさらに同 path)
    - 同じ shape でも index 値が違う (`m[k1]` と `m[k2]`) のは静的判定不能なため 1 write として扱う（厳しい側）。複数 key を更新したい場合は `for` ループを使う
 5. **`fn` 呼び出しは可能**（純粋なので安全）
-6. **バッチは全部通るか全部通らないか**: どれか 1 つの slot の新しい値がその型の refinement に違反したら、その reducer 適用は丸ごと破棄される — slot 書き込みなし、`emit` なし、`stop-timer` なし — そして拒否が報告される（[batching](./runtime.md#バッチは全部通るか全部通らないかのどちらか) 参照）。到達しうる境界はプログラム側の責任である。ガードは自分で書く
+6. **バッチは全部通るか全部通らないか**: どれか 1 つの slot の新しい値がその型の refinement に違反したら、その reducer 適用は丸ごと破棄される — slot 書き込みなし、`emit` なし、`stop-timer` なし — そして拒否が報告される（[batching](./runtime.md#a-batch-commits-all-or-nothing) 参照）。到達しうる境界はプログラム側の責任である。ガードは自分で書く
    - `Volume = nominal Int where between(0, 11)` に対する `volume := volume + 1` は 11 で ✗（拒否され、報告される）
    - `if volume < 11 then volume := volume + 1` ✓
 

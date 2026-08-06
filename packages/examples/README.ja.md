@@ -18,7 +18,7 @@
 
 | アプリ | 規模 | 主に学べること |
 |---|---|---|
-| [01-counter](./apps/01-counter/) | ~22 行 | slot / reducer / tile / イベント |
+| [01-counter](./apps/01-counter/) | ~15 行 | slot / reducer / tile / イベント |
 | [02-todomvc](./apps/02-todomvc/) | ~161 行 | リスト・フィルタ・`bind`・localStorage 永続化 |
 | [03-blog](./apps/03-blog/) | ~418 行 | ルーティング・HTTP fetch・サスペンス |
 | [04-issue-tracker](./apps/04-issue-tracker/) | ~726 行 | CRUD・`Map`・`Option` バリアント・フォーム・日付 |

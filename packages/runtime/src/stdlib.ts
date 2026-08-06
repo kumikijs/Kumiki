@@ -4,9 +4,34 @@
 // into the classic `_stdlib` export by `index.ts`, so `kumiki build` output
 // never ships the test runners.
 
-import { KumikiPanic, tokenRef } from "./core.ts";
+import { KumikiPanic, type RefinementRejection, refinementRejectionOf, tokenRef } from "./core.ts";
 
 export const _stdlibCore = {
+  /**
+   * Record a slot write against its refinement and return the value unchanged
+   * (runtime.md §10.3.3). Codegen wraps every assignment to a refined slot, so
+   * the check happens *per write* rather than on the batch's final value —
+   * without it a `for` loop whose slot leaves and re-enters its range would
+   * pass, and the intermediate value it computed with is readable by later
+   * statements exactly like a committed one.
+   *
+   * The value is returned regardless: the body keeps evaluating, but the batch
+   * is already doomed and nothing it produces will be applied.
+   */
+  slotWrite(
+    metas: Record<
+      string,
+      { refine?: (v: unknown) => boolean; refineKind?: string; refineArgs?: unknown }
+    >,
+    rejected: RefinementRejection[],
+    name: string,
+    value: unknown,
+  ): unknown {
+    const meta = metas[name];
+    if (meta?.refine && !meta.refine(value))
+      rejected.push(refinementRejectionOf(name, value, meta));
+    return value;
+  },
   /**
    * Resolve a theme-token reference `@<group>.<seg>(.<seg>)*` from a `style`
    * block (spec/style.md §4.3). Codegen lowers `@colors.surface` to

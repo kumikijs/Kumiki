@@ -301,7 +301,7 @@ function applyReducerOnSsr(
     logger.recordPanic({ ...panicInfo(e, "hydrate"), location: `reducer "${r.name}"` });
     return null;
   }
-  const { diffs, dirty, rejected } = computeSlotDiffs(live, applied.slots, slotMetas);
+  const { diffs, dirty, rejected } = computeSlotDiffs(live, applied, slotMetas);
   if (rejected.length > 0) {
     // §10.3.3 all-or-nothing, on the server too: nothing was written, so the
     // emits must not chain either. Reported here as well as on the client so a

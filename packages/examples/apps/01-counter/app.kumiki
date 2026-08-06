@@ -1,5 +1,5 @@
 # Counter
-# 12 lines of code, demonstrates: type, slot, reducer, tile, app
+# 15 lines of code, demonstrates: type, slot, reducer, tile, app
 #
 # `N` bounds the count, so `inc` / `dec` guard their own edge: a write outside
 # the range is refused and takes the rest of the reducer's batch with it

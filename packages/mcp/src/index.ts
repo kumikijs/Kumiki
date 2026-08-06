@@ -432,6 +432,10 @@ export function createServer(): McpServer {
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
           ...s.errors.map((e) => `    error: ${e}`),
+          // An error the step's `errorIncludes` asked for is out of `errors`,
+          // so without this line the agent driving the fix loop reads a step
+          // that reported something as one that reported nothing.
+          ...s.expectedErrors.map((e) => `    expected error: ${e}`),
           ...s.failures.map((f) => `    assert: ${f}`),
         ];
         const emits = s.emits.length ? `    emits: ${s.emits.map((e) => e.effect).join(", ")}` : "";

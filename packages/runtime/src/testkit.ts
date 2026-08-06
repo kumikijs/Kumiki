@@ -5,11 +5,12 @@
 // classic `_stdlib` export for the inlining (full-bundle) path.
 
 import {
+  batchRejections,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
   type ReducerSpec,
-  refinementRejections,
+  type RefinementRejection,
   reportRejectedBatch,
 } from "./core.ts";
 
@@ -616,15 +617,15 @@ function executeEpisode(
   // tier is to reproduce what the app actually did.
   const writeSlots = (
     reducerName: string,
-    resSlots: Record<string, unknown> | undefined,
+    res: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | undefined,
   ): { name: string; before: unknown; after: unknown }[] | null => {
-    const rejected = refinementRejections(resSlots ?? {}, app.slots);
+    const rejected = batchRejections(res, app.slots);
     if (rejected.length > 0) {
       reportRejectedBatch(reducerName, rejected);
       return null;
     }
     const diffs: { name: string; before: unknown; after: unknown }[] = [];
-    for (const [k, v] of Object.entries(resSlots ?? {})) {
+    for (const [k, v] of Object.entries(res?.slots ?? {})) {
       const before = app.live[k];
       app.live[k] = v;
       if (!deepEqualValue(before, v)) diffs.push({ name: k, before, after: v });
@@ -728,7 +729,7 @@ function executeEpisode(
       }
       continue;
     }
-    const written = writeSlots(job.reducer.name, res.slots);
+    const written = writeSlots(job.reducer.name, res);
     const diffs = written ?? [];
     for (const d of diffs) dirtyForEpisode.add(d.name);
     if (
@@ -913,6 +914,11 @@ export const _stdlibTest = {
    * `run-reducer(name)` step used inside a `property-test` invariant (§8.3).
    * Pure w.r.t. the test: it seeds `app.live` from `state.slots`, applies, and
    * returns a fresh merged slots snapshot (emitted effects are ignored).
+   *
+   * Chained steps make this the one apply path where a rejection is easiest to
+   * hide: `run-reducer(inc).run-reducer(dec)` reads its predecessor's output, so
+   * a batch the app would refuse becomes the next step's starting state and the
+   * invariant is checked against a world that cannot happen.
    */
   runReducerStep(
     app: {
@@ -929,6 +935,11 @@ export const _stdlibTest = {
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
+    const rejected = batchRejections(res, app.slots);
+    if (rejected.length > 0) {
+      reportRejectedBatch(name, rejected);
+      return { slots: { ...slots } };
+    }
     const next: Record<string, unknown> = { ...slots };
     for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
     return { slots: next };
@@ -998,7 +1009,11 @@ export const _stdlibTest = {
     target: string;
     givenSlots: Record<string, unknown>;
     slotMetas: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
-    result: { slots: Record<string, unknown>; emits: { effect: string; args: unknown[] }[] } | null;
+    result: {
+      slots: Record<string, unknown>;
+      emits: { effect: string; args: unknown[] }[];
+      rejected?: RefinementRejection[];
+    } | null;
     panic: string | null;
     expect:
       | { kind: "panic"; message: string }
@@ -1009,7 +1024,9 @@ export const _stdlibTest = {
         };
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
-    const rejected = refinementRejections(result?.slots ?? {}, slotMetas ?? {});
+    // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here,
+    // not silently lose every refinement check and pass a batch the app refuses.
+    const rejected = batchRejections(result, slotMetas);
     if (rejected.length > 0) {
       reportRejectedBatch(target, rejected);
       return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
@@ -1050,14 +1067,14 @@ export const _stdlibTest = {
     // would see effects the running app would never have dispatched.
     const writeSlots = (
       reducerName: string,
-      resSlots: Record<string, unknown> | undefined,
+      res: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | undefined,
     ): boolean => {
-      const rejected = refinementRejections(resSlots ?? {}, slots);
+      const rejected = batchRejections(res, slots);
       if (rejected.length > 0) {
         reportRejectedBatch(reducerName, rejected);
         return false;
       }
-      for (const [k, v] of Object.entries(resSlots ?? {})) live[k] = v;
+      for (const [k, v] of Object.entries(res?.slots ?? {})) live[k] = v;
       return true;
     };
     const enqueue = (emits: { effect: string; args: unknown[] }[] | undefined): void => {
@@ -1072,7 +1089,7 @@ export const _stdlibTest = {
       const tr = app.reducers.find((r) => r.name === target);
       if (!tr) throw new Error(`reducer ${target} not found`);
       const res0 = tr.apply(live, { $el: el, $event: el });
-      if (writeSlots(tr.name, res0.slots)) enqueue(res0.emits);
+      if (writeSlots(tr.name, res0)) enqueue(res0.emits);
       let guard = 0;
       while (queue.length > 0 && guard++ < 10000) {
         const job = queue.shift();
@@ -1085,7 +1102,7 @@ export const _stdlibTest = {
             r.event.outcome === job.outcome
           ) {
             const res = r.apply(live, { $1: job.value, $2: undefined });
-            if (writeSlots(r.name, res.slots)) enqueue(res.emits);
+            if (writeSlots(r.name, res)) enqueue(res.emits);
             matched++;
           }
         }

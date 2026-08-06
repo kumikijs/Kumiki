@@ -43,7 +43,7 @@ tile Compose = column(
 input(bind=draft, strict=false)
 ```
 
-このフィールド単位の拒否は `bind` に固有のもので、意図的に静かである。入力途中の値は欠陥ではなく想定内だからだ。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#バッチは全部通るか全部通らないかのどちらか) を参照。
+この 2 つの挙動はどちらも `bind` に固有のもので、どちらも意図的に静かである。入力途中の値は欠陥ではなく想定内だからだ。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
 
 ---
 

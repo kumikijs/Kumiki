@@ -10,8 +10,8 @@
 // slot writes (emits, stop-timer) and the one path that deliberately keeps the
 // per-field behaviour: two-way `bind`.
 
-import type { AppShape, MountedApp } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import type { AppShape, MountedApp, ReducerSpec } from "@kumikijs/runtime";
+import { _stdlib, mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** `count` is capped at 3; `mirror` and `log` are unconstrained bystanders. */
@@ -279,6 +279,136 @@ describe("a rejected batch is reported, never silent", () => {
     expect(errors).toEqual([
       '[kumiki] reducer "bump" was rejected: slot "count" cannot hold 1 (its refinement). No slot was written and no effect was emitted.',
     ]);
+  });
+});
+
+// The live mount is only one of the five places a reducer batch gets applied.
+// The other four are verification tiers, and a tier that accepts what the app
+// refuses certifies the bug it exists to catch — so each is pinned here.
+describe("every tier applies the same rule", () => {
+  const overflow = (name: string): ReducerSpec => ({
+    name,
+    event: { kind: "ui", ev: "click" },
+    apply: (live) => ({
+      slots: { count: (live.count as number) + 4, log: "written" },
+      emits: [],
+    }),
+  });
+
+  it("refuses the batch on the SSR pass, and does not chain its emits", async () => {
+    const followUps: string[] = [];
+    const app = makeApp({
+      caps: ["http.get"],
+      effects: {
+        boot: {
+          name: "boot",
+          cap: "http.get",
+          invoke: () => Promise.resolve({ kind: "ok", value: null } as const),
+        },
+        // A distinct effect, so a regression shows up as one extra invoke
+        // rather than as a self-feeding boot → booted → boot loop.
+        audit: {
+          name: "audit",
+          cap: "http.get",
+          invoke: () => {
+            followUps.push("audit");
+            return Promise.resolve({ kind: "ok", value: null } as const);
+          },
+        },
+      },
+      init: [{ effect: "boot", args: [{}] }],
+      reducers: [
+        {
+          name: "booted",
+          event: { kind: "effect", effect: "boot", outcome: "ok" },
+          apply: () => ({
+            slots: { count: 9, log: "written" },
+            emits: [{ effect: "audit", args: [{}] }],
+          }),
+        },
+      ],
+    });
+
+    const { snapshot } = await renderToString(app, { path: "/" });
+
+    expect(snapshot.slots.count).toBe(0);
+    expect(snapshot.slots.log).toBe("");
+    expect(followUps).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('reducer "booted" was rejected');
+    // A rejected batch is not an *unhandled* error: the `.ok` reducer matched,
+    // it just refused to commit. Reporting both would name a defect that is not
+    // there.
+    expect(errors[0]).not.toContain("no .err reducer");
+  });
+
+  it("refuses the batch during episode replay", () => {
+    const app = {
+      live: { count: 0, log: "" } as Record<string, unknown>,
+      slots: makeApp().slots,
+      reducers: [overflow("bump")],
+    };
+    const result = _stdlib.runEpisodeTest({
+      name: "replay",
+      app,
+      episodes: [
+        {
+          id: "e1",
+          trigger: { kind: "ui", target: "Btn" },
+          steps: [{ kind: "reducer", name: "bump" }],
+          status: "completed",
+        },
+      ],
+      mocks: {},
+      expect: { slotsEqual: { count: 0, log: "" } },
+    });
+
+    expect(result.pass).toBe(true);
+    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+  });
+
+  it("refuses the batch in a mocked reducer-test, and drops its emits", () => {
+    const app = {
+      live: { count: 0, log: "" } as Record<string, unknown>,
+      slots: makeApp().slots,
+      reducers: [
+        {
+          name: "bump",
+          event: { kind: "ui", ev: "click" },
+          apply: (live: Record<string, unknown>) => ({
+            slots: { count: (live.count as number) + 4 },
+            emits: [{ effect: "persist", args: [] }],
+          }),
+        } as ReducerSpec,
+      ],
+    };
+    const result = _stdlib.runReducerTestFlow({
+      name: "t",
+      app,
+      target: "bump",
+      el: {},
+      mocks: {},
+      // `effects: []` is the assertion: the emit must not survive as residual.
+      expect: { kind: "state", slots: { count: 0 }, effects: [] },
+    });
+
+    expect(result.pass).toBe(true);
+    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+  });
+
+  it("refuses the batch in a property-test's run-reducer step", () => {
+    const app = {
+      live: { count: 0, log: "" } as Record<string, unknown>,
+      slots: makeApp().slots,
+      reducers: [overflow("bump")],
+    };
+    // Chained steps are why this one matters: without the check the refused
+    // state becomes the next step's input and the invariant is proved about a
+    // world the app cannot reach.
+    const after = _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {});
+
+    expect(after.slots).toEqual({ count: 0, log: "" });
+    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 });
 
