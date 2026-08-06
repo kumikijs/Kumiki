@@ -51,6 +51,59 @@ describe("scenario runner", () => {
     expect(report.steps[0]?.failures[0]).toContain("count");
   });
 
+  // Some contracts are "the runtime must say something" — a reducer batch a
+  // refinement rejected, an effect error no `.err` reducer consumes. The tier
+  // could only assert the absence of errors, so those were unassertable and an
+  // example demonstrating one had to settle for not failing.
+  describe("errorIncludes", () => {
+    const atomicity = join(examples, "features", "63-reducer-batch-atomicity.kumiki");
+
+    const toCeiling = [
+      { do: { clickText: "bump" } },
+      { do: { clickText: "bump" } },
+      { do: { clickText: "bump" } },
+    ];
+
+    it("passes when the named error is reported, and keeps it out of the failures", async () => {
+      const app = await loadApp(atomicity);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          ...toCeiling,
+          {
+            do: { clickText: "bump" },
+            // `noErrors` still holds: it means "nothing this step did not ask
+            // for", so the two compose instead of contradicting.
+            expect: { noErrors: true, errorIncludes: ['reducer "bump" was rejected'] },
+          },
+        ],
+      });
+      expect(report.ok).toBe(true);
+      const last = report.steps[3];
+      expect(last?.errors).toEqual([]);
+      expect(last?.expectedErrors).toHaveLength(1);
+      expect(last?.expectedErrors[0]).toContain("cannot hold 4 (between(0, 3))");
+    });
+
+    it("fails when the named error is not reported", async () => {
+      const app = await loadApp(atomicity);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: { clickText: "bump" }, expect: { errorIncludes: ["was rejected"] } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.failures[0]).toContain('expected an error including "was rejected"');
+      expect(report.steps[0]?.failures[0]).toContain("none");
+    });
+
+    it("still fails on an error the step did not name", async () => {
+      const app = await loadApp(atomicity);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [...toCeiling, { do: { clickText: "bump" }, expect: { errorIncludes: [] } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[3]?.errors).toHaveLength(1);
+    });
+  });
+
   // A manifest-registered custom capability (telemetry.track) must compile and
   // its effect must be emittable + dispatched — mocked deterministically here,
   // exactly like a standard effect. loadApp resolves examples/features/kumiki.caps.json.

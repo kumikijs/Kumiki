@@ -43,6 +43,8 @@ For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters
 input(bind=draft, strict=false)
 ```
 
+Both shapes are specific to `bind`, and both are deliberately quiet: a half-typed value is expected, not a defect. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
+
 ---
 
 ## 5.2 Form Elements

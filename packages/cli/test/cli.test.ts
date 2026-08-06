@@ -109,10 +109,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // build time — a production mount is silent because it passed no
     // `onDiagnostic`, which is what keeps the sink a supported seam in a built
     // artifact rather than a dev-only affordance a bundler strips.
+    // Bumped to 57KB with all-or-nothing reducer batches (spec/runtime.md
+    // §10.3.3): the per-write refinement check, the rejection merge, and the
+    // report that names the slot, value and predicate. Ships in production for
+    // the same reason the diagnostic above does — a reducer the runtime refuses
+    // to commit is invisible from the DOM, so a built artifact that stayed
+    // silent about it would be the defect this budget is meant to protect
+    // against, not the size.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(56_000);
+    expect(total).toBeLessThan(57_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
@@ -486,6 +493,29 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("PASS  add-surfaces-persist-error");
     expect(out).toMatch(/PASS {2}inc-dec-roundtrips \(100 cases, \d+ms\)/);
     expect(out).toContain("7/7 passed");
+  });
+
+  // The reducer-test tier has to refuse exactly what the running app refuses.
+  // It used to merge a reducer's returned slots over the given ones with no
+  // refinement check at all, so a batch the app discards passed here — the tier
+  // meant to catch the bug would have certified it.
+  it("refuses a batch the app's refinement rejects", { timeout: 30000 }, () => {
+    const file = resolve(here, "../../examples/features/63-reducer-batch-atomicity.kumiki");
+    const res = spawnSync("npx", ["tsx", CLI_PATH, "test", file], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    expect(res.stdout).toContain("PASS  bump-commits-whole");
+    expect(res.stdout).toContain("PASS  bump-at-ceiling-changes-nothing");
+    expect(res.stdout).toContain("2/2 passed");
+    // The `expect` block alone cannot tell "the batch was refused" from "the
+    // reducer degenerated into a no-op" — both leave the slots untouched — so
+    // pin the report too. The reducer-test tier has no `errorIncludes`
+    // equivalent to express this in-language.
+    expect(res.stderr).toContain(
+      '[kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
+    );
   });
 
   it("filters by a name prefix", { timeout: 30000 }, () => {

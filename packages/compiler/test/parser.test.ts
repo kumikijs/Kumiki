@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { AppDef, ReducerDef, SlotDef, TileDef, TypeDef } from "@kumikijs/compiler";
+import type { AppDef, ReducerDef, SlotDef, Statement, TileDef, TypeDef } from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -32,8 +32,15 @@ describe("parser", () => {
     expect(incReducer?.on.kind).toBe("UiEvent");
     expect(incReducer?.on.ev).toBe("click");
     expect(incReducer?.on.selector.tile).toBe("IncBtn");
+    // `inc` guards its own ceiling, so the body is one `if` whose consequent is
+    // the assignment (the count type is bounded, and a refused write discards
+    // the whole batch — spec/runtime.md §10.3.3).
     expect(incReducer?.do).toHaveLength(1);
-    expect(incReducer?.do[0]).toMatchObject({
+    const incGuard = incReducer?.do[0] as Extract<Statement, { kind: "IfStmt" }>;
+    expect(incGuard).toMatchObject({ kind: "IfStmt", cond: { kind: "BinOp", op: "<" } });
+    expect(incGuard.alternate).toEqual([]);
+    expect(incGuard.consequent).toHaveLength(1);
+    expect(incGuard.consequent[0]).toMatchObject({
       kind: "SlotAssign",
       lvalue: { kind: "LSlot", name: "count" },
       rhs: { kind: "BinOp", op: "+" },

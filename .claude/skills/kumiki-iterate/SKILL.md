@@ -47,7 +47,10 @@ are deterministic and hermetic.
 
 - Actions: `{dispatch, payload?}` (fire a reducer by name), `{clickText}`, `{click}` (CSS),
   `{fill, value}`, `{choose, value}`, `{navigate}`.
-- `expect`: `{ noErrors?, state?: {slot: value}, domIncludes?: [], domExcludes?: [] }`.
+- `expect`: `{ noErrors?, errorIncludes?: [], state?: {slot: value}, domIncludes?: [], domExcludes?: [] }`.
+  `errorIncludes` asserts an error **was** reported (each substring must appear in one) — for
+  contracts whose point is that the runtime surfaces something, e.g. a reducer batch a
+  refinement rejected. `noErrors` then means "nothing this step did not ask for", so both compose.
   `state` is a **partial** match; keys may be dotted paths (`issues.id-1.status`).
 - `effects`: per-effect queues of `{outcome, value}` returned in order — script HTTP/storage
   so the loop is deterministic and never hits the network.

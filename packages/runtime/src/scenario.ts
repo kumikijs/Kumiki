@@ -27,6 +27,14 @@ export type Action =
 export type Expect = {
   /** No runtime errors since the previous step. */
   noErrors?: boolean;
+  /**
+   * Substrings that must each appear in some error reported since the previous
+   * step. The counterpart to `noErrors`: a contract whose whole point is that
+   * the runtime *reports* something (a rejected reducer batch, a dropped effect
+   * error) is otherwise unassertable at this tier, and an example demonstrating
+   * one would have to settle for "no error was raised about it".
+   */
+  errorIncludes?: string[];
   /** Partial match against the slot state (slot name → expected value). */
   state?: Record<string, unknown>;
   /** Substrings that must appear in the rendered text. */
@@ -51,7 +59,18 @@ export type Scenario = {
 export type StepResult = {
   label?: string;
   action?: string;
+  /**
+   * Errors reported during this step that no `errorIncludes` claimed. These are
+   * what fail the run — an error the step asked for moves to `expectedErrors`.
+   */
   errors: string[];
+  /**
+   * Errors this step's `errorIncludes` matched. Kept in the trace (the run is
+   * about what the app did, and hiding a reported error would defeat that) but
+   * out of `errors`, so a scenario can assert a report without also asserting
+   * that the run failed.
+   */
+  expectedErrors: string[];
   emits: { effect: string; args: unknown[] }[];
   state: Record<string, unknown>;
   domText: string;
@@ -171,15 +190,20 @@ export async function runScenario(
         }
         await settle(settleMs);
       }
+      const expected = errorBuf.filter((e) =>
+        (step.expect?.errorIncludes ?? []).some((s) => e.includes(s)),
+      );
+      const unexpected = errorBuf.filter((e) => !expected.includes(e));
       const result = mkStep(
         step.label,
         actionDesc,
-        [...errorBuf],
+        unexpected,
         [...emitBuf],
         app,
         root,
-        evaluateExpect(step.expect, errorBuf, app, root),
+        evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
         [...diagBuf],
+        expected,
       );
       steps.push(result);
     }
@@ -205,9 +229,11 @@ function mkStep(
   root: HTMLElement,
   failures: string[],
   diagnostics: RuntimeDiagnostic[] = [],
+  expectedErrors: string[] = [],
 ): StepResult {
   const step: StepResult = {
     errors,
+    expectedErrors,
     emits,
     state: snapshotState(app),
     domText: (root.textContent ?? "").replace(/\s+/g, " ").trim(),
@@ -296,14 +322,27 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
 
 function evaluateExpect(
   expect: Expect | undefined,
-  errors: string[],
+  // One object rather than two adjacent `string[]`s: swapping them would still
+  // compile and would quietly invert what `noErrors` and `errorIncludes` mean.
+  reported: { all: string[]; unexpected: string[] },
   app: AppShape,
   root: HTMLElement,
 ): string[] {
   if (!expect) return [];
   const failures: string[] = [];
-  if (expect.noErrors && errors.length > 0) {
-    failures.push(`expected no errors but got: ${errors.join("; ")}`);
+  // `noErrors` means "nothing this step did not ask for", so it composes with
+  // `errorIncludes`: a step can require one report and forbid every other.
+  if (expect.noErrors && reported.unexpected.length > 0) {
+    failures.push(`expected no errors but got: ${reported.unexpected.join("; ")}`);
+  }
+  for (const s of expect.errorIncludes ?? []) {
+    if (!reported.all.some((e) => e.includes(s))) {
+      failures.push(
+        `expected an error including "${s}" but got: ${
+          reported.all.length > 0 ? reported.all.join("; ") : "none"
+        }`,
+      );
+    }
   }
   if (expect.state) {
     const state = snapshotState(app);

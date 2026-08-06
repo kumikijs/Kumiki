@@ -221,6 +221,7 @@ export async function runCmd(
     const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
     console.log(`[${status}] ${head}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
+    for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
     // Advisory, and attributed to the action above it — that pairing is the
     // whole reason the runner buffers diagnostics per step. Listed rather than

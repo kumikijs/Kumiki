@@ -40,7 +40,10 @@ describe("counter e2e (built from .kumiki)", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 3");
   });
 
-  it("decrements but refinement rejects below 0", async () => {
+  // The floor is guarded in the source, so the refinement never fires here —
+  // this pins that the guard is what stops the decrement, from the built
+  // artifact rather than the AST.
+  it("does not decrement below the guarded floor", async () => {
     const app = await buildAndLoad(COUNTER, rootId);
     mount(app, root);
     const minus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "-");
@@ -61,7 +64,7 @@ describe("counter e2e (built from .kumiki)", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
 
-  it("caps at refinement ceiling 999", async () => {
+  it("does not increment past the guarded ceiling of 999", async () => {
     const app = await buildAndLoad(COUNTER, rootId);
     mount(app, root);
     const plus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "+");

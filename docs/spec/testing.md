@@ -51,7 +51,11 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
 
-### 8.2.3 Expecting a panic
+### 8.2.3 The batch rule applies here too
+
+A reducer-test asserts what the *running app* would do, so a batch a refinement rejects leaves every slot at its `given` value and emits nothing ([batching](./runtime.md#a-batch-commits-all-or-nothing)). The rejection is reported on `console.error`, not through `expect` — the tier has no `errorIncludes` counterpart, so an `expect` block alone cannot distinguish "the batch was refused" from "the reducer did nothing".
+
+### 8.2.4 Expecting a panic
 
 ```kumiki
 test addTodo-empty =
@@ -281,7 +285,7 @@ These run in default CI (no browser binaries), so a re-introduced dropped-expres
 
 - **Action**: `{dispatch, payload?}` (fire a reducer by name) / `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{fill, value}` / `{choose, value}` / `{navigate}`. `{focus}` and `{blur}` dispatch a real DOM `FocusEvent` on a selector match, so the scenario tier alone verifies the `addEventListener` wiring that feeds `ui.focus` / `ui.blur` reducers.
 - **Observation**: after each step, record `state` (a slot snapshot), `domText`, `errors`, and `emits` (the fired effects).
-- **Assertion (expect)**: `{ noErrors?, state?, domIncludes?, domExcludes? }`. `state` is a **partial match against slot state** (dot-separated paths allowed). Because you can verify state rather than DOM text, it can mechanically detect **non-exception behavior bugs** (the class a human notices by clicking), such as "a select always ending up at the last option." This is equivalent to making the acceptance criteria (AC) of TDD executable.
+- **Assertion (expect)**: `{ noErrors?, errorIncludes?, state?, domIncludes?, domExcludes? }`. `state` is a **partial match against slot state** (dot-separated paths allowed). `errorIncludes` is the counterpart to `noErrors` — each substring must appear in some error reported during that step — for contracts whose whole point is that the runtime *surfaces* something, such as a reducer batch a refinement rejected ([batching](./runtime.md#a-batch-commits-all-or-nothing)) or an effect error no `.err` reducer consumes. It is scenario-tier only: the browser tier treats any reported error as fatal. Because you can verify state rather than DOM text, it can mechanically detect **non-exception behavior bugs** (the class a human notices by clicking), such as "a select always ending up at the last option." This is equivalent to making the acceptance criteria (AC) of TDD executable.
 - **effect script**: `effects: { <name>: [{outcome, value}, ...] }` replaces HTTP / Storage results in order, keeping the loop deterministic and network-independent.
 
 Why this works cleanly in Kumiki: because state is explicit (slots), the oracle is trustworthy; because events are declarative (reducer names), it can be driven precisely; and because effects can be mocked at the capability boundary, it is reproducible. The agent generates "app + scenario (AC)" from requirements and self-corrects by reading the trace, so the human only needs to state the requirements once. The loop procedure is described in `.claude/skills/kumiki-iterate`.

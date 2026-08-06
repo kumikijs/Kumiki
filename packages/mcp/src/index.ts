@@ -397,7 +397,7 @@ export function createServer(): McpServer {
     {
       title: "Run a scenario",
       description:
-        "Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with `expect` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call `kumiki_auto_patch { apply: true, testName }` (test-driven, deterministic literal repair); on a compile diagnostic, call `kumiki_fix { apply: true }` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action `do` is one of: {dispatch, payload?}, {clickText}, {click}, {fill, value}, {choose, value}, {navigate}. An `expect` is { noErrors?, state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths).",
+        "Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with `expect` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call `kumiki_auto_patch { apply: true, testName }` (test-driven, deterministic literal repair); on a compile diagnostic, call `kumiki_fix { apply: true }` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action `do` is one of: {dispatch, payload?}, {clickText}, {click}, {fill, value}, {choose, value}, {navigate}. An `expect` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; `errorIncludes` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).",
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -432,6 +432,10 @@ export function createServer(): McpServer {
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
           ...s.errors.map((e) => `    error: ${e}`),
+          // An error the step's `errorIncludes` asked for is out of `errors`,
+          // so without this line the agent driving the fix loop reads a step
+          // that reported something as one that reported nothing.
+          ...s.expectedErrors.map((e) => `    expected error: ${e}`),
           ...s.failures.map((f) => `    assert: ${f}`),
         ];
         const emits = s.emits.length ? `    emits: ${s.emits.map((e) => e.effect).join(", ")}` : "";

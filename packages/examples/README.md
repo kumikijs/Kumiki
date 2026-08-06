@@ -18,7 +18,7 @@ From small to large. Shows how features combine in real apps.
 
 | App | Size | Main takeaways |
 |---|---|---|
-| [01-counter](./apps/01-counter/) | ~22 lines | slot / reducer / tile / events |
+| [01-counter](./apps/01-counter/) | ~15 lines | slot / reducer / tile / events |
 | [02-todomvc](./apps/02-todomvc/) | ~161 lines | lists, filters, `bind`, localStorage persistence |
 | [03-blog](./apps/03-blog/) | ~418 lines | routing, HTTP fetch, suspense |
 | [04-issue-tracker](./apps/04-issue-tracker/) | ~726 lines | CRUD, `Map`, `Option` variants, forms, dates |

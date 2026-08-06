@@ -1,6 +1,24 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
+import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
+
+/**
+ * Wrap a write to `slot` so the refinement is checked *as it happens*
+ * (spec/runtime.md §10.3.3). Slots with no refinement are emitted bare — the
+ * wrapper would be dead weight on every assignment in the program.
+ *
+ * Checking the batch's final value alone is not enough: `_next` is a map, so a
+ * `for` loop writing the same slot repeatedly only preserves the last value,
+ * and an intermediate that left the slot's range would never be seen. That
+ * intermediate is readable by later statements in the body exactly like a
+ * committed one, which is the leak this rule exists to close.
+ */
+function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
+  const def = gen.slots.find((s) => s.name === slot);
+  if (!def || refinementJs(def.type, gen) === undefined) return valueJs;
+  return `_s.slotWrite(_slots, _rejected, ${JSON.stringify(slot)}, ${valueJs})`;
+}
 
 /** All effect names emitted anywhere in a reducer body (descends into control flow). */
 export function collectEmits(stmts: Statement[]): string[] {
@@ -170,6 +188,7 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
   stmtLines.push(`const _next = {};`);
   stmtLines.push(`const _emits = [];`);
   stmtLines.push(`const _stops = [];`);
+  stmtLines.push(`const _rejected = [];`);
   // bind payload positional args. For effect events, $1, $2, etc. are payload props.
   if (r.on.kind === "EffectEvent") {
     for (let i = 0; i < r.on.binds.length; i++) {
@@ -184,7 +203,9 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
 
   for (const st of r.do) stmtLines.push(genStatement(st, ctx));
 
-  stmtLines.push(`return { slots: _next, emits: _emits, stopTimers: _stops };`);
+  stmtLines.push(
+    `return { slots: _next, emits: _emits, stopTimers: _stops, rejected: _rejected };`,
+  );
 
   return `  {
     name: ${JSON.stringify(r.name)},
@@ -271,7 +292,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
 export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   const rhsJs = jsOfExpr(rhs, ctx);
   if (lv.kind === "LSlot") {
-    return `_next[${JSON.stringify(lv.name)}] = ${rhsJs};`;
+    return `_next[${JSON.stringify(lv.name)}] = ${slotWriteJs(lv.name, rhsJs, ctx.gen)};`;
   }
   // Build update for nested lvalue.
   // The root slot name + path → produce a new object.
@@ -295,7 +316,8 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
     if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
     else pathExpr += `, ${jsOfExpr(seg.expr, ctx)}`;
   }
-  return `_next[${JSON.stringify(root)}] = _setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs});`;
+  const updated = `_setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
+  return `_next[${JSON.stringify(root)}] = ${slotWriteJs(root, updated, ctx.gen)};`;
 }
 
 export function lvalueRootName(lv: Lvalue): string {

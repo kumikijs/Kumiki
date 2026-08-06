@@ -138,6 +138,57 @@ on reducer execution:
 
 1 つの reducer 実行内のすべての slot 変更は **1 つのバッチ**として扱う。`for` ループ内の連続変更も同一バッチ。バッチ確定後に signal graph を 1 度だけ更新する。
 
+#### バッチは全部通るか全部通らないかのどちらか {#a-batch-commits-all-or-nothing}
+
+**書き込みごとに**、対象 slot の refinement（[登録済み refinement 述語](./language.md#_1-3-3-登録済み-refinement-述語)）に照らして検査する。バッチ最終値だけではない。**いずれか 1 つの書き込みでも**拒否された場合、その reducer 適用は丸ごと破棄される。slot は 1 つも書かれず、`emit` は 1 つも発行されず、`stop-timer` も走らず、再レンダリングも起きない。
+
+バッチ単位ではなく書き込み単位なのは、バッチが map であり各 slot について最後に代入された値しか覚えていないからである。slot の範囲から出て戻ってくる `for` ループは合法な値で終わり、途中で通過した非合法な値 — 下記のとおり後続のすべての文から読める — は一度も検査されない:
+
+```kumiki
+reducer drift on=ui.click(Btn)
+    do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    ; 4 に到達する
+                                                mirror := mirror + count }
+```
+
+これは panic では**ない** — アプリは操作可能なまま、slot は無傷で、`app.error` も発火しない — が、決して沈黙しない。runtime は
+
+```
+[kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3)). No slot was written and no effect was emitted.
+```
+
+を `console.error` に報告する。未処理の effect エラー（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）と同じ経路・同じ契約であり、検証ティア（`smoke` / `runScenario` / e2e）がすべて拾う。
+
+このルールがあるのは、もう一方の選択肢 — 拒否された slot だけを飛ばして残りを書く — が reducer を半分だけ適用し、さらに slot が一度も取らなかった値を隣の slot へ逃がしてしまうからである。body の後続文は構築途中のバッチを読むためだ:
+
+```kumiki
+type Small = nominal Int where between(0, 3)
+slot count : Small = 0
+slot mirror : Int  = 0
+
+reducer bump on=ui.click(Btn)
+    do= count  := count + 1      ; 上限では、この値は拒否される
+        mirror := count          ; ...そしてここから読めてはならない
+```
+
+到達しうる境界はプログラム側の責任であって runtime の責任ではない。ガードは自分で書く:
+
+```kumiki
+reducer bump on=ui.click(Btn)
+    do= if count < 3 then count := count + 1
+```
+
+refinement が門番を**しない**ものが 2 つある:
+
+- **宣言時の初期値**。`slot email : Text where email = ""` は自身の refinement が拒否する値を最初から保持する。これこそが、手つかずのフォームで `error(field=email)` にメッセージを出させている仕組みである（[エラー表示](./forms.md#_5-7-エラー表示)）。
+- **双方向 `bind`**。入力の拒否はフィールド単位で、報告も出ない（[refinement の扱い](./forms.md#_5-1-2-refinement-の扱い)）。入力途中の値は欠陥ではなく想定内だからである。デフォルトでは slot は以前の値を保つが、`strict=false` では新しい値を取り、代わりにフォームの `valid` フラグが false になる。
+
+**この 2 つは組み合わさると罠になる**。宣言時の初期値が自身の refinement に違反している slot は、reducer からその初期値に*リセット*できない。`Text where nonempty` の slot に対する `name := ""` は他と変わらない書き込みなので、バッチを破棄する。slot の型を広げて境界で refine するか、空のケースを `Option` でモデル化すること:
+
+```kumiki
+slot name : Text where nonempty = ""    ; 不正な値で始まる — 許される
+reducer clear on=ui.click(Btn) do= name := ""    ; 拒否される — 許されない
+```
+
 ### 10.3.4 DOM レンダリングの不変条件
 
 - **null/undefined 子ノードは skip される**。`when(false, X)` のような偽分岐は `null` を子に渡すが、`renderTile` はそれを無視して兄弟だけを描画する

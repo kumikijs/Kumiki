@@ -50,5 +50,6 @@ Minimal examples, one feature per file. Each file is a self-contained, working K
 | [46-stdlib-paren-methods](https://github.com/kumikijs/Kumiki/blob/main/examples/features/46-stdlib-paren-methods.kumiki) | paren-form stdlib methods (`is-ok()` / `values()` / `lower()` / `sort()` etc.) + `Bytes.from-text/base64/bytes` constructors |
 | [61-reserved-identifier-names](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/61-reserved-identifier-names.kumiki) | names that are JS reserved words (`new` / `class` / `var`) or look like runtime internals (`_live` / `_s`) |
 | [62-conditional-inline-tile-handlers](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/62-conditional-inline-tile-handlers.kumiki) | a conditional swapping two inline tiles that differ only in their handler |
+| [63-reducer-batch-atomicity](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/63-reducer-batch-atomicity.kumiki) | a refinement rejects the whole reducer batch, and the guard to write instead |
 
 New questions and bugs are answered first by adding a minimal reproduction here.

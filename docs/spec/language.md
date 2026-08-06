@@ -370,6 +370,9 @@ issue.copy(status=Done, priority=High)
      - `if cond then x := 1 else x := 2; x := 3` ✗ (same path again after combining mutually exclusive branches)
    - Even with the same shape, different index values (`m[k1]` and `m[k2]`) cannot be statically decided, so they are treated as 1 write (the stricter side). If you want to update multiple keys, use a `for` loop
 5. **Calling `fn` is allowed** (safe because it is pure)
+6. **The batch commits all-or-nothing**: if any slot's new value violates its type's refinement, the entire reducer application is discarded — no slot write, no `emit`, no `stop-timer` — and the rejection is reported (see [batching](./runtime.md#a-batch-commits-all-or-nothing)). A reachable bound is the program's business: write the guard.
+   - `volume := volume + 1` on `Volume = nominal Int where between(0, 11)` ✗ at 11 (rejected and reported)
+   - `if volume < 11 then volume := volume + 1` ✓
 
 ### 1.6.5 Positional Binding
 
@@ -763,8 +766,8 @@ link(to="/x") {text("Home")}                           # `{...}` is key:value pr
 type N      = nominal Int where between(0, 999)
 slot count  : N    = 0
 
-reducer inc   on=ui.click(IncBtn)   do= count := count + 1
-reducer dec   on=ui.click(DecBtn)   do= count := count - 1
+reducer inc   on=ui.click(IncBtn)   do= if count < 999 then count := count + 1
+reducer dec   on=ui.click(DecBtn)   do= if count > 0   then count := count - 1
 reducer reset on=ui.click(ResetBtn) do= count := 0
 
 tile IncBtn   = button(text="+")
