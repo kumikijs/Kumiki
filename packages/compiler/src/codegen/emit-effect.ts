@@ -70,7 +70,7 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   return `{
     name: ${JSON.stringify(eff.name)},
     cap: ${JSON.stringify(eff.cap)},
-    policy: ${policyJs(eff.policy)},
+    policy: ${policyJs(gen, eff.policy)},
     retry: ${retryJs(eff.retry)},
     invoke: ${invokeBody},
   }`;
@@ -82,13 +82,19 @@ export function retryJs(r?: RetryExpr): string {
   return `{ kind: "exponential", n: ${r.n}, ms: ${r.ms}, factor: ${r.factor} }`;
 }
 
-export function policyJs(p?: PolicyExpr): string {
+/**
+ * `gen` is what lets the `latest-per-key` key expression see the slot table: it
+ * is an ordinary non-reducer scope, plus the lambda's own `$1`. Lowering it
+ * against an empty context made a slot reference look like an unknown local and
+ * emitted a bare identifier, the same defect `app.init` arguments had.
+ */
+export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   if (!p) return "undefined";
   switch (p.kind) {
     case "PolLatest":
       return `{ kind: "latest" }`;
     case "PolLatestKey":
-      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, { gen: {} as GenCtx, localBinds: new Set(["$1"]) })})) }`;
+      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, makeEvalCtx(gen, new Set(["$1"]), false))})) }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":

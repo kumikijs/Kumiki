@@ -165,4 +165,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `61-reserved-identifier-names.kumiki` | fn, reducer | コア | [§1.2](./language.md#_1-2-字句) |
 | `62-conditional-inline-tile-handlers.kumiki` | tile, reducer | コア | [§10.3.13](./runtime.md#_10-3-13-data-prop-の等値判定) |
 | `63-reducer-batch-atomicity.kumiki` | slot, reducer | コア | [§10.3.3](./runtime.md#_10-3-3-batching) |
+| `64-init-slot-argument.kumiki` | app, effect | コア | [§1.12](./language.md#_1-12-アプリエントリ-app) |
 <!-- examples:end -->

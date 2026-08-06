@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "label": "init fired with the slot's value, and the .ok reducer applied it",
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello from storage", "status": "loaded kumiki:note" },
+        "domIncludes": ["note=hello from storage", "status=loaded kumiki:note"]
+      }
+    }
+  ],
+  "effects": {
+    "loadNote": [{ "outcome": "ok", "value": { "_tag": "Some", "_0": "hello from storage" } }]
+  }
+}

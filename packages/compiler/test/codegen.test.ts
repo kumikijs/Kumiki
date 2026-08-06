@@ -1053,3 +1053,59 @@ describe("codegen", () => {
     });
   });
 });
+
+// `app.init` arguments and an effect's `latest-per-key` key expression are the
+// two places codegen used to lower an expression against a fabricated empty
+// `GenCtx`. With no slot table, a slot reference resolved as a plain local and
+// was emitted as a bare identifier — `check` and `build` both passed and the
+// module threw `ReferenceError` on import. Both now lower against the real
+// context, like every other non-reducer scope.
+describe("expressions outside a reducer body still see the slot table", () => {
+  const SRC = `
+    slot userId : Text = "u_42"
+    slot got    : Text = "none"
+    effect loadUser cap=http.get
+                    in=Text
+                    out=Result(Text, Text)
+                    policy=latest-per-key(userId)
+    reducer onOk on=loadUser.ok($v, _) do= got := $v
+    tile App = column(text(got))
+    app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[loadUser(userId)]
+  `;
+
+  it("lowers a slot reference in an app.init argument to the live map", () => {
+    const result = compile(SRC, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const init = result.js.match(/init: \[[^\]]*\]/)?.[0] ?? "";
+    expect(init).toContain('_live["userId"]');
+    expect(init).not.toMatch(/args: \[\s*userId/);
+  });
+
+  it("lowers a slot reference in latest-per-key to the live map", () => {
+    const result = compile(SRC, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const keyOf = result.js.match(/keyOf: .*/)?.[0] ?? "";
+    expect(keyOf).toContain('_live["userId"]');
+  });
+
+  it("still binds the key lambda's own $1", () => {
+    const result = compile(
+      `
+      slot got : Text = "none"
+      effect load cap=http.get in=Text out=Result(Text, Text) policy=latest-per-key($1)
+      reducer onOk on=load.ok($v, _) do= got := $v
+      tile App = column(text(got))
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+      `,
+      { runtimeSpecifier: "./runtime.js" },
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const keyOf = result.js.match(/keyOf: .*/)?.[0] ?? "";
+    // `$1` is the lambda's parameter, not a slot — it must stay a local.
+    expect(keyOf).toContain("_d_1");
+    expect(keyOf).not.toContain("_live");
+  });
+});

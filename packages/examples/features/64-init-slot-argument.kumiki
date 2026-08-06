@@ -1,0 +1,37 @@
+# Feature: `app.init` fires effects at startup, and its arguments are ordinary
+# expressions — a slot reference included.
+#
+# `init = [loadNote(noteKey)]` has to lower `noteKey` against the program's slot
+# table. Lowered against an empty one it stayed the bare identifier `noteKey`,
+# which `check` and `build` both accepted and which threw `ReferenceError` the
+# moment the module was imported — the app never mounted at all. The same held
+# for the `latest-per-key` key expression below, the other place codegen lowers
+# an expression outside a reducer body.
+#
+# Init arguments are evaluated once, when the app object is built, so they read
+# each slot's declared default. `app.init` runs immediately after mount and is
+# never re-run on hydration, so no reducer can have moved them first.
+
+slot noteKey : Text = "kumiki:note"
+slot note    : Text = "(loading)"
+slot status  : Text = ""
+
+effect loadNote cap=storage.read
+                in=Text
+                out=Result(Option(Text), Text)
+                # Scoped by the key being read, so loads of two different notes
+                # do not cancel each other.
+                policy=latest-per-key(noteKey)
+                map-request={key: $1, decode: Decoder.Json(Text)}
+
+reducer loaded   on=loadNote.ok($o, _) do= note   := $o.get-or("(empty)")
+                                           status := "loaded " + noteKey
+reducer loadFail on=loadNote.err(_, _) do= note   := "(empty)"
+                                           status := "storage unavailable"
+
+tile App = column(text("note=" + note), text("status=" + status)) {pad: "lg", gap: "sm"}
+
+app InitSlotArgument
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadNote(noteKey)]
