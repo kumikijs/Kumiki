@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   addDef,
   applyFixPlan,
+  directDeps,
   editDef,
   findReferences,
   fixCmd,
@@ -48,7 +49,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const here = dirname(fileURLToPath(import.meta.url));
-const _COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const TODOMVC = resolve(here, "../../examples/apps/02-todomvc/app.kumiki");
 
 function copy(src: string): string {
@@ -2913,5 +2914,152 @@ describe("KUMIKI_DEBUG=fix hook", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+// Reference resolution used to be a name match over the source text, so a
+// record field, a word in a comment, a string literal and a loop variable all
+// counted as references to a definition that merely shared their spelling.
+// `rename` rewrote every one of them; `remove --cascade` followed them; `refs`
+// and `view --with-deps` disagreed because only one of the two stripped strings.
+describe("references resolve through the AST, not the source text", () => {
+  // `label` is a slot AND a record field AND a word in a comment. Only the slot
+  // and its one real reference may move.
+  const AMBIGUOUS = `type ItemId = nominal Text where len-eq(3)
+type Item   = {id: ItemId, label: Text}
+
+# a counter whose label says count
+slot label : Text = "hi"
+slot count : Int  = 0
+
+reducer bump on=ui.click(Btn) do= count := count + 1
+
+tile Btn = button(text="label", onClick=bump)
+tile App = column(Btn, text(label))
+
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  function write(src: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-refs-"));
+    const dst = join(dir, "input.kumiki");
+    writeFileSync(dst, src);
+    return dst;
+  }
+
+  it("renames a slot without touching a record field of the same name", () => {
+    const f = write(AMBIGUOUS);
+    renameDef(f, "slot.label", "caption");
+    const out = readFileSync(f, "utf8");
+    expect(out).toContain("type Item   = {id: ItemId, label: Text}");
+    expect(out).toContain("slot caption : Text");
+    expect(out).toContain("text(caption)");
+  });
+
+  it("leaves the name alone inside a comment and a string literal", () => {
+    const f = write(AMBIGUOUS);
+    renameDef(f, "slot.label", "caption");
+    const out = readFileSync(f, "utf8");
+    expect(out).toContain("# a counter whose label says count");
+    expect(out).toContain('button(text="label"');
+  });
+
+  it("refuses a rename that would collide with an existing definition", () => {
+    const f = write(AMBIGUOUS);
+    expect(() => renameDef(f, "slot.label", "count")).toThrow(/already exists/);
+    expect(readFileSync(f, "utf8")).toBe(AMBIGUOUS);
+  });
+
+  it("does not count a definition as a reference to itself", () => {
+    const store = load(COUNTER);
+    for (const e of listDefs(store)) {
+      const q = `${e.layer}.${e.name}`;
+      expect(findReferences(store, q).map((r) => r.qname)).not.toContain(q);
+    }
+  });
+
+  // `refs` and `view --with-deps` read the same edge from opposite ends. They
+  // used to disagree: `findReferences` stripped strings before matching and
+  // `directDeps` did not, so a name inside a string literal was a dependency in
+  // one direction and not a reference in the other — and the op log's
+  // `depends-on` recorded the looser of the two.
+  //
+  // Comparing the two APIs to each other would prove nothing now: they read one
+  // shared table, so the comparison is an identity. The edges are pinned
+  // literally instead, which is what would actually go red if the walk changed.
+  it("reports the edges of a known file exactly, in both directions", () => {
+    const store = load(COUNTER);
+    expect(directDeps(store, "app.Counter")).toEqual(["tile.App"]);
+    expect(directDeps(store, "tile.App")).toEqual([
+      "slot.count",
+      "tile.DecBtn",
+      "tile.IncBtn",
+      "tile.ResetBtn",
+    ]);
+    expect(directDeps(store, "slot.count")).toEqual(["type.N"]);
+    expect(directDeps(store, "type.N")).toEqual([]);
+
+    expect(
+      findReferences(store, "slot.count")
+        .map((r) => r.qname)
+        .sort(),
+    ).toEqual(["reducer.dec", "reducer.inc", "reducer.reset", "tile.App"]);
+    expect(findReferences(store, "type.N").map((r) => r.qname)).toEqual(["slot.count"]);
+    // `IncBtn` is named by its reducer's selector and by `tile App` — the
+    // selector edge is the one the AST used to drop.
+    expect(
+      findReferences(store, "tile.IncBtn")
+        .map((r) => r.qname)
+        .sort(),
+    ).toEqual(["reducer.inc", "tile.App"]);
+  });
+
+  it("keeps a definition out of its own reference list even when it recurses", () => {
+    const f = write(`slot depth : Int = 0
+fn countdown(n: Int) -> Int = if n <= 0 then 0 else countdown(n - 1)
+tile Node = column(text(depth.show), Node)
+tile App = column(Node, text(countdown(depth).show))
+
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    const store = load(f);
+    expect(directDeps(store, "fn.countdown")).toEqual([]);
+    expect(directDeps(store, "tile.Node")).toEqual(["slot.depth"]);
+    expect(findReferences(store, "tile.Node").map((r) => r.qname)).toEqual(["tile.App"]);
+  });
+
+  it("cascade removal reports every definition it deletes, as one op", () => {
+    const f = copy(COUNTER);
+    const { removed } = removeDef(f, "slot.count", true);
+    // `count` is read by all three reducers and by `tile App`, and `App` is the
+    // only route target, so `app Counter` goes with it. The three buttons are
+    // referenced BY the reducers, not the other way round, so they survive.
+    // The requested definition comes first — a replay applies it as the head of
+    // the bundle — so compare the set, then pin the head separately.
+    expect(removed[0]).toBe("slot.count");
+    expect([...removed].sort()).toEqual([
+      "app.Counter",
+      "reducer.dec",
+      "reducer.inc",
+      "reducer.reset",
+      "slot.count",
+      "tile.App",
+    ]);
+    const after = load(f);
+    expect(
+      listDefs(after)
+        .map((e) => `${e.layer}.${e.name}`)
+        .sort(),
+    ).toEqual(["tile.DecBtn", "tile.IncBtn", "tile.ResetBtn", "type.N"]);
+    const log = readOpLog(f);
+    expect(log).toHaveLength(1);
+    expect(log[0]?.removed).toEqual(removed);
+    expect(log[0]?.cascade).toBe(true);
   });
 });

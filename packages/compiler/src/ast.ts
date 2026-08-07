@@ -36,6 +36,7 @@ export type TestDef = {
   testKind: "reducer-test" | "tile-test" | "property-test" | "episode-test";
   /** Reducer / tile name. Absent for `property-test` / `episode-test`. */
   target?: string;
+  targetPos?: Pos;
   /** The `given = { ... }` record literal (interpreted, not codegen'd as-is). */
   given: Expr;
   /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
@@ -104,7 +105,8 @@ export type TileDef = {
   name: string;
   in?: TypeExpr;
   errorBoundary?: string;
-  subRoutes?: { path: string; tile: string }[];
+  errorBoundaryPos?: Pos;
+  subRoutes?: { path: string; tile: string; tilePos?: Pos }[];
   /** §3.9 scroll-restoration. Absent ≡ default (true). `false` opts the tile out of automatic restore. */
   scrollRestoration?: boolean;
   body: TileExpr;
@@ -141,6 +143,8 @@ export type AppHttpConfig = {
   on401?: string;
   on403?: string;
   on5xx?: string;
+  /** Positions of the three reducer names above, keyed by field. */
+  reducerRefPos?: { on401?: Pos; on403?: Pos; on5xx?: Pos };
   timeout?: Expr;
   credentials?: Expr;
   pos: Pos;
@@ -188,9 +192,10 @@ export type AppDef = {
   kind: "AppDef";
   name: string;
   caps: string[];
-  routes: { path: string; tile: string }[];
+  routes: { path: string; tile: string; tilePos?: Pos }[];
   init: Expr[];
   theme?: string;
+  themePos?: Pos;
   http?: AppHttpConfig;
   indexedDb?: AppIndexedDbConfig;
   meta?: AppMetaConfig;
@@ -223,10 +228,33 @@ export type Refinement = {
 // ----- Events -----
 
 export type EventPattern =
-  | { kind: "UiEvent"; ev: UiEventKind; selector: { tile: string; id?: string }; pos: Pos }
-  | { kind: "EffectEvent"; effect: string; outcome: "ok" | "err"; binds: string[]; pos: Pos }
+  | {
+      kind: "UiEvent";
+      ev: UiEventKind;
+      selector: { tile: string; id?: string; tilePos?: Pos };
+      pos: Pos;
+    }
+  | {
+      kind: "EffectEvent";
+      effect: string;
+      outcome: "ok" | "err";
+      binds: string[];
+      /** Position of the effect name itself, which `pos` (the whole pattern) does not give. */
+      effectPos?: Pos;
+      pos: Pos;
+    }
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }
-  | { kind: "LifecycleEvent"; name: string; pos: Pos };
+  | {
+      kind: "LifecycleEvent";
+      name: string;
+      /**
+       * For `tile.mount(X)` / `tile.unmount(X)`, where `X` sits. The tile name
+       * is folded into `name` as `tile.mount("X")`, so without this there is no
+       * way to rewrite it except by matching text inside that string.
+       */
+      tileNamePos?: Pos;
+      pos: Pos;
+    };
 
 export type UiEventKind =
   | "click"
@@ -243,7 +271,7 @@ export type UiEventKind =
 export type Statement =
   | { kind: "SlotAssign"; lvalue: Lvalue; rhs: Expr; pos: Pos }
   | { kind: "LetStmt"; name: string; rhs: Expr; pos: Pos }
-  | { kind: "Emit"; effect: string; args: Expr[]; pos: Pos }
+  | { kind: "Emit"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "StopTimer"; name: string; pos: Pos }
   | { kind: "ForStmt"; bind: string; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
@@ -302,7 +330,7 @@ export type Expr =
   // `EffectId` (spec §2.1.1.1, http.md §6.4). Statement-form `emit` keeps the
   // separate `Statement.Emit` so existing reducers without a capture stay
   // unchanged.
-  | { kind: "EmitExpr"; effect: string; args: Expr[]; pos: Pos }
+  | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
   // Theme-token reference (spec/style.md §4.3): `@colors.surface`,
   // `@spacing.md`, `@typography.size.lg`. `group` is the top-level theme

@@ -19,8 +19,15 @@ export function registerRemove(program: Command): void {
           process.exit(2);
         }
         try {
-          const opId = removeDef(resolve(process.cwd(), file), qname, Boolean(options.cascade));
+          const { opId, removed } = removeDef(
+            resolve(process.cwd(), file),
+            qname,
+            Boolean(options.cascade),
+          );
           console.log(`removed ${qname}  (${opId})`);
+          // A cascade that deletes eight definitions and reports one is how a
+          // file loses its `app` without anyone noticing.
+          for (const q of removed) if (q !== qname) console.log(`  cascaded ${q}`);
         } catch (e) {
           console.error(String(e));
           process.exit(1);
