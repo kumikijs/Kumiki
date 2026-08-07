@@ -54,6 +54,7 @@ typo` is caught rather than accepted).
 | `E0104` | yes | Close-name suggestion against known effect names. |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
+| `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). |
 | `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
 | `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
@@ -228,6 +229,18 @@ A `slot` is declared with a name the compiler resolves before it consults the sl
 
 **Fix**: Rename the slot.
 
+### E0116 `undef-call`
+
+A call `f(...)` names no function. The candidate set is the program's `fn` definitions plus the built-in calls of [Standard Library](./stdlib.md#_2-4-built-in-functions): the unqualified `now` / `fmt` / `panic` / `file-url` / `prefers-dark` / `run-reducer`, the fixed-qualifier constructors (`Duration.*`, `Bytes.*`, `Decoder.*`, `EffectId.none`), and `fresh` / `parse` / `show` on any capitalised qualifier.
+
+> `Call to undefined function "<name>"`
+
+Code generation lowers an unrecognised callee to a call on a binding of the same name, so without this check a misspelling compiles, builds, and throws `<name> is not defined` on the first evaluation. The accepted set is exactly the set code generation can lower — a checker looser than the lowering it guards is what produced that failure, and a stricter one would reject programs that run.
+
+`E0801` is the same relationship for `obj.method(...)`, which is a different expression form and resolved separately.
+
+**Fix**: Correct the spelling, or declare the `fn`.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -370,6 +383,16 @@ The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) 
 
 **Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
 
+### E0213 `call-arity-mismatch`
+
+A call to a declared `fn` passes a different number of arguments than the `fn` declares parameters. Kumiki has no partial application and no default parameters, so any mismatch is an error rather than a narrower type.
+
+> `Function "<name>" expects <n> argument(s) but got <m>`
+
+Built-in calls are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them.
+
+**Fix**: Pass the declared number of arguments, or change the `fn` signature.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
@@ -498,3 +521,13 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 **Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). Calling a no-argument method with `()` is also caught by this band. For the list of standard library methods, see [Standard Library](./stdlib.md).
 
 **Fix**: Correct it to the right method name, or rewrite the operation using implemented means such as `match` / `fold`. If you need an unimplemented specification method, implement it in `packages/` and add a working example in `examples/`.
+
+### E0802 `unimplemented-function`
+
+A call names a function this document describes but the toolchain does not lower yet. Distinct from `E0116`: the name is right, and the gap is on the implementation side.
+
+> `Function "<name>" is documented but not implemented by the runtime`
+
+Currently one name is in this state: `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
+
+**Fix**: Remove the call. Nothing in the language is blocked on it — `trace` is a debugging aid.

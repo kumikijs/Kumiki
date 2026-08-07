@@ -69,6 +69,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | routing |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
+| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -81,6 +82,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0211](./errors.md#e0211-undef-tile-in-selector) | `undef-tile-in-selector` | reducer | core |
 | [E0212](./errors.md#e0212-selector-id-mismatch-opt-in-via-strict-selector-id) | `selector-id-mismatch` | reducer | core |
 | [W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) | `ui-event-tile-mismatch` | reducer | core |
+| [E0213](./errors.md#e0213-call-arity-mismatch) | `call-arity-mismatch` | fn | core |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
@@ -95,6 +97,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | style |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
+| [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
 <!-- codes:end -->
 
 ## Feature Examples Index
@@ -168,4 +171,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `62-conditional-inline-tile-handlers.kumiki` | tile, reducer | core | [§10.3.13](./runtime.md#_10-3-13-data-prop-equality) |
 | `63-reducer-batch-atomicity.kumiki` | slot, reducer | core | [§10.3.3](./runtime.md#_10-3-3-batching) |
 | `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
+| `65-prefers-dark.kumiki` | app, reducer | style | [§4.6.1](./style.md#_4-6-1-following-os-settings) |
 <!-- examples:end -->

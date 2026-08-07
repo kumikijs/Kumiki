@@ -1,0 +1,46 @@
+# Feature: `prefers-dark()` — the OS colour-scheme preference, read as a Bool.
+#
+# style.md §4.6.1 documents this as the way an app follows the system theme,
+# and its example is verbatim the `initTheme` reducer below. Nothing in
+# `packages/` implemented it: the call lowered to a bare `prefers_dark(...)`
+# binding, so the reducer that picks the initial theme threw
+# `prefers_dark is not defined` on `app.start` — the app mounted and then
+# immediately lost its theme, with `check` and `build` both green.
+#
+# It is read once per call rather than subscribed to. An app that also wants to
+# follow a mid-session change has `theme = <slot>` plus a reducer that writes
+# that slot, which is the same shape as the manual toggle here.
+#
+# In a headless DOM (`kumiki smoke`, `kumiki run`) `matchMedia` is absent and
+# the helper answers false, so the scenario below asserts the light branch.
+
+slot themeName : Text = "unset"
+
+theme Light = {
+    colors: {bg: "#ffffff", fg: "#101014", primary: "#2f6fdb", border: "#d6d6dd"}
+}
+
+theme Dark = {
+    colors: {bg: "#101014", fg: "#f2f2f5", primary: "#6ea8ff", border: "#2c2c34"}
+}
+
+reducer initTheme
+    on=app.start
+    do= themeName := if prefers-dark() then "Dark" else "Light"
+
+reducer useDark  on=ui.click(DarkBtn)  do= themeName := "Dark"
+reducer useLight on=ui.click(LightBtn) do= themeName := "Light"
+
+tile DarkBtn  = button(text="Dark",  onClick=useDark)
+tile LightBtn = button(text="Light", onClick=useLight)
+
+tile App = column(
+             text("theme=" + themeName),
+             row(LightBtn, DarkBtn) {gap: "sm"})
+           {pad: "lg", gap: "sm", bg: "bg", color: "fg"}
+
+app PrefersDark
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = themeName

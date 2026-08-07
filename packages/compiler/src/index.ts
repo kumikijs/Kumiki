@@ -1,5 +1,13 @@
 // Public API of @kumikijs/compiler.
 export type * from "./ast.ts";
+export {
+  BUILTIN_CALLS,
+  calleeCandidates,
+  isBuiltinCallee,
+  QUALIFIED_BUILTIN_CALLS,
+  TYPE_MEMBER_CALLS,
+  UNIMPLEMENTED_CALLS,
+} from "./builtin-calls.ts";
 export { BUILTIN_TILES, TILE_FAMILY, type TileFamily, VALUE_ARG_BUILTINS } from "./builtins.ts";
 export {
   type CapabilityManifest,

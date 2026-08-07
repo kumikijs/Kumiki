@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "app.start ran initTheme — the helper answered, so themeName is no longer its default",
+      "expect": {
+        "noErrors": true,
+        "state": { "themeName": "Light" },
+        "domIncludes": ["theme=Light"]
+      }
+    },
+    {
+      "label": "the same slot drives the manual switch",
+      "do": { "clickText": "Dark" },
+      "expect": {
+        "noErrors": true,
+        "state": { "themeName": "Dark" },
+        "domIncludes": ["theme=Dark"]
+      }
+    }
+  ]
+}

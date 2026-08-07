@@ -414,6 +414,8 @@ trace(label, value)        : T            ; episode log にラベル付きで記
 panic(message)             : never        ; プログラムを停止（reducer 内のみ）
 ```
 
+`trace` は**未実装**である。lowering された式から mount の episode logger へ到達する経路が無く、記録するには存在しないランタイム接続点が要る。`check` はこの呼び出しに対して [E0802](./errors.md#e0802-unimplemented-function) を報告し、名前が評価時に未定義グローバルへ落ちることを防ぐ。`panic` は実装済み。
+
 ---
 
 ## 2.5 標準 capability {#_2-5-standard-capabilities}

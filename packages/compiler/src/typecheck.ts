@@ -16,6 +16,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
+import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
@@ -1165,6 +1166,50 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   checkLvalue(lv.base, sym, errors, ctx);
 }
 
+/**
+ * Resolve a `Call`'s callee. Codegen's fallback lowers an unknown name to a
+ * call on a JS binding of that name, so anything this function lets through
+ * without a lowering becomes `<name> is not defined` at runtime — which is why
+ * the accepted set is `builtin-calls.ts`, the same table codegen dispatches on,
+ * rather than a looser "looks like a function" rule.
+ */
+function checkCallee(
+  callee: string,
+  argCount: number,
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (UNIMPLEMENTED_CALLS.has(callee)) {
+    errors.push({
+      code: "E0802",
+      kind: "unimplemented-function",
+      message: `Function "${callee}" is documented but not implemented by the runtime`,
+      pos,
+    });
+    return;
+  }
+  if (isBuiltinCallee(callee)) return;
+  const fn = sym.fns.get(callee);
+  if (!fn) {
+    errors.push({
+      code: "E0116",
+      kind: "undef-call",
+      message: `Call to undefined function "${callee}"`,
+      pos,
+    });
+    return;
+  }
+  if (fn.params.length !== argCount) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Function "${callee}" expects ${fn.params.length} argument(s) but got ${argCount}`,
+      pos,
+    });
+  }
+}
+
 function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   switch (e.kind) {
     case "Num":
@@ -1246,6 +1291,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "Call":
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      checkCallee(e.callee, e.args.length, e.pos, sym, errors);
       return;
     case "MethodCall":
       if (!KNOWN_METHODS.has(e.method)) {
@@ -2227,12 +2273,28 @@ function checkApp(
       pos: app.pos,
     });
   }
+  const initCtx: Ctx = {
+    kind: "reducer",
+    localBinds: new Set(),
+    capsAvailable: new Set(app.caps),
+  };
   for (const e of app.init) {
-    checkExpr(e, sym, errors, {
-      kind: "reducer",
-      localBinds: new Set(),
-      capsAvailable: new Set(app.caps),
-    });
+    // An init entry is an effect call by the grammar (§1.12), so its callee is
+    // resolved against the effect namespace here rather than by `checkExpr`,
+    // which would look for a `fn` and report the wrong namespace to `fix`.
+    if (e.kind === "Call" && !e.callee.includes(".")) {
+      if (!sym.effects.has(e.callee)) {
+        errors.push({
+          code: "E0104",
+          kind: "undef-effect",
+          message: `Reference to undefined effect "${e.callee}"`,
+          pos: e.pos,
+        });
+      }
+      for (const a of e.args) checkExpr(a, sym, errors, initCtx);
+      continue;
+    }
+    checkExpr(e, sym, errors, initCtx);
   }
 }
 

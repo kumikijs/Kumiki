@@ -416,6 +416,8 @@ trace(label, value)        : T            ; records to the episode log with a la
 panic(message)             : never        ; stops the program (inside a reducer only)
 ```
 
+`trace` is **not implemented yet**: a lowered expression has no route to the mount's episode logger, so recording one needs a runtime seam that does not exist. `check` reports [E0802](./errors.md#e0802-unimplemented-function) for a call to it, rather than letting the name become an undefined global at evaluation time. `panic` is implemented.
+
 ---
 
 ## 2.5 Standard Capabilities

@@ -8,7 +8,14 @@
 import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
 import type { KumikiError, TestDef } from "@kumikijs/compiler";
-import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
+import {
+  calleeCandidates,
+  check,
+  collectTimerNames,
+  lex,
+  parse,
+  variantTagsOf,
+} from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
@@ -269,6 +276,39 @@ export function planFixesExplained(
       const suggested = suggestNameFrom(timers, missing);
       if (!suggested) {
         skip(err.code, "e0106-no-close-timer", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => {
+          const lines = text.split(/\r?\n/);
+          const idx = err.pos.line - 1;
+          const line = lines[idx] ?? "";
+          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+          lines[idx] = line.replace(re, suggested);
+          return lines.join("\n");
+        },
+      });
+    }
+    if (err.code === "E0116") {
+      // Message shape: `Call to undefined function "<name>"`. The candidate set
+      // is the fn namespace plus the built-in calls — NOT every definition.
+      // Suggesting a slot or a tile for a misspelled call would turn a name
+      // error into a different one that still compiles.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0116-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const fnNames = listDefs(store)
+        .filter((e) => e.layer === "fn")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(calleeCandidates(fnNames), missing);
+      if (!suggested) {
+        skip(err.code, "e0116-no-close-callee", err.message);
         continue;
       }
       patches.push({
