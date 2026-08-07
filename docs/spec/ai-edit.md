@@ -62,6 +62,8 @@ kumiki patch revert <op-id>                 # revert a specific op
 
 Multi-line bodies (a reducer's `do=` block, a fn's multi-line RHS, etc.) must go through `--body-file` — the positional form is joined with single spaces so whitespace-significant content (newlines, tab runs) is lost. Passing `--body-file` alongside a positional body is rejected as a mutually-exclusive conflict.
 
+A write op is validated by re-parsing and re-typechecking the file, and rolls back on any `severity: "error"` diagnostic — with one exception. A program is built one definition at a time, so it is app-less until the `app` lands; **`E0003 missing-app` does not roll back a write op**. Whether the program is a complete application is what `kumiki check` reports, not what a mid-edit graph must already satisfy.
+
 ### 9.2.3 Validation Commands
 
 ```bash
@@ -71,6 +73,8 @@ kumiki check --refs                # referential integrity only
 kumiki check --effects             # capability/policy consistency only
 kumiki check --a11y                # accessibility conventions
 ```
+
+The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
 
 ### 9.2.4 Fix Assistance
 

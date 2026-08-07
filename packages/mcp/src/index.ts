@@ -768,7 +768,12 @@ export function createServer(): McpServer {
               .join("\n")}`,
           );
         }
-        return text(plan.patches.map((p) => `${p.code}: ${p.description}`).join("\n"));
+        // The unrepairable half goes out with the repairable half. An agent
+        // that reads only the proposals treats the file as one patch away from
+        // clean when it is not.
+        const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
+        const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);
+        return text([...proposals, ...unrepaired].join("\n"));
       } catch (e) {
         return errText(e);
       }

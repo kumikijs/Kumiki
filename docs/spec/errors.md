@@ -59,6 +59,8 @@ typo` is caught rather than accepted).
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
 | `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
+| `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
+| `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
 Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
@@ -91,6 +93,28 @@ Two or more `timer(d, name=N)` triggers declare the same timer name `N`. Timer n
 > `Timer name "<name>" is declared more than once`
 
 **Fix**: Rename one of the timers so each `name=` is unique. See [timer](./lifecycle.md#_7-1-5-timer).
+
+### E0003 `missing-app`
+
+The program declares no `app` definition, so it has no entry point: there is no route table and no root tile to mount. An empty file is this case too. Reported at `1:1`, because the thing that is missing has no position.
+
+> `Program has no app definition`
+
+Checking is what decides this, not code generation — an unnarrowed `check` that reports `ok` must describe a buildable program. (`--types` / `--refs` / `--effects` narrow the report to one band, so they answer a smaller question; `E00xx` survives them regardless, because no narrowing selects it.) See [Application Entry](./language.md#_1-12-application-entry-app).
+
+The one exception is a program under construction. The [AI-editing](./ai-edit.md) verbs add definitions one at a time, and every edit before the `app` lands would otherwise be rolled back, so they check with the requirement off. `kumiki check` is where an incomplete program is reported.
+
+**Fix**: Add an `app` definition with `caps`, `routes` and `init`.
+
+### E0004 `duplicate-app`
+
+The program declares more than one `app` definition. There is one entry point: code generation reads the first and drops the rest, so a second `app` takes its routes, `caps`, `init` and `theme` out of the artifact without any of them appearing anywhere. Reported once per app past the first, at that definition.
+
+> `Program declares more than one app definition ("<name>")`
+
+Unlike `E0003`, this is not relaxed for a program under construction — one app too few is an unfinished program, one app too many is a wrong one.
+
+**Fix**: Remove or merge the extra definition. To swap an app out, `replace` it, or `remove` the old one before adding the new.
 
 ## E01xx — Name Resolution
 

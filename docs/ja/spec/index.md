@@ -53,6 +53,8 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 |---|---|---|---|
 | [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | ルーティング |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | ライフサイクル |
+| [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | コア |
+| [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | コア |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | コア |
 | [E0104](./errors.md#e0104-undef-effect) | `undef-effect` | effect | コア |

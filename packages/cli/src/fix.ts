@@ -408,10 +408,10 @@ export function planFix(
 ): FixPlan {
   const store = load(path);
   const errors = check(store.program, { capabilities });
-  if (errors.length === 0) return { errors, patches: [] };
-  const all = planFixes(store, errors);
+  if (errors.length === 0) return { errors, patches: [], skipped: [] };
+  const { patches: all, skipped } = planFixesExplained(store, errors);
   const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
-  return { errors, patches };
+  return { errors, patches, skipped };
 }
 
 export type FixPlan = {
@@ -419,6 +419,14 @@ export type FixPlan = {
   errors: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
   patches: AutoPatch[];
+  /**
+   * The diagnostics no patch covers, with the classifier for why. Every error
+   * lands in exactly one of `patches` or `skipped`, so a caller that reports
+   * only the patches is telling the reader the file has fewer problems than it
+   * does. Not affected by `onlyCode` — a patch the caller filtered out was
+   * still found.
+   */
+  skipped: SkipReason[];
 };
 
 /**
@@ -575,7 +583,7 @@ export function fixCmd(
   capabilities: string[] = [],
 ): void {
   if (!apply) {
-    const { errors, patches } = planFix(path, onlyCode, capabilities);
+    const { errors, patches, skipped } = planFix(path, onlyCode, capabilities);
     if (errors.length === 0) {
       console.log("no errors");
       return;
@@ -588,6 +596,13 @@ export function fixCmd(
     for (const p of patches) {
       console.log(`${p.code} ${p.message}`);
       console.log(`  fix: ${p.description}`);
+    }
+    // A repair loop that sees only the repairable half applies it and calls the
+    // file done. The `--apply` path already reports what survives; the dry run
+    // has to say the same thing before anything is written.
+    if (skipped.length > 0) {
+      console.log(`(no auto-patch for ${skipped.length} of ${errors.length})`);
+      for (const s of skipped) console.error(`${s.code} ${s.message}`);
     }
     return;
   }

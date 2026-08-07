@@ -77,6 +77,15 @@ const STRICT_SELECTOR_ID_CODES = new Set(["E0212"]);
  * set from `@kumikijs/icons` (Vite plugin / CLI passes `Object.keys(ALL_ICONS)`);
  * with `strictIcons: true`, any literal `icon(name="<x>")` whose name is in
  * neither `iconNames` nor a `theme.icons` block becomes an `E0704`.
+ *
+ * `requireApp` (default `true`) decides whether a program with no `app`
+ * definition is an error. It is the difference between the two questions a
+ * checker answers: "is every definition well-formed?" and "is this a complete
+ * application?" Only the AI-editing verbs ask the first one — a program is
+ * legitimately app-less between `kumiki add` calls — so they opt out. Every
+ * other caller wants the second, which is why the default is on. It does not
+ * cover `E0004`: one app too many is wrong at every point in an edit, unlike
+ * one too few.
  */
 export function check(
   program: Program,
@@ -86,6 +95,7 @@ export function check(
     strictSelectorId?: boolean;
     iconNames?: Iterable<string>;
     capabilities?: string[];
+    requireApp?: boolean;
   },
 ): KumikiError[] {
   const iconDomain = new Set<string>(opts?.iconNames ?? []);
@@ -97,6 +107,31 @@ export function check(
     }
   }
   const errors = checkAll(program, new Set(opts?.capabilities ?? []), iconDomain);
+  const apps = program.defs.filter((d): d is AppDef => d.kind === "AppDef");
+  if (opts?.requireApp !== false && apps.length === 0) {
+    // Appended, not prepended: consumers that read the first diagnostic to
+    // classify a file (`kumiki fix`) learn more from the one that names a
+    // definition than from the one that names the whole program. The position
+    // is the top of the file because what is missing has no token.
+    errors.push({
+      code: "E0003",
+      kind: "missing-app",
+      message: "Program has no app definition",
+      pos: { line: 1, col: 1 },
+    });
+  }
+  // Not gated by `requireApp`. An app-less program is incomplete, which is a
+  // legitimate state mid-edit; a second app is wrong in any state, because
+  // codegen takes the first and drops the rest — routes and all — without
+  // saying so.
+  for (const extra of apps.slice(1)) {
+    errors.push({
+      code: "E0004",
+      kind: "duplicate-app",
+      message: `Program declares more than one app definition ("${extra.name}")`,
+      pos: extra.pos,
+    });
+  }
   return errors.filter((e) => {
     if (A11Y_CODES.has(e.code) && !opts?.strictA11y) return false;
     if (STRICT_ICONS_CODES.has(e.code) && !opts?.strictIcons) return false;

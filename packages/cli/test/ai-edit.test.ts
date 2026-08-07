@@ -2617,7 +2617,8 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     // `app` def in the file, so `planFixesExplained` records
     // `e0301-no-app-def` and returns zero patches. `runFixFromTest` must
     // surface that reason into the outcome, and `printFixFromTest` must
-    // print it above the compile errors.
+    // print it above the compile errors. E0003 fires on the same file and is
+    // appended after, which is what keeps the specific reason first.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-compile-reason-e2e-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -2639,6 +2640,7 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
       expect(outcome.status).toBe("no-patch");
       if (outcome.status === "no-patch") {
         expect(outcome.compileErrors?.some((e) => e.code === "E0301")).toBe(true);
+        expect(outcome.compileErrors?.some((e) => e.code === "E0003")).toBe(true);
         expect(outcome.reason).toBe("e0301-no-app-def");
       }
       const stdout = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
