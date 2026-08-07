@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import type { Def, Program, Token } from "@kumikijs/compiler";
-import { lex, parse } from "@kumikijs/compiler";
+import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
 
 export type DefRange = {
   /** 1-based start line in the source file. */
@@ -26,6 +26,8 @@ export type Store = {
   program: Program;
   defs: DefEntry[];
   byQName: Map<string, DefEntry>;
+  /** Lazily built by `refTable`; qname -> the references that definition makes. */
+  refs?: Map<string, Reference[]>;
 };
 
 const LAYER_OF: Record<string, string> = {
@@ -102,58 +104,65 @@ export function viewWithDeps(store: Store, qname: string): string {
 }
 
 /**
- * Return qnames that the definition at `qname` references. The match is
- * textual (identifier token in the source range) and intentionally over-
- * inclusive: any identifier that names another definition is considered a
- * dependency.
+ * Every reference each definition makes, resolved against the program's
+ * definition index. Computed once per `Store` because `refs`, `view --with-deps`
+ * and `remove --cascade` all ask about the same relation, and they used to
+ * disagree: one stripped strings before matching and the other did not.
+ */
+function refTable(store: Store): Map<string, Reference[]> {
+  if (store.refs) return store.refs;
+  const index = buildDefIndex(store.program);
+  const table = new Map<string, Reference[]>();
+  for (const e of store.defs) table.set(`${e.layer}.${e.name}`, referencesIn(e.def, index));
+  store.refs = table;
+  return table;
+}
+
+/**
+ * The qnames the definition at `qname` references. A definition is never its
+ * own dependency: a self-recursive tile or fn names itself, and reporting that
+ * turned `view --with-deps` into a cycle and `refs` into a lie.
  */
 export function directDeps(store: Store, qname: string): string[] {
-  const e = store.byQName.get(qname);
-  if (!e) return [];
-  const body = store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
-  const refs = new Set<string>();
-  // Iterate over candidate identifiers in the body (skip comments and strings).
-  const idents = body.matchAll(/[a-zA-Z_][a-zA-Z0-9_-]*/g);
-  for (const m of idents) {
-    const tok = m[0];
-    if (!tok || tok === e.name) continue;
-    for (const other of store.defs) {
-      if (other === e) continue;
-      if (other.name === tok) refs.add(`${other.layer}.${other.name}`);
-    }
+  const refs = refTable(store).get(qname);
+  if (!refs) return [];
+  const out = new Set<string>();
+  for (const r of refs) {
+    const q = `${r.layer}.${r.name}`;
+    if (q !== qname) out.add(q);
   }
-  return Array.from(refs).sort();
+  return Array.from(out).sort();
 }
 
 export type RefSite = { qname: string; layer: string; name: string; line: number };
 
+/**
+ * Where `targetQname` is referenced, one entry per definition+line. Layer-aware:
+ * a `slot label` and a record field called `label` are different things, and so
+ * are a `type Filter` and a `slot filter`.
+ */
 export function findReferences(store: Store, targetQname: string): RefSite[] {
   const target = store.byQName.get(targetQname);
   if (!target) return [];
   const out: RefSite[] = [];
-  const targetName = target.name;
+  const seen = new Set<string>();
   for (const e of store.defs) {
     if (e === target) continue;
-    for (let ln = e.range.startLine; ln <= e.range.endLine; ln++) {
-      const line = store.lines[ln - 1] ?? "";
-      // Strip comments + strings before matching.
-      const cleaned = line.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#.*$/, "");
-      const re = new RegExp(`(^|[^a-zA-Z0-9_-])${escapeRegExp(targetName)}(?![a-zA-Z0-9_-])`);
-      if (re.test(cleaned)) {
-        out.push({
-          qname: `${e.layer}.${e.name}`,
-          layer: e.layer,
-          name: e.name,
-          line: ln,
-        });
-      }
+    const from = `${e.layer}.${e.name}`;
+    for (const r of refTable(store).get(from) ?? []) {
+      if (`${r.layer}.${r.name}` !== targetQname) continue;
+      const key = `${from}:${r.pos.line}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ qname: from, layer: e.layer, name: e.name, line: r.pos.line });
     }
   }
-  return out;
+  return out.sort((a, b) => a.line - b.line);
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Every reference site inside `qname`'s own body, for a precise rewrite. */
+export function referenceSites(store: Store, qname: string): Reference[] {
+  return refTable(store).get(qname) ?? [];
 }
 
 export function listDefs(store: Store, layer?: string): DefEntry[] {

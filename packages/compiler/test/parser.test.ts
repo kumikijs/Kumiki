@@ -87,7 +87,9 @@ describe("parser", () => {
     const src = `reducer r on=ui.submit(LoginForm#new) do= x := 1`;
     const program = parse(lex(src));
     const r = program.defs[0] as ReducerDef;
-    expect(r.on.selector).toEqual({ tile: "LoginForm", id: "new" });
+    // `tilePos` is carried too, so `rename` can rewrite the selector without
+    // matching text; the tile/id pair is what this test is about.
+    expect(r.on.selector).toMatchObject({ tile: "LoginForm", id: "new" });
   });
 
   it("parses a timer event", () => {
@@ -208,7 +210,7 @@ reducer onErr on=route.error("/p") do= s := true`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
     expect(tile.kind).toBe("TileDef");
-    expect(tile.subRoutes).toEqual([
+    expect(tile.subRoutes).toMatchObject([
       { path: "/settings/account", tile: "Account" },
       { path: "/settings", tile: "Home" },
       { path: "/legacy", tile: ">>/settings" },

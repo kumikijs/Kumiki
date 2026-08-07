@@ -521,14 +521,15 @@ class Parser {
           throw new ParseError(`Unknown ui event "${sub}"`, t.pos);
         }
         this.eat("op", "(");
-        const tile = this.eat("ident").value;
+        const tileTok = this.eat("ident");
+        const tile = tileTok.value;
         let id: string | undefined;
         if (this.matchOp("#")) {
           this.next();
           id = this.eat("ident").value;
         }
         this.eat("op", ")");
-        const sel: { tile: string; id?: string } = { tile };
+        const sel: { tile: string; id?: string; tilePos?: Pos } = { tile, tilePos: tileTok.pos };
         if (id) sel.id = id;
         return { kind: "UiEvent", ev: sub as UiEventKind, selector: sel, pos: t.pos };
       }
@@ -591,6 +592,8 @@ class Parser {
           effect: name,
           outcome: sub,
           binds,
+          // `t` is the effect name itself — the pattern starts with it.
+          effectPos: t.pos,
           pos: t.pos,
         };
       }
@@ -668,7 +671,8 @@ class Parser {
     }
     if (this.matchKw("emit")) {
       const start = this.next();
-      const effect = this.eat("ident").value;
+      const effectTok = this.eat("ident");
+      const effect = effectTok.value;
       this.eat("op", "(");
       const args: Expr[] = [];
       if (!this.matchOp(")")) {
@@ -679,7 +683,7 @@ class Parser {
         }
       }
       this.eat("op", ")");
-      return { kind: "Emit", effect, args, pos: start.pos };
+      return { kind: "Emit", effect, args, effectPos: effectTok.pos, pos: start.pos };
     }
     // `stop-timer(N)` — clear a named timer. `stop-timer` lexes as one ident.
     const cur = this.peek();
@@ -760,7 +764,8 @@ class Parser {
     // `let id = emit X(...)`.
     if (this.matchKw("emit")) {
       const start = this.next();
-      const effect = this.eat("ident").value;
+      const effectTok = this.eat("ident");
+      const effect = effectTok.value;
       this.eat("op", "(");
       const args: Expr[] = [];
       if (!this.matchOp(")")) {
@@ -771,7 +776,7 @@ class Parser {
         }
       }
       this.eat("op", ")");
-      return { kind: "EmitExpr", effect, args, pos: start.pos };
+      return { kind: "EmitExpr", effect, args, effectPos: effectTok.pos, pos: start.pos };
     }
     return this.parseLogicOr();
   }
@@ -1288,7 +1293,8 @@ class Parser {
     const name = this.eat("ident").value;
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
-    let subRoutes: { path: string; tile: string }[] | undefined;
+    let errorBoundaryPos: Pos | undefined;
+    let subRoutes: { path: string; tile: string; tilePos?: Pos }[] | undefined;
     let scrollRestoration: boolean | undefined;
     while (!this.matchOp("=")) {
       if (this.matchKw("in")) {
@@ -1300,7 +1306,9 @@ class Parser {
       if (this.matchT("ident", "error-boundary")) {
         this.next();
         this.eat("op", "=");
-        errorBoundary = this.eat("ident").value;
+        const tok = this.eat("ident");
+        errorBoundary = tok.value;
+        errorBoundaryPos = tok.pos;
         continue;
       }
       if (this.matchT("ident", "scroll-restoration")) {
@@ -1332,6 +1340,7 @@ class Parser {
     const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
+    if (errorBoundaryPos) def.errorBoundaryPos = errorBoundaryPos;
     if (subRoutes) def.subRoutes = subRoutes;
     if (scrollRestoration === false) def.scrollRestoration = false;
     return def;
@@ -1659,6 +1668,7 @@ class Parser {
     let routes: { path: string; tile: string }[] = [];
     let init: Expr[] = [];
     let theme: string | undefined;
+    let themePos: Pos | undefined;
     let http: AppHttpConfig | undefined;
     let indexedDb: AppIndexedDbConfig | undefined;
     let meta: AppMetaConfig | undefined;
@@ -1671,8 +1681,11 @@ class Parser {
       if (k === "caps") caps = this.parseQualifiedList();
       else if (k === "routes") routes = this.parseRouteMap();
       else if (k === "init") init = this.parseInitList();
-      else if (k === "theme") theme = this.eat("ident").value;
-      else if (k === "http") http = this.parseAppHttp(ident.pos);
+      else if (k === "theme") {
+        const tok = this.eat("ident");
+        theme = tok.value;
+        themePos = tok.pos;
+      } else if (k === "http") http = this.parseAppHttp(ident.pos);
       else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos);
       else if (k === "meta") meta = this.parseAppMeta(ident.pos);
       else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos);
@@ -1683,6 +1696,7 @@ class Parser {
 
     const def: AppDef = { kind: "AppDef", name, caps, routes, init, pos: start.pos };
     if (theme) def.theme = theme;
+    if (themePos) def.themePos = themePos;
     if (http) def.http = http;
     if (indexedDb) def.indexedDb = indexedDb;
     if (meta) def.meta = meta;
@@ -1859,12 +1873,15 @@ class Parser {
           break;
         case "on-401":
           cfg.on401 = this.appHttpReducerRef(f.name, f.value);
+          this.noteHttpReducerPos(cfg, "on401", f.value);
           break;
         case "on-403":
           cfg.on403 = this.appHttpReducerRef(f.name, f.value);
+          this.noteHttpReducerPos(cfg, "on403", f.value);
           break;
         case "on-5xx":
           cfg.on5xx = this.appHttpReducerRef(f.name, f.value);
+          this.noteHttpReducerPos(cfg, "on5xx", f.value);
           break;
         case "timeout":
           cfg.timeout = f.value;
@@ -1877,6 +1894,21 @@ class Parser {
       }
     }
     return cfg;
+  }
+
+  /**
+   * Record where a `app.http.on-*` reducer name sits. The field itself is a
+   * bare string, so without this the rename path has no way to find the
+   * occurrence except by matching text, which is what it must not do.
+   */
+  private noteHttpReducerPos(
+    cfg: AppHttpConfig,
+    key: "on401" | "on403" | "on5xx",
+    value: Expr,
+  ): void {
+    const at = cfg.reducerRefPos ?? {};
+    at[key] = value.pos;
+    cfg.reducerRefPos = at;
   }
 
   private appHttpReducerRef(field: string, value: Expr): string {
@@ -2064,9 +2096,9 @@ class Parser {
     return name;
   }
 
-  private parseRouteMap(): { path: string; tile: string }[] {
+  private parseRouteMap(): { path: string; tile: string; tilePos?: Pos }[] {
     this.eat("op", "{");
-    const routes: { path: string; tile: string }[] = [];
+    const routes: { path: string; tile: string; tilePos?: Pos }[] = [];
     if (!this.matchOp("}")) {
       routes.push(this.parseRouteEntry());
       while (this.matchOp(",")) {
@@ -2078,7 +2110,7 @@ class Parser {
     return routes;
   }
 
-  private parseRouteEntry(): { path: string; tile: string } {
+  private parseRouteEntry(): { path: string; tile: string; tilePos?: Pos } {
     const path = this.eat("str").value;
     if (this.matchOp("->>")) {
       this.next();
@@ -2087,8 +2119,8 @@ class Parser {
       return { path, tile: `>>${target}` };
     }
     this.eat("op", "->");
-    const tile = this.eat("ident").value;
-    return { path, tile };
+    const tok = this.eat("ident");
+    return { path, tile: tok.value, tilePos: tok.pos };
   }
 
   private parseInitList(): Expr[] {

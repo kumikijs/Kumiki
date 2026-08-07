@@ -3,8 +3,15 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { check, lex, parse } from "@kumikijs/compiler";
-import { directDeps, findReferences, load, type Store } from "./store.ts";
+import { check, lex, type Pos, parse } from "@kumikijs/compiler";
+import {
+  type DefEntry,
+  directDeps,
+  findReferences,
+  load,
+  referenceSites,
+  type Store,
+} from "./store.ts";
 
 // Crockford base32. The mutate-op id is a §9.3.3 ULID — 10-char ms timestamp
 // prefix followed by 16 random chars — so that lexicographic ordering matches
@@ -37,6 +44,8 @@ export type OpLogEntry = {
   body?: string;
   newName?: string;
   cascade?: boolean;
+  /** Every definition a cascade deleted, the requested one first (§9.4.1). */
+  removed?: string[];
   patch?: unknown;
   author: string;
   ts: number;
@@ -52,6 +61,7 @@ type RawOp = {
   body?: string;
   newName?: string;
   cascade?: boolean;
+  removed?: string[];
   patch?: unknown;
 };
 
@@ -144,6 +154,7 @@ function logOp(path: string, op: RawOp): string {
     ...(op.body !== undefined ? { body: op.body } : {}),
     ...(op.newName !== undefined ? { newName: op.newName } : {}),
     ...(op.cascade !== undefined ? { cascade: op.cascade } : {}),
+    ...(op.removed !== undefined ? { removed: op.removed } : {}),
     ...(op.patch !== undefined ? { patch: op.patch } : {}),
     author: authorOf(),
     ts: Date.now(),
@@ -257,7 +268,12 @@ export function replaceDef(path: string, qname: string, body: string): string {
   return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body });
 }
 
-export function removeDef(path: string, qname: string, cascade: boolean): string {
+/** Removes `qname`, plus everything that references it when `cascade`. */
+export function removeDef(
+  path: string,
+  qname: string,
+  cascade: boolean,
+): { opId: string; removed: string[] } {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -307,7 +323,20 @@ export function removeDef(path: string, qname: string, cascade: boolean): string
     writeFileSync(path, original);
     throw new Error(`remove rejected: ${v.message}`);
   }
-  return logOp(path, { op: "remove", layer: entry.layer, name: entry.name, cascade });
+  // §9.4.1: a cascade is one op. Logging only the requested definition left the
+  // op log unable to reproduce the state — a replay would delete one definition
+  // where the run deleted eight, and nothing said so.
+  const removed = removalEntries
+    .map((e) => `${e.layer}.${e.name}`)
+    .sort((a, b) => (a === qname ? -1 : b === qname ? 1 : a.localeCompare(b)));
+  const opId = logOp(path, {
+    op: "remove",
+    layer: entry.layer,
+    name: entry.name,
+    cascade,
+    ...(removed.length > 1 ? { removed } : {}),
+  });
+  return { opId, removed };
 }
 
 export function renameDef(path: string, qname: string, newName: string): string {
@@ -316,43 +345,48 @@ export function renameDef(path: string, qname: string, newName: string): string 
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const old = entry.name;
-  // Replace `old` as a whole word, but leave commented or stringed occurrences
-  // alone. Line-by-line so we can skip past `#` and inside `"…"`.
-  const re = new RegExp(`\\b${escapeRegExp(old)}\\b`, "g");
-  const next = store.lines
-    .map((line) => {
-      const depth = 0;
-      let result = "";
-      let i = 0;
-      while (i < line.length) {
-        const ch = line[i];
-        if (ch === "#") {
-          result += line.slice(i);
-          break;
-        }
-        if (ch === '"') {
-          // copy the whole string literal verbatim
-          const start = i;
-          i++;
-          while (i < line.length && line[i] !== '"') {
-            if (line[i] === "\\") i++;
-            i++;
-          }
-          i++;
-          result += line.slice(start, i);
-          continue;
-        }
-        result += ch;
-        i++;
+  if (old === newName) return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
+  if (store.byQName.has(`${entry.layer}.${newName}`)) {
+    throw new Error(`Cannot rename ${qname}: ${entry.layer}.${newName} already exists`);
+  }
+
+  // Every occurrence to rewrite, as (line, col) — the definition's own name plus
+  // each resolved reference to it. Nothing else is touched, so a record field, a
+  // word in a comment, a string literal and a loop variable that merely share
+  // the spelling are left alone by construction rather than by a filter that has
+  // to anticipate them.
+  const sites: Pos[] = [defNamePos(store, entry, old)];
+  for (const e of store.defs) {
+    for (const r of referenceSites(store, `${e.layer}.${e.name}`)) {
+      if (r.layer === entry.layer && r.name === old) sites.push(r.pos);
+    }
+  }
+
+  const lines = store.lines.slice();
+  // Right-to-left within a line so earlier columns keep their positions.
+  const byLine = new Map<number, number[]>();
+  for (const p of sites) {
+    const cols = byLine.get(p.line) ?? [];
+    cols.push(p.col);
+    byLine.set(p.line, cols);
+  }
+  for (const [line, cols] of byLine) {
+    const text = lines[line - 1];
+    if (text === undefined) continue;
+    let next = text;
+    for (const col of [...new Set(cols)].sort((a, b) => b - a)) {
+      const at = col - 1;
+      if (next.slice(at, at + old.length) !== old) {
+        throw new Error(
+          `rename aborted: expected "${old}" at ${line}:${col} but found "${next.slice(at, at + old.length)}"`,
+        );
       }
-      // Now apply rename to the non-string, non-comment prefix and re-glue.
-      const codePart = result;
-      const tail = line.slice(codePart.length);
-      const renamed = codePart.replace(re, newName);
-      void depth;
-      return renamed + tail;
-    })
-    .join("\n");
+      next = next.slice(0, at) + newName + next.slice(at + old.length);
+    }
+    lines[line - 1] = next;
+  }
+
+  const next = lines.join("\n");
   const original = store.source;
   writeFileSync(path, next);
   const v = validate(path);
@@ -361,6 +395,18 @@ export function renameDef(path: string, qname: string, newName: string): string 
     throw new Error(`rename rejected: ${v.message}`);
   }
   return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
+}
+
+/**
+ * Where a definition's own name sits. The AST records the definition's start,
+ * which is the keyword, so the name is the first occurrence after it on that
+ * line — unambiguous because a definition header is `<keyword> <name>`.
+ */
+function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
+  const line = store.lines[entry.range.startLine - 1] ?? "";
+  const at = line.indexOf(name, (entry.def as { pos?: Pos }).pos?.col ?? 1);
+  if (at < 0) throw new Error(`rename aborted: cannot locate "${name}" on its own definition line`);
+  return { line: entry.range.startLine, col: at + 1 };
 }
 
 /**
@@ -535,7 +581,7 @@ function applyOne(path: string, op: RawOp): string {
       if (!op.newName) throw new Error("rename op missing newName");
       return renameDef(path, `${op.layer}.${op.name}`, op.newName);
     case "remove":
-      return removeDef(path, `${op.layer}.${op.name}`, op.cascade ?? false);
+      return removeDef(path, `${op.layer}.${op.name}`, op.cascade ?? false).opId;
     default:
       throw new Error(`unknown op kind "${op.op}"`);
   }
@@ -554,7 +600,7 @@ export function patchRevert(path: string, opId: string): string {
   switch (target.op) {
     case "add":
       // Inverse of add = remove.
-      return removeDef(path, `${target.layer}.${target.name}`, false);
+      return removeDef(path, `${target.layer}.${target.name}`, false).opId;
     case "remove": {
       // Inverse of remove = add. The removed body was the previous replace/add body.
       const prev = priorBody(log, idx, target.layer, target.name);

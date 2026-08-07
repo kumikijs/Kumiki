@@ -27,5 +27,13 @@ export {
 export { generateDts } from "./dts.ts";
 export { lex } from "./lexer.ts";
 export { ParseError, parse } from "./parser.ts";
+export {
+  buildDefIndex,
+  type DefIndex,
+  layerOfDef,
+  type Reference,
+  type RefLayer,
+  referencesIn,
+} from "./references.ts";
 export { collectTimerNames, variantTagsOf } from "./symbols.ts";
 export { check, type KumikiError } from "./typecheck.ts";
