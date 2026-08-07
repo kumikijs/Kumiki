@@ -19,10 +19,11 @@ import type {
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
-// One handler-name set for the whole compiler. A local copy here had
-// drifted from the lifted set — it was missing `onKeyDown` and
-// `onMouseEnter`, so `input(onKeyDown=bump)` compiled to a working
-// listener but was reported as an undefined reference (#261).
+// One handler-name set for the whole compiler. A local copy here had drifted
+// from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
+// `input(onKeyDown=bump)` compiled to a working listener but was reported as
+// an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
+// this set through the checker, so a second copy cannot drift unnoticed again.
 import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
 
 export type KumikiError = {
