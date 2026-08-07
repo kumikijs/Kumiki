@@ -2613,11 +2613,12 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
   });
 
   it("runFixFromTest: compile-tier no-patch propagates the first skip reason end-to-end", async () => {
-    // E0301 fires (effect requires capability `log.write`) but there is no
-    // `app` def in the file, so `planFixesExplained` records
-    // `e0301-no-app-def` and returns zero patches. `runFixFromTest` must
-    // surface that reason into the outcome, and `printFixFromTest` must
-    // print it above the compile errors.
+    // A file with no `app` def reports E0003 first, and nothing repairs a
+    // missing entry point — so the outcome's reason is the default
+    // `no-repair-branch` classifier, and `printFixFromTest` must print it
+    // above the compile errors. E0301 also fires (the effect wants
+    // `log.write`), which is what keeps more than one skip in play: the
+    // outcome carries the FIRST one, not an arbitrary one.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-compile-reason-e2e-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -2638,16 +2639,42 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
       const outcome = await fixFromTest(file, "t", false);
       expect(outcome.status).toBe("no-patch");
       if (outcome.status === "no-patch") {
-        expect(outcome.compileErrors?.some((e) => e.code === "E0301")).toBe(true);
-        expect(outcome.reason).toBe("e0301-no-app-def");
+        expect(outcome.compileErrors?.map((e) => e.code)).toEqual(["E0003", "E0301"]);
+        expect(outcome.reason).toBe("no-repair-branch");
       }
       const stdout = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(stdout).toMatch(/reason: e0301-no-app-def/);
+      expect(stdout).toMatch(/reason: no-repair-branch/);
     } finally {
       logSpy.mockRestore();
       errSpy.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("planFixesExplained still classifies E0301 with no reachable app def", () => {
+    // The E0301 repair appends to `app.caps`, so it needs an app to append to.
+    // That skip is no longer the first one a file without an app produces
+    // (E0003 comes first), but the branch is still the one that fires for the
+    // capability error itself — asserted here directly so it keeps coverage.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-e0301-no-app-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches).toEqual([]);
+    expect(skipped.map((s) => s.reason)).toEqual(["no-repair-branch", "e0301-no-app-def"]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("runFixFromTest: testRunError variant carries reason=test-runner-threw and printer surfaces it", async () => {

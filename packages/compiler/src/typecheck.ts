@@ -77,6 +77,13 @@ const STRICT_SELECTOR_ID_CODES = new Set(["E0212"]);
  * set from `@kumikijs/icons` (Vite plugin / CLI passes `Object.keys(ALL_ICONS)`);
  * with `strictIcons: true`, any literal `icon(name="<x>")` whose name is in
  * neither `iconNames` nor a `theme.icons` block becomes an `E0704`.
+ *
+ * `requireApp` (default `true`) decides whether a program with no `app`
+ * definition is an error. It is the difference between the two questions a
+ * checker answers: "is every definition well-formed?" and "is this a complete
+ * application?" Only the AI-editing verbs ask the first one — a program is
+ * legitimately app-less between `kumiki add` calls — so they opt out. Every
+ * other caller wants the second, which is why the default is on.
  */
 export function check(
   program: Program,
@@ -86,6 +93,7 @@ export function check(
     strictSelectorId?: boolean;
     iconNames?: Iterable<string>;
     capabilities?: string[];
+    requireApp?: boolean;
   },
 ): KumikiError[] {
   const iconDomain = new Set<string>(opts?.iconNames ?? []);
@@ -97,6 +105,16 @@ export function check(
     }
   }
   const errors = checkAll(program, new Set(opts?.capabilities ?? []), iconDomain);
+  if (opts?.requireApp !== false && !program.defs.some((d) => d.kind === "AppDef")) {
+    // No token to point at — an empty file has none — so the diagnostic sits at
+    // the top of the file, ahead of whatever else was found.
+    errors.unshift({
+      code: "E0003",
+      kind: "missing-app",
+      message: "Program has no app definition",
+      pos: { line: 1, col: 1 },
+    });
+  }
   return errors.filter((e) => {
     if (A11Y_CODES.has(e.code) && !opts?.strictA11y) return false;
     if (STRICT_ICONS_CODES.has(e.code) && !opts?.strictIcons) return false;

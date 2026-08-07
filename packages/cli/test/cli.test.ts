@@ -907,3 +907,118 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
     expect(out).toMatch(/positive integer/);
   });
 });
+
+// `check` is the gate: CI, the MCP server and every editing loop ask it whether
+// a file is sound. It used to answer `ok` for a file with no `app` definition —
+// including a completely empty one — while `build`, `smoke` and `test` all
+// failed on it. E0003 makes the gate agree with the stages behind it.
+describe("kumiki check (E0003 missing-app)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-e0003-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
+    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return {
+      stdout: res.stdout ?? "",
+      stderr: res.stderr ?? "",
+      code: res.status ?? (res.error ? 1 : 0),
+    };
+  }
+
+  function write(name: string, source: string): string {
+    const file = join(dir, name);
+    writeFileSync(file, source);
+    return file;
+  }
+
+  const CASES: Array<[string, string]> = [
+    [
+      "definitions but no entry point",
+      'type N = Int\nslot count : N = 0\ntile App = column(heading("v"))\n',
+    ],
+    ["an empty file", ""],
+    ["whitespace and comments only", "\n  \n# nothing to see\n"],
+  ];
+
+  for (const [label, source] of CASES) {
+    it(`fails on ${label}`, { timeout: 30000 }, () => {
+      const file = write("noapp.kumiki", source);
+      const { stdout, stderr, code } = runCli(["check", file]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0003 missing-app at 1:1");
+      expect(stdout).not.toContain("ok");
+    });
+  }
+
+  it("reports the same failure from build, rather than an uncaught throw", {
+    timeout: 30000,
+  }, () => {
+    const file = write("noapp.kumiki", CASES[0]![1]);
+    const { stderr, code } = runCli(["build", file, join(dir, "out")]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).not.toContain("No app definition found");
+  });
+
+  it("still passes a file that has an app", { timeout: 30000 }, () => {
+    const { stdout, code } = runCli(["check", COUNTER_PATH]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("ok");
+  });
+
+  // `--types/--refs/--effects` narrow along one axis. Structural errors are not
+  // on that axis, so no scope selects them — and a filter that drops what no
+  // scope can ask for turns every narrowing flag back into the hole above.
+  for (const scope of ["--types", "--refs", "--effects"]) {
+    it(`survives ${scope}`, { timeout: 30000 }, () => {
+      const file = write("noapp.kumiki", CASES[0]![1]);
+      const { stderr, code } = runCli(["check", file, scope]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0003 missing-app");
+    });
+  }
+
+  it("keeps the other structural diagnostic (E0001) visible under --types", {
+    timeout: 30000,
+  }, () => {
+    const file = write(
+      "no404.kumiki",
+      'tile App = column(heading("v"))\napp A caps=[] routes={"/" -> App} init=[]\n',
+    );
+    const { stderr, code } = runCli(["check", file, "--types"]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0001 missing-404");
+  });
+
+  it("does not block an AI edit that leaves the program incomplete", {
+    timeout: 60000,
+  }, () => {
+    const file = write("grow.kumiki", "");
+    const added = runCli(["add", file, "slot", "count", "Int", "=", "0"]);
+    expect(added.code).toBe(0);
+    expect(readFileSync(file, "utf8")).toContain("slot count");
+    // The edit lands; the gate is what reports that the program is not yet
+    // an application.
+    expect(runCli(["check", file]).code).toBe(1);
+  });
+
+  it("catches an app that a cascading remove deleted", { timeout: 60000 }, () => {
+    const file = join(dir, "counter.kumiki");
+    writeFileSync(file, readFileSync(COUNTER_PATH, "utf8"));
+    const removed = runCli(["remove", file, "slot.count", "--cascade"]);
+    expect(removed.code).toBe(0);
+    expect(removed.stdout).toContain("cascaded app.Counter");
+    const { stderr, code } = runCli(["check", file]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0003 missing-app");
+  });
+});

@@ -12,24 +12,38 @@ const USAGE =
 type CheckScope = "all" | "types" | "refs" | "effects";
 
 /**
- * Diagnostics gated by an explicit `--strict-*` opt-in upstream (a11y E0701-
- * E0703, strict-icons E0704, strict-selector-id E0212). They survive any
- * `--types/--refs/--effects` scope filter so combining `--strict-icons --types`
- * does not silently drop the strict findings the user asked for.
+ * Which diagnostic bands each narrowing flag selects (see the code system in
+ * `docs/spec/errors.md`). A code whose band appears in none of them — `E00`
+ * structure, `E07` opt-in checks, `E08` runtime hazards — is not on this axis
+ * at all: no scope could ever ask for it, so narrowing must not be able to hide
+ * it. Otherwise `check --types` would report `ok` for a file with no `app`
+ * definition, which is the failure `--types` was never meant to have an opinion
+ * about.
  */
-const STRICT_GATE_CODES = new Set(["E0212", "E0701", "E0702", "E0703", "E0704"]);
+const SCOPE_BANDS: Record<Exclude<CheckScope, "all">, readonly string[]> = {
+  types: ["E02", "E04", "E06"],
+  refs: ["E01", "E05"],
+  effects: ["E03"],
+};
+
+const SCOPED_BANDS = new Set(Object.values(SCOPE_BANDS).flat());
+
+/**
+ * `E0212` (strict-selector-id) is the one `--strict-*` diagnostic that lives in
+ * a band a scope claims, so combining `--strict-selector-id --refs` would drop
+ * the finding the user explicitly asked for. The a11y and strict-icons codes
+ * are `E07`, which no scope claims, so they survive on the rule above.
+ */
+const STRICT_GATE_CODES = new Set(["E0212"]);
 
 function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
   if (scope === "all") return errors;
   return errors.filter((e) => {
-    const code = e.code;
-    if (STRICT_GATE_CODES.has(code)) return true;
     if (e.severity === "warning") return true;
-    if (scope === "types")
-      return code.startsWith("E02") || code.startsWith("E04") || code.startsWith("E06");
-    if (scope === "refs") return code.startsWith("E01") || code.startsWith("E05");
-    if (scope === "effects") return code.startsWith("E03");
-    return true;
+    if (STRICT_GATE_CODES.has(e.code)) return true;
+    const band = e.code.slice(0, 3);
+    if (!SCOPED_BANDS.has(band)) return true;
+    return SCOPE_BANDS[scope].includes(band);
   });
 }
 

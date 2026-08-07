@@ -177,7 +177,12 @@ function validate(path: string): { ok: true } | { ok: false; message: string } {
     // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
     // warnings (W02xx) describe pre-existing dead code patterns and would
     // wedge legitimate edits to unrelated layers.
-    const errors = check(program).filter((d) => d.severity !== "warning");
+    //
+    // `requireApp: false` because a program is built one definition at a time:
+    // the first `add` into a new file, and every edit until the `app` lands,
+    // would otherwise roll back with E0003. Whether the result is a complete
+    // application is what `kumiki check` answers afterwards.
+    const errors = check(program, { requireApp: false }).filter((d) => d.severity !== "warning");
     if (errors.length > 0) {
       const summary = errors
         .slice(0, 3)
