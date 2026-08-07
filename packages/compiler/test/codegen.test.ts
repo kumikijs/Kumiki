@@ -1053,3 +1053,71 @@ describe("codegen", () => {
     });
   });
 });
+
+// `app.init` arguments and an effect's `latest-per-key` key expression are the
+// two places codegen lowers an expression outside any reducer body. Both were
+// lowered against a fabricated empty `GenCtx`, so a slot reference had no slot
+// table to resolve against and came out as a bare identifier. They fail in
+// different places, which matters when one recurs: an init argument sits in the
+// app object literal, so the module throws on import; a key expression sits in
+// an arrow body, so the app imports and renders and throws on first dispatch.
+describe("expressions outside a reducer body still see the slot table", () => {
+  const SRC = `
+    slot noteKey : Text = "kumiki:note"
+    slot got     : Text = "none"
+    effect loadNote cap=http.get
+                    in=Text
+                    out=Result(Text, Text)
+                    policy=latest-per-key(noteKey)
+    reducer onOk on=loadNote.ok($v, _) do= got := $v
+    tile App = column(text(got))
+    app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[loadNote(noteKey)]
+  `;
+
+  /** The one emitted line starting with `label`. Line-wise, so a second entry
+   *  on the same line cannot slip past a match that stopped at the first `]`. */
+  function emittedLine(js: string, label: string): string {
+    const line = js.split(/\r?\n/).find((l) => l.includes(label));
+    if (line === undefined) throw new Error(`no emitted line contains ${label}`);
+    return line;
+  }
+
+  it("lowers a slot reference in an app.init argument to the live map", () => {
+    const result = compile(SRC, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const init = emittedLine(result.js, "init: [");
+    expect(init).toContain('args: [_live["noteKey"]]');
+    expect(init).not.toMatch(/args: \[\s*noteKey/);
+  });
+
+  it("lowers a slot reference in latest-per-key to the live map", () => {
+    const result = compile(SRC, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const keyOf = emittedLine(result.js, "keyOf:");
+    expect(keyOf).toContain('String(_live["noteKey"])');
+  });
+
+  // Not a regression guard for the bug above — `jsOfExpr` checks `localBinds`
+  // before the slot table, so this emits the same text either way. It guards
+  // the fix from over-reaching and turning the lambda's own parameter into a
+  // slot read, which would break every `latest-per-key($1)` in the corpus.
+  it("still binds the key lambda's own $1", () => {
+    const result = compile(
+      `
+      slot got : Text = "none"
+      effect load cap=http.get in=Text out=Result(Text, Text) policy=latest-per-key($1)
+      reducer onOk on=load.ok($v, _) do= got := $v
+      tile App = column(text(got))
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+      `,
+      { runtimeSpecifier: "./runtime.js" },
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const keyOf = emittedLine(result.js, "keyOf:");
+    expect(keyOf).toContain("_d_1");
+    expect(keyOf).not.toContain("_live");
+  });
+});

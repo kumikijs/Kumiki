@@ -165,4 +165,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `61-reserved-identifier-names.kumiki` | fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
 | `62-conditional-inline-tile-handlers.kumiki` | tile, reducer | core | [§10.3.13](./runtime.md#_10-3-13-data-prop-equality) |
 | `63-reducer-batch-atomicity.kumiki` | slot, reducer | core | [§10.3.3](./runtime.md#_10-3-3-batching) |
+| `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
 <!-- examples:end -->

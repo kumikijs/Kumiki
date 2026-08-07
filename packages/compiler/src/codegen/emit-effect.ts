@@ -70,7 +70,7 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   return `{
     name: ${JSON.stringify(eff.name)},
     cap: ${JSON.stringify(eff.cap)},
-    policy: ${policyJs(eff.policy)},
+    policy: ${policyJs(gen, eff.policy)},
     retry: ${retryJs(eff.retry)},
     invoke: ${invokeBody},
   }`;
@@ -82,13 +82,21 @@ export function retryJs(r?: RetryExpr): string {
   return `{ kind: "exponential", n: ${r.n}, ms: ${r.ms}, factor: ${r.factor} }`;
 }
 
-export function policyJs(p?: PolicyExpr): string {
+/**
+ * Lower an effect's `policy=` to the descriptor the dispatcher reads. Only
+ * `latest-per-key` carries an expression: the key lambda, whose scope is the
+ * ordinary non-reducer one plus its own `$1`. `gen` is what lets that
+ * expression see the slot table — without it a slot reference lowered to a bare
+ * identifier, and because the lambda body only runs when the effect is
+ * dispatched, the app imported, mounted and rendered before throwing.
+ */
+export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   if (!p) return "undefined";
   switch (p.kind) {
     case "PolLatest":
       return `{ kind: "latest" }`;
     case "PolLatestKey":
-      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, { gen: {} as GenCtx, localBinds: new Set(["$1"]) })})) }`;
+      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, makeEvalCtx(gen, new Set(["$1"])))})) }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":

@@ -45,10 +45,31 @@ export function appAnalyticsJson(
   return out;
 }
 
-export function emitFromInitExpr(e: Expr): string {
+/**
+ * Lower one `app.init` entry to the `EmitSpec` the dispatcher consumes, or to
+ * `null` when the entry is not a call at all — `init = [note]` reaches here,
+ * because nothing rejects it earlier, and the dispatcher then reads `.effect`
+ * off `null`.
+ *
+ * The arguments need the real `GenCtx`: without a slot table a slot reference
+ * looks like an unknown local and lowers to a bare identifier, so
+ * `init = [loadNote(noteKey)]` emitted `args: [noteKey]`. That lands in the app
+ * object literal, so the failure is a `ReferenceError` at *import* — nothing
+ * mounts. (The sibling site, `policyJs`, lowers into an arrow body and fails at
+ * the first dispatch instead.) Scope is the plain non-reducer one, as in
+ * `httpConfigJs`.
+ *
+ * Arguments are evaluated **once**, when `createApp()` builds the app object,
+ * and the resulting array is never re-read: a later `app.live` change is not
+ * reflected. What is in `_live` at that moment is each slot's declared default
+ * — and NOT `route`, which `mountCore` installs afterwards, so `route` in an
+ * init argument reads `undefined`.
+ */
+export function emitFromInitExpr(e: Expr, gen: GenCtx): string {
   if (e.kind === "Call") {
+    const ctx = makeEvalCtx(gen, new Set(), false);
     return `{ effect: ${JSON.stringify(e.callee)}, args: [${e.args
-      .map((a) => jsOfExpr(a, { gen: {} as GenCtx, localBinds: new Set() }))
+      .map((a) => jsOfExpr(a, ctx))
       .join(", ")}] }`;
   }
   return "null";

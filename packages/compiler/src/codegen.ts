@@ -252,7 +252,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push(`  caps: ${JSON.stringify(app.caps)},`);
   lines.push("  reducers: _reducers,");
   lines.push("  effects: _effects,");
-  lines.push(`  init: [${app.init.map((e) => emitFromInitExpr(e)).join(", ")}],`);
+  lines.push(`  init: [${app.init.map((e) => emitFromInitExpr(e, ctx)).join(", ")}],`);
   lines.push("  routes: _routes,");
   lines.push("  live: _live,");
   lines.push("  themes: _themes,");

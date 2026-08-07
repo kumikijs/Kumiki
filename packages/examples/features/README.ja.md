@@ -51,5 +51,6 @@
 | [61-reserved-identifier-names](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/61-reserved-identifier-names.kumiki) | JS の予約語（`new` / `class` / `var`）やランタイム内部名（`_live` / `_s`）と衝突する識別子 |
 | [62-conditional-inline-tile-handlers](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/62-conditional-inline-tile-handlers.kumiki) | ハンドラだけが異なる 2 つのインラインタイルを条件分岐で入れ替える |
 | [63-reducer-batch-atomicity](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/63-reducer-batch-atomicity.kumiki) | refinement が reducer のバッチを丸ごと拒否する挙動と、代わりに書くべきガード |
+| [64-init-slot-argument](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 
 新しい質問・バグには、まずここへ最小再現例を足すことで答える。

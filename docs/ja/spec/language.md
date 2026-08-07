@@ -693,6 +693,12 @@ app TodoApp
     theme  = DefaultTheme
 ```
 
+### 1.12.1 `init` の引数が評価されるタイミング
+
+`init` の各エントリは effect 呼び出しであり、その引数は通常の式である。slot 参照も書ける。引数は app オブジェクトの構築時に**一度だけ**評価され、得られた値が読み直されることはない。後から slot が変わっても、すでに捕捉された引数には反映されない。
+
+その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` は `undefined` を読む。route が必要なら `route.enter` reducer 側で受け取ること。
+
 ---
 
 ## 1.13 反例

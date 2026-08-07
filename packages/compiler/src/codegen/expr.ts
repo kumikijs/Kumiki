@@ -27,7 +27,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
           ? `((_next["route"] !== undefined) ? _next["route"] : _live["route"])`
           : `_live["route"]`;
       }
-      const isSlot = ctx.gen.slots?.some((s) => s.name === e.name);
+      const isSlot = ctx.gen.slots.some((s) => s.name === e.name);
       if (isSlot) {
         const key = JSON.stringify(e.name);
         return ctx.reducerScope

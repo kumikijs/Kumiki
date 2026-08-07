@@ -337,7 +337,7 @@ export function jsOfConfirmArg(a: Expr, ctx: EvalCtx): string {
     const v = f.value;
     if ((f.name === "onYes" || f.name === "onNo") && v.kind === "Ref") {
       const refName = v.name;
-      const isReducer = ctx.gen.reducers?.some((r) => r.name === refName);
+      const isReducer = ctx.gen.reducers.some((r) => r.name === refName);
       if (isReducer) {
         return `${JSON.stringify(f.name)}: ${JSON.stringify(refName)}`;
       }

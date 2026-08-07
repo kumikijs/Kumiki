@@ -722,6 +722,12 @@ app TodoApp
     theme  = DefaultTheme
 ```
 
+### 1.12.1 When `init` arguments are evaluated
+
+An `init` entry is an effect call, and its arguments are ordinary expressions — a slot reference included. They are evaluated **once**, when the app object is constructed, and the resulting values are never re-read: a later change to a slot is not reflected in an argument already captured.
+
+What a slot reference sees at that moment is its **declared default**. `route` is the exception — it is maintained by the runtime and does not exist yet, so `init = [load(route.path)]` reads `undefined`. Take the route from a `route.enter` reducer instead.
+
 ---
 
 ## 1.13 Counterexamples
