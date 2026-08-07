@@ -83,10 +83,12 @@ export function retryJs(r?: RetryExpr): string {
 }
 
 /**
- * `gen` is what lets the `latest-per-key` key expression see the slot table: it
- * is an ordinary non-reducer scope, plus the lambda's own `$1`. Lowering it
- * against an empty context made a slot reference look like an unknown local and
- * emitted a bare identifier, the same defect `app.init` arguments had.
+ * Lower an effect's `policy=` to the descriptor the dispatcher reads. Only
+ * `latest-per-key` carries an expression: the key lambda, whose scope is the
+ * ordinary non-reducer one plus its own `$1`. `gen` is what lets that
+ * expression see the slot table — without it a slot reference lowered to a bare
+ * identifier, and because the lambda body only runs when the effect is
+ * dispatched, the app imported, mounted and rendered before throwing.
  */
 export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   if (!p) return "undefined";
@@ -94,7 +96,7 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
     case "PolLatest":
       return `{ kind: "latest" }`;
     case "PolLatestKey":
-      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, makeEvalCtx(gen, new Set(["$1"]), false))})) }`;
+      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, makeEvalCtx(gen, new Set(["$1"])))})) }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":
