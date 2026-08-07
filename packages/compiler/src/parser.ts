@@ -548,11 +548,12 @@ class Parser {
           throw new ParseError(`Unknown tile lifecycle event "tile.${sub}"`, t.pos);
         }
         this.eat("op", "(");
-        const tile = this.eat("ident").value;
+        const tileTok = this.eat("ident");
         this.eat("op", ")");
         return {
           kind: "LifecycleEvent",
-          name: `tile.${sub}(${JSON.stringify(tile)})`,
+          name: `tile.${sub}(${JSON.stringify(tileTok.value)})`,
+          tileNamePos: tileTok.pos,
           pos: t.pos,
         };
       }
@@ -1944,7 +1945,8 @@ class Parser {
         kindTok.pos,
       );
     }
-    const target = this.eat("ident").value;
+    const targetTok = this.eat("ident");
+    const target = targetTok.value;
 
     const givenKw = this.eat("ident");
     if (givenKw.value !== "given") {
@@ -1965,6 +1967,7 @@ class Parser {
       name,
       testKind: kindTok.value,
       target,
+      targetPos: targetTok.pos,
       given,
       expect,
       pos: start.pos,

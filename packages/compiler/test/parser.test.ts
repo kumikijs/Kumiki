@@ -87,9 +87,10 @@ describe("parser", () => {
     const src = `reducer r on=ui.submit(LoginForm#new) do= x := 1`;
     const program = parse(lex(src));
     const r = program.defs[0] as ReducerDef;
-    // `tilePos` is carried too, so `rename` can rewrite the selector without
-    // matching text; the tile/id pair is what this test is about.
-    expect(r.on.selector).toMatchObject({ tile: "LoginForm", id: "new" });
+    // `tilePos` points at `LoginForm` itself, not at the `ui.submit(` before
+    // it — `rename` rewrites that span verbatim, so an off-by-one here is a
+    // corrupted file.
+    expect(r.on.selector).toEqual({ tile: "LoginForm", id: "new", tilePos: { line: 1, col: 24 } });
   });
 
   it("parses a timer event", () => {
@@ -210,9 +211,11 @@ reducer onErr on=route.error("/p") do= s := true`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
     expect(tile.kind).toBe("TileDef");
-    expect(tile.subRoutes).toMatchObject([
-      { path: "/settings/account", tile: "Account" },
-      { path: "/settings", tile: "Home" },
+    expect(tile.subRoutes).toEqual([
+      { path: "/settings/account", tile: "Account", tilePos: { line: 3, col: 28 } },
+      { path: "/settings", tile: "Home", tilePos: { line: 4, col: 28 } },
+      // A `->>` redirect targets a path, not a tile, so there is nothing to
+      // point at and nothing for `rename` to rewrite.
       { path: "/legacy", tile: ">>/settings" },
     ]);
   });

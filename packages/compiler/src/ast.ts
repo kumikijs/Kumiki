@@ -36,6 +36,7 @@ export type TestDef = {
   testKind: "reducer-test" | "tile-test" | "property-test" | "episode-test";
   /** Reducer / tile name. Absent for `property-test` / `episode-test`. */
   target?: string;
+  targetPos?: Pos;
   /** The `given = { ... }` record literal (interpreted, not codegen'd as-is). */
   given: Expr;
   /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
@@ -243,7 +244,17 @@ export type EventPattern =
       pos: Pos;
     }
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }
-  | { kind: "LifecycleEvent"; name: string; pos: Pos };
+  | {
+      kind: "LifecycleEvent";
+      name: string;
+      /**
+       * For `tile.mount(X)` / `tile.unmount(X)`, where `X` sits. The tile name
+       * is folded into `name` as `tile.mount("X")`, so without this there is no
+       * way to rewrite it except by matching text inside that string.
+       */
+      tileNamePos?: Pos;
+      pos: Pos;
+    };
 
 export type UiEventKind =
   | "click"

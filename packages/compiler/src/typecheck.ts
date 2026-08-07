@@ -19,7 +19,11 @@ import type {
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
-import { UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
+// One handler-name set for the whole compiler. A local copy here had
+// drifted from the lifted set — it was missing `onKeyDown` and
+// `onMouseEnter`, so `input(onKeyDown=bump)` compiled to a working
+// listener but was reported as an undefined reference (#261).
+import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
 
 export type KumikiError = {
   code: string;
@@ -629,15 +633,7 @@ function checkTileCall(
       }
     }
   }
-  const HANDLER_NAMES = new Set([
-    "onClick",
-    "onSubmit",
-    "onChange",
-    "onInput",
-    "onFocus",
-    "onBlur",
-    "onClose",
-  ]);
+
   for (const arg of t.args) {
     const v = arg.value;
     if (

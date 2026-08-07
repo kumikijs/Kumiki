@@ -2986,20 +2986,52 @@ app A
   // `directDeps` did not, so a name inside a string literal was a dependency in
   // one direction and not a reference in the other — and the op log's
   // `depends-on` recorded the looser of the two.
-  it("reports the same edges as view --with-deps, in both directions", () => {
-    const store = load(TODOMVC);
-    const all = listDefs(store).map((e) => `${e.layer}.${e.name}`);
-    for (const q of all) {
-      const deps = new Set(directDeps(store, q));
-      for (const d of all) {
-        if (d === q) continue;
-        const namedByQ = deps.has(d);
-        const seesQ = findReferences(store, d).some((r) => r.qname === q);
-        expect([q, d, namedByQ]).toEqual([q, d, seesQ]);
-      }
-    }
-    // A floor: the table would also "agree" if it were empty everywhere.
-    expect(directDeps(store, "tile.App").length).toBeGreaterThan(0);
+  //
+  // Comparing the two APIs to each other would prove nothing now: they read one
+  // shared table, so the comparison is an identity. The edges are pinned
+  // literally instead, which is what would actually go red if the walk changed.
+  it("reports the edges of a known file exactly, in both directions", () => {
+    const store = load(COUNTER);
+    expect(directDeps(store, "app.Counter")).toEqual(["tile.App"]);
+    expect(directDeps(store, "tile.App")).toEqual([
+      "slot.count",
+      "tile.DecBtn",
+      "tile.IncBtn",
+      "tile.ResetBtn",
+    ]);
+    expect(directDeps(store, "slot.count")).toEqual(["type.N"]);
+    expect(directDeps(store, "type.N")).toEqual([]);
+
+    expect(
+      findReferences(store, "slot.count")
+        .map((r) => r.qname)
+        .sort(),
+    ).toEqual(["reducer.dec", "reducer.inc", "reducer.reset", "tile.App"]);
+    expect(findReferences(store, "type.N").map((r) => r.qname)).toEqual(["slot.count"]);
+    // `IncBtn` is named by its reducer's selector and by `tile App` — the
+    // selector edge is the one the AST used to drop.
+    expect(
+      findReferences(store, "tile.IncBtn")
+        .map((r) => r.qname)
+        .sort(),
+    ).toEqual(["reducer.inc", "tile.App"]);
+  });
+
+  it("keeps a definition out of its own reference list even when it recurses", () => {
+    const f = write(`slot depth : Int = 0
+fn countdown(n: Int) -> Int = if n <= 0 then 0 else countdown(n - 1)
+tile Node = column(text(depth.show), Node)
+tile App = column(Node, text(countdown(depth).show))
+
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    const store = load(f);
+    expect(directDeps(store, "fn.countdown")).toEqual([]);
+    expect(directDeps(store, "tile.Node")).toEqual(["slot.depth"]);
+    expect(findReferences(store, "tile.Node").map((r) => r.qname)).toEqual(["tile.App"]);
   });
 
   it("cascade removal reports every definition it deletes, as one op", () => {

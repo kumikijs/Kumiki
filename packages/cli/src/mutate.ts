@@ -323,9 +323,12 @@ export function removeDef(
     writeFileSync(path, original);
     throw new Error(`remove rejected: ${v.message}`);
   }
-  // §9.4.1: a cascade is one op. Logging only the requested definition left the
-  // op log unable to reproduce the state — a replay would delete one definition
-  // where the run deleted eight, and nothing said so.
+  // §9.4.1: a cascade is one op, and it says what it took. Replay could already
+  // reproduce the state — `applyOne` re-runs `removeDef` with `cascade`, which
+  // re-derives the same dependent set — but nothing in the log or on stdout
+  // said that removing one definition had removed eight. `removed` is written
+  // whenever `cascade` was requested, including when it took nothing, so its
+  // absence means "not a cascade" rather than "a cascade with no dependents".
   const removed = removalEntries
     .map((e) => `${e.layer}.${e.name}`)
     .sort((a, b) => (a === qname ? -1 : b === qname ? 1 : a.localeCompare(b)));
@@ -334,7 +337,7 @@ export function removeDef(
     layer: entry.layer,
     name: entry.name,
     cascade,
-    ...(removed.length > 1 ? { removed } : {}),
+    ...(cascade ? { removed } : {}),
   });
   return { opId, removed };
 }
@@ -355,10 +358,26 @@ export function renameDef(path: string, qname: string, newName: string): string 
   // word in a comment, a string literal and a loop variable that merely share
   // the spelling are left alone by construction rather than by a filter that has
   // to anticipate them.
+  // Some references have no identifier position of their own — a test's
+  // `{slots: {count: 0}}` key is a record key, not a token the AST points at.
+  // They are edges for `refs` and `remove --cascade` but nothing `rename` can
+  // rewrite, so refuse rather than half-rename the program.
+  const unpositioned = store.defs.filter((e) =>
+    referenceSites(store, `${e.layer}.${e.name}`).some(
+      (r) => r.layer === entry.layer && r.name === old && !r.pos,
+    ),
+  );
+  if (unpositioned.length > 0) {
+    const where = unpositioned.map((e) => `${e.layer}.${e.name}`).join(", ");
+    throw new Error(
+      `Cannot rename ${qname}: it is named in a position with no rewritable identifier (${where}). Edit those definitions first.`,
+    );
+  }
+
   const sites: Pos[] = [defNamePos(store, entry, old)];
   for (const e of store.defs) {
     for (const r of referenceSites(store, `${e.layer}.${e.name}`)) {
-      if (r.layer === entry.layer && r.name === old) sites.push(r.pos);
+      if (r.layer === entry.layer && r.name === old && r.pos) sites.push(r.pos);
     }
   }
 
@@ -372,7 +391,9 @@ export function renameDef(path: string, qname: string, newName: string): string 
   }
   for (const [line, cols] of byLine) {
     const text = lines[line - 1];
-    if (text === undefined) continue;
+    if (text === undefined) {
+      throw new Error(`rename aborted: reference at line ${line} is past the end of the file`);
+    }
     let next = text;
     for (const col of [...new Set(cols)].sort((a, b) => b - a)) {
       const at = col - 1;
@@ -399,12 +420,20 @@ export function renameDef(path: string, qname: string, newName: string): string 
 
 /**
  * Where a definition's own name sits. The AST records the definition's start,
- * which is the keyword, so the name is the first occurrence after it on that
- * line — unambiguous because a definition header is `<keyword> <name>`.
+ * which is the keyword; the name is the first identifier after it.
+ *
+ * The search must begin past the keyword, not at it: `pos.col` is 1-based and
+ * `indexOf`'s offset is 0-based, so starting at `col` began one character into
+ * the keyword — and a name that is a suffix of its own keyword (`slot lot`,
+ * `fn n`, `type e`) matched inside the keyword instead. That produced
+ * `stotal lot` from `rename slot.lot total`, written to disk before `validate`
+ * caught it and rolled back.
  */
 function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
   const line = store.lines[entry.range.startLine - 1] ?? "";
-  const at = line.indexOf(name, (entry.def as { pos?: Pos }).pos?.col ?? 1);
+  const keywordCol = (entry.def as { pos?: Pos }).pos?.col ?? 1;
+  const from = keywordCol - 1 + entry.layer.length;
+  const at = line.indexOf(name, from);
   if (at < 0) throw new Error(`rename aborted: cannot locate "${name}" on its own definition line`);
   return { line: entry.range.startLine, col: at + 1 };
 }

@@ -25,6 +25,7 @@ import type {
   ReducerDef,
   SlotDef,
   Statement,
+  TestDef,
   TileArg,
   TileDef,
   TileExpr,
@@ -39,14 +40,24 @@ export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | 
 export type Reference = {
   layer: RefLayer;
   name: string;
-  /** Position of the identifier token itself, so a rewrite can be exact. */
-  pos: Pos;
+  /**
+   * Position of the identifier token itself, so a rewrite can be exact.
+   *
+   * Absent when the reference has no identifier of its own to point at — a
+   * test's `{slots: {count: 0}}` key, for instance, where the slot name is the
+   * key of a record. The edge is real (`refs` and `remove --cascade` must see
+   * it), but `rename` has nothing to rewrite and skips it rather than guessing.
+   */
+  pos?: Pos;
 };
 
 /** Definition names by layer, for resolving a bare name to a definition. */
 export type DefIndex = Record<RefLayer, Set<string>>;
 
-const LAYER_OF_DEF: Partial<Record<Def["kind"], RefLayer>> = {
+// Exhaustive on purpose. With `Partial<…>`, a new `Def` kind would compile and
+// then vanish from the reference graph: `refs` would report it as unreferenced,
+// `remove` would delete it without warning, and `rename` would miss every use.
+const LAYER_OF_DEF: Record<Def["kind"], RefLayer | null> = {
   TypeDef: "type",
   SlotDef: "slot",
   EffectDef: "effect",
@@ -55,11 +66,14 @@ const LAYER_OF_DEF: Partial<Record<Def["kind"], RefLayer>> = {
   FnDef: "fn",
   ThemeDef: "theme",
   MotionDef: "motion",
+  // Never referenced by name from another definition.
+  AppDef: null,
+  TestDef: null,
 };
 
 /** The layer a definition occupies, or null for `app` / `test` (never referenced). */
 export function layerOfDef(def: Def): RefLayer | null {
-  return LAYER_OF_DEF[def.kind] ?? null;
+  return LAYER_OF_DEF[def.kind];
 }
 
 export function buildDefIndex(program: Program): DefIndex {
@@ -130,8 +144,11 @@ export function referencesIn(def: Def, index: DefIndex): Reference[] {
     case "AppDef":
       w.app(def as AppDef);
       break;
+    case "TestDef":
+      w.test(def as TestDef);
+      break;
     default:
-      // `theme` / `motion` / `test` bodies reference no definitions by name.
+      // `theme` and `motion` bodies are literal values — no names to resolve.
       break;
   }
   return out;
@@ -213,6 +230,11 @@ class Walker {
         this.expr(e.index, locals);
         return;
       case "Call":
+        // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value.
+        if (e.callee === "run-reducer") {
+          this.runReducerArg(e.args[0]);
+          return;
+        }
         // `TodoId.fresh()` and `math.abs(x)` are qualified — only an unqualified
         // callee can name a `fn` definition.
         if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
@@ -220,6 +242,10 @@ class Walker {
         return;
       case "MethodCall":
         this.expr(e.receiver, locals);
+        if (e.method === "run-reducer") {
+          this.runReducerArg(e.args[0]);
+          return;
+        }
         for (const a of e.args) this.expr(a, locals);
         return;
       case "RecordLit":
@@ -267,6 +293,12 @@ class Walker {
     }
   }
 
+  /** A capitalised reducer name parses as `Variant`, a lowercase one as `Ref`. */
+  private runReducerArg(arg: Expr | undefined): void {
+    if (arg?.kind === "Ref") this.add("reducer", arg.name, arg.pos);
+    else if (arg?.kind === "Variant") this.add("reducer", arg.name, arg.pos);
+  }
+
   statement(s: Statement, locals: Set<string>): void {
     switch (s.kind) {
       case "SlotAssign": {
@@ -285,7 +317,7 @@ class Walker {
         return;
       case "Emit":
         this.add("effect", s.effect, s.effectPos);
-        for (const a of s.args) this.expr(a, locals);
+        for (const a of s.args) this.confirmAwareExpr(s.effect, a, locals);
         return;
       case "ForStmt": {
         this.expr(s.iter, locals);
@@ -312,6 +344,25 @@ class Walker {
     }
   }
 
+  /**
+   * `emit confirm({onYes: r, onNo: r})` (lifecycle §7.6): those two fields name
+   * reducers, not values. Every other field, and every other effect, takes the
+   * ordinary path.
+   */
+  private confirmAwareExpr(effect: string, arg: Expr, locals: ReadonlySet<string>): void {
+    if (effect !== "confirm" || arg.kind !== "RecordLit") {
+      this.expr(arg, locals);
+      return;
+    }
+    for (const f of arg.fields) {
+      if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        this.add("reducer", f.value.name, f.value.pos);
+        continue;
+      }
+      this.expr(f.value, locals);
+    }
+  }
+
   reducer(r: ReducerDef): void {
     const locals = new Set<string>(["$el", "$event", "$route", "$now"]);
     if (r.on.kind === "UiEvent") {
@@ -320,10 +371,11 @@ class Walker {
       this.add("effect", r.on.effect, r.on.effectPos);
       for (const b of r.on.binds) if (b !== "_") locals.add(b);
     } else if (r.on.kind === "LifecycleEvent") {
+      // `tile.mount(X)` folds the tile name into the event name, so the parser
+      // records where `X` sat. Reporting the pattern's own position instead
+      // would break the contract on `Reference.pos` and make `rename` abort.
       const m = r.on.name.match(/^tile\.(?:un)?mount\("([^"]+)"\)$/);
-      // The tile name is embedded in the event name and has no position of its
-      // own; `refs` still needs the edge, so report it at the pattern.
-      if (m?.[1]) this.add("tile", m[1], r.on.pos);
+      if (m?.[1]) this.add("tile", m[1], r.on.tileNamePos);
     }
     for (const s of r.do) this.statement(s, locals);
   }
@@ -342,10 +394,21 @@ class Walker {
         this.add("tile", t.name, t.pos);
         for (const a of t.args) this.tileArg(a, locals);
         for (const p of t.props) {
-          // A handler prop's value is a reducer name, not a slot read — the one
-          // place a bare identifier means something other than a value.
+          // Three props hold a definition NAME rather than a value expression.
+          // Each mirrors a `typecheck` site that resolves the same way — see
+          // `undef-reducer` for the first two and `undef-motion` for the third.
           if (HANDLER_NAMES.has(p.name) && p.value.kind === "Ref") {
             this.add("reducer", p.value.name, p.value.pos);
+            continue;
+          }
+          if (t.name === "link" && p.name === "prefetch") {
+            // §3.8: a bare ident or a string literal, both naming a reducer.
+            if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
+            else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
+            continue;
+          }
+          if (p.name === "motion" && p.value.kind === "Str") {
+            this.add("motion", p.value.value, p.value.pos);
             continue;
           }
           this.expr(p.value, locals);
@@ -396,13 +459,91 @@ class Walker {
     this.expr(v, locals);
   }
 
+  /**
+   * A `test` names the reducer or tile it drives, and its `given` / `expect`
+   * blocks name slots, effects and tiles. None of that is type-checked, so a
+   * rename that misses it leaves a test that still compiles and still passes
+   * while asserting about a definition that no longer exists.
+   */
+  test(t: TestDef): void {
+    if (t.testKind === "reducer-test") this.add("reducer", t.target ?? "", t.targetPos);
+    if (t.testKind === "tile-test") this.add("tile", t.target ?? "", t.targetPos);
+    this.testRecord(t.given);
+    if (t.expect) {
+      if (isTileExpr(t.expect)) this.tileExpr(t.expect, new Set());
+      else this.testRecord(t.expect);
+    }
+    for (const v of t.forAll ?? []) this.typeExpr(v.type);
+    const generated = new Set((t.forAll ?? []).map((v: { name: string }) => v.name));
+    if (t.invariant) this.expr(t.invariant, generated);
+    if (t.mocks) this.testRecord(t.mocks);
+  }
+
+  /**
+   * A test's `given` / `expect` / `mocks` records are keyed BY definition name —
+   * `{slots: {count: 0}}`, `{effects: [persist(…)]}`, `{event: {target: Btn}}` —
+   * which is the opposite of an ordinary record literal, where the keys are
+   * field names and only the values are expressions. Keys have no position of
+   * their own in the AST, so they are reported as edges (which `refs` and
+   * `remove --cascade` need) without a position (so `rename` leaves them alone
+   * rather than rewriting the wrong span).
+   */
+  private testRecord(e: Expr | undefined): void {
+    if (!e) return;
+    if (e.kind === "RecordLit") {
+      for (const f of e.fields) {
+        if (f.name === "slots" && f.value.kind === "RecordLit") {
+          for (const slot of f.value.fields) this.addUnpositioned("slot", slot.name);
+        }
+        if (f.name === "mocks" && f.value.kind === "RecordLit") {
+          for (const eff of f.value.fields) this.addUnpositioned("effect", eff.name);
+        }
+        if (f.name === "target") {
+          // A tile name is capitalised, so it parses as a `Variant`, not a `Ref`.
+          if (f.value.kind === "Variant") this.add("tile", f.value.name, f.value.pos);
+          else if (f.value.kind === "Ref") this.add("tile", f.value.name, f.value.pos);
+        }
+        this.testRecord(f.value);
+      }
+      return;
+    }
+    if (e.kind === "ListLit") {
+      for (const i of e.items) this.testRecord(i);
+      return;
+    }
+    if (e.kind === "Call" && !e.callee.includes(".")) {
+      this.addUnpositioned("effect", e.callee);
+      for (const a of e.args) this.testRecord(a);
+      return;
+    }
+    this.expr(e, new Set());
+  }
+
+  /**
+   * An edge with no source position: `refs` and `remove --cascade` see it,
+   * `rename` cannot act on it. Better than dropping the edge (which is what
+   * made a renamed slot leave a passing test asserting about a slot that no
+   * longer exists) and better than inventing a position.
+   */
+  private addUnpositioned(layer: RefLayer, name: string): void {
+    if (!this.index[layer].has(name)) return;
+    this.out.push({ layer, name });
+  }
+
   app(a: AppDef): void {
     for (const r of a.routes) this.add("tile", r.tile, r.tilePos);
-    for (const e of a.init) this.expr(e, new Set());
-    // `init = [loadNote(k)]` parses as a Call, whose callee names an effect
-    // rather than a fn — the one position where that is true.
     for (const e of a.init) {
-      if (e.kind === "Call" && !e.callee.includes(".")) this.add("effect", e.callee, e.pos);
+      // An init entry's callee names an EFFECT, never a fn — so it must not go
+      // through the generic expression walk, which would resolve it as a fn as
+      // well. With a `fn` and an `effect` sharing a name, that produced two
+      // references at one position, and renaming the fn silently repointed
+      // `init` at an effect that no longer exists.
+      if (e.kind === "Call" && !e.callee.includes(".")) {
+        this.add("effect", e.callee, e.pos);
+        for (const a2 of e.args) this.expr(a2, new Set());
+        continue;
+      }
+      this.expr(e, new Set());
     }
     this.add("theme", a.theme ?? "", a.themePos);
     if (a.http) {

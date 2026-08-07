@@ -30,7 +30,9 @@ export type Store = {
   refs?: Map<string, Reference[]>;
 };
 
+/** Every `Def` kind, including the two that are never referenced by name. */
 const LAYER_OF: Record<string, string> = {
+  TestDef: "test",
   TypeDef: "type",
   SlotDef: "slot",
   EffectDef: "effect",
@@ -120,8 +122,8 @@ function refTable(store: Store): Map<string, Reference[]> {
 
 /**
  * The qnames the definition at `qname` references. A definition is never its
- * own dependency: a self-recursive tile or fn names itself, and reporting that
- * turned `view --with-deps` into a cycle and `refs` into a lie.
+ * own dependency — a recursive tile or fn names itself, and an edge from a node
+ * to itself is not a dependency anyone can act on.
  */
 export function directDeps(store: Store, qname: string): string[] {
   const refs = refTable(store).get(qname);
@@ -138,8 +140,8 @@ export type RefSite = { qname: string; layer: string; name: string; line: number
 
 /**
  * Where `targetQname` is referenced, one entry per definition+line. Layer-aware:
- * a `slot label` and a record field called `label` are different things, and so
- * are a `type Filter` and a `slot filter`.
+ * a `slot label` and a `tile label` are different targets, and a record field
+ * called `label` is not a reference to either.
  */
 export function findReferences(store: Store, targetQname: string): RefSite[] {
   const target = store.byQName.get(targetQname);
@@ -151,10 +153,17 @@ export function findReferences(store: Store, targetQname: string): RefSite[] {
     const from = `${e.layer}.${e.name}`;
     for (const r of refTable(store).get(from) ?? []) {
       if (`${r.layer}.${r.name}` !== targetQname) continue;
-      const key = `${from}:${r.pos.line}`;
+      const key = `${from}:${r.pos?.line ?? 0}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ qname: from, layer: e.layer, name: e.name, line: r.pos.line });
+      // A reference with no identifier of its own (a test's `{slots: {x: …}}`
+      // key) still counts — it is reported at the definition's first line.
+      out.push({
+        qname: from,
+        layer: e.layer,
+        name: e.name,
+        line: r.pos?.line ?? e.range.startLine,
+      });
     }
   }
   return out.sort((a, b) => a.line - b.line);
