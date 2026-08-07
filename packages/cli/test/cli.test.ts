@@ -306,12 +306,32 @@ app StrictThemed
 
   // Critical fix: --strict-icons combined with a scope filter must NOT drop
   // E0704 silently — the strict opt-in is an additive axis, not a sub-band.
-  it("--strict-icons + --types still surfaces E0704", { timeout: 30000 }, () => {
-    const file = join(dir, "bad.kumiki");
-    writeFileSync(file, UNKNOWN);
-    const { out, code } = runCli(["check", file, "--strict-icons", "--types"]);
+  for (const scope of ["--types", "--refs", "--effects"]) {
+    it(`--strict-icons + ${scope} still surfaces E0704`, { timeout: 30000 }, () => {
+      const file = join(dir, "bad.kumiki");
+      writeFileSync(file, UNKNOWN);
+      const { out, code } = runCli(["check", file, "--strict-icons", scope]);
+      expect(code).toBe(1);
+      expect(out).toContain("E0704");
+    });
+  }
+
+  it("--strict-a11y + --types still surfaces the a11y band", { timeout: 30000 }, () => {
+    const file = join(dir, "a11y.kumiki");
+    writeFileSync(
+      file,
+      `slot _ : Text = ""
+tile Pic = image(src="/x.png")
+tile App = column(Pic)
+app StrictA11y
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const { out, code } = runCli(["check", file, "--strict-a11y", "--types"]);
     expect(code).toBe(1);
-    expect(out).toContain("E0704");
+    expect(out).toMatch(/E070[123]/);
   });
 });
 
@@ -395,13 +415,18 @@ app OkApp
 
   // Critical: --strict-selector-id combined with a scope filter must NOT drop
   // E0212 silently — the strict opt-in is an additive axis, not a sub-band.
-  it("--strict-selector-id + --types still surfaces E0212", { timeout: 30000 }, () => {
-    const file = join(dir, "bad.kumiki");
-    writeFileSync(file, MISMATCH);
-    const { out, code } = runCli(["check", file, "--strict-selector-id", "--types"]);
-    expect(code).toBe(1);
-    expect(out).toContain("E0212");
-  });
+  // `--refs` and `--effects` are the cases that actually depend on the
+  // strict-code allowlist: E0212 lives in E02, which `--types` selects anyway,
+  // so a `--types` case alone passes even with the allowlist emptied.
+  for (const scope of ["--types", "--refs", "--effects"]) {
+    it(`--strict-selector-id + ${scope} still surfaces E0212`, { timeout: 30000 }, () => {
+      const file = join(dir, "bad.kumiki");
+      writeFileSync(file, MISMATCH);
+      const { out, code } = runCli(["check", file, "--strict-selector-id", scope]);
+      expect(code).toBe(1);
+      expect(out).toContain("E0212");
+    });
+  }
 });
 
 // #143 — `kumiki check` surfaces W0212 ui-event-tile-mismatch as a non-fatal
@@ -955,7 +980,9 @@ describe("kumiki check (E0003 missing-app)", () => {
       const { stdout, stderr, code } = runCli(["check", file]);
       expect(code).toBe(1);
       expect(stderr).toContain("E0003 missing-app at 1:1");
-      expect(stdout).not.toContain("ok");
+      // `check` prints its summary and nothing else on stdout, so an empty
+      // stdout is the precise statement that it did not call the file ok.
+      expect(stdout.trim()).toBe("");
     });
   }
 
@@ -1020,5 +1047,49 @@ describe("kumiki check (E0003 missing-app)", () => {
     const { stderr, code } = runCli(["check", file]);
     expect(code).toBe(1);
     expect(stderr).toContain("E0003 missing-app");
+  });
+
+  // The mirror image: too many entry points reads as `ok` and then builds into
+  // whichever one comes first, dropping the other's routes without a word.
+  describe("E0004 duplicate-app", () => {
+    const TWO_APPS = `slot n : Int = 0
+tile App   = column(text(n.show))
+tile Other = column(text("x"))
+app First  caps=[] routes={"/" -> App,    "/404" -> App}   init=[]
+app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
+`;
+
+    it("fails check, naming the app past the first", { timeout: 30000 }, () => {
+      const file = write("two.kumiki", TWO_APPS);
+      const { stdout, stderr, code } = runCli(["check", file]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0004 duplicate-app at 5:1");
+      expect(stderr).toContain("Second");
+      expect(stdout.trim()).toBe("");
+    });
+
+    it("stops the build that used to drop the second app's routes", {
+      timeout: 30000,
+    }, () => {
+      const file = write("two.kumiki", TWO_APPS);
+      const outDir = join(dir, "out-two");
+      const { stderr, code } = runCli(["build", file, outDir]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0004 duplicate-app");
+      expect(existsSync(join(outDir, "app.js"))).toBe(false);
+    });
+  });
+
+  // A repair loop reads the dry run to decide what is left to do. Listing only
+  // the repairable diagnostics tells it the file is one patch from clean.
+  it("kumiki fix reports the diagnostics it cannot repair, not just the ones it can", {
+    timeout: 30000,
+  }, () => {
+    const file = write("hide.kumiki", "slot count : Int = 0\ntile App = column(text(cout.show))\n");
+    const { stdout, stderr, code } = runCli(["fix", file]);
+    expect(code).toBe(0);
+    expect(stdout).toContain('fix: replace "cout" with "count"');
+    expect(stdout).toContain("(no auto-patch for 1 of 2)");
+    expect(stderr).toContain("E0003 Program has no app definition");
   });
 });

@@ -74,6 +74,8 @@ kumiki check --effects             # capability/policy consistency only
 kumiki check --a11y                # accessibility conventions
 ```
 
+The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
+
 ### 9.2.4 Fix Assistance
 
 ```bash

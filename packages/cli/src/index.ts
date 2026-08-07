@@ -1,5 +1,6 @@
 // Public API of @kumikijs/cli — the programmatic surface behind the `kumiki` command.
 
+export { type CheckScope, filterByScope } from "./commands/check.ts";
 export { type DevCmdOptions, devCmd, startDevServer } from "./dev.ts";
 export {
   type AutoPatch,

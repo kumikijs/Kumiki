@@ -9,16 +9,16 @@ import { applyStrictFlags } from "./_shared/strict-flags.ts";
 const USAGE =
   "Usage: kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]";
 
-type CheckScope = "all" | "types" | "refs" | "effects";
+export type CheckScope = "all" | "types" | "refs" | "effects";
 
 /**
  * Which diagnostic bands each narrowing flag selects (see the code system in
- * `docs/spec/errors.md`). A code whose band appears in none of them — `E00`
- * structure, `E07` opt-in checks, `E08` runtime hazards — is not on this axis
- * at all: no scope could ever ask for it, so narrowing must not be able to hide
- * it. Otherwise `check --types` would report `ok` for a file with no `app`
- * definition, which is the failure `--types` was never meant to have an opinion
- * about.
+ * `docs/spec/errors.md`). The three named scopes divide one axis — what kind of
+ * mistake this is — and `E00` (structure), `E07` (a11y / strict-icons /
+ * testing-DSL invariants) and `E08` (runtime hazards) are not on it. No scope
+ * can ask for those, so no scope may hide them: `check --types` would otherwise
+ * report `ok` for a file with no `app` definition, a failure `--types` was
+ * never meant to have an opinion about.
  */
 const SCOPE_BANDS: Record<Exclude<CheckScope, "all">, readonly string[]> = {
   types: ["E02", "E04", "E06"],
@@ -29,14 +29,15 @@ const SCOPE_BANDS: Record<Exclude<CheckScope, "all">, readonly string[]> = {
 const SCOPED_BANDS = new Set(Object.values(SCOPE_BANDS).flat());
 
 /**
- * `E0212` (strict-selector-id) is the one `--strict-*` diagnostic that lives in
- * a band a scope claims, so combining `--strict-selector-id --refs` would drop
- * the finding the user explicitly asked for. The a11y and strict-icons codes
- * are `E07`, which no scope claims, so they survive on the rule above.
+ * `E0212` (strict-selector-id) is the one `--strict-*` diagnostic that lands in
+ * a band a scope claims (`E02`), so `--strict-selector-id --refs` would drop the
+ * finding the user explicitly asked for. The a11y and strict-icons codes are
+ * `E07`, which no scope claims, so the rule above already keeps them.
  */
 const STRICT_GATE_CODES = new Set(["E0212"]);
 
-function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
+/** Exported for the band × scope table test; the CLI is the only caller. */
+export function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
   if (scope === "all") return errors;
   return errors.filter((e) => {
     if (e.severity === "warning") return true;
@@ -107,7 +108,9 @@ function scopeFrom(options: CheckOptions): CheckScope {
 export function registerCheck(program: Command): void {
   const cmd = program
     .command("check")
-    .description("Typecheck / validate a .kumiki file")
+    .description(
+      "Typecheck / validate a .kumiki file. The narrowing flags below always also report structure (E00*), opt-in checks (E07*) and runtime hazards (E08*), which no narrowing selects.",
+    )
     .argument("[input]", "input .kumiki file")
     .option("--types", "narrow to type errors (E02*/E04*/E06*)")
     .option("--refs", "narrow to reference errors (E01*/E05*)")

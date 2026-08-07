@@ -18,6 +18,8 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | code | meaning | usual fix |
 |---|---|---|
 | `E0001` | `app.routes` missing `/404` | add `"/404" -> NotFound` |
+| `E0003` | no `app` definition (an empty file counts) | add the `app` entry point; expected while a program is still being assembled with the editing verbs, which do not enforce it |
+| `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
 | `E0104` | undefined effect in `emit` | declare the effect or fix the name |
