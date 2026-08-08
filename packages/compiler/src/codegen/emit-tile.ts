@@ -1,4 +1,5 @@
 import type { Expr, TileDef, TileExpr } from "../ast.ts";
+import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import { addBind, type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, tupleArm } from "./expr.ts";
@@ -128,7 +129,6 @@ function tileCallJs(
     if (!def) throw new Error(`Tile "${name}" not found`);
     const inner = makeEvalCtx(gen, ctx.localBinds);
     const arg1 = t.args[0];
-    const TILE_KINDS = new Set(["TileCall", "TileFor", "TileWhen", "TileIf", "TileMatch"]);
     const wrapBoundary = (body: string): string => {
       if (!def.errorBoundary) return body;
       const fb = gen.tiles.find((x) => x.name === def.errorBoundary);
@@ -144,8 +144,7 @@ function tileCallJs(
     const nameLit = JSON.stringify(def.name);
     if (arg1) {
       const v = arg1.value;
-      const isTile = TILE_KINDS.has((v as { kind?: string }).kind ?? "");
-      if (isTile) {
+      if (isTileExpr(v)) {
         return wrap(
           wrapBoundary(`_named(${tileExprJs(v as TileExpr, gen, inner, def.name)}, ${nameLit})`),
         );
@@ -535,14 +534,8 @@ function collectChildren(
   for (const a of args) {
     if (a.name) continue; // skip named args at container level
     const v = a.value;
-    if (
-      (v as TileExpr).kind === "TileCall" ||
-      (v as TileExpr).kind === "TileFor" ||
-      (v as TileExpr).kind === "TileWhen" ||
-      (v as TileExpr).kind === "TileIf" ||
-      (v as TileExpr).kind === "TileMatch"
-    ) {
-      parts.push(tileExprJs(v as TileExpr, gen, ctx, enclosingTile));
+    if (isTileExpr(v)) {
+      parts.push(tileExprJs(v, gen, ctx, enclosingTile));
     } else if ((v as Expr).kind === "Ref") {
       const refName = (v as Expr & { name: string }).name;
       const def = gen.tiles.find((x) => x.name === refName);

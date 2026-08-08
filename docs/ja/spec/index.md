@@ -70,6 +70,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
 | [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
+| [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -83,6 +84,10 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) | `selector-id-mismatch` | reducer | コア |
 | [W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) | `ui-event-tile-mismatch` | reducer | コア |
 | [E0213](./errors.md#e0213-call-arity-mismatch) | `call-arity-mismatch` | fn | コア |
+| [E0214](./errors.md#e0214-missing-record-field) | `missing-record-field` | type | コア |
+| [E0215](./errors.md#e0215-unknown-record-field) | `unknown-record-field` | type | コア |
+| [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | コア |
+| [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | コア |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |
@@ -172,4 +177,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `63-reducer-batch-atomicity.kumiki` | slot, reducer | コア | [§10.3.3](./runtime.md#_10-3-3-batching) |
 | `64-init-slot-argument.kumiki` | app, effect | コア | [§1.12](./language.md#_1-12-アプリエントリ-app) |
 | `65-prefers-dark.kumiki` | app, reducer | スタイル | [§4.6.1](./style.md#_4-6-1-os-設定への追従) |
+| `66-value-types.kumiki` | type, slot, fn | コア | [§1.9.4](./language.md#_1-9-4-演算子の型) |
 <!-- examples:end -->

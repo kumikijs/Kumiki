@@ -11,8 +11,16 @@
 
 import type { EffectDef, Program, SlotDef, TypeDef, TypeExpr } from "./ast.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
+import { type PrimName, STDLIB_TYPES } from "./stdlib-types.ts";
 
-const PRIM_TS: Record<string, string> = {
+/**
+ * Keyed by `PrimName` rather than `string`, so adding a primitive to the
+ * grammar is a compile error here instead of a silent `unknown` in the
+ * generated declaration. `File` and `Bytes` are the runtime shapes the
+ * capability boundary actually carries; `EffectId` is the opaque handle
+ * codegen lowers to a string (`EffectId.none` is `""`).
+ */
+const PRIM_TS: Record<PrimName, string> = {
   Int: "number",
   Float: "number",
   Time: "number",
@@ -20,28 +28,36 @@ const PRIM_TS: Record<string, string> = {
   Bool: "boolean",
   Unit: "null",
   Bytes: "Uint8Array",
+  File: "{ name: string; size: number; type: string }",
+  EffectId: "string",
 };
 
-// Standard-library scalar nominals (docs/spec/stdlib.md §2.1.3) reduce to a base
-// TS type. Anything else named is assumed to be a user `type` (emitted as an
-// alias) or falls back to `unknown`.
-const KNOWN_SCALAR: Record<string, string> = {
-  Url: "string",
-  Email: "string",
-  Uuid: "string",
-  HttpStatus: "number",
-  Duration: "number",
-};
+// The standard library's domain types (docs/spec/stdlib.md §2.1.3) come from
+// the one table the checker also reads. A private list here held only the
+// scalar nominals, so `HttpError` and `Route` — the two a capability provider
+// is most likely to carry — generated `unknown`.
+const STDLIB_BY_NAME: ReadonlyMap<string, TypeDef> = new Map(STDLIB_TYPES.map((t) => [t.name, t]));
 
-type Ctx = { userTypes: Set<string> };
+type Ctx = {
+  userTypes: Set<string>;
+  expanding: Set<string>;
+  /** Type parameters of the declaration being emitted — they render as themselves. */
+  typeParams: ReadonlySet<string>;
+};
 
 function tsOfType(t: TypeExpr, ctx: Ctx): string {
   switch (t.kind) {
     case "TypePrim":
-      return PRIM_TS[t.name] ?? "unknown";
-    case "TypeRef":
-      if (ctx.userTypes.has(t.name)) return t.name;
-      return KNOWN_SCALAR[t.name] ?? "unknown";
+      return PRIM_TS[t.name];
+    case "TypeRef": {
+      if (ctx.typeParams.has(t.name) || ctx.userTypes.has(t.name)) return t.name;
+      const std = STDLIB_BY_NAME.get(t.name);
+      // `FormData` names `FormValue`, which names nothing back — but a program
+      // that shadows one of these with a self-referential alias would, so the
+      // expansion refuses to re-enter a name it is already inside.
+      if (!std || ctx.expanding.has(t.name)) return "unknown";
+      return tsOfType(std.body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
+    }
     case "TypeApp": {
       const arg = (i: number): string =>
         t.args[i] ? tsOfType(t.args[i] as TypeExpr, ctx) : "unknown";
@@ -62,12 +78,22 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
           return `{ _tag: "Ok"; _0: ${arg(0)} } | { _tag: "Err"; _0: ${arg(1)} }`;
         case "Tuple":
           return `[${t.args.map((a) => tsOfType(a, ctx)).join(", ")}]`;
-        default:
-          return "unknown";
+        default: {
+          // A user generic applied to arguments (`Box(Int)`) — the alias is
+          // emitted with its parameters, so the application can name it.
+          if (ctx.userTypes.has(t.name))
+            return `${t.name}<${t.args.map((a) => tsOfType(a, ctx)).join(", ")}>`;
+          const std = STDLIB_BY_NAME.get(t.name);
+          if (!std || ctx.expanding.has(t.name)) return "unknown";
+          return tsOfType(std.body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
+        }
       }
     }
     case "TypeRecord":
-      return `{ ${t.fields.map((f) => `${f.name}: ${tsOfType(f.type, ctx)}`).join("; ")} }`;
+      // A Kumiki field name may be kebab-case (`episode-id` on `PanicInfo`),
+      // which is not a TypeScript identifier — unquoted it produces a
+      // declaration that does not parse.
+      return `{ ${t.fields.map((f) => `${tsFieldName(f.name)}: ${tsOfType(f.type, ctx)}`).join("; ")} }`;
     case "TypeUnion":
       // Each variant is a tagged record `{ _tag: "Name"; _0: P0; _1: P1; … }`
       // (positional payloads), matching the runtime variant representation.
@@ -79,6 +105,13 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
     default:
       return "unknown";
   }
+}
+
+const TS_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/** Quote a field name TypeScript cannot take bare. */
+function tsFieldName(name: string): string {
+  return TS_IDENT.test(name) ? name : JSON.stringify(name);
 }
 
 /** One tagged variant: `{ _tag: "Name" }` or `{ _tag: "Name"; _0: P0; … }`. */
@@ -102,7 +135,11 @@ export function generateDts(program: Program): string {
   const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
   const slots = program.defs.filter((d): d is SlotDef => d.kind === "SlotDef");
   const effects = program.defs.filter((d): d is EffectDef => d.kind === "EffectDef");
-  const ctx: Ctx = { userTypes: new Set(types.map((t) => t.name)) };
+  const ctx: Ctx = {
+    userTypes: new Set(types.map((t) => t.name)),
+    expanding: new Set(),
+    typeParams: new Set(),
+  };
 
   const out: string[] = [];
   out.push("// Auto-generated by @kumikijs/compiler from the .kumiki source. Do not edit.");
@@ -119,7 +156,10 @@ export function generateDts(program: Program): string {
 
   for (const t of types) {
     const params = t.params.length > 0 ? `<${t.params.join(", ")}>` : "";
-    out.push(`export type ${t.name}${params} = ${tsOfType(t.body, ctx)};`);
+    // The alias body may name its own parameters; without them in scope they
+    // resolve to nothing and every generic alias emits `unknown`.
+    const body = tsOfType(t.body, { ...ctx, typeParams: new Set(t.params) });
+    out.push(`export type ${t.name}${params} = ${body};`);
   }
   if (types.length > 0) out.push("");
 

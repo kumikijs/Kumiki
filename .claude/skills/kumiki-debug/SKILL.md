@@ -24,7 +24,14 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
 | `E0104` | undefined effect in `emit` | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
-| `E0201` | handler arg/prop is not a reducer | point it at a `reducer` |
+| `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
+| `E0201` | a value does not have the type its position requires (slot init, assignment, `fn` argument / return, tile `in=`, operator operand) | correct the value, or widen the declared type |
+| `E0202` | an `emit` argument does not match the effect's `in=` | pass a value of the declared type |
+| `E0213` | wrong argument count: `fn` call, `emit`, user-tile call, or variant payload | pass the declared number |
+| `E0214` | a record literal is missing a declared field | supply it — Kumiki records have no optional fields |
+| `E0215` | a record literal / `.copy(f=v)` names a field the type does not have | fix the name, or declare it on the type |
+| `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
+| `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
 | `E0301` | effect needs a capability not in `app.caps` | add the cap to `caps = [...]` |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
@@ -35,7 +42,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 ## Auto-fix
 
-For name-resolution errors (E0102–E0105), the compiler can suggest the closest existing name:
+For name-resolution errors, the compiler can suggest the closest existing name. `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`–`E0105`, `E0107` and `E0211` search all top-level definitions.
 
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes

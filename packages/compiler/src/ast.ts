@@ -5,7 +5,12 @@ export type Pos = { line: number; col: number };
 export type Token =
   | { kind: "ident"; value: string; pos: Pos }
   | { kind: "kw"; value: string; pos: Pos }
-  | { kind: "num"; value: number; pos: Pos }
+  /**
+   * `raw` is the literal as written. `value` is already the rounded double, so
+   * without it a precision diagnostic can only report the rounded number twice
+   * and read as self-contradicting.
+   */
+  | { kind: "num"; value: number; raw: string; pos: Pos }
   | { kind: "str"; value: string; pos: Pos }
   | { kind: "op"; value: string; pos: Pos }
   | { kind: "eof"; pos: Pos };
@@ -218,6 +223,23 @@ export type TypeExpr =
   | { kind: "TypeNominal"; inner: TypeExpr; refinement?: Refinement; pos: Pos }
   | { kind: "TypeRefinement"; inner: TypeExpr; refinement: Refinement; pos: Pos };
 
+/**
+ * Node kinds of `TileExpr`. A tile argument's `value` is typed `Expr | TileExpr`
+ * and every consumer has to tell them apart, so the set lives with the types it
+ * describes rather than being re-listed at each site.
+ */
+const TILE_EXPR_KINDS: ReadonlySet<string> = new Set([
+  "TileCall",
+  "TileFor",
+  "TileWhen",
+  "TileIf",
+  "TileMatch",
+]);
+
+export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
+  return TILE_EXPR_KINDS.has((v as TileExpr).kind);
+}
+
 export type Refinement = {
   kind: "Refinement";
   pred: string;
@@ -291,7 +313,7 @@ export type Lvalue =
 // ----- Expressions -----
 
 export type Expr =
-  | { kind: "Num"; value: number; pos: Pos }
+  | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }

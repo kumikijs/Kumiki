@@ -225,7 +225,7 @@ describe("codegen", () => {
     const src = `
       slot xs : List(Int) = []
       effect load cap=http.get in={url: Url} out=Unit
-      reducer go on=ui.click(B) do= emit load({url: Url})
+      reducer go on=ui.click(B) do= emit load({url: "https://example.com/x"})
       tile B = button(text="b")
       tile App = column(B)
       app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]

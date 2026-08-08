@@ -14,6 +14,7 @@ import {
   collectTimerNames,
   lex,
   parse,
+  typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
@@ -346,6 +347,62 @@ export function planFixesExplained(
         apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
       });
     }
+    if (err.code === "E0117") {
+      // Message shape: `Reference to undefined type "<name>"`. The candidate
+      // set is the type namespace — the program's own `type` definitions plus
+      // the primitives, the standard library's domain types, and the generic
+      // constructors. A slot or fn name would be E0117 again at the same
+      // position, so the same namespace argument as E0116 applies.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0117-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const userTypes = listDefs(store)
+        .filter((e) => e.layer === "type")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(typeCandidates(userTypes), missing);
+      if (!suggested) {
+        skip(err.code, "e0117-no-close-type", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        // Column splice for the same reason as E0116: a type name may sit
+        // inside a longer one on the same line (`Map(Text, Txt)`), and `\b`
+        // would find the wrong occurrence.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0216") {
+      // Message shape: `Variant "<tag>" is not a member of type "<T>"` — the
+      // constructor-side twin of E0209, and resolved the same way.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length < 2) {
+        skip(err.code, "e0216-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const tags = variantTagsOf(quoted[1]!, store.program);
+      if (!tags || tags.length === 0) {
+        skip(err.code, "e0216-unresolved-variant-type", err.message);
+        continue;
+      }
+      const suggested = suggestNameFrom(tags, missing);
+      if (!suggested) {
+        skip(err.code, "e0216-no-close-tag", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
     if (err.code === "E0209") {
       // Message shape: `Variant "<tag>" is not a member of scrutinee type "<T>"`.
       // Candidates are the union's tag list, not top-level defs. `<T>` may be
@@ -519,8 +576,24 @@ export function applyFixPlan(
   if (plan.patches.length === 0) {
     return { applied: 0, before, after: before, remaining: plan.errors };
   }
+  // Counted one patch at a time, because a patch can decline to change
+  // anything: `replaceAt` returns the source untouched when the reported
+  // column does not hold the name it was told to replace. Composed with
+  // patches that do land, the regression gate passes on the strength of the
+  // others and the no-op would still be reported as applied.
   let after = before;
-  for (const p of plan.patches) after = p.apply(after);
+  let applied = 0;
+  for (const p of plan.patches) {
+    const next = p.apply(after);
+    if (next !== after) applied += 1;
+    after = next;
+  }
+  if (applied === 0) {
+    // Nothing changed, so there is nothing to gate and nothing to write. This
+    // is "no auto-patch took effect", not a rollback — `regressionBlocked`
+    // stays unset so the caller reports it as such.
+    return { applied: 0, before, after: before, remaining: plan.errors };
+  }
   // Regression gate. Every path that would touch disk first re-parses and
   // re-typechecks the composed source, then compares diagnostic *sets* (code
   // + position) rather than counts. Rollback triggers when any of:
@@ -594,7 +667,7 @@ export function applyFixPlan(
       writeError: e instanceof Error ? e.message : String(e),
     };
   }
-  return { applied: plan.patches.length, before, after, remaining: dryRemaining };
+  return { applied, before, after, remaining: dryRemaining };
 }
 
 export type FixApplyResult = {

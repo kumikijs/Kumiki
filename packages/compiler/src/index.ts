@@ -40,5 +40,8 @@ export {
   type RefLayer,
   referencesIn,
 } from "./references.ts";
+// Same reasoning as the call tables above: the definitions themselves stay
+// internal, and only the candidate-set question a repair asks is published.
+export { typeCandidates } from "./stdlib-types.ts";
 export { collectTimerNames, variantTagsOf } from "./symbols.ts";
 export { check, type KumikiError } from "./typecheck.ts";

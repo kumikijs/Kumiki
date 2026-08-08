@@ -101,10 +101,10 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
   });
 
   it("adds a new slot at the end of the file and validates", () => {
-    addDef(path, "slot", "lastSync", "Time = 0");
+    addDef(path, "slot", "lastSync", "Option(Time) = None");
     const store = load(path);
     expect(store.byQName.has("slot.lastSync")).toBe(true);
-    expect(viewDef(store, "slot.lastSync")).toContain("slot lastSync : Time = 0");
+    expect(viewDef(store, "slot.lastSync")).toContain("slot lastSync : Option(Time) = None");
     // op log entry
     const log = readFileSync(`${path}.kumiki-ops.jsonl`, "utf8");
     expect(log).toContain('"op":"add"');
@@ -213,6 +213,62 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     const store = load(file);
     const descs = planFixes(store, check(store.program)).map((p) => p.description);
     expect(descs.some((d) => d.includes(`replace "prefers-drak" with "prefers-dark"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close type name for an undefined type, and applies it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-type-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `type Filter = All | Done
+slot f : Filtre = All
+tile App = column(text("x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    expect(planFixes(store, check(store.program)).map((p) => p.description)).toEqual([
+      `replace "Filtre" with "Filter" at 2:10`,
+    ]);
+    fixCmd(file, true);
+    expect(check(load(file).program)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a standard-library type, not only a declared one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-stdtype-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot e : Option(HttpErrro) = None
+tile App = column(text("x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    const descs = planFixes(store, check(store.program)).map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "HttpErrro" with "HttpError"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close variant tag for a constructor the union does not have", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-variant-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `type Status = Idle | Running
+slot s : Status = Runing
+tile App = column(text("x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    expect(planFixes(store, check(store.program)).map((p) => p.description)).toEqual([
+      `replace "Runing" with "Running" at 2:19`,
+    ]);
+    fixCmd(file, true);
+    expect(check(load(file).program)).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1666,8 +1722,8 @@ describe("op log: spec §9.3.2 wire format", () => {
   });
 
   it("chains parent-ops to the last op-id", () => {
-    const first = addDef(path, "slot", "lastSync", "Time = 0");
-    const second = addDef(path, "slot", "prevSync", "Time = 0");
+    const first = addDef(path, "slot", "lastSync", "Option(Time) = None");
+    const second = addDef(path, "slot", "prevSync", "Option(Time) = None");
     const log = readOpLog(path);
     expect(log).toHaveLength(2);
     expect(log[0]!["op-id"]).toBe(first);
@@ -1679,8 +1735,8 @@ describe("op log: spec §9.3.2 wire format", () => {
     // §9.3.3 decides same-name add winners by op-id lexicographic order, so
     // op-ids must be monotonic with creation time — that's why the id is a
     // ULID (10-char ms timestamp + 16 random chars) rather than fully random.
-    const first = addDef(path, "slot", "lastSync", "Time = 0");
-    const second = addDef(path, "slot", "prevSync", "Time = 0");
+    const first = addDef(path, "slot", "lastSync", "Option(Time) = None");
+    const second = addDef(path, "slot", "prevSync", "Option(Time) = None");
     expect(first).toMatch(/^op_[0-9A-HJ-NP-TV-Z]{26}$/);
     expect(second).toMatch(/^op_[0-9A-HJ-NP-TV-Z]{26}$/);
     // Time-prefix (chars 3..13) must be non-decreasing across calls.
@@ -1691,7 +1747,7 @@ describe("op log: spec §9.3.2 wire format", () => {
     const prev = process.env.KUMIKI_AUTHOR;
     process.env.KUMIKI_AUTHOR = "agent:claude-7";
     try {
-      addDef(path, "slot", "lastSync", "Time = 0");
+      addDef(path, "slot", "lastSync", "Option(Time) = None");
       const log = readOpLog(path);
       expect(log[0]!.author).toBe("agent:claude-7");
     } finally {
@@ -1791,21 +1847,21 @@ describe("patch apply / revert", () => {
   it("applies a JSONL ops bundle in order", () => {
     const opsFile = join(dirname(path), "ops.jsonl");
     const ops = [
-      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
-      { op: "replace", layer: "slot", name: "lastSync", body: "Time = 100" },
+      { op: "add", layer: "slot", name: "lastSync", body: "Option(Time) = None" },
+      { op: "replace", layer: "slot", name: "lastSync", body: "Option(Time) = Some(now)" },
     ];
     writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
     const ids = patchApplyFile(path, opsFile);
     expect(ids).toHaveLength(2);
     const store = load(path);
-    expect(viewDef(store, "slot.lastSync")).toContain("= 100");
+    expect(viewDef(store, "slot.lastSync")).toContain("= Some(now)");
   });
 
   it("rolls back the file when any op in the bundle fails", () => {
     const before = readFileSync(path, "utf8");
     const opsFile = join(dirname(path), "ops.jsonl");
     const ops = [
-      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "add", layer: "slot", name: "lastSync", body: "Option(Time) = None" },
       { op: "add", layer: "tile", name: "Broken", body: "column(Nonexistent)" },
     ];
     writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
@@ -1820,7 +1876,7 @@ describe("patch apply / revert", () => {
     const { existsSync: exists } = await import("node:fs");
     const opsFile = join(dirname(path), "ops.jsonl");
     const ops = [
-      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "add", layer: "slot", name: "lastSync", body: "Option(Time) = None" },
       { op: "add", layer: "tile", name: "Broken", body: "column(Nonexistent)" },
     ];
     writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
@@ -1829,7 +1885,7 @@ describe("patch apply / revert", () => {
   });
 
   it("reverts an add op via patchRevert", () => {
-    const id = addDef(path, "slot", "lastSync", "Time = 0");
+    const id = addDef(path, "slot", "lastSync", "Option(Time) = None");
     expect(load(path).byQName.has("slot.lastSync")).toBe(true);
     patchRevert(path, id);
     expect(load(path).byQName.has("slot.lastSync")).toBe(false);
@@ -1866,10 +1922,10 @@ describe("viewHistory / viewHash", () => {
   });
 
   it("returns ops for one qname in chronological order", () => {
-    addDef(path, "slot", "lastSync", "Time = 0");
-    replaceDef(path, "slot.lastSync", "Time = 1");
-    replaceDef(path, "slot.lastSync", "Time = 2");
-    addDef(path, "slot", "other", "Time = 0"); // irrelevant
+    addDef(path, "slot", "lastSync", "Option(Time) = None");
+    replaceDef(path, "slot.lastSync", "Option(Time) = Some(now)");
+    replaceDef(path, "slot.lastSync", "Option(Time) = None");
+    addDef(path, "slot", "other", "Option(Time) = None"); // irrelevant
     const hist = viewHistory(path, "slot.lastSync");
     expect(hist).toHaveLength(3);
     expect(hist[0]!.op).toBe("add");
@@ -1934,7 +1990,7 @@ describe("ownership lock", () => {
     process.env.KUMIKI_AUTHOR = "agent-1";
     lockDef(path, "agent-1", "slot.todos*");
     process.env.KUMIKI_AUTHOR = "agent-2";
-    expect(() => addDef(path, "slot", "lastSync", "Time = 0")).not.toThrow();
+    expect(() => addDef(path, "slot", "lastSync", "Option(Time) = None")).not.toThrow();
   });
 
   it("unlock removes the agent's claim", () => {
@@ -1954,11 +2010,11 @@ describe("parallel op merge", () => {
     const aFirst = copy(TODOMVC);
     const bFirst = copy(TODOMVC);
     // a: add new slot. b: rename slot.draft → newDraft.
-    addDef(aFirst, "slot", "lastSync", "Time = 0");
+    addDef(aFirst, "slot", "lastSync", "Option(Time) = None");
     renameDef(aFirst, "slot.draft", "newDraft");
 
     renameDef(bFirst, "slot.draft", "newDraft");
-    addDef(bFirst, "slot", "lastSync", "Time = 0");
+    addDef(bFirst, "slot", "lastSync", "Option(Time) = None");
 
     const aStore = load(aFirst);
     const bStore = load(bFirst);
@@ -2138,6 +2194,58 @@ describe("planFixesExplained: skip-reason classification", () => {
     ]);
     expect(patches).toEqual([]);
     expect(skipped[0]?.reason).toBe("e0116-no-close-callee");
+  });
+
+  it("e0117-quoted-name-extract-failed: E0117 message without a quoted name", () => {
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { patches, skipped } = planFixesExplained(store, [synth("E0117", "some undefined type")]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0117-quoted-name-extract-failed");
+  });
+
+  it("e0117-no-close-type: typo too far from every type name", () => {
+    const store = writeAndLoad(
+      ["type Filter = All | Done", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { skipped } = planFixesExplained(store, [
+      synth("E0117", 'Reference to undefined type "ZZZZZZZZZZ"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0117-no-close-type");
+  });
+
+  it("e0117: a close slot name is not a candidate, so no patch is proposed", () => {
+    // Same namespace argument as E0116: `Filtr` is one edit from the slot
+    // `Filtar`, but a slot name in a type position is E0117 again.
+    const store = writeAndLoad(
+      ["slot Filtar : Int = 0", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0117", 'Reference to undefined type "Filtar"'),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0117-no-close-type");
+  });
+
+  it("e0216-quoted-name-extract-failed: E0216 message without both quoted names", () => {
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { skipped } = planFixesExplained(store, [synth("E0216", 'Variant "Zork" is unknown')]);
+    expect(skipped[0]?.reason).toBe("e0216-quoted-name-extract-failed");
+  });
+
+  it("e0216-unresolved-variant-type: the named type is not a union", () => {
+    const store = writeAndLoad(["type N = Int", 'tile App = heading("hi")', ""].join("\n"));
+    const { skipped } = planFixesExplained(store, [
+      synth("E0216", 'Variant "Zork" is not a member of type "N"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0216-unresolved-variant-type");
+  });
+
+  it("e0216-no-close-tag: typo too far from every tag of the union", () => {
+    const store = writeAndLoad(["type S = Idle | Busy", 'tile App = heading("hi")', ""].join("\n"));
+    const { skipped } = planFixesExplained(store, [
+      synth("E0216", 'Variant "ZZZZZZZZZZ" is not a member of type "S"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0216-no-close-tag");
   });
 
   it("e0301-quoted-name-extract-failed: E0301 message without the `requires capability` phrase", () => {

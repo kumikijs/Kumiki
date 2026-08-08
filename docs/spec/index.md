@@ -70,6 +70,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
 | [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | core |
+| [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -83,6 +84,10 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0212](./errors.md#e0212-selector-id-mismatch-opt-in-via-strict-selector-id) | `selector-id-mismatch` | reducer | core |
 | [W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) | `ui-event-tile-mismatch` | reducer | core |
 | [E0213](./errors.md#e0213-call-arity-mismatch) | `call-arity-mismatch` | fn | core |
+| [E0214](./errors.md#e0214-missing-record-field) | `missing-record-field` | type | core |
+| [E0215](./errors.md#e0215-unknown-record-field) | `unknown-record-field` | type | core |
+| [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | core |
+| [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | core |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
@@ -172,4 +177,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `63-reducer-batch-atomicity.kumiki` | slot, reducer | core | [§10.3.3](./runtime.md#_10-3-3-batching) |
 | `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
 | `65-prefers-dark.kumiki` | app, reducer | style | [§4.6.1](./style.md#_4-6-1-following-os-settings) |
+| `66-value-types.kumiki` | type, slot, fn | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
 <!-- examples:end -->

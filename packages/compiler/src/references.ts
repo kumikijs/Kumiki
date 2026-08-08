@@ -32,6 +32,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -558,12 +559,6 @@ class Walker {
       this.add("reducer", a.http.on5xx ?? "", at.on5xx);
     }
   }
-}
-
-const TILE_EXPR_KINDS = new Set(["TileCall", "TileFor", "TileWhen", "TileIf", "TileMatch"]);
-
-function isTileExpr(v: Expr | TileExpr): v is TileExpr {
-  return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
 function withPatternBinds(

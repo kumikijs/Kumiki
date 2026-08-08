@@ -54,6 +54,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Text, cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` |
 
 ---
 

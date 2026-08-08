@@ -667,6 +667,31 @@ items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
 
 `&` and `|` use short-circuit evaluation.
 
+### 1.9.4 Operator Types
+
+Every operator's operand and result types, which the compiler checks
+([E0201](./errors.md#e0201-type-mismatch)):
+
+| Operator | Operands | Result |
+|---|---|---|
+| `+` | `Text` on either side | `Text` — concatenation; the other side is stringified |
+| `+` `-` `*` `%` | both numeric | `Float` if either operand is `Float`, else `Int` |
+| `/` | both numeric | **`Float`, always** |
+| `<` `>` `<=` `>=` | both numeric, both `Text`, or both `Time` | `Bool` |
+| `&` `\|` | both `Bool` | `Bool` |
+| `==` `!=` | any two values | `Bool` |
+| unary `-` | numeric | the operand's type |
+| unary `!` | `Bool` | `Bool` |
+
+`/` is `Float` even between two `Int`s. It is JavaScript's `/` at runtime — `5 / 2`
+is `2.5`, not `2` — so an `Int` result type would be a promise the runtime does not
+keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
+[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
+declare the `Float`.
+
+`EffectId` is outside this table: only `==` and `!=` apply to it
+([E0204](./errors.md#e0204-effect-id-misuse)).
+
 ---
 
 ## 1.10 Namespaces and Reference Resolution
