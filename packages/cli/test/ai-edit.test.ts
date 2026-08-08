@@ -178,6 +178,69 @@ app Counter
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("suggests a close fn name for an undefined call, and applies it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-call-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+fn double(x: Int) -> Int = x * 2
+reducer inc on=ui.click(B) do= n := doubel(n)
+tile B = button(text="+")
+tile App = column(B, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([`replace "doubel" with "double" at 3:37`]);
+    fixCmd(file, true);
+    expect(check(load(file).program)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a builtin, not only a declared fn", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-builtin-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot t : Text = "Light"
+reducer initTheme on=app.start do= t := if prefers-drak() then "Dark" else "Light"
+tile App = column(text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    const descs = planFixes(store, check(store.program)).map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "prefers-drak" with "prefers-dark"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rewrites the reported column, not the line's first word-boundary match", () => {
+    // Kumiki names are kebab-case, so `\b` matches at each `-`: the first
+    // boundary match for `laod` on this line sits inside `re-laod`, which is
+    // defined and was never the name reported.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-col-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+fn re-laod(x: Int) -> Int = x + 1
+fn load(x: Int) -> Int = x * 2
+reducer go on=ui.click(B) do= n := re-laod(laod(n))
+tile B = button(text="+")
+tile App = column(B, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    fixCmd(file, true);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("re-laod(load(n))");
+    expect(after).toContain("fn re-laod(x: Int)");
+    expect(check(load(file).program)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("apply fixes the file end-to-end", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-"));
     const file = join(dir, "broken.kumiki");
@@ -2042,6 +2105,39 @@ describe("planFixesExplained: skip-reason classification", () => {
       synth("E0209", 'Variant "ZZZZZZZZZZ" is not a member of scrutinee type "Light"'),
     ]);
     expect(skipped[0]?.reason).toBe("e0209-no-close-tag");
+  });
+
+  it("e0116-quoted-name-extract-failed: E0116 message without a quoted name", () => {
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0116", "call to something undefined"),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0116-quoted-name-extract-failed");
+  });
+
+  it("e0116-no-close-callee: typo too far from every fn and builtin", () => {
+    const store = writeAndLoad(
+      ["fn double(x: Int) -> Int = x * 2", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { skipped } = planFixesExplained(store, [
+      synth("E0116", 'Call to undefined function "ZZZZZZZZZZ"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0116-no-close-callee");
+  });
+
+  it("e0116: a close slot name is not a candidate, so no patch is proposed", () => {
+    // The whole point of the scoped candidate set: `doubel` is one edit from
+    // the slot `double`, but a slot cannot be called, so proposing it would
+    // produce E0116 again and burn a repair round.
+    const store = writeAndLoad(
+      ["slot doubel-value : Int = 0", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0116", 'Call to undefined function "doubel-value"'),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0116-no-close-callee");
   });
 
   it("e0301-quoted-name-extract-failed: E0301 message without the `requires capability` phrase", () => {

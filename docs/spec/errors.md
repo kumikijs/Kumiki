@@ -54,6 +54,7 @@ typo` is caught rather than accepted).
 | `E0104` | yes | Close-name suggestion against known effect names. |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
+| `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). |
 | `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
 | `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
@@ -135,11 +136,15 @@ An event handler argument / prop refers to a reducer name that does not exist.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
 
-### E0104 `undef-effect`
+### E0104 `undef-effect` / `init-not-effect-call`
 
-The target of an `emit` refers to an undefined effect.
+The target of an `emit` refers to an undefined effect. An `app.init` entry is validated the same way — the grammar makes it an effect call ([§1.12](./language.md#_1-12-application-entry-app)), so the same capability and argument checks apply, and the built-in effects (`toast`, `navigate`, `log`, …) are equally legal there.
 
 > `Reference to undefined effect "<name>"`
+
+An init entry that is not a call at all takes the `init-not-effect-call` kind. Code generation has nothing to lower it to; before the diagnostic existed it emitted `null` into the init array and the dispatcher read `.effect` off it at mount, so the app died with a raw `TypeError` and no position.
+
+> `app.init entries must be effect calls`
 
 ### E0106 `undef-timer`
 
@@ -227,6 +232,28 @@ A `slot` is declared with a name the compiler resolves before it consults the sl
 > `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
 
 **Fix**: Rename the slot.
+
+### E0116 `undef-call`
+
+A call `f(...)` names no function. The candidate set is the program's `fn` definitions plus the built-in calls, which are spread across three documents:
+
+| Callee | Where it is specified |
+|---|---|
+| `now`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
+| `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), §2.4 |
+| `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [Forms §5.10](./forms.md) |
+| `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
+
+`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116.
+
+> `Call to undefined function "<name>"`
+
+Code generation lowers an unrecognised callee to a call on a binding of the same name, so without this check a misspelling compiles, builds, and throws `<name> is not defined` on the first evaluation. The accepted set is exactly the set code generation can lower — a checker looser than the lowering it guards is what produced that failure, and a stricter one would reject programs that run.
+
+`E0801` is the same relationship for `obj.method(...)`, which is a different expression form and resolved separately.
+
+**Fix**: Correct the spelling, or declare the `fn`.
 
 ## E02xx — Types
 
@@ -370,6 +397,16 @@ The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) 
 
 **Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
 
+### E0213 `call-arity-mismatch`
+
+A call to a declared `fn` passes a different number of arguments than the `fn` declares parameters. Kumiki has no partial application and no default parameters, so any mismatch is an error rather than a narrower type.
+
+> `Function "<name>" expects <n> argument(s) but got <m>`
+
+Built-in calls are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them.
+
+**Fix**: Pass the declared number of arguments, or change the `fn` signature.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
@@ -498,3 +535,13 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 **Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). Calling a no-argument method with `()` is also caught by this band. For the list of standard library methods, see [Standard Library](./stdlib.md).
 
 **Fix**: Correct it to the right method name, or rewrite the operation using implemented means such as `match` / `fold`. If you need an unimplemented specification method, implement it in `packages/` and add a working example in `examples/`.
+
+### E0802 `unimplemented-function`
+
+A call names a function this document describes but the toolchain does not lower yet. Distinct from `E0116`: the name is right, and the gap is on the implementation side.
+
+> `Function "<name>" is documented but not implemented by the runtime`
+
+Currently one name is in this state: `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
+
+**Fix**: Remove the call. Nothing in the language is blocked on it — `trace` is a debugging aid.

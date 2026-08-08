@@ -60,7 +60,7 @@ type KumikiError = {
 
 > `Program has no app definition`
 
-これを判定するのはコード生成ではなく検査である。**絞り込み無しの** `check` が `ok` と報告したものは必ずビルドできなければならない（`--types` / `--refs` / `--effects` は報告を 1 つの帯に絞るため、より小さい問いに答える。ただし `E00xx` はどの絞り込みも選ばないため常に残る）。詳細は [アプリエントリ](./language.md#_1-12-アプリエントリ-app)。
+これを判定するのはコード生成ではなく検査である。**絞り込み無しの** `check` が `ok` と報告したものは必ずビルドできなければならない（`--types` / `--refs` / `--effects` は報告を 1 つの帯に絞るため、より小さい問いに答える。ただし `E00xx` はどの絞り込みも選ばないため常に残る）。詳細は [アプリエントリ](./language.md#_1-12-アプリエントリ-app)。
 
 唯一の例外は構築途中のプログラムである。[AI 編集](./ai-edit.md)の動詞は定義を 1 つずつ追加していくため、この要求を課すと `app` が入るまでの全編集がロールバックされてしまう。したがって編集時は要求を外して検査し、未完成であることは `kumiki check` が報告する。
 
@@ -95,11 +95,15 @@ type KumikiError = {
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
-### E0104 `undef-effect`
+### E0104 `undef-effect` / `init-not-effect-call`
 
-`emit` の対象が未定義の effect を指している。
+`emit` の対象が未定義の effect を指している。`app.init` のエントリも同じ経路で検証される — 文法上これは effect 呼び出しであり（[§1.12](./language.md#_1-12-アプリエントリ-app)）、ケイパビリティ検査も引数型検査も同様に適用され、組み込み effect（`toast` / `navigate` / `log` 等）も同じく使える。
 
 > `Reference to undefined effect "<name>"`
+
+そもそも呼び出しですらない init エントリは kind `init-not-effect-call` になる。コード生成には落とす先が無く、この診断が無かった頃は init 配列に `null` を出力し、dispatcher が mount 時にそこから `.effect` を読んで、位置情報の無い生の `TypeError` でアプリが死んでいた。
+
+> `app.init entries must be effect calls`
 
 ### E0106 `undef-timer`
 
@@ -187,6 +191,28 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 > `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
 
 **修正**：slot の名前を変える。
+
+### E0116 `undef-call`
+
+呼び出し `f(...)` がどの関数も指していない。候補集合はプログラム内の `fn` 定義と組み込み呼び出しで、後者は 3 つの文書に分かれている。
+
+| callee | 規定箇所 |
+|---|---|
+| `now` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-ビルトイン関数) |
+| `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ §2.2](./stdlib.md#_2-2-コレクションメソッド)・§2.4 |
+| `Decoder.*` / `EffectId.none` | [HTTP / Storage §6.1.4](./http.md)・[標準ライブラリ §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [フォーム §5.10](./forms.md) |
+| `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
+
+`run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。それ以外の場所に書けば E0116 になる。
+
+> `Call to undefined function "<name>"`
+
+コード生成は未知の callee を同名バインディングの呼び出しへ落とすため、この検査が無いと綴り間違いが check も build も通り、最初の評価時に `<name> is not defined` を投げる。受理集合はコード生成が落とせる集合とちょうど一致させている — 守る対象より緩い検査がその失敗を生んだのであり、厳しすぎる検査は動くプログラムを拒否する。
+
+`obj.method(...)` に対する同じ関係が `E0801` であり、式の形が異なるため別々に解決される。
+
+**修正**：綴りを直すか、`fn` を宣言する。
 
 ## E02xx — 型
 
@@ -330,6 +356,16 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 **`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。
 
+### E0213 `call-arity-mismatch`
+
+宣言済み `fn` の呼び出しが、宣言された仮引数の個数と異なる個数の引数を渡している。Kumiki には部分適用もデフォルト引数も無いため、個数の不一致は狭い型ではなくエラーである。
+
+> `Function "<name>" expects <n> argument(s) but got <m>`
+
+組み込み呼び出しは arity を検査しない。いくつかは lowering の時点で引数を完全に無視する（`Decoder.Json(Text)` は引数に関わらずセンチネルへ落ちる）ため、個数が契約として意味を持たない。
+
+**修正**：宣言どおりの個数を渡すか、`fn` のシグネチャを変える。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`
@@ -458,3 +494,13 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 **補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドを `()` 付きで呼んだ場合もこの帯で捕捉される。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
 
 **修正**：正しいメソッド名に直すか、その操作を `match` / `fold` など実装済みの手段で書き換える。未実装の仕様メソッドが必要なら、`packages/` に実装して `examples/` に動く例を足す。
+
+### E0802 `unimplemented-function`
+
+本ドキュメントが記述しているが、ツールチェーンがまだ lowering していない関数の呼び出し。`E0116` とは異なり、名前は正しく、欠けているのは実装側である。
+
+> `Function "<name>" is documented but not implemented by the runtime`
+
+現在この状態にあるのは `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-デバッグ補助)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
+
+**修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。

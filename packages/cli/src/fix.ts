@@ -7,8 +7,15 @@
 // stays named — no test needs to mock reads.
 import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
-import type { KumikiError, TestDef } from "@kumikijs/compiler";
-import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
+import type { KumikiError, Pos, TestDef } from "@kumikijs/compiler";
+import {
+  calleeCandidates,
+  check,
+  collectTimerNames,
+  lex,
+  parse,
+  variantTagsOf,
+} from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
@@ -80,6 +87,28 @@ function levenshtein(a: string, b: string): number {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Replace `missing` with `replacement` at exactly the reported position.
+ *
+ * The name-suggest branches historically replaced the first `\b`-delimited
+ * match on the diagnostic's line, which is not the same thing: Kumiki
+ * identifiers are kebab-case and `\b` matches either side of a `-`, so the
+ * first match on `n := re-laod(laod(n))` is inside `re-laod` even when the
+ * diagnostic points at `laod`. Returns the text unchanged when the position
+ * does not hold `missing` — the caller's regression gate then rolls the patch
+ * back rather than writing a rewrite of something else.
+ */
+function replaceAt(text: string, pos: Pos, missing: string, replacement: string): string {
+  const lines = text.split(/\r?\n/);
+  const idx = pos.line - 1;
+  const line = lines[idx];
+  if (line === undefined) return text;
+  const at = pos.col - 1;
+  if (line.slice(at, at + missing.length) !== missing) return text;
+  lines[idx] = line.slice(0, at) + replacement + line.slice(at + missing.length);
+  return lines.join("\n");
 }
 
 /**
@@ -283,6 +312,38 @@ export function planFixesExplained(
           lines[idx] = line.replace(re, suggested);
           return lines.join("\n");
         },
+      });
+    }
+    if (err.code === "E0116") {
+      // Message shape: `Call to undefined function "<name>"`. The candidate set
+      // is the fn namespace plus the built-in calls — NOT every definition. A
+      // slot or tile is in a different namespace, so proposing one produces
+      // E0116 again at the same position: the patch fails the regression gate,
+      // is rolled back, and the repair loop has spent a round on a name that
+      // could never have resolved.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0116-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const fnNames = listDefs(store)
+        .filter((e) => e.layer === "fn")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(calleeCandidates(fnNames), missing);
+      if (!suggested) {
+        skip(err.code, "e0116-no-close-callee", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        // Spliced at the reported column rather than at the line's first `\b`
+        // match. Kumiki identifiers are kebab-case and `\b` matches at a `-`,
+        // so `re-laod(laod(n))` has the first match inside `re-laod` — the
+        // patch would rewrite a name that was never the one reported.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
       });
     }
     if (err.code === "E0209") {
@@ -602,7 +663,10 @@ export function fixCmd(
     // has to say the same thing before anything is written.
     if (skipped.length > 0) {
       console.log(`(no auto-patch for ${skipped.length} of ${errors.length})`);
-      for (const s of skipped) console.error(`${s.code} ${s.message}`);
+      // The kebab-case reason travels with the line: it is the stable half of
+      // this output, and a repair loop deciding whether to retry or escalate
+      // reads it rather than the prose.
+      for (const s of skipped) console.error(`${s.code} ${s.message} [${s.reason}]`);
     }
     return;
   }

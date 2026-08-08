@@ -57,7 +57,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | コア |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | コア |
-| [E0104](./errors.md#e0104-undef-effect) | `undef-effect` | effect | コア |
+| [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | コア |
 | [E0106](./errors.md#e0106-undef-timer) | `undef-timer` | reducer | ライフサイクル |
 | [E0105](./errors.md#e0105-undef-tile) | `undef-tile` | tile | コア |
 | [E0107](./errors.md#e0107-undef-motion) | `undef-motion` | tile | スタイル |
@@ -69,6 +69,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | ルーティング |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
+| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -81,6 +82,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0211](./errors.md#e0211-undef-tile-in-selector) | `undef-tile-in-selector` | reducer | コア |
 | [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) | `selector-id-mismatch` | reducer | コア |
 | [W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) | `ui-event-tile-mismatch` | reducer | コア |
+| [E0213](./errors.md#e0213-call-arity-mismatch) | `call-arity-mismatch` | fn | コア |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |
@@ -95,6 +97,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | スタイル |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
+| [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
 <!-- codes:end -->
 
 ## examples 索引
@@ -168,4 +171,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `62-conditional-inline-tile-handlers.kumiki` | tile, reducer | コア | [§10.3.13](./runtime.md#_10-3-13-data-prop-の等値判定) |
 | `63-reducer-batch-atomicity.kumiki` | slot, reducer | コア | [§10.3.3](./runtime.md#_10-3-3-batching) |
 | `64-init-slot-argument.kumiki` | app, effect | コア | [§1.12](./language.md#_1-12-アプリエントリ-app) |
+| `65-prefers-dark.kumiki` | app, reducer | スタイル | [§4.6.1](./style.md#_4-6-1-os-設定への追従) |
 <!-- examples:end -->

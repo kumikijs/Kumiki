@@ -1090,6 +1090,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
     expect(code).toBe(0);
     expect(stdout).toContain('fix: replace "cout" with "count"');
     expect(stdout).toContain("(no auto-patch for 1 of 2)");
-    expect(stderr).toContain("E0003 Program has no app definition");
+    // The stable kebab reason rides along — a repair loop branches on it.
+    expect(stderr).toContain("E0003 Program has no app definition [no-repair-branch]");
   });
 });

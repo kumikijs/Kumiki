@@ -447,6 +447,23 @@ export const _stdlibCore = {
     return url;
   },
 
+  /**
+   * `prefers-dark()` — the OS colour-scheme preference (style.md §4.6.1).
+   *
+   * Read once per call rather than subscribed to: an `app.start` reducer uses
+   * it to pick the initial theme, and a running app that wants to follow a
+   * mid-session change has `theme = <slot>` plus a reducer to write it.
+   *
+   * The guard is for SSR, where there is no `window` at all. happy-dom does
+   * implement `matchMedia` and answers `false` by default, so the smoke and
+   * scenario tiers take the real path — see `prefers-dark.test.ts`, which
+   * drives both branches by stubbing the media query.
+   */
+  prefersDark(): boolean {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  },
+
   // ----- Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
   // Bytes is represented as Uint8Array at runtime. The constructors are
   // lenient on nullish / malformed input and return an empty Uint8Array

@@ -169,6 +169,10 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
         return `_s.panic(${a})`;
       }
+      // `prefers-dark()` — reads `prefers-color-scheme: dark` (style.md §4.6.1).
+      // Environment-reading like `now`, and used the same way: an `app.start`
+      // reducer picks the initial theme from it.
+      if (cn === "prefers-dark") return `_s.prefersDark()`;
       // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.
