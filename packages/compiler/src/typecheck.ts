@@ -16,10 +16,22 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
+import {
+  assignable,
+  constructorArity,
+  isOpaque,
+  paramSubstitution,
+  recordFieldType,
+  substituteType,
+  typeToString,
+  unaliasType,
+  unknownType,
+} from "./assignable.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
+import { BUILTIN_TYPE_CONSTRUCTORS, STDLIB_TYPES } from "./stdlib-types.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
@@ -1510,29 +1522,6 @@ function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | nu
   return { kind: "TypePrim", name, pos };
 }
 
-/** Unwrap type aliases (`TypeRef` → its `TypeDef` body) and nominal/refinement wrappers. */
-function unaliasType(
-  t: TypeExpr | null,
-  sym: SymbolTable,
-  seen: Set<string> = new Set(),
-): TypeExpr | null {
-  if (!t) return null;
-  if (t.kind === "TypeRef") {
-    if (seen.has(t.name)) return null;
-    const def = sym.types.get(t.name);
-    if (!def) return t; // unknown name / type param — opaque, treated as "other"
-    seen.add(t.name);
-    return unaliasType(def.body, sym, seen);
-  }
-  if (t.kind === "TypeNominal" || t.kind === "TypeRefinement")
-    return unaliasType(t.inner, sym, seen);
-  return t;
-}
-
-function recordFieldType(rec: TypeExpr & { kind: "TypeRecord" }, name: string): TypeExpr | null {
-  return rec.fields.find((f) => f.name === name)?.type ?? null;
-}
-
 const unitType = (pos: Pos): TypeExpr => ({ kind: "TypePrim", name: "Unit", pos });
 
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
@@ -1982,74 +1971,6 @@ function resolveToTuple(
     return resolveToTuple(scrut.inner, sym, seen);
   }
   return "not-a-tuple";
-}
-
-function paramSubstitution(params: string[], args: TypeExpr[]): Map<string, TypeExpr> {
-  const m = new Map<string, TypeExpr>();
-  for (let i = 0; i < params.length; i++) {
-    const p = params[i];
-    const a = args[i];
-    if (p && a) m.set(p, a);
-  }
-  return m;
-}
-
-/** Substitute type-param names (carried as `TypeRef`) inside `t` using `sub`. */
-function substituteType(t: TypeExpr, sub: Map<string, TypeExpr>): TypeExpr {
-  if (sub.size === 0) return t;
-  switch (t.kind) {
-    case "TypePrim":
-      return t;
-    case "TypeRef": {
-      const r = sub.get(t.name);
-      return r ?? t;
-    }
-    case "TypeApp":
-      return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
-    case "TypeRecord":
-      return {
-        ...t,
-        fields: t.fields.map((f) => ({ name: f.name, type: substituteType(f.type, sub) })),
-      };
-    case "TypeUnion":
-      return {
-        ...t,
-        variants: t.variants.map((v) => ({
-          name: v.name,
-          payloads: v.payloads.map((p) => substituteType(p, sub)),
-        })),
-      };
-    case "TypeNominal":
-      return { ...t, inner: substituteType(t.inner, sub) };
-    case "TypeRefinement":
-      return { ...t, inner: substituteType(t.inner, sub) };
-  }
-}
-
-/** Best-effort textual rendering of a type for diagnostic messages. */
-function typeToString(t: TypeExpr): string {
-  switch (t.kind) {
-    case "TypePrim":
-      return t.name;
-    case "TypeRef":
-      return t.name;
-    case "TypeApp":
-      return t.args.length === 0 ? t.name : `${t.name}(${t.args.map(typeToString).join(", ")})`;
-    case "TypeRecord":
-      return `{${t.fields.map((f) => `${f.name}: ${typeToString(f.type)}`).join(", ")}}`;
-    case "TypeUnion":
-      return t.variants
-        .map((v) =>
-          v.payloads.length === 0
-            ? v.name
-            : `${v.name}(${v.payloads.map(typeToString).join(", ")})`,
-        )
-        .join(" | ");
-    case "TypeNominal":
-      return `nominal ${typeToString(t.inner)}`;
-    case "TypeRefinement":
-      return typeToString(t.inner);
-  }
 }
 
 /**
