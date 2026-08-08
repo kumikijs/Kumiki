@@ -128,9 +128,7 @@ export function unionVariant(
  * slot would have to be initialised `0.0`, and `slider(min=0)` on a `Float`
  * slot would be an error.
  */
-const widensTo: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ["Int", new Set(["Float"])],
-]);
+const widensTo: ReadonlyMap<string, ReadonlySet<string>> = new Map([["Int", new Set(["Float"])]]);
 
 /**
  * Is a value of type `actual` accepted where `declared` is required?

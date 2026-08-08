@@ -214,24 +214,52 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：綴りを直すか、`fn` を宣言する。
 
+### E0117 `undef-type`
+
+型名が何も指していない：`type` 定義にも、[標準ライブラリの型](./stdlib.md#_2-1-ビルトイン型)にも、外側の `type` 定義の型パラメータにも該当しない。
+
+> `Reference to undefined type "<name>"`
+
+解決できない名前は**不透明型**であり、不透明型はあらゆる値を受理する — したがってこの検査が無い状態では `slot v : NoSuchType = 1` が通り、以降 `v` を使うすべての箇所でも値検査が効かなかった。綴り間違い 1 つが、その下流全体の型検査を無効化していた。
+
+型パラメータはそれを宣言した定義の body の中だけでスコープに入る：`type Box(T) = {v: T}` は正しく、`type Box(T) = {v: U}` は誤り。他の宣言箇所（`slot` / `fn` / `effect` / `tile in=`）は型パラメータを持たないので、そこでの未解決名は常にエラーである。
+
+**修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
 
-イベントハンドラの引数 / prop が reducer 名でなければならないのに、別種の値だった。
+値が、その位置の要求する型を持っていない。
 
+> `Expected <declared> but got <actual>`
+> `Operator "<op>" expects a number but got <type>`
+> `Operator "<op>" expects Bool but got <type>`
+> `Operator "<op>" cannot compare <type> with <type>`
+> `Condition of "<form>" must be Bool but got <type>`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+
+代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。`nominal` / `where` のラッパーは透過する（refinement は runtime の検査。[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）。別名と generic の具体化は辿る。
+
+**この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、レシーバ依存の結果型を持つメソッド、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) が担保する。
+
+**修正**：値を直すか、宣言型を広げる。
+
 ### E0202 `emit-arg-type-mismatch`
 
-`emit` の対象 effect が `in=EffectId` を宣言しているのに、渡した引数の静的推論型が `EffectId` ではない。キャンセルの配線ミスの典型形で、`emit stopSearch(searchId)`（`searchId : EffectId`）は正しく、`emit stopSearch(42)` や `emit stopSearch("id")` は誤り。この検査が無いと codegen は `EffectId` でないランタイム値をそのまま渡し、cancel パスは静かに no-op となる — 成功したキャンセルと見分けがつかなくなる。
+`emit` の引数が、その effect の宣言する `in=` 型と一致しない。
 
+> `Expected <in-type> but got <actual>`
 > `emit "<effect>" expects an EffectId argument`
 
-検査は best-effort：`emit` が引数を 1 つ以上持ち、かつその第 1 引数の型が静的に推論できる場合にのみ発火する。引数無しの `emit` や、型が check 時に解決できない式は対象外で、runtime に委ねる。
+`EffectId` の場合だけ文言を分けているのは、修正の種類が違うからである。これはキャンセルの配線ミスの典型形で、`emit stopSearch(searchId)`（`searchId : EffectId`）は正しく、`emit stopSearch(42)` や `emit stopSearch("id")` は誤り。codegen は `EffectId` でない値をそのまま渡し、cancel パスは静かに no-op となる — 成功したキャンセルと見分けがつかない。
 
-**修正**：以前に fire-and-track した同じ effect が返した値のような、`EffectId` 型の slot / 束縛を渡す。もしくは — その effect が本当にスカラーを受けるべきなら — `effect` 宣言の `in=` 型を実態に合わせる。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid) と [emit](./lifecycle.md)。
+引数の**個数**はこのコードではなく [E0213](#e0213-call-arity-mismatch) が扱う。
+
+**修正**：宣言された `in=` 型の値を渡す（`EffectId` なら、以前に fire-and-track した同じ effect が返したハンドル）。もしくは effect の `in=` を実態に合わせる。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid) と [emit](./lifecycle.md)。
 
 ### E0204 `effect-id-misuse`
 
@@ -358,13 +386,60 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 ### E0213 `call-arity-mismatch`
 
-宣言済み `fn` の呼び出しが、宣言された仮引数の個数と異なる個数の引数を渡している。Kumiki には部分適用もデフォルト引数も無いため、個数の不一致は狭い型ではなくエラーである。
+適用が、適用される側の宣言する個数と異なる個数の引数を渡している。Kumiki には部分適用もデフォルト引数も無いため、個数の不一致は狭い型ではなくエラーである。
 
-> `Function "<name>" expects <n> argument(s) but got <m>`
+| 適用の形 | 宣言する側 | メッセージ |
+|---|---|---|
+| `fn` への `f(...)` | 仮引数列 | `Function "<name>" expects <n> argument(s) but got <m>` |
+| `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 | `Effect "<name>" expects <n> argument(s) but got <m>` |
+| user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
+| union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
+
+tile と effect の形は、これまで check 時ではなく実行時に失敗していたものである：`in=` の宣言する引数無しで呼ばれた tile は `$1` が束縛されないまま mount し `_d_1 is not defined` で死に、入力無しで emit された effect は最初の dispatch で `Cannot destructure property … of 'input'` を投げる。
 
 組み込み呼び出しは arity を検査しない。いくつかは lowering の時点で引数を完全に無視する（`Decoder.Json(Text)` は引数に関わらずセンチネルへ落ちる）ため、個数が契約として意味を持たない。
 
-**修正**：宣言どおりの個数を渡すか、`fn` のシグネチャを変える。
+**修正**：宣言どおりの個数を渡すか、宣言の側を変える。
+
+### E0214 `missing-record-field`
+
+record リテラルが、宣言型の要求するフィールドを欠いている。Kumiki の record に省略可能フィールドは無い — 欠けうるフィールドは `Option(T)` であり、それでも書く必要がある。
+
+> `Record literal is missing field "<name>" of type <type>`
+
+欠けたフィールド 1 つにつき 1 件、リテラルの位置に報告する。
+
+**修正**：フィールドを与えるか、型を変える。
+
+### E0215 `unknown-record-field`
+
+record リテラル、または `.copy(f=v)` の record 更新が、宣言型に無いフィールドを名指している。
+
+> `Record type has no field "<name>"`
+
+どちらも素のオブジェクト spread へ落ちるため、宣言されていないフィールドは「誰も読まないプロパティ」になっていた — 拒否されるのではなく、値が静かに捨てられていた。
+
+**修正**：フィールド名を直すか、型に宣言する。
+
+### E0216 `unknown-variant`
+
+variant コンストラクタが、宣言された union 型に無いタグを名指している — `type Status = Idle | Busy` に対する `slot s : Status = Zork`。
+
+> `Variant "<name>" is not a member of type "<type>"`
+
+タグは `{_tag: "Zork"}` へ落ち、どの `match` arm にも一致しない。UI は静かに何も描かず、runtime エラーも出ない。パターン側の同じ誤りが [E0209](#e0209-pat-unknown-variant) である。
+
+**修正**：宣言済みのタグを使うか、そのタグを union に加える。
+
+### E0217 `int-literal-precision`
+
+`Int` の位置に、JavaScript が正確に表現できる範囲（`Number.MAX_SAFE_INTEGER`、9007199254740991）を超えるリテラルが与えられた。リテラルは AST に載る時点で丸められるため、そのまま実行すれば書かれた値とは違う値で動く。
+
+> `Int literal <value> is not exactly representable and was rounded to <value>`
+
+小数部を持つリテラルは精度ではなく型の誤りなので、[E0201](#e0201-type-mismatch) を報告する。
+
+**修正**：安全範囲内の値を使うか、その数値を `Text` として持つ。
 
 ## E03xx — ケイパビリティと純粋性
 

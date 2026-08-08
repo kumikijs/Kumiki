@@ -78,6 +78,19 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     }),
   ),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
+  // The payload of `app.error` and of an `error-boundary` tile's `in=`
+  // (docs/spec/lifecycle.md §7.2.3). Filed with the domain types rather than
+  // with lifecycle because a program names it exactly the way it names `Route`.
+  def(
+    "PanicInfo",
+    record({
+      message: prim("Text"),
+      location: prim("Text"),
+      "episode-id": prim("Text"),
+      cause: app("Option", prim("Text")),
+      category: prim("Text"),
+    }),
+  ),
   def("FormValue", {
     kind: "TypeUnion",
     variants: [
@@ -103,3 +116,39 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Result", 2],
   ["Tuple", null],
 ]);
+
+/**
+ * The primitive type names (stdlib §2.1.1). The grammar turns these into
+ * `TypePrim` rather than a name lookup, so they never reach the symbol table —
+ * but a *misspelling* of one does, as an unresolvable `TypeRef`, which is
+ * exactly when a repair needs them as candidates.
+ */
+const PRIM_TYPE_NAMES: readonly string[] = [
+  "Text",
+  "Int",
+  "Float",
+  "Bool",
+  "Unit",
+  "Bytes",
+  "Time",
+  "File",
+  "EffectId",
+];
+
+/**
+ * Every type name a program may write, given its own `type` definitions. The
+ * candidate set `kumiki fix` suggests from for E0117 — a name from another
+ * namespace would be E0117 again at the same position, so only type names
+ * belong here.
+ */
+export function typeCandidates(userTypeNames: Iterable<string>): string[] {
+  // The program's own names come first so an equidistant tie resolves to one
+  // of them: `Filtre` is two edits from both the declared `Filter` and the
+  // built-in `File`, and the declared type is the one the author meant.
+  return [
+    ...userTypeNames,
+    ...STDLIB_TYPES.map((t) => t.name),
+    ...BUILTIN_TYPE_CONSTRUCTORS.keys(),
+    ...PRIM_TYPE_NAMES,
+  ];
+}

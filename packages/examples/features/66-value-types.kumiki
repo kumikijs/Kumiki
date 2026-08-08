@@ -1,0 +1,58 @@
+# Feature: value-level type checking — the shapes the compiler now rejects.
+#
+# Everything below is the *accepted* form of a mistake that used to compile and
+# then misbehave at runtime. Each comment names the diagnostic the wrong form
+# produces (spec/errors.md E0201 / E0213 / E0214 / E0215 / E0216 / E0217).
+
+type Status  = Idle | Loading | Done(Int)
+type Reading = {label: Text, celsius: Int}
+
+# `-> Float`, because `/` is Float even between two Ints (§1.9.4). Declaring
+# `-> Int` here is E0201 — and used to render `69.8` from a whole-number promise.
+fn toFahrenheit(c: Int) -> Float = c * 9 / 5 + 32
+
+# A record literal must name every declared field and no others: a missing one
+# is E0214, an extra one E0215, a mistyped one E0201.
+slot reading : Reading      = {label: "outside", celsius: 21}
+# A union slot takes one of its own tags; `Warming` would be E0216.
+slot status  : Status       = Idle
+# `Option(Int)` takes `None` / `Some(n)`, never a bare `n` (E0201).
+slot lastRun : Option(Int)  = None
+# Every element is checked against the declared element type (E0201 at the element).
+slot samples : List(Int)    = [18, 19, 21]
+# An Int literal past 2^53-1 is E0217: it would be rounded on the way in.
+slot budget  : Int          = 9007199254740991
+
+# `.copy(f=v)` is a patch, so naming a subset is the point — but naming a field
+# the type does not have is E0215, and a wrong replacement type is E0201.
+reducer warmer on=ui.click(WarmBtn)
+    do= reading := reading.copy(celsius=reading.celsius + 1)
+        status  := Done(reading.celsius)
+
+reducer reset on=ui.click(ResetBtn)
+    do= reading := {label: "outside", celsius: 21}
+        status  := Idle
+        lastRun := Some(budget)
+
+# A tile that declares `in=` is applied like a one-parameter function. Calling
+# `Sample` with no argument is E0213 — and used to die at mount with
+# `_d_1 is not defined`.
+tile Sample in=Int = text($1.show + "°C") {color: "muted"}
+
+tile WarmBtn  = button(text="+1°C", onClick=warmer)
+tile ResetBtn = button(text="reset", onClick=reset)
+
+tile App = column(
+             heading(reading.label),
+             text(reading.celsius.show + "°C = " + toFahrenheit(reading.celsius).show + "°F"),
+             text(match status with
+                    | Idle       -> "idle"
+                    | Loading    -> "loading"
+                    | Done(n)    -> "done at " + n.show),
+             row(for s in samples Sample(s)) {gap: "sm"},
+             row(WarmBtn, ResetBtn) {gap: "sm"})
+
+app ValueTypes
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

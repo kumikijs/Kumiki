@@ -53,5 +53,6 @@ Minimal examples, one feature per file. Each file is a self-contained, working K
 | [63-reducer-batch-atomicity](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/63-reducer-batch-atomicity.kumiki) | a refinement rejects the whole reducer batch, and the guard to write instead |
 | [64-init-slot-argument](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |
+| [66-value-types](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/66-value-types.kumiki) | the shapes value-level type checking accepts, and the mistake each one used to hide |
 
 New questions and bugs are answered first by adding a minimal reproduction here.

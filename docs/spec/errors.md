@@ -255,24 +255,52 @@ Code generation lowers an unrecognised callee to a call on a binding of the same
 
 **Fix**: Correct the spelling, or declare the `fn`.
 
+### E0117 `undef-type`
+
+A type name resolves to nothing: it names no `type` definition, no [standard-library type](./stdlib.md#_2-1-built-in-types), and no type parameter of the enclosing `type` definition.
+
+> `Reference to undefined type "<name>"`
+
+An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
+
+Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+
+**Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
 
-An event handler argument / prop must be a reducer name, but was a different kind of value.
+A value does not have the type its position requires.
 
+> `Expected <declared> but got <actual>`
+> `Operator "<op>" expects a number but got <type>`
+> `Operator "<op>" expects Bool but got <type>`
+> `Operator "<op>" cannot compare <type> with <type>`
+> `Condition of "<form>" must be Bool but got <type>`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+
+Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. `nominal` and `where` wrappers are transparent to it (the refinement is a runtime check, see [Forms §5.6](./forms.md#_5-6-validation-strategy)); aliases and generic instantiations are followed.
+
+**The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result depends on its receiver, a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) remain the checks that a name exists at all.
+
+**Fix**: Correct the value, or widen the declared type.
+
 ### E0202 `emit-arg-type-mismatch`
 
-An `emit` targets an effect whose declared input type is `EffectId`, but the argument's statically-inferred type is not `EffectId`. This is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Without this check, codegen would pass through a non-`EffectId` runtime value and the cancel path would silently no-op, indistinguishable from a successful cancel.
+An `emit` argument does not match the effect's declared `in=` type.
 
+> `Expected <in-type> but got <actual>`
 > `emit "<effect>" expects an EffectId argument`
 
-The check is best-effort: it only fires when the `emit` has at least one argument AND the argument's type can be statically inferred. A zero-argument `emit`, or an argument whose type is unresolvable at check time, is left to the runtime.
+The `EffectId` case keeps its own wording because its fix is different in kind. It is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Codegen would pass the non-`EffectId` value through and the cancel path would silently no-op, indistinguishable from a successful cancel.
 
-**Fix**: Pass a slot / binding of type `EffectId` (the value returned by an earlier fire-and-track of the same effect), or — if the effect really should accept a scalar — change its `in=` type in the `effect` declaration. See [EffectId](./stdlib.md#_2-1-1-1-effectid) and [emit](./lifecycle.md).
+Argument *count* is [E0213](#e0213-call-arity-mismatch), not this code.
+
+**Fix**: Pass a value of the declared `in=` type — for `EffectId`, the handle an earlier fire-and-track of the same effect returned — or change the effect's `in=`. See [EffectId](./stdlib.md#_2-1-1-1-effectid) and [emit](./lifecycle.md).
 
 ### E0204 `effect-id-misuse`
 
@@ -399,13 +427,60 @@ The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) 
 
 ### E0213 `call-arity-mismatch`
 
-A call to a declared `fn` passes a different number of arguments than the `fn` declares parameters. Kumiki has no partial application and no default parameters, so any mismatch is an error rather than a narrower type.
+An application passes a different number of arguments than the thing it applies declares. Kumiki has no partial application and no default parameters, so any mismatch is an error rather than a narrower type.
 
-> `Function "<name>" expects <n> argument(s) but got <m>`
+| Applied form | Declares | Message |
+|---|---|---|
+| `f(...)` on a `fn` | its parameter list | `Function "<name>" expects <n> argument(s) but got <m>` |
+| `emit E(...)` | one argument, or none when `in=Unit` | `Effect "<name>" expects <n> argument(s) but got <m>` |
+| `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
+| `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
+
+The tile and effect forms are the ones that used to fail at runtime rather than at check time: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`, and an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch.
 
 Built-in calls are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them.
 
-**Fix**: Pass the declared number of arguments, or change the `fn` signature.
+**Fix**: Pass the declared number of arguments, or change the declaration.
+
+### E0214 `missing-record-field`
+
+A record literal omits a field its declared type requires. Kumiki records have no optional fields — a field that may be absent is `Option(T)` and must still be written.
+
+> `Record literal is missing field "<name>" of type <type>`
+
+One diagnostic is reported per missing field, at the literal.
+
+**Fix**: Supply the field, or change the type.
+
+### E0215 `unknown-record-field`
+
+A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have.
+
+> `Record type has no field "<name>"`
+
+Both lower to a plain object spread, so an undeclared field became a property that nothing ever reads — the value was silently dropped rather than rejected.
+
+**Fix**: Correct the field name, or declare it on the type.
+
+### E0216 `unknown-variant`
+
+A variant constructor names a tag its declared union type does not have — `slot s : Status = Zork` where `type Status = Idle | Busy`.
+
+> `Variant "<name>" is not a member of type "<type>"`
+
+The tag lowers to `{_tag: "Zork"}`, which no `match` arm can match; the UI silently renders nothing and no runtime error is raised. [E0209](#e0209-pat-unknown-variant) is the same mistake on the pattern side.
+
+**Fix**: Use one of the declared tags, or add the tag to the union.
+
+### E0217 `int-literal-precision`
+
+An `Int` position is given a literal outside the range JavaScript represents exactly (`Number.MAX_SAFE_INTEGER`, 9007199254740991). The literal is rounded on the way into the AST, so the program would run with a value that is not the one written.
+
+> `Int literal <value> is not exactly representable and was rounded to <value>`
+
+A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — that is a type mistake, not a precision one.
+
+**Fix**: Use a value inside the safe range, or carry the number as `Text`.
 
 ## E03xx — Capabilities and Purity
 

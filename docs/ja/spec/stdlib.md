@@ -54,6 +54,7 @@ let id = emit fetchQuote()
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Text, cause: Option(Text), category: Text}` — `app.error` および `error-boundary` tile の `in=` に渡る値 |
 
 ---
 

@@ -1,3 +1,14 @@
+import {
+  assignable,
+  constructorArity,
+  isOpaque,
+  paramSubstitution,
+  recordFieldType,
+  substituteType,
+  typeToString,
+  unaliasType,
+  unknownType,
+} from "./assignable.ts";
 import type {
   AppDef,
   EffectDef,
@@ -16,17 +27,6 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import {
-  assignable,
-  constructorArity,
-  isOpaque,
-  paramSubstitution,
-  recordFieldType,
-  substituteType,
-  typeToString,
-  unaliasType,
-  unknownType,
-} from "./assignable.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
@@ -182,7 +182,9 @@ function checkAll(
 ): KumikiError[] {
   const errors: KumikiError[] = [];
   const sym: SymbolTable = {
-    types: new Map(),
+    // Seeded before the program's own definitions, so `type Route = …` in a
+    // program shadows the standard-library one rather than colliding with it.
+    types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
     tiles: new Map(),
@@ -235,6 +237,7 @@ function checkAll(
   }
 
   for (const def of program.defs) {
+    if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
     if (def.kind === "SlotDef") checkSlot(def, sym, errors);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);
@@ -393,12 +396,15 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void
     });
   }
   resolveType(slot.type, sym, errors);
-  checkExpr(slot.init, sym, errors, { kind: "slot-init", localBinds: new Set() });
+  const ctx: Ctx = { kind: "slot-init", localBinds: new Set() };
+  checkExpr(slot.init, sym, errors, ctx);
+  checkAgainst(slot.init, slot.type, sym, errors, ctx);
 }
 
 function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = { kind: "tile", localBinds: new Set(), localTypes: new Map() };
   if (tile.in) {
+    resolveType(tile.in, sym, errors);
     ctx.localBinds.add("$1");
     ctx.localTypes?.set("$1", tile.in);
   }
@@ -632,13 +638,59 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
   }
 }
 
+/** The `TileExpr` node kinds, for telling a tile child from a value argument. */
+const TILE_EXPR_KINDS: ReadonlySet<string> = new Set([
+  "TileCall",
+  "TileFor",
+  "TileWhen",
+  "TileIf",
+  "TileMatch",
+]);
+
+/**
+ * A user tile is applied like a one-parameter function: `tile Row in=Int` is
+ * called `Row(id)`, and a tile with no `in=` takes nothing. `$1` is bound from
+ * that argument, so a call with the wrong count leaves `$1` undefined and the
+ * mount dies with `_d_1 is not defined` — no diagnostic anywhere before this.
+ *
+ * Props (`{key: …}`) are not arguments and named args belong to the built-in
+ * tiles, so only positional args count.
+ */
+function checkTileInput(
+  t: TileExpr & { kind: "TileCall" },
+  def: TileDef,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const positional = t.args.filter((a) => a.name === undefined);
+  const wants = def.in ? 1 : 0;
+  if (positional.length !== wants) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Tile "${t.name}" expects ${wants} argument(s) but got ${positional.length}`,
+      pos: t.pos,
+    });
+    return;
+  }
+  const arg = positional[0];
+  if (!def.in || !arg) return;
+  // A tile passed as a child is a TileExpr, not a value; the caller's walk
+  // checks those as tiles.
+  const value = arg.value;
+  if (TILE_EXPR_KINDS.has((value as TileExpr).kind)) return;
+  checkAgainst(value as Expr, def.in, sym, errors, ctx);
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  if (!BUILTIN_TILES.has(t.name) && !sym.tiles.has(t.name)) {
+  const userTile = sym.tiles.get(t.name);
+  if (!BUILTIN_TILES.has(t.name) && !userTile) {
     errors.push({
       code: "E0105",
       kind: "undef-tile",
@@ -646,6 +698,7 @@ function checkTileCall(
       pos: t.pos,
     });
   }
+  if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, errors);
   checkIconName(t, sym, errors);
   if (t.name === "input") {
@@ -1039,6 +1092,7 @@ function checkStmt(
   }
   if (s.kind === "IfStmt") {
     checkExpr(s.cond, sym, errors, ctx);
+    checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
     // then/else are exclusive — each branch starts from the parent write set.
     // A slot written in only one branch (or both) counts as "written" for the
     // parent, so subsequent code can't re-write it.
@@ -1151,6 +1205,7 @@ function checkStmt(
   writtenRoots.add(shape);
   checkLvalue(s.lvalue, sym, errors, ctx);
   checkExpr(s.rhs, sym, errors, ctx);
+  checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
 function lvalueShape(lv: Lvalue): string {
@@ -1187,11 +1242,13 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
  */
 function checkCallee(
   callee: string,
-  argCount: number,
+  args: Expr[],
   pos: Pos,
   sym: SymbolTable,
   errors: KumikiError[],
+  ctx: Ctx,
 ): void {
+  const argCount = args.length;
   const fn = sym.fns.get(callee);
   // A declared `fn` wins over the unimplemented list. Codegen has no lowering
   // for `trace`, so it takes the user-fn fallback and a program that declares
@@ -1223,7 +1280,12 @@ function checkCallee(
       message: `Function "${callee}" expects ${fn.params.length} argument(s) but got ${argCount}`,
       pos,
     });
+    return;
   }
+  fn.params.forEach((p, i) => {
+    const arg = args[i];
+    if (arg) checkAgainst(arg, p.type, sym, errors, ctx);
+  });
 }
 
 function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
@@ -1278,10 +1340,12 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // `>=`), which is what we flag here.
       const isEffectId = (t: TypeExpr | null): boolean =>
         !!t && t.kind === "TypePrim" && t.name === "EffectId";
+      let effectIdMisuse = false;
       if (e.op !== "==" && e.op !== "!=") {
         const lt = inferType(e.lhs, sym, ctx);
         const rt = inferType(e.rhs, sym, ctx);
         if (isEffectId(lt) || isEffectId(rt)) {
+          effectIdMisuse = true;
           errors.push({
             code: "E0204",
             kind: "effect-id-misuse",
@@ -1292,11 +1356,25 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       checkExpr(e.lhs, sym, errors, ctx);
       checkExpr(e.rhs, sym, errors, ctx);
+      // E0204 already named the operand; the operand-family check would only
+      // repeat it in different words.
+      if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
       return;
     }
-    case "UnaryOp":
+    case "UnaryOp": {
       checkExpr(e.rhs, sym, errors, ctx);
+      const rt = inferType(e.rhs, sym, ctx);
+      if (e.op === "!") checkCondition(e.rhs, rt, sym, errors, '"!"');
+      else if (isKnown(rt, sym) && !isNumeric(rt, sym)) {
+        errors.push({
+          code: "E0201",
+          kind: "type-mismatch",
+          message: `Operator "-" expects a number but got ${typeToString(rt as TypeExpr)}`,
+          pos: e.rhs.pos,
+        });
+      }
       return;
+    }
     case "FieldAccess":
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
@@ -1307,7 +1385,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "Call":
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
-      checkCallee(e.callee, e.args.length, e.pos, sym, errors);
+      checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
     case "MethodCall":
       if (!KNOWN_METHODS.has(e.method)) {
@@ -1319,6 +1397,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
       }
       checkExpr(e.receiver, sym, errors, ctx);
+      if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
       for (const a of e.args) {
         // Inside method call args, $1/$2 are implicit lambdas
         const inner: Ctx = {
@@ -1374,6 +1453,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     }
     case "IfExpr":
       checkExpr(e.cond, sym, errors, ctx);
+      checkCondition(e.cond, inferType(e.cond, sym, ctx), sym, errors, '"if"');
       checkExpr(e.consequent, sym, errors, ctx);
       checkExpr(e.alternate, sym, errors, ctx);
       return;
@@ -1421,6 +1501,369 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
   }
 }
 
+const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
+const BOOLEAN_OPS: ReadonlySet<string> = new Set(["&", "|"]);
+const EQUALITY_OPS: ReadonlySet<string> = new Set(["==", "!="]);
+
+/**
+ * The set an ordering comparison is defined within. Two operands compare only
+ * when they land in the same one — `Int < Text` has no answer the runtime could
+ * give that is not an accident of JavaScript's coercion rules.
+ */
+function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
+  if (isNumeric(t, sym)) return "number";
+  if (isPrimNamed(t, sym, "Text")) return "text";
+  if (isPrimNamed(t, sym, "Time")) return "time";
+  return null;
+}
+
+function binOpResult(e: Expr & { kind: "BinOp" }, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
+  if (COMPARISON_OPS.has(e.op) || BOOLEAN_OPS.has(e.op) || EQUALITY_OPS.has(e.op))
+    return prim("Bool", e.pos);
+  const lt = inferType(e.lhs, sym, ctx);
+  const rt = inferType(e.rhs, sym, ctx);
+  if (e.op === "+") {
+    // `+` is the one overloaded operator: `Text` on either side concatenates
+    // and stringifies the other. An operand we cannot type might be that
+    // `Text`, so a sum with one is undecidable rather than numeric.
+    if (isPrimNamed(lt, sym, "Text") || isPrimNamed(rt, sym, "Text")) return prim("Text", e.pos);
+    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return null;
+  }
+  return arithmeticResult(e.op, lt, rt, sym, e.pos);
+}
+
+function checkBinOpOperands(
+  e: Expr & { kind: "BinOp" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const lt = inferType(e.lhs, sym, ctx);
+  const rt = inferType(e.rhs, sym, ctx);
+  const sides = [
+    [lt, e.lhs],
+    [rt, e.rhs],
+  ] as const;
+
+  const requireNumeric = (): void => {
+    for (const [t, side] of sides) {
+      if (isKnown(t, sym) && !isNumeric(t, sym)) {
+        errors.push({
+          code: "E0201",
+          kind: "type-mismatch",
+          message: `Operator "${e.op}" expects a number but got ${typeToString(t as TypeExpr)}`,
+          pos: side.pos,
+        });
+      }
+    }
+  };
+
+  if (e.op === "+") {
+    if (isPrimNamed(lt, sym, "Text") || isPrimNamed(rt, sym, "Text")) return;
+    // Neither side is known to be `Text`, but an unknown one could be — only a
+    // sum whose operands are both resolved can be judged.
+    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return;
+    requireNumeric();
+    return;
+  }
+  if (e.op === "-" || e.op === "*" || e.op === "/" || e.op === "%") {
+    requireNumeric();
+    return;
+  }
+  if (BOOLEAN_OPS.has(e.op)) {
+    for (const [t, side] of sides) {
+      if (isKnown(t, sym) && !isPrimNamed(t, sym, "Bool")) {
+        errors.push({
+          code: "E0201",
+          kind: "type-mismatch",
+          message: `Operator "${e.op}" expects Bool but got ${typeToString(t as TypeExpr)}`,
+          pos: side.pos,
+        });
+      }
+    }
+    return;
+  }
+  if (COMPARISON_OPS.has(e.op)) {
+    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return;
+    const lf = orderingFamily(lt, sym);
+    if (lf !== null && lf === orderingFamily(rt, sym)) return;
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}`,
+      pos: e.pos,
+    });
+  }
+  // `==` / `!=` are defined on every type, including across an Option and its
+  // None, so there is nothing here to reject.
+}
+
+/** A condition — `if`, `when`, `!` — must be a `Bool` when its type is known. */
+function checkCondition(
+  e: Expr,
+  t: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  site: string,
+): void {
+  if (!isKnown(t, sym) || isPrimNamed(t, sym, "Bool")) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `Condition of ${site} must be Bool but got ${typeToString(t as TypeExpr)}`,
+    pos: e.pos,
+  });
+}
+
+/**
+ * Check `e` against the type the site declares, reporting at the innermost
+ * expression that is wrong.
+ *
+ * The literal forms are matched against the declared shape directly rather than
+ * inferred and compared, because that is the only way a diagnostic can point at
+ * the offending element: `[1, "a"]` against `List(Int)` names `"a"`, and a
+ * record literal names the field. Everything else falls back to `inferType` +
+ * `assignable`, which stay silent whenever either side is undecidable.
+ *
+ * `code` exists because `emit` reports its argument under its own code
+ * (E0202) — the diagnostic that already told authors to look at the effect's
+ * `in=` type.
+ */
+function checkAgainst(
+  e: Expr,
+  declared: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: "E0201" | "E0202" = "E0201",
+): void {
+  if (declared === null) return;
+  const d = unaliasType(declared, sym);
+  if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
+
+  const mismatch = (at: Expr, actual: TypeExpr): void => {
+    errors.push(
+      code === "E0202"
+        ? {
+            code: "E0202",
+            kind: "emit-arg-type-mismatch",
+            message: `Expected ${typeToString(declared)} but got ${typeToString(actual)}`,
+            pos: at.pos,
+          }
+        : {
+            code: "E0201",
+            kind: "type-mismatch",
+            message: `Expected ${typeToString(declared)} but got ${typeToString(actual)}`,
+            pos: at.pos,
+          },
+    );
+  };
+
+  if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
+    for (const item of e.items) checkAgainst(item, d.args[0] ?? null, sym, errors, ctx, code);
+    return;
+  }
+  if (d.kind === "TypeApp" && e.kind === "MapLit") {
+    // `{}` and `{a, b}` build a Set through the same literal form; the parser
+    // marks a set's values `Unit`.
+    if (d.name === "Set") {
+      for (const ent of e.entries) checkAgainst(ent.key, d.args[0] ?? null, sym, errors, ctx, code);
+      return;
+    }
+    if (d.name === "Map") {
+      for (const ent of e.entries) {
+        checkAgainst(ent.key, d.args[0] ?? null, sym, errors, ctx, code);
+        if (ent.value.kind !== "Unit")
+          checkAgainst(ent.value, d.args[1] ?? null, sym, errors, ctx, code);
+      }
+      return;
+    }
+  }
+  if (d.kind === "TypeRecord" && e.kind === "RecordLit") {
+    checkRecordLit(e, d, sym, errors, ctx, code);
+    return;
+  }
+  if (e.kind === "Variant") {
+    checkVariantAgainst(e, d, declared, sym, errors, ctx, code);
+    return;
+  }
+  if (e.kind === "IfExpr") {
+    // Both branches land in this position, and reporting at the branch beats
+    // reporting at the `if`.
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    return;
+  }
+  if (
+    e.kind === "Num" &&
+    d.kind === "TypePrim" &&
+    d.name === "Int" &&
+    Number.isInteger(e.value) &&
+    !Number.isSafeInteger(e.value)
+  ) {
+    errors.push({
+      code: "E0217",
+      kind: "int-literal-precision",
+      message: `Int literal ${e.value} is not exactly representable and was rounded to ${e.value}`,
+      pos: e.pos,
+    });
+    return;
+  }
+
+  const actual = inferType(e, sym, ctx);
+  if (actual === null || !isKnown(actual, sym)) return;
+  if (!assignable(actual, declared, sym)) mismatch(e, actual);
+}
+
+/**
+ * `r.copy(f=v)` names fields of `r`'s type and replaces them. Unlike a record
+ * literal it is a *patch*, so naming only some fields is the point and a
+ * missing one is never an error — but naming one the type does not have is,
+ * and so is a replacement value of the wrong type. Both used to lower to a
+ * spread that silently added a property nothing reads.
+ */
+function checkRecordUpdate(
+  e: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const patch = e.args[0];
+  if (patch?.kind !== "RecordLit") return;
+  const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
+  if (recv?.kind !== "TypeRecord") return;
+  for (const f of patch.fields) {
+    const want = recordFieldType(recv, f.name);
+    if (want === null) {
+      errors.push({
+        code: "E0215",
+        kind: "unknown-record-field",
+        message: `Record type has no field "${f.name}"`,
+        pos: f.value.pos,
+      });
+      continue;
+    }
+    checkAgainst(f.value, want, sym, errors, ctx);
+  }
+}
+
+function checkRecordLit(
+  e: Expr & { kind: "RecordLit" },
+  d: TypeExpr & { kind: "TypeRecord" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: "E0201" | "E0202",
+): void {
+  const given = new Set(e.fields.map((f) => f.name));
+  for (const declaredField of d.fields) {
+    if (given.has(declaredField.name)) continue;
+    errors.push({
+      code: "E0214",
+      kind: "missing-record-field",
+      message: `Record literal is missing field "${declaredField.name}" of type ${typeToString(declaredField.type)}`,
+      pos: e.pos,
+    });
+  }
+  for (const f of e.fields) {
+    const want = recordFieldType(d, f.name);
+    if (want === null) {
+      errors.push({
+        code: "E0215",
+        kind: "unknown-record-field",
+        message: `Record type has no field "${f.name}"`,
+        pos: f.value.pos,
+      });
+      continue;
+    }
+    checkAgainst(f.value, want, sym, errors, ctx, code);
+  }
+}
+
+/**
+ * A variant constructor is the one expression whose type comes entirely from
+ * the position it sits in: `Idle` names a tag, and only the declared type says
+ * which union that tag belongs to.
+ */
+function checkVariantAgainst(
+  e: Expr & { kind: "Variant" },
+  d: TypeExpr,
+  declared: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: "E0201" | "E0202",
+): void {
+  const payloadsOf = (): TypeExpr[] | "unknown-tag" | null => {
+    if (d.kind === "TypeUnion") {
+      const v = d.variants.find((variant) => variant.name === e.name);
+      return v ? v.payloads : "unknown-tag";
+    }
+    if (d.kind === "TypeApp" && d.name === "Option") {
+      if (e.name === "None") return [];
+      if (e.name === "Some") return [d.args[0] ?? unknownType(e.pos)];
+      return "unknown-tag";
+    }
+    if (d.kind === "TypeApp" && d.name === "Result") {
+      if (e.name === "Ok") return [d.args[0] ?? unknownType(e.pos)];
+      if (e.name === "Err") return [d.args[1] ?? unknownType(e.pos)];
+      return "unknown-tag";
+    }
+    return null;
+  };
+
+  const payloads = payloadsOf();
+  if (payloads === null) {
+    // The declared type is not a union at all — `slot n : Int = Idle`.
+    errors.push({
+      code: code === "E0202" ? "E0202" : "E0201",
+      kind: code === "E0202" ? "emit-arg-type-mismatch" : "type-mismatch",
+      message: `Expected ${typeToString(declared)} but got variant "${e.name}"`,
+      pos: e.pos,
+    });
+    return;
+  }
+  if (payloads === "unknown-tag") {
+    errors.push({
+      code: "E0216",
+      kind: "unknown-variant",
+      message: `Variant "${e.name}" is not a member of type "${typeToString(declared)}"`,
+      pos: e.pos,
+    });
+    return;
+  }
+  if (payloads.length !== e.payload.length) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Variant "${e.name}" carries ${payloads.length} payload(s) but got ${e.payload.length}`,
+      pos: e.pos,
+    });
+    return;
+  }
+  e.payload.forEach((p, i) => {
+    checkAgainst(p, payloads[i] ?? null, sym, errors, ctx, code);
+  });
+}
+
+/**
+ * The declared type of an assignment target, walking `.field` and `[k]` through
+ * the slot's type. `null` wherever the path leaves what the type system knows.
+ */
+function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
+  if (lv.kind === "LSlot") return sym.slots.get(lv.name)?.type ?? null;
+  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  if (!base) return null;
+  if (lv.kind === "LField") {
+    return base.kind === "TypeRecord" ? recordFieldType(base, lv.field) : null;
+  }
+  if (base.kind === "TypeApp") {
+    if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
+    if (base.name === "Map") return base.args[1] ?? null;
+  }
+  return null;
+}
+
 /**
  * Common emit-call validation shared by `Statement.Emit` (line ~655) and the
  * `Expr.EmitExpr` form used in `let id = emit X(...)`. Checks the effect is
@@ -1462,15 +1905,28 @@ function checkEmitTarget(
       pos,
     });
   }
-  if (eff && args.length > 0) {
-    const declared = eff.inType;
-    const actual = inferType(args[0] as Expr, sym, ctx);
-    if (
-      declared.kind === "TypePrim" &&
-      declared.name === "EffectId" &&
-      actual &&
-      !(actual.kind === "TypePrim" && actual.name === "EffectId")
-    ) {
+  if (!eff) return;
+  // `in=Unit` is the "no input" declaration, so the effect takes no argument;
+  // every other `in=` takes exactly one. Codegen destructures the argument, so
+  // a missing one is `Cannot destructure property 'key' of 'input'` at the
+  // first dispatch rather than a diagnostic.
+  const wants = isPrimNamed(eff.inType, sym, "Unit") ? 0 : 1;
+  if (args.length !== wants) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Effect "${effect}" expects ${wants} argument(s) but got ${args.length}`,
+      pos,
+    });
+    return;
+  }
+  const arg = args[0];
+  if (!arg) return;
+  // The EffectId case keeps its own wording: the fix is never "convert the
+  // value" but "pass the handle an earlier emit returned".
+  if (isPrimNamed(eff.inType, sym, "EffectId")) {
+    const actual = inferType(arg, sym, ctx);
+    if (actual && !isPrimNamed(actual, sym, "EffectId")) {
       errors.push({
         code: "E0202",
         kind: "emit-arg-type-mismatch",
@@ -1478,7 +1934,9 @@ function checkEmitTarget(
         pos,
       });
     }
+    return;
   }
+  checkAgainst(arg, eff.inType, sym, errors, ctx, "E0202");
 }
 
 // Closed set of theme token namespaces (spec/style.md §4.2). The token name
@@ -1522,13 +1980,84 @@ function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | nu
   return { kind: "TypePrim", name, pos };
 }
 
-const unitType = (pos: Pos): TypeExpr => ({ kind: "TypePrim", name: "Unit", pos });
+const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
+const container = (name: string, args: TypeExpr[], pos: Pos): TypeExpr => ({
+  kind: "TypeApp",
+  name,
+  args,
+  pos,
+});
+
+type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
+
+/** True when `t` is a number — the operand family arithmetic is defined on. */
+function isNumeric(t: TypeExpr | null, sym: SymbolTable): boolean {
+  const u = unaliasType(t, sym);
+  return u?.kind === "TypePrim" && (u.name === "Int" || u.name === "Float");
+}
+
+/** True when `t` resolved to a concrete shape, so a mismatch against it is real. */
+function isKnown(t: TypeExpr | null, sym: SymbolTable): boolean {
+  return t !== null && !isOpaque(t, sym);
+}
+
+function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName): boolean {
+  const u = unaliasType(t, sym);
+  return u?.kind === "TypePrim" && u.name === name;
+}
+
+/**
+ * Result types of the methods whose answer is fixed regardless of the receiver
+ * (docs/spec/stdlib.md §2.2). Deliberately short: a method whose result depends
+ * on the receiver's type argument (`.head`, `.map`, `.filter`) stays undecidable
+ * rather than being guessed, because a wrong answer here becomes a wrong
+ * diagnostic on a working program.
+ */
+const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
+  ["show", "Text"],
+  ["to-int", "Int"],
+  ["to-float", "Float"],
+]);
+
+/**
+ * Result types of the built-in calls that have one. `panic` never returns and
+ * `Decoder.*` produce an opaque sentinel, so both stay undecidable.
+ */
+const CALL_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
+  ["now", "Time"],
+  ["fmt", "Text"],
+  ["file-url", "Text"],
+  ["prefers-dark", "Bool"],
+  ["EffectId.none", "EffectId"],
+]);
+
+/**
+ * The type an arithmetic expression produces. `/` is the exception: it is
+ * JavaScript's `/` at runtime, so `5 / 2` is `2.5` and the type has to say so
+ * (docs/spec/language.md §1.9.4). Anything else is `Float` when either operand
+ * is, and `Int` otherwise — including when an operand was rejected above, so a
+ * bad operand costs one diagnostic instead of cascading into the surrounding
+ * expression.
+ */
+function arithmeticResult(
+  op: string,
+  lt: TypeExpr | null,
+  rt: TypeExpr | null,
+  sym: SymbolTable,
+  pos: Pos,
+): TypeExpr {
+  if (op === "/") return prim("Float", pos);
+  const float = isPrimNamed(lt, sym, "Float") || isPrimNamed(rt, sym, "Float");
+  return prim(float ? "Float" : "Int", pos);
+}
 
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
     case "Num":
-      return { kind: "TypePrim", name: "Int", pos: e.pos }; // Int/Float not split here
+      // The lexer has no exponent form, so an integral value came from integral
+      // digits. `1.0` reads as `Int`, which costs nothing: Int widens to Float.
+      return prim(Number.isInteger(e.value) ? "Int" : "Float", e.pos);
     case "Str":
       return { kind: "TypePrim", name: "Text", pos: e.pos };
     case "Bool":
@@ -1553,7 +2082,11 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         (base.name === "Option" || base.name === "Result")
       )
         return base.args[0] ?? null;
-      return null;
+      // Paren-less method shortcut (`n.show`, `f.to-int`) — same table as the
+      // called form, reached here because the parser produces a FieldAccess
+      // for a member with no argument list.
+      const fixed = METHOD_RESULT.get(e.field);
+      return fixed ? prim(fixed, e.pos) : null;
     }
     case "Index": {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
@@ -1571,48 +2104,111 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
         if (recv?.kind === "TypeApp") {
           if (recv.name === "Map")
-            return recv.args[1]
-              ? { kind: "TypeApp", name: "Option", args: [recv.args[1]], pos: e.pos }
-              : null;
+            return recv.args[1] ? container("Option", [recv.args[1]], e.pos) : null;
           if (recv.name === "Option" || recv.name === "Result") return recv.args[0] ?? null;
         }
       }
-      return null;
+      // `r.copy(f=v)` is record update — same type in, same type out.
+      if (e.method === "copy") return inferType(e.receiver, sym, ctx);
+      const fixed = METHOD_RESULT.get(e.method);
+      return fixed ? prim(fixed, e.pos) : null;
     }
     case "RecordLit":
       return {
         kind: "TypeRecord",
         fields: e.fields.map((f) => ({
           name: f.name,
-          type: inferType(f.value, sym, ctx) ?? unitType(f.value.pos),
+          // A field whose value cannot be typed must stay unknown, not become
+          // `Unit`: `Unit` is a real type and would be compared as one, so an
+          // undecidable field would read as a mismatch against every declared
+          // field type.
+          type: inferType(f.value, sym, ctx) ?? unknownType(f.value.pos),
         })),
         pos: e.pos,
       };
+    case "ListLit": {
+      // Only a literal whose items all agree yields an element type; a mixed
+      // literal is wrong wherever it lands, and the site that has a declared
+      // type reports it precisely (`checkAgainst` walks the items).
+      const elem = commonType(
+        e.items.map((it) => inferType(it, sym, ctx)),
+        sym,
+      );
+      return container("List", [elem ?? unknownType(e.pos)], e.pos);
+    }
+    case "MapLit": {
+      // The same literal syntax builds a Set (`{}` / `{a, b}`), where the
+      // parser leaves the values as `Unit`. Inferring `Map(K, Unit)` for one
+      // would make it a mismatch against `Set(K)`, so a unit-valued literal
+      // stays undecidable and the declared type decides.
+      if (e.entries.some((ent) => ent.value.kind === "Unit")) return null;
+      const k = commonType(
+        e.entries.map((ent) => inferType(ent.key, sym, ctx)),
+        sym,
+      );
+      const v = commonType(
+        e.entries.map((ent) => inferType(ent.value, sym, ctx)),
+        sym,
+      );
+      return container("Map", [k ?? unknownType(e.pos), v ?? unknownType(e.pos)], e.pos);
+    }
     case "Variant": {
       const inner = e.payload[0]
-        ? (inferType(e.payload[0], sym, ctx) ?? unitType(e.pos))
-        : unitType(e.pos);
-      if (e.name === "Some" || e.name === "None")
-        return { kind: "TypeApp", name: "Option", args: [inner], pos: e.pos };
-      if (e.name === "Ok") return { kind: "TypeApp", name: "Result", args: [inner], pos: e.pos };
-      // Err carries E, not T — can't infer the success type, so stay dynamic.
+        ? (inferType(e.payload[0], sym, ctx) ?? unknownType(e.pos))
+        : unknownType(e.pos);
+      if (e.name === "Some") return container("Option", [inner], e.pos);
+      // `None` says nothing about the element type — `Option(Unit)` would make
+      // it a mismatch against every `Option(T)` there is.
+      if (e.name === "None") return container("Option", [unknownType(e.pos)], e.pos);
+      if (e.name === "Ok") return container("Result", [inner, unknownType(e.pos)], e.pos);
+      if (e.name === "Err") return container("Result", [unknownType(e.pos), inner], e.pos);
+      // A user union's tag names its type only via the declared side, which
+      // `checkAgainst` has; from the expression alone it is undecidable.
       return null;
+    }
+    case "BinOp":
+      return binOpResult(e, sym, ctx);
+    case "UnaryOp": {
+      if (e.op === "!") return prim("Bool", e.pos);
+      const rt = inferType(e.rhs, sym, ctx);
+      return isNumeric(rt, sym) ? rt : null;
+    }
+    case "IfExpr": {
+      return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
     }
     case "EmitExpr":
       // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
       // yields the dispatched effect's EffectId.
-      return { kind: "TypePrim", name: "EffectId", pos: e.pos };
-    case "Call":
-      // `EffectId.none` is the empty-handle sentinel for slot init / cancel
-      // no-op. Treated as a builtin call so it sits beside `Duration.ms` /
-      // `Decoder.Json` (same shape — uppercase qualifier + dot + member).
-      if (e.callee === "EffectId.none") {
-        return { kind: "TypePrim", name: "EffectId", pos: e.pos };
-      }
-      return null;
+      return prim("EffectId", e.pos);
+    case "Call": {
+      const fixed = CALL_RESULT.get(e.callee);
+      if (fixed) return prim(fixed, e.pos);
+      // `Duration.ms(500)` and friends build the standard library's `Duration`;
+      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10).
+      const qualifier = e.callee.includes(".") ? e.callee.slice(0, e.callee.indexOf(".")) : null;
+      if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
+      if (qualifier === "Bytes") return prim("Bytes", e.pos);
+      return sym.fns.get(e.callee)?.ret ?? null;
+    }
     default:
       return null;
   }
+}
+
+/**
+ * The single type a set of inferred types all agree on, or `null` when they do
+ * not — including when any of them is undecidable. Used where a form has
+ * several sources for one type (list items, `if` branches) and guessing one of
+ * them would be worse than saying nothing.
+ */
+function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | null {
+  const first = types[0];
+  if (types.length === 0 || !first) return null;
+  for (const t of types.slice(1)) {
+    if (!t) return null;
+    if (!assignable(t, first, sym) || !assignable(first, t, sym)) return null;
+  }
+  return first;
 }
 
 /**
@@ -1685,7 +2281,10 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
   // also bind $1, $2 used in expression-fragment style
   ctx.localBinds.add("$1");
   ctx.localBinds.add("$2");
+  for (const p of fn.params) resolveType(p.type, sym, errors);
+  if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
+  checkAgainst(fn.body, fn.ret ?? null, sym, errors, ctx);
 }
 
 function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -2224,40 +2823,75 @@ function checkApp(
   }
 }
 
-function resolveType(t: TypeExpr, sym: SymbolTable, errors: KumikiError[]): void {
+/**
+ * Walk a type written in the program and report the names in it that resolve to
+ * nothing.
+ *
+ * `typeParams` is what makes this possible without false positives: the body of
+ * `type Box(T) = {v: T}` may name `T`, and nothing else may. Every other
+ * declaration site — `slot`, `fn`, `effect`, `tile in=` — has no type
+ * parameters, so it passes an empty scope and every unresolved name there is a
+ * real one. Before this, the unknown-name case returned unconditionally with a
+ * comment saying parameter scopes were not tracked, which meant `NoSuchType`
+ * was accepted everywhere.
+ */
+function resolveType(
+  t: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  typeParams: ReadonlySet<string> = EMPTY_SCOPE,
+): void {
   switch (t.kind) {
     case "TypePrim":
       return;
     case "TypeRef":
-      if (!sym.types.has(t.name)) {
-        // Could be an in-scope type param of an enclosing TypeDef; we don't track those yet.
-        return;
-      }
-      return;
-    case "TypeApp": {
-      const def = sym.types.get(t.name);
-      if (def && def.params.length !== t.args.length) {
+      if (!sym.types.has(t.name) && !typeParams.has(t.name)) {
         errors.push({
-          code: "E0210",
-          kind: "type-arity-mismatch",
-          message: `Type "${t.name}" expects ${def.params.length} type argument(s) but got ${t.args.length}`,
+          code: "E0117",
+          kind: "undef-type",
+          message: `Reference to undefined type "${t.name}"`,
           pos: t.pos,
         });
       }
-      for (const a of t.args) resolveType(a, sym, errors);
+      return;
+    case "TypeApp": {
+      const arity = constructorArity(t.name, sym);
+      if (arity === null && !BUILTIN_TYPE_CONSTRUCTORS.has(t.name) && !typeParams.has(t.name)) {
+        errors.push({
+          code: "E0117",
+          kind: "undef-type",
+          message: `Reference to undefined type "${t.name}"`,
+          pos: t.pos,
+        });
+      } else if (arity !== null && arity !== t.args.length) {
+        errors.push({
+          code: "E0210",
+          kind: "type-arity-mismatch",
+          message: `Type "${t.name}" expects ${arity} type argument(s) but got ${t.args.length}`,
+          pos: t.pos,
+        });
+      }
+      for (const a of t.args) resolveType(a, sym, errors, typeParams);
       return;
     }
     case "TypeRecord":
-      for (const f of t.fields) resolveType(f.type, sym, errors);
+      for (const f of t.fields) resolveType(f.type, sym, errors, typeParams);
       return;
     case "TypeUnion":
-      for (const v of t.variants) for (const p of v.payloads) resolveType(p, sym, errors);
+      for (const v of t.variants)
+        for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
-      resolveType(t.inner, sym, errors);
+      resolveType(t.inner, sym, errors, typeParams);
       return;
     case "TypeRefinement":
-      resolveType(t.inner, sym, errors);
+      resolveType(t.inner, sym, errors, typeParams);
       return;
   }
+}
+
+const EMPTY_SCOPE: ReadonlySet<string> = new Set();
+
+function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
+  resolveType(def.body, sym, errors, new Set(def.params));
 }

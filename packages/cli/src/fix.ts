@@ -14,6 +14,7 @@ import {
   collectTimerNames,
   lex,
   parse,
+  typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
@@ -343,6 +344,62 @@ export function planFixesExplained(
         // match. Kumiki identifiers are kebab-case and `\b` matches at a `-`,
         // so `re-laod(laod(n))` has the first match inside `re-laod` — the
         // patch would rewrite a name that was never the one reported.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0117") {
+      // Message shape: `Reference to undefined type "<name>"`. The candidate
+      // set is the type namespace — the program's own `type` definitions plus
+      // the primitives, the standard library's domain types, and the generic
+      // constructors. A slot or fn name would be E0117 again at the same
+      // position, so the same namespace argument as E0116 applies.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0117-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const userTypes = listDefs(store)
+        .filter((e) => e.layer === "type")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(typeCandidates(userTypes), missing);
+      if (!suggested) {
+        skip(err.code, "e0117-no-close-type", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        // Column splice for the same reason as E0116: a type name may sit
+        // inside a longer one on the same line (`Map(Text, Txt)`), and `\b`
+        // would find the wrong occurrence.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0216") {
+      // Message shape: `Variant "<tag>" is not a member of type "<T>"` — the
+      // constructor-side twin of E0209, and resolved the same way.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length < 2) {
+        skip(err.code, "e0216-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const tags = variantTagsOf(quoted[1]!, store.program);
+      if (!tags || tags.length === 0) {
+        skip(err.code, "e0216-unresolved-variant-type", err.message);
+        continue;
+      }
+      const suggested = suggestNameFrom(tags, missing);
+      if (!suggested) {
+        skip(err.code, "e0216-no-close-tag", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
         apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
       });
     }

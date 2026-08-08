@@ -27,9 +27,7 @@ const PRIM_TS: Record<string, string> = {
 // the one table the checker also reads. A private list here had five of the
 // nine, so `HttpError` and `Route` — the two a capability provider is most
 // likely to carry — generated `unknown`.
-const STDLIB_BY_NAME: ReadonlyMap<string, TypeDef> = new Map(
-  STDLIB_TYPES.map((t) => [t.name, t]),
-);
+const STDLIB_BY_NAME: ReadonlyMap<string, TypeDef> = new Map(STDLIB_TYPES.map((t) => [t.name, t]));
 
 type Ctx = { userTypes: Set<string>; expanding: Set<string> };
 
