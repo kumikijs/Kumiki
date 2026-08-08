@@ -1180,7 +1180,12 @@ function checkCallee(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  if (UNIMPLEMENTED_CALLS.has(callee)) {
+  const fn = sym.fns.get(callee);
+  // A declared `fn` wins over the unimplemented list. Codegen has no lowering
+  // for `trace`, so it takes the user-fn fallback and a program that declares
+  // `fn trace` works — reporting E0802 for it would reject a running program
+  // and tell its author their own function is unimplemented.
+  if (!fn && UNIMPLEMENTED_CALLS.has(callee)) {
     errors.push({
       code: "E0802",
       kind: "unimplemented-function",
@@ -1190,7 +1195,6 @@ function checkCallee(
     return;
   }
   if (isBuiltinCallee(callee)) return;
-  const fn = sym.fns.get(callee);
   if (!fn) {
     errors.push({
       code: "E0116",
@@ -2279,22 +2283,23 @@ function checkApp(
     capsAvailable: new Set(app.caps),
   };
   for (const e of app.init) {
-    // An init entry is an effect call by the grammar (§1.12), so its callee is
-    // resolved against the effect namespace here rather than by `checkExpr`,
-    // which would look for a `fn` and report the wrong namespace to `fix`.
-    if (e.kind === "Call" && !e.callee.includes(".")) {
-      if (!sym.effects.has(e.callee)) {
-        errors.push({
-          code: "E0104",
-          kind: "undef-effect",
-          message: `Reference to undefined effect "${e.callee}"`,
-          pos: e.pos,
-        });
-      }
-      for (const a of e.args) checkExpr(a, sym, errors, initCtx);
+    // An init entry is an effect call by the grammar (§1.12). `checkExpr` would
+    // resolve the callee as a `fn` and send `fix` hunting in the wrong
+    // namespace, so it goes through the same validation as `emit` instead —
+    // which is also what makes the built-in effects (`toast`, `navigate`, …)
+    // legal here, and what brings the capability and argument-type checks that
+    // an `emit` of the same effect has always had.
+    if (e.kind !== "Call") {
+      errors.push({
+        code: "E0104",
+        kind: "init-not-effect-call",
+        message: "app.init entries must be effect calls",
+        pos: e.pos,
+      });
       continue;
     }
-    checkExpr(e, sym, errors, initCtx);
+    checkEmitTarget(e.callee, e.args, sym, errors, initCtx, e.pos);
+    for (const a of e.args) checkExpr(a, sym, errors, initCtx);
   }
 }
 

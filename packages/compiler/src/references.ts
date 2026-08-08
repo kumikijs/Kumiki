@@ -235,8 +235,9 @@ class Walker {
           this.runReducerArg(e.args[0]);
           return;
         }
-        // `TodoId.fresh()` and `math.abs(x)` are qualified — only an unqualified
-        // callee can name a `fn` definition.
+        // `TodoId.fresh()` is qualified — only an unqualified callee can name a
+        // `fn` definition. (A lowercase `a.b(x)` never reaches here: the parser
+        // requires a capitalised qualifier, so it is a `MethodCall`.)
         if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;

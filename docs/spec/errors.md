@@ -136,11 +136,15 @@ An event handler argument / prop refers to a reducer name that does not exist.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
 
-### E0104 `undef-effect`
+### E0104 `undef-effect` / `init-not-effect-call`
 
-The target of an `emit` refers to an undefined effect.
+The target of an `emit` refers to an undefined effect. An `app.init` entry is validated the same way — the grammar makes it an effect call ([§1.12](./language.md#_1-12-application-entry-app)), so the same capability and argument checks apply, and the built-in effects (`toast`, `navigate`, `log`, …) are equally legal there.
 
 > `Reference to undefined effect "<name>"`
+
+An init entry that is not a call at all takes the `init-not-effect-call` kind. Code generation has nothing to lower it to; before the diagnostic existed it emitted `null` into the init array and the dispatcher read `.effect` off it at mount, so the app died with a raw `TypeError` and no position.
+
+> `app.init entries must be effect calls`
 
 ### E0106 `undef-timer`
 
@@ -231,7 +235,17 @@ A `slot` is declared with a name the compiler resolves before it consults the sl
 
 ### E0116 `undef-call`
 
-A call `f(...)` names no function. The candidate set is the program's `fn` definitions plus the built-in calls of [Standard Library](./stdlib.md#_2-4-built-in-functions): the unqualified `now` / `fmt` / `panic` / `file-url` / `prefers-dark` / `run-reducer`, the fixed-qualifier constructors (`Duration.*`, `Bytes.*`, `Decoder.*`, `EffectId.none`), and `fresh` / `parse` / `show` on any capitalised qualifier.
+A call `f(...)` names no function. The candidate set is the program's `fn` definitions plus the built-in calls, which are spread across three documents:
+
+| Callee | Where it is specified |
+|---|---|
+| `now`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
+| `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), §2.4 |
+| `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [Forms §5.10](./forms.md) |
+| `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
+
+`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116.
 
 > `Call to undefined function "<name>"`
 

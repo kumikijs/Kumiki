@@ -4,17 +4,16 @@
 // and then threw `doubel is not defined` on the first interaction — the whole
 // point of a name-resolution band bypassed for one expression form.
 
+import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { describe, expect, it } from "vitest";
+// The tables are internal to the compiler — see `src/index.ts` for why they are
+// not published — so this reaches for them directly, as `ui-lifts.test.ts` does.
 import {
   BUILTIN_CALLS,
-  check,
-  compile,
-  lex,
-  parse,
   QUALIFIED_BUILTIN_CALLS,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
-} from "@kumikijs/compiler";
-import { describe, expect, it } from "vitest";
+} from "../src/builtin-calls.ts";
 
 /** A program whose reducer body is `expr`, with a fn and a slot to call into. */
 function inReducer(expr: string): string {
@@ -88,6 +87,15 @@ describe("E0213 call-arity-mismatch", () => {
   it("says nothing when the count matches", () => {
     expect(codes(inReducer("a := double(a)"))).toEqual([]);
   });
+
+  it("does not apply to built-in calls", () => {
+    // A documented decision (errors.md E0213), pinned because it is the kind
+    // of asymmetry a later reader would "fix" without noticing that several
+    // builtins ignore their arguments outright at lowering. `Duration.s()`
+    // lowering to `((0) * 1000)` is the cost, and #275 tracks it.
+    expect(codes(inReducer("a := Duration.s()"))).toEqual([]);
+    expect(codes(inReducer('a := Duration.s(1, 2, "x")'))).toEqual([]);
+  });
 });
 
 describe("E0802 unimplemented-function", () => {
@@ -100,6 +108,49 @@ describe("E0802 unimplemented-function", () => {
         pos: { line: 4, col: 35 },
       },
     ]);
+  });
+
+  it("says nothing when the program declares a `fn` of that name", () => {
+    // Codegen has no builtin case for `trace`, so a declared one takes the
+    // user-fn fallback and the program runs. Reporting E0802 here would reject
+    // a working program and blame the author for the toolchain's gap.
+    const src = `slot a : Int = 0
+fn trace(x: Int) -> Int = x + 1
+reducer r on=ui.click(B) do= a := trace(a)
+tile B = button(text="b")
+tile App = column(B, text(a.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src)))).toEqual([]);
+    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+  });
+});
+
+describe("run-reducer is legal only where it lowers", () => {
+  it("is rejected in an ordinary reducer", () => {
+    // It lowers to `_s.runReducerStep(App, _init, …)`, and `_init` exists only
+    // inside a generated property-test trial. Accepting it anywhere else is
+    // check-green, build-green, `_init is not defined` on the first click.
+    expect(codes(inReducer('t := run-reducer("inc").show'))).toEqual(["E0116"]);
+  });
+
+  it("still resolves inside a property-test invariant", () => {
+    // `checkTest` walks the invariant itself and never calls `checkExpr`, so
+    // the callee never reaches `checkCallee` — which is why removing it from
+    // the builtin table costs the legitimate use nothing.
+    const src = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test round-trips =
+    property-test
+        for-all   = {count: Int}
+        given     = {slots: {count: count}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == count + 1
+`;
+    expect(check(parse(lex(src)))).toEqual([]);
   });
 });
 
@@ -125,22 +176,50 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[] theme=Light
   });
 });
 
-describe("app.init resolves its callee as an effect", () => {
-  const app = (init: string) => `slot n : Int = 0
-effect load cap=storage.read in=Unit out=Result(Text, Text)
+describe("app.init entries are validated like an emit", () => {
+  const app = (init: string, caps = "storage.read") => `slot n : Int = 0
+effect load cap=storage.read in=Text out=Result(Text, Text)
 reducer got on=load.ok(_, _) do= n := 1
 tile App = column(text(n.show))
-app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[${init}]
+app A caps=[${caps}] routes={"/" -> App, "/404" -> App} init=[${init}]
 `;
 
   it("accepts a declared effect", () => {
-    expect(codes(app("load()"))).toEqual([]);
+    expect(codes(app('load("k")'))).toEqual([]);
   });
 
   it("reports an undefined one as E0104, not as a missing function", () => {
     // An init entry is an effect call by the grammar, so the candidate set is
     // the effect namespace — E0116 would send `kumiki fix` looking for a fn.
-    expect(codes(app("looad()"))).toEqual(["E0104"]);
+    expect(codes(app('looad("k")'))).toEqual(["E0104"]);
+  });
+
+  it("accepts the built-in effects, which are not in the effect table", () => {
+    // `toast` / `navigate` / `log` and the rest are legal at an `emit`, and
+    // codegen's installer DCE already assumes an init entry can name one.
+    expect(codes(app('toast("hello")'))).toEqual([]);
+  });
+
+  it("reports a capability the app does not declare", () => {
+    expect(codes(app('load("k")', ""))).toEqual(["E0301"]);
+  });
+
+  it("rejects a qualified callee, which names no effect at all", () => {
+    // `Duration.ms` is a real builtin, so the callee resolved; what it is not
+    // is an effect. The dispatcher drops the entry and the app boots without
+    // its bootstrap effect, all three tiers green.
+    expect(codes(app("Duration.ms(5)"))).toEqual(["E0104"]);
+  });
+
+  it("rejects an entry that is not a call", () => {
+    expect(check(parse(lex(app("n"))))).toEqual([
+      {
+        code: "E0104",
+        kind: "init-not-effect-call",
+        message: "app.init entries must be effect calls",
+        pos: { line: 5, col: 68 },
+      },
+    ]);
   });
 });
 
@@ -185,17 +264,22 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     return body;
   }
 
-  const named = [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS].filter(
-    // `run-reducer` only lowers inside a generated property-test trial, where
-    // `_init` / `_event` are bound; `28-tests.kumiki` covers it end to end.
-    (name) => name !== "run-reducer",
-  );
+  const named = [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS];
 
   it("has a call site for every builtin in the tables", () => {
     // Duration is uniform enough to generate; the rest are listed explicitly so
     // adding a builtin forces a decision about how it is exercised here.
     const missing = named.filter((n) => !CALL_SITE[n] && !n.startsWith("Duration."));
     expect(missing).toEqual([]);
+  });
+
+  it("covers the whole of both name tables, not a subset", () => {
+    // `TYPE_MEMBER_CALLS` is checked for acceptance above but has no lowering
+    // case of its own — codegen matches `<Qualifier>.fresh|parse|show` by
+    // regex — so it is deliberately outside this loop. Stating that here keeps
+    // the guard's reach explicit rather than implied by the filter above.
+    expect(named.length).toBe(BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size);
+    expect([...TYPE_MEMBER_CALLS].some((m) => named.includes(m))).toBe(false);
   });
 
   for (const name of named) {

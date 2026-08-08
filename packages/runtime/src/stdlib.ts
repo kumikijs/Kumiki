@@ -452,9 +452,12 @@ export const _stdlibCore = {
    *
    * Read once per call rather than subscribed to: an `app.start` reducer uses
    * it to pick the initial theme, and a running app that wants to follow a
-   * mid-session change has `theme = <slot>` plus a reducer to write it. Falsy
-   * wherever `matchMedia` is absent (SSR, a headless DOM), so a program that
-   * branches on it renders its light theme instead of throwing.
+   * mid-session change has `theme = <slot>` plus a reducer to write it.
+   *
+   * The guard is for SSR, where there is no `window` at all. happy-dom does
+   * implement `matchMedia` and answers `false` by default, so the smoke and
+   * scenario tiers take the real path — see `prefers-dark.test.ts`, which
+   * drives both branches by stubbing the media query.
    */
   prefersDark(): boolean {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;

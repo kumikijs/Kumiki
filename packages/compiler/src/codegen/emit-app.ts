@@ -46,10 +46,11 @@ export function appAnalyticsJson(
 }
 
 /**
- * Lower one `app.init` entry to the `EmitSpec` the dispatcher consumes, or to
- * `null` when the entry is not a call at all — `init = [note]` reaches here,
- * because nothing rejects it earlier, and the dispatcher then reads `.effect`
- * off `null`.
+ * Lower one `app.init` entry to the `EmitSpec` the dispatcher consumes.
+ *
+ * A non-call entry is rejected by `checkApp` (E0104 `init-not-effect-call`), so
+ * reaching the throw means a caller skipped `check` — which used to emit `null`
+ * into the init array and let the dispatcher read `.effect` off it at mount.
  *
  * The arguments need the real `GenCtx`: without a slot table a slot reference
  * looks like an unknown local and lowers to a bare identifier, so
@@ -66,11 +67,11 @@ export function appAnalyticsJson(
  * init argument reads `undefined`.
  */
 export function emitFromInitExpr(e: Expr, gen: GenCtx): string {
-  if (e.kind === "Call") {
-    const ctx = makeEvalCtx(gen, new Set(), false);
-    return `{ effect: ${JSON.stringify(e.callee)}, args: [${e.args
-      .map((a) => jsOfExpr(a, ctx))
-      .join(", ")}] }`;
+  if (e.kind !== "Call") {
+    throw new Error(`app.init entry is not an effect call (${e.kind})`);
   }
-  return "null";
+  const ctx = makeEvalCtx(gen, new Set(), false);
+  return `{ effect: ${JSON.stringify(e.callee)}, args: [${e.args
+    .map((a) => jsOfExpr(a, ctx))
+    .join(", ")}] }`;
 }

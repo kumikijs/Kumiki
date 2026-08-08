@@ -60,7 +60,7 @@ type KumikiError = {
 
 > `Program has no app definition`
 
-これを判定するのはコード生成ではなく検査である。**絞り込み無しの** `check` が `ok` と報告したものは必ずビルドできなければならない（`--types` / `--refs` / `--effects` は報告を 1 つの帯に絞るため、より小さい問いに答える。ただし `E00xx` はどの絞り込みも選ばないため常に残る）。詳細は [アプリエントリ](./language.md#_1-12-アプリエントリ-app)。
+これを判定するのはコード生成ではなく検査である。**絞り込み無しの** `check` が `ok` と報告したものは必ずビルドできなければならない（`--types` / `--refs` / `--effects` は報告を 1 つの帯に絞るため、より小さい問いに答える。ただし `E00xx` はどの絞り込みも選ばないため常に残る）。詳細は [アプリエントリ](./language.md#_1-12-アプリエントリ-app)。
 
 唯一の例外は構築途中のプログラムである。[AI 編集](./ai-edit.md)の動詞は定義を 1 つずつ追加していくため、この要求を課すと `app` が入るまでの全編集がロールバックされてしまう。したがって編集時は要求を外して検査し、未完成であることは `kumiki check` が報告する。
 
@@ -95,11 +95,15 @@ type KumikiError = {
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
-### E0104 `undef-effect`
+### E0104 `undef-effect` / `init-not-effect-call`
 
-`emit` の対象が未定義の effect を指している。
+`emit` の対象が未定義の effect を指している。`app.init` のエントリも同じ経路で検証される — 文法上これは effect 呼び出しであり（[§1.12](./language.md#_1-12-アプリエントリ-app)）、ケイパビリティ検査も引数型検査も同様に適用され、組み込み effect（`toast` / `navigate` / `log` 等）も同じく使える。
 
 > `Reference to undefined effect "<name>"`
+
+そもそも呼び出しですらない init エントリは kind `init-not-effect-call` になる。コード生成には落とす先が無く、この診断が無かった頃は init 配列に `null` を出力し、dispatcher が mount 時にそこから `.effect` を読んで、位置情報の無い生の `TypeError` でアプリが死んでいた。
+
+> `app.init entries must be effect calls`
 
 ### E0106 `undef-timer`
 
@@ -190,7 +194,17 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0116 `undef-call`
 
-呼び出し `f(...)` がどの関数も指していない。候補集合はプログラム内の `fn` 定義と、[標準ライブラリ](./stdlib.md#_2-4-built-in-functions)の組み込み呼び出し — 修飾なしの `now` / `fmt` / `panic` / `file-url` / `prefers-dark` / `run-reducer`、固定修飾子のコンストラクタ（`Duration.*` / `Bytes.*` / `Decoder.*` / `EffectId.none`）、そして大文字始まりの任意の修飾子に対する `fresh` / `parse` / `show`。
+呼び出し `f(...)` がどの関数も指していない。候補集合はプログラム内の `fn` 定義と組み込み呼び出しで、後者は 3 つの文書に分かれている。
+
+| callee | 規定箇所 |
+|---|---|
+| `now` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-ビルトイン関数) |
+| `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ §2.2](./stdlib.md#_2-2-コレクションメソッド)・§2.4 |
+| `Decoder.*` / `EffectId.none` | [HTTP / Storage §6.1.4](./http.md)・[標準ライブラリ §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [フォーム §5.10](./forms.md) |
+| `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
+
+`run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。それ以外の場所に書けば E0116 になる。
 
 > `Call to undefined function "<name>"`
 
@@ -487,6 +501,6 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Function "<name>" is documented but not implemented by the runtime`
 
-現在この状態にあるのは `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-debugging-aids)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
+現在この状態にあるのは `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-デバッグ補助)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
 
 **修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。

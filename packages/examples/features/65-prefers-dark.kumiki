@@ -11,8 +11,10 @@
 # follow a mid-session change has `theme = <slot>` plus a reducer that writes
 # that slot, which is the same shape as the manual toggle here.
 #
-# In a headless DOM (`kumiki smoke`, `kumiki run`) `matchMedia` is absent and
-# the helper answers false, so the scenario below asserts the light branch.
+# happy-dom implements `matchMedia` and reports no dark preference, so
+# `kumiki run` takes the real code path and the scenario below asserts the
+# light branch. What it pins is that `initTheme` ran at all: `themeName`
+# starts at "unset", so a helper that threw would leave it there.
 
 slot themeName : Text = "unset"
 

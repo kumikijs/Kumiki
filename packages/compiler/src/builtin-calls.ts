@@ -5,26 +5,32 @@
 // user-fn fallback, and became an undefined global at runtime — `check` and
 // `build` both green, `doubel is not defined` on the first click.
 //
-// Closing that means the checker has to know exactly what codegen can lower,
-// which is what these tables are for. They are the single source of truth for
-// both sides: `packages/compiler/test/callee-resolution.test.ts` asserts every
-// name here lowers to something other than the fallback, so a name accepted by
-// one side and unknown to the other cannot ship.
+// Closing that means the checker has to know exactly what codegen can lower.
+// Codegen does not read these tables — `codegen/expr.ts` dispatches through its
+// own chain of bespoke cases, one per builtin, because each lowers to something
+// different. What keeps the two in step is
+// `packages/compiler/test/callee-resolution.test.ts`, which compiles a call to
+// every name below and asserts the result is not the fallback. A name the
+// checker accepts and codegen forgot fails there rather than in an app.
 
 /**
  * Callees codegen lowers itself, with no qualifier. Every entry is lowercase
  * because the parser only produces an unqualified `Call` for a lowercase name
  * — a capitalised one is a `Variant`.
  */
+// `run-reducer` is deliberately absent. It only lowers inside a generated
+// property-test trial, where `_init` and `_event` are bound, and a
+// property-test invariant never reaches `checkCallee` — `checkTest` walks it
+// itself to resolve the reducer name. Listing it here would have whitelisted
+// the one context where it is wrong: `t := run-reducer("inc")` in an ordinary
+// reducer passes check and build and then throws `_init is not defined`, which
+// is the exact failure this file exists to stop.
 export const BUILTIN_CALLS: ReadonlySet<string> = new Set([
   "now",
   "fmt",
   "panic",
   "file-url",
   "prefers-dark",
-  // Testing DSL: legal inside a property-test invariant, where `checkTest`
-  // resolves its argument against the reducer namespace (E0102).
-  "run-reducer",
 ]);
 
 /** Callees codegen lowers by their full `Qualifier.member` name. */
