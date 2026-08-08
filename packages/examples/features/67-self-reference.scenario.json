@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "label": "a fold over the data reaches the deepest node without a recursive fn",
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": 0 },
+        "domIncludes": ["root", "child", "leaf", "deepest: 2", "picked: root"]
+      }
+    },
+    {
+      "label": "`for` draws one row per element and stops, and the slot advances on its own",
+      "do": { "clickText": "next" },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": 1 },
+        "domIncludes": ["depth 0", "depth 1", "depth 2", "picked: child"]
+      }
+    },
+    {
+      "label": "the derived label follows the slot rather than being stored alongside it",
+      "do": { "clickText": "next" },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": 2 },
+        "domIncludes": ["deepest: 2", "picked: leaf"]
+      }
+    }
+  ]
+}

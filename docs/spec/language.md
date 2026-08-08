@@ -82,6 +82,7 @@ fresh  self  now  null
 - **Indentation-independent**: leading whitespace is ignored
 - **Newline is the statement separator**: only inside `do=` can `;` join multiple statements
 - **Identifiers are at most 32 characters**
+- **An expression, type, pattern or tile tree is at most 256 levels deep**: a construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream. Past the limit the parser reports a positioned error instead. Nothing written in practice comes near it: no program in the examples or benchmarks approaches the limit.
 - **Multi-line comments prohibited**
 - **Macros prohibited**
 
