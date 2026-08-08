@@ -181,4 +181,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
 | `65-prefers-dark.kumiki` | app, reducer | style | [§4.6.1](./style.md#_4-6-1-following-os-settings) |
 | `66-value-types.kumiki` | type, slot, fn | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
+| `67-self-reference.kumiki` | tile, slot, fn | core | [§1.7.2](./language.md#_1-7-2-invariants) |
 <!-- examples:end -->

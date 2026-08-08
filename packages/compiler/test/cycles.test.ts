@@ -69,6 +69,25 @@ ${TAIL}`;
     expect(codes(src)).toEqual(["E0005", "E0005"]);
   });
 
+  it("follows a bare identifier standing in for a tile", () => {
+    // A capitalised name inside a builtin parses as a `TileCall`; a lowercase
+    // one parses as a `Ref`. Code generation resolves that `Ref` to a tile
+    // before anything else and inlines it the same way — which is what made
+    // this shape crash the build — while the checker resolves it as a value.
+    // So the slots are what makes the program reach code generation at all:
+    // without them the names are E0103 and there is nothing to inline.
+    const src = `slot leaf : Int = 1
+slot other : Int = 2
+tile leaf = column(text("l"), other)
+tile other = column(text("o"), leaf)
+tile App = column(leaf)
+${TAIL}`;
+    const [err, ...rest] = diags(src);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0005");
+    expect(err?.message).toContain("leaf → other → leaf");
+  });
+
   // Each of these is a construct codegen inlines, so each is an expansion edge.
   const nesting: [string, string][] = [
     ["a nested call", `tile A = column(row(B))`],

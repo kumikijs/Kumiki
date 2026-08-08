@@ -90,9 +90,14 @@ describe("a chain of prefix operators is not nesting", () => {
   // `not not not x` recursed once per operator, which is why a chain of them
   // could exhaust the stack. Collected iteratively there is no depth to bound,
   // so a chain far longer than the nesting limit is still a legal program.
+  //
+  // The length is what makes this a test rather than a statement: recursing
+  // per operator runs out of stack between 5,000 and 10,000, so a chain
+  // shorter than that passes either way.
+  const CHAIN = 50_000;
   for (const op of ["not ", "-"]) {
     it(`parses a chain of ${JSON.stringify(op.trim())} far past the nesting bound`, () => {
-      const src = `slot v : Int = ${op.repeat(MAX_DEPTH * 20)}1\n`;
+      const src = `slot v : Int = ${op.repeat(CHAIN)}1\n`;
       expect(() => parse(lex(src))).not.toThrow();
     });
   }
