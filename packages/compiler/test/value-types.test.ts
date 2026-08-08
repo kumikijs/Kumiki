@@ -468,6 +468,20 @@ describe("undecidable types stay silent", () => {
     expect(prog(`type Box(T) = {v: T}\ntype Pair(T) = {a: Box(T), b: T}`)).toEqual([]);
   });
 
+  it("does not carry an outer $1 into a method-call argument", () => {
+    // `$1` inside `.map(...)` is the element, not the tile's `in=`. Carrying
+    // the tile's type in reported `formatDate($1)` — which is correct code —
+    // as a mismatch, on a recorded benchmark program that compiles and runs.
+    expect(
+      prog(
+        `type Id = nominal Text where uuid
+slot due : Map(Id, Option(Time)) = {}
+fn formatDate(t: Time) -> Text = t.show
+tile Due in=Id = text(due[$1].map(formatDate($1)).get-or(""))`,
+      ),
+    ).toEqual([]);
+  });
+
   it("says nothing about a match arm binding", () => {
     expect(
       inReducer(

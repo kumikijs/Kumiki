@@ -1407,6 +1407,15 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         };
         inner.localBinds.add("$1");
         inner.localBinds.add("$2");
+        // …and they SHADOW any outer `$1` / `$2`, so the outer type must go
+        // with the name. A tile that declares `in=TaskId` binds `$1` to it,
+        // and `dueDate.map(formatDate($1))` inside that tile is a different
+        // `$1` — the element of the Option. Carrying the tile's type in would
+        // report the element as a TaskId. The element type itself is left
+        // undecided: which argument a method binds is per-method, and guessing
+        // it wrong costs a wrong diagnostic on a working program.
+        inner.localTypes?.delete("$1");
+        inner.localTypes?.delete("$2");
         checkExpr(a, sym, errors, inner);
       }
       return;

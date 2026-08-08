@@ -436,7 +436,7 @@ An application passes a different number of arguments than the thing it applies 
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 
-The tile and effect forms are the ones that used to fail at runtime rather than at check time: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`, and an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch.
+The tile and effect forms are the ones that used to go unreported: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`; an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch; and a tile that declares no `in=` but is *given* an argument mounts and renders normally, silently dropping the value the caller meant to pass.
 
 Built-in calls are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them.
 
