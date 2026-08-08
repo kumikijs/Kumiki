@@ -82,6 +82,7 @@ fresh  self  now  null
 - **Indentation-independent**: leading whitespace is ignored
 - **Newline is the statement separator**: only inside `do=` can `;` join multiple statements
 - **Identifiers are at most 32 characters**
+- **Nesting is at most 256 levels deep**: a construct that contains itself — a parenthesised expression, a list, a record, an `if` chain, a tile call, a tuple pattern, a type application, a theme record — may not nest further. The parser descends by recursion, so past that point it would run out of stack and report nothing; the limit turns it into a positioned parse error instead. Nothing written in practice comes near it (the deepest nesting in the examples and benchmarks is 18). A chain of prefix operators (`not not x`) is not nesting and is unbounded.
 - **Multi-line comments prohibited**
 - **Macros prohibited**
 

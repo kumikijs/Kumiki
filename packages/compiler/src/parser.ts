@@ -44,6 +44,21 @@ export class ParseError extends Error {
   }
 }
 
+/** Kept in step with the AST so a new prefix operator cannot be missed here. */
+type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
+
+/**
+ * How deeply a program may nest (language.md §1.2.3).
+ *
+ * The parser descends by recursion, so nesting past what the call stack holds
+ * used to surface as a bare `RangeError` with no position — and the point at
+ * which that happened depended on the construct, from ~780 parenthesised
+ * expressions to ~2500 tile calls. Bounding it here turns all of them into one
+ * positioned error. The limit is far above anything written in practice: the
+ * deepest nesting anywhere in this repository's examples and benchmarks is 18.
+ */
+const MAX_NESTING_DEPTH = 256;
+
 const PRIM_TYPES = new Set([
   "Int",
   "Text",
@@ -126,7 +141,30 @@ const REFINE_PREDS = new Set([
 
 class Parser {
   private i = 0;
+  private depth = 0;
   constructor(private tokens: Token[]) {}
+
+  /**
+   * Parse one level deeper, refusing to go past `MAX_NESTING_DEPTH`.
+   *
+   * Every construct that can contain itself goes through this, so a program
+   * that nests too far is reported at the token where the parser stopped
+   * rather than crashing the process.
+   */
+  private descend<T>(parseNested: () => T): T {
+    if (this.depth >= MAX_NESTING_DEPTH) {
+      throw new ParseError(
+        `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
+        this.peek().pos,
+      );
+    }
+    this.depth += 1;
+    try {
+      return parseNested();
+    } finally {
+      this.depth -= 1;
+    }
+  }
 
   // ----- low-level token utilities -----
 
@@ -200,6 +238,10 @@ class Parser {
   }
 
   private parseThemeRecord(): { [k: string]: import("./ast.ts").ThemeValue } {
+    return this.descend(() => this.parseThemeRecordNested());
+  }
+
+  private parseThemeRecordNested(): { [k: string]: import("./ast.ts").ThemeValue } {
     this.eat("op", "{");
     const out: { [k: string]: import("./ast.ts").ThemeValue } = {};
     if (!this.matchOp("}")) {
@@ -284,6 +326,10 @@ class Parser {
   }
 
   private parseTypeExpr(): TypeExpr {
+    return this.descend(() => this.parseTypeExprNested());
+  }
+
+  private parseTypeExprNested(): TypeExpr {
     // Union: parse first, then check for `|` follow-up
     const first = this.parseTypeUnionAtom();
     if (this.matchOp("|")) {
@@ -758,6 +804,10 @@ class Parser {
   // ----- expressions -----
 
   parseExpr(): Expr {
+    return this.descend(() => this.parseExprNested());
+  }
+
+  private parseExprNested(): Expr {
     // `emit X(args)` as an expression (spec http.md §6.4, stdlib §2.1.1.1) —
     // yields the dispatched effect's `EffectId`. Statement-form `emit` is
     // parsed earlier in `parseStatement` (with no capture), so we only reach
@@ -867,23 +917,22 @@ class Parser {
     return lhs;
   }
   private parseUnary(): Expr {
-    if (this.matchOp("-")) {
-      const tok = this.next();
-      const rhs = this.parseUnary();
-      return { kind: "UnaryOp", op: "-", rhs, pos: tok.pos };
+    // A run of prefix operators (`- - x`, `not not b`) is collected in a loop
+    // rather than by recursing per operator: a chain is not nesting, and one
+    // long enough used to exhaust the stack. `not` is the keyword spelling
+    // of `!`.
+    const prefixes: { op: UnaryOp; pos: Pos }[] = [];
+    while (true) {
+      if (this.matchOp("-")) prefixes.push({ op: "-", pos: this.next().pos });
+      else if (this.matchOp("!")) prefixes.push({ op: "!", pos: this.next().pos });
+      else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
+      else break;
     }
-    if (this.matchOp("!")) {
-      const tok = this.next();
-      const rhs = this.parseUnary();
-      return { kind: "UnaryOp", op: "!", rhs, pos: tok.pos };
+    let e = this.parsePostfix();
+    for (const prefix of prefixes.reverse()) {
+      e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
     }
-    // `not` as keyword equivalent of `!`
-    if (this.matchT("ident", "not")) {
-      const tok = this.next();
-      const rhs = this.parseUnary();
-      return { kind: "UnaryOp", op: "!", rhs, pos: tok.pos };
-    }
-    return this.parsePostfix();
+    return e;
   }
 
   private parsePostfix(): Expr {
@@ -1150,6 +1199,10 @@ class Parser {
   }
 
   private parsePattern(): Pattern {
+    return this.descend(() => this.parsePatternNested());
+  }
+
+  private parsePatternNested(): Pattern {
     const t = this.peek();
     if (t.kind === "ident" && t.value === "_") {
       this.next();
@@ -1348,6 +1401,10 @@ class Parser {
   }
 
   private parseTileExpr(): TileExpr {
+    return this.descend(() => this.parseTileExprNested());
+  }
+
+  private parseTileExprNested(): TileExpr {
     // for/when/if/match control
     if (this.matchKw("for")) {
       const start = this.next();
@@ -1393,6 +1450,10 @@ class Parser {
   }
 
   private parseTileCall(): TileExpr {
+    return this.descend(() => this.parseTileCallNested());
+  }
+
+  private parseTileCallNested(): TileExpr {
     const nameTok = this.eat("ident");
     const name = nameTok.value;
     const isBuiltin = BUILTIN_TILES.has(name);

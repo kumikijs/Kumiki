@@ -550,11 +550,7 @@ describe("the assignability relation itself", () => {
     // The tuple slot is initialised from `.zip`, whose result type is
     // undecidable, so the only diagnostic left is the assignment itself.
     expect(
-      assign(
-        `slot ns : List(Int) = []\nslot ts : List(Text) = []\nslot t : Tuple(Int, Text) = ns.zip(ts)\nslot n : Int = 0`,
-        "t",
-        "n",
-      ),
+      assign(`slot t : Tuple(Int, Text) = [1].zip(["a"])\nslot n : Int = 0`, "t", "n"),
     ).toEqual(["E0201"]);
   });
 

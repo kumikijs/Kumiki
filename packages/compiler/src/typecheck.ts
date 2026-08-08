@@ -34,6 +34,8 @@ import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
+import { expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
+import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
@@ -239,9 +241,10 @@ function checkAll(
     }
   }
 
+  const index = buildDefIndex(program);
   for (const def of program.defs) {
     if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
-    if (def.kind === "SlotDef") checkSlot(def, sym, errors);
+    if (def.kind === "SlotDef") checkSlot(def, sym, errors, index);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);
     if (def.kind === "FnDef") checkFn(def, sym, errors);
@@ -250,8 +253,64 @@ function checkAll(
     if (def.kind === "MotionDef") checkMotion(def, errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
+  checkCycles(program, sym, index, errors);
 
   return errors;
+}
+
+/**
+ * A tile that expands into itself and a `fn` that calls itself.
+ *
+ * The two are checked together because the question is the same one — does the
+ * definition graph close a loop — and only the edges differ. Slots are absent:
+ * an initializer may not read another slot at all (`E0304`), which leaves a
+ * slot loop unreachable.
+ */
+function checkCycles(
+  program: Program,
+  sym: SymbolTable,
+  index: DefIndex,
+  errors: KumikiError[],
+): void {
+  const tiles = program.defs.filter((d): d is TileDef => d.kind === "TileDef");
+  const tileEdges = (name: string): readonly GraphEdge[] => {
+    const def = sym.tiles.get(name);
+    if (!def) return [];
+    // Builtins terminate — they have no body to expand — so only names that
+    // resolve to a declared tile are edges.
+    return expansionTargets(def.body).filter((e) => sym.tiles.has(e.to));
+  };
+  for (const cycle of findCycles(
+    tiles.map((t) => t.name),
+    tileEdges,
+  )) {
+    errors.push({
+      code: "E0005",
+      kind: "tile-cycle",
+      message: `Tile "${cycle.path[0]}" expands into itself (${cycle.path.join(" → ")})`,
+      pos: cycle.pos,
+    });
+  }
+
+  const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
+  const fnEdges = (name: string): readonly GraphEdge[] => {
+    const def = sym.fns.get(name);
+    if (!def) return [];
+    return referencesIn(def, index)
+      .filter((r) => r.layer === "fn")
+      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
+  };
+  for (const cycle of findCycles(
+    fns.map((f) => f.name),
+    fnEdges,
+  )) {
+    errors.push({
+      code: "E0006",
+      kind: "fn-cycle",
+      message: `fn "${cycle.path[0]}" calls itself (${cycle.path.join(" → ")})`,
+      pos: cycle.pos,
+    });
+  }
 }
 
 // ----- motion layer -----
@@ -388,7 +447,7 @@ const RESERVED_SLOT_NAMES: ReadonlyMap<string, string> = new Map([
   ["route", "the router-maintained route slot"],
 ]);
 
-function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {
+function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index: DefIndex): void {
   const reserved = RESERVED_SLOT_NAMES.get(slot.name);
   if (reserved !== undefined) {
     errors.push({
@@ -399,6 +458,19 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void
     });
   }
   resolveType(slot.type, sym, errors);
+  // Derived slots are prohibited (language.md §1.4.2 inv. 4), and the lowering
+  // agrees: a slot read is emitted as a lookup in the live-value table, which
+  // is built after the slot table — so an initializer that reads a slot throws
+  // on mount whichever order the two are declared in.
+  for (const ref of referencesIn(slot, index)) {
+    if (ref.layer !== "slot") continue;
+    errors.push({
+      code: "E0304",
+      kind: "derived-slot",
+      message: `Slot "${slot.name}" reads slot "${ref.name}" in its initial value; derived slots are prohibited — compute it in a fn instead`,
+      pos: ref.pos ?? slot.pos,
+    });
+  }
   const ctx: Ctx = { kind: "slot-init", localBinds: new Set(), localTypes: new Map() };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);
@@ -864,55 +936,13 @@ function collectTileBuiltinKinds(
   if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
   const def = sym.tiles.get(tileName);
   if (!def) return new Set();
-  return walkTileExprForBuiltinKinds(def.body, sym, visited);
-}
-
-function walkTileExprForBuiltinKinds(
-  expr: TileExpr,
-  sym: SymbolTable,
-  visited: Set<string>,
-): Set<string> {
-  if (expr.kind === "TileFor" || expr.kind === "TileWhen") {
-    return walkTileExprForBuiltinKinds(expr.body, sym, visited);
-  }
-  if (expr.kind === "TileIf") {
-    const a = walkTileExprForBuiltinKinds(expr.consequent, sym, visited);
-    const b = walkTileExprForBuiltinKinds(expr.alternate, sym, visited);
-    return new Set([...a, ...b]);
-  }
-  if (expr.kind === "TileMatch") {
-    const out = new Set<string>();
-    for (const arm of expr.arms) {
-      for (const k of walkTileExprForBuiltinKinds(arm.body, sym, visited)) out.add(k);
-    }
-    return out;
-  }
-  // TileCall: include the call itself, then recurse into positional TileExpr-
-  // typed args (children) and into `Ref` args that name another tile.
+  // The same edges a cycle is looked for along: what this body expands into is
+  // what its render tree is made of. A name that resolves to neither a builtin
+  // nor a declared tile contributes nothing, and the `visited` guard keeps a
+  // cycle from recurring here — `E0005` is what reports it.
   const out = new Set<string>();
-  if (BUILTIN_TILES.has(expr.name)) {
-    out.add(expr.name);
-  } else {
-    for (const k of collectTileBuiltinKinds(expr.name, sym, visited)) out.add(k);
-  }
-  for (const a of expr.args) {
-    if (a.name) continue; // skip named args — they're props, not children
-    const v = a.value as { kind?: string };
-    if (!v || typeof v !== "object" || !("kind" in v)) continue;
-    if (
-      v.kind === "TileCall" ||
-      v.kind === "TileFor" ||
-      v.kind === "TileWhen" ||
-      v.kind === "TileIf" ||
-      v.kind === "TileMatch"
-    ) {
-      for (const k of walkTileExprForBuiltinKinds(v as TileExpr, sym, visited)) out.add(k);
-    } else if (v.kind === "Ref") {
-      const refName = (v as Expr & { name: string }).name;
-      if (sym.tiles.has(refName) || BUILTIN_TILES.has(refName)) {
-        for (const k of collectTileBuiltinKinds(refName, sym, visited)) out.add(k);
-      }
-    }
+  for (const target of expansionTargets(def.body)) {
+    for (const kind of collectTileBuiltinKinds(target.to, sym, visited)) out.add(kind);
   }
   return out;
 }
@@ -982,9 +1012,9 @@ function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
       return acc;
     }
     case "TileCall": {
-      const idProp = expr.props.find((p) => p.name === "id");
-      if (!idProp || idProp.value.kind !== "Str") return ID_COLL_UNKNOWN;
-      return { known: true, ids: new Set([idProp.value.value]) };
+      const id = expr.props.find((p) => p.name === "id")?.value;
+      if (id?.kind !== "Str") return ID_COLL_UNKNOWN;
+      return { known: true, ids: new Set([id.value]) };
     }
     default: {
       const _exhaustive: never = expr;

@@ -55,6 +55,8 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | lifecycle |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | core |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | core |
+| [E0005](./errors.md#e0005-tile-cycle) | `tile-cycle` | tile | core |
+| [E0006](./errors.md#e0006-fn-cycle) | `fn-cycle` | fn | core |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | core |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | core |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | core |
@@ -91,6 +93,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
+| [E0304](./errors.md#e0304-derived-slot) | `derived-slot` | slot | core |
 | [E0305](./errors.md#e0305-fn-impurity) | `fn-impurity` | fn | core |
 | [E0401](./errors.md#e0401-motion-unknown-property) | `motion-unknown-property` | tile | style |
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |

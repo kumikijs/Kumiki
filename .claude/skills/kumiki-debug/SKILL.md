@@ -20,6 +20,8 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0001` | `app.routes` missing `/404` | add `"/404" -> NotFound` |
 | `E0003` | no `app` definition (an empty file counts) | add the `app` entry point; expected while a program is still being assembled with the editing verbs, which do not enforce it |
 | `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
+| `E0005` | a tile expands into itself, directly or through other tiles | break the loop — repetition belongs in `for`, alternatives in `when` / `match` |
+| `E0006` | a `fn` calls itself, directly or through other functions | rewrite as `fold` / `map` / `filter` over the data |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
 | `E0104` | undefined effect in `emit` | declare the effect or fix the name |
@@ -33,6 +35,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
 | `E0301` | effect needs a capability not in `app.caps` | add the cap to `caps = [...]` |
+| `E0304` | a slot's initial value reads a slot (its own or another's) | give it a standalone value and derive the rest in a `fn` |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
