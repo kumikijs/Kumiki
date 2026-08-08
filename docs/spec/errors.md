@@ -59,6 +59,8 @@ typo` is caught rather than accepted).
 | `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
 | `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
+| `E0117` | yes | Close-name suggestion against type names — the program's own `type` definitions first, then the primitives, the standard library's domain types, and the generic constructors (scoped — a slot or fn whose name is close is not a candidate). |
+| `E0216` | yes | Close-name suggestion against variant tags of the declared union, the same resolution E0209 uses on the pattern side. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
 | `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
@@ -265,7 +267,7 @@ An unresolved name is *opaque*, and an opaque type accepts every value — so be
 
 Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
-**Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list.
+**Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list. `kumiki fix` proposes the closest type name.
 
 ## E02xx — Types
 
@@ -278,12 +280,15 @@ A value does not have the type its position requires.
 > `Operator "<op>" expects Bool but got <type>`
 > `Operator "<op>" cannot compare <type> with <type>`
 > `Condition of "<form>" must be Bool but got <type>`
+> `Expected <declared> but got variant "<name>"`
+> `Tile "<name>" expects a value of type <type> but got a tile`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+> `link prefetch must be a reducer name`
 
 The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
-Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. `nominal` and `where` wrappers are transparent to it (the refinement is a runtime check, see [Forms §5.6](./forms.md#_5-6-validation-strategy)); aliases and generic instantiations are followed.
+Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed. `nominal` and `where` wrappers are transparent to it: the refinement is a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)), and two nominals over the same base accept each other. That reads against [§1.3.5](./language.md#_1-3-5-type-canonicalization) and is tracked separately.
 
 **The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result depends on its receiver, a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) remain the checks that a name exists at all.
 
@@ -294,6 +299,7 @@ Assignability is structural, with one implicit conversion — `Int` flows into a
 An `emit` argument does not match the effect's declared `in=` type.
 
 > `Expected <in-type> but got <actual>`
+> `Expected <in-type> but got variant "<name>"`
 > `emit "<effect>" expects an EffectId argument`
 
 The `EffectId` case keeps its own wording because its fix is different in kind. It is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Codegen would pass the non-`EffectId` value through and the cancel path would silently no-op, indistinguishable from a successful cancel.
@@ -470,7 +476,7 @@ A variant constructor names a tag its declared union type does not have — `slo
 
 The tag lowers to `{_tag: "Zork"}`, which no `match` arm can match; the UI silently renders nothing and no runtime error is raised. [E0209](#e0209-pat-unknown-variant) is the same mistake on the pattern side.
 
-**Fix**: Use one of the declared tags, or add the tag to the union.
+**Fix**: Use one of the declared tags, or add the tag to the union. `kumiki fix` proposes the closest tag.
 
 ### E0217 `int-literal-precision`
 

@@ -953,7 +953,7 @@ class Parser {
     const t = this.peek();
     if (t.kind === "num") {
       this.next();
-      return { kind: "Num", value: t.value, pos: t.pos };
+      return { kind: "Num", value: t.value, raw: t.raw, pos: t.pos };
     }
     if (t.kind === "str") {
       this.next();

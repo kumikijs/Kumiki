@@ -36,6 +36,36 @@ type KumikiError = {
 | `E08xx` | ランタイムハザード（コンパイルは通るが実行で壊れる書き方） |
 | `W02xx` | 非致命的な警告（ビルドは成功する） |
 
+## 自動修正のカバレッジ
+
+`kumiki fix`（および `kumiki fix --apply`）は、診断の一部についてソースを決定的に書き換える。適用されたパッチはすべて回帰ゲートを通る：合成後のソースを再パース・再型検査してから書き込みを確定し、結果の診断集合に新しい失敗が入るか、既存の失敗を 1 つも解消できなかった場合はロールバックする（比較は生の件数ではなく `code@line:col` 単位なので、`E0301 → E0302` のような 1 対 1 の入れ替わりも見逃さない）。
+
+| コード | 自動修正 | 方針 |
+|---|---|---|
+| `E0001` | あり | `NotFound` tile を挿入し、`app.routes` に `"/404" -> NotFound` を追加する。 |
+| `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。 |
+| `E0104` | あり | 既知の effect 名に対する近傍名の提案。 |
+| `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
+| `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
+| `E0107` | あり | 宣言済み motion 名に対する近傍名の提案。 |
+| `E0116` | あり | 宣言済み `fn` 名と組み込み呼び出しに対する近傍名の提案（スコープ限定 — 名前の近い slot や tile は候補にならない）。 |
+| `E0117` | あり | 型名に対する近傍名の提案。プログラム自身の `type` 定義を先に、続いてプリミティブ・標準ライブラリのドメイン型・generic コンストラクタ（スコープ限定 — 名前の近い slot や fn は候補にならない）。 |
+| `E0209` | あり | scrutinee union の variant タグに対する近傍名の提案（組み込みの `Option` / `Result` と、別名を辿ったユーザ `TypeDef` の body）。 |
+| `E0211` | あり | セレクタの対象について、宣言済み tile 名に対する近傍名の提案。 |
+| `E0216` | あり | 宣言された union の variant タグに対する近傍名の提案。解決方法はパターン側の E0209 と同じ。 |
+| `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
+| `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
+| `E0004` | なし | どちらの app が意図されたものか、もう一方の routes を統合すべきかはユーザの意図である。 |
+| `E0210` | なし | 型引数の追加はユーザの意図の合成であり、静的修復の外側にある。 |
+| その他 | なし | 現時点では自動修復の対象外（よくある形が見つかれば issue を立てること）。 |
+
+失敗した `test` からの振る舞い修復（`kumiki fix --auto-patch <test-name>`）は別のティアで、失敗した leaf を一意のソース位置まで辿れる場合に機能する：
+
+- 文字列 / 数値 / 真偽値リテラルの完全一致。**スコープを考慮した曖昧性解消**付き：対象 tile / reducer 自身の行範囲を優先し、次にその依存、最後に無関係なコードの順で選ぶ。
+- **文字列の前後一致修復**：`actual` と `expected` が共通の接頭辞・接尾辞を持つとき、食い違う中間部分だけを差し替える。
+- **reducer の算術修復**：失敗した slot を書く reducer がちょうど 1 つのとき、`slot := slot ± N` を期待される差分に合わせて書き換える（符号の反転・オペランドの変更）。
+
 ## E00xx — 構造
 
 ### E0001 `missing-404`
@@ -224,7 +254,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 型パラメータはそれを宣言した定義の body の中だけでスコープに入る：`type Box(T) = {v: T}` は正しく、`type Box(T) = {v: U}` は誤り。他の宣言箇所（`slot` / `fn` / `effect` / `tile in=`）は型パラメータを持たないので、そこでの未解決名は常にエラーである。
 
-**修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。
+**修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。`kumiki fix` が最も近い型名を提案する。
 
 ## E02xx — 型
 
@@ -237,12 +267,15 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 > `Operator "<op>" expects Bool but got <type>`
 > `Operator "<op>" cannot compare <type> with <type>`
 > `Condition of "<form>" must be Bool but got <type>`
+> `Expected <declared> but got variant "<name>"`
+> `Tile "<name>" expects a value of type <type> but got a tile`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
+> `link prefetch must be a reducer name`
 
 照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
-代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。`nominal` / `where` のラッパーは透過する（refinement は runtime の検査。[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）。別名と generic の具体化は辿る。
+代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿る。`nominal` / `where` のラッパーは透過する：refinement は runtime の検査であり（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）、同じ基底型を持つ 2 つの nominal は互いを受理する。これは [§1.3.5](./language.md#_1-3-5-型の一意化) の記述とは逆向きであり、別途追跡している。
 
 **この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、レシーバ依存の結果型を持つメソッド、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) が担保する。
 
@@ -253,6 +286,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 `emit` の引数が、その effect の宣言する `in=` 型と一致しない。
 
 > `Expected <in-type> but got <actual>`
+> `Expected <in-type> but got variant "<name>"`
 > `emit "<effect>" expects an EffectId argument`
 
 `EffectId` の場合だけ文言を分けているのは、修正の種類が違うからである。これはキャンセルの配線ミスの典型形で、`emit stopSearch(searchId)`（`searchId : EffectId`）は正しく、`emit stopSearch(42)` や `emit stopSearch("id")` は誤り。codegen は `EffectId` でない値をそのまま渡し、cancel パスは静かに no-op となる — 成功したキャンセルと見分けがつかない。
@@ -429,7 +463,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 タグは `{_tag: "Zork"}` へ落ち、どの `match` arm にも一致しない。UI は静かに何も描かず、runtime エラーも出ない。パターン側の同じ誤りが [E0209](#e0209-pat-unknown-variant) である。
 
-**修正**：宣言済みのタグを使うか、そのタグを union に加える。
+**修正**：宣言済みのタグを使うか、そのタグを union に加える。`kumiki fix` が最も近いタグを提案する。
 
 ### E0217 `int-literal-precision`
 

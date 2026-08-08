@@ -491,3 +491,236 @@ tile Due in=Id = text(due[$1].map(formatDate($1)).get-or(""))`,
     ).toEqual([]);
   });
 });
+
+/**
+ * `relate` is only reached when neither side is a literal, which in practice
+ * means slot-to-slot assignment. Every record and union case above goes down
+ * the literal path instead, so without these the whole relation could be
+ * replaced by `() => true` and stay green.
+ */
+describe("the assignability relation itself", () => {
+  const assign = (defs: string, lhs: string, rhs: string) => inReducer(defs, `${lhs} := ${rhs}`);
+
+  it("refuses a record missing a declared field", () => {
+    expect(
+      assign(
+        `type P = {a: Int, b: Int}\ntype Q = {a: Int}\nslot p : P = {a: 1, b: 2}\nslot q : Q = {a: 1}`,
+        "p",
+        "q",
+      ),
+    ).toEqual(["E0201"]);
+  });
+
+  it("refuses a record carrying a field the target does not declare", () => {
+    // Records get no width subtyping: the extra field would ride into a value
+    // whose type says it is not there, and every later read of that value is
+    // checked against a shape it does not have.
+    expect(
+      assign(
+        `type P = {a: Int}\ntype Q = {a: Int, b: Int}\nslot p : P = {a: 1}\nslot q : Q = {a: 1, b: 2}`,
+        "p",
+        "q",
+      ),
+    ).toEqual(["E0201"]);
+  });
+
+  it("refuses a container whose element type differs", () => {
+    expect(assign(`slot li : List(Int) = []\nslot lt : List(Text) = []`, "li", "lt")).toEqual([
+      "E0201",
+    ]);
+  });
+
+  it("refuses a different container of the same element type", () => {
+    expect(assign(`slot li : List(Int) = []\nslot si : Set(Int) = {}`, "li", "si")).toEqual([
+      "E0201",
+    ]);
+  });
+
+  it("refuses a union whose variant payloads differ", () => {
+    expect(
+      assign(
+        `type A = Idle | Busy(Int)\ntype B = Idle | Busy(Text)\nslot a : A = Idle\nslot b : B = Idle`,
+        "a",
+        "b",
+      ),
+    ).toEqual(["E0201"]);
+  });
+
+  it("refuses a scalar where a tuple is declared", () => {
+    // The tuple slot is initialised from `.zip`, whose result type is
+    // undecidable, so the only diagnostic left is the assignment itself.
+    expect(
+      assign(
+        `slot ns : List(Int) = []\nslot ts : List(Text) = []\nslot t : Tuple(Int, Text) = ns.zip(ts)\nslot n : Int = 0`,
+        "t",
+        "n",
+      ),
+    ).toEqual(["E0201"]);
+  });
+
+  it("accepts a container of the same shape", () => {
+    expect(assign(`slot a : List(Int) = []\nslot b : List(Int) = []`, "a", "b")).toEqual([]);
+  });
+});
+
+/**
+ * A recursive type is what an LLM reaches for first — a comment tree, a file
+ * tree, a nested todo. `unaliasType`'s cycle guard covers one normalisation,
+ * so the relation needs its own or it recurses until the stack gives out: a
+ * `RangeError` thrown out of `check`, not a diagnostic.
+ */
+describe("recursive types terminate", () => {
+  const RECURSIVE: [string, string][] = [
+    ["a record naming itself", `type Node = {value: Int, next: Node}\nfn f(n: Node) -> Node = n`],
+    ["two records naming each other", `type A = {b: B}\ntype B = {a: A}\nfn f(x: A) -> A = x`],
+    ["a union naming itself", `type Tree = Leaf | Branch(Tree, Tree)\nfn f(t: Tree) -> Tree = t`],
+    [
+      "a record reaching itself through a container",
+      `type Comment = {id: Int, body: Text, replies: List(Comment)}\nfn f(c: Comment) -> Comment = c`,
+    ],
+  ];
+
+  for (const [label, src] of RECURSIVE) {
+    it(`checks ${label} without exhausting the stack`, () => {
+      expect(() => prog(src)).not.toThrow();
+      expect(prog(src)).toEqual([]);
+    });
+  }
+
+  it("still reports a mismatch inside a recursive type", () => {
+    expect(
+      prog(
+        `type Node = {value: Int, next: Option(Node)}\nslot n : Node = {value: "x", next: None}`,
+      ),
+    ).toEqual(["E0201"]);
+  });
+});
+
+/**
+ * `substituteType` is what instantiates a generic. Replaced with the identity,
+ * every argument degrades to an opaque type parameter — which the relation
+ * accepts — so a test that only asserts `[]` cannot tell the two apart.
+ */
+describe("generic instantiation", () => {
+  it("checks a field against the instantiated parameter", () => {
+    expect(prog(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: "x"}`)).toEqual(["E0201"]);
+  });
+
+  it("checks through a container of the parameter", () => {
+    expect(prog(`type Box(T) = {v: List(T)}\nslot b : Box(Int) = {v: ["a"]}`)).toEqual(["E0201"]);
+  });
+
+  it("checks a nested instantiation", () => {
+    expect(
+      prog(
+        `type Box(T) = {v: T}\ntype Pair(A) = {l: Box(A), r: Box(A)}\nslot p : Pair(Int) = {l: {v: 1}, r: {v: "x"}}`,
+      ),
+    ).toEqual(["E0201"]);
+  });
+
+  it("accepts a correct instantiation", () => {
+    expect(prog(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: 1}`)).toEqual([]);
+  });
+
+  it("reports a generic named without its arguments", () => {
+    // `Box` alone expands with `T` unsubstituted, and an unsubstituted
+    // parameter is opaque — so everything typed by it would stop being checked.
+    expect(prog(`type Box(T) = {v: T}\nslot b : Box = {v: 1}`)).toEqual(["E0210"]);
+  });
+});
+
+/**
+ * `fix.ts` parses these with regexes and the debug skill quotes them, so the
+ * wording is an interface. `spec-drift` compares codes and `spec-index`
+ * compares the two documents to each other; neither reads a message.
+ */
+describe("diagnostic messages", () => {
+  const firstMessage = (src: string) => check(parse(lex(`${src}\n${TAIL}`)))[0]?.message;
+
+  it("names the literal as written and the value it became", () => {
+    expect(firstMessage(`slot n : Int = 9007199254740993`)).toBe(
+      "Int literal 9007199254740993 is not exactly representable and was rounded to 9007199254740992",
+    );
+  });
+
+  it("names both types in an assignment mismatch", () => {
+    expect(firstMessage(`slot n : Int = "x"`)).toBe("Expected Int but got Text");
+  });
+
+  it("names the declared type in an unknown-variant message, as E0209 does", () => {
+    // `fix.ts` extracts the second quoted name and resolves its tags from it.
+    expect(firstMessage(`type S = Idle | Busy\nslot s : S = Zork`)).toBe(
+      'Variant "Zork" is not a member of type "S"',
+    );
+  });
+
+  it("prints an undecidable type argument rather than dropping it", () => {
+    // `?` is `unknownType` reaching the reader: `List(?)` says the value is a
+    // list and its element type could not be worked out.
+    expect(firstMessage(`slot n : Int = []`)).toBe("Expected Int but got List(?)");
+  });
+});
+
+/**
+ * The one-sided design is the load-bearing claim, so the silences need pinning
+ * as much as the reports do — each of these would be a false positive on a
+ * program that runs.
+ */
+describe("more that stays silent", () => {
+  it("says nothing about a refinement, which the runtime evaluates instead", () => {
+    expect(
+      inReducer(`type N = nominal Int where between(0, 999)\nslot c : N = 0`, `c := 5000`),
+    ).toEqual([]);
+  });
+
+  it("does not carry an outer $2 into a method-call argument", () => {
+    expect(
+      prog(
+        `slot rows : List(Int) = []
+fn pick(a: Int, b: Int) -> Int = a + b
+tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("says nothing about .copy on a receiver that is not a record", () => {
+    expect(inReducer(`slot n : Int = 0`, `n := n.copy(z=1)`)).toEqual([]);
+  });
+
+  it("says nothing about an operator with one unresolved side", () => {
+    expect(inReducer(`slot t : Text = ""\nslot l : List(Text) = []`, `t := l.head + "x"`)).toEqual(
+      [],
+    );
+  });
+});
+
+/**
+ * A binding shadows whatever the name meant outside it. Before `bindLocal`,
+ * only the name was rebound and the outer type stayed behind, so an inner loop
+ * variable was reported as the type of an outer `let`.
+ */
+describe("a re-binding does not inherit the outer type", () => {
+  it("for-bind over a let of a different type", () => {
+    expect(
+      inReducer(
+        `slot names : List(Text) = ["a"]\nslot total : Text = ""`,
+        `let x = 5\n  for x in names\n    total := x`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("match-bind over a let of a different type", () => {
+    expect(
+      inReducer(
+        `slot o : Option(Text) = None\nslot t : Text = ""`,
+        `let v = 5\n  match o with | Some(v) -> t := v | None -> t := ""`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("still types the for-bind from its own container", () => {
+    expect(
+      inReducer(`slot names : List(Text) = ["a"]\nslot n : Int = 0`, `for x in names\n    n := x`),
+    ).toEqual(["E0201"]);
+  });
+});

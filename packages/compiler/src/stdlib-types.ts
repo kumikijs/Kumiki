@@ -3,7 +3,8 @@
 // Two consumers used to carry their own list and had already drifted: the
 // typechecker had none at all (so `HttpError` was an unresolvable name that
 // silently accepted every value), and `dts.ts` had a private `KNOWN_SCALAR`
-// covering five of the nine. Both read this now, and `stdlib-types.test.ts`
+// holding only the scalar nominals — no records, no unions, so `HttpError` and
+// `Route` generated `unknown`. Both read this now, and `stdlib-types.test.ts`
 // drives every entry through both.
 
 import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
@@ -16,7 +17,7 @@ import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
  */
 const NO_POS: Pos = { line: 0, col: 0 };
 
-type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
+export type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
 
 const prim = (name: PrimName): TypeExpr => ({ kind: "TypePrim", name, pos: NO_POS });
 const ref = (name: string): TypeExpr => ({ kind: "TypeRef", name, pos: NO_POS });
@@ -123,7 +124,7 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
  * but a *misspelling* of one does, as an unresolvable `TypeRef`, which is
  * exactly when a repair needs them as candidates.
  */
-const PRIM_TYPE_NAMES: readonly string[] = [
+const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "Text",
   "Int",
   "Float",

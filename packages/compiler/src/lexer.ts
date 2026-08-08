@@ -162,7 +162,7 @@ export function lex(source: string): Token[] {
           advance();
         }
       }
-      tokens.push({ kind: "num", value: Number(raw), pos: startPos });
+      tokens.push({ kind: "num", value: Number(raw), raw, pos: startPos });
       continue;
     }
 

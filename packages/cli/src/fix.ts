@@ -576,8 +576,24 @@ export function applyFixPlan(
   if (plan.patches.length === 0) {
     return { applied: 0, before, after: before, remaining: plan.errors };
   }
+  // Counted one patch at a time, because a patch can decline to change
+  // anything: `replaceAt` returns the source untouched when the reported
+  // column does not hold the name it was told to replace. Composed with
+  // patches that do land, the regression gate passes on the strength of the
+  // others and the no-op would still be reported as applied.
   let after = before;
-  for (const p of plan.patches) after = p.apply(after);
+  let applied = 0;
+  for (const p of plan.patches) {
+    const next = p.apply(after);
+    if (next !== after) applied += 1;
+    after = next;
+  }
+  if (applied === 0) {
+    // Nothing changed, so there is nothing to gate and nothing to write. This
+    // is "no auto-patch took effect", not a rollback — `regressionBlocked`
+    // stays unset so the caller reports it as such.
+    return { applied: 0, before, after: before, remaining: plan.errors };
+  }
   // Regression gate. Every path that would touch disk first re-parses and
   // re-typechecks the composed source, then compares diagnostic *sets* (code
   // + position) rather than counts. Rollback triggers when any of:
@@ -651,7 +667,7 @@ export function applyFixPlan(
       writeError: e instanceof Error ? e.message : String(e),
     };
   }
-  return { applied: plan.patches.length, before, after, remaining: dryRemaining };
+  return { applied, before, after, remaining: dryRemaining };
 }
 
 export type FixApplyResult = {

@@ -42,7 +42,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 ## Auto-fix
 
-For name-resolution errors (E0102–E0106, E0116, E0117, E0209, E0216), the compiler can suggest the closest existing name — each from its own namespace, so a slot is never proposed where a type belongs:
+For name-resolution errors, the compiler can suggest the closest existing name. `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`–`E0105`, `E0107` and `E0211` search all top-level definitions.
 
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes

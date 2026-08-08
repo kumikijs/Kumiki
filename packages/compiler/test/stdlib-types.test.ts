@@ -27,20 +27,40 @@ describe("every stdlib type resolves in the checker", () => {
 });
 
 describe("every stdlib type generates a real TypeScript type", () => {
+  const providerLine = (src: string): string | undefined =>
+    generateDts(parse(lex(src)))
+      .split("\n")
+      .find((l) => l.includes('"custom.thing"'));
+
   for (const t of STDLIB_TYPES) {
-    it(`maps "${t.name}" to something other than unknown`, () => {
-      const src = `effect e cap=custom.thing in=${t.name} out=Result(Unit, Text)
-${TAIL}`;
-      const dts = generateDts(parse(lex(src)));
-      const line = dts.split("\n").find((l) => l.includes('"custom.thing"'));
+    it(`maps "${t.name}" with no unknown anywhere in it`, () => {
+      const line = providerLine(`effect e cap=custom.thing in=${t.name} out=Result(Unit, Text)
+${TAIL}`);
       expect(line, `no provider line for ${t.name}`).toBeDefined();
-      // `Provider<In, Out>` — the input half is what the entry maps to.
-      const input = (line as string).slice(
-        (line as string).indexOf("Provider<") + "Provider<".length,
-      );
-      expect(input.startsWith("unknown"), `${t.name} generated \`unknown\`: ${line}`).toBe(false);
+      // Not a prefix check: an `unknown` nested inside a record field or a
+      // union member is the same hole, and that is where `File` inside
+      // `FormValue` sat while the primitive table was missing it.
+      expect(line, `${t.name} generated an unknown`).not.toContain("unknown");
     });
   }
+
+  it("quotes a field name TypeScript cannot take bare", () => {
+    // `PanicInfo.episode-id` is kebab-case; unquoted, the declaration does not
+    // parse at all — which is what routing PanicInfo through this table opened.
+    expect(
+      providerLine(`effect e cap=custom.thing in=PanicInfo out=Result(Unit, Text)
+${TAIL}`),
+    ).toContain('"episode-id": string');
+  });
+
+  it("names a user generic's parameters instead of erasing them", () => {
+    const src = `type Box(T) = {v: T}
+effect e cap=custom.thing in=Box(Int) out=Result(Unit, Text)
+${TAIL}`;
+    const dts = generateDts(parse(lex(src)));
+    expect(dts).toContain("export type Box<T> = { v: T };");
+    expect(dts).toContain("Provider<Box<number>,");
+  });
 });
 
 describe("the built-in type constructors", () => {

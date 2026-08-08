@@ -25,6 +25,12 @@ export type TypeEnv = { types: ReadonlyMap<string, TypeDef> };
  * `TypeRef` to a name the grammar cannot produce, so it takes the same
  * "unresolved name is opaque" path as a type parameter with no substitution —
  * one rule instead of a separate case in every comparison.
+ *
+ * `?` is also what a reader sees: nested inside a container it survives into
+ * `typeToString`, and `Expected Int but got List(?)` is the honest rendering —
+ * the value is a list, and its element type could not be decided. It cannot
+ * appear on the declared side, which is the half `symbols.ts#variantTagsOf`
+ * and `fix.ts` parse back out of a message.
  */
 export const unknownType = (pos: Pos): TypeExpr => ({ kind: "TypeRef", name: "?", pos });
 
@@ -39,9 +45,9 @@ export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
  * generic definitions instantiated, `nominal` / `where` wrappers stripped.
  *
  * A `TypeRef` that names nothing is returned as-is, which is how a type
- * parameter and a misspelling both become opaque. Recursion through an alias
- * cycle returns `null` rather than looping — cycle *detection* is issue #243's
- * job, and this must terminate regardless.
+ * parameter and a misspelling both become opaque. An alias that resolves to
+ * itself returns `null` rather than looping: reporting the cycle is a separate
+ * check, and normalisation has to terminate whether or not one exists.
  */
 export function unaliasType(
   t: TypeExpr | null,
@@ -111,15 +117,17 @@ export function recordFieldType(
   return rec.fields.find((f) => f.name === name)?.type ?? null;
 }
 
-/** Look up a variant of a union by tag, after unaliasing. */
-export function unionVariant(
-  t: TypeExpr | null,
-  tag: string,
-  env: TypeEnv,
-): { name: string; payloads: TypeExpr[] } | null {
+/**
+ * What one iteration of `for x in <t>` binds, or `null` when the container's
+ * element type is not decidable. `Map` is deliberately absent: what iterating a
+ * Map yields is not settled anywhere in the spec, and a wrong answer here binds
+ * the loop variable to a type it does not have.
+ */
+export function elementType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
   const u = unaliasType(t, env);
-  if (u?.kind !== "TypeUnion") return null;
-  return u.variants.find((v) => v.name === tag) ?? null;
+  if (u?.kind !== "TypeApp") return null;
+  if (u.name === "List" || u.name === "Set") return u.args[0] ?? null;
+  return null;
 }
 
 /**
@@ -144,12 +152,35 @@ export function assignable(
   return relate(actual, declared, env, new Set());
 }
 
+/**
+ * Comparisons already in progress, keyed by the pair being compared as written.
+ *
+ * `unaliasType`'s own guard covers one normalisation and nothing more: the
+ * moment `relate` descends into a field or a payload it starts a fresh one, so
+ * `type Node = {value: Int, next: Node}` recurses until the stack gives out.
+ * A comment tree, a file tree and a nested todo are all this shape.
+ *
+ * Re-entering a pair means the answer depends on itself, and the only
+ * terminating answer that keeps the relation one-sided is "yes" — refusing
+ * would reject every recursive type. That is the standard co-inductive reading
+ * of structural equality on regular trees, and it is sound here because the
+ * finite part of the comparison has already been checked on the way down.
+ */
 function relate(
   actual: TypeExpr | null,
   declared: TypeExpr | null,
   env: TypeEnv,
   seen: ReadonlySet<string>,
 ): boolean {
+  if (actual !== null && declared !== null) {
+    // Keyed on the types *as written*, not on the unaliased forms: a recursive
+    // type is finite as written (the cycle is a `TypeRef` back to its own
+    // name), so the key set is finite and this terminates. Keying on the
+    // expansion would not.
+    const key = `${typeToString(actual)} ⇒ ${typeToString(declared)}`;
+    if (seen.has(key)) return true;
+    seen = new Set([...seen, key]);
+  }
   const a = unaliasType(actual, env);
   const d = unaliasType(declared, env);
   if (a === null || d === null) return true;
@@ -229,7 +260,17 @@ export function typeToString(t: TypeExpr): string {
   }
 }
 
-/** Arity of a type constructor, or `null` when it takes any number / is unknown. */
+/** Does `name` name a type at all — a definition, or a built-in constructor? */
+export function isKnownTypeName(name: string, env: TypeEnv): boolean {
+  return env.types.has(name) || BUILTIN_TYPE_CONSTRUCTORS.has(name);
+}
+
+/**
+ * How many type arguments `name` takes, or `null` when the question does not
+ * apply — `Tuple` is variadic, and a name that is not a type has no arity.
+ * Callers resolve the name with `isKnownTypeName` first, so by the time this
+ * answers `null` the only reading left is "variadic".
+ */
 export function constructorArity(name: string, env: TypeEnv): number | null {
   const def = env.types.get(name);
   if (def) return def.params.length;

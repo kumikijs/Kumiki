@@ -1,6 +1,8 @@
 import {
   assignable,
   constructorArity,
+  elementType,
+  isKnownTypeName,
   isOpaque,
   paramSubstitution,
   recordFieldType,
@@ -27,11 +29,12 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
-import { BUILTIN_TYPE_CONSTRUCTORS, STDLIB_TYPES } from "./stdlib-types.ts";
+import { STDLIB_TYPES } from "./stdlib-types.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
@@ -396,7 +399,7 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void
     });
   }
   resolveType(slot.type, sym, errors);
-  const ctx: Ctx = { kind: "slot-init", localBinds: new Set() };
+  const ctx: Ctx = { kind: "slot-init", localBinds: new Set(), localTypes: new Map() };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);
 }
@@ -406,7 +409,7 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
   if (tile.in) {
     resolveType(tile.in, sym, errors);
     ctx.localBinds.add("$1");
-    ctx.localTypes?.set("$1", tile.in);
+    ctx.localTypes.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
@@ -515,13 +518,39 @@ type Ctx = {
   capsAvailable?: Set<string>; // for reducer context
   /**
    * Inferred types of in-scope local binds (ADR-002): fn params, tile `in`
-   * (`$1`), and `let` bindings. Used by FieldAccess inference to dispatch
-   * field-vs-shortcut and to flag E0108. Cloned alongside `localBinds` when a
-   * narrower scope is entered. Absent for binds we don't type (reducer payloads,
-   * `match` binds) — those infer as dynamic.
+   * (`$1`), `let` bindings, `for` binds and `match` binds. Cloned alongside
+   * `localBinds` when a narrower scope is entered.
+   *
+   * Always present, and always written through `bindLocal` — a name absent
+   * here must mean "in scope, type unknown", which is only true if every
+   * re-binding *removes* the outer entry. It did not, so an inner `for x in
+   * names` inherited the type of an outer `let x = 5` and reported the loop
+   * variable as an Int.
    */
-  localTypes?: Map<string, TypeExpr>;
+  localTypes: Map<string, TypeExpr>;
 };
+
+/**
+ * Bring `name` into scope with `type`, or with no type when it cannot be
+ * worked out. The delete is the load-bearing half: a bind shadows whatever the
+ * name meant outside, so leaving the outer type behind makes the checker
+ * reason about a value that is no longer there.
+ */
+function bindLocal(ctx: Ctx, name: string, type: TypeExpr | null): void {
+  ctx.localBinds.add(name);
+  if (type) ctx.localTypes.set(name, type);
+  else ctx.localTypes.delete(name);
+}
+
+/** The type one iteration of `for x in iter` binds, given the iterated expression. */
+function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
+  return elementType(inferType(iter, sym, ctx), sym);
+}
+
+/** A copy of `ctx` whose bindings can be extended without touching the parent. */
+function innerScope(ctx: Ctx): Ctx {
+  return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+}
 
 /**
  * Validate `icon(name="<literal>")` against the strict-icons domain. Only
@@ -593,21 +622,19 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
   switch (t.kind) {
     case "TileFor": {
       checkExpr(t.iter, sym, errors, ctx);
-      const inner: Ctx = {
-        ...ctx,
-        localBinds: new Set(ctx.localBinds),
-        localTypes: new Map(ctx.localTypes ?? []),
-      };
-      inner.localBinds.add(t.bind);
+      const inner = innerScope(ctx);
+      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
       checkTileExpr(t.body, sym, errors, inner);
       return;
     }
     case "TileWhen":
       checkExpr(t.cond, sym, errors, ctx);
+      checkCondition(t.cond, inferType(t.cond, sym, ctx), sym, errors, '"when"');
       checkTileExpr(t.body, sym, errors, ctx);
       return;
     case "TileIf":
       checkExpr(t.cond, sym, errors, ctx);
+      checkCondition(t.cond, inferType(t.cond, sym, ctx), sym, errors, '"if"');
       checkTileExpr(t.consequent, sym, errors, ctx);
       checkTileExpr(t.alternate, sym, errors, ctx);
       return;
@@ -615,19 +642,8 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = inferType(t.scrutinee, sym, ctx);
       for (const arm of t.arms) {
-        const inner: Ctx = {
-          ...ctx,
-          localBinds: new Set(ctx.localBinds),
-          localTypes: new Map(ctx.localTypes ?? []),
-        };
-        checkPatternAgainstType(
-          arm.pattern,
-          scrutType,
-          sym,
-          errors,
-          inner.localBinds,
-          inner.localTypes,
-        );
+        const inner = innerScope(ctx);
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -638,20 +654,18 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
   }
 }
 
-/** The `TileExpr` node kinds, for telling a tile child from a value argument. */
-const TILE_EXPR_KINDS: ReadonlySet<string> = new Set([
-  "TileCall",
-  "TileFor",
-  "TileWhen",
-  "TileIf",
-  "TileMatch",
-]);
-
 /**
- * A user tile is applied like a one-parameter function: `tile Row in=Int` is
- * called `Row(id)`, and a tile with no `in=` takes nothing. `$1` is bound from
- * that argument, so a call with the wrong count leaves `$1` undefined and the
- * mount dies with `_d_1 is not defined` — no diagnostic anywhere before this.
+ * A user tile is applied like a one-parameter function (§1.7.1: "a tile takes a
+ * single positional argument", readable as `$1` only when `in=` is declared).
+ * `tile Row in=Int` is called `Row(id)`; a tile with no `in=` takes nothing.
+ *
+ * Three shapes were unreported before this. Too few arguments leaves `$1`
+ * unbound and the mount dies with `_d_1 is not defined`. Too many, to a tile
+ * with no `in=`, mounts and renders while dropping the value. And a *tile*
+ * where a value belongs — `Card(text("child"))` — makes codegen render the
+ * argument in place of the tile's own body, so `Card`'s definition disappears
+ * from the output with nothing said. The grammar has no children form; that
+ * lowering is unspecified and now unreachable.
  *
  * Props (`{key: …}`) are not arguments and named args belong to the built-in
  * tiles, so only positional args count.
@@ -676,11 +690,17 @@ function checkTileInput(
   }
   const arg = positional[0];
   if (!def.in || !arg) return;
-  // A tile passed as a child is a TileExpr, not a value; the caller's walk
-  // checks those as tiles.
   const value = arg.value;
-  if (TILE_EXPR_KINDS.has((value as TileExpr).kind)) return;
-  checkAgainst(value as Expr, def.in, sym, errors, ctx);
+  if (isTileExpr(value)) {
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message: `Tile "${t.name}" expects a value of type ${typeToString(def.in)} but got a tile`,
+      pos: value.pos,
+    });
+    return;
+  }
+  checkAgainst(value, def.in, sym, errors, ctx);
 }
 
 function checkTileCall(
@@ -977,6 +997,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   const ctx: Ctx = {
     kind: "reducer",
     localBinds: new Set(),
+    localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
   };
   // event binds
@@ -1076,12 +1097,8 @@ function checkStmt(
 ): void {
   if (s.kind === "ForStmt") {
     checkExpr(s.iter, sym, errors, ctx);
-    const inner: Ctx = {
-      ...ctx,
-      localBinds: new Set(ctx.localBinds),
-      localTypes: new Map(ctx.localTypes ?? []),
-    };
-    inner.localBinds.add(s.bind);
+    const inner = innerScope(ctx);
+    bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
     // A loop body executes multiple times; track writes inside its own scope
     // so the same slot can be assigned once per iteration. After the loop,
     // propagate the write set up to the parent (the slot WAS written).
@@ -1110,19 +1127,8 @@ function checkStmt(
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
-      const inner: Ctx = {
-        ...ctx,
-        localBinds: new Set(ctx.localBinds),
-        localTypes: new Map(ctx.localTypes ?? []),
-      };
-      checkPatternAgainstType(
-        arm.pattern,
-        scrutType,
-        sym,
-        errors,
-        inner.localBinds,
-        inner.localTypes,
-      );
+      const inner = innerScope(ctx);
+      checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
       armSets.push(armWrites);
@@ -1133,12 +1139,7 @@ function checkStmt(
   if (s.kind === "NoopStmt") return;
   if (s.kind === "LetStmt") {
     checkExpr(s.rhs, sym, errors, ctx);
-    ctx.localBinds.add(s.name);
-    const rt = inferType(s.rhs, sym, ctx);
-    if (rt) {
-      if (!ctx.localTypes) ctx.localTypes = new Map();
-      ctx.localTypes.set(s.name, rt);
-    }
+    bindLocal(ctx, s.name, inferType(s.rhs, sym, ctx));
     return;
   }
   if (s.kind === "Emit") {
@@ -1399,23 +1400,15 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
       for (const a of e.args) {
-        // Inside method call args, $1/$2 are implicit lambdas
-        const inner: Ctx = {
-          ...ctx,
-          localBinds: new Set(ctx.localBinds),
-          localTypes: new Map(ctx.localTypes ?? []),
-        };
-        inner.localBinds.add("$1");
-        inner.localBinds.add("$2");
-        // …and they SHADOW any outer `$1` / `$2`, so the outer type must go
-        // with the name. A tile that declares `in=TaskId` binds `$1` to it,
-        // and `dueDate.map(formatDate($1))` inside that tile is a different
-        // `$1` — the element of the Option. Carrying the tile's type in would
-        // report the element as a TaskId. The element type itself is left
+        // Inside a method-call argument `$1` / `$2` are the implicit lambda's
+        // parameters, and they SHADOW any outer ones — a tile that declares
+        // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
+        // inside that tile is a different `$1`. The element type is left
         // undecided: which argument a method binds is per-method, and guessing
-        // it wrong costs a wrong diagnostic on a working program.
-        inner.localTypes?.delete("$1");
-        inner.localTypes?.delete("$2");
+        // wrong costs a diagnostic on a working program.
+        const inner = innerScope(ctx);
+        bindLocal(inner, "$1", null);
+        bindLocal(inner, "$2", null);
         checkExpr(a, sym, errors, inner);
       }
       return;
@@ -1443,19 +1436,8 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = inferType(e.scrutinee, sym, ctx);
       for (const arm of e.arms) {
-        const inner: Ctx = {
-          ...ctx,
-          localBinds: new Set(ctx.localBinds),
-          localTypes: new Map(ctx.localTypes ?? []),
-        };
-        checkPatternAgainstType(
-          arm.pattern,
-          scrutType,
-          sym,
-          errors,
-          inner.localBinds,
-          inner.localTypes,
-        );
+        const inner = innerScope(ctx);
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
       }
       return;
@@ -1471,11 +1453,9 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       const inner: Ctx = {
         ...ctx,
         localBinds: new Set(ctx.localBinds),
-        localTypes: new Map(ctx.localTypes ?? []),
+        localTypes: new Map(ctx.localTypes),
       };
-      inner.localBinds.add(e.name);
-      const vt = inferType(e.value, sym, inner);
-      if (vt) inner.localTypes?.set(e.name, vt);
+      bindLocal(inner, e.name, inferType(e.value, sym, inner));
       checkExpr(e.body, sym, errors, inner);
       return;
     }
@@ -1625,6 +1605,23 @@ function checkCondition(
 }
 
 /**
+ * The code a value mismatch is reported under, and the `kind` that goes with
+ * it. `emit` reports its argument as E0202 — the diagnostic that already told
+ * authors to look at the effect's `in=` type — and everything else as E0201.
+ * The pair is derived in one place so the two can never be assembled apart.
+ */
+const MISMATCH_KIND = {
+  E0201: "type-mismatch",
+  E0202: "emit-arg-type-mismatch",
+} as const;
+
+type MismatchCode = keyof typeof MISMATCH_KIND;
+
+function pushMismatch(errors: KumikiError[], code: MismatchCode, message: string, pos: Pos): void {
+  errors.push({ code, kind: MISMATCH_KIND[code], message, pos });
+}
+
+/**
  * Check `e` against the type the site declares, reporting at the innermost
  * expression that is wrong.
  *
@@ -1644,27 +1641,18 @@ function checkAgainst(
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
-  code: "E0201" | "E0202" = "E0201",
+  code: MismatchCode = "E0201",
 ): void {
   if (declared === null) return;
   const d = unaliasType(declared, sym);
   if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
 
   const mismatch = (at: Expr, actual: TypeExpr): void => {
-    errors.push(
-      code === "E0202"
-        ? {
-            code: "E0202",
-            kind: "emit-arg-type-mismatch",
-            message: `Expected ${typeToString(declared)} but got ${typeToString(actual)}`,
-            pos: at.pos,
-          }
-        : {
-            code: "E0201",
-            kind: "type-mismatch",
-            message: `Expected ${typeToString(declared)} but got ${typeToString(actual)}`,
-            pos: at.pos,
-          },
+    pushMismatch(
+      errors,
+      code,
+      `Expected ${typeToString(declared)} but got ${typeToString(actual)}`,
+      at.pos,
     );
   };
 
@@ -1673,17 +1661,15 @@ function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
-    // `{}` and `{a, b}` build a Set through the same literal form; the parser
-    // marks a set's values `Unit`.
-    if (d.name === "Set") {
-      for (const ent of e.entries) checkAgainst(ent.key, d.args[0] ?? null, sym, errors, ctx, code);
-      return;
-    }
+    // A `Set` is written `{}` and nothing else: the grammar has no non-empty
+    // set literal (`{"a", "b"}` does not parse, and `{a, b}` is a record), so
+    // an entry can only come from a `Map`. Both are the same node kind, which
+    // is why the declared type decides.
+    if (d.name === "Set") return;
     if (d.name === "Map") {
       for (const ent of e.entries) {
         checkAgainst(ent.key, d.args[0] ?? null, sym, errors, ctx, code);
-        if (ent.value.kind !== "Unit")
-          checkAgainst(ent.value, d.args[1] ?? null, sym, errors, ctx, code);
+        checkAgainst(ent.value, d.args[1] ?? null, sym, errors, ctx, code);
       }
       return;
     }
@@ -1713,7 +1699,10 @@ function checkAgainst(
     errors.push({
       code: "E0217",
       kind: "int-literal-precision",
-      message: `Int literal ${e.value} is not exactly representable and was rounded to ${e.value}`,
+      // `e.value` is already the rounded double, so the literal as written has
+      // to come from the lexeme — reporting `e.value` on both sides of "was
+      // rounded to" says the number was rounded to itself.
+      message: `Int literal ${e.raw ?? e.value} is not exactly representable and was rounded to ${e.value}`,
       pos: e.pos,
     });
     return;
@@ -1762,7 +1751,7 @@ function checkRecordLit(
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
-  code: "E0201" | "E0202",
+  code: MismatchCode,
 ): void {
   const given = new Set(e.fields.map((f) => f.name));
   for (const declaredField of d.fields) {
@@ -1801,7 +1790,7 @@ function checkVariantAgainst(
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
-  code: "E0201" | "E0202",
+  code: MismatchCode,
 ): void {
   const payloadsOf = (): TypeExpr[] | "unknown-tag" | null => {
     if (d.kind === "TypeUnion") {
@@ -1824,12 +1813,12 @@ function checkVariantAgainst(
   const payloads = payloadsOf();
   if (payloads === null) {
     // The declared type is not a union at all — `slot n : Int = Idle`.
-    errors.push({
-      code: code === "E0202" ? "E0202" : "E0201",
-      kind: code === "E0202" ? "emit-arg-type-mismatch" : "type-mismatch",
-      message: `Expected ${typeToString(declared)} but got variant "${e.name}"`,
-      pos: e.pos,
-    });
+    pushMismatch(
+      errors,
+      code,
+      `Expected ${typeToString(declared)} but got variant "${e.name}"`,
+      e.pos,
+    );
     return;
   }
   if (payloads === "unknown-tag") {
@@ -2072,7 +2061,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     case "Bool":
       return { kind: "TypePrim", name: "Bool", pos: e.pos };
     case "Ref": {
-      const bound = ctx.localTypes?.get(e.name);
+      const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
       return sym.slots.get(e.name)?.type ?? null;
     }
@@ -2146,11 +2135,9 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return container("List", [elem ?? unknownType(e.pos)], e.pos);
     }
     case "MapLit": {
-      // The same literal syntax builds a Set (`{}` / `{a, b}`), where the
-      // parser leaves the values as `Unit`. Inferring `Map(K, Unit)` for one
-      // would make it a mismatch against `Set(K)`, so a unit-valued literal
-      // stays undecidable and the declared type decides.
-      if (e.entries.some((ent) => ent.value.kind === "Unit")) return null;
+      // `{}` is both the empty map and the only set literal the grammar has,
+      // so an entry-less literal says nothing about which it is.
+      if (e.entries.length === 0) return null;
       const k = commonType(
         e.entries.map((ent) => inferType(ent.key, sym, ctx)),
         sym,
@@ -2344,6 +2331,7 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
     checkExpr(eff.mapRequest, sym, errors, {
       kind: "slot-init", // treat as pure context (no slots, no fns)
       localBinds: new Set(["$1"]),
+      localTypes: new Map(),
     });
 }
 
@@ -2353,9 +2341,9 @@ function wildcardText(e: Expr & { kind: "Wildcard" }): string {
 
 /**
  * Validate that `pat` is structurally compatible with `scrutType`, push
- * diagnostics for any mismatch, and register every bind name into `binds` /
- * (when its type is known) `localTypes` so the arm body resolves names and
- * sees the right inner type.
+ * diagnostics for any mismatch, and bring every bind name into `scope` — with
+ * its type when that is known, and explicitly without one when it is not, so
+ * an arm binding cannot inherit the type of a same-named binding outside it.
  *
  * When `scrutType` is null (undecidable), we still collect bind names — the
  * arm body must remain usable — but skip the structural checks (consistent
@@ -2369,8 +2357,7 @@ function checkPatternAgainstType(
   scrutType: TypeExpr | null,
   sym: SymbolTable,
   errors: KumikiError[],
-  binds: Set<string>,
-  localTypes: Map<string, TypeExpr> | undefined,
+  scope: Ctx,
 ): void {
   const t = unaliasType(scrutType, sym);
   // Diagnostics prefer the user-written name (`Light`) over its expanded body
@@ -2381,8 +2368,7 @@ function checkPatternAgainstType(
   if (pat.kind === "PWildcard") return;
 
   if (pat.kind === "PBind") {
-    binds.add(pat.name);
-    if (t && localTypes) localTypes.set(pat.name, t);
+    bindLocal(scope, pat.name, t);
     return;
   }
 
@@ -2392,7 +2378,7 @@ function checkPatternAgainstType(
       // Undecidable scrutinee — still walk the items so nested binds land in
       // scope; just skip the per-element type check.
       for (const it of pat.items) {
-        checkPatternAgainstType(it, null, sym, errors, binds, localTypes);
+        checkPatternAgainstType(it, null, sym, errors, scope);
       }
       return;
     }
@@ -2404,7 +2390,7 @@ function checkPatternAgainstType(
         pos: pat.pos,
       });
       for (const it of pat.items) {
-        checkPatternAgainstType(it, null, sym, errors, binds, localTypes);
+        checkPatternAgainstType(it, null, sym, errors, scope);
       }
       return;
     }
@@ -2424,7 +2410,7 @@ function checkPatternAgainstType(
       const item = pat.items[i];
       if (!item) continue;
       const elemType = tupleT.args[i] ?? null;
-      checkPatternAgainstType(item, elemType, sym, errors, binds, localTypes);
+      checkPatternAgainstType(item, elemType, sym, errors, scope);
     }
     return;
   }
@@ -2432,12 +2418,12 @@ function checkPatternAgainstType(
   // PVariant
   if (!t) {
     // Undecidable scrutinee — register binds without types and stop.
-    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    for (const b of pat.binds) if (b !== "_") bindLocal(scope, b, null);
     return;
   }
   const payloads = lookupVariantPayloads(pat.name, t, sym);
   if (payloads === null) {
-    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    for (const b of pat.binds) if (b !== "_") bindLocal(scope, b, null);
     return;
   }
   if (payloads === "unknown-tag") {
@@ -2447,7 +2433,7 @@ function checkPatternAgainstType(
       message: `Variant "${pat.name}" is not a member of scrutinee type "${typeToString(display as TypeExpr)}"`,
       pos: pat.pos,
     });
-    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    for (const b of pat.binds) if (b !== "_") bindLocal(scope, b, null);
     return;
   }
   if (payloads === "not-a-union") {
@@ -2457,7 +2443,7 @@ function checkPatternAgainstType(
       message: `Variant pattern "${pat.name}" cannot match scrutinee of type "${typeToString(display as TypeExpr)}"`,
       pos: pat.pos,
     });
-    for (const b of pat.binds) if (b !== "_") binds.add(b);
+    for (const b of pat.binds) if (b !== "_") bindLocal(scope, b, null);
     return;
   }
   if (pat.binds.length !== payloads.length) {
@@ -2471,9 +2457,7 @@ function checkPatternAgainstType(
   for (let i = 0; i < pat.binds.length; i++) {
     const name = pat.binds[i];
     if (!name || name === "_") continue;
-    binds.add(name);
-    const ty = payloads[i] ?? null;
-    if (ty && localTypes) localTypes.set(name, ty);
+    bindLocal(scope, name, payloads[i] ?? null);
   }
 }
 
@@ -2765,7 +2749,11 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     });
   }
   // The `expect` is a tile expression — validate its tile references.
-  checkTileExpr(t.expect as TileExpr, sym, errors, { kind: "tile", localBinds: new Set() });
+  checkTileExpr(t.expect as TileExpr, sym, errors, {
+    kind: "tile",
+    localBinds: new Set(),
+    localTypes: new Map(),
+  });
 }
 
 function checkApp(
@@ -2809,6 +2797,7 @@ function checkApp(
   const initCtx: Ctx = {
     kind: "reducer",
     localBinds: new Set(),
+    localTypes: new Map(),
     capsAvailable: new Set(app.caps),
   };
   for (const e of app.init) {
@@ -2840,9 +2829,9 @@ function checkApp(
  * `type Box(T) = {v: T}` may name `T`, and nothing else may. Every other
  * declaration site — `slot`, `fn`, `effect`, `tile in=` — has no type
  * parameters, so it passes an empty scope and every unresolved name there is a
- * real one. Before this, the unknown-name case returned unconditionally with a
- * comment saying parameter scopes were not tracked, which meant `NoSuchType`
- * was accepted everywhere.
+ * real one. Tracking them is what makes reporting possible at all: without a
+ * scope the only safe answer for an unknown name is to accept it, and
+ * accepting `NoSuchType` turns off value checking for everything it types.
  */
 function resolveType(
   t: TypeExpr,
@@ -2853,32 +2842,36 @@ function resolveType(
   switch (t.kind) {
     case "TypePrim":
       return;
-    case "TypeRef":
-      if (!sym.types.has(t.name) && !typeParams.has(t.name)) {
+    case "TypeRef": {
+      if (typeParams.has(t.name)) return;
+      if (!isKnownTypeName(t.name, sym)) {
         errors.push({
           code: "E0117",
           kind: "undef-type",
           message: `Reference to undefined type "${t.name}"`,
           pos: t.pos,
         });
+        return;
       }
+      // A generic named without its arguments is the same hole E0117 closes,
+      // through a different door: `Box` on `type Box(T) = {v: T}` expands with
+      // `T` unsubstituted, and an unsubstituted parameter is opaque, so
+      // everything typed by it stops being checked.
+      checkTypeArity(t.name, 0, t.pos, sym, errors);
       return;
+    }
     case "TypeApp": {
-      const arity = constructorArity(t.name, sym);
-      if (arity === null && !BUILTIN_TYPE_CONSTRUCTORS.has(t.name) && !typeParams.has(t.name)) {
-        errors.push({
-          code: "E0117",
-          kind: "undef-type",
-          message: `Reference to undefined type "${t.name}"`,
-          pos: t.pos,
-        });
-      } else if (arity !== null && arity !== t.args.length) {
-        errors.push({
-          code: "E0210",
-          kind: "type-arity-mismatch",
-          message: `Type "${t.name}" expects ${arity} type argument(s) but got ${t.args.length}`,
-          pos: t.pos,
-        });
+      if (!typeParams.has(t.name)) {
+        if (!isKnownTypeName(t.name, sym)) {
+          errors.push({
+            code: "E0117",
+            kind: "undef-type",
+            message: `Reference to undefined type "${t.name}"`,
+            pos: t.pos,
+          });
+        } else {
+          checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+        }
       }
       for (const a of t.args) resolveType(a, sym, errors, typeParams);
       return;
@@ -2897,6 +2890,29 @@ function resolveType(
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
+}
+
+/**
+ * Report a type constructor applied to the wrong number of arguments. `Tuple`
+ * is the one variadic constructor, and `constructorArity` answers `null` for
+ * it — so does an unknown name, which is why the caller resolves the name
+ * first and this only decides the count.
+ */
+function checkTypeArity(
+  name: string,
+  given: number,
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const arity = constructorArity(name, sym);
+  if (arity === null || arity === given) return;
+  errors.push({
+    code: "E0210",
+    kind: "type-arity-mismatch",
+    message: `Type "${name}" expects ${arity} type argument(s) but got ${given}`,
+    pos,
+  });
 }
 
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
