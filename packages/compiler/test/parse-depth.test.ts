@@ -1,14 +1,19 @@
-// Nesting deeper than the parser's recursion can carry used to surface as a
-// bare `RangeError: Maximum call stack size exceeded` — no position, no
-// message, nothing pointing at the source. Every construct that nests is
-// bounded now, and the bound is a positioned `ParseError`.
+// A tree deeper than the call stack can walk used to surface as a bare
+// `RangeError: Maximum call stack size exceeded` — no position, no message,
+// nothing pointing at the source. The bound is a positioned `ParseError` now.
 //
-// The thresholds differ per construct (parentheses ran out of stack at 781,
-// tile calls at 2500), so a bound placed on only some of the entry points
-// still leaves a `RangeError` reachable through the others. One row per
-// construct is what makes a missed entry point visible.
+// The bound is on the tree, not on how the parser reached it. That distinction
+// is the whole subject here: a left-associative chain (`1 + 1 + 1 + …`,
+// `x.trim().trim()…`, a run of `not`) is parsed by a loop and costs the parser
+// no stack, but still builds one node per operator — so bounding only what the
+// parser recursed through moved the crash downstream instead of removing it,
+// and `compile` went down at ~2,500 operators while `parse` returned clean.
+//
+// Every assertion therefore goes through `compile`, not `parse`. The thresholds
+// also differ per construct, so one row per construct is what makes a missed
+// entry point visible.
 
-import { lex, ParseError, parse } from "@kumikijs/compiler";
+import { compile, lex, ParseError, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
 /** The bound recorded in language.md §1.2.3. */
@@ -17,88 +22,159 @@ const MAX_DEPTH = 256;
 const nest = (open: string, close: string, inner: string, depth: number) =>
   open.repeat(depth) + inner + close.repeat(depth);
 
-/** Every self-recursive entry point in the parser, one source shape each. */
-const FORMS: readonly { name: string; at: (depth: number) => string }[] = [
+const TAIL = `tile App = column(text("x"))
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+/**
+ * Every construct that can contain itself, and every chain that builds one
+ * node per operator without recursing.
+ *
+ * `effective` is where each first refuses. They are not all `MAX_DEPTH`: a
+ * construct whose parse passes through more than one guarded entry point —
+ * a tile call goes through `parseTileExpr` and `parseTileCall` — spends the
+ * extra level on the way in, and the budget is over the resulting tree.
+ */
+const FORMS: readonly { name: string; effective: number; at: (depth: number) => string }[] = [
   {
     name: "parenthesised expression",
-    at: (d) => `slot v : Int = ${nest("(", ")", "1", d)}\n`,
+    effective: 255,
+    at: (d) => `slot v : Int = ${nest("(", ")", "1", d)}\n${TAIL}`,
   },
   {
     name: "list literal",
-    at: (d) => `slot v : Int = ${nest("[", "]", "1", d)}\n`,
+    effective: 255,
+    at: (d) => `slot v : Int = ${nest("[", "]", "1", d)}\n${TAIL}`,
   },
   {
     name: "record literal",
-    at: (d) => `slot v : Int = ${nest("{a: ", "}", "1", d)}\n`,
+    effective: 255,
+    at: (d) => `slot v : Int = ${nest("{a: ", "}", "1", d)}\n${TAIL}`,
   },
   {
     name: "if / else chain",
-    at: (d) => `slot v : Int = ${"if true then 1 else ".repeat(d)}1\n`,
+    effective: 255,
+    at: (d) => `slot v : Int = ${"if true then 1 else ".repeat(d)}1\n${TAIL}`,
   },
   {
     name: "tile call",
-    at: (d) => `tile T = ${nest("column(", ")", 'text("x")', d)}\n`,
+    effective: 253,
+    at: (d) => `tile T = ${nest("column(", ")", 'text("x")', d)}\n${TAIL}`,
   },
   {
     // A tuple is the only pattern that contains a pattern — a variant's
     // payloads are binds, so `Some(Some(y))` is not grammar at any depth.
     name: "tuple pattern",
-    at: (d) => `slot v : Int = match q with | ${nest("(x, ", ")", "y", d)} -> 1\n`,
+    effective: 255,
+    at: (d) =>
+      `slot q : Int = 0\nslot v : Int = match q with | ${nest("(x, ", ")", "y", d)} -> 1\n${TAIL}`,
   },
   {
     name: "type application",
-    at: (d) => `slot v : ${nest("List(", ")", "Int", d)} = []\n`,
+    effective: 256,
+    at: (d) => `slot v : ${nest("List(", ")", "Int", d)} = []\n${TAIL}`,
   },
   {
     name: "theme record",
-    at: (d) => `theme T = ${nest("{a: ", "}", "1", d)}\n`,
+    effective: 257,
+    at: (d) => `theme T = ${nest("{a: ", "}", "1", d)}\n${TAIL}`,
+  },
+  {
+    // Statement bodies nest through `parseStatement` → `parseStatementBody` →
+    // `parseStatement`, a path distinct from the expression-level `if`.
+    name: "if statement",
+    effective: 254,
+    at: (d) =>
+      `slot x : Int = 0
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= ${"if true then { ".repeat(d)}x := 1${" }".repeat(d)}
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  {
+    name: "for statement",
+    effective: 254,
+    at: (d) =>
+      `slot x : Int = 0
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= ${"for i in [1] { ".repeat(d)}x := 1${" }".repeat(d)}
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  // The chains. Each is parsed by a loop, so none of these cost the parser any
+  // stack — and each still builds one node per operator.
+  {
+    name: "binary operator chain",
+    effective: 255,
+    at: (d) => `slot v : Int = ${Array.from({ length: d + 1 }, () => "1").join(" + ")}\n${TAIL}`,
+  },
+  {
+    name: "method chain",
+    effective: 255,
+    at: (d) => `slot v : Text = ""${".trim()".repeat(d)}\n${TAIL}`,
+  },
+  {
+    name: "prefix operator run",
+    effective: 255,
+    at: (d) => `slot v : Int = ${"-".repeat(d)}1\n${TAIL}`,
   },
 ];
 
-describe("the parser bounds how deeply a program may nest", () => {
+/** What the whole pipeline does with a source — never a `RangeError`. */
+function pipeline(source: string): "ok" | "fail" | ParseError {
+  try {
+    return compile(source, { capabilities: [] }).kind;
+  } catch (e) {
+    if (e instanceof ParseError) return e;
+    throw e;
+  }
+}
+
+describe("the parser bounds how deep a tree a program may build", () => {
   for (const form of FORMS) {
-    it(`reports a positioned error instead of overflowing on a deep ${form.name}`, () => {
-      let thrown: unknown;
-      try {
-        parse(lex(form.at(2000)));
-      } catch (e) {
-        thrown = e;
-      }
-      expect(thrown, `a deep ${form.name} parsed without complaint`).toBeInstanceOf(ParseError);
-      const pos = (thrown as ParseError).pos;
+    it(`refuses a ${form.name} at its limit, with a position`, () => {
+      const result = pipeline(form.at(form.effective));
+      expect(result, `a deep ${form.name} was not refused`).toBeInstanceOf(ParseError);
+      const { pos } = result as ParseError;
+      // A real token position — `1:1` is what a synthesised one looks like,
+      // and every one of these is deep inside a long line.
       expect(pos.line).toBeGreaterThanOrEqual(1);
-      expect(pos.col).toBeGreaterThanOrEqual(1);
+      expect(pos.col).toBeGreaterThan(1);
     });
 
-    it(`accepts a ${form.name} well inside the bound`, () => {
-      expect(() => parse(lex(form.at(100)))).not.toThrow();
+    it(`accepts a ${form.name} one level under its limit`, () => {
+      // Pinned exactly, so a limit that drifts — in either direction — fails
+      // one of this pair rather than passing both.
+      expect(
+        pipeline(form.at(form.effective - 1)),
+        `a legal ${form.name} was refused`,
+      ).not.toBeInstanceOf(ParseError);
+    });
+
+    it(`refuses a ${form.name} far past the limit without exhausting the stack`, () => {
+      expect(pipeline(form.at(20_000))).toBeInstanceOf(ParseError);
     });
   }
 
   it("names the bound so the message says what to change", () => {
-    let thrown: unknown;
-    try {
-      parse(lex(FORMS[0]?.at(2000) ?? ""));
-    } catch (e) {
-      thrown = e;
-    }
-    expect((thrown as ParseError).message).toContain(String(MAX_DEPTH));
+    const result = pipeline(FORMS[0]?.at(20_000) ?? "");
+    expect((result as ParseError).message).toContain(String(MAX_DEPTH));
   });
 });
 
-describe("a chain of prefix operators is not nesting", () => {
-  // `not not not x` recursed once per operator, which is why a chain of them
-  // could exhaust the stack. Collected iteratively there is no depth to bound,
-  // so a chain far longer than the nesting limit is still a legal program.
-  //
-  // The length is what makes this a test rather than a statement: recursing
-  // per operator runs out of stack between 5,000 and 10,000, so a chain
-  // shorter than that passes either way.
-  const CHAIN = 50_000;
-  for (const op of ["not ", "-"]) {
-    it(`parses a chain of ${JSON.stringify(op.trim())} far past the nesting bound`, () => {
-      const src = `slot v : Int = ${op.repeat(CHAIN)}1\n`;
-      expect(() => parse(lex(src))).not.toThrow();
-    });
-  }
+describe("a parse error is never a stack overflow", () => {
+  it("throws ParseError, not RangeError, for every form far past the limit", () => {
+    for (const form of FORMS) {
+      let thrown: unknown;
+      try {
+        parse(lex(form.at(20_000)));
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, `${form.name} did not throw`).toBeInstanceOf(ParseError);
+      expect(thrown, `${form.name} overflowed the stack`).not.toBeInstanceOf(RangeError);
+    }
+  });
 });

@@ -44,18 +44,25 @@ export class ParseError extends Error {
   }
 }
 
-/** Kept in step with the AST so a new prefix operator cannot be missed here. */
+/** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
 
 /**
- * How deeply a program may nest (language.md §1.2.3).
+ * How deep a tree a program may build (language.md §1.2.3).
  *
- * The parser descends by recursion, so nesting past what the call stack holds
- * used to surface as a bare `RangeError` with no position — and the point at
- * which that happened depended on the construct, from ~780 parenthesised
- * expressions to ~2500 tile calls. Bounding it here turns all of them into one
- * positioned error. The limit is far above anything written in practice: the
- * deepest nesting anywhere in this repository's examples and benchmarks is 18.
+ * The bound is on the *result*, not on how the parser reached it. Everything
+ * downstream of the parse — the typechecker, the reference walk, code
+ * generation — descends the tree by recursion, so a tree past what the call
+ * stack holds surfaces as a bare `RangeError` with no position wherever it is
+ * first walked. Bounding the parse alone would only move that crash: a
+ * left-associative chain (`1 + 1 + 1 + …`, `x.trim().trim()…`) is parsed by a
+ * loop but still builds one node per operator, and at 3,000 operators it
+ * parsed clean and then took down `compile`.
+ *
+ * So a chain counts against the same budget nesting does, and one budget
+ * covers both. The limit is far above anything written in practice — no
+ * program in this repository's examples or benchmarks comes close, and the
+ * corpus gates would fail if one ever did.
  */
 const MAX_NESTING_DEPTH = 256;
 
@@ -144,26 +151,44 @@ class Parser {
   private depth = 0;
   constructor(private tokens: Token[]) {}
 
+  /** The one place the budget is refused, so every caller reports alike. */
+  private refuseDepth(): never {
+    throw new ParseError(
+      `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
+      this.peek().pos,
+    );
+  }
+
   /**
    * Parse one level deeper, refusing to go past `MAX_NESTING_DEPTH`.
    *
    * Every construct that can contain itself goes through this, so a program
    * that nests too far is reported at the token where the parser stopped
-   * rather than crashing the process.
+   * rather than crashing the process. The budget is over the whole enclosing
+   * tree, not per construct: a pattern inside a slot's initializer starts one
+   * level down because that is where its node will sit.
    */
   private descend<T>(parseNested: () => T): T {
-    if (this.depth >= MAX_NESTING_DEPTH) {
-      throw new ParseError(
-        `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
-        this.peek().pos,
-      );
-    }
+    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth();
     this.depth += 1;
     try {
       return parseNested();
     } finally {
       this.depth -= 1;
     }
+  }
+
+  /**
+   * Charge `built` levels against the same budget without recursing.
+   *
+   * A left-associative chain — `1 + 1 + 1 + …`, `x.trim().trim()…`, a run of
+   * prefix operators — is parsed by a loop, so it costs the parser no stack.
+   * It still builds one node per operator, each nested inside the last, and
+   * everything downstream walks that by recursion. Left unbounded it parsed
+   * clean and crashed `compile` instead.
+   */
+  private widen(built: number): void {
+    if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
   }
 
   // ----- low-level token utilities -----
@@ -669,6 +694,10 @@ class Parser {
   // ----- statements -----
 
   private parseStatement(): Statement {
+    return this.descend(() => this.parseStatementNested());
+  }
+
+  private parseStatementNested(): Statement {
     if (this.matchKw("for")) {
       const start = this.next();
       const bindTok = this.eat("ident");
@@ -839,7 +868,10 @@ class Parser {
     // (capital-letter variant or `_`) and a `->`. This lets `a | b` mean bool
     // OR in expression context while still letting `not x | Done -> ...` be
     // parsed as a match arm separator.
+    let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
+      built += 1;
+      this.widen(built);
       const op = "|" as BinOp;
       this.next();
       const rhs = this.parseLogicAnd();
@@ -882,7 +914,10 @@ class Parser {
     // `&&` and `&` are both accepted as boolean AND — `&` is a tolerance alias
     // for LLMs that bring C-style habits. (`|` would conflict with type union
     // and match arm separator; only `&` can be safely aliased.)
+    let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
+      built += 1;
+      this.widen(built);
       this.next();
       const rhs = this.parseCmp();
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
@@ -891,7 +926,10 @@ class Parser {
   }
   private parseCmp(): Expr {
     let lhs = this.parseAdd();
+    let built = 0;
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
+      built += 1;
+      this.widen(built);
       const op = this.eat("op").value as BinOp;
       const rhs = this.parseAdd();
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
@@ -900,7 +938,10 @@ class Parser {
   }
   private parseAdd(): Expr {
     let lhs = this.parseMul();
+    let built = 0;
     while (this.matchAnyOp(["+", "-"])) {
+      built += 1;
+      this.widen(built);
       const op = this.eat("op").value as BinOp;
       const rhs = this.parseMul();
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
@@ -909,7 +950,10 @@ class Parser {
   }
   private parseMul(): Expr {
     let lhs = this.parseUnary();
+    let built = 0;
     while (this.matchAnyOp(["*", "/", "%"])) {
+      built += 1;
+      this.widen(built);
       const op = this.eat("op").value as BinOp;
       const rhs = this.parseUnary();
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
@@ -928,6 +972,7 @@ class Parser {
       else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
       else break;
     }
+    this.widen(prefixes.length);
     let e = this.parsePostfix();
     for (const prefix of prefixes.reverse()) {
       e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
@@ -937,8 +982,11 @@ class Parser {
 
   private parsePostfix(): Expr {
     let e = this.parsePrimary();
+    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
+        built += 1;
+        this.widen(built);
         this.next();
         const fldTok = this.peek();
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
@@ -987,6 +1035,8 @@ class Parser {
           e = { kind: "FieldAccess", base: e, field: fld, pos: e.pos };
         }
       } else if (this.matchOp("[")) {
+        built += 1;
+        this.widen(built);
         this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");

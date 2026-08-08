@@ -34,7 +34,7 @@ import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
-import { expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
+import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
@@ -276,9 +276,13 @@ function checkCycles(
   const tileEdges = (name: string): readonly GraphEdge[] => {
     const def = sym.tiles.get(name);
     if (!def) return [];
+    const boundary = boundaryTarget(def);
+    const targets = boundary
+      ? [...expansionTargets(def.body), boundary]
+      : expansionTargets(def.body);
     // Builtins terminate — they have no body to expand — so only names that
     // resolve to a declared tile are edges.
-    return expansionTargets(def.body).filter((e) => sym.tiles.has(e.to));
+    return targets.filter((e) => sym.tiles.has(e.to));
   };
   for (const cycle of findCycles(
     tiles.map((t) => t.name),
@@ -931,6 +935,11 @@ function collectTileBuiltinKinds(
   sym: SymbolTable,
   visited: Set<string> = new Set(),
 ): Set<string> {
+  // `visited` is shared across the whole walk on purpose, and does two things:
+  // it stops a cycle from recurring (`E0005` is what reports one), and it stops
+  // a name reached twice through different branches from being re-expanded.
+  // The second is why it must not be per-branch — a diamond over a deep tile
+  // would otherwise re-walk the shared part once per path.
   if (visited.has(tileName)) return new Set();
   visited.add(tileName);
   if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
@@ -938,8 +947,7 @@ function collectTileBuiltinKinds(
   if (!def) return new Set();
   // The same edges a cycle is looked for along: what this body expands into is
   // what its render tree is made of. A name that resolves to neither a builtin
-  // nor a declared tile contributes nothing, and the `visited` guard keeps a
-  // cycle from recurring here — `E0005` is what reports it.
+  // nor a declared tile contributes nothing.
   const out = new Set<string>();
   for (const target of expansionTargets(def.body)) {
     for (const kind of collectTileBuiltinKinds(target.to, sym, visited)) out.add(kind);
