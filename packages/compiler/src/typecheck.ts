@@ -43,7 +43,12 @@ import { STDLIB_TYPES } from "./stdlib-types.ts";
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
 import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
-import { duplicatesIn, namesOf } from "./uniqueness.ts";
+import {
+  describeDuplicate,
+  duplicateSubRoutes,
+  findDuplicateDefinitions,
+  findDuplicateNames,
+} from "./uniqueness.ts";
 
 export type KumikiError = {
   code: string;
@@ -252,93 +257,26 @@ function checkAll(
     if (def.kind === "EffectDef") checkEffect(def, sym, errors);
     if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps);
     if (def.kind === "MotionDef") checkMotion(def, errors);
-    // A theme has no other checks — its body is a literal record, validated by
-    // the grammar — so the duplicate report is the whole of its pass.
-    if (def.kind === "ThemeDef")
-      pushDuplicates(def.duplicateKeys ?? [], "duplicate-key", "theme key", errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
   checkCycles(program, sym, index, errors);
-  checkDuplicateDefinitions(program, errors);
+  checkDuplicateNames(program, errors);
 
   return errors;
 }
 
-/** The layer a definition occupies, for the message and for the namespace. */
-const LAYER_OF_DEF: Readonly<Record<string, string>> = {
-  TypeDef: "type",
-  SlotDef: "slot",
-  ReducerDef: "reducer",
-  TileDef: "tile",
-  FnDef: "fn",
-  EffectDef: "effect",
-  ThemeDef: "theme",
-  MotionDef: "motion",
-  TestDef: "test",
-};
-
-/**
- * Two definitions of one layer sharing a name.
- *
- * Over `program.defs` rather than over the symbol tables, for two reasons the
- * tables cannot give: they are seeded with the standard library's types, so a
- * program's own `type Route = Text` would read as a redeclaration of a name it
- * is entitled to shadow; and they are per layer already, so a `slot` and a
- * `tile` sharing a name — which is legal, and which code generation relies on
- * — would need to be excluded by hand.
- *
- * `app` is absent: `E0004` covers it, and a code's meaning is permanent.
- */
-function checkDuplicateDefinitions(program: Program, errors: KumikiError[]): void {
-  const byLayer = new Map<string, { name: string; pos: Pos }[]>();
-  for (const def of program.defs) {
-    const layer = LAYER_OF_DEF[def.kind];
-    if (layer === undefined) continue;
-    byLayer.set(layer, [...(byLayer.get(layer) ?? []), { name: def.name, pos: def.pos }]);
-  }
-  for (const [layer, declared] of byLayer) {
-    for (const dup of duplicatesIn(declared)) {
-      errors.push({
-        code: "E0007",
-        kind: "duplicate-definition",
-        message: `${layer} "${dup.name}" is declared more than once; the later declaration silently replaced the earlier one`,
-        pos: dup.pos,
-      });
-    }
-  }
-}
-
-/**
- * One report per name a construct declared twice.
- *
- * Takes the duplicates, not the declarations — the two kinds of caller reach
- * this with different things in hand. A construct whose tree keeps both
- * occurrences narrows its own list with `duplicatesIn`; `app` / `effect`
- * clauses and theme records keep only the winner, so what the parser recorded
- * on the way past *is* the duplicate list. Filtering here would silently
- * discard the second kind, which is a set of one per name.
- */
-function pushDuplicates(
-  duplicates: readonly import("./ast.ts").DuplicateName[],
-  kind:
-    | "duplicate-clause"
-    | "duplicate-key"
-    | "duplicate-field"
-    | "duplicate-param"
-    | "duplicate-variant",
-  what: string,
-  errors: KumikiError[],
-  /** The enclosing definition, when naming it tells the reader where to look. */
-  within = "",
-): void {
-  for (const dup of duplicates) {
+/** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
+function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
+  for (const d of findDuplicateDefinitions(program)) {
     errors.push({
-      code: "E0008",
-      kind,
-      message: `${what} "${dup.name}" is written more than once${within}`,
-      pos: dup.pos,
+      code: "E0007",
+      kind: "duplicate-definition",
+      message: `${d.layer} "${d.name}" is declared more than once; only one of the two declarations takes effect`,
+      pos: d.pos,
     });
   }
+  for (const d of findDuplicateNames(program))
+    errors.push({ code: "E0008", ...describeDuplicate(d) });
 }
 
 /**
@@ -420,7 +358,6 @@ type MotionBody = { [k: string]: import("./ast.ts").ThemeValue };
  * record — so this only enforces the closed property + timing vocabularies.
  */
 function checkMotion(def: import("./ast.ts").MotionDef, errors: KumikiError[]): void {
-  pushDuplicates(def.duplicateKeys ?? [], "duplicate-key", "motion key", errors);
   const body = def.body as MotionBody;
   const keyframes = body.keyframes;
   if (typeof keyframes !== "object" || Array.isArray(keyframes)) {
@@ -590,18 +527,17 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  // Duplicate sub-route paths within the same tile.
-  const seen = new Set<string>();
-  for (const sr of subRoutes) {
-    if (seen.has(sr.path)) {
-      errors.push({
-        code: "E0112",
-        kind: "duplicate-sub-route",
-        message: `Sub-route path "${sr.path}" is declared more than once in tile "${tile.name}"`,
-        pos: tile.pos,
-      });
-    }
-    seen.add(sr.path);
+  // Duplicate sub-route paths within the same tile. `E0112` rather than
+  // `E0008` because it came first and a code's meaning is permanent — but the
+  // rule behind it is the shared one, so the position is the offending entry
+  // rather than the tile that contains it.
+  for (const dup of duplicateSubRoutes(subRoutes)) {
+    errors.push({
+      code: "E0112",
+      kind: "duplicate-sub-route",
+      message: `Sub-route path "${dup.name}" is declared more than once in tile "${tile.name}"`,
+      pos: dup.pos,
+    });
   }
   // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
   // never match because the runtime only looks them up after the parent
@@ -1543,41 +1479,12 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       });
       return;
     case "RecordLit":
-      // Context-free: a key written twice is wrong whatever type the literal
-      // is checked against, and wrong when it is checked against nothing.
-      pushDuplicates(
-        duplicatesIn(
-          namesOf(
-            e.fields,
-            (f) => f.name,
-            (f) => f.pos ?? f.value.pos,
-          ),
-        ),
-        "duplicate-key",
-        "Record field",
-        errors,
-      );
       for (const f of e.fields) checkExpr(f.value, sym, errors, ctx);
       return;
     case "ListLit":
       for (const it of e.items) checkExpr(it, sym, errors, ctx);
       return;
     case "MapLit":
-      // Only literal keys can be compared; a computed key is the runtime's
-      // question, and two of them may or may not collide.
-      pushDuplicates(
-        duplicatesIn(
-          e.entries
-            .filter((ent) => ent.key.kind === "Str" || ent.key.kind === "Num")
-            .map((ent) => ({
-              name: String((ent.key as Expr & { value: string | number }).value),
-              pos: ent.key.pos,
-            })),
-        ),
-        "duplicate-key",
-        "Map key",
-        errors,
-      );
       for (const ent of e.entries) {
         checkExpr(ent.key, sym, errors, ctx);
         checkExpr(ent.value, sym, errors, ctx);
@@ -2429,19 +2336,6 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
   // also bind $1, $2 used in expression-fragment style
   ctx.localBinds.add("$1");
   ctx.localBinds.add("$2");
-  pushDuplicates(
-    duplicatesIn(
-      namesOf(
-        fn.params,
-        (prm) => prm.name,
-        (prm) => prm.type.pos,
-      ),
-    ),
-    "duplicate-param",
-    "Parameter",
-    errors,
-    ` in fn "${fn.name}"`,
-  );
   for (const p of fn.params) resolveType(p.type, sym, errors);
   if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
@@ -2449,7 +2343,6 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
 }
 
 function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
-  pushDuplicates(eff.duplicateClauses ?? [], "duplicate-clause", "effect clause", errors);
   resolveType(eff.inType, sym, errors);
   resolveType(eff.outType, sym, errors);
   // §6.4: an effect bound to `cap=http.cancel` cancels an in-flight effect by
@@ -2928,21 +2821,6 @@ function checkApp(
   errors: KumikiError[],
   registeredCaps: Set<string>,
 ): void {
-  pushDuplicates(app.duplicateClauses ?? [], "duplicate-clause", "app clause", errors);
-  // A route pattern written twice emits two entries and the router matches the
-  // first, so the second tile is unreachable with nothing said about it.
-  pushDuplicates(
-    duplicatesIn(
-      namesOf(
-        app.routes,
-        (r) => r.path,
-        (r) => r.pathPos ?? app.pos,
-      ),
-    ),
-    "duplicate-key",
-    "Route pattern",
-    errors,
-  );
   // Each declared capability must be standard or registered via a manifest.
   for (const cap of app.caps) {
     if (!STANDARD_CAPABILITIES.has(cap) && !registeredCaps.has(cap)) {
@@ -3058,37 +2936,9 @@ function resolveType(
       return;
     }
     case "TypeRecord":
-      // In `resolveType` rather than in `checkTypeDef`, so an inline record
-      // type — a slot's, a fn parameter's, an effect's `in=` — is covered too.
-      pushDuplicates(
-        duplicatesIn(
-          namesOf(
-            t.fields,
-            (f) => f.name,
-            (f) => f.pos,
-          ),
-        ),
-        "duplicate-field",
-        "Record type field",
-        errors,
-      );
       for (const f of t.fields) resolveType(f.type, sym, errors, typeParams);
       return;
     case "TypeUnion":
-      // A tag written twice makes one of the two arms of every `match` on this
-      // union unreachable, and which one depends on resolution order.
-      pushDuplicates(
-        duplicatesIn(
-          namesOf(
-            t.variants,
-            (v) => v.name,
-            (v) => v.pos,
-          ),
-        ),
-        "duplicate-variant",
-        "Union variant",
-        errors,
-      );
       for (const v of t.variants)
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
@@ -3127,14 +2977,5 @@ function checkTypeArity(
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
 function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  // A type's parameters are bare names in the tree, so the definition is the
-  // only position available — which still names the parameter and the type.
-  pushDuplicates(
-    duplicatesIn(def.params.map((name) => ({ name, pos: def.pos }))),
-    "duplicate-param",
-    "Parameter",
-    errors,
-    ` in type "${def.name}"`,
-  );
   resolveType(def.body, sym, errors, new Set(def.params));
 }

@@ -281,7 +281,10 @@ class Parser {
     [k: string]: import("./ast.ts").ThemeValue;
   } {
     this.eat("op", "{");
-    const out: { [k: string]: import("./ast.ts").ThemeValue } = {};
+    // Prototype-less: `out["__proto__"] = v` on an object literal replaces the
+    // prototype instead of adding a property, so the key vanished from the
+    // body and `Object.hasOwn` could never see it written twice.
+    const out: { [k: string]: import("./ast.ts").ThemeValue } = Object.create(null);
     if (!this.matchOp("}")) {
       this.parseThemeEntry(out, duplicates);
       while (this.matchOp(",")) {
@@ -1351,7 +1354,7 @@ class Parser {
       }
     }
     if (isRecord) {
-      const fields: { name: string; value: Expr; pos?: Pos }[] = [];
+      const fields: { name: string; value: Expr; pos: Pos }[] = [];
       while (true) {
         const keyTok = this.peek();
         if (keyTok.kind !== "ident" && keyTok.kind !== "kw") {
@@ -1419,9 +1422,21 @@ class Parser {
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
     let errorBoundaryPos: Pos | undefined;
-    let subRoutes: { path: string; tile: string; tilePos?: Pos }[] | undefined;
+    let subRoutes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] | undefined;
     let scrollRestoration: boolean | undefined;
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+    // Same assembly as `app` and `effect`: one variable per clause, so a
+    // second `in=` silently retypes `$1` and a second `error-boundary=`
+    // decides by line order which tile a failed render falls back to.
+    const noteClause = (tok: Token): void => {
+      // Only the clause keywords matter; the loop rejects anything else.
+      if (tok.kind !== "kw" && tok.kind !== "ident") return;
+      if (seenClauses.has(tok.value)) duplicateClauses.push({ name: tok.value, pos: tok.pos });
+      seenClauses.add(tok.value);
+    };
     while (!this.matchOp("=")) {
+      noteClause(this.peek());
       if (this.matchKw("in")) {
         this.next();
         this.eat("op", "=");
@@ -1463,6 +1478,7 @@ class Parser {
     this.eat("op", "=");
     const body = this.parseTileExpr();
     const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
     if (errorBoundaryPos) def.errorBoundaryPos = errorBoundaryPos;
@@ -1571,7 +1587,7 @@ class Parser {
       // whether the parent tile is itself a value-arg builtin.
       const argTakesValue = parentTakesValueArg || VALUE_NAMED_ARGS.has(name);
       const value = this.parseArgValue(parentIsBuiltin, argTakesValue);
-      return { kind: "TileArg", name, value };
+      return { kind: "TileArg", name, namePos: first.pos, value };
     }
     return { kind: "TileArg", value: this.parseArgValue(parentIsBuiltin, parentTakesValueArg) };
   }
@@ -1627,7 +1643,7 @@ class Parser {
     this.next();
     this.eat("op", ":");
     const value = this.parseExpr();
-    return { kind: "TileProp", name: nameTok.value as string, value };
+    return { kind: "TileProp", name: nameTok.value as string, pos: nameTok.pos, value };
   }
 
   // ----- fn -----
@@ -1636,7 +1652,7 @@ class Parser {
     const start = this.eat("kw", "fn");
     const name = this.eat("ident").value;
     this.eat("op", "(");
-    const params: { name: string; type: TypeExpr }[] = [];
+    const params: { name: string; type: TypeExpr; pos: Pos }[] = [];
     if (!this.matchOp(")")) {
       params.push(this.parseFnParam());
       while (this.matchOp(",")) {
@@ -1657,11 +1673,11 @@ class Parser {
     return def;
   }
 
-  private parseFnParam(): { name: string; type: TypeExpr } {
-    const name = this.eat("ident").value;
+  private parseFnParam(): { name: string; type: TypeExpr; pos: Pos } {
+    const tok = this.eat("ident");
     this.eat("op", ":");
     const type = this.parseTypeExpr();
-    return { name, type };
+    return { name: tok.value, type, pos: tok.pos };
   }
 
   // ----- effect -----
@@ -1808,7 +1824,7 @@ class Parser {
     const start = this.eat("kw", "app");
     const name = this.eat("ident").value;
     let caps: string[] = [];
-    let routes: { path: string; tile: string }[] = [];
+    let routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     let init: Expr[] = [];
     let theme: string | undefined;
     let themePos: Pos | undefined;
@@ -1819,6 +1835,7 @@ class Parser {
 
     const duplicateClauses: DuplicateName[] = [];
     const seenClauses = new Set<string>();
+    const configSources: Expr[] = [];
 
     while (!this.isAppEnd()) {
       const ident = this.eat("ident");
@@ -1836,10 +1853,10 @@ class Parser {
         const tok = this.eat("ident");
         theme = tok.value;
         themePos = tok.pos;
-      } else if (k === "http") http = this.parseAppHttp(ident.pos);
-      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos);
-      else if (k === "meta") meta = this.parseAppMeta(ident.pos);
-      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos);
+      } else if (k === "http") http = this.parseAppHttp(ident.pos, configSources);
+      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos, configSources);
+      else if (k === "meta") meta = this.parseAppMeta(ident.pos, configSources);
+      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos, configSources);
       else {
         throw new ParseError(`Unknown app field "${k}"`, ident.pos);
       }
@@ -1847,6 +1864,7 @@ class Parser {
 
     const def: AppDef = { kind: "AppDef", name, caps, routes, init, pos: start.pos };
     if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
+    if (configSources.length > 0) def.configSources = configSources;
     if (theme) def.theme = theme;
     if (themePos) def.themePos = themePos;
     if (http) def.http = http;
@@ -1857,8 +1875,9 @@ class Parser {
   }
 
   // app.meta = { title?, description?, og-image?, favicon? } — spec style.md §4.10.
-  private parseAppMeta(pos: Pos): AppMetaConfig {
+  private parseAppMeta(pos: Pos, sources: Expr[]): AppMetaConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.meta must be a record literal`, pos);
     }
@@ -1889,8 +1908,9 @@ class Parser {
   }
 
   // app.analytics = { provider: "console" | "noop", app-id? } — spec runtime.md §10.4.6.
-  private parseAppAnalytics(pos: Pos): AppAnalyticsConfig {
+  private parseAppAnalytics(pos: Pos, sources: Expr[]): AppAnalyticsConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.analytics must be a record literal`, pos);
     }
@@ -1921,8 +1941,9 @@ class Parser {
   }
 
   // app.indexed-db = { name, version, stores: [{ name, key, indexes? }] } — spec http.md §6.7.4.
-  private parseAppIndexedDb(pos: Pos): AppIndexedDbConfig {
+  private parseAppIndexedDb(pos: Pos, sources: Expr[]): AppIndexedDbConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.indexed-db must be a record literal`, pos);
     }
@@ -2009,8 +2030,9 @@ class Parser {
   // app.http = { base-url, headers, on-401, on-403, on-5xx, timeout, credentials } — spec http.md §6.3.
   // headers is kept as Expr so the codegen can wrap it in a closure (slot
   // references must re-evaluate on every request, not freeze at mount).
-  private parseAppHttp(pos: Pos): AppHttpConfig {
+  private parseAppHttp(pos: Pos, sources: Expr[]): AppHttpConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.http must be a record literal`, pos);
     }
@@ -2210,15 +2232,15 @@ class Parser {
   }
 
   /** `{ name: TypeExpr, … }` — the `for-all` generators (types, not values). */
-  private parseForAllRecord(): { name: string; type: TypeExpr }[] {
+  private parseForAllRecord(): { name: string; type: TypeExpr; pos: Pos }[] {
     this.eat("op", "{");
-    const out: { name: string; type: TypeExpr }[] = [];
+    const out: { name: string; type: TypeExpr; pos: Pos }[] = [];
     if (!this.matchOp("}")) {
       while (true) {
-        const id = this.eat("ident").value;
+        const id = this.eat("ident");
         this.eat("op", ":");
         const type = this.parseTypeExpr();
-        out.push({ name: id, type });
+        out.push({ name: id.value, type, pos: id.pos });
         if (!this.matchOp(",")) break;
         this.next();
       }
@@ -2250,9 +2272,9 @@ class Parser {
     return name;
   }
 
-  private parseRouteMap(): { path: string; tile: string; tilePos?: Pos; pathPos?: Pos }[] {
+  private parseRouteMap(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] {
     this.eat("op", "{");
-    const routes: { path: string; tile: string; tilePos?: Pos; pathPos?: Pos }[] = [];
+    const routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     if (!this.matchOp("}")) {
       routes.push(this.parseRouteEntry());
       while (this.matchOp(",")) {
@@ -2264,7 +2286,7 @@ class Parser {
     return routes;
   }
 
-  private parseRouteEntry(): { path: string; tile: string; tilePos?: Pos; pathPos?: Pos } {
+  private parseRouteEntry(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos } {
     const pathTok = this.eat("str");
     const path = pathTok.value;
     if (this.matchOp("->>")) {
