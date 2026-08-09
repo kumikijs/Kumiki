@@ -47,7 +47,7 @@ export type TestDef = {
   /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
   expect?: Expr | TileExpr;
   /** `property-test` only: the `for-all = { name: Type }` generators. */
-  forAll?: { name: string; type: TypeExpr }[];
+  forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
   invariant?: Expr;
   /** `property-test` only: trial count (default 100). */
@@ -63,10 +63,23 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
+/**
+ * A name the parser saw a second time in a construct that keeps only one.
+ *
+ * `app`, `effect` and the theme-record grammar all assemble their fields into
+ * a record, so the later of two same-named clauses overwrites the earlier and
+ * the duplicate leaves no trace in the tree. Recording it here is what lets
+ * the checker report `E0008` — the alternative, throwing from the parser,
+ * would stop at the first one and take the whole file's editing verbs with it.
+ */
+export type DuplicateName = { name: string; pos: Pos };
+
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Keys seen more than once in the body, at any nesting depth. */
+  duplicateKeys?: DuplicateName[];
   pos: Pos;
 };
 
@@ -77,6 +90,8 @@ export type MotionDef = {
   kind: "MotionDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Keys seen more than once in the body, at any nesting depth. */
+  duplicateKeys?: DuplicateName[];
   pos: Pos;
 };
 
@@ -111,9 +126,11 @@ export type TileDef = {
   in?: TypeExpr;
   errorBoundary?: string;
   errorBoundaryPos?: Pos;
-  subRoutes?: { path: string; tile: string; tilePos?: Pos }[];
+  subRoutes?: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
   /** §3.9 scroll-restoration. Absent ≡ default (true). `false` opts the tile out of automatic restore. */
   scrollRestoration?: boolean;
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
   body: TileExpr;
   pos: Pos;
 };
@@ -121,7 +138,7 @@ export type TileDef = {
 export type FnDef = {
   kind: "FnDef";
   name: string;
-  params: { name: string; type: TypeExpr }[];
+  params: { name: string; type: TypeExpr; pos: Pos }[];
   ret?: TypeExpr;
   body: Expr;
   pos: Pos;
@@ -136,6 +153,8 @@ export type EffectDef = {
   policy?: PolicyExpr;
   retry?: RetryExpr;
   mapRequest?: Expr; // record literal usually
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
   pos: Pos;
 };
 
@@ -197,7 +216,7 @@ export type AppDef = {
   kind: "AppDef";
   name: string;
   caps: string[];
-  routes: { path: string; tile: string; tilePos?: Pos }[];
+  routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
   init: Expr[];
   theme?: string;
   themePos?: Pos;
@@ -205,6 +224,19 @@ export type AppDef = {
   indexedDb?: AppIndexedDbConfig;
   meta?: AppMetaConfig;
   analytics?: AppAnalyticsConfig;
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
+  /**
+   * The record literals `meta` / `http` / `indexed-db` / `analytics` were
+   * folded from, kept so checks that walk expressions can still reach them.
+   *
+   * Each config above is a narrowed shape with only the fields it recognises,
+   * which is right for everything that reads it — and which is why the source
+   * has to be kept too: a duplicate key is a property of what was *written*,
+   * and folding a record into a config object is exactly where that evidence
+   * would otherwise be lost.
+   */
+  configSources?: Expr[];
   pos: Pos;
 };
 
@@ -218,8 +250,8 @@ export type TypeExpr =
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
   | { kind: "TypeApp"; name: string; args: TypeExpr[]; pos: Pos }
-  | { kind: "TypeRecord"; fields: { name: string; type: TypeExpr }[]; pos: Pos }
-  | { kind: "TypeUnion"; variants: { name: string; payloads: TypeExpr[] }[]; pos: Pos }
+  | { kind: "TypeRecord"; fields: { name: string; type: TypeExpr; pos: Pos }[]; pos: Pos }
+  | { kind: "TypeUnion"; variants: { name: string; payloads: TypeExpr[]; pos: Pos }[]; pos: Pos }
   | { kind: "TypeNominal"; inner: TypeExpr; refinement?: Refinement; pos: Pos }
   | { kind: "TypeRefinement"; inner: TypeExpr; refinement: Refinement; pos: Pos };
 
@@ -337,7 +369,7 @@ export type Expr =
   | { kind: "Index"; base: Expr; index: Expr; pos: Pos }
   | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, math.abs, ...)
   | { kind: "MethodCall"; receiver: Expr; method: string; args: Expr[]; pos: Pos }
-  | { kind: "RecordLit"; fields: { name: string; value: Expr }[]; pos: Pos }
+  | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
   | { kind: "ListLit"; items: Expr[]; pos: Pos }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit
   // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a
@@ -404,11 +436,14 @@ export type TileMatchArm = {
 export type TileArg = {
   kind: "TileArg";
   name?: string;
+  /** Position of the name, when the argument has one. */
+  namePos?: Pos;
   value: Expr | TileExpr;
 };
 
 export type TileProp = {
   kind: "TileProp";
   name: string;
+  pos: Pos;
   value: Expr;
 };

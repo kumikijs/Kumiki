@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "label": "one name in four layers resolves to four distinct definitions",
+      "expect": {
+        "noErrors": true,
+        "state": { "phase": { "_tag": "Idle" } },
+        "domIncludes": ["row: first (1)", "alpha", "beta", "total: 7", "phase: idle"]
+      }
+    },
+    {
+      "label": "each union tag reaches its own arm",
+      "do": { "clickText": "step" },
+      "expect": {
+        "noErrors": true,
+        "state": { "phase": { "_tag": "Running", "_0": 1 } },
+        "domIncludes": ["phase: running 1"]
+      }
+    },
+    {
+      "label": "and the arms stay distinguishable through the whole cycle",
+      "do": { "clickText": "step" },
+      "expect": {
+        "noErrors": true,
+        "state": { "phase": { "_tag": "Running", "_0": 2 } },
+        "domIncludes": ["phase: running 2", "total: 7"]
+      }
+    }
+  ]
+}

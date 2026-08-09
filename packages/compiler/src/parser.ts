@@ -7,12 +7,14 @@ import type {
   AppMetaConfig,
   BinOp,
   Def,
+  DuplicateName,
   EffectDef,
   EventPattern,
   Expr,
   FnDef,
   Lvalue,
   MatchArm,
+  MotionDef,
   Pattern,
   PolicyExpr,
   Pos,
@@ -23,6 +25,7 @@ import type {
   SlotDef,
   Statement,
   TestDef,
+  ThemeDef,
   TileArg,
   TileDef,
   TileExpr,
@@ -247,8 +250,11 @@ class Parser {
     const start = this.eat("ident", "theme");
     const name = this.eat("ident").value;
     this.eat("op", "=");
-    const body = this.parseThemeRecord();
-    return { kind: "ThemeDef", name, body, pos: start.pos };
+    const duplicateKeys: DuplicateName[] = [];
+    const body = this.parseThemeRecord(duplicateKeys);
+    const def: ThemeDef = { kind: "ThemeDef", name, body, pos: start.pos };
+    if (duplicateKeys.length > 0) def.duplicateKeys = duplicateKeys;
+    return def;
   }
 
   // `motion N = { keyframes: {...}, duration: ..., ... }`. The body reuses the
@@ -258,40 +264,56 @@ class Parser {
     const start = this.eat("ident", "motion");
     const name = this.eat("ident").value;
     this.eat("op", "=");
-    const body = this.parseThemeRecord();
-    return { kind: "MotionDef", name, body, pos: start.pos };
+    const duplicateKeys: DuplicateName[] = [];
+    const body = this.parseThemeRecord(duplicateKeys);
+    const def: MotionDef = { kind: "MotionDef", name, body, pos: start.pos };
+    if (duplicateKeys.length > 0) def.duplicateKeys = duplicateKeys;
+    return def;
   }
 
-  private parseThemeRecord(): { [k: string]: import("./ast.ts").ThemeValue } {
-    return this.descend(() => this.parseThemeRecordNested());
+  private parseThemeRecord(duplicates: DuplicateName[]): {
+    [k: string]: import("./ast.ts").ThemeValue;
+  } {
+    return this.descend(() => this.parseThemeRecordNested(duplicates));
   }
 
-  private parseThemeRecordNested(): { [k: string]: import("./ast.ts").ThemeValue } {
+  private parseThemeRecordNested(duplicates: DuplicateName[]): {
+    [k: string]: import("./ast.ts").ThemeValue;
+  } {
     this.eat("op", "{");
-    const out: { [k: string]: import("./ast.ts").ThemeValue } = {};
+    // Prototype-less: `out["__proto__"] = v` on an object literal replaces the
+    // prototype instead of adding a property, so the key vanished from the
+    // body and `Object.hasOwn` could never see it written twice.
+    const out: { [k: string]: import("./ast.ts").ThemeValue } = Object.create(null);
     if (!this.matchOp("}")) {
-      this.parseThemeEntry(out);
+      this.parseThemeEntry(out, duplicates);
       while (this.matchOp(",")) {
         this.next();
         if (this.matchOp("}")) break;
-        this.parseThemeEntry(out);
+        this.parseThemeEntry(out, duplicates);
       }
     }
     this.eat("op", "}");
     return out;
   }
 
-  private parseThemeEntry(out: { [k: string]: import("./ast.ts").ThemeValue }): void {
+  private parseThemeEntry(
+    out: { [k: string]: import("./ast.ts").ThemeValue },
+    duplicates: DuplicateName[],
+  ): void {
     const keyTok = this.peek();
     if (keyTok.kind !== "ident" && keyTok.kind !== "kw" && keyTok.kind !== "str") {
       throw new ParseError(`Expected theme key`, keyTok.pos);
     }
     this.next();
     const key = keyTok.value as string;
+    // `out` is this record's own keys, so sibling records with a key in common
+    // are not a duplicate — only a key written twice in the same braces is.
+    if (Object.hasOwn(out, key)) duplicates.push({ name: key, pos: keyTok.pos });
     this.eat("op", ":");
     const v = this.peek();
     if (v.kind === "op" && v.value === "{") {
-      out[key] = this.parseThemeRecord();
+      out[key] = this.parseThemeRecord(duplicates);
     } else if (v.kind === "str") {
       this.next();
       out[key] = v.value;
@@ -358,7 +380,9 @@ class Parser {
     // Union: parse first, then check for `|` follow-up
     const first = this.parseTypeUnionAtom();
     if (this.matchOp("|")) {
-      const variants: { name: string; payloads: TypeExpr[] }[] = [this.typeAsVariant(first)];
+      const variants: { name: string; payloads: TypeExpr[]; pos: Pos }[] = [
+        this.typeAsVariant(first),
+      ];
       while (this.matchOp("|")) {
         this.next();
         variants.push(this.typeAsVariant(this.parseTypeUnionAtom()));
@@ -374,9 +398,9 @@ class Parser {
     return first;
   }
 
-  private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[] } {
-    if (t.kind === "TypeRef") return { name: t.name, payloads: [] };
-    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args };
+  private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
+    if (t.kind === "TypeRef") return { name: t.name, payloads: [], pos: t.pos };
+    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args, pos: t.pos };
     throw new ParseError(`Unsupported variant form`, t.pos);
   }
 
@@ -407,7 +431,7 @@ class Parser {
     // Record: { fields }
     if (this.matchOp("{")) {
       const start = this.next();
-      const fields: { name: string; type: TypeExpr }[] = [];
+      const fields: { name: string; type: TypeExpr; pos: Pos }[] = [];
       if (!this.matchOp("}")) {
         fields.push(this.parseTypeField());
         while (this.matchOp(",")) {
@@ -441,11 +465,11 @@ class Parser {
     return { kind: "TypeRef", name, pos: t.pos };
   }
 
-  private parseTypeField(): { name: string; type: TypeExpr } {
-    const name = this.eat("ident").value;
+  private parseTypeField(): { name: string; type: TypeExpr; pos: Pos } {
+    const tok = this.eat("ident");
     this.eat("op", ":");
     const type = this.parseTypeExpr();
-    return { name, type };
+    return { name: tok.value, type, pos: tok.pos };
   }
 
   private parseRefinement(): Refinement {
@@ -1330,7 +1354,7 @@ class Parser {
       }
     }
     if (isRecord) {
-      const fields: { name: string; value: Expr }[] = [];
+      const fields: { name: string; value: Expr; pos: Pos }[] = [];
       while (true) {
         const keyTok = this.peek();
         if (keyTok.kind !== "ident" && keyTok.kind !== "kw") {
@@ -1346,7 +1370,7 @@ class Parser {
         } else {
           value = { kind: "Ref", name: fieldName, pos: fieldPos };
         }
-        fields.push({ name: fieldName, value });
+        fields.push({ name: fieldName, value, pos: fieldPos });
         if (!this.matchOp(",")) break;
         this.next();
       }
@@ -1398,9 +1422,21 @@ class Parser {
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
     let errorBoundaryPos: Pos | undefined;
-    let subRoutes: { path: string; tile: string; tilePos?: Pos }[] | undefined;
+    let subRoutes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] | undefined;
     let scrollRestoration: boolean | undefined;
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+    // Same assembly as `app` and `effect`: one variable per clause, so a
+    // second `in=` silently retypes `$1` and a second `error-boundary=`
+    // decides by line order which tile a failed render falls back to.
+    const noteClause = (tok: Token): void => {
+      // Only the clause keywords matter; the loop rejects anything else.
+      if (tok.kind !== "kw" && tok.kind !== "ident") return;
+      if (seenClauses.has(tok.value)) duplicateClauses.push({ name: tok.value, pos: tok.pos });
+      seenClauses.add(tok.value);
+    };
     while (!this.matchOp("=")) {
+      noteClause(this.peek());
       if (this.matchKw("in")) {
         this.next();
         this.eat("op", "=");
@@ -1442,6 +1478,7 @@ class Parser {
     this.eat("op", "=");
     const body = this.parseTileExpr();
     const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
     if (errorBoundaryPos) def.errorBoundaryPos = errorBoundaryPos;
@@ -1550,7 +1587,7 @@ class Parser {
       // whether the parent tile is itself a value-arg builtin.
       const argTakesValue = parentTakesValueArg || VALUE_NAMED_ARGS.has(name);
       const value = this.parseArgValue(parentIsBuiltin, argTakesValue);
-      return { kind: "TileArg", name, value };
+      return { kind: "TileArg", name, namePos: first.pos, value };
     }
     return { kind: "TileArg", value: this.parseArgValue(parentIsBuiltin, parentTakesValueArg) };
   }
@@ -1606,7 +1643,7 @@ class Parser {
     this.next();
     this.eat("op", ":");
     const value = this.parseExpr();
-    return { kind: "TileProp", name: nameTok.value as string, value };
+    return { kind: "TileProp", name: nameTok.value as string, pos: nameTok.pos, value };
   }
 
   // ----- fn -----
@@ -1615,7 +1652,7 @@ class Parser {
     const start = this.eat("kw", "fn");
     const name = this.eat("ident").value;
     this.eat("op", "(");
-    const params: { name: string; type: TypeExpr }[] = [];
+    const params: { name: string; type: TypeExpr; pos: Pos }[] = [];
     if (!this.matchOp(")")) {
       params.push(this.parseFnParam());
       while (this.matchOp(",")) {
@@ -1636,11 +1673,11 @@ class Parser {
     return def;
   }
 
-  private parseFnParam(): { name: string; type: TypeExpr } {
-    const name = this.eat("ident").value;
+  private parseFnParam(): { name: string; type: TypeExpr; pos: Pos } {
+    const tok = this.eat("ident");
     this.eat("op", ":");
     const type = this.parseTypeExpr();
-    return { name, type };
+    return { name: tok.value, type, pos: tok.pos };
   }
 
   // ----- effect -----
@@ -1655,8 +1692,17 @@ class Parser {
     let retry: RetryExpr | undefined;
     let mapRequest: Expr | undefined;
 
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+
     while (this.isEffectField()) {
       const key = this.peek();
+      // Same assembly as `app`: one variable per clause, so a second one wins
+      // and the first is gone by the time the tree exists.
+      if (key.kind === "kw" || key.kind === "ident") {
+        if (seenClauses.has(key.value)) duplicateClauses.push({ name: key.value, pos: key.pos });
+        seenClauses.add(key.value);
+      }
       if (key.kind === "kw" && key.value === "cap") {
         this.next();
         this.eat("op", "=");
@@ -1700,6 +1746,7 @@ class Parser {
     if (policy) def.policy = policy;
     if (retry) def.retry = retry;
     if (mapRequest) def.mapRequest = mapRequest;
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     return def;
   }
 
@@ -1777,7 +1824,7 @@ class Parser {
     const start = this.eat("kw", "app");
     const name = this.eat("ident").value;
     let caps: string[] = [];
-    let routes: { path: string; tile: string }[] = [];
+    let routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     let init: Expr[] = [];
     let theme: string | undefined;
     let themePos: Pos | undefined;
@@ -1786,9 +1833,18 @@ class Parser {
     let meta: AppMetaConfig | undefined;
     let analytics: AppAnalyticsConfig | undefined;
 
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+    const configSources: Expr[] = [];
+
     while (!this.isAppEnd()) {
       const ident = this.eat("ident");
       const k = ident.value;
+      // Each clause is assigned into a single variable, so a second one
+      // overwrites the first and leaves nothing behind — for `caps` that means
+      // the declared capability set depends silently on clause order.
+      if (seenClauses.has(k)) duplicateClauses.push({ name: k, pos: ident.pos });
+      seenClauses.add(k);
       this.eat("op", "=");
       if (k === "caps") caps = this.parseQualifiedList();
       else if (k === "routes") routes = this.parseRouteMap();
@@ -1797,16 +1853,18 @@ class Parser {
         const tok = this.eat("ident");
         theme = tok.value;
         themePos = tok.pos;
-      } else if (k === "http") http = this.parseAppHttp(ident.pos);
-      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos);
-      else if (k === "meta") meta = this.parseAppMeta(ident.pos);
-      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos);
+      } else if (k === "http") http = this.parseAppHttp(ident.pos, configSources);
+      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos, configSources);
+      else if (k === "meta") meta = this.parseAppMeta(ident.pos, configSources);
+      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos, configSources);
       else {
         throw new ParseError(`Unknown app field "${k}"`, ident.pos);
       }
     }
 
     const def: AppDef = { kind: "AppDef", name, caps, routes, init, pos: start.pos };
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
+    if (configSources.length > 0) def.configSources = configSources;
     if (theme) def.theme = theme;
     if (themePos) def.themePos = themePos;
     if (http) def.http = http;
@@ -1817,8 +1875,9 @@ class Parser {
   }
 
   // app.meta = { title?, description?, og-image?, favicon? } — spec style.md §4.10.
-  private parseAppMeta(pos: Pos): AppMetaConfig {
+  private parseAppMeta(pos: Pos, sources: Expr[]): AppMetaConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.meta must be a record literal`, pos);
     }
@@ -1849,8 +1908,9 @@ class Parser {
   }
 
   // app.analytics = { provider: "console" | "noop", app-id? } — spec runtime.md §10.4.6.
-  private parseAppAnalytics(pos: Pos): AppAnalyticsConfig {
+  private parseAppAnalytics(pos: Pos, sources: Expr[]): AppAnalyticsConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.analytics must be a record literal`, pos);
     }
@@ -1881,8 +1941,9 @@ class Parser {
   }
 
   // app.indexed-db = { name, version, stores: [{ name, key, indexes? }] } — spec http.md §6.7.4.
-  private parseAppIndexedDb(pos: Pos): AppIndexedDbConfig {
+  private parseAppIndexedDb(pos: Pos, sources: Expr[]): AppIndexedDbConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.indexed-db must be a record literal`, pos);
     }
@@ -1969,8 +2030,9 @@ class Parser {
   // app.http = { base-url, headers, on-401, on-403, on-5xx, timeout, credentials } — spec http.md §6.3.
   // headers is kept as Expr so the codegen can wrap it in a closure (slot
   // references must re-evaluate on every request, not freeze at mount).
-  private parseAppHttp(pos: Pos): AppHttpConfig {
+  private parseAppHttp(pos: Pos, sources: Expr[]): AppHttpConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.http must be a record literal`, pos);
     }
@@ -2170,15 +2232,15 @@ class Parser {
   }
 
   /** `{ name: TypeExpr, … }` — the `for-all` generators (types, not values). */
-  private parseForAllRecord(): { name: string; type: TypeExpr }[] {
+  private parseForAllRecord(): { name: string; type: TypeExpr; pos: Pos }[] {
     this.eat("op", "{");
-    const out: { name: string; type: TypeExpr }[] = [];
+    const out: { name: string; type: TypeExpr; pos: Pos }[] = [];
     if (!this.matchOp("}")) {
       while (true) {
-        const id = this.eat("ident").value;
+        const id = this.eat("ident");
         this.eat("op", ":");
         const type = this.parseTypeExpr();
-        out.push({ name: id, type });
+        out.push({ name: id.value, type, pos: id.pos });
         if (!this.matchOp(",")) break;
         this.next();
       }
@@ -2210,9 +2272,9 @@ class Parser {
     return name;
   }
 
-  private parseRouteMap(): { path: string; tile: string; tilePos?: Pos }[] {
+  private parseRouteMap(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] {
     this.eat("op", "{");
-    const routes: { path: string; tile: string; tilePos?: Pos }[] = [];
+    const routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     if (!this.matchOp("}")) {
       routes.push(this.parseRouteEntry());
       while (this.matchOp(",")) {
@@ -2224,17 +2286,18 @@ class Parser {
     return routes;
   }
 
-  private parseRouteEntry(): { path: string; tile: string; tilePos?: Pos } {
-    const path = this.eat("str").value;
+  private parseRouteEntry(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos } {
+    const pathTok = this.eat("str");
+    const path = pathTok.value;
     if (this.matchOp("->>")) {
       this.next();
       // redirect target as string. Represent it as a tile name.
       const target = this.eat("str").value;
-      return { path, tile: `>>${target}` };
+      return { path, tile: `>>${target}`, pathPos: pathTok.pos };
     }
     this.eat("op", "->");
     const tok = this.eat("ident");
-    return { path, tile: tok.value, tilePos: tok.pos };
+    return { path, tile: tok.value, tilePos: tok.pos, pathPos: pathTok.pos };
   }
 
   private parseInitList(): Expr[] {

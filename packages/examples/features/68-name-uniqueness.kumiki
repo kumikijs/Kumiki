@@ -1,0 +1,72 @@
+# Feature: where a name may be reused, and where reusing it is a mistake.
+#
+# A duplicate has no accepted form — that is what E0007 / E0008 say — so what
+# this example demonstrates is the boundary. Everything below reuses a name
+# legally; each comment names the diagnostic the illegal neighbour produces.
+
+# E0007 is per layer, so one name may sit in several layers at once. All four
+# `entry` definitions below are distinct definitions, and code generation
+# resolves each by position. A second `slot entry` would be E0007.
+type  entry = {label: Text, weight: Int}
+slot  entry : entry = {label: "first", weight: 1}
+fn    entry(e: entry) -> Text = e.label + " (" + e.weight.show + ")"
+tile  entry = row(text("row: " + entry(entry))) {gap: "xs"}
+
+# E0008 duplicate-field: a record type's fields. `{label: Text, label: Int}`
+# would keep only the second and check every literal against it.
+type Row = {name: Text, count: Int}
+
+# E0008 duplicate-variant: a union's tags. A second `Idle` would make one arm
+# of every `match` below unreachable, with nothing said about which.
+type Phase = Idle | Running(Int) | Done
+
+# Sibling records each get their own key scope, so `sm` twice is two scopes,
+# not a duplicate. `{sm: "1", sm: "2"}` inside one of them would be E0008.
+theme Compact = {
+    space: {sm: "4px", md: "8px"},
+    size:  {sm: "12px", md: "16px"}
+}
+
+slot phase : Phase     = Idle
+slot rows  : List(Row) = [{name: "alpha", count: 2}, {name: "beta", count: 5}]
+
+# E0008 duplicate-param: `fn total(rs: List(Row), rs: List(Row))` binds the
+# second and silently drops the first argument at every call site.
+fn total(rs: List(Row)) -> Int = rs.fold(0, $1 + $2.count)
+
+fn phaseLabel(p: Phase) -> Text =
+    match p with
+      | Idle       -> "idle"
+      | Running(n) -> "running " + n.show
+      | Done       -> "done"
+
+tile RowLine in=Row = row(
+                        text($1.name),
+                        text($1.count.show) {color: "muted"})
+                      {gap: "sm"}
+
+tile StepBtn = button(text="step", onClick=step)
+
+reducer step on=ui.click(StepBtn)
+    do= phase := match phase with
+                  | Idle       -> Running(1)
+                  | Running(n) -> if n < 2 then Running(n + 1) else Done
+                  | Done       -> Idle
+
+# E0008 duplicate-key on `app.routes`: two entries for one pattern both reach
+# the artifact and the router matches the first, so the second is unreachable.
+tile App = column(
+             heading("uniqueness"),
+             entry,
+             column(for r in rows RowLine(r) {key: r.name}) {gap: "xs"},
+             text("total: " + total(rows).show),
+             text("phase: " + phaseLabel(phase)),
+             StepBtn)
+           {pad: "lg", gap: "md"}
+
+# E0008 duplicate-clause: a second `caps = [...]` would win over this one, so
+# the declared capability set would depend on line order.
+app NameUniqueness
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

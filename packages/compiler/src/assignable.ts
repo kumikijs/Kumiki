@@ -92,13 +92,13 @@ export function substituteType(t: TypeExpr, sub: ReadonlyMap<string, TypeExpr>):
     case "TypeRecord":
       return {
         ...t,
-        fields: t.fields.map((f) => ({ name: f.name, type: substituteType(f.type, sub) })),
+        fields: t.fields.map((f) => ({ ...f, type: substituteType(f.type, sub) })),
       };
     case "TypeUnion":
       return {
         ...t,
         variants: t.variants.map((v) => ({
-          name: v.name,
+          ...v,
           payloads: v.payloads.map((p) => substituteType(p, sub)),
         })),
       };

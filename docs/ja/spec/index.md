@@ -57,6 +57,8 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |
 | [E0005](./errors.md#e0005-tile-cycle) | `tile-cycle` | tile | コア |
 | [E0006](./errors.md#e0006-fn-cycle) | `fn-cycle` | fn | コア |
+| [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | コア |
+| [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | コア |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | コア |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | コア |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | コア |
@@ -182,4 +184,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `65-prefers-dark.kumiki` | app, reducer | スタイル | [§4.6.1](./style.md#_4-6-1-os-設定への追従) |
 | `66-value-types.kumiki` | type, slot, fn | コア | [§1.9.4](./language.md#_1-9-4-演算子の型) |
 | `67-self-reference.kumiki` | tile, slot, fn | コア | [§1.7.2](./language.md#_1-7-2-不変条件) |
+| `68-name-uniqueness.kumiki` | type, slot, fn | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 <!-- examples:end -->

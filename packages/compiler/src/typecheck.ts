@@ -43,6 +43,12 @@ import { STDLIB_TYPES } from "./stdlib-types.ts";
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
 import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
+import {
+  describeDuplicate,
+  duplicateSubRoutes,
+  findDuplicateDefinitions,
+  findDuplicateNames,
+} from "./uniqueness.ts";
 
 export type KumikiError = {
   code: string;
@@ -254,8 +260,23 @@ function checkAll(
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
   checkCycles(program, sym, index, errors);
+  checkDuplicateNames(program, errors);
 
   return errors;
+}
+
+/** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
+function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
+  for (const d of findDuplicateDefinitions(program)) {
+    errors.push({
+      code: "E0007",
+      kind: "duplicate-definition",
+      message: `${d.layer} "${d.name}" is declared more than once; only one of the two declarations takes effect`,
+      pos: d.pos,
+    });
+  }
+  for (const d of findDuplicateNames(program))
+    errors.push({ code: "E0008", ...describeDuplicate(d) });
 }
 
 /**
@@ -506,18 +527,17 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  // Duplicate sub-route paths within the same tile.
-  const seen = new Set<string>();
-  for (const sr of subRoutes) {
-    if (seen.has(sr.path)) {
-      errors.push({
-        code: "E0112",
-        kind: "duplicate-sub-route",
-        message: `Sub-route path "${sr.path}" is declared more than once in tile "${tile.name}"`,
-        pos: tile.pos,
-      });
-    }
-    seen.add(sr.path);
+  // Duplicate sub-route paths within the same tile. `E0112` rather than
+  // `E0008` because it came first and a code's meaning is permanent — but the
+  // rule behind it is the shared one, so the position is the offending entry
+  // rather than the tile that contains it.
+  for (const dup of duplicateSubRoutes(subRoutes)) {
+    errors.push({
+      code: "E0112",
+      kind: "duplicate-sub-route",
+      message: `Sub-route path "${dup.name}" is declared more than once in tile "${tile.name}"`,
+      pos: dup.pos,
+    });
   }
   // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
   // never match because the runtime only looks them up after the parent
@@ -2159,6 +2179,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
           // undecidable field would read as a mismatch against every declared
           // field type.
           type: inferType(f.value, sym, ctx) ?? unknownType(f.value.pos),
+          pos: f.pos ?? f.value.pos,
         })),
         pos: e.pos,
       };
