@@ -26,8 +26,9 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0008` | a name written twice inside one construct (app/effect/tile clause, record key or field, map key, tile argument or prop, fn/type parameter, `for-all` generator, union tag, route pattern) | delete the later one |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
-| `E0104` | undefined effect in `emit` | declare the effect or fix the name |
+| `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
+| `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
 | `E0201` | a value does not have the type its position requires (slot init, assignment, `fn` argument / return, tile `in=`, operator operand) | correct the value, or widen the declared type |
 | `E0202` | an `emit` argument does not match the effect's `in=` | pass a value of the declared type |
@@ -36,7 +37,8 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0215` | a record literal / `.copy(f=v)` names a field the type does not have | fix the name, or declare it on the type |
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
-| `E0301` | effect needs a capability not in `app.caps` | add the cap to `caps = [...]` |
+| `E0211` | a reducer's `ui.*` selector or `tile.mount` / `tile.unmount` names an undeclared tile | declare the tile or fix the name; try `kumiki_fix` |
+| `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
 | `E0304` | a slot's initial value reads a slot (its own or another's) | give it a standalone value and derive the rest in a `fn` |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
@@ -47,7 +49,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 ## Auto-fix
 
-For name-resolution errors, the compiler can suggest the closest existing name. `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`–`E0105`, `E0107` and `E0211` search all top-level definitions.
+For name-resolution errors, the compiler can suggest the closest existing name. `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`–`E0105`, `E0107` and `E0211` search all top-level definitions.
 
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes

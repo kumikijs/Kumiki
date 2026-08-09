@@ -32,7 +32,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { isTileExpr, lifecycleTileTarget } from "./ast.ts";
 import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -376,8 +376,8 @@ class Walker {
       // `tile.mount(X)` folds the tile name into the event name, so the parser
       // records where `X` sat. Reporting the pattern's own position instead
       // would break the contract on `Reference.pos` and make `rename` abort.
-      const m = r.on.name.match(/^tile\.(?:un)?mount\("([^"]+)"\)$/);
-      if (m?.[1]) this.add("tile", m[1], r.on.tileNamePos);
+      const target = lifecycleTileTarget(r.on);
+      if (target) this.add("tile", target.tile, r.on.tileNamePos);
     }
     for (const s of r.do) this.statement(s, locals);
   }

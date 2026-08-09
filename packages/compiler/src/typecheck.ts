@@ -29,10 +29,10 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { isTileExpr, lifecycleTileTarget } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
-import { STANDARD_CAPABILITIES } from "./capabilities.ts";
+import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
 import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
@@ -176,6 +176,8 @@ type SymbolTable = {
   timerNames: Set<string>;
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
   motions: Set<string>;
+  /** Names declared by `theme N = {…}` — the `app.theme` namespace. */
+  themes: Set<string>;
   /**
    * Closed icon-name domain for `--strict-icons`: union of the
    * `@kumikijs/icons` registry passed by the toolchain and every key seen
@@ -203,6 +205,7 @@ function checkAll(
     effects: new Map(),
     timerNames: new Set(),
     motions: new Set(),
+    themes: new Set(),
     iconDomain,
   };
 
@@ -240,6 +243,9 @@ function checkAll(
         break;
       case "MotionDef":
         sym.motions.add(def.name);
+        break;
+      case "ThemeDef":
+        sym.themes.add(def.name);
         break;
       case "AppDef":
         sym.app = def;
@@ -1061,9 +1067,32 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   // event binds
   if (r.on.kind === "EffectEvent") {
     for (const b of r.on.binds) if (b !== "_") ctx.localBinds.add(b);
+    // The name before `.ok` / `.err` is the effect whose result this reducer
+    // waits for. A misspelling leaves it waiting for a result nothing produces.
+    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {
+      errors.push({
+        code: "E0104",
+        kind: "undef-effect",
+        message: `Reference to undefined effect "${r.on.effect}"`,
+        pos: r.on.effectPos ?? r.on.pos,
+      });
+    }
   }
   if (r.on.kind === "LifecycleEvent") {
     if (r.on.name.startsWith("route.")) ctx.localBinds.add("$route");
+  }
+  // `tile.mount(X)` fires when *that* tile enters the rendered tree, so an
+  // undeclared `X` is the same dead subscription E0211 reports for a `ui.*`
+  // selector — and there is no `_` here to exempt: the wildcard exists for
+  // reducers dispatched indirectly, which a lifecycle event never is.
+  const lifecycleTile = lifecycleTileTarget(r.on);
+  if (lifecycleTile && !sym.tiles.has(lifecycleTile.tile)) {
+    errors.push({
+      code: "E0211",
+      kind: "undef-tile-in-selector",
+      message: `Reducer "${r.name}" subscribes to ${lifecycleTile.event}(${lifecycleTile.tile}) but tile "${lifecycleTile.tile}" is not declared`,
+      pos: lifecycleTile.pos,
+    });
   }
   // §1.6.2 — the selector's tile name must refer to a declared `tile`. A typo
   // here used to bind nothing silently, which made `ui.click(Foo)` indistin-
@@ -1936,15 +1965,7 @@ function checkEmitTarget(
   pos: Pos,
 ): void {
   const eff = sym.effects.get(effect);
-  const isBuiltinNav =
-    effect === "navigate" ||
-    effect === "navigate-replace" ||
-    effect === "navigate-back" ||
-    effect === "scroll-to" ||
-    effect === "toast" ||
-    effect === "confirm" ||
-    effect === "log";
-  if (!eff && !isBuiltinNav) {
+  if (!eff && !BUILTIN_EFFECT_CAPS.has(effect)) {
     errors.push({
       code: "E0104",
       kind: "undef-effect",
@@ -1953,11 +1974,14 @@ function checkEmitTarget(
     });
     return;
   }
-  if (eff && ctx.capsAvailable && !ctx.capsAvailable.has(eff.cap)) {
+  // A built-in effect has no `effect` declaration to read a `cap=` off, so the
+  // requirement comes from the table instead — the runtime gates it either way.
+  const cap = eff ? eff.cap : (BUILTIN_EFFECT_CAPS.get(effect) ?? null);
+  if (cap && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
       kind: "missing-capability",
-      message: `Effect "${effect}" requires capability "${eff.cap}" which is not declared in app.caps`,
+      message: `Effect "${effect}" requires capability "${cap}" which is not declared in app.caps`,
       pos,
     });
   }
@@ -2878,6 +2902,59 @@ function checkApp(
     checkEmitTarget(e.callee, e.args, sym, errors, initCtx, e.pos);
     for (const a of e.args) checkExpr(a, sym, errors, initCtx);
   }
+  checkAppHttpHandlers(app, sym, errors);
+  checkAppTheme(app, sym, errors);
+}
+
+/**
+ * The reducers `app.http` routes a 401 / 403 / 5xx response to.
+ *
+ * They are named the same way a `button(onClick=…)` names one, and were the
+ * one such site with nothing resolving the name — a misspelling left the
+ * response with no handler, which looks exactly like a response the app chose
+ * not to handle.
+ */
+function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const http = app.http;
+  if (!http) return;
+  const handlers = [
+    ["on401", http.on401] as const,
+    ["on403", http.on403] as const,
+    ["on5xx", http.on5xx] as const,
+  ];
+  for (const [field, name] of handlers) {
+    if (name === undefined || sym.reducers.has(name)) continue;
+    errors.push({
+      code: "E0102",
+      kind: "undef-reducer",
+      message: `Reference to undefined reducer "${name}"`,
+      pos: http.reducerRefPos?.[field] ?? http.pos,
+    });
+  }
+}
+
+/**
+ * `app.theme = X`, where `X` is either a `theme` definition or the slot whose
+ * value selects one (spec §4.6). Resolving to neither leaves the runtime with
+ * a name that matches no registered theme, and it renders with the built-in
+ * defaults — an app that looks merely unstyled rather than misconfigured.
+ *
+ * The *value* a slot holds is deliberately not checked, though §4.6 says it
+ * must name a declared theme. An app that picks its theme on `app.start` — the
+ * shape §4.6.1 prescribes — has to give the slot some initial value first, and
+ * every theme name would be a lie there; the honest one is a sentinel that
+ * names no theme. That sentinel and a misspelling are the same program, so
+ * separating them takes intent, which a check does not have.
+ */
+function checkAppTheme(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const name = app.theme;
+  if (name === undefined || sym.themes.has(name) || sym.slots.has(name)) return;
+  errors.push({
+    code: "E0118",
+    kind: "undef-theme",
+    message: `Reference to undefined theme "${name}"`,
+    pos: app.themePos ?? app.pos,
+  });
 }
 
 /**

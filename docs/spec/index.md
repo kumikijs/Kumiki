@@ -75,6 +75,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
 | [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | core |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | core |
+| [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | style |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -185,4 +186,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `66-value-types.kumiki` | type, slot, fn | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
 | `67-self-reference.kumiki` | tile, slot, fn | core | [§1.7.2](./language.md#_1-7-2-invariants) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | core | [§1.3.1](./language.md#_1-3-1-syntax) |
+| `69-builtin-effect-capabilities.kumiki` | reducer, effect | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
 <!-- examples:end -->

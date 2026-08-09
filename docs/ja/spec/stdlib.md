@@ -466,6 +466,8 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 各 capability に対応する標準 effect。`app.caps` に capability があれば自動で使える。
 
+逆向きも検査される：これらを capability 無しで emit すると [E0301](./errors.md#e0301-missing-capability) になる。これらには `cap=` を読み取る `effect` 宣言が無い — ランタイム自身が登録するものだからである — ので、要求元は各 effect が登録されているケイパビリティであり、以下の各 effect に併記してある。`scroll-to` だけは何も要求しない。
+
 → 詳細仕様は [HTTP / Storage](./http.md)。
 
 ### 2.6.1 ナビゲーション

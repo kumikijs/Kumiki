@@ -75,6 +75,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
 | [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
+| [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | スタイル |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -185,4 +186,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `66-value-types.kumiki` | type, slot, fn | コア | [§1.9.4](./language.md#_1-9-4-演算子の型) |
 | `67-self-reference.kumiki` | tile, slot, fn | コア | [§1.7.2](./language.md#_1-7-2-不変条件) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | コア | [§1.3.1](./language.md#_1-3-1-構文) |
+| `69-builtin-effect-capabilities.kumiki` | reducer, effect | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
 <!-- examples:end -->

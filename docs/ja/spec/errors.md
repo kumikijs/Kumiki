@@ -51,6 +51,7 @@ type KumikiError = {
 | `E0107` | あり | 宣言済み motion 名に対する近傍名の提案。 |
 | `E0116` | あり | 宣言済み `fn` 名と組み込み呼び出しに対する近傍名の提案（スコープ限定 — 名前の近い slot や tile は候補にならない）。 |
 | `E0117` | あり | 型名に対する近傍名の提案。プログラム自身の `type` 定義を先に、続いてプリミティブ・標準ライブラリのドメイン型・generic コンストラクタ（スコープ限定 — 名前の近い slot や fn は候補にならない）。 |
+| `E0118` | あり | 宣言済みの theme 名と slot 名に対する近傍名の提案 — `app.theme` が受け付ける 2 つの名前空間（スコープ限定 — 名前の近い tile や reducer は候補にならない）。 |
 | `E0209` | あり | scrutinee union の variant タグに対する近傍名の提案（組み込みの `Option` / `Result` と、別名を辿ったユーザ `TypeDef` の body）。 |
 | `E0211` | あり | セレクタの対象について、宣言済み tile 名に対する近傍名の提案。 |
 | `E0216` | あり | 宣言された union の variant タグに対する近傍名の提案。解決方法はパターン側の E0209 と同じ。 |
@@ -184,7 +185,7 @@ tile が、直接またはほかの tile を経由して自分自身へ展開し
 
 ### E0104 `undef-effect` / `init-not-effect-call`
 
-`emit` の対象が未定義の effect を指している。`app.init` のエントリも同じ経路で検証される — 文法上これは effect 呼び出しであり（[§1.12](./language.md#_1-12-アプリエントリ-app)）、ケイパビリティ検査も引数型検査も同様に適用され、組み込み effect（`toast` / `navigate` / `log` 等）も同じく使える。
+`emit` の対象、または reducer が `on=<effect>.ok(…)` / `.err(…)` で待ち受ける effect が、未定義の effect を指している。セレクタの綴りを間違えると、その reducer は誰も生成しない結果を待ち続けることになり、完了しない effect と区別がつかない。`app.init` のエントリも同じ経路で検証される — 文法上これは effect 呼び出しであり（[§1.12](./language.md#_1-12-アプリエントリ-app)）、ケイパビリティ検査も引数型検査も同様に適用され、組み込み effect（`toast` / `navigate` / `log` 等）も同じく使える。
 
 > `Reference to undefined effect "<name>"`
 
@@ -315,6 +316,16 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。`kumiki fix` が最も近い型名を提案する。
 
+### E0118 `undef-theme`
+
+`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-テーマ切替)）。
+
+> `Reference to undefined theme "<name>"`
+
+どちらにも解決されない名前は、登録されていない theme をランタイムが引くことになる。ランタイムは組み込みの既定値にフォールバックして描画するので、設定を誤ったアプリではなく、単にスタイルが当たっていないだけのアプリに見える。
+
+**修正**：綴りを直すか、theme を宣言する。`kumiki fix` が最も近い theme 名または slot 名を提案する。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -428,11 +439,12 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 ### E0211 `undef-tile-in-selector`
 
-reducer の `ui.*` セレクタが宣言されていない tile を指している。この検査がないと、`ui.click(SaveBtn)` を `ui.click(SaveBtnn)` と打ち間違えてもコンパイルが通り、どこにも bind されない reducer（= 意図的に未使用の reducer）と区別がつかない。
+reducer が宣言されていない tile を指している。tile を名指すトリガは 2 つあり、どちらも対象になる：`ui.*` セレクタと、`tile.mount(<Tile>)` / `tile.unmount(<Tile>)`。この検査がないと、`ui.click(SaveBtn)` を `ui.click(SaveBtnn)` と打ち間違えてもコンパイルが通り、どこにも bind されない reducer（= 意図的に未使用の reducer）と区別がつかない。
 
 > `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
+> `Reducer "<name>" subscribes to tile.mount(<Tile>) but tile "<Tile>" is not declared`
 
-**修正**: `tile <Tile> = …` を宣言するか、セレクタの tile 名を既存のものに直す。`emit confirm({onYes: r, …})` 等のコールバックとして間接的に dispatch される reducer 用のワイルドカード `_`（[Lifecycle §7](./lifecycle.md) 参照）はこの検査の対象外。
+**修正**: `tile <Tile> = …` を宣言するか、tile 名を既存のものに直す。`emit confirm({onYes: r, …})` 等のコールバックとして間接的に dispatch される reducer 用のワイルドカード `_`（[Lifecycle §7](./lifecycle.md) 参照）は `ui.*` セレクタでのみ受理され、解決すべき tile を持たない。lifecycle イベントにその形は無い — 名前を持つ tile が描画ツリーに出入りしたときに発火するイベントだからである。
 
 ### E0212 `selector-id-mismatch`（`--strict-selector-id` で opt-in）
 
@@ -538,7 +550,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0301 `missing-capability`
 
-effect が要求するケイパビリティが `app.caps` で宣言されていない。
+effect が要求するケイパビリティが `app.caps` で宣言されていない。要求元は effect 自身の `cap=`、または `navigate` / `toast` のような[標準 effect](./stdlib.md#_2-6-標準-effect)（プログラム側で宣言しないもの）が登録されているケイパビリティである。ランタイムはどちらも同じように制限する — 宣言されていないケイパビリティの effect は console 警告を出して捨てられるので、この検査がないと emit はコンパイルもマウントも通り、そして何も起きない。
 
 > `Effect "<effect>" requires capability "<cap>" which is not declared in app.caps`
 

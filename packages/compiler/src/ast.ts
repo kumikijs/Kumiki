@@ -310,6 +310,25 @@ export type EventPattern =
       pos: Pos;
     };
 
+/**
+ * The tile a `tile.mount(X)` / `tile.unmount(X)` pattern names, or `null` for
+ * every other event.
+ *
+ * The name is folded into the event's own name because it is part of the event
+ * identity the runtime dispatches on — so reading it back means decoding that
+ * string, and every caller that decodes it separately is a chance to decode it
+ * differently from the parser that wrote it.
+ */
+export function lifecycleTileTarget(
+  on: EventPattern,
+): { event: string; tile: string; pos: Pos } | null {
+  if (on.kind !== "LifecycleEvent") return null;
+  const m = /^(tile\.(?:un)?mount)\((".*")\)$/.exec(on.name);
+  if (!m?.[1] || !m[2]) return null;
+  // The exact inverse of the `JSON.stringify` the parser encoded it with.
+  return { event: m[1], tile: JSON.parse(m[2]) as string, pos: on.tileNamePos ?? on.pos };
+}
+
 export type UiEventKind =
   | "click"
   | "submit"

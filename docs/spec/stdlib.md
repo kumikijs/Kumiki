@@ -497,6 +497,8 @@ The compiled bundle auto-mounts to `#root`; a host embedding the bundle can regi
 
 The standard effect corresponding to each capability. If the capability is in `app.caps`, it is automatically usable.
 
+The converse is checked too: emitting one of these without its capability in `app.caps` is [E0301](./errors.md#e0301-missing-capability). They have no `effect` declaration to read a `cap=` off — the runtime registers them itself — so the requirement comes from the capability each is registered behind, listed with each effect below. `scroll-to` is the one that needs none.
+
 → For the detailed specification, see [HTTP / Storage](./http.md).
 
 ### 2.6.1 Navigation

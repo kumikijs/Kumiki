@@ -377,6 +377,32 @@ export function planFixesExplained(
         apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
       });
     }
+    if (err.code === "E0118") {
+      // Message shape: `Reference to undefined theme "<name>"`. The candidate
+      // set is the two namespaces `app.theme` accepts — a `theme` definition,
+      // or the slot whose value selects one. Every other layer would be E0118
+      // again at the same position.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0118-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const candidates = listDefs(store)
+        .filter((e) => e.layer === "theme" || e.layer === "slot")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(candidates, missing);
+      if (!suggested) {
+        skip(err.code, "e0118-no-close-theme", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
     if (err.code === "E0216") {
       // Message shape: `Variant "<tag>" is not a member of type "<T>"` — the
       // constructor-side twin of E0209, and resolved the same way.
