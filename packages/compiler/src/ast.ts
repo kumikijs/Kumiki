@@ -293,8 +293,13 @@ export type EventPattern =
       effect: string;
       outcome: "ok" | "err";
       binds: string[];
-      /** Position of the effect name itself, which `pos` (the whole pattern) does not give. */
-      effectPos?: Pos;
+      /**
+       * Where the effect name sits. Always the same token as `pos` here — the
+       * pattern starts at the name — and named separately because that is a
+       * property of this one pattern rather than of a position field, and
+       * because `refs` and the typechecker both want the name, not the pattern.
+       */
+      effectPos: Pos;
       pos: Pos;
     }
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }

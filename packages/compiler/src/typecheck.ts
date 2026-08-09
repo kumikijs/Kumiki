@@ -1074,7 +1074,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
         code: "E0104",
         kind: "undef-effect",
         message: `Reference to undefined effect "${r.on.effect}"`,
-        pos: r.on.effectPos ?? r.on.pos,
+        pos: r.on.effectPos,
       });
     }
   }
