@@ -100,4 +100,37 @@ describe("benchmark corpus", () => {
     const present = new Set(files.map((f) => f.rel));
     expect(Object.keys(KNOWN_BAD).filter((k) => !present.has(k))).toEqual([]);
   });
+
+  it("stays an order of magnitude under the parser's nesting limit", () => {
+    // The limit is only defensible if real programs are nowhere near it, and
+    // that claim is in the spec (language.md §1.2.3). Computed rather than
+    // written down, because a number in a comment drifts silently and this
+    // one is load-bearing: raising the limit to admit ordinary code would
+    // mean the limit was wrong.
+    const deepest = Math.max(
+      ...files.map((f) => {
+        try {
+          return astDepth(parse(lex(readFileSync(f.path, "utf8"))).defs);
+        } catch {
+          return 0; // the two recorded parse failures
+        }
+      }),
+    );
+    expect(deepest).toBeGreaterThan(0);
+    expect(deepest, `deepest corpus tree is ${deepest}`).toBeLessThan(PARSER_NESTING_LIMIT / 10);
+  });
 });
+
+/** The bound `parser.ts` enforces, as documented in language.md §1.2.3. */
+const PARSER_NESTING_LIMIT = 256;
+
+/** How deeply AST nodes nest — what the parser's budget is spent on. */
+function astDepth(node: unknown): number {
+  if (Array.isArray(node)) return Math.max(0, ...node.map(astDepth));
+  if (node && typeof node === "object") {
+    const fields = Object.values(node as Record<string, unknown>);
+    const inner = Math.max(0, ...fields.map(astDepth));
+    return "kind" in (node as object) ? inner + 1 : inner;
+  }
+  return 0;
+}

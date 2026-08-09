@@ -64,6 +64,9 @@ typo` is caught rather than accepted).
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
 | `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
+| `E0005` | no | Which edge of the loop is the mistaken one, and what the tile should render there instead, is user intent. |
+| `E0006` | no | Rewriting recursion as a fold over data is a change of algorithm, not a substitution. |
+| `E0304` | no | Where the derived value should be computed — a `fn`, or a reducer that runs once on entry — is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
 Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
@@ -118,6 +121,24 @@ The program declares more than one `app` definition. There is one entry point: c
 Unlike `E0003`, this is not relaxed for a program under construction — one app too few is an unfinished program, one app too many is a wrong one.
 
 **Fix**: Remove or merge the extra definition. To swap an app out, `replace` it, or `remove` the old one before adding the new.
+
+### E0005 `tile-cycle`
+
+A tile expands into itself, directly or through other tiles ([Tile Layer Invariants](./language.md#_1-7-2-invariants), inv. 4). Code generation inlines every child, so a cycle is an infinite tree: without this the build ran out of stack with no position and nothing naming the tiles involved. Reported once per cycle, at the first edge of it — inside the tile the message names.
+
+> `Tile "<name>" expands into itself (<A> → <B> → <A>)`
+
+The edges are the ones code generation follows: nested tile calls, an identifier argument standing in for a tile, the branches of `for` / `when` / `if` / `match`, and the tile's own `error-boundary` — the boundary's body is inlined into the `catch` at every call site of the tile that declares it, so a boundary that leads back closes a loop like any other child. `sub-routes` is not an edge: a sub-route is selected by the router through `route-outlet` and is never inlined.
+
+**Fix**: Break the loop. Repetition belongs in `for` over a collection, and an alternative rendering in `when` / `match` — neither of which needs a tile to contain itself.
+
+### E0006 `fn-cycle`
+
+A `fn` calls itself, directly or through other functions ([fn Layer Invariants](./language.md#_1-8-3-invariants), inv. 5). Direct recursion is prohibited outright, and mutual recursion is admitted only where the depth can be proven at the type level — which the language has no form for, so every loop in the call graph is reported. Reported once per cycle, at the first call of it.
+
+> `fn "<name>" calls itself (<f> → <g> → <f>)`
+
+**Fix**: Express the repetition over data instead — `fold` / `map` / `filter` over a `List` terminate by construction, which is what the invariant is protecting.
 
 ## E01xx — Name Resolution
 
@@ -516,6 +537,16 @@ An effect declared with `cap=http.cancel` does not have the required shape `in=E
 > `effect "<name>" with cap=http.cancel cannot declare map-request`
 
 **Fix**: Change the `in=` and `out=` clauses to `in=EffectId out=Unit`, drop any `policy=` / `retry=` / `map-request=` clauses, or remove the `cap=http.cancel` clause. See [HTTP Cancellation](./http.md#_6-4-cancellation).
+
+### E0304 `derived-slot`
+
+A slot's initial value reads another slot — or itself. Derived slots are prohibited ([Store Layer Invariants](./language.md#_1-4-2-invariants), inv. 4), and `init-expr` ([Store Layer Syntax](./language.md#_1-4-1-syntax)) admits a literal, a record or collection literal, or a builtin call, none of which name a slot.
+
+> `Slot "<name>" reads slot "<other>" in its initial value; derived slots are prohibited — compute it in a fn instead`
+
+The lowering agrees with the invariant: a slot read is emitted as a lookup in the live-value table, and that table is built from the slot table, not before it. So an initializer that reads a slot throws on mount whichever order the two slots are declared in — the declaration order is not what decides it. Because no initializer may read a slot, a cycle between initializers cannot be written, and has no code of its own.
+
+**Fix**: Give the slot a value that stands on its own and compute the derived form in a `fn`, which is the layer for derived computation. A value that must be derived once at startup belongs in a `route.enter` reducer instead.
 
 ### E0305 `fn-impurity`
 
