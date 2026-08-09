@@ -1083,6 +1083,53 @@ describe("planFixes: expanded auto-patch coverage", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("suggests a close tile name for E0211 (undef tile in a lifecycle event)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0211-lifecycle-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot mounts : Int = 0",
+        'tile Panel = card(text("p"))',
+        "reducer onPanel on=tile.mount(Pannel) do= mounts := mounts + 1",
+        "tile App = column(Panel)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "Pannel" with "Panel"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close theme or slot name for E0118", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0118-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        'theme Light = {colors: {bg: "#fff"}}',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "    theme  = Ligth",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "Ligth" with "Light"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("suggests a close tile name for E0211 (undef tile in ui.click selector)", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0211-"));
     const file = join(dir, "in.kumiki");
