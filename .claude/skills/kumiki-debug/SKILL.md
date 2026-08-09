@@ -22,6 +22,8 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
 | `E0005` | a tile expands into itself, directly or through other tiles | break the loop — repetition belongs in `for`, alternatives in `when` / `match` |
 | `E0006` | a `fn` calls itself, directly or through other functions | rewrite as `fold` / `map` / `filter` over the data |
+| `E0007` | two definitions of one layer share a name — the later one silently replaced the earlier | delete or rename one |
+| `E0008` | a name written twice inside one construct (app/effect clause, record key or field, fn/type parameter, union tag, route pattern) | delete the later one |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
 | `E0104` | undefined effect in `emit` | declare the effect or fix the name |

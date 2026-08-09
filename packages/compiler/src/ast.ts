@@ -63,10 +63,23 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
+/**
+ * A name the parser saw a second time in a construct that keeps only one.
+ *
+ * `app`, `effect` and the theme-record grammar all assemble their fields into
+ * a record, so the later of two same-named clauses overwrites the earlier and
+ * the duplicate leaves no trace in the tree. Recording it here is what lets
+ * the checker report `E0008` — the alternative, throwing from the parser,
+ * would stop at the first one and take the whole file's editing verbs with it.
+ */
+export type DuplicateName = { name: string; pos: Pos };
+
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Keys seen more than once in the body, at any nesting depth. */
+  duplicateKeys?: DuplicateName[];
   pos: Pos;
 };
 
@@ -77,6 +90,8 @@ export type MotionDef = {
   kind: "MotionDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Keys seen more than once in the body, at any nesting depth. */
+  duplicateKeys?: DuplicateName[];
   pos: Pos;
 };
 
@@ -136,6 +151,8 @@ export type EffectDef = {
   policy?: PolicyExpr;
   retry?: RetryExpr;
   mapRequest?: Expr; // record literal usually
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
   pos: Pos;
 };
 
@@ -197,7 +214,7 @@ export type AppDef = {
   kind: "AppDef";
   name: string;
   caps: string[];
-  routes: { path: string; tile: string; tilePos?: Pos }[];
+  routes: { path: string; tile: string; tilePos?: Pos; pathPos?: Pos }[];
   init: Expr[];
   theme?: string;
   themePos?: Pos;
@@ -205,6 +222,8 @@ export type AppDef = {
   indexedDb?: AppIndexedDbConfig;
   meta?: AppMetaConfig;
   analytics?: AppAnalyticsConfig;
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
   pos: Pos;
 };
 
@@ -218,8 +237,8 @@ export type TypeExpr =
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
   | { kind: "TypeApp"; name: string; args: TypeExpr[]; pos: Pos }
-  | { kind: "TypeRecord"; fields: { name: string; type: TypeExpr }[]; pos: Pos }
-  | { kind: "TypeUnion"; variants: { name: string; payloads: TypeExpr[] }[]; pos: Pos }
+  | { kind: "TypeRecord"; fields: { name: string; type: TypeExpr; pos: Pos }[]; pos: Pos }
+  | { kind: "TypeUnion"; variants: { name: string; payloads: TypeExpr[]; pos: Pos }[]; pos: Pos }
   | { kind: "TypeNominal"; inner: TypeExpr; refinement?: Refinement; pos: Pos }
   | { kind: "TypeRefinement"; inner: TypeExpr; refinement: Refinement; pos: Pos };
 
@@ -337,7 +356,7 @@ export type Expr =
   | { kind: "Index"; base: Expr; index: Expr; pos: Pos }
   | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, math.abs, ...)
   | { kind: "MethodCall"; receiver: Expr; method: string; args: Expr[]; pos: Pos }
-  | { kind: "RecordLit"; fields: { name: string; value: Expr }[]; pos: Pos }
+  | { kind: "RecordLit"; fields: { name: string; value: Expr; pos?: Pos }[]; pos: Pos }
   | { kind: "ListLit"; items: Expr[]; pos: Pos }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit
   // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a

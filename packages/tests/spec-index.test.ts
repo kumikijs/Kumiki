@@ -52,7 +52,11 @@ const featuresDir = join(repoRoot, "packages", "examples", "features");
 
 // The 7 layers are language-independent, so the layer columns can be validated
 // against this closed set on both tracks.
-const LAYERS = new Set(["type", "slot", "effect", "reducer", "tile", "fn", "app"]);
+// The seven layers, plus `all` for a code that fires on every one of them.
+// `all` is not a layer a program can write — it is the honest answer for a
+// check whose subject is any definition (`E0007`) or any construct (`E0008`),
+// where naming one layer would be wrong rather than imprecise.
+const LAYERS = new Set(["type", "slot", "effect", "reducer", "tile", "fn", "app", "all"]);
 
 // Feature-dimension language-neutral keys. Each track spells the same key
 // differently (EN "http" vs JA "HTTP/Storage"), so raw column text is not

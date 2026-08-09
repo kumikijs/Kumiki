@@ -65,6 +65,8 @@ typo` is caught rather than accepted).
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
 | `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
 | `E0005` | no | Which edge of the loop is the mistaken one, and what the tile should render there instead, is user intent. |
+| `E0007` | no | Which of the two definitions is the intended one is user intent — and deleting the wrong one silently changes behaviour. |
+| `E0008` | no | Same: which occurrence to keep is user intent, and for `caps` the choice is a capability decision. |
 | `E0006` | no | Rewriting recursion as a fold over data is a change of algorithm, not a substitution. |
 | `E0304` | no | Where the derived value should be computed — a `fn`, or a reducer that runs once on entry — is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
@@ -139,6 +141,38 @@ A `fn` calls itself, directly or through other functions ([fn Layer Invariants](
 > `fn "<name>" calls itself (<f> → <g> → <f>)`
 
 **Fix**: Express the repetition over data instead — `fold` / `map` / `filter` over a `List` terminate by construction, which is what the invariant is protecting.
+
+### E0007 `duplicate-definition`
+
+Two definitions of the same layer share a name. Symbol collection keeps one entry per name, so the later declaration replaced the earlier one and the program that ran was not the program that was written. Reported once per declaration past the first, at that declaration.
+
+> `<layer> "<name>" is declared more than once; the later declaration silently replaced the earlier one`
+
+Two `reducer`s of one name is the sharpest case: code generation emits both, and the runtime dispatches the **first** while the checker validated only the **last**. So the two halves of the toolchain disagreed about which definition existed.
+
+The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else — and a program's own `type Route = …` shadowing the standard library's is legal too. A second `app` is `E0004`, which predates this and keeps its own code.
+
+**Fix**: Remove one, or rename it. `kumiki rename` refuses to create a duplicate, and `kumiki add` rolls back on one.
+
+### E0008 `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant`
+
+A name written twice inside one construct. Reported at the later occurrence — the one to delete.
+
+> `<what> "<name>" is written more than once`
+
+| `kind` | Where |
+|---|---|
+| `duplicate-clause` | an `app` or `effect` clause (`caps = … caps = …`, `cap=… cap=…`) |
+| `duplicate-key` | a record literal field, a literal map key, a `theme` / `motion` entry at any depth, a route pattern in `app.routes` |
+| `duplicate-field` | a record **type**'s fields, wherever the record type is written |
+| `duplicate-param` | a `fn`'s parameters, a `type`'s parameters |
+| `duplicate-variant` | a union's variant tags |
+
+`caps` is why this is not cosmetic: the clauses are assembled into one field, so the later one wins and reversing the order of two `caps` clauses silently changes the capability set — a security boundary decided by line order, undetectable in a workflow where an agent appends. A duplicate route pattern emits both entries and the router matches the first, leaving the second tile unreachable. A duplicate variant tag makes one arm of every `match` on that union unreachable.
+
+A computed map key is not compared: whether two of them collide is the runtime's question, and the answer is not available here.
+
+**Fix**: Delete the later one, or rename it if both were meant.
 
 ## E01xx — Name Resolution
 

@@ -119,6 +119,31 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
     expect(readFileSync(path, "utf8")).toBe(before);
   });
 
+  // `add` refuses a duplicate through the validation gate rather than through
+  // a check of its own: it writes, typechecks, and rolls back. That indirection
+  // is why this is pinned — the gate is one `check()` call away from being the
+  // only thing standing between an appending agent and a definition that
+  // silently replaces another.
+  it("rolls back an add that would duplicate an existing definition", () => {
+    const before = readFileSync(path, "utf8");
+    expect(() => addDef(path, "slot", "draft", 'Text = ""')).toThrowError(/E0007/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("refuses a rename onto an existing name in the same layer", () => {
+    const before = readFileSync(path, "utf8");
+    expect(() => renameDef(path, "slot.draft", "todos")).toThrowError(/already exists/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("allows a rename onto a name taken in a different layer", () => {
+    // Namespaces are per layer, so this is legal — and `E0007` must not make
+    // it illegal by accident.
+    renameDef(path, "slot.draft", "matchFilter");
+    expect(load(path).byQName.has("slot.matchFilter")).toBe(true);
+    expect(load(path).byQName.has("fn.matchFilter")).toBe(true);
+  });
+
   it("rename updates the def and every reference", () => {
     renameDef(path, "slot.draft", "newTodoText");
     const store = load(path);

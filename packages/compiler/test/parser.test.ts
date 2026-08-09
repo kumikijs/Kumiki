@@ -212,11 +212,23 @@ reducer onErr on=route.error("/p") do= s := true`;
     const tile = program.defs[0] as TileDef;
     expect(tile.kind).toBe("TileDef");
     expect(tile.subRoutes).toEqual([
-      { path: "/settings/account", tile: "Account", tilePos: { line: 3, col: 28 } },
-      { path: "/settings", tile: "Home", tilePos: { line: 4, col: 28 } },
+      {
+        path: "/settings/account",
+        tile: "Account",
+        tilePos: { line: 3, col: 28 },
+        pathPos: { line: 3, col: 5 },
+      },
+      {
+        path: "/settings",
+        tile: "Home",
+        tilePos: { line: 4, col: 28 },
+        pathPos: { line: 4, col: 5 },
+      },
       // A `->>` redirect targets a path, not a tile, so there is nothing to
-      // point at and nothing for `rename` to rewrite.
-      { path: "/legacy", tile: ">>/settings" },
+      // point at and nothing for `rename` to rewrite — the pattern's own
+      // position is still carried, because a duplicate pattern is reported
+      // whether or not its target is a tile.
+      { path: "/legacy", tile: ">>/settings", pathPos: { line: 5, col: 5 } },
     ]);
   });
 

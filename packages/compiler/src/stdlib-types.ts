@@ -29,7 +29,7 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
 });
 const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
   kind: "TypeRecord",
-  fields: Object.entries(fields).map(([name, type]) => ({ name, type })),
+  fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
 });
 const nominal = (inner: TypeExpr, pred?: string, args: (number | string)[] = []): TypeExpr => ({
@@ -95,10 +95,10 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("FormValue", {
     kind: "TypeUnion",
     variants: [
-      { name: "TextV", payloads: [prim("Text")] },
-      { name: "NumberV", payloads: [prim("Float")] },
-      { name: "BoolV", payloads: [prim("Bool")] },
-      { name: "FileV", payloads: [prim("File")] },
+      { name: "TextV", payloads: [prim("Text")], pos: NO_POS },
+      { name: "NumberV", payloads: [prim("Float")], pos: NO_POS },
+      { name: "BoolV", payloads: [prim("Bool")], pos: NO_POS },
+      { name: "FileV", payloads: [prim("File")], pos: NO_POS },
     ],
     pos: NO_POS,
   }),
