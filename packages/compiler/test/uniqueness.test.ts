@@ -100,6 +100,14 @@ describe("a name declared twice inside one construct", () => {
     ],
     ["a theme entry", "duplicate-key", `theme T = {gap: "1", gap: "2"}\n${APP}${TAIL}`],
     [
+      // The motion grammar is the theme grammar, but a separate definition
+      // kind — so a duplicate here travels a second wire that must be
+      // connected on its own.
+      "a motion keyframe stop",
+      "duplicate-key",
+      `motion Fade = {keyframes: {from: {opacity: 0}, from: {opacity: 1}, to: {opacity: 1}}, duration: 100}\n${APP}${TAIL}`,
+    ],
+    [
       "a nested theme entry",
       "duplicate-key",
       `theme T = {space: {sm: "1", sm: "2"}}\n${APP}${TAIL}`,
@@ -124,6 +132,54 @@ describe("a name declared twice inside one construct", () => {
       const found = diags(src).filter((e) => e.code === "E0008");
       expect(found.length, `no E0008 for ${what}`).toBeGreaterThan(0);
       expect(found[0]?.kind).toBe(kind);
+    });
+  }
+
+  // The message has to say what kind of thing was duplicated: `kind` is
+  // machine-readable and the position is a point, so the sentence is the only
+  // part that tells a reader which of several names on one line to delete.
+  const messages: [string, string, string][] = [
+    ["a record type field", "Record type field", "type R = {a: Int, a: Text}"],
+    ["a union variant", "Union variant", "type U = A | B | A"],
+    [
+      "a fn parameter",
+      'Parameter "a" is written more than once in fn "f"',
+      "fn f(a: Int, a: Int) -> Int = a",
+    ],
+    [
+      "a type parameter",
+      'Parameter "T" is written more than once in type "Box"',
+      "type Box(T, T) = {v: T}",
+    ],
+    ["a record literal key", "Record field", "slot s : Int = {a: 1, a: 2}.a"],
+    ["a map literal key", "Map key", 'slot s : Map(Text, Int) = {"a": 1, "a": 2}'],
+    ["a theme entry", "theme key", 'theme T = {gap: "1", gap: "2"}'],
+    [
+      "a motion keyframe stop",
+      "motion key",
+      "motion Fade = {keyframes: {from: {opacity: 0}, from: {opacity: 1}, to: {opacity: 1}}, duration: 100}",
+    ],
+    [
+      "an app clause",
+      "app clause",
+      `${APP}app A caps=[] caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+    ],
+    [
+      "an effect clause",
+      "effect clause",
+      "effect E cap=custom.a cap=custom.b in=Text out=Result(Unit, Text)",
+    ],
+    [
+      "a route pattern",
+      "Route pattern",
+      `${APP}app A caps=[] routes={"/" -> App, "/" -> App, "/404" -> App} init=[]`,
+    ],
+  ];
+  for (const [what, says, defs] of messages) {
+    it(`names what was duplicated for ${what}`, () => {
+      const err = diags(`${defs}\n${APP}${TAIL}`).find((e) => e.code === "E0008");
+      expect(err, `no E0008 for ${what}`).toBeDefined();
+      expect(err?.message).toContain(says);
     });
   }
 
