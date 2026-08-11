@@ -496,6 +496,14 @@ class Parser {
 
   private parseRefinementArg(): number | string {
     const t = this.peek();
+    // A refinement's arguments are literals, and `-40.0` is one. The lexer
+    // emits the sign as its own operator (it has no way to know whether a `-`
+    // is unary), so a literal-only position has to put it back.
+    if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
+      this.next();
+      const n = this.next() as { value: number };
+      return -n.value;
+    }
     if (t.kind === "num") {
       this.next();
       return t.value;
@@ -795,6 +803,16 @@ class Parser {
       this.eat("op", ")");
       return { kind: "StopTimer", name, pos: cur.pos };
     }
+    // `panic("...")` (stdlib §2.4) is documented as usable inside a reducer,
+    // and a reducer body is statements. As an expression it was writable only
+    // by assigning it to something, which is the opposite of what it does.
+    if (cur.kind === "ident" && cur.value === "panic" && this.matchTAt(1, "op", "(")) {
+      this.next();
+      this.eat("op", "(");
+      const message = this.parseExpr();
+      this.eat("op", ")");
+      return { kind: "PanicStmt", message, pos: cur.pos };
+    }
     // SlotAssign with lvalue path
     const lvalue = this.parseLvalue();
     this.eat("op", ":=");
@@ -910,29 +928,35 @@ class Parser {
     const next = this.peek(1);
     // `| _ ->` is a wildcard match arm
     if (next.kind === "ident" && next.value === "_") return true;
-    // `| Variant ->` or `| Variant(args) ->`
+    // `| Variant ->` / `| Variant(args) ->`, and `| (p, q) ->` — a tuple
+    // pattern arm (§1.9). A payload or a tuple proves nothing on its own:
+    // `a | Some(1).is-some` and `a | (b)` are ors written with the same tokens,
+    // so what decides is whether a `->` closes the parens.
     if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
-      // Look further: must eventually find `->` before another `|` or terminator.
-      // Simple check: peek(2) must be `->` or `(`.
       const after = this.peek(2);
-      if (after.kind === "op" && (after.value === "->" || after.value === "(")) return true;
+      if (after.kind === "op" && after.value === "->") return true;
+      if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
     }
-    // `| (p, q) ->` — tuple pattern arm (§1.9). Walk forward through balanced
-    // parens and accept the arm only when the closing `)` is followed by `->`.
-    if (next.kind === "op" && next.value === "(") {
-      let depth = 1;
-      let i = 2;
-      while (depth > 0) {
-        const tok = this.peek(i);
-        if (tok.kind === "eof") return false;
-        if (tok.kind === "op" && tok.value === "(") depth++;
-        else if (tok.kind === "op" && tok.value === ")") depth--;
-        i++;
-      }
-      const after = this.peek(i);
-      return after.kind === "op" && after.value === "->";
-    }
+    if (next.kind === "op" && next.value === "(") return this.arrowClosesParens(2);
     return false;
+  }
+
+  /**
+   * From `peek(from)`, one paren already open: skip to its match and answer
+   * whether a `->` follows it.
+   */
+  private arrowClosesParens(from: number): boolean {
+    let depth = 1;
+    let i = from;
+    while (depth > 0) {
+      const tok = this.peek(i);
+      if (tok.kind === "eof") return false;
+      if (tok.kind === "op" && tok.value === "(") depth++;
+      else if (tok.kind === "op" && tok.value === ")") depth--;
+      i++;
+    }
+    const after = this.peek(i);
+    return after.kind === "op" && after.value === "->";
   }
   private parseLogicAnd(): Expr {
     let lhs = this.parseCmp();
@@ -1012,9 +1036,28 @@ class Parser {
       if (this.matchOp(".")) {
         built += 1;
         this.widen(built);
-        this.next();
+        const dotTok = this.next();
         const fldTok = this.peek();
+        // `slot s : Float = 1.` at the end of a line: the member name is
+        // whatever the next line starts with, so this reads as a chained
+        // access and the error surfaces there instead. A chain written across
+        // lines puts the `.` on the member's line, never on the receiver's.
+        if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
+          throw new ParseError(
+            `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+            e.pos,
+          );
+        }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
+          // `1.` lexes as the number then the access operator, so what arrives
+          // here is a member access with no member — and `Expected field or
+          // method name` describes the tokens rather than the mistake.
+          if (e.kind === "Num") {
+            throw new ParseError(
+              `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+              e.pos,
+            );
+          }
           throw new ParseError(`Expected field or method name`, fldTok.pos);
         }
         this.next();
@@ -1102,7 +1145,26 @@ class Parser {
     }
     if (t.kind === "op" && t.value === "(") {
       this.next();
+      // `()` is the unit literal (spec §1.2). It was writable only as a bare
+      // statement, so §7's `do= ()` read and §8's `-> ()` did not.
+      if (this.matchOp(")")) {
+        this.next();
+        return { kind: "Unit", pos: t.pos };
+      }
       const inner = this.parseExpr();
+      // `(a, b)` is a tuple. `Tuple` is a type and tuple PATTERNS destructure
+      // one, so §1.8.4's `match (lr, tag) with` was a documented example with
+      // no way to write its scrutinee.
+      if (this.matchOp(",")) {
+        this.next();
+        const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
+        while (this.matchOp(",")) {
+          this.next();
+          items.push(this.parseExpr());
+        }
+        this.eat("op", ")");
+        return { kind: "TupleLit", items, pos: t.pos };
+      }
       this.eat("op", ")");
       return inner;
     }
@@ -1791,7 +1853,7 @@ class Parser {
     if (t.value === "none") return { kind: "RetryNone" };
     if (t.value === "linear") {
       this.eat("op", "(");
-      const n = this.eat("num").value;
+      const n = this.eatRetryCount();
       this.eat("op", ",");
       const ms = this.parseDuration();
       this.eat("op", ")");
@@ -1799,24 +1861,73 @@ class Parser {
     }
     if (t.value === "exponential") {
       this.eat("op", "(");
-      const n = this.eat("num").value;
+      const n = this.eatRetryCount();
       this.eat("op", ",");
       const ms = this.parseDuration();
       this.eat("op", ",");
-      const factor = this.eat("num").value;
+      const factor = this.eatRetryFactor();
       this.eat("op", ")");
       return { kind: "RetryExp", n, ms, factor };
     }
     throw new ParseError(`Unknown retry "${t.value}"`, t.pos);
   }
 
+  /**
+   * A retry count. Signed, because `§1.2` makes a sign part of a number
+   * literal and `Expected num, got op(-)` said nothing about what is wrong with
+   * one — and then rejected, because a negative count is not a shorter retry
+   * policy, it is a policy that cannot run. Whole, for the same reason: 2.5
+   * attempts is not a number of attempts.
+   */
+  private eatRetryCount(): number {
+    const t = this.peek();
+    const n = this.eatSignedNumber();
+    if (n < 0 || !Number.isInteger(n)) {
+      throw new ParseError(`Retry count must be a whole number, 0 or more (got ${n})`, t.pos);
+    }
+    return n;
+  }
+
+  /**
+   * A retry backoff factor — a multiplier, so signed like every other literal
+   * and then held to being one.
+   */
+  private eatRetryFactor(): number {
+    const t = this.peek();
+    const n = this.eatSignedNumber();
+    if (n <= 0) {
+      throw new ParseError(`Retry factor must be greater than 0 (got ${n})`, t.pos);
+    }
+    return n;
+  }
+
+  /** A number literal with the sign the lexer emits as its own operator. */
+  private eatSignedNumber(): number {
+    if (this.matchOp("-") && this.matchTAt(1, "num")) {
+      this.next();
+      return -this.eat("num").value;
+    }
+    return this.eat("num").value;
+  }
+
   private parseDuration(): number {
-    const n = this.eat("num").value;
-    const unit = this.eat("ident").value;
+    const numTok = this.peek();
+    const n = this.eatSignedNumber();
+    const unitTok = this.eat("ident");
+    const unit = unitTok.value;
+    // A duration is a length of time, and the runtime reads every one of them
+    // as a delay: `setInterval(f, -1000)` is clamped to the minimum, so
+    // `on=timer(-1s)` would fire a "once a second" reducer hundreds of times a
+    // second. `§1.2` makes the sign part of the literal, so the grammar admits
+    // it and the meaning is what rejects it.
+    if (n < 0) {
+      throw new ParseError(`Duration must be 0 or more (got ${n})`, numTok.pos);
+    }
     if (unit === "ms") return n;
     if (unit === "s") return n * 1000;
     if (unit === "m") return n * 60 * 1000;
-    throw new ParseError(`Unknown duration unit "${unit}"`, this.peek().pos);
+    // At the unit, not at whatever follows it: the unit is what has to change.
+    throw new ParseError(`Unknown duration unit "${unit}"`, unitTok.pos);
   }
 
   // ----- app -----
@@ -2076,6 +2187,15 @@ class Parser {
     const t = this.peek();
     if (t.kind === "eof") return true;
     if (t.kind === "kw") return true;
+    // `theme` and `motion` are the two definition heads that are not reserved
+    // words, because `theme = T` is also an `app` clause. The shape tells them
+    // apart: a definition names itself first (`theme T = …`), a clause assigns
+    // straight away (`theme = T`). Without this an `app` written before either
+    // one ate it as a clause of its own, though §1.1 says definitions are
+    // unordered.
+    if (t.kind === "ident" && (t.value === "theme" || t.value === "motion")) {
+      return this.matchTAt(1, "ident") && this.matchTAt(2, "op", "=");
+    }
     return false;
   }
 
@@ -2247,9 +2367,22 @@ class Parser {
     let name = this.eat("ident").value;
     while (this.matchOp(".")) {
       this.next();
-      name += `.${this.eat("ident").value}`;
+      // A segment after `.` is a name in the capability's own namespace, not in
+      // the language's, so a keyword there is unambiguous — and
+      // `caps=[telemetry.out]` was otherwise unwritable.
+      name += `.${this.eatName().value}`;
     }
     return name;
+  }
+
+  /** An identifier, or a keyword used where only a name can appear. */
+  private eatName(): { value: string; pos: Pos } {
+    const t = this.peek();
+    if (t.kind === "kw") {
+      this.next();
+      return { value: t.value, pos: t.pos };
+    }
+    return this.eat("ident");
   }
 
   private parseRouteMap(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] {

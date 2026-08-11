@@ -181,6 +181,10 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 - `undef-slot`：reducer 本体で未定義の slot へ代入した。
   > `Assignment to undefined slot "<name>"`
 
+`count-1` と書いた名前は引き算ではなく 1 つの名前である：`-` は直後に識別子文字があれば名前を続け（[§1.2](./language.md#_1-2-字句)）、`on-401` もまったく同じ書き方の中核構文である。ハイフンの前の部分が何かに解決される場合は、代わりにどう書くべきかをメッセージが示す。
+
+> `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
+
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
 ### E0104 `undef-effect` / `init-not-effect-call`

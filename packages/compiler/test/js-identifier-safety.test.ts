@@ -101,7 +101,10 @@ describe("jsBinding", () => {
 });
 
 describe("JS reserved words in binding positions", () => {
-  it("compiles a `let` named after a JS reserved word", async () => {
+  // Writes the generated module to disk and `import()`s it, so it pays for a
+  // real module load and overruns the 5s default on a cold cache. Per-test,
+  // because the default is an assertion elsewhere in this package.
+  it("compiles a `let` named after a JS reserved word", { timeout: 30_000 }, async () => {
     const { app } = await build(`
       slot count : Int = 0
       reducer go on=ui.click(Btn)

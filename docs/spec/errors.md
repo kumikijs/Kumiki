@@ -194,6 +194,10 @@ A reducer name refers to no `reducer` definition. Three sites name one: an event
 - `undef-slot`: An assignment was made to an undefined slot in a reducer body.
   > `Assignment to undefined slot "<name>"`
 
+A name written `count-1` is one name, not a subtraction: `-` continues an identifier when an identifier character follows it ([§1.2](./language.md#_1-2-lexical)), and `on-401` is core syntax written exactly the same way. When the part before the hyphen does resolve to something, the message says which spelling to use instead.
+
+> `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
+
 **Fix**: Confirm that the referenced slot / binding is declared.
 
 ### E0104 `undef-effect` / `init-not-effect-call`

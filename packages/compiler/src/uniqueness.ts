@@ -411,6 +411,9 @@ function walkStatement(s: Statement, f: Finder): void {
       walkExpr(s.scrutinee, f);
       for (const arm of s.arms) for (const b of arm.body) walkStatement(b, f);
       return;
+    case "PanicStmt":
+      walkExpr(s.message, f);
+      return;
     case "NoopStmt":
     case "StopTimer":
       return;
@@ -495,6 +498,7 @@ function walkExpr(e: Expr | undefined, f: Finder): void {
       for (const a of e.args) walkExpr(a, f);
       return;
     case "ListLit":
+    case "TupleLit":
       for (const it of e.items) walkExpr(it, f);
       return;
     case "MatchExpr":

@@ -36,18 +36,27 @@ definition  ::= type-def | slot-def | effect-def | reducer-def | tile-def | fn-d
 ## 1.2 字句
 
 ```
-identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; 最大 32 文字
+identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; 最大 32 文字、最長一致
 qname       ::= identifier ('.' identifier)*     ; ドット区切り完全名
+cap-name    ::= identifier ('.' cap-segment)*    ; ケイパビリティ。そのセグメントはこの言語の中の何も指さない
+cap-segment ::= identifier | keyword             ; ゆえに `telemetry.out` は構文エラーではない
 literal     ::= number | string | bool | unit
 number      ::= int | float
 int         ::= '-'? [0-9]+
-float       ::= '-'? [0-9]+ '.' [0-9]+
+float       ::= '-'? [0-9]+ '.' [0-9]+           ; 小数点以下の数字は必須
 string      ::= '"' (escape | non-quote-char)* '"'
 escape      ::= '\\' ('n' | 't' | 'r' | '"' | '\\' | 'u{' hex+ '}')
 bool        ::= 'true' | 'false'
 unit        ::= '()'
+tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; Tuple が型を付ける値
 comment     ::= '#' until-eol                    ; 1 行コメントのみ
 ```
+
+**`-` は識別子の文字でも引き算でもあり、最長一致で決める。** `-` の直後に識別子文字があれば名前が続き、なければそこで名前が終わる。したがって `page-size` / `base-url` / `on-401` はそれぞれ 1 つの名前であり、`count-1` も同様に 1 つの名前になる — 名前とリテラルの引き算を `count - 1` と書くのはそのためである。`count- 1` も引き算になる（`-` の続く先が無い）。`count -1` が引き算になる理由は別で、空白が `-` に到達する前に名前を終わらせているからである。どこにも解決されない `count-1` は [E0103](./errors.md#e0103-undef-ref-undef-slot) であり、その旨がメッセージに出る。
+
+**両側のどちらかに空白がある `#` は常にコメントを開始する。** セレクタ演算子（[§1.6.1](#_1-6-1-構文)）になるのは、直前の文字が値を終える文字（識別子文字、または閉じる `)` / `]` / `}`）であり、**かつ**直後の文字が識別子を開始する場合だけで、`SaveBtn#new` がその形である。行頭の `#TODO` や `= 0# how many` を含むそれ以外では行末までがコメントになる。したがって `#id` の断片は英字または `_` で始まる — `tile-ref` が元から要求していたとおりである。
+
+**位置情報。** 行の終端は `\n` または `\r\n` であり、単独の `\r` は行内の空白である。列は UTF-16 コードユニットを数えるので、サロゲートペアの文字は列を 2 進める — Language Server Protocol と同じ規約であり、Kumiki の位置を使う側が必要とする規約でもある（パッチはソース行を `column - 1` で分割する）。先頭の BOM が空白として扱われるのも同じ理由で、テキストの一部ではないが分割される文字列の一部ではあるので、1 列を占める。
 
 ### 1.2.1 演算子
 
@@ -164,7 +173,7 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 ### 1.4.1 構文
 
 ```
-slot-def    ::= 'slot' identifier ':' type-expr modifier* ('=' init-expr)?
+slot-def    ::= 'slot' identifier ':' type-expr modifier? '=' init-expr
 modifier    ::= 'transient' | 'volatile'
 init-expr   ::= literal | record-literal | collection-literal | builtin-call
 ```
@@ -174,6 +183,10 @@ init-expr   ::= literal | record-literal | collection-literal | builtin-call
 | (なし) | ホットリロード時に維持・永続化対象 |
 | `transient` | ホットリロード時に破棄 |
 | `volatile` | episode log に書かれない、ホットリロード時に破棄 |
+
+modifier は最大 1 つ。`volatile` は `transient` がすることをすべて含むので、両方を並べても `volatile` 単独が言っていない事は何も言わない。
+
+初期値は必須。`=` の無い slot は、プログラムが最初に書き込むまで何かを保持していなければならないが、言語にその値が無い — null も、型ごとのゼロ値も無い。
 
 ### 1.4.2 不変条件
 
@@ -256,7 +269,7 @@ reducer-def ::= 'reducer' identifier
 event-pattern ::= ui-event | effect-event | timer-event | lifecycle-event | route-event
 ui-event      ::= 'ui' '.' ui-kind '(' selector ')'
 ui-kind       ::= 'click' | 'submit' | 'change' | 'input' | 'focus' | 'blur' | 'key' | 'hover'
-selector      ::= tile-ref | 'self'
+selector      ::= tile-ref
 tile-ref      ::= identifier ('#' identifier)?    ; TileName または TileName#id
 effect-event  ::= identifier '.' ('ok' | 'err') '(' bind (',' bind)* ')'
 timer-event   ::= 'timer' '(' duration ')'   ; intervalMs ごとに当該 reducer を発火

@@ -253,7 +253,11 @@ describe("codegen", () => {
     expect(result.js).toContain("export { createApp };");
   });
 
-  it("produces independent live state from two createApp() instances", async () => {
+  // Same reason as `js-identifier-safety.test.ts`: a real module load on a
+  // cold cache, not a slow compiler.
+  it("produces independent live state from two createApp() instances", {
+    timeout: 30_000,
+  }, async () => {
     // Evaluate the generated factory and assert the two apps don't share `live`.
     const src = `
       slot n : Int = 0

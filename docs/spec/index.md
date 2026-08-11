@@ -187,4 +187,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `67-self-reference.kumiki` | tile, slot, fn | core | [§1.7.2](./language.md#_1-7-2-invariants) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
+| `70-spec-grammar.kumiki` | type, slot, fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
 <!-- examples:end -->

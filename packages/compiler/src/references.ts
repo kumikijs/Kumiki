@@ -255,6 +255,7 @@ class Walker {
         for (const f of e.fields) this.expr(f.value, locals);
         return;
       case "ListLit":
+      case "TupleLit":
         for (const i of e.items) this.expr(i, locals);
         return;
       case "MapLit":
@@ -316,6 +317,9 @@ class Walker {
       case "LetStmt":
         this.expr(s.rhs, locals);
         locals.add(s.name);
+        return;
+      case "PanicStmt":
+        this.expr(s.message, locals);
         return;
       case "Emit":
         this.add("effect", s.effect, s.effectPos);
@@ -509,7 +513,7 @@ class Walker {
       }
       return;
     }
-    if (e.kind === "ListLit") {
+    if (e.kind === "ListLit" || e.kind === "TupleLit") {
       for (const i of e.items) this.testRecord(i);
       return;
     }

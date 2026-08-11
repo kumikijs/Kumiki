@@ -1,0 +1,54 @@
+# Feature: constructs docs/spec/language.md defines that were unwritable.
+# Spec: language.md §1.2 (lexical), §1.8.4 (match on a tuple), stdlib.md §2.4.
+#
+# Each line below is a documented form the parser used to reject:
+#   - a tuple, which §1.8.4's own `match (lr, tag) with` example needs
+#   - `()` in expression position, not only as a bare statement
+#   - a negative literal where a refinement takes literals
+#   - `panic("...")` as a reducer statement, which is where stdlib.md puts it
+#   - a trailing `# comment` written tight against the value before it
+#   - `\u{...}` in a string
+#
+# The `#` rule is the one worth reading twice: a `#` with whitespace on either
+# side always starts a comment. It is the selector operator only when the
+# character before it ends a value and the character after it begins an
+# identifier (`Row#pick` below).
+
+type Celsius = nominal Float where between(-40.0, 60.0)
+
+slot reading  : Celsius = 20.0# degrees, not a selector
+slot picked   : Text    = "\u{2013}"
+
+type Reading = Pending | Taken(Celsius)
+
+fn classify(r: Reading, label: Option(Text)) -> Text
+   = match (r, label) with
+       | (Taken(c), Some(l)) -> l + ": " + c.show
+       | (Taken(c), None)    -> c.show
+       | _                   -> "pending"
+
+fn nothing() -> Unit = ()
+
+reducer pick on=ui.click(Row#pick) do= picked := classify(Taken(reading), Some("now"))
+reducer warm on=ui.click(WarmBtn) do= reading := reading + 5.0
+# `panic` as a statement is what this line is for. Its guard cannot hold —
+# `Celsius` is refined to between(-40.0, 60.0) — which is what keeps the
+# example mountable, since a panic is a stop and `kumiki smoke` clicks every
+# button it finds.
+reducer stop on=ui.click(StopBtn) do= if reading > 100.0 then panic("reading out of range")
+
+tile Row     = button(text="reading: " + reading.show, onClick=pick) {id: "pick"}
+tile WarmBtn = button(text="warmer", onClick=warm)
+tile StopBtn = button(text="panic", onClick=stop)
+
+tile App = page(
+             heading("Grammar"),
+             Row,
+             text("picked: " + picked),
+             WarmBtn,
+             StopBtn)
+
+app SpecGrammar
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

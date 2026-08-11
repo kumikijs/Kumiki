@@ -187,4 +187,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `67-self-reference.kumiki` | tile, slot, fn | コア | [§1.7.2](./language.md#_1-7-2-不変条件) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
+| `70-spec-grammar.kumiki` | type, slot, fn, reducer | コア | [§1.2](./language.md#_1-2-字句) |
 <!-- examples:end -->
