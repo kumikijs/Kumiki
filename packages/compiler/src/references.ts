@@ -513,7 +513,7 @@ class Walker {
       }
       return;
     }
-    if (e.kind === "ListLit") {
+    if (e.kind === "ListLit" || e.kind === "TupleLit") {
       for (const i of e.items) this.testRecord(i);
       return;
     }

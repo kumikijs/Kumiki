@@ -1,4 +1,5 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
+import { assertNever } from "../ast.ts";
 import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
@@ -79,6 +80,21 @@ export function collectEmits(stmts: Statement[]): string[] {
         out.push(e.effect);
         for (const a of e.args) visitExpr(a);
         return;
+      case "TupleLit":
+        for (const it of e.items) visitExpr(it);
+        return;
+      // Leaves: nothing inside to reach an emit through.
+      case "Num":
+      case "Str":
+      case "Bool":
+      case "Unit":
+      case "Ref":
+      case "Wildcard":
+      case "TokenRef":
+        return;
+      default:
+        assertNever(e);
+        return;
     }
   };
   const walk = (ss: Statement[]): void => {
@@ -98,6 +114,10 @@ export function collectEmits(stmts: Statement[]): string[] {
       } else if (s.kind === "MatchStmt") {
         visitExpr(s.scrutinee);
         for (const a of s.arms) walk(a.body);
+      } else if (s.kind === "PanicStmt") {
+        visitExpr(s.message);
+      } else if (s.kind !== "StopTimer" && s.kind !== "NoopStmt") {
+        assertNever(s);
       }
     }
   };
@@ -160,6 +180,21 @@ export function scanRunReducers(e: Expr | undefined, cb: (name: string) => void)
     case "Variant":
       for (const p of e.payload) scanRunReducers(p, cb);
       break;
+    case "TupleLit":
+      for (const it of e.items) scanRunReducers(it, cb);
+      break;
+    // Leaves, plus the two forms whose own arguments are walked above.
+    case "Num":
+    case "Str":
+    case "Bool":
+    case "Unit":
+    case "Ref":
+    case "Wildcard":
+    case "TokenRef":
+    case "EmitExpr":
+      break;
+    default:
+      assertNever(e);
   }
 }
 

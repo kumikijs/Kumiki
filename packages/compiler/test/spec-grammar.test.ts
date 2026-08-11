@@ -3,8 +3,7 @@
 //
 // `docs/spec/` is normative, so a construct it defines and the implementation
 // rejects is a bug in the implementation — unless the construct has no meaning
-// to give, in which case the spec is what moves. Each block below says which,
-// and the PR that introduced it carries the same table.
+// to give, in which case the spec is what moves. Each block below says which.
 
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -28,11 +27,16 @@ function outcome(src: string, capabilities: string[] = []): string[] {
 const clean = (src: string, capabilities: string[] = []) =>
   expect(outcome(src, capabilities)).toEqual([]);
 
+/** The diagnostics themselves, for a test that reads a message or a position. */
+const diags = (src: string) => check(parse(lex(src)));
+const codes = (src: string) => diags(src).map((e) => e.code);
+
 describe("comments and the selector #", () => {
   // `#` is the one context-sensitive character in the lexer. The rule: it is
-  // the selector operator only when an identifier character sits on both sides
-  // of it with no whitespace between. Everything else starts a comment, so a
-  // `#` with a space in front of it or after it is always a comment.
+  // the selector operator only when the character before it ends a value — an
+  // identifier character or a closing bracket — and the character after it
+  // begins an identifier. Everything else starts a comment, so a `#` with a
+  // space in front of it or after it is always a comment.
   const trailing: [string, string][] = [
     ["a number", `slot count : Int = 0# how many clicks${APP}`],
     ["a type name", `slot count : Int# what for\n = 0${APP}`],
@@ -47,6 +51,22 @@ describe("comments and the selector #", () => {
 
   it("starts a comment at the beginning of a line even with no space", () => {
     clean(`#TODO write this\nslot count : Int = 0${APP}`);
+  });
+
+  it("needs an identifier START after it, which is what a #id fragment is", () => {
+    // The two sides use different predicates, and only this pins the second:
+    // `4` continues an identifier but cannot begin one, so `Btn#4` is a
+    // comment — which agrees with `tile-ref`, whose id is an identifier.
+    expect(
+      lex("Btn#4")
+        .filter((t) => t.kind !== "eof")
+        .map((t) => t.kind),
+    ).toEqual(["ident"]);
+    expect(
+      lex("Btn#_x")
+        .filter((t) => t.kind !== "eof")
+        .map((t) => t.kind),
+    ).toEqual(["ident", "op", "ident"]);
   });
 
   it("is the selector operator when identifiers sit tight on both sides", () => {
@@ -117,8 +137,10 @@ describe("string escapes", () => {
   it("rejects a malformed escape as a lex error, with a position", () => {
     // Not merely "throws": letting `parseInt` produce NaN and `fromCodePoint`
     // throw a bare RangeError loses the position, which is the whole reason to
-    // report it here.
-    for (const bad of ["\\u{}", "\\u{2713", "\\u{zz}", "\\u2713"]) {
+    // report it here. `\\u{110000}` is past the last code point and `\\u{D800}`
+    // is half of one — both make a string no encoder can write, and finding
+    // out at the encoder is finding out in the wrong place.
+    for (const bad of ["\\u{}", "\\u{2713", "\\u{zz}", "\\u2713", "\\u{110000}", "\\u{D800}"]) {
       expect(outcome(`slot s : Text = "${bad}"${APP}`)[0], bad).toContain("Lex error at");
     }
   });
@@ -144,8 +166,9 @@ describe("file-level input", () => {
 
 describe("definitions are unordered", () => {
   // §1.1: "Definitions are unordered." `isAppEnd` stopped only at a keyword or
-  // EOF, and `theme` / `motion` / `test` are identifiers, so an `app` written
-  // first ate the next definition as one of its own clauses.
+  // EOF, and `theme` / `motion` are the two definition heads that are not
+  // reserved words — `theme = T` is also an `app` clause — so an `app` written
+  // first ate either one as a clause of its own.
   it("accepts a theme after the app", () => {
     clean(
       `tile App2 = column(text("hi"))
@@ -195,7 +218,7 @@ ${APP}`,
       `effect load cap=http.get in=Unit out=Result(Text, Text) retry=linear(-1, 100ms)
 ${APP}`,
     )[0];
-    expect(err).toContain("Retry count must be 0 or more");
+    expect(err).toContain("Retry count must be a whole number, 0 or more");
   });
 
   it("accepts panic as a reducer statement, which is the only place it may appear", () => {
@@ -230,18 +253,147 @@ app A caps=[telemetry.out] routes={"/" -> App2, "/404" -> App2} init=[]
 
 describe("diagnostics that pointed at the wrong thing", () => {
   it("reports an unknown duration unit at the unit", () => {
-    const err = outcome(
-      `effect load cap=http.get in=Unit out=Result(Text, Text) retry=linear(3, 100xy)
-${APP}`,
-    )[0];
+    const line = `effect load cap=http.get in=Unit out=Result(Text, Text) retry=linear(3, 100xy)`;
+    const err = outcome(`${line}
+${APP}`)[0];
     expect(err).toContain("Unknown duration unit");
     // At the unit itself. It used to point one token past it, at the `)`.
-    expect(err).toContain("1:76");
+    // Derived from the fixture, so a space added to it does not break this.
+    expect(err).toContain(`1:${line.indexOf("xy") + 1}`);
   });
 
   it("says what is wrong with a float that has no digits after the point", () => {
-    const err = outcome(`slot s : Float = 1. + 2.0${APP}`)[0];
-    expect(err).toContain("1.0");
+    expect(outcome(`slot s : Float = 1. + 2.0${APP}`)[0]).toContain("1.0");
+    // The end of a line is where this actually gets written, and there the
+    // next line's first token reads as the member name — so the error used to
+    // surface a line later as `Expected a definition keyword`.
+    expect(outcome(`slot s : Float = 1.${APP}`)[0]).toContain("1.0");
+  });
+});
+
+describe("a tuple's arity is its type", () => {
+  // Unlike a list, whose length is not in its type. `assignable` compares a
+  // `TypeApp`'s arguments pairwise and treats a missing one as agreeing, which
+  // is right for `List(Int)` and silent here — and the silence reaches the
+  // runtime: a tuple pattern guards on `length`, so a mismatched literal makes
+  // every arm fail and writes `undefined` into the slot.
+  it("reports a literal with too many items", () => {
+    const err = diags(`slot p : Tuple(Int, Int) = (1, 2, 3)${APP}`).find((d) => d.code === "E0201");
+    expect(err?.message).toContain("tuple of 3 item(s)");
+  });
+
+  it("reports a literal with too few", () => {
+    const err = diags(`slot p : Tuple(Int, Int, Int) = (1, 2)${APP}`).find(
+      (d) => d.code === "E0201",
+    );
+    expect(err?.message).toContain("tuple of 2 item(s)");
+  });
+
+  it("reports one at a call site too, not only at a declaration", () => {
+    const src = `fn f(p: Tuple(Int, Text)) -> Int = 1\nslot s : Int = f((1, "a", 2))${APP}`;
+    expect(codes(src)).toContain("E0201");
+  });
+
+  it("names the item whose type is wrong, not the whole tuple", () => {
+    const found = diags(`slot p : Tuple(Int, Text) = ("a", 1)${APP}`).filter(
+      (d) => d.code === "E0201",
+    );
+    expect(found.map((d) => `${d.pos.col} ${d.message}`)).toEqual([
+      "30 Expected Int but got Text",
+      "35 Expected Text but got Int",
+    ]);
+  });
+
+  it("accepts one that matches", () => {
+    clean(`slot p : Tuple(Int, Text) = (1, "a")${APP}`);
+  });
+});
+
+describe("a duration is a length of time", () => {
+  // §1.2 makes the sign part of a number literal, so the grammar admits `-1s`
+  // and the meaning is what rejects it. The runtime reads every one of these as
+  // a delay and clamps a negative to the minimum, so `on=timer(-1s)` would fire
+  // a once-a-second reducer hundreds of times a second.
+  const negative: [string, string][] = [
+    ["a timer trigger", `slot n : Int = 0\nreducer tick on=timer(-1s) do= n := n + 1${APP}`],
+    [
+      "a debounce policy",
+      `effect e cap=http.get in=Text out=Result(Text, Text) policy=debounce(-1ms)${APP}`,
+    ],
+    [
+      "a throttle policy",
+      `effect e cap=http.get in=Text out=Result(Text, Text) policy=throttle(-1s)${APP}`,
+    ],
+    [
+      "a retry backoff",
+      `effect e cap=http.get in=Unit out=Result(Text, Text) retry=linear(3, -100ms)${APP}`,
+    ],
+  ];
+  for (const [what, src] of negative) {
+    it(`rejects a negative duration in ${what}`, () => {
+      expect(outcome(src)[0]).toContain("Duration must be 0 or more");
+    });
+  }
+
+  it("rejects a retry count that is not a whole number", () => {
+    const err = outcome(
+      `effect e cap=http.get in=Unit out=Result(Text, Text) retry=linear(2.5, 100ms)${APP}`,
+    )[0];
+    expect(err).toContain("Retry count must be a whole number");
+  });
+
+  it("rejects a backoff factor that cannot grow", () => {
+    const err = outcome(
+      `effect e cap=http.get in=Unit out=Result(Text, Text) retry=exponential(3, 100ms, -2.0)${APP}`,
+    )[0];
+    expect(err).toContain("Retry factor must be greater than 0");
+  });
+
+  it("still accepts the durations a program actually writes", () => {
+    clean(`slot n : Int = 0\nreducer tick on=timer(1s) do= n := n + 1${APP}`);
+    clean(
+      `effect e cap=http.get in=Unit out=Result(Text, Text) retry=exponential(3, 100ms, 2.0)${APP}`,
+    );
+  });
+});
+
+describe("a panic carries one thing out of the program", () => {
+  const panicking = (arg: string) => `slot n : Int = 0
+tile B = button(text="b", onClick=r)
+tile App2 = column(B)
+reducer r on=ui.click(B) do= panic(${arg})
+app A caps=[] routes={"/" -> App2, "/404" -> App2} init=[]
+`;
+
+  it("requires the message to be Text", () => {
+    // The runtime stringifies it, so a record arrives as "[object Object]" —
+    // the stop reason lost at exactly the moment it is needed.
+    expect(codes(panicking("42"))).toContain("E0201");
+    expect(codes(panicking("{code: 1}"))).toContain("E0201");
+  });
+
+  it("accepts a Text message", () => {
+    clean(panicking('"unreachable"'));
+  });
+});
+
+describe("input the lexer has to survive", () => {
+  it("counts a byte-order mark as a column, so a patch splices the right place", () => {
+    // A BOM is not part of the text, but it IS part of the string every
+    // consumer of a position splices at `column - 1`. Skipping the index
+    // without advancing the column left line 1 one short.
+    const [tok] = lex("\uFEFFslot");
+    expect(tok?.pos).toEqual({ line: 1, col: 2 });
+  });
+
+  it("ends a `$` binding at a hyphen the same way a name does", () => {
+    // Two identifier forms, one rule: `$el- 1` must not become a binding
+    // named `$el-`.
+    expect(
+      lex("$1- 1")
+        .filter((t) => t.kind !== "eof")
+        .map((t) => `${t.kind}:${"value" in t ? t.value : ""}`),
+    ).toEqual(["ident:$1", "op:-", "num:1"]);
   });
 });
 

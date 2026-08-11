@@ -1036,8 +1036,18 @@ class Parser {
       if (this.matchOp(".")) {
         built += 1;
         this.widen(built);
-        this.next();
+        const dotTok = this.next();
         const fldTok = this.peek();
+        // `slot s : Float = 1.` at the end of a line: the member name is
+        // whatever the next line starts with, so this reads as a chained
+        // access and the error surfaces there instead. A chain written across
+        // lines puts the `.` on the member's line, never on the receiver's.
+        if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
+          throw new ParseError(
+            `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+            e.pos,
+          );
+        }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
           // `1.` lexes as the number then the access operator, so what arrives
           // here is a member access with no member — and `Expected field or
@@ -1146,7 +1156,8 @@ class Parser {
       // one, so §1.8.4's `match (lr, tag) with` was a documented example with
       // no way to write its scrutinee.
       if (this.matchOp(",")) {
-        const items: Expr[] = [inner];
+        this.next();
+        const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
         while (this.matchOp(",")) {
           this.next();
           items.push(this.parseExpr());
@@ -1854,7 +1865,7 @@ class Parser {
       this.eat("op", ",");
       const ms = this.parseDuration();
       this.eat("op", ",");
-      const factor = this.eat("num").value;
+      const factor = this.eatRetryFactor();
       this.eat("op", ")");
       return { kind: "RetryExp", n, ms, factor };
     }
@@ -1865,13 +1876,27 @@ class Parser {
    * A retry count. Signed, because `§1.2` makes a sign part of a number
    * literal and `Expected num, got op(-)` said nothing about what is wrong with
    * one — and then rejected, because a negative count is not a shorter retry
-   * policy, it is a policy that cannot run.
+   * policy, it is a policy that cannot run. Whole, for the same reason: 2.5
+   * attempts is not a number of attempts.
    */
   private eatRetryCount(): number {
     const t = this.peek();
     const n = this.eatSignedNumber();
-    if (n < 0) {
-      throw new ParseError(`Retry count must be 0 or more (got ${n})`, t.pos);
+    if (n < 0 || !Number.isInteger(n)) {
+      throw new ParseError(`Retry count must be a whole number, 0 or more (got ${n})`, t.pos);
+    }
+    return n;
+  }
+
+  /**
+   * A retry backoff factor — a multiplier, so signed like every other literal
+   * and then held to being one.
+   */
+  private eatRetryFactor(): number {
+    const t = this.peek();
+    const n = this.eatSignedNumber();
+    if (n <= 0) {
+      throw new ParseError(`Retry factor must be greater than 0 (got ${n})`, t.pos);
     }
     return n;
   }
@@ -1886,9 +1911,18 @@ class Parser {
   }
 
   private parseDuration(): number {
+    const numTok = this.peek();
     const n = this.eatSignedNumber();
     const unitTok = this.eat("ident");
     const unit = unitTok.value;
+    // A duration is a length of time, and the runtime reads every one of them
+    // as a delay: `setInterval(f, -1000)` is clamped to the minimum, so
+    // `on=timer(-1s)` would fire a "once a second" reducer hundreds of times a
+    // second. `§1.2` makes the sign part of the literal, so the grammar admits
+    // it and the meaning is what rejects it.
+    if (n < 0) {
+      throw new ParseError(`Duration must be 0 or more (got ${n})`, numTok.pos);
+    }
     if (unit === "ms") return n;
     if (unit === "s") return n * 1000;
     if (unit === "m") return n * 60 * 1000;

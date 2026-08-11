@@ -279,6 +279,19 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
+/**
+ * The end of an exhaustive `switch` over a node union.
+ *
+ * A walker whose `switch` ends in a bare `return` compiles unchanged when a
+ * node kind is added, and then silently skips it — which for a walker that
+ * collects (emits, `run-reducer` targets, references) means a subtree that
+ * stops existing. Ending with `assertNever` makes `tsc` the thing that finds
+ * the next one.
+ */
+export function assertNever(node: never): void {
+  void node;
+}
+
 export type Refinement = {
   kind: "Refinement";
   pred: string;
@@ -376,7 +389,7 @@ export type Expr =
    * destructures. Two items minimum; one parenthesised expression is that
    * expression, which is the older and more common reading of `( … )`.
    */
-  | { kind: "TupleLit"; items: Expr[]; pos: Pos }
+  | { kind: "TupleLit"; items: [Expr, Expr, ...Expr[]]; pos: Pos }
   | { kind: "Ref"; name: string; pos: Pos }
   | { kind: "BinOp"; op: BinOp; lhs: Expr; rhs: Expr; pos: Pos }
   | { kind: "UnaryOp"; op: "-" | "!"; rhs: Expr; pos: Pos }

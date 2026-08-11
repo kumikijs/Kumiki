@@ -10,8 +10,9 @@
 #   - `\u{...}` in a string
 #
 # The `#` rule is the one worth reading twice: a `#` with whitespace on either
-# side always starts a comment, and it is the selector operator only when
-# identifier characters sit tight on both sides (`Row#pick` below).
+# side always starts a comment. It is the selector operator only when the
+# character before it ends a value and the character after it begins an
+# identifier (`Row#pick` below).
 
 type Celsius = nominal Float where between(-40.0, 60.0)
 

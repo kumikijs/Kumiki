@@ -1269,6 +1269,10 @@ function checkStmt(
   }
   if (s.kind === "PanicStmt") {
     checkExpr(s.message, sym, errors, ctx);
+    // The runtime stringifies whatever it is given, so a record arrives as
+    // "[object Object]" — the stop reason lost at exactly the moment it is
+    // needed. A panic carries one thing out of the program and this is it.
+    checkAgainst(s.message, prim("Text", s.pos), sym, errors, ctx);
     return;
   }
   // SlotAssign
@@ -1388,6 +1392,12 @@ function checkCallee(
  * exactly like `count-1`, so no rule can keep one and split the other. What is
  * left is that `count-1` resolves to nothing, and the diagnostic can say why
  * when the part before the hyphen is a name that does resolve.
+ *
+ * Not when a declared name is one edit away, though: `page-size` beside a
+ * `page-sizes` is a typo, and `kumiki fix` reads this message as a contract —
+ * telling it to insert spaces there would propose the one repair that cannot
+ * be right. A misspelling looks like arithmetic in exactly the cases where
+ * saying so is least useful.
  */
 function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string {
   const cut = name.indexOf("-");
@@ -1396,7 +1406,42 @@ function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string {
   const tail = name.slice(cut + 1);
   const resolves = ctx.localBinds.has(head) || sym.slots.has(head) || sym.fns.has(head);
   if (!resolves) return "";
+  if (hasCloseName(name, sym, ctx)) return "";
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
+}
+
+/**
+ * Is some name in scope within one edit of `name`? Deliberately cheaper than
+ * `kumiki fix`'s suggester, which ranks candidates — here the only question is
+ * whether a suggestion exists at all, because one is a better answer than the
+ * hint.
+ */
+function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {
+  const inScope = [...ctx.localBinds, ...sym.slots.keys(), ...sym.fns.keys()];
+  return inScope.some((c) => c !== name && withinOneEdit(name, c));
+}
+
+/** Levenshtein distance ≤ 1, without building the matrix. */
+function withinOneEdit(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (a.length < b.length) j++;
+    else {
+      i++;
+      j++;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
 }
 
 function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
@@ -1769,6 +1814,29 @@ function checkAgainst(
 
   if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
     for (const item of e.items) checkAgainst(item, d.args[0] ?? null, sym, errors, ctx, code);
+    return;
+  }
+  if (d.kind === "TypeApp" && d.name === "Tuple" && e.kind === "TupleLit") {
+    // Arity first, and on its own: a tuple's length IS its type, unlike a
+    // list's. `assignable` compares argument lists pairwise and treats a
+    // missing one as agreeing — right for `List`, where the count is the
+    // constructor's own arity, and wrong here, where `Tuple(Int, Int, Int) =
+    // (1, 2)` would reach codegen and lower to a pattern guard that never
+    // matches, writing `undefined` into the slot.
+    if (e.items.length !== d.args.length) {
+      pushMismatch(
+        errors,
+        code,
+        `Expected ${typeToString(declared)} but got a tuple of ${e.items.length} item(s)`,
+        e.pos,
+      );
+      return;
+    }
+    // Then position by position, so the diagnostic names the item rather than
+    // the whole tuple.
+    for (let i = 0; i < e.items.length; i++) {
+      checkAgainst(e.items[i] as Expr, d.args[i] ?? null, sym, errors, ctx, code);
+    }
     return;
   }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
