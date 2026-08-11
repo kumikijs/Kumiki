@@ -111,6 +111,18 @@ app A
     clean(`fn f(s: Int) -> Int = s- 1${APP}`);
   });
 
+  it("stays quiet when a declared name is one edit away", () => {
+    // `page-size` beside a `page-sizes` is a misspelling, not arithmetic, and
+    // `kumiki fix` reads the message as a contract — proposing spaces there is
+    // the one repair that cannot be right.
+    const err = diags(
+      `slot page : Int = 1
+slot page-sizes : Int = 2
+fn f() -> Int = page-size${APP}`,
+    ).find((e) => e.code === "E0103");
+    expect(err?.message).toBe('Reference to undefined name "page-size"');
+  });
+
   it("says what to write when a name that reads as arithmetic resolves to nothing", () => {
     const errs = check(parse(lex(`fn f(count: Int) -> Int = count-1${APP}`)));
     const err = errs.find((e) => e.code === "E0103");
