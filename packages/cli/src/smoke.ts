@@ -194,6 +194,40 @@ export async function runScenarioSource(
   }
 }
 
+/**
+ * Read a scenario document, or fail with a message that names the file.
+ *
+ * Every failure below used to reach the caller as the raw thrown thing: an
+ * `ENOENT` / `EISDIR` from the read, a `SyntaxError` naming a character offset
+ * in an unnamed string, or — for a document that parsed but held no `steps` —
+ * a `TypeError: scenario.steps is not iterable` thrown from inside the runner,
+ * three frames from anything the author wrote. With two paths on the command
+ * line, "which file" is the first thing the message has to answer.
+ */
+function loadScenario(path: string): Scenario {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (e) {
+    throw new Error(`could not read scenario ${path}: ${e instanceof Error ? e.message : e}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+  }
+  const steps = (doc as { steps?: unknown } | null)?.steps;
+  if (!Array.isArray(steps)) {
+    throw new Error(`${path} is not a scenario: it needs a "steps" array`);
+  }
+  const bad = steps.findIndex((s) => typeof s !== "object" || s === null || Array.isArray(s));
+  if (bad !== -1) {
+    throw new Error(`${path} is not a scenario: steps[${bad}] is not a step object`);
+  }
+  return doc as Scenario;
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
@@ -201,7 +235,7 @@ export async function runCmd(
   capabilities: string[] = [],
   opts: { episodeLog?: string } = {},
 ): Promise<void> {
-  const scenario = JSON.parse(readFileSync(scenarioPath, "utf8")) as Scenario;
+  const scenario = loadScenario(scenarioPath);
   // Episode log is opt-in: write only when the caller asked for it via the
   // `--episode-log <file>` flag or the `KUMIKI_EPISODE_LOG` env var. This keeps
   // example runs from littering sidecar JSONL next to every .kumiki file. When
@@ -344,7 +378,14 @@ export async function runTests(
 /** Print a `TestReport` in the §8.7.1 format. Returns the failure count. */
 function printTestReport(report: TestReport): number {
   if (report.results.length === 0) {
-    console.log(report.filter ? `no tests match "${report.filter}"` : "no tests found");
+    // A filter that matches nothing is a failure: the caller named tests that
+    // are not there, and a renamed test would otherwise leave CI green while
+    // running nothing. Having no tests at all when none were asked for is not.
+    if (report.filter) {
+      console.error(`no tests match "${report.filter}"`);
+      return 1;
+    }
+    console.log("no tests found");
     return 0;
   }
   for (const r of report.results) {

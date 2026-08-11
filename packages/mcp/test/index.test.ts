@@ -532,3 +532,76 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
     });
   });
 });
+
+// A client that branches on `isError` has to be able to trust it. Half these
+// tools caught their own failures and returned a JSON envelope as a *success*
+// response; the other half let the throw reach the SDK, which flagged it. The
+// same missing file was a result in one tool and an error in the next.
+describe("failure reporting", () => {
+  let workdir: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-err-"));
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  /** A value for every required argument of `tool` other than `path`. */
+  const ARGS: Record<string, Record<string, unknown>> = {
+    kumiki_add: { layer: "slot", name: "x", body: ": Int = 0" },
+    kumiki_replace: { name: "slot.x", body: ": Int = 1" },
+    kumiki_remove: { name: "slot.x" },
+    kumiki_rename: { name: "slot.x", newName: "y" },
+    kumiki_edit: { name: "slot.x", patch: { find: "0", replace: "1" } },
+    kumiki_view: { name: "slot.x" },
+    kumiki_refs: { name: "slot.x" },
+    kumiki_history: { name: "slot.x" },
+    kumiki_auto_patch: { testName: "t" },
+    kumiki_run_scenario: { scenario: { steps: [] } },
+    kumiki_episode: { episodeId: "ep_0001" },
+  };
+
+  it("every tool that opens a file reports a missing one as an error", async () => {
+    // Enumerated from the live server rather than listed here: a tool added
+    // without the guard is the failure this is for, and a hand-written list
+    // would not contain it.
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const withPath = tools.filter(
+        (t) => (t.inputSchema.required as string[] | undefined)?.includes("path") ?? false,
+      );
+      expect(withPath.length).toBeGreaterThan(8);
+      for (const t of withPath) {
+        const res = await client.callTool({
+          name: t.name,
+          arguments: { path: join(workdir, "does-not-exist.kumiki"), ...(ARGS[t.name] ?? {}) },
+        });
+        expect(res.isError, `${t.name} reported a missing file as success`).toBe(true);
+        const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+        expect(body.startsWith("{"), `${t.name} used a different envelope: ${body}`).toBe(true);
+        const parsed = JSON.parse(body) as { error?: { kind: string; message: string } };
+        expect(parsed.error, `${t.name} used a different envelope`).toBeDefined();
+      }
+    });
+  });
+
+  it("a tool that succeeds is not flagged", async () => {
+    await withClient(async (client) => {
+      const res = await client.callTool({ name: "kumiki_check", arguments: { path: FIX_A11Y } });
+      expect(res.isError ?? false).toBe(false);
+    });
+  });
+
+  it("refs and view give the same answer for a name that is not defined", async () => {
+    await withClient(async (client) => {
+      for (const name of ["kumiki_refs", "kumiki_view"]) {
+        const res = await client.callTool({
+          name,
+          arguments: { path: FIX_COUNTER_TESTS, name: "slot.nope" },
+        });
+        expect(res.isError, name).toBe(true);
+        const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+        const parsed = JSON.parse(body) as { error: { message: string } };
+        expect(parsed.error.message, name).toBe('Definition "slot.nope" not found');
+      }
+    });
+  });
+});

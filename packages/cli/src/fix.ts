@@ -576,13 +576,25 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
  * repairable; `errors` carries the raw diagnostics either way so the caller can
  * distinguish "clean file" from "errors but nothing to auto-fix".
  */
+/**
+ * The diagnostics `fix` is about. A warning is not something to repair — it is
+ * advisory by definition, no branch in `planFixes` emits a patch for one, and
+ * counting it here made a warning-only file report "(no auto-patches
+ * available)" where `check` reports `ok (1 warning)`. It also has to be dropped
+ * on BOTH sides of the regression gate: seen only after the patch, a warning
+ * the file already had looks newly introduced and rolls back a good repair.
+ */
+function repairable(diagnostics: KumikiError[]): KumikiError[] {
+  return diagnostics.filter((d) => d.severity !== "warning");
+}
+
 export function planFix(
   path: string,
   onlyCode: string | undefined,
   capabilities: string[] = [],
 ): FixPlan {
   const store = load(path);
-  const errors = check(store.program, { capabilities });
+  const errors = repairable(check(store.program, { capabilities }));
   if (errors.length === 0) return { errors, patches: [], skipped: [] };
   const { patches: all, skipped } = planFixesExplained(store, errors);
   const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
@@ -590,7 +602,7 @@ export function planFix(
 }
 
 export type FixPlan = {
-  /** Raw typecheck errors on `path`. Empty when the file is clean. */
+  /** Typecheck errors on `path`, warnings excluded. Empty when the file is clean. */
   errors: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
   patches: AutoPatch[];
@@ -696,7 +708,7 @@ export function applyFixPlan(
       parseError: message,
     };
   }
-  const dryRemaining = check(parsed, { capabilities });
+  const dryRemaining = repairable(check(parsed, { capabilities }));
   const afterSet = new Set(dryRemaining.map(key));
   const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
   const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
@@ -735,10 +747,10 @@ export type FixApplyResult = {
   /** Source after writing (already on disk). */
   after: string;
   /**
-   * Residual diagnostics after the write. Empty ⇔ file is clean. When the
-   * write produced unparseable source, this contains a synthetic `E0000`
-   * parse-error so the empty-⇔-clean invariant holds without callers needing
-   * to inspect `parseError` first.
+   * Residual errors after the write, warnings excluded. Empty ⇔ file is clean.
+   * When the write produced unparseable source, this contains a synthetic
+   * `E0000` parse-error so the empty-⇔-clean invariant holds without callers
+   * needing to inspect `parseError` first.
    */
   remaining: KumikiError[];
   /**
@@ -782,6 +794,7 @@ export function fixCmd(
     if (patches.length === 0) {
       console.log("(no auto-patches available)");
       for (const e of errors) console.error(`${e.code} ${e.message}`);
+      process.exitCode = 1;
       return;
     }
     for (const p of patches) {
@@ -798,6 +811,9 @@ export function fixCmd(
       // reads it rather than the prose.
       for (const s of skipped) console.error(`${s.code} ${s.message} [${s.reason}]`);
     }
+    // A dry run leaves every error where it found it, so the file is still
+    // broken and `kumiki fix <f> && next-step` must not run `next-step`.
+    process.exitCode = 1;
     return;
   }
   const result = applyFixPlan(path, onlyCode, capabilities);
@@ -815,22 +831,27 @@ export function fixCmd(
       console.log("no errors");
       return;
     }
-    if (result.regressionBlocked) {
+    // Order matters: a parse-error sets `regressionBlocked` as well, so asking
+    // about the rollback first tells the reader the patch "would have
+    // introduced new errors" and never that it broke the file's syntax.
+    if (result.parseError) {
+      console.log(`fixes broke the file: ${result.parseError}`);
+    } else if (result.regressionBlocked) {
       console.log("(auto-patch rolled back — it would have introduced new errors)");
     } else {
       console.log("(no auto-patches available)");
     }
     for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+    process.exitCode = 1;
     return;
   }
-  if (result.parseError) {
-    console.error(`fixes broke the file: ${result.parseError}`);
-    return;
-  }
-  if (result.remaining.length === 0)
+  if (result.remaining.length === 0) {
     console.log(`applied ${result.applied} fix(es) — file now clean`);
-  else
-    console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
+    return;
+  }
+  console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
+  for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+  process.exitCode = 1;
 }
 
 // ----- `kumiki fix --auto-patch <test-name>` (M4b) -----

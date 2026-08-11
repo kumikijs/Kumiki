@@ -32,7 +32,6 @@ export type Store = {
 
 /** Every `Def` kind, including the two that are never referenced by name. */
 const LAYER_OF: Record<string, string> = {
-  TestDef: "test",
   TypeDef: "type",
   SlotDef: "slot",
   EffectDef: "effect",
@@ -42,7 +41,16 @@ const LAYER_OF: Record<string, string> = {
   AppDef: "app",
   ThemeDef: "theme",
   MotionDef: "motion",
+  TestDef: "test",
 };
+
+/**
+ * Every label a `DefEntry` can carry, in the order above — the seven layers of
+ * the language followed by the three definition kinds that live outside them.
+ * Derived rather than written out a second time, so a new `Def` kind cannot be
+ * a layer the store labels but `list <layer>` rejects.
+ */
+export const LAYERS: readonly string[] = Object.values(LAYER_OF);
 
 export function load(path: string): Store {
   const source = readFileSync(path, "utf8");

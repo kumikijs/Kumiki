@@ -1087,7 +1087,9 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
   }, () => {
     const file = write("hide.kumiki", "slot count : Int = 0\ntile App = column(text(cout.show))\n");
     const { stdout, stderr, code } = runCli(["fix", file]);
-    expect(code).toBe(0);
+    // A dry run proposes; it does not repair. The file still has both errors
+    // when the process ends, so the exit code has to say so.
+    expect(code).toBe(1);
     expect(stdout).toContain('fix: replace "cout" with "count"');
     expect(stdout).toContain("(no auto-patch for 1 of 2)");
     // The stable kebab reason rides along — a repair loop branches on it.

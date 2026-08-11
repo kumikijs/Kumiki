@@ -17,8 +17,8 @@ function err(code: string, severity?: "warning"): KumikiError {
   return severity ? { ...e, severity } : e;
 }
 
-const survives = (code: string, scope: (typeof SCOPES)[number]) =>
-  filterByScope([err(code)], scope).length === 1;
+const survives = (code: string, ...scopes: (typeof SCOPES)[number][]) =>
+  filterByScope([err(code)], scopes).length === 1;
 
 describe("filterByScope", () => {
   // Literal here rather than imported from the implementation: a test that
@@ -38,7 +38,7 @@ describe("filterByScope", () => {
     });
 
     it(`--${scope} keeps warnings`, () => {
-      expect(filterByScope([err("W0212", "warning")], scope)).toHaveLength(1);
+      expect(filterByScope([err("W0212", "warning")], [scope])).toHaveLength(1);
     });
   }
 
@@ -56,8 +56,18 @@ describe("filterByScope", () => {
     });
   });
 
-  it("`all` is the identity", () => {
+  it("no scope is the identity", () => {
     const errors = [err("E0103"), err("E0003"), err("W0212", "warning")];
-    expect(filterByScope(errors, "all")).toBe(errors);
+    expect(filterByScope(errors, [])).toBe(errors);
+  });
+
+  // The flags name what to keep, so two of them keep both. Taking only the
+  // first dropped the findings the same command line asked for and reported
+  // the file as `ok`.
+  it("composes: two scopes keep the union of their bands", () => {
+    expect(survives("E0103", "types", "refs")).toBe(true);
+    expect(survives("E0201", "types", "refs")).toBe(true);
+    expect(survives("E0301", "types", "refs")).toBe(false);
+    expect(survives("E0301", "types", "refs", "effects")).toBe(true);
   });
 });
