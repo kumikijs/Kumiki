@@ -161,9 +161,9 @@ app App
 |---|---|
 | `base-url` | Base for relative URLs |
 | `headers` | Applied to all requests (expressions allowed, slot references allowed) |
-| `on-401` | Reducer that receives a 401 |
-| `on-403` | Reducer that receives a 403 |
-| `on-5xx` | Reducer that receives a 5xx |
+| `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) |
+| `on-403` | Reducer that receives a 403 (same) |
+| `on-5xx` | Reducer that receives a 5xx (same) |
 | `timeout` | Default timeout (duration) |
 
 ### 6.3.2 Global Handling of 401

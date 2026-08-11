@@ -164,11 +164,9 @@ export type AppHttpConfig = {
   // at mount.
   baseUrl?: Expr;
   headers?: Expr;
-  on401?: string;
-  on403?: string;
-  on5xx?: string;
-  /** Positions of the three reducer names above, keyed by field. */
-  reducerRefPos?: { on401?: Pos; on403?: Pos; on5xx?: Pos };
+  on401?: NamedRef;
+  on403?: NamedRef;
+  on5xx?: NamedRef;
   timeout?: Expr;
   credentials?: Expr;
   pos: Pos;
@@ -212,14 +210,23 @@ export type AppAnalyticsConfig = {
   pos: Pos;
 };
 
+/**
+ * A name written in the source, with where it was written.
+ *
+ * The pair exists so the two cannot drift apart: a name recorded without its
+ * position leaves a diagnostic pointing at the enclosing definition and leaves
+ * `rename` with nothing to rewrite, and every optional-position field so far
+ * has had a fallback that the parser made unreachable.
+ */
+export type NamedRef = { readonly name: string; readonly pos: Pos };
+
 export type AppDef = {
   kind: "AppDef";
   name: string;
   caps: string[];
   routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
   init: Expr[];
-  theme?: string;
-  themePos?: Pos;
+  theme?: NamedRef;
   http?: AppHttpConfig;
   indexedDb?: AppIndexedDbConfig;
   meta?: AppMetaConfig;
@@ -307,32 +314,16 @@ export type EventPattern =
       kind: "LifecycleEvent";
       name: string;
       /**
-       * For `tile.mount(X)` / `tile.unmount(X)`, where `X` sits. The tile name
-       * is folded into `name` as `tile.mount("X")`, so without this there is no
-       * way to rewrite it except by matching text inside that string.
+       * The tile `tile.mount(X)` / `tile.unmount(X)` names, and where `X` sits.
+       *
+       * `name` folds the tile in as `tile.mount("X")` because that string is
+       * the key the runtime dispatches on, and reading the tile back out of it
+       * is a decode every caller would have to get right. Absent for the
+       * `app.*` and `route.*` patterns, which name no tile.
        */
-      tileNamePos?: Pos;
+      tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
       pos: Pos;
     };
-
-/**
- * The tile a `tile.mount(X)` / `tile.unmount(X)` pattern names, or `null` for
- * every other event.
- *
- * The name is folded into the event's own name because it is part of the event
- * identity the runtime dispatches on — so reading it back means decoding that
- * string, and every caller that decodes it separately is a chance to decode it
- * differently from the parser that wrote it.
- */
-export function lifecycleTileTarget(
-  on: EventPattern,
-): { event: string; tile: string; pos: Pos } | null {
-  if (on.kind !== "LifecycleEvent") return null;
-  const m = /^(tile\.(?:un)?mount)\((".*")\)$/.exec(on.name);
-  if (!m?.[1] || !m[2]) return null;
-  // The exact inverse of the `JSON.stringify` the parser encoded it with.
-  return { event: m[1], tile: JSON.parse(m[2]) as string, pos: on.tileNamePos ?? on.pos };
-}
 
 export type UiEventKind =
   | "click"

@@ -13,9 +13,9 @@ export function httpConfigJs(http: AppDef["http"], gen: GenCtx): string {
   if (http.headers) fields.push(`headers: () => (${jsOfExpr(http.headers, ctx)})`);
   if (http.timeout) fields.push(`timeout: ${jsOfExpr(http.timeout, ctx)}`);
   if (http.credentials) fields.push(`credentials: ${jsOfExpr(http.credentials, ctx)}`);
-  if (http.on401) fields.push(`on401: ${JSON.stringify(http.on401)}`);
-  if (http.on403) fields.push(`on403: ${JSON.stringify(http.on403)}`);
-  if (http.on5xx) fields.push(`on5xx: ${JSON.stringify(http.on5xx)}`);
+  if (http.on401) fields.push(`on401: ${JSON.stringify(http.on401.name)}`);
+  if (http.on403) fields.push(`on403: ${JSON.stringify(http.on403.name)}`);
+  if (http.on5xx) fields.push(`on5xx: ${JSON.stringify(http.on5xx.name)}`);
   return `const _http = { ${fields.join(", ")} };`;
 }
 

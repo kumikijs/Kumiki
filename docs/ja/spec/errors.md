@@ -45,7 +45,7 @@ type KumikiError = {
 | `E0001` | あり | `NotFound` tile を挿入し、`app.routes` に `"/404" -> NotFound` を追加する。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
 | `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。 |
-| `E0104` | あり | 既知の effect 名に対する近傍名の提案。 |
+| `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
 | `E0107` | あり | 宣言済み motion 名に対する近傍名の提案。 |
@@ -168,7 +168,7 @@ tile が、直接またはほかの tile を経由して自分自身へ展開し
 
 ### E0102 `undef-reducer`
 
-イベントハンドラ引数 / prop が、存在しない reducer 名を指している。
+reducer 名がどの `reducer` 定義も指していない。名指す箇所は 3 つある：イベントハンドラの引数または prop、`link` の `prefetch`、そして [`app.http`](./http.md#_6-3-認証) の `on-401` / `on-403` / `on-5xx` — 最後のものは、解決されない名前があるとそのレスポンスにハンドラが無い状態になり、「アプリが敢えて処理しないことにしたレスポンス」と区別がつかない。
 
 > `Reference to undefined reducer "<name>"`
 
@@ -318,7 +318,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0118 `undef-theme`
 
-`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-テーマ切替)）。
+`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-ダークモード)）。
 
 > `Reference to undefined theme "<name>"`
 
@@ -550,7 +550,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0301 `missing-capability`
 
-effect が要求するケイパビリティが `app.caps` で宣言されていない。要求元は effect 自身の `cap=`、または `navigate` / `toast` のような[標準 effect](./stdlib.md#_2-6-標準-effect)（プログラム側で宣言しないもの）が登録されているケイパビリティである。ランタイムはどちらも同じように制限する — 宣言されていないケイパビリティの effect は console 警告を出して捨てられるので、この検査がないと emit はコンパイルもマウントも通り、そして何も起きない。
+effect が要求するケイパビリティが `app.caps` で宣言されていない。要求元は effect 自身の `cap=`、または `navigate` / `toast` のような[標準 effect](./stdlib.md#_2-6-標準-effect)（プログラム側で宣言しないもの）が登録されているケイパビリティである。DOM ランタイムはどちらも同じように制限する — 宣言されていないケイパビリティの effect は console 警告を出して捨てられるので、この検査がないと emit はコンパイルもマウントも通り、そして何も起きない。
 
 > `Effect "<effect>" requires capability "<cap>" which is not declared in app.caps`
 

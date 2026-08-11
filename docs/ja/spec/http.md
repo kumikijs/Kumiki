@@ -161,9 +161,9 @@ app App
 |---|---|
 | `base-url` | 相対 URL のベース |
 | `headers` | 全リクエストに付与（式可、slot 参照可） |
-| `on-401` | 401 を受けた reducer |
-| `on-403` | 403 を受けた reducer |
-| `on-5xx` | 5xx を受けた reducer |
+| `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） |
+| `on-403` | 403 を受けた reducer（同上） |
+| `on-5xx` | 5xx を受けた reducer（同上） |
 | `timeout` | デフォルトタイムアウト（duration） |
 
 ### 6.3.2 401 のグローバル処理

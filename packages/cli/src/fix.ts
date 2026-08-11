@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
 import type { KumikiError, Pos, TestDef } from "@kumikijs/compiler";
 import {
+  BUILTIN_EFFECT_CAPS,
   calleeCandidates,
   check,
   collectTimerNames,
@@ -216,6 +217,9 @@ function appendAppCap(text: string, cap: string, appRange: [number, number] | nu
  *   - **E0209** (pat-unknown-variant) — variant tags live inside the union
  *     type's payload list; we resolve them via `variantTagsOf(typeName,
  *     program)` (built-in `Option` / `Result` plus user `TypeDef` bodies).
+ *   - **E0104** (undef-effect) — the effect namespace plus the standard
+ *     effects, which no program declares and which the shared list therefore
+ *     never held.
  * Adding either code back to *this* set silently corrupts the source: the
  * shared candidate list has no timer / variant entries, so `suggestName`
  * would propose an unrelated tile or reducer whose name happens to be close.
@@ -223,7 +227,6 @@ function appendAppCap(text: string, cap: string, appRange: [number, number] | nu
 const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
   "E0102", // undef-reducer
   "E0103", // undef-ref / undef-slot
-  "E0104", // undef-effect
   "E0105", // undef-tile
   "E0107", // undef-motion
   "E0211", // undef-tile-in-selector
@@ -374,6 +377,34 @@ export function planFixesExplained(
         // Column splice for the same reason as E0116: a type name may sit
         // inside a longer one on the same line (`Map(Text, Txt)`), and `\b`
         // would find the wrong occurrence.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0104") {
+      // Message shape: `Reference to undefined effect "<name>"`. The candidate
+      // set is the effect namespace plus the standard effects the runtime
+      // registers itself — a tile or slot whose name is close is E0104 again at
+      // the same position, and the standard effects were reachable from no
+      // candidate list at all, so `emit navigat(…)` had no proposal.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0104-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const candidates = listDefs(store)
+        .filter((e) => e.layer === "effect")
+        .map((e) => e.name)
+        .concat([...BUILTIN_EFFECT_CAPS.keys()]);
+      const suggested = suggestNameFrom(candidates, missing);
+      if (!suggested) {
+        skip(err.code, "e0104-no-close-effect", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
         apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
       });
     }

@@ -73,7 +73,9 @@ describe("built-in effect capabilities (E0301)", () => {
   for (const [effect, cap, emit] of BUILTIN) {
     if (cap === null) {
       it(`asks for no capability for ${effect}`, () => {
-        expect(checkSrc(emitting("[]", emit)).map((e) => e.code)).not.toContain("E0301");
+        // Nothing at all, not merely no E0301: dropping the table entry makes
+        // this an undefined effect, which `not.toContain("E0301")` accepts.
+        expect(checkSrc(emitting("[]", emit))).toEqual([]);
       });
       continue;
     }

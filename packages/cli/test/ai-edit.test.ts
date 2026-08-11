@@ -1107,6 +1107,104 @@ describe("planFixes: expanded auto-patch coverage", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("suggests a close standard-effect name for E0104", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0104-builtin-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n : Int = 0",
+        'tile Btn = button(text="go", onClick=go)',
+        'reducer go on=ui.click(Btn) do= emit navigat({path: "/x", params: {}})',
+        "tile App = column(Btn)",
+        "app A",
+        "    caps   = [nav.push]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    // The standard effects are in no definition list, so before they were a
+    // candidate set of their own this had no proposal at all.
+    expect(descs.some((d) => d.includes(`replace "navigat" with "navigate"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close effect name for an on=<effect>.ok selector", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0104-selector-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n : Int = 0",
+        "effect load cap=http.get in=Unit out=Result(Text, HttpError)",
+        "reducer got on=laod.ok($v, _) do= n := 1",
+        'tile App = column(text("hi"))',
+        "app A",
+        "    caps   = [http.get]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "laod" with "load"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close reducer name for an app.http handler", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0102-http-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n : Int = 0",
+        "reducer onUnauth on=app.start do= n := 1",
+        'tile App = column(text("hi"))',
+        "app A",
+        "    caps   = [http.get]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        '    http   = {base-url: "/api", on-401: onUnath}',
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "onUnath" with "onUnauth"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close slot name for E0118, not only a theme name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0118-slot-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        'slot themeName : Text = "Light"',
+        'theme Light = {colors: {bg: "#fff"}}',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "    theme  = themeNam",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "themeNam" with "themeName"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("suggests a close theme or slot name for E0118", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0118-"));
     const file = join(dir, "in.kumiki");

@@ -65,18 +65,23 @@ reducer r on=load.ok($v, _) do= n := 1${TAIL}`;
     expect(codes(src)).not.toContain("E0104");
   });
 
-  it("accepts a built-in effect", () => {
-    // The runtime registers the built-ins on the same `app.effects` map as a
-    // declared effect and reports their results through the same channel, so
-    // `on=navigate.ok(...)` does fire.
-    expect(codes(`${PANEL}reducer r on=navigate.ok(_, _) do= n := 1${TAIL}`)).not.toContain(
-      "E0104",
-    );
-  });
+  for (const outcome of ["ok", "err"]) {
+    it(`accepts a built-in effect's .${outcome}`, () => {
+      // The runtime registers the built-ins on the same `app.effects` map as a
+      // declared effect and reports their results through the same channel, so
+      // `on=navigate.ok(...)` does fire.
+      expect(
+        codes(`${PANEL}reducer r on=navigate.${outcome}(_, _) do= n := 1${TAIL}`),
+      ).not.toContain("E0104");
+    });
+  }
 });
 
 describe("app.http handlers (E0102)", () => {
-  const app = (handlers: string) => `
+  // One handler per line, so the reported position tells the three apart —
+  // on one line every field shares it with the `http` clause's own position,
+  // which is the fallback a broken hand-off would produce.
+  const app = (on401: string, on403: string, on5xx: string) => `
 slot n : Int = 0
 tile App = column(text("hi"))
 reducer known on=app.start do= n := 1
@@ -84,20 +89,21 @@ app A
     caps   = [http.get]
     routes = {"/" -> App, "/404" -> App}
     init   = []
-    http   = {base-url: "/api", ${handlers}}
+    http   = {base-url: "/api",
+              on-401: ${on401},
+              on-403: ${on403},
+              on-5xx: ${on5xx}}
 `;
 
-  for (const field of ["on-401", "on-403", "on-5xx"]) {
-    it(`reports an undeclared reducer in ${field}`, () => {
-      const err = diags(app(`${field}: noSuchReducer`)).find((e) => e.code === "E0102");
-      expect(err, `no E0102 for ${field}`).toBeDefined();
-      expect(err?.message).toContain("noSuchReducer");
-      expect(err?.pos.line).toBe(9);
-    });
-  }
+  it("reports each undeclared handler at its own name", () => {
+    const found = diags(app("noSuchA", "noSuchB", "noSuchC")).filter((e) => e.code === "E0102");
+    expect(
+      found.map((e) => `${e.pos.line}:${e.pos.col} ${e.message.match(/"(.+)"/)?.[1]}`),
+    ).toEqual(["10:23 noSuchA", "11:23 noSuchB", "12:23 noSuchC"]);
+  });
 
   it("accepts declared reducers", () => {
-    expect(codes(app("on-401: known, on-403: known, on-5xx: known"))).not.toContain("E0102");
+    expect(codes(app("known", "known", "known"))).not.toContain("E0102");
   });
 });
 

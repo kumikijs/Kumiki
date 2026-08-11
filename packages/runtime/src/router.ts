@@ -234,9 +234,11 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
-  // §3.9 scroll-to — standard presentation effect. No capability gate (parity
-  // with confirm / toast on the presentation side); `window.scrollTo` is a
-  // no-op in headless DOMs, so it stays safe under smoke / scenario runs.
+  // §3.9 scroll-to — the one standard effect with no capability gate. It moves
+  // the viewport of the page the user is already looking at and reaches nothing
+  // outside it, which `confirm` and `toast` (both on `notification.show`) do
+  // not: those put up UI of their own. `window.scrollTo` is a no-op in headless
+  // DOMs, so it stays safe under smoke / scenario runs.
   app.effects["scroll-to"] = {
     name: "scroll-to",
     cap: "",

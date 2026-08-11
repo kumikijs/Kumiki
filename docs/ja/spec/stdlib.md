@@ -466,7 +466,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 各 capability に対応する標準 effect。`app.caps` に capability があれば自動で使える。
 
-逆向きも検査される：これらを capability 無しで emit すると [E0301](./errors.md#e0301-missing-capability) になる。これらには `cap=` を読み取る `effect` 宣言が無い — ランタイム自身が登録するものだからである — ので、要求元は各 effect が登録されているケイパビリティであり、以下の各 effect に併記してある。`scroll-to` だけは何も要求しない。
+逆向きも検査される：これらを capability 無しで emit すると [E0301](./errors.md#e0301-missing-capability) になる。これらには `cap=` を読み取る `effect` 宣言が無い — ランタイム自身が登録するものだからである — ので、要求元は各 effect が登録されているケイパビリティであり、以下の各 effect に併記してある。この節はその全件であり、コンパイラが保持している一覧そのものである。
 
 → 詳細仕様は [HTTP / Storage](./http.md)。
 
@@ -489,6 +489,22 @@ effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
 ```kumiki
 effect log         cap=log.write    in={level: Text, message: Text, data: Map(Text, Text)}  out=Unit
 ```
+
+### 2.6.4 スクロール
+
+```kumiki
+effect scroll-to   in={x: Int, y: Int}  out=Unit
+```
+
+ケイパビリティを要求しない唯一の標準 effect。ユーザーが既に見ているページのビューポートを動かすだけで、その外側には何も届かないからである。→ [ルーティング §3.9](./routing.md#_3-9-スクロール復元)。
+
+### 2.6.5 確認ダイアログ
+
+```kumiki
+effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
+```
+
+ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-確認ダイアログ)。
 
 ---
 

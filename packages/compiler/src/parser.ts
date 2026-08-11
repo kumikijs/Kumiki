@@ -15,6 +15,7 @@ import type {
   Lvalue,
   MatchArm,
   MotionDef,
+  NamedRef,
   Pattern,
   PolicyExpr,
   Pos,
@@ -648,7 +649,7 @@ class Parser {
         return {
           kind: "LifecycleEvent",
           name: `tile.${sub}(${JSON.stringify(tileTok.value)})`,
-          tileNamePos: tileTok.pos,
+          tileTarget: { event: `tile.${sub}`, name: tileTok.value, pos: tileTok.pos },
           pos: t.pos,
         };
       }
@@ -1826,8 +1827,7 @@ class Parser {
     let caps: string[] = [];
     let routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     let init: Expr[] = [];
-    let theme: string | undefined;
-    let themePos: Pos | undefined;
+    let theme: NamedRef | undefined;
     let http: AppHttpConfig | undefined;
     let indexedDb: AppIndexedDbConfig | undefined;
     let meta: AppMetaConfig | undefined;
@@ -1851,8 +1851,7 @@ class Parser {
       else if (k === "init") init = this.parseInitList();
       else if (k === "theme") {
         const tok = this.eat("ident");
-        theme = tok.value;
-        themePos = tok.pos;
+        theme = { name: tok.value, pos: tok.pos };
       } else if (k === "http") http = this.parseAppHttp(ident.pos, configSources);
       else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos, configSources);
       else if (k === "meta") meta = this.parseAppMeta(ident.pos, configSources);
@@ -1866,7 +1865,6 @@ class Parser {
     if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     if (configSources.length > 0) def.configSources = configSources;
     if (theme) def.theme = theme;
-    if (themePos) def.themePos = themePos;
     if (http) def.http = http;
     if (indexedDb) def.indexedDb = indexedDb;
     if (meta) def.meta = meta;
@@ -2047,15 +2045,12 @@ class Parser {
           break;
         case "on-401":
           cfg.on401 = this.appHttpReducerRef(f.name, f.value);
-          this.noteHttpReducerPos(cfg, "on401", f.value);
           break;
         case "on-403":
           cfg.on403 = this.appHttpReducerRef(f.name, f.value);
-          this.noteHttpReducerPos(cfg, "on403", f.value);
           break;
         case "on-5xx":
           cfg.on5xx = this.appHttpReducerRef(f.name, f.value);
-          this.noteHttpReducerPos(cfg, "on5xx", f.value);
           break;
         case "timeout":
           cfg.timeout = f.value;
@@ -2070,26 +2065,11 @@ class Parser {
     return cfg;
   }
 
-  /**
-   * Record where a `app.http.on-*` reducer name sits. The field itself is a
-   * bare string, so without this the rename path has no way to find the
-   * occurrence except by matching text, which is what it must not do.
-   */
-  private noteHttpReducerPos(
-    cfg: AppHttpConfig,
-    key: "on401" | "on403" | "on5xx",
-    value: Expr,
-  ): void {
-    const at = cfg.reducerRefPos ?? {};
-    at[key] = value.pos;
-    cfg.reducerRefPos = at;
-  }
-
-  private appHttpReducerRef(field: string, value: Expr): string {
+  private appHttpReducerRef(field: string, value: Expr): NamedRef {
     if (value.kind !== "Ref") {
       throw new ParseError(`app.http.${field} must be a reducer name (bare identifier)`, value.pos);
     }
-    return value.name;
+    return { name: value.name, pos: value.pos };
   }
 
   private isAppEnd(): boolean {

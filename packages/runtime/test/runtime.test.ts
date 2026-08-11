@@ -236,6 +236,18 @@ describe("style block application", () => {
     expect(box?.style.padding).toBe("12px");
     expect(box?.style.borderRadius).toBe("4px");
   });
+
+  it("says so when the selected theme name matches no declared theme", () => {
+    // The compiler resolves the name in `app.theme = X` but not the value a
+    // slot behind it holds, so this is where a misspelled theme name surfaces.
+    // Rendering with the built-in defaults otherwise looks merely unstyled.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = makeStyledApp();
+    app.themeName = "Ligth";
+    mount(app, root);
+    expect(warn.mock.calls.flat().join(" ")).toContain('Theme "Ligth" is not declared');
+    warn.mockRestore();
+  });
 });
 
 // A named timer (`timer(100ms, name=countdown)`) incrementing `count`, plus a

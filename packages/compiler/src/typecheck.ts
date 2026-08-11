@@ -29,7 +29,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr, lifecycleTileTarget } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
@@ -1085,12 +1085,12 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   // undeclared `X` is the same dead subscription E0211 reports for a `ui.*`
   // selector — and there is no `_` here to exempt: the wildcard exists for
   // reducers dispatched indirectly, which a lifecycle event never is.
-  const lifecycleTile = lifecycleTileTarget(r.on);
-  if (lifecycleTile && !sym.tiles.has(lifecycleTile.tile)) {
+  const lifecycleTile = r.on.kind === "LifecycleEvent" ? r.on.tileTarget : undefined;
+  if (lifecycleTile && !sym.tiles.has(lifecycleTile.name)) {
     errors.push({
       code: "E0211",
       kind: "undef-tile-in-selector",
-      message: `Reducer "${r.name}" subscribes to ${lifecycleTile.event}(${lifecycleTile.tile}) but tile "${lifecycleTile.tile}" is not declared`,
+      message: `Reducer "${r.name}" subscribes to ${lifecycleTile.event}(${lifecycleTile.name}) but tile "${lifecycleTile.name}" is not declared`,
       pos: lifecycleTile.pos,
     });
   }
@@ -1975,9 +1975,11 @@ function checkEmitTarget(
     return;
   }
   // A built-in effect has no `effect` declaration to read a `cap=` off, so the
-  // requirement comes from the table instead — the runtime gates it either way.
+  // requirement comes from the table instead — the DOM runtime gates it either
+  // way. `null` is the one entry that asks for nothing; an empty `cap=` on a
+  // declared effect is not that, and stays reportable.
   const cap = eff ? eff.cap : (BUILTIN_EFFECT_CAPS.get(effect) ?? null);
-  if (cap && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
+  if (cap !== null && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
       kind: "missing-capability",
@@ -2917,18 +2919,13 @@ function checkApp(
 function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
   if (!http) return;
-  const handlers = [
-    ["on401", http.on401] as const,
-    ["on403", http.on403] as const,
-    ["on5xx", http.on5xx] as const,
-  ];
-  for (const [field, name] of handlers) {
-    if (name === undefined || sym.reducers.has(name)) continue;
+  for (const handler of [http.on401, http.on403, http.on5xx]) {
+    if (handler === undefined || sym.reducers.has(handler.name)) continue;
     errors.push({
       code: "E0102",
       kind: "undef-reducer",
-      message: `Reference to undefined reducer "${name}"`,
-      pos: http.reducerRefPos?.[field] ?? http.pos,
+      message: `Reference to undefined reducer "${handler.name}"`,
+      pos: handler.pos,
     });
   }
 }
@@ -2947,13 +2944,13 @@ function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError
  * separating them takes intent, which a check does not have.
  */
 function checkAppTheme(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const name = app.theme;
-  if (name === undefined || sym.themes.has(name) || sym.slots.has(name)) return;
+  const theme = app.theme;
+  if (theme === undefined || sym.themes.has(theme.name) || sym.slots.has(theme.name)) return;
   errors.push({
     code: "E0118",
     kind: "undef-theme",
-    message: `Reference to undefined theme "${name}"`,
-    pos: app.themePos ?? app.pos,
+    message: `Reference to undefined theme "${theme.name}"`,
+    pos: theme.pos,
   });
 }
 

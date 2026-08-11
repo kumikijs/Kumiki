@@ -32,7 +32,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr, lifecycleTileTarget } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -372,12 +372,12 @@ class Walker {
     } else if (r.on.kind === "EffectEvent") {
       this.add("effect", r.on.effect, r.on.effectPos);
       for (const b of r.on.binds) if (b !== "_") locals.add(b);
-    } else if (r.on.kind === "LifecycleEvent") {
+    } else if (r.on.kind === "LifecycleEvent" && r.on.tileTarget) {
       // `tile.mount(X)` folds the tile name into the event name, so the parser
-      // records where `X` sat. Reporting the pattern's own position instead
-      // would break the contract on `Reference.pos` and make `rename` abort.
-      const target = lifecycleTileTarget(r.on);
-      if (target) this.add("tile", target.tile, r.on.tileNamePos);
+      // keeps the name and where `X` sat alongside it. Reporting the pattern's
+      // own position instead would break the contract on `Reference.pos` and
+      // make `rename` abort.
+      this.add("tile", r.on.tileTarget.name, r.on.tileTarget.pos);
     }
     for (const s of r.do) this.statement(s, locals);
   }
@@ -547,16 +547,23 @@ class Walker {
       }
       this.expr(e, new Set());
     }
-    this.add("theme", a.theme ?? "", a.themePos);
+    // `app.theme` names either a `theme` definition or the slot whose value
+    // selects one (spec §4.6) — the same two namespaces, resolved in the same
+    // order, that the typechecker accepts. Recording it as a theme
+    // unconditionally dropped the slot form from the graph entirely, so
+    // `rename` left the clause pointing at the old name.
+    if (a.theme) {
+      const layer = this.index.theme.has(a.theme.name) ? "theme" : "slot";
+      this.add(layer, a.theme.name, a.theme.pos);
+    }
     if (a.http) {
       this.expr(a.http.baseUrl, new Set());
       this.expr(a.http.headers, new Set());
       this.expr(a.http.timeout, new Set());
       this.expr(a.http.credentials, new Set());
-      const at = a.http.reducerRefPos ?? {};
-      this.add("reducer", a.http.on401 ?? "", at.on401);
-      this.add("reducer", a.http.on403 ?? "", at.on403);
-      this.add("reducer", a.http.on5xx ?? "", at.on5xx);
+      for (const h of [a.http.on401, a.http.on403, a.http.on5xx]) {
+        if (h) this.add("reducer", h.name, h.pos);
+      }
     }
   }
 }
