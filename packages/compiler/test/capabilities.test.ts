@@ -106,6 +106,28 @@ describe("built-in effect capabilities (E0301)", () => {
     expect(checkSrc(src).map((e) => e.code)).toContain("E0301");
   });
 
+  it("holds a declared effect with an empty cap to that empty capability", () => {
+    // The parser rejects `cap=` with nothing after it, so this shape reaches
+    // `check` only from a `Program` built programmatically — which `check`
+    // accepts, being exported over the AST rather than over source. Empty is
+    // not the same as "asks for nothing": only the built-in table says that,
+    // and only for `scroll-to`.
+    const program = parse(
+      lex(`
+        slot x : Int = 0
+        effect ping cap=log.write in=Unit out=Unit
+        reducer r on=ui.click(B) do= emit ping()
+        tile B = button(text="b", onClick=r)
+        tile App = column(B, text(x.show))
+        app A caps=[log.write] routes={"/" -> App, "/404" -> App} init=[]
+      `),
+    );
+    const effect = program.defs.find((d) => d.kind === "EffectDef");
+    if (effect?.kind !== "EffectDef") throw new Error("no effect in fixture");
+    effect.cap = "";
+    expect(check(program).map((e) => e.code)).toContain("E0301");
+  });
+
   it("still reports an unknown effect as undefined rather than uncapable", () => {
     const codes = checkSrc(emitting("[]", 'emit navigat({path: "/x", params: {}})')).map(
       (e) => e.code,
