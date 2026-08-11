@@ -621,7 +621,9 @@ test title-text =
     const file = join(dir, "behavioral.kumiki");
     writeFileSync(file, BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text"]);
-    expect(code).toBe(0);
+    // Proposing is not repairing: the test still fails when the process ends,
+    // which is what the exit code reports.
+    expect(code).toBe(1);
     expect(out).toContain('replace "Helo" with "Hello"');
     // File untouched (AC4).
     expect(readFileSync(file, "utf8")).toContain('heading("Helo")');

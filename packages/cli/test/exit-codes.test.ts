@@ -166,6 +166,37 @@ app Demo
     expect(code).toBe(1);
   });
 
+  it("holds --auto-patch to the same rule as the diagnostic path", SPAWN, () => {
+    // The two halves of `fix` answer the same question and must answer it the
+    // same way. A dry run here proposes a compile fix and leaves the file with
+    // the error `check` exits 1 for, so this exits 1 too — and a test that
+    // already passes exits 0 without anything to do.
+    const blocked = `slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= conut := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+    const dry = runCli(["fix", write("auto-dry.kumiki", blocked), "--auto-patch", "inc-works"]);
+    expect(dry.stdout).toContain('replace "conut" with "count"');
+    expect(dry.code).toBe(1);
+
+    const passing = runCli([
+      "fix",
+      write("auto-ok.kumiki", WITH_TESTS),
+      "--auto-patch",
+      "inc-works",
+    ]);
+    expect(passing.code).toBe(0);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     // The regression gate compares the diagnostics before and after the patch.
     // Counting the pre-existing warning on one side only makes it look newly

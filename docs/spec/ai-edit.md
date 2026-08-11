@@ -105,7 +105,7 @@ Per verb, `1` means:
 | `smoke` | the app fails to mount, or an interaction throws |
 | `run` | the scenario document is unreadable / not a scenario, or a step fails |
 | `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0` |
-| `fix` | errors remain in the file when the process ends. A dry run always leaves them there, so `kumiki fix <file>` on a file with errors is `1` even when every one of them is repairable |
+| `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` whenever it had something to propose |
 | `view` / `refs` | the file, or the qualified name inside it, does not exist |
 | `list` | the file does not exist. A real layer with no definitions in it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |

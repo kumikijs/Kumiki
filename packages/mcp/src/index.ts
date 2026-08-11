@@ -13,6 +13,7 @@ import {
   editDef,
   episodeLogPathFor,
   findReferences,
+  LAYERS,
   listDefs,
   load,
   planFix,
@@ -487,9 +488,11 @@ export function createServer(): McpServer {
       description: "List the definitions in a .kumiki file, optionally filtered by layer.",
       inputSchema: {
         path: z.string().describe("Path to a .kumiki file"),
-        layer: z
-          .enum(["type", "slot", "effect", "reducer", "tile", "fn", "app", "theme"])
-          .optional(),
+        // Derived from the labels the store puts on definitions, so this
+        // filter and `kumiki list <layer>` accept the same set. Written out
+        // here, it silently excluded `test` and `motion` — layers whose
+        // definitions the tool then listed but could not filter to.
+        layer: z.enum(LAYERS).optional(),
       },
     },
     async ({ path, layer }) => {
