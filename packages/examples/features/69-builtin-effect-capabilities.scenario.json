@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been navigated to or notified yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "arrivals": 0, "notices": 0 },
+        "domIncludes": ["Home", "arrivals: 0", "notices: 0"]
+      }
+    },
+    {
+      "label": "toast runs because notification.show is declared",
+      "do": { "clickText": "Notify" },
+      "expect": { "noErrors": true, "state": { "notices": 1 } }
+    },
+    {
+      "label": "navigate moves the route, and its .ok reaches a reducer",
+      "do": { "clickText": "Go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "arrivals": 1 },
+        "domIncludes": ["Other", "arrivals: 1"]
+      }
+    },
+    {
+      "label": "navigate-back returns to where it came from",
+      "do": { "clickText": "Back" },
+      "expect": { "noErrors": true, "domIncludes": ["Home"] }
+    }
+  ]
+}

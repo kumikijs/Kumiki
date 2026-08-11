@@ -48,6 +48,95 @@ describe("capability manifest parsing", () => {
   });
 });
 
+// The effects the runtime registers itself, with the argument shape
+// `docs/spec/stdlib.md §2.6` gives each and the capability it is gated on.
+// `scroll-to` is the one that needs none.
+const BUILTIN: [effect: string, cap: string | null, emit: string][] = [
+  ["navigate", "nav.push", `emit navigate({path: "/x", params: {}})`],
+  ["navigate-replace", "nav.replace", `emit navigate-replace({path: "/x", params: {}})`],
+  ["navigate-back", "nav.back", `emit navigate-back()`],
+  ["toast", "notification.show", `emit toast({kind: "info", text: "hi"})`],
+  ["confirm", "notification.show", `emit confirm({title: "t", onYes: r, onNo: r})`],
+  ["log", "log.write", `emit log({level: "info", message: "m", data: {}})`],
+  ["scroll-to", null, `emit scroll-to({x: 0, y: 0})`],
+];
+
+const emitting = (caps: string, body: string): string => `
+  slot x : Int = 0
+  reducer r on=ui.click(B) do= ${body}
+  tile B = button(text="b", onClick=r)
+  tile App = column(B, text(x.show))
+  app A caps=${caps} routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+describe("built-in effect capabilities (E0301)", () => {
+  for (const [effect, cap, emit] of BUILTIN) {
+    if (cap === null) {
+      it(`asks for no capability for ${effect}`, () => {
+        // Nothing at all, not merely no E0301: dropping the table entry makes
+        // this an undefined effect, which `not.toContain("E0301")` accepts.
+        expect(checkSrc(emitting("[]", emit))).toEqual([]);
+      });
+      continue;
+    }
+    it(`requires ${cap} for ${effect}`, () => {
+      const err = checkSrc(emitting("[]", emit)).find((e) => e.code === "E0301");
+      expect(err, `no E0301 for ${effect}`).toBeDefined();
+      expect(err?.message).toContain(cap);
+      expect(err?.message).toContain(effect);
+    });
+
+    it(`accepts ${effect} once ${cap} is declared`, () => {
+      expect(checkSrc(emitting(`[${cap}]`, emit)).map((e) => e.code)).not.toContain("E0301");
+    });
+  }
+
+  // All three ways to reach an effect share one validation path; a check
+  // wired into only the statement form would leave the other two open.
+  it("checks an effect emitted for its handle", () => {
+    const src = emitting("[]", `let h = emit navigate({path: "/x", params: {}})\n x := 1`);
+    expect(checkSrc(src).map((e) => e.code)).toContain("E0301");
+  });
+
+  it("checks an effect run from app.init", () => {
+    const src = `
+      tile App = column(text("hi"))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[toast({kind: "info", text: "hi"})]
+    `;
+    expect(checkSrc(src).map((e) => e.code)).toContain("E0301");
+  });
+
+  it("holds a declared effect with an empty cap to that empty capability", () => {
+    // The parser rejects `cap=` with nothing after it, so this shape reaches
+    // `check` only from a `Program` built programmatically — which `check`
+    // accepts, being exported over the AST rather than over source. Empty is
+    // not the same as "asks for nothing": only the built-in table says that,
+    // and only for `scroll-to`.
+    const program = parse(
+      lex(`
+        slot x : Int = 0
+        effect ping cap=log.write in=Unit out=Unit
+        reducer r on=ui.click(B) do= emit ping()
+        tile B = button(text="b", onClick=r)
+        tile App = column(B, text(x.show))
+        app A caps=[log.write] routes={"/" -> App, "/404" -> App} init=[]
+      `),
+    );
+    const effect = program.defs.find((d) => d.kind === "EffectDef");
+    if (effect?.kind !== "EffectDef") throw new Error("no effect in fixture");
+    effect.cap = "";
+    expect(check(program).map((e) => e.code)).toContain("E0301");
+  });
+
+  it("still reports an unknown effect as undefined rather than uncapable", () => {
+    const codes = checkSrc(emitting("[]", 'emit navigat({path: "/x", params: {}})')).map(
+      (e) => e.code,
+    );
+    expect(codes).toContain("E0104");
+    expect(codes).not.toContain("E0301");
+  });
+});
+
 describe("capability checking (E0302)", () => {
   it("accepts standard capabilities", () => {
     expect(checkSrc(appWith("[storage.write, nav.push]")).some((e) => e.code === "E0302")).toBe(

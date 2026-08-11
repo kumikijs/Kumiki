@@ -234,7 +234,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push(`  ${JSON.stringify(t.name)}: ${JSON.stringify(t.body)},`);
   }
   lines.push("};");
-  const themeRef = app.theme ? JSON.stringify(app.theme) : "null";
+  const themeRef = app.theme ? JSON.stringify(app.theme.name) : "null";
   lines.push("");
 
   // Motion registry — reusable, scoped animations (M5). The runtime turns each

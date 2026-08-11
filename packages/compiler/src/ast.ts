@@ -164,11 +164,9 @@ export type AppHttpConfig = {
   // at mount.
   baseUrl?: Expr;
   headers?: Expr;
-  on401?: string;
-  on403?: string;
-  on5xx?: string;
-  /** Positions of the three reducer names above, keyed by field. */
-  reducerRefPos?: { on401?: Pos; on403?: Pos; on5xx?: Pos };
+  on401?: NamedRef;
+  on403?: NamedRef;
+  on5xx?: NamedRef;
   timeout?: Expr;
   credentials?: Expr;
   pos: Pos;
@@ -212,14 +210,23 @@ export type AppAnalyticsConfig = {
   pos: Pos;
 };
 
+/**
+ * A name written in the source, with where it was written.
+ *
+ * The pair exists so the two cannot drift apart: a name recorded without its
+ * position leaves a diagnostic pointing at the enclosing definition and leaves
+ * `rename` with nothing to rewrite, and every optional-position field so far
+ * has had a fallback that the parser made unreachable.
+ */
+export type NamedRef = { readonly name: string; readonly pos: Pos };
+
 export type AppDef = {
   kind: "AppDef";
   name: string;
   caps: string[];
   routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
   init: Expr[];
-  theme?: string;
-  themePos?: Pos;
+  theme?: NamedRef;
   http?: AppHttpConfig;
   indexedDb?: AppIndexedDbConfig;
   meta?: AppMetaConfig;
@@ -293,8 +300,13 @@ export type EventPattern =
       effect: string;
       outcome: "ok" | "err";
       binds: string[];
-      /** Position of the effect name itself, which `pos` (the whole pattern) does not give. */
-      effectPos?: Pos;
+      /**
+       * Where the effect name sits. Always the same token as `pos` here — the
+       * pattern starts at the name — and named separately because that is a
+       * property of this one pattern rather than of a position field, and
+       * because `refs` and the typechecker both want the name, not the pattern.
+       */
+      effectPos: Pos;
       pos: Pos;
     }
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }
@@ -302,11 +314,14 @@ export type EventPattern =
       kind: "LifecycleEvent";
       name: string;
       /**
-       * For `tile.mount(X)` / `tile.unmount(X)`, where `X` sits. The tile name
-       * is folded into `name` as `tile.mount("X")`, so without this there is no
-       * way to rewrite it except by matching text inside that string.
+       * The tile `tile.mount(X)` / `tile.unmount(X)` names, and where `X` sits.
+       *
+       * `name` folds the tile in as `tile.mount("X")` because that string is
+       * the key the runtime dispatches on, and reading the tile back out of it
+       * is a decode every caller would have to get right. Absent for the
+       * `app.*` and `route.*` patterns, which name no tile.
        */
-      tileNamePos?: Pos;
+      tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
       pos: Pos;
     };
 

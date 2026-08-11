@@ -158,6 +158,50 @@ test round-trips =
     });
   });
 
+  describe("the app definition", () => {
+    const app = (theme: string, extra: string) => `${extra}tile App = column(text("hi"))
+reducer onUnauth on=app.start do= n := 1
+slot n : Int = 0
+app A
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = ${theme}
+    http   = {base-url: "/api", on-401: onUnauth}
+`;
+
+    it("names a theme definition the theme clause selects", () => {
+      const src = app(
+        "Light",
+        `theme Light = {colors: {bg: "#fff"}}
+`,
+      );
+      expect(refsOf(src, "app.A")).toContain("theme.Light@9:14");
+    });
+
+    it("names the slot the theme clause reads the name from", () => {
+      // `theme = <slot>` is the dynamic form (spec §4.6). Recording it as a
+      // theme unconditionally dropped the edge — `add` keeps only names its
+      // own layer holds — so `rename` left the clause pointing at the old
+      // name and the write was rolled back with no mention of `app.theme`.
+      const src = app(
+        "themeName",
+        `slot themeName : Text = "Light"
+`,
+      );
+      expect(refsOf(src, "app.A")).toContain("slot.themeName@9:14");
+    });
+
+    it("names an app.http handler at the handler, not at the app", () => {
+      const src = app(
+        "Light",
+        `theme Light = {colors: {bg: "#fff"}}
+`,
+      );
+      expect(refsOf(src, "app.A")).toContain("reducer.onUnauth@10:41");
+    });
+  });
+
   describe("the test layer", () => {
     const src = `slot count : Int = 0
 reducer inc on=ui.click(IncBtn) do= count := count + 1

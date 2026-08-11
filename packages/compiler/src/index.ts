@@ -7,6 +7,7 @@ export type * from "./ast.ts";
 export { calleeCandidates, isBuiltinCallee } from "./builtin-calls.ts";
 export { BUILTIN_TILES, TILE_FAMILY, type TileFamily, VALUE_ARG_BUILTINS } from "./builtins.ts";
 export {
+  BUILTIN_EFFECT_CAPS,
   type CapabilityManifest,
   type ManifestResult,
   parseCapabilityManifest,

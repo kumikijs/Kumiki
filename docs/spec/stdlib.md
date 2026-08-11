@@ -497,6 +497,8 @@ The compiled bundle auto-mounts to `#root`; a host embedding the bundle can regi
 
 The standard effect corresponding to each capability. If the capability is in `app.caps`, it is automatically usable.
 
+The converse is checked too: emitting one of these without its capability in `app.caps` is [E0301](./errors.md#e0301-missing-capability). They have no `effect` declaration to read a `cap=` off — the runtime registers them itself — so the requirement comes from the capability each is registered behind, written with each effect below. This section lists all of them, and it is the list the compiler holds.
+
 → For the detailed specification, see [HTTP / Storage](./http.md).
 
 ### 2.6.1 Navigation
@@ -518,6 +520,22 @@ effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
 ```kumiki
 effect log         cap=log.write    in={level: Text, message: Text, data: Map(Text, Text)}  out=Unit
 ```
+
+### 2.6.4 Scroll
+
+```kumiki
+effect scroll-to   in={x: Int, y: Int}  out=Unit
+```
+
+The one standard effect with no capability: it moves the viewport of the page the user is already looking at, and reaches nothing outside it. → [Routing §3.9](./routing.md#_3-9-scroll-restoration).
+
+### 2.6.5 Confirm
+
+```kumiki
+effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
+```
+
+Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. → [Lifecycle §7.6](./lifecycle.md#_7-6-confirmation-dialogs).
 
 ---
 

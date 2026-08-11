@@ -51,7 +51,7 @@ typo` is caught rather than accepted).
 | `E0001` | yes | Inject a `NotFound` tile and add `"/404" -> NotFound` to `app.routes`. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
 | `E0103` | yes | Close-name suggestion against known slot / binding names. |
-| `E0104` | yes | Close-name suggestion against known effect names. |
+| `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
 | `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). |
@@ -60,6 +60,7 @@ typo` is caught rather than accepted).
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
 | `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
 | `E0117` | yes | Close-name suggestion against type names — the program's own `type` definitions first, then the primitives, the standard library's domain types, and the generic constructors (scoped — a slot or fn whose name is close is not a candidate). |
+| `E0118` | yes | Close-name suggestion against declared theme names and slot names — the two namespaces `app.theme` accepts (scoped — a tile or reducer whose name is close is not a candidate). |
 | `E0216` | yes | Close-name suggestion against variant tags of the declared union, the same resolution E0209 uses on the pattern side. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
@@ -180,7 +181,7 @@ A computed map key is not compared: whether two of them collide is the runtime's
 
 ### E0102 `undef-reducer`
 
-An event handler argument / prop refers to a reducer name that does not exist.
+A reducer name refers to no `reducer` definition. Three sites name one: an event handler argument or prop, `link`'s `prefetch`, and the `on-401` / `on-403` / `on-5xx` fields of [`app.http`](./http.md#_6-3-authentication) — where a name that resolves to nothing leaves the response with no handler, which is indistinguishable from a response the app chose not to handle.
 
 > `Reference to undefined reducer "<name>"`
 
@@ -197,7 +198,7 @@ An event handler argument / prop refers to a reducer name that does not exist.
 
 ### E0104 `undef-effect` / `init-not-effect-call`
 
-The target of an `emit` refers to an undefined effect. An `app.init` entry is validated the same way — the grammar makes it an effect call ([§1.12](./language.md#_1-12-application-entry-app)), so the same capability and argument checks apply, and the built-in effects (`toast`, `navigate`, `log`, …) are equally legal there.
+The target of an `emit`, or the effect a reducer waits on in `on=<effect>.ok(…)` / `.err(…)`, refers to an undefined effect. A misspelled selector leaves the reducer waiting for a result nothing produces, which is indistinguishable from an effect that never completes. An `app.init` entry is validated the same way — the grammar makes it an effect call ([§1.12](./language.md#_1-12-application-entry-app)), so the same capability and argument checks apply, and the built-in effects (`toast`, `navigate`, `log`, …) are equally legal there.
 
 > `Reference to undefined effect "<name>"`
 
@@ -328,6 +329,16 @@ Type parameters are in scope inside the body of the definition that declares the
 
 **Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list. `kumiki fix` proposes the closest type name.
 
+### E0118 `undef-theme`
+
+`app.theme = <name>` where `<name>` is neither a `theme` definition nor a slot. Both are legal: a theme name selects that theme, and a slot selects whichever theme its value names, so the theme can change while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
+
+> `Reference to undefined theme "<name>"`
+
+A name that resolves to neither leaves the runtime looking up a theme that was never registered. It falls back to the built-in defaults and renders, so the app looks merely unstyled rather than misconfigured.
+
+**Fix**: Correct the spelling, or declare the theme. `kumiki fix` proposes the closest theme or slot name.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -441,11 +452,12 @@ A type-level application `T(...)` of a user-declared generic type passes a diffe
 
 ### E0211 `undef-tile-in-selector`
 
-A reducer's `ui.*` selector names a tile that has not been declared. Without this check a typo (`ui.click(SaveBtn)` vs `ui.click(SaveBtnn)`) compiles silently and binds nothing — indistinguishable from a deliberately unused reducer.
+A reducer names a tile that has not been declared, in either of the two triggers that name one: a `ui.*` selector, or `tile.mount(<Tile>)` / `tile.unmount(<Tile>)`. Without this check a typo (`ui.click(SaveBtn)` vs `ui.click(SaveBtnn)`) compiles silently and binds nothing — indistinguishable from a deliberately unused reducer.
 
 > `Reducer "<name>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" is not declared`
+> `Reducer "<name>" subscribes to tile.mount(<Tile>) but tile "<Tile>" is not declared`
 
-**Fix**: Add a `tile <Tile> = …` declaration, or correct the selector's tile name to match an existing one. The `_` wildcard (for reducers dispatched indirectly via `emit confirm({onYes: r, …})` callbacks, see [Lifecycle §7](./lifecycle.md)) is accepted and has no tile to resolve.
+**Fix**: Add a `tile <Tile> = …` declaration, or correct the tile name to match an existing one. The `_` wildcard (for reducers dispatched indirectly via `emit confirm({onYes: r, …})` callbacks, see [Lifecycle §7](./lifecycle.md)) is accepted in a `ui.*` selector and has no tile to resolve. A lifecycle event has no such form: it fires when a *named* tile enters or leaves the rendered tree.
 
 ### E0212 `selector-id-mismatch` (opt-in via `--strict-selector-id`)
 
@@ -551,7 +563,7 @@ A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — th
 
 ### E0301 `missing-capability`
 
-A capability required by an effect is not declared in `app.caps`.
+A capability required by an effect is not declared in `app.caps`. The requirement comes from the effect's own `cap=`, or — for a [standard effect](./stdlib.md#_2-6-standard-effects) such as `navigate` or `toast`, which no program declares — from the capability that effect is registered behind. The DOM runtime gates both the same way: an undeclared capability drops the effect with a console warning, so without this check the emit compiles, mounts, and silently does nothing.
 
 > `Effect "<effect>" requires capability "<cap>" which is not declared in app.caps`
 

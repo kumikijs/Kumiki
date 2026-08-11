@@ -29,7 +29,7 @@ describe("parser: app.http (#78)", () => {
     expect(app.http).toBeDefined();
     expect(app.http?.baseUrl?.kind).toBe("Str");
     expect(app.http?.headers?.kind).toBe("MapLit");
-    expect(app.http?.on401).toBe("handleUnauthorized");
+    expect(app.http?.on401?.name).toBe("handleUnauthorized");
     expect(app.http?.timeout?.kind).toBe("Num");
     expect(app.http?.credentials?.kind).toBe("Str");
   });
@@ -53,8 +53,11 @@ describe("parser: app.http (#78)", () => {
     const program = parse(lex(src));
     const app = program.defs.find((d) => d.kind === "AppDef");
     if (app?.kind !== "AppDef") throw new Error("no app");
-    expect(app.http?.on403).toBe("handleForbidden");
-    expect(app.http?.on5xx).toBe("handleServerErr");
+    expect(app.http?.on403?.name).toBe("handleForbidden");
+    expect(app.http?.on5xx?.name).toBe("handleServerErr");
+    // The name carries where it was written, so a diagnostic and a rename
+    // both land on the handler rather than on the `app`.
+    expect(app.http?.on5xx?.pos.line).toBeGreaterThan(app.http?.on403?.pos.line ?? 0);
   });
 
   it("leaves http undefined when app has no http block", () => {

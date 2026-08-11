@@ -1808,8 +1808,7 @@ export function mountCore(
   // tests) always re-apply this app's theme, even if the name matches.
   lastAppliedThemeName = null;
   applyThemeDefaults(app);
-  lastAppliedThemeName =
-    (app.live?.[app.themeName ?? ""] as string | undefined) ?? app.themeName ?? null;
+  lastAppliedThemeName = resolvedThemeName(app) ?? null;
 
   // Initial route sync — but first resolve any static redirect (top-level
   // `->>` or one declared inside a matched parent's sub-routes per §3.6).
@@ -4091,24 +4090,40 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
 // (see the multi-mount changeset); give co-mounted apps distinct theme names
 // or isolate them in shadow roots.
 let lastAppliedThemeName: string | null = null;
-function maybeReapplyTheme(app: AppShape): void {
-  // Resolve the current theme name (could be slot-driven via `app.theme = slotName`).
-  let name = app.themeName;
-  if (
-    name &&
-    app.themes &&
-    !(name in app.themes) &&
-    app.live &&
-    typeof app.live[name] === "string"
-  ) {
-    name = app.live[name] as string;
+/**
+ * The theme name in force: `app.themeName`, or — when that names a slot rather
+ * than a theme, which is the `app.theme = <slot>` form — the name that slot
+ * currently holds.
+ */
+function resolvedThemeName(app: AppShape): string | undefined {
+  const name = app.themeName ?? undefined;
+  if (name && app.themes && !(name in app.themes) && typeof app.live?.[name] === "string") {
+    return app.live[name] as string;
   }
+  return name;
+}
+
+function maybeReapplyTheme(app: AppShape): void {
+  const name = resolvedThemeName(app);
   if (name === lastAppliedThemeName) return;
   lastAppliedThemeName = name ?? null;
   applyThemeDefaults(app);
 }
 
 function applyThemeDefaults(app: AppShape): void {
+  // The compiler resolves the NAME in `app.theme = X`, and deliberately not the
+  // value a slot behind it holds: an app that picks its theme on `app.start`
+  // starts that slot at a sentinel naming no theme, and a sentinel cannot be
+  // told from a misspelling without intent. So the misspelling surfaces here
+  // instead — otherwise the app renders with the built-in defaults and looks
+  // merely unstyled. Every caller reaches this once per name change.
+  const selected = resolvedThemeName(app);
+  if (selected && app.themes && !(selected in app.themes)) {
+    console.warn(
+      `Theme "${selected}" is not declared; rendering with the built-in defaults. ` +
+        `Declared themes: ${Object.keys(app.themes).join(", ") || "(none)"}`,
+    );
+  }
   const theme = currentThemeOf(app);
   if (!theme) return;
   const colors = (theme.colors ?? {}) as Record<string, ThemeValue>;
@@ -4217,13 +4232,7 @@ export function currentTheme(): Theme | null {
 
 function currentThemeOf(app: AppShape): Theme | null {
   if (!app.themes) return null;
-  let name = app.themeName;
-  // If `app.theme = someSlot` was used in source, app.themeName holds the slot
-  // NAME (e.g. "themeName"). Resolve through the live slot value so theme
-  // switching at runtime takes effect.
-  if (name && !(name in app.themes) && app.live && typeof app.live[name] === "string") {
-    name = app.live[name] as string;
-  }
+  let name = resolvedThemeName(app);
   if (!name) name = Object.keys(app.themes)[0];
   if (!name) return null;
   return app.themes[name] ?? null;
