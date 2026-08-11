@@ -15,7 +15,7 @@
 // that proceeds on a broken file.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -140,6 +140,30 @@ describe("kumiki fix", () => {
     const { stdout, code } = runCli(["fix", write("fix-warn.kumiki", WARN_ONLY)]);
     expect(stdout).toBe("no errors\n");
     expect(code).toBe(0);
+  });
+
+  it("reports the parser's message when a patch breaks the file", SPAWN, () => {
+    // The `}` inside the route string is what makes this reachable: the
+    // missing-404 patch finds the end of the routes map by scanning for the
+    // first `}`, so here it splices its entry into the middle of a string
+    // literal and the result no longer parses. Nothing is written.
+    //
+    // A broken patch sets `regressionBlocked` too, so asking about the
+    // rollback first told the reader the patch "would have introduced new
+    // errors" and never that it had made the file unparseable.
+    const src = `slot count : Int = 0
+tile App = column(heading("Count: " + count.show))
+app Demo
+    caps   = []
+    routes = {"/a}b" -> App}
+    init   = []
+`;
+    const file = write("fix-breaks.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("fixes broke the file:");
+    expect(stdout).not.toContain("rolled back");
+    expect(readFileSync(file, "utf8")).toBe(src);
+    expect(code).toBe(1);
   });
 
   it("applies a patch to a file that also has a warning", SPAWN, () => {
