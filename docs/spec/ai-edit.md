@@ -74,7 +74,7 @@ kumiki check --effects             # capability/policy consistency only
 kumiki check --a11y                # accessibility conventions
 ```
 
-The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
+The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. They name what to keep, so they compose — `--types --refs` reports both bands rather than one of them. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
 
 ### 9.2.4 Fix Assistance
 
@@ -83,6 +83,36 @@ kumiki fix --auto-patch <error-id>          # propose a CRDT op that auto-fixes 
 kumiki fix --apply                          # apply the proposal as-is
 kumiki fix --interactive                    # apply proposals one at a time with confirmation
 ```
+
+### 9.2.5 Exit Codes
+
+Every verb reports through its exit code, because that is the only part of the output a shell reads. `kumiki fix --apply && kumiki build …` has to stop when the file is still broken, and `kumiki test app.kumiki 'checkout-*'` has to fail when the name it was given matches nothing.
+
+| code | meaning |
+|---|---|
+| `0` | the verb did what it was asked |
+| `1` | the verb ran and the operation failed |
+| `2` | the arguments are the wrong shape |
+
+`2` is decided before any work happens — a missing positional, an unknown option, a positional outside its allowed set. It therefore never means "we looked at your program"; whatever `2` reports, the file was not read.
+
+Per verb, `1` means:
+
+| verb | exits `1` when |
+|---|---|
+| `check` | a diagnostic of severity `error` survives the narrowing flags. Warnings do not change the code (`ok (1 warning)` is `0`) |
+| `build` | the program does not compile, or the output cannot be written |
+| `smoke` | the app fails to mount, or an interaction throws |
+| `run` | the scenario document is unreadable / not a scenario, or a step fails |
+| `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0` |
+| `fix` | errors remain in the file when the process ends. A dry run always leaves them there, so `kumiki fix <file>` on a file with errors is `1` even when every one of them is repairable |
+| `view` / `refs` | the file, or the qualified name inside it, does not exist |
+| `list` | the file does not exist. A real layer with no definitions in it prints nothing and exits `0` |
+| `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
+
+A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.
+
+The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isError`, and answers it the same way: a failure that would exit `1` sets `isError: true` and carries `{"error": {"kind", "message"}}` as its content.
 
 ## 9.3 The Form of a CRDT op
 
