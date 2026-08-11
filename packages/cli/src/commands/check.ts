@@ -7,7 +7,7 @@ import { capsFor } from "./_shared/caps.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
 
 const USAGE =
-  "Usage: kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]";
+  "Usage: kumiki check <input.kumiki> [--strict-a11y] [--strict-icons] [--strict-selector-id] [--types] [--refs] [--effects]";
 
 export type CheckScope = "types" | "refs" | "effects";
 

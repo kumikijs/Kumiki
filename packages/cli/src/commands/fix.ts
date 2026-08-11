@@ -38,7 +38,7 @@ export function registerFix(program: Command): void {
           if (!repaired) process.exitCode = 1;
           return;
         }
-        fixCmd(fixPath, apply, code, capsFor(fixPath));
+        process.exitCode = fixCmd(fixPath, apply, code, capsFor(fixPath));
       },
     );
 }

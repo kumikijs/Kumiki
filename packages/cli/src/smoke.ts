@@ -197,12 +197,10 @@ export async function runScenarioSource(
 /**
  * Read a scenario document, or fail with a message that names the file.
  *
- * Every failure below used to reach the caller as the raw thrown thing: an
- * `ENOENT` / `EISDIR` from the read, a `SyntaxError` naming a character offset
- * in an unnamed string, or — for a document that parsed but held no `steps` —
- * a `TypeError: scenario.steps is not iterable` thrown from inside the runner,
- * three frames from anything the author wrote. With two paths on the command
- * line, "which file" is the first thing the message has to answer.
+ * Two paths are on the command line, so "which file" is the first thing any
+ * failure here has to answer — a read error, a `SyntaxError` that otherwise
+ * names only a character offset, or a document that parsed and is not a
+ * scenario, which reaches the runner as a `TypeError` about a property.
  */
 function loadScenario(path: string): Scenario {
   let raw: string;
@@ -375,7 +373,11 @@ export async function runTests(
   };
 }
 
-/** Print a `TestReport` in the §8.7.1 format. Returns the failure count. */
+/**
+ * Print a `TestReport` in the §8.7.1 format and return the number of failures
+ * the caller should exit on — the count of failing tests, or 1 for a filter
+ * that matched nothing, which is a failure with no failing test behind it.
+ */
 function printTestReport(report: TestReport): number {
   if (report.results.length === 0) {
     // A filter that matches nothing is a failure: the caller named tests that

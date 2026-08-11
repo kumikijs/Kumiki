@@ -24,8 +24,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI_PATH = resolve(here, "../src/kumiki.ts");
 
-// Each case pays for a node + tsx module load, not for compiler work.
-const SPAWN = { timeout: 30_000 };
+// Each case pays for a node + tsx module load, not for compiler work, and the
+// whole file is spawns — so the limits are generous enough to survive a
+// saturated machine running the rest of the suite alongside it.
+//
+// The child gets its own: `spawnSync` blocks the worker's event loop, so a hung
+// CLI cannot be interrupted by vitest's timeout — the run would stop rather
+// than fail. The child's limit is the shorter one so it always fires first.
+const CHILD_TIMEOUT_MS = 60_000;
+const SPAWN = { timeout: 70_000 };
 
 let dir: string;
 
@@ -36,12 +43,23 @@ function write(name: string, source: string): string {
 }
 
 function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-  const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+  // `node --import tsx` rather than `npx tsx`: same interpreter, without npm's
+  // per-call resolution — which this file would pay for ~35 times.
+  const res = spawnSync(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
     stdio: "pipe",
-    shell: true,
     encoding: "utf8",
+    timeout: CHILD_TIMEOUT_MS,
   });
-  return { stdout: res.stdout ?? "", stderr: res.stderr ?? "", code: res.status ?? 1 };
+  // A process that never started, or one a signal killed, has `status: null`.
+  // Folding that into 1 would make every `toBe(1)` in this file pass without
+  // the CLI running at all, which is the one result a test about exit codes
+  // must not accept.
+  if (res.error) throw res.error;
+  return {
+    stdout: res.stdout ?? "",
+    stderr: res.stderr ?? "",
+    code: res.status ?? Number.NaN,
+  };
 }
 
 const CLEAN = `slot count : Int = 0
@@ -140,6 +158,33 @@ describe("kumiki fix", () => {
     const { stdout, code } = runCli(["fix", write("fix-warn.kumiki", WARN_ONLY)]);
     expect(stdout).toBe("no errors\n");
     expect(code).toBe(0);
+  });
+
+  it("keeps a repair that clears an error and reveals a warning", SPAWN, () => {
+    // `Crd` is undefined (E0211). The patch resolves it to `Card` — and a
+    // `box` cannot fire `focus`, so W0212 appears where nothing was reported
+    // before. The gate compares errors only, in both directions: rolling this
+    // back would leave the file holding an error to avoid holding an advisory
+    // diagnostic. The decision, not an accident of which side was filtered.
+    const src = `slot count : Int = 0
+reducer bump on=ui.focus(Crd) do= count := count + 1
+tile Card = box(heading("Count: " + count.show))
+tile App = column(Card)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const file = write("fix-reveals-warning.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("file now clean");
+    expect(readFileSync(file, "utf8")).toContain("ui.focus(Card)");
+    expect(code).toBe(0);
+    // …and the warning it revealed is reported by the verb that reports
+    // warnings, which still exits 0 for it.
+    const after = runCli(["check", file]);
+    expect(after.stderr).toContain("W0212");
+    expect(after.code).toBe(0);
   });
 
   it("reports the parser's message when a patch breaks the file", SPAWN, () => {
@@ -294,16 +339,18 @@ describe("kumiki refs / view", () => {
 });
 
 describe("kumiki list", () => {
-  it("rejects a layer that is not one of the layers", SPAWN, () => {
+  it("rejects a word that labels no definition", SPAWN, () => {
     const { stderr, code } = runCli(["list", write("list.kumiki", CLEAN), "bogus"]);
     expect(stderr).toContain("bogus");
     // The message has to name the alternatives — the caller who typed `bogus`
-    // has no other way to learn `motion` is a layer and `route` is not.
+    // has no other way to learn `motion` is a filter and `route` is not.
     expect(stderr).toContain("slot");
-    expect(code).not.toBe(0);
+    // 2, not merely non-zero: commander decides this before the file is read,
+    // which is the line between the two failing codes.
+    expect(code).toBe(2);
   });
 
-  it("succeeds for a real layer with no definitions in it", SPAWN, () => {
+  it("succeeds for a real label with no definitions under it", SPAWN, () => {
     const { stdout, code } = runCli(["list", write("list-empty.kumiki", CLEAN), "motion"]);
     expect(stdout.trim()).toBe("");
     expect(code).toBe(0);
@@ -349,6 +396,16 @@ describe("kumiki run", () => {
     expect(code).toBe(1);
   });
 
+  it("names the step that is not a step", SPAWN, () => {
+    // The container can be right while an element is not: `steps: ["click"]`
+    // reaches the runner as a string where a step object belongs.
+    const bad = write("step-not-object.json", JSON.stringify({ steps: [{}, "click"] }));
+    const { stderr, code } = runCli(["run", write("run-f.kumiki", CLEAN), bad]);
+    expect(stderr).toContain(bad);
+    expect(stderr).toContain("steps[1]");
+    expect(code).toBe(1);
+  });
+
   it("says what a scenario document must contain", SPAWN, () => {
     // `{}` used to reach the runner and die on `scenario.steps is not
     // iterable` — a TypeError from inside the runtime for a document problem
@@ -365,5 +422,64 @@ describe("kumiki run", () => {
     const { stdout, code } = runCli(["run", write("run-e.kumiki", CLEAN), scenario]);
     expect(stdout).toContain("scenario passed");
     expect(code).toBe(0);
+  });
+});
+
+// The rows in the §9.2.5 table that this PR documents without changing. They
+// are stated as a contract, so they are asserted as one — the mechanisms live
+// in `smoke.ts`, and nothing else pins the codes they exit with.
+describe("the verbs the table documents but this change does not touch", () => {
+  const PANICS = `slot count : Int = 0
+reducer boom on=ui.click(BoomBtn) do= panic("boom")
+tile BoomBtn = button(text="go", onClick=boom)
+tile App = column(heading("Count: " + count.show), BoomBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("smoke exits 1 when a file that compiles throws on interaction", SPAWN, () => {
+    const { stderr, code } = runCli(["smoke", write("smoke-panics.kumiki", PANICS)]);
+    expect(stderr).toContain("runtime smoke failed");
+    expect(code).toBe(1);
+  });
+
+  it("smoke exits 0 when the app mounts and survives", SPAWN, () => {
+    const { code } = runCli(["smoke", write("smoke-ok.kumiki", WITH_TESTS)]);
+    expect(code).toBe(0);
+  });
+
+  it("run exits 1 when a step's assertion fails", SPAWN, () => {
+    const scenario = write(
+      "fails.json",
+      JSON.stringify({ steps: [{ expect: { state: { count: 9 } } }] }),
+    );
+    const { stdout, code } = runCli(["run", write("run-fail.kumiki", CLEAN), scenario]);
+    expect(stdout).toContain("scenario FAILED");
+    expect(code).toBe(1);
+  });
+
+  it("test exits 1 when a test fails", SPAWN, () => {
+    // Same file as the passing case with the expectation moved off by one, so
+    // the difference between the two runs is the test result and nothing else.
+    const failing = WITH_TESTS.replace(
+      "expect = {slots: {count: 1}",
+      "expect = {slots: {count: 7}",
+    );
+    const { stdout, code } = runCli(["test", write("test-fails.kumiki", failing)]);
+    expect(stdout).toContain("FAIL");
+    expect(code).toBe(1);
+    expect(runCli(["test", write("test-passes.kumiki", WITH_TESTS)]).code).toBe(0);
+  });
+
+  it("fix --auto-patch exits 1 for a test name that does not exist", SPAWN, () => {
+    const { code } = runCli([
+      "fix",
+      write("auto-missing.kumiki", WITH_TESTS),
+      "--auto-patch",
+      "no-such-test",
+    ]);
+    expect(code).toBe(1);
   });
 });

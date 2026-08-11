@@ -1844,25 +1844,26 @@ describe("write-failure handling", () => {
       ].join("\n"),
     );
     const before = readFileSync(file, "utf8");
-    const prevExit = process.exitCode;
     const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
       throw new Error("EACCES: simulated fixCmd");
     });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      fixCmd(file, true);
+      // The code is returned rather than written to `process.exitCode`: this
+      // call is in-process, and a function that set the exit code as a side
+      // effect would fail the vitest worker that called it.
+      const code = fixCmd(file, true);
       const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
       expect(stderr).toContain(`could not write fixes to ${file}`);
       expect(stderr).toContain("EACCES");
-      expect(process.exitCode).toBe(1);
+      expect(code).toBe(1);
       // On-disk file unchanged.
       expect(readFileSync(file, "utf8")).toBe(before);
     } finally {
       writeSpy.mockRestore();
       errSpy.mockRestore();
       logSpy.mockRestore();
-      process.exitCode = prevExit;
       rmSync(dir, { recursive: true, force: true });
     }
   });

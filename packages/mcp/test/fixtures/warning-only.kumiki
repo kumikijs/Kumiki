@@ -1,0 +1,8 @@
+slot count : Int = 0
+reducer bump on=ui.focus(Card) do= count := count + 1
+tile Card = box(heading("Count: " + count.show))
+tile App = column(Card)
+app WarningOnly
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

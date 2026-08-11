@@ -30,6 +30,7 @@ import {
 } from "@kumikijs/cli";
 import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 type Scenario = Parameters<typeof runScenarioSource>[1];
 
@@ -49,6 +50,21 @@ type Diagnostic = { code: string; kind: string; message: string; line: number; c
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
+}
+
+/**
+ * A tool answer that reports failure.
+ *
+ * The content is whatever the caller asked for — the diagnostics, the smoke
+ * report, the scenario trace — and `isError` is the one field a client can
+ * branch on without reading prose. The rule, so that no tool needs its own:
+ * **`isError` is set exactly when the matching CLI verb would exit non-zero**
+ * (docs/spec/ai-edit.md §9.2.5). `build failed:` and `scenario FAILED` exist
+ * only as sentences, so without this an agent driving generate → check → fix
+ * over MCP reads a failed build as a finished one.
+ */
+function failed(s: string) {
+  return { ...text(s), isError: true };
 }
 
 /**
@@ -264,15 +280,22 @@ function validate(
   source: string,
   capabilities: string[] = [],
   opts: StrictCheckOpts = {},
-): { ok: boolean; diagnostics: Diagnostic[] } {
+): { ok: boolean; failing: boolean; diagnostics: Diagnostic[] } {
   try {
     const program = parse(lex(source));
     const errors = check(program, { capabilities, ...opts });
-    return { ok: errors.length === 0, diagnostics: toDiagnostics(errors) };
+    return {
+      ok: errors.length === 0,
+      // A warning is reported and does not fail — the same split `kumiki
+      // check` makes when it prints `ok (1 warning)` and exits 0.
+      failing: errors.some((e) => e.severity !== "warning"),
+      diagnostics: toDiagnostics(errors),
+    };
   } catch (e) {
     const pe = e as { message?: string; pos?: { line: number; col: number } };
     return {
       ok: false,
+      failing: true,
       diagnostics: [
         {
           code: "E0000",
@@ -297,17 +320,19 @@ export function createServer(): McpServer {
    * that is exactly how half of these ended up reporting a missing file as a
    * successful result while the other half reported it as an error.
    *
-   * The assertion on the wrapper is the price of implementing a callback type
-   * whose parameters depend on a type variable: `ToolCallback<InputArgs>`
-   * resolves to concrete parameters only once `InputArgs` is, and every call
-   * site below supplies one.
+   * The assertion is the price of implementing a callback type whose
+   * parameters depend on a type variable: `ToolCallback<InputArgs>` resolves
+   * to concrete parameters only once `InputArgs` is, and every call site below
+   * supplies one. The explicit return type keeps the assertion from covering
+   * what this function returns as well — without it the `catch` arm is checked
+   * against an unresolved conditional type, which accepts anything.
    */
   const tool = <InputArgs extends ZodRawShapeCompat>(
     name: string,
     config: { title: string; description: string; inputSchema: InputArgs },
     handler: ToolCallback<InputArgs>,
   ): void => {
-    server.registerTool(name, config, (async (args, extra) => {
+    server.registerTool(name, config, (async (args, extra): Promise<CallToolResult> => {
       try {
         return await handler(args, extra);
       } catch (e) {
@@ -357,7 +382,8 @@ export function createServer(): McpServer {
       }
       const result = validate(readSource(input), capsForInput(input), strictOpts);
       if (result.ok) return text("ok — no diagnostics");
-      return text(JSON.stringify(result.diagnostics, null, 2));
+      const body = JSON.stringify(result.diagnostics, null, 2);
+      return result.failing ? failed(body) : text(body);
     },
   );
 
@@ -388,7 +414,7 @@ export function createServer(): McpServer {
         capabilities: capsForInput(input),
       });
       if (result.kind === "fail") {
-        return text(`build failed:\n${JSON.stringify(toDiagnostics(result.errors), null, 2)}`);
+        return failed(`build failed:\n${JSON.stringify(toDiagnostics(result.errors), null, 2)}`);
       }
       if (input.includeJs) return text(result.js);
       return text(
@@ -424,7 +450,7 @@ export function createServer(): McpServer {
       const lines = report.issues.map(
         (i) => `[${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`,
       );
-      return text(
+      return failed(
         `runtime smoke failed (mounted=${report.mounted}, rendered=${report.rendered}):\n${lines.join("\n")}`,
       );
     },
@@ -477,7 +503,8 @@ export function createServer(): McpServer {
       const tail = report.ok ? "scenario passed" : "scenario FAILED";
       // Include the final state snapshot to help the agent diagnose.
       const finalState = report.steps.at(-1)?.state ?? {};
-      return text(`${lines.join("\n")}\n\n${tail}\nfinal state: ${JSON.stringify(finalState)}`);
+      const body = `${lines.join("\n")}\n\n${tail}\nfinal state: ${JSON.stringify(finalState)}`;
+      return report.ok ? text(body) : failed(body);
     },
   );
 
@@ -490,8 +517,8 @@ export function createServer(): McpServer {
         path: z.string().describe("Path to a .kumiki file"),
         // Derived from the labels the store puts on definitions, so this
         // filter and `kumiki list <layer>` accept the same set. Written out
-        // here, it silently excluded `test` and `motion` — layers whose
-        // definitions the tool then listed but could not filter to.
+        // here, it omitted `test` and `motion` — definitions the tool listed
+        // but could not filter to.
         layer: z.enum(LAYERS).optional(),
       },
     },
@@ -652,7 +679,7 @@ export function createServer(): McpServer {
       const { entries } = readEpisodeLog(logPath);
       const hit = entries.find((e) => e.id === episodeId);
       if (hit) return text(JSON.stringify(hit, null, 2));
-      return text(`(no episode with id ${episodeId})`);
+      throw new Error(`no episode with id ${episodeId}`);
     },
   );
 
@@ -765,31 +792,32 @@ export function createServer(): McpServer {
       const caps = capsForInput(input);
       if (input.apply) {
         const r = applyFixPlan(abs, input.only, caps);
-        return text(
-          JSON.stringify(
-            {
-              applied: r.applied,
-              before: r.before,
-              after: r.after,
-              remaining: toDiagnostics(r.remaining),
-              // Surface every non-success modifier on the wire so callers
-              // can distinguish "no patch was needed" (`applied === 0`,
-              // no modifier) from a rollback / parser-break / I/O failure.
-              // Without these fields the three failure shapes collapse into
-              // one indistinguishable `applied: 0`.
-              ...(r.parseError ? { parseError: r.parseError } : {}),
-              ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
-              ...(r.writeError ? { writeError: r.writeError } : {}),
-            },
-            null,
-            2,
-          ),
+        const body = JSON.stringify(
+          {
+            applied: r.applied,
+            before: r.before,
+            after: r.after,
+            remaining: toDiagnostics(r.remaining),
+            // Surface every non-success modifier on the wire so callers
+            // can distinguish "no patch was needed" (`applied === 0`,
+            // no modifier) from a rollback / parser-break / I/O failure.
+            // Without these fields the three failure shapes collapse into
+            // one indistinguishable `applied: 0`.
+            ...(r.parseError ? { parseError: r.parseError } : {}),
+            ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
+            ...(r.writeError ? { writeError: r.writeError } : {}),
+          },
+          null,
+          2,
         );
+        return r.remaining.length > 0 ? failed(body) : text(body);
       }
       const plan = planFix(abs, input.only, caps);
       if (plan.errors.length === 0) return text("no errors");
+      // A dry run proposes and repairs nothing, so the file still has every
+      // error it started with — which is what `isError` reports here.
       if (plan.patches.length === 0) {
-        return text(
+        return failed(
           `(no auto-patches available)\n${plan.errors
             .map((e) => `${e.code} ${e.message}`)
             .join("\n")}`,
@@ -800,7 +828,7 @@ export function createServer(): McpServer {
       // clean when it is not.
       const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
       const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);
-      return text([...proposals, ...unrepaired].join("\n"));
+      return failed([...proposals, ...unrepaired].join("\n"));
     },
   );
 
@@ -828,8 +856,13 @@ export function createServer(): McpServer {
     async (input) => {
       const abs = resolve(process.cwd(), input.path);
       const caps = capsForInput(input);
-      const outcome = await runFixFromTest(abs, input.testName, input.apply === true, caps);
-      return text(JSON.stringify(serialiseFixFromTest(outcome), null, 2));
+      const apply = input.apply === true;
+      const outcome = await runFixFromTest(abs, input.testName, apply, caps);
+      const body = JSON.stringify(serialiseFixFromTest(outcome), null, 2);
+      // `ok` counts a dry-run proposal as success; the named test passing is
+      // what was asked for. Same rule as `kumiki fix --auto-patch`.
+      const repaired = outcome.status === "already-pass" || (apply && outcome.ok);
+      return repaired ? text(body) : failed(body);
     },
   );
 
@@ -857,19 +890,21 @@ export function createServer(): McpServer {
       const abs = resolve(process.cwd(), input.path);
       const caps = capsForInput(input);
       const report = await runTests(abs, input.filter, caps);
-      return text(
-        JSON.stringify(
-          {
-            total: report.total,
-            passed: report.passed,
-            failed: report.failed,
-            filter: report.filter ?? null,
-            results: report.results,
-          },
-          null,
-          2,
-        ),
+      const body = JSON.stringify(
+        {
+          total: report.total,
+          passed: report.passed,
+          failed: report.failed,
+          filter: report.filter ?? null,
+          results: report.results,
+        },
+        null,
+        2,
       );
+      // A filter that matches nothing is a failure for the same reason it is
+      // one in `kumiki test`: the caller named tests that are not there.
+      const matchedNothing = report.filter !== undefined && report.total === 0;
+      return report.failed > 0 || matchedNothing ? failed(body) : text(body);
     },
   );
 
@@ -904,7 +939,14 @@ export function createServer(): McpServer {
       description: "Fetch the full text of one spec document (e.g. 'language' or 'errors.md').",
       inputSchema: { doc: z.string() },
     },
-    async ({ doc }) => text(getSpecDoc(doc) ?? `not found: ${doc}`),
+    async ({ doc }) => {
+      const body = getSpecDoc(doc);
+      // A name that resolves to no document is a caller mistake, not an empty
+      // document: returning the sentence as the answer means a client reads
+      // "not found: langauge" as the spec text it asked for.
+      if (body === null) throw new Error(`no spec document named "${doc}"`);
+      return text(body);
+    },
   );
 
   return server;

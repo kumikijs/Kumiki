@@ -38,7 +38,7 @@ const USAGES: Record<string, string> = {
   view: "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]",
   refs: "Usage: kumiki refs <input.kumiki> <qname>",
   check:
-    "Usage: kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]",
+    "Usage: kumiki check <input.kumiki> [--strict-a11y] [--strict-icons] [--strict-selector-id] [--types] [--refs] [--effects]",
   smoke: "Usage: kumiki smoke <input.kumiki>",
   dev: "Usage: kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]",
   test: "Usage: kumiki test <input.kumiki> [name|prefix*]",

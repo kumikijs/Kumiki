@@ -94,7 +94,7 @@ Every verb reports through its exit code, because that is the only part of the o
 | `1` | the verb ran and the operation failed |
 | `2` | the arguments are the wrong shape |
 
-`2` is decided before any work happens — a missing positional, an unknown option, a positional outside its allowed set. It therefore never means "we looked at your program"; whatever `2` reports, the file was not read.
+`2` is decided before the `.kumiki` file is read — a missing positional, an unknown option, a positional outside its allowed set. It therefore never means "we looked at your program"; whatever `2` reports, the program was not examined.
 
 Per verb, `1` means:
 
@@ -104,15 +104,18 @@ Per verb, `1` means:
 | `build` | the program does not compile, or the output cannot be written |
 | `smoke` | the app fails to mount, or an interaction throws |
 | `run` | the scenario document is unreadable / not a scenario, or a step fails |
-| `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0` |
-| `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` whenever it had something to propose |
-| `view` / `refs` | the file, or the qualified name inside it, does not exist |
-| `list` | the file does not exist. A real layer with no definitions in it prints nothing and exits `0` |
+| `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0`; `--watch` runs until interrupted and so reports nothing |
+| `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` for any file that is not already in that state |
+| `view` / `refs` | the file, or the qualified name inside it, does not exist. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for |
+| `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
+| `lock` / `unlock` | the lock is held by another agent, or there is none to release |
+| `replay` | the log is unreadable, the named episode is not in it, or a replayed episode panicked |
+| `dev` | the server could not start. Once it is serving it runs until interrupted, and so reports nothing |
 
 A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.
 
-The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isError`, and answers it the same way: a failure that would exit `1` sets `isError: true` and carries `{"error": {"kind", "message"}}` as its content.
+The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isError`: a failure that would exit `1` here sets `isError: true` there. The content is unchanged by the flag — a failed check still answers with its diagnostics and a failed scenario with its trace. Only a failure that produced no answer at all (a missing file, a name that resolves to nothing) replaces the content with the envelope `{"error": {"kind", "message"}}`.
 
 ## 9.3 The Form of a CRDT op
 
