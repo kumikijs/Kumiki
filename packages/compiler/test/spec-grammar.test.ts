@@ -6,7 +6,7 @@
 // to give, in which case the spec is what moves. Each block below says which,
 // and the PR that introduced it carries the same table.
 
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
 const APP = `
@@ -105,9 +105,34 @@ describe("string escapes", () => {
     clean(`slot s : Text = "\\u{2713}"${APP}`);
   });
 
-  it("rejects an unterminated or empty one rather than accepting a wrong character", () => {
-    expect(outcome(`slot s : Text = "\\u{}"${APP}`)[0]).toContain("THROW");
-    expect(outcome(`slot s : Text = "\\u{2713"${APP}`)[0]).toContain("THROW");
+  it("reads the escape as a code point, not as a UTF-16 unit", () => {
+    // The astral half is the reason the `{...}` form exists: `\u{1F600}` is one
+    // character, and `fromCharCode` would truncate it to U+F600.
+    const program = parse(lex(`slot s : Text = "\\u{1F600}"${APP}`));
+    const slot = program.defs.find((d) => d.kind === "SlotDef");
+    if (slot?.kind !== "SlotDef" || slot.init.kind !== "Str") throw new Error("no slot in fixture");
+    expect(slot.init.value).toBe("\u{1F600}");
+  });
+
+  it("rejects a malformed escape as a lex error, with a position", () => {
+    // Not merely "throws": letting `parseInt` produce NaN and `fromCodePoint`
+    // throw a bare RangeError loses the position, which is the whole reason to
+    // report it here.
+    for (const bad of ["\\u{}", "\\u{2713", "\\u{zz}", "\\u2713"]) {
+      expect(outcome(`slot s : Text = "${bad}"${APP}`)[0], bad).toContain("Lex error at");
+    }
+  });
+});
+
+describe("what a tuple lowers to", () => {
+  it("is the array a tuple pattern destructures", () => {
+    // `tupleArm` guards with `Array.isArray` and reads by index, so the two
+    // halves have to agree on the shape — and nothing else reaches the
+    // generated code for a tuple.
+    const out = compile(`fn pair(a: Int, b: Text) -> Tuple(Int, Text) = (a, b)${APP}`, {});
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") return;
+    expect(out.js).toContain("[a, b]");
   });
 });
 
