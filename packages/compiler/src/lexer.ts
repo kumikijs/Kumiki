@@ -75,7 +75,10 @@ export class LexError extends Error {
 
 export function lex(source: string): Token[] {
   const tokens: Token[] = [];
-  let i = 0;
+  // A byte-order mark is how several editors mark a UTF-8 file, and it is not
+  // part of the text. Reaching the token loop, it was an unexpected character
+  // at 1:1 — a file that looks identical to a working one, rejected.
+  let i = source.charCodeAt(0) === 0xfeff ? 1 : 0;
   let line = 1;
   let col = 1;
 
@@ -102,12 +105,23 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    // # is context-sensitive: operator when it follows an identifier or closing bracket
-    // (e.g. `TileName#id`), otherwise it starts a line comment.
+    // `#` is the one context-sensitive character in the language: the selector
+    // operator in `TileName#id`, and the start of a comment everywhere else.
+    // It is the operator only when an identifier character sits tight on BOTH
+    // sides of it, which is how every selector is written. Looking only at the
+    // character before, as this did, made `slot n : Int = 0# how many` an
+    // operator followed by the rest of the line as tokens.
+    //
+    // Stated the other way, which is the rule to remember: a `#` with
+    // whitespace on either side of it always starts a comment.
     if (c === "#") {
       const prev = i > 0 ? source[i - 1] : undefined;
+      const next = source[i + 1];
       const attaches =
-        prev !== undefined && (isIdentCont(prev) || prev === ")" || prev === "]" || prev === "}");
+        prev !== undefined &&
+        (isIdentCont(prev) || prev === ")" || prev === "]" || prev === "}") &&
+        next !== undefined &&
+        isIdentStart(next);
       if (attaches) {
         tokens.push({ kind: "op", value: "#", pos: pos() });
         advance();
@@ -134,7 +148,29 @@ export function lex(source: string): Token[] {
           else if (esc === "r") value += "\r";
           else if (esc === '"') value += '"';
           else if (esc === "\\") value += "\\";
-          else throw new LexError(`Unknown escape \\${esc}`, pos());
+          else if (esc === "u") {
+            // `\u{hex+}` (spec §1.2). A code POINT, not a UTF-16 unit, so
+            // `String.fromCodePoint` — the astral half of the escape is the
+            // reason the form exists.
+            const escPos = pos();
+            advance();
+            if (source[i] !== "{") throw new LexError("\\u must be written \\u{hex}", escPos);
+            advance();
+            let hex = "";
+            while (i < source.length && source[i] !== "}") {
+              hex += source[i];
+              advance();
+            }
+            if (source[i] !== "}") throw new LexError("Unterminated \\u{...} escape", escPos);
+            if (!/^[0-9a-fA-F]+$/.test(hex)) {
+              throw new LexError(`Invalid \\u{${hex}} escape: expected hex digits`, escPos);
+            }
+            const code = Number.parseInt(hex, 16);
+            if (code > 0x10ffff) {
+              throw new LexError(`\\u{${hex}} is past the last code point`, escPos);
+            }
+            value += String.fromCodePoint(code);
+          } else throw new LexError(`Unknown escape \\${esc}`, pos());
           advance();
         } else {
           value += ch;
@@ -193,6 +229,12 @@ export function lex(source: string): Token[] {
     if (isIdentStart(c)) {
       let raw = "";
       while (i < source.length && isIdentCont(source[i] as string)) {
+        // `-` is both an identifier character and the subtraction operator, and
+        // longest munch is what decides: it continues the name only when an
+        // identifier character follows it. `on-401` and `count-1` are the same
+        // shape, so the name wins in both; `s- 1` and `s-` end at the `s`,
+        // which is what makes the operator reachable at all.
+        if (source[i] === "-" && !isIdentCont(source[i + 1] ?? "")) break;
         raw += source[i];
         advance();
       }

@@ -350,6 +350,13 @@ export type Statement =
       arms: { pattern: Pattern; body: Statement[] }[];
       pos: Pos;
     }
+  /**
+   * `panic("...")` written as a statement. Stdlib §2.4 places it inside a
+   * reducer, and a reducer body holds statements, not expressions — as an
+   * expression the only way to write it was to assign its result somewhere,
+   * which is the one thing it never produces.
+   */
+  | { kind: "PanicStmt"; message: Expr; pos: Pos }
   | { kind: "NoopStmt"; pos: Pos };
 
 export type Lvalue =
@@ -364,6 +371,12 @@ export type Expr =
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
+  /**
+   * `(a, b, …)` — the value a `Tuple(T1, …, Tn)` types and a tuple pattern
+   * destructures. Two items minimum; one parenthesised expression is that
+   * expression, which is the older and more common reading of `( … )`.
+   */
+  | { kind: "TupleLit"; items: Expr[]; pos: Pos }
   | { kind: "Ref"; name: string; pos: Pos }
   | { kind: "BinOp"; op: BinOp; lhs: Expr; rhs: Expr; pos: Pos }
   | { kind: "UnaryOp"; op: "-" | "!"; rhs: Expr; pos: Pos }

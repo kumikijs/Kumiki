@@ -36,18 +36,26 @@ These seven are the **logic/data/UI core** — what an author must learn to expr
 ## 1.2 Lexical
 
 ```
-identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; max 32 characters
-qname       ::= identifier ('.' identifier)*     ; dot-separated fully qualified name
+identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; max 32 characters, longest munch
+qname       ::= identifier ('.' name-segment)*   ; dot-separated fully qualified name
+name-segment ::= identifier | keyword            ; a segment names something outside the language
 literal     ::= number | string | bool | unit
 number      ::= int | float
 int         ::= '-'? [0-9]+
-float       ::= '-'? [0-9]+ '.' [0-9]+
+float       ::= '-'? [0-9]+ '.' [0-9]+           ; the digits after the point are required
 string      ::= '"' (escape | non-quote-char)* '"'
 escape      ::= '\\' ('n' | 't' | 'r' | '"' | '\\' | 'u{' hex+ '}')
 bool        ::= 'true' | 'false'
 unit        ::= '()'
+tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; the value a Tuple types
 comment     ::= '#' until-eol                    ; single-line comment only
 ```
+
+**`-` is both an identifier character and subtraction, and longest munch decides.** A `-` continues the identifier when an identifier character follows it, and ends it otherwise. So `page-size`, `base-url` and `on-401` are one name each — and so is `count-1`, which is why subtraction between a name and a literal is written `count - 1`. `count -1` and `count- 1` also read as subtraction, because in both the `-` has no identifier character after it. A name written `count-1` that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), and its message says so.
+
+**A `#` with whitespace on either side of it always starts a comment.** It is the selector operator ([§1.6.1](#_1-6-1-syntax)) only when identifier characters sit tight on both sides, as in `SaveBtn#new` — everywhere else, including `#TODO` at the start of a line and `= 0# how many`, it runs to the end of the line.
+
+**Positions.** A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line. A column counts UTF-16 code units, so an astral character advances it by two — the same convention the Language Server Protocol uses, and the one every consumer of a Kumiki position needs, since a patch splices a source line at `column - 1`. A leading byte-order mark is not part of the text and is skipped.
 
 ### 1.2.1 Operators
 
@@ -164,7 +172,7 @@ Structurally identical types have the same content-hash. Only `nominal` produces
 ### 1.4.1 Syntax
 
 ```
-slot-def    ::= 'slot' identifier ':' type-expr modifier* ('=' init-expr)?
+slot-def    ::= 'slot' identifier ':' type-expr modifier? '=' init-expr
 modifier    ::= 'transient' | 'volatile'
 init-expr   ::= literal | record-literal | collection-literal | builtin-call
 ```
@@ -174,6 +182,10 @@ init-expr   ::= literal | record-literal | collection-literal | builtin-call
 | (none) | Retained on hot reload; subject to persistence |
 | `transient` | Discarded on hot reload |
 | `volatile` | Not written to the episode log; discarded on hot reload |
+
+At most one modifier: `volatile` already does everything `transient` does, so the pair would say nothing the second word did not.
+
+The initial value is required. A slot with no `=` would have to hold something before the program first writes to it, and the language has no value for that — no null, and no per-type zero.
 
 ### 1.4.2 Invariants
 
@@ -256,7 +268,7 @@ reducer-def ::= 'reducer' identifier
 event-pattern ::= ui-event | effect-event | timer-event | lifecycle-event | route-event
 ui-event      ::= 'ui' '.' ui-kind '(' selector ')'
 ui-kind       ::= 'click' | 'submit' | 'change' | 'input' | 'focus' | 'blur' | 'key' | 'hover'
-selector      ::= tile-ref | 'self'
+selector      ::= tile-ref
 tile-ref      ::= identifier ('#' identifier)?    ; TileName or TileName#id
 effect-event  ::= identifier '.' ('ok' | 'err') '(' bind (',' bind)* ')'
 timer-event   ::= 'timer' '(' duration ')'   ; fires this reducer every intervalMs

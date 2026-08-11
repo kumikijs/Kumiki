@@ -286,6 +286,11 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
   if (s.kind === "StopTimer") {
     return `_stops.push(${JSON.stringify(s.name)});`;
   }
+  // The same helper the expression form lowers to — it throws, so a statement
+  // is the shape that always fitted.
+  if (s.kind === "PanicStmt") {
+    return `_s.panic(${jsOfExpr(s.message, ctx)});`;
+  }
   return genSlotAssign(s.lvalue, s.rhs, ctx);
 }
 

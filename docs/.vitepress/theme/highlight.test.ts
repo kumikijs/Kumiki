@@ -48,7 +48,12 @@ describe("kumiki playground highlighter", () => {
     expect(html).toMatch(/&(#x26|amp);/);
   });
 
-  it("AC4: highlights every feature example without throwing (JS regex engine)", async () => {
+  // The cost is one highlighter build plus one pass per example, so it grows
+  // with the corpus and sits near the default 5s ceiling. A timeout here has
+  // never meant a broken grammar, only a cold start.
+  it("AC4: highlights every feature example without throwing (JS regex engine)", {
+    timeout: 30_000,
+  }, async () => {
     const highlight = await createKumikiHighlighter();
     const entries = Object.entries(exampleModules);
     expect(entries.length).toBeGreaterThan(0);

@@ -193,6 +193,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "ListLit":
       return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+    // The same array a tuple pattern destructures — `tupleArm` guards with
+    // `Array.isArray` and reads by index, so the two halves already agreed on
+    // the shape before there was a way to write one.
+    case "TupleLit":
+      return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
     case "MapLit": {
       const parts = e.entries.map((en) => {
         // A `<any-id>` map key (test expect, §8.2.2) lowers to the runtime's

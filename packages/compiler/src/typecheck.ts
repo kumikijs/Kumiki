@@ -1267,6 +1267,10 @@ function checkStmt(
     }
     return;
   }
+  if (s.kind === "PanicStmt") {
+    checkExpr(s.message, sym, errors, ctx);
+    return;
+  }
   // SlotAssign
   const root = lvalueRoot(s.lvalue);
   if (!sym.slots.has(root)) {
@@ -1376,6 +1380,25 @@ function checkCallee(
   });
 }
 
+/**
+ * The sentence to add when an unresolved name reads as arithmetic.
+ *
+ * `-` is an identifier character AND the subtraction operator, and longest
+ * munch settles it in the identifier's favour — `on-401` is core syntax written
+ * exactly like `count-1`, so no rule can keep one and split the other. What is
+ * left is that `count-1` resolves to nothing, and the diagnostic can say why
+ * when the part before the hyphen is a name that does resolve.
+ */
+function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string {
+  const cut = name.indexOf("-");
+  if (cut <= 0) return "";
+  const head = name.slice(0, cut);
+  const tail = name.slice(cut + 1);
+  const resolves = ctx.localBinds.has(head) || sym.slots.has(head) || sym.fns.has(head);
+  if (!resolves) return "";
+  return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
+}
+
 function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   switch (e.kind) {
     case "Num":
@@ -1413,7 +1436,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       errors.push({
         code: "E0103",
         kind: "undef-ref",
-        message: `Reference to undefined name "${e.name}"`,
+        message: `Reference to undefined name "${e.name}"${arithmeticHint(e.name, sym, ctx)}`,
         pos: e.pos,
       });
       return;
@@ -1511,6 +1534,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const f of e.fields) checkExpr(f.value, sym, errors, ctx);
       return;
     case "ListLit":
+    case "TupleLit":
       for (const it of e.items) checkExpr(it, sym, errors, ctx);
       return;
     case "MapLit":
@@ -2219,6 +2243,14 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       );
       return container("List", [elem ?? unknownType(e.pos)], e.pos);
     }
+    case "TupleLit":
+      // Position by position, unlike a list: a tuple's items are allowed to
+      // disagree, which is the whole reason to write one.
+      return container(
+        "Tuple",
+        e.items.map((it) => inferType(it, sym, ctx) ?? unknownType(it.pos)),
+        e.pos,
+      );
     case "MapLit": {
       // `{}` is both the empty map and the only set literal the grammar has,
       // so an entry-less literal says nothing about which it is.
@@ -2685,6 +2717,7 @@ function walkExpr(e: Expr | undefined, visit: (n: Expr) => void): void {
       for (const f of e.fields) walkExpr(f.value, visit);
       return;
     case "ListLit":
+    case "TupleLit":
       for (const it of e.items) walkExpr(it, visit);
       return;
     case "MapLit":
