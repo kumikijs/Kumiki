@@ -687,6 +687,17 @@ describe("isError mirrors the CLI's exit code", () => {
     expect(await flag("kumiki_fix", { path: file, apply: true })).toBe(false);
     // Now clean.
     expect(await flag("kumiki_fix", { path: file })).toBe(false);
+
+    // Apply is not success by itself: this file has a second error no patch
+    // covers, so the write lands and the file is still broken.
+    const partial = join(workdir, "partial.kumiki");
+    writeFileSync(
+      partial,
+      `${readFileSync(FIX_COUNTER_TYPO, "utf8")}
+tile Orphan = column(zzz.show)
+`,
+    );
+    expect(await flag("kumiki_fix", { path: partial, apply: true })).toBe(true);
   });
 
   it("flags an auto-patch that only proposed, and an unknown test name", async () => {
