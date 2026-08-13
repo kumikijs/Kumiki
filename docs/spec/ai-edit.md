@@ -74,7 +74,7 @@ kumiki check --effects             # capability/policy consistency only
 kumiki check --a11y                # accessibility conventions
 ```
 
-The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
+The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. They name what to keep, so they compose — `--types --refs` reports both bands rather than one of them. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
 
 ### 9.2.4 Fix Assistance
 
@@ -83,6 +83,39 @@ kumiki fix --auto-patch <error-id>          # propose a CRDT op that auto-fixes 
 kumiki fix --apply                          # apply the proposal as-is
 kumiki fix --interactive                    # apply proposals one at a time with confirmation
 ```
+
+### 9.2.5 Exit Codes
+
+Every verb reports through its exit code, because that is the only part of the output a shell reads. `kumiki fix --apply && kumiki build …` has to stop when the file is still broken, and `kumiki test app.kumiki 'checkout-*'` has to fail when the name it was given matches nothing.
+
+| code | meaning |
+|---|---|
+| `0` | the verb did what it was asked |
+| `1` | the verb ran and the operation failed |
+| `2` | the arguments are the wrong shape |
+
+`2` is decided before the `.kumiki` file is read — a missing positional, an unknown option, a positional outside its allowed set. It therefore never means "we looked at your program"; whatever `2` reports, the program was not examined.
+
+Per verb, `1` means:
+
+| verb | exits `1` when |
+|---|---|
+| `check` | a diagnostic of severity `error` survives the narrowing flags. Warnings do not change the code (`ok (1 warning)` is `0`) |
+| `build` | the program does not compile, or the output cannot be written |
+| `smoke` | the app fails to mount, or an interaction throws |
+| `run` | the scenario document is unreadable / not a scenario, or a step fails |
+| `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0`; `--watch` runs until interrupted and so reports nothing |
+| `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` for any file that is not already in that state |
+| `view` / `refs` | the file, or the qualified name inside it, does not exist. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for |
+| `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
+| `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
+| `lock` / `unlock` | the lock is held by another agent, or there is none to release |
+| `replay` | the log is unreadable, the named episode is not in it, or a replayed episode panicked |
+| `dev` | the server could not start. Once it is serving it runs until interrupted, and so reports nothing |
+
+A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.
+
+The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isError`: a failure that would exit `1` here sets `isError: true` there. The content is unchanged by the flag — a failed check still answers with its diagnostics and a failed scenario with its trace. Only a failure that produced no answer at all (a missing file, a name that resolves to nothing) replaces the content with the envelope `{"error": {"kind", "message"}}`.
 
 ## 9.3 The Form of a CRDT op
 

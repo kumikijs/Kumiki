@@ -7,9 +7,9 @@ import { capsFor } from "./_shared/caps.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
 
 const USAGE =
-  "Usage: kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]";
+  "Usage: kumiki check <input.kumiki> [--strict-a11y] [--strict-icons] [--strict-selector-id] [--types] [--refs] [--effects]";
 
-export type CheckScope = "all" | "types" | "refs" | "effects";
+export type CheckScope = "types" | "refs" | "effects";
 
 /**
  * Which diagnostic bands each narrowing flag selects (see the code system in
@@ -20,7 +20,7 @@ export type CheckScope = "all" | "types" | "refs" | "effects";
  * report `ok` for a file with no `app` definition, a failure `--types` was
  * never meant to have an opinion about.
  */
-const SCOPE_BANDS: Record<Exclude<CheckScope, "all">, readonly string[]> = {
+const SCOPE_BANDS: Record<CheckScope, readonly string[]> = {
   types: ["E02", "E04", "E06"],
   refs: ["E01", "E05"],
   effects: ["E03"],
@@ -36,15 +36,25 @@ const SCOPED_BANDS = new Set(Object.values(SCOPE_BANDS).flat());
  */
 const STRICT_GATE_CODES = new Set(["E0212"]);
 
-/** Exported for the band × scope table test; the CLI is the only caller. */
-export function filterByScope(errors: KumikiError[], scope: CheckScope): KumikiError[] {
-  if (scope === "all") return errors;
+/**
+ * Narrow `errors` to the bands the given scopes select. Scopes compose: they
+ * name what to keep, so `--types --refs` keeps the union of both. Taking only
+ * the first would drop findings the same command line explicitly asked for, and
+ * `check` would report `ok` for a file the user was told to look at.
+ *
+ * The empty list is the identity — nothing was narrowed, so nothing is hidden.
+ *
+ * Exported for the band × scope table test; the CLI is the only other caller.
+ */
+export function filterByScope(errors: KumikiError[], scopes: readonly CheckScope[]): KumikiError[] {
+  if (scopes.length === 0) return errors;
+  const selected = new Set(scopes.flatMap((s) => SCOPE_BANDS[s]));
   return errors.filter((e) => {
     if (e.severity === "warning") return true;
     if (STRICT_GATE_CODES.has(e.code)) return true;
     const band = e.code.slice(0, 3);
     if (!SCOPED_BANDS.has(band)) return true;
-    return SCOPE_BANDS[scope].includes(band);
+    return selected.has(band);
   });
 }
 
@@ -53,7 +63,7 @@ export async function checkCmd(
   strictA11y: boolean,
   strictIcons: boolean,
   strictSelectorId: boolean,
-  scope: CheckScope,
+  scopes: readonly CheckScope[],
 ): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const store = load(inputPath);
@@ -75,7 +85,7 @@ export async function checkCmd(
     iconNames,
     capabilities: capsFor(inputPath),
   });
-  const filtered = filterByScope(all, scope);
+  const filtered = filterByScope(all, scopes);
   const warnings = filtered.filter((d) => d.severity === "warning");
   const errors = filtered.filter((d) => d.severity !== "warning");
   for (const d of [...warnings, ...errors]) {
@@ -98,18 +108,19 @@ type CheckOptions = {
   effects?: boolean;
 };
 
-function scopeFrom(options: CheckOptions): CheckScope {
-  if (options.types) return "types";
-  if (options.refs) return "refs";
-  if (options.effects) return "effects";
-  return "all";
+function scopesFrom(options: CheckOptions): CheckScope[] {
+  const scopes: CheckScope[] = [];
+  if (options.types) scopes.push("types");
+  if (options.refs) scopes.push("refs");
+  if (options.effects) scopes.push("effects");
+  return scopes;
 }
 
 export function registerCheck(program: Command): void {
   const cmd = program
     .command("check")
     .description(
-      "Typecheck / validate a .kumiki file. The narrowing flags below always also report structure (E00*), opt-in checks (E07*) and runtime hazards (E08*), which no narrowing selects.",
+      "Typecheck / validate a .kumiki file. The narrowing flags below compose (giving two reports both bands) and always also report structure (E00*), opt-in checks (E07*) and runtime hazards (E08*), which no narrowing selects.",
     )
     .argument("[input]", "input .kumiki file")
     .option("--types", "narrow to type errors (E02*/E04*/E06*)")
@@ -126,7 +137,7 @@ export function registerCheck(program: Command): void {
         Boolean(options.strictA11y),
         Boolean(options.strictIcons),
         Boolean(options.strictSelectorId),
-        scopeFrom(options),
+        scopesFrom(options),
       );
     });
   applyStrictFlags(cmd);

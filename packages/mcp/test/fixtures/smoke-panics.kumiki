@@ -1,0 +1,8 @@
+slot count : Int = 0
+reducer boom on=ui.click(BoomBtn) do= panic("boom")
+tile BoomBtn = button(text="go", onClick=boom)
+tile App = column(heading("Count: " + count.show), BoomBtn)
+app SmokePanics
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

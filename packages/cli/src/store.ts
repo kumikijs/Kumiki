@@ -30,9 +30,15 @@ export type Store = {
   refs?: Map<string, Reference[]>;
 };
 
-/** Every `Def` kind, including the two that are never referenced by name. */
-const LAYER_OF: Record<string, string> = {
-  TestDef: "test",
+/**
+ * The label each `Def` kind carries — the seven layers of the language, plus
+ * `theme`, `motion` and `test`, which are definitions but not layers.
+ *
+ * `satisfies Record<Def["kind"], string>` is what makes this total: a new kind
+ * of definition is a compile error here rather than a definition that silently
+ * lists as `?` and cannot be filtered to.
+ */
+const LAYER_OF = {
   TypeDef: "type",
   SlotDef: "slot",
   EffectDef: "effect",
@@ -42,7 +48,15 @@ const LAYER_OF: Record<string, string> = {
   AppDef: "app",
   ThemeDef: "theme",
   MotionDef: "motion",
-};
+  TestDef: "test",
+} as const satisfies Record<Def["kind"], string>;
+
+/**
+ * Every label a `DefEntry` can carry, in the order above. Derived rather than
+ * written out a second time, so a definition the store labels is always one
+ * `list <label>` and `kumiki_list` accept as a filter.
+ */
+export const LAYERS = Object.values(LAYER_OF);
 
 export function load(path: string): Store {
   const source = readFileSync(path, "utf8");
@@ -59,7 +73,7 @@ function buildEntries(program: Program, lines: string[], tokens: Token[]): DefEn
   const out: DefEntry[] = [];
   for (let i = 0; i < program.defs.length; i++) {
     const d = program.defs[i]!;
-    const layer = LAYER_OF[d.kind] ?? "?";
+    const layer = LAYER_OF[d.kind];
     const name = "name" in d ? d.name : "_";
     const start = (d as { pos?: { line: number } }).pos?.line ?? 1;
     // End line: just before the next def's start (or last line of file).

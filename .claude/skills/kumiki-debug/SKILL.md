@@ -56,6 +56,10 @@ pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show plan
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file> --apply  # apply them
 ```
 
+Both forms exit `1` while the file still has errors, so the first one exits `1`
+whenever it has anything to propose — that is the proposal succeeding, not
+failing. Read the output, not the code, until `--apply` reports the file clean.
+
 Or `kumiki_fix` via `@kumiki/mcp`.
 
 ## Warnings (W-codes)

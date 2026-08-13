@@ -6,6 +6,13 @@ const USAGE = "Usage: kumiki refs <input.kumiki> <qname>";
 
 export function refsCmd(inputArg: string, qname: string): void {
   const store = load(resolve(process.cwd(), inputArg));
+  // "(no references)" for a name that does not exist reads as "nothing depends
+  // on this, safe to delete" — the opposite of what a typo'd qname means. Same
+  // message and same exit code as `view`, which is asked the same question.
+  if (!store.byQName.has(qname)) {
+    console.error(`Definition "${qname}" not found`);
+    process.exit(1);
+  }
   const refs = findReferences(store, qname);
   if (refs.length === 0) {
     console.log(`(no references to ${qname})`);

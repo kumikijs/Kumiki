@@ -22,6 +22,8 @@ const FIX_COUNTER_TYPO_WITH_TEST = resolve(here, "fixtures/counter-typo-with-tes
 const FIX_A11Y = resolve(here, "fixtures/a11y-missing-alt.kumiki");
 const FIX_REGRESSION = resolve(here, "fixtures/regression.kumiki");
 const FIX_FAILING_SINGLE = resolve(here, "fixtures/failing-single.kumiki");
+const FIX_WARNING_ONLY = resolve(here, "fixtures/warning-only.kumiki");
+const FIX_SMOKE_PANICS = resolve(here, "fixtures/smoke-panics.kumiki");
 
 type TextContent = { type: "text"; text: string };
 
@@ -529,6 +531,212 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
       expect(panicStep.cause).toHaveLength(1);
       expect(panicStep.cause![0]!.message).toBe("root");
       expect(panicStep.cause![0]!.stack).toMatch(/at inner/);
+    });
+  });
+});
+
+// A client that branches on `isError` has to be able to trust it. Half these
+// tools caught their own failures and returned a JSON envelope as a *success*
+// response; the other half let the throw reach the SDK, which flagged it. The
+// same missing file was a result in one tool and an error in the next.
+describe("failure reporting", () => {
+  let workdir: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-err-"));
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  /** A value for every required argument of `tool` other than `path`. */
+  const ARGS: Record<string, Record<string, unknown>> = {
+    kumiki_add: { layer: "slot", name: "x", body: ": Int = 0" },
+    kumiki_replace: { name: "slot.x", body: ": Int = 1" },
+    kumiki_remove: { name: "slot.x" },
+    kumiki_rename: { name: "slot.x", newName: "y" },
+    kumiki_edit: { name: "slot.x", patch: { find: "0", replace: "1" } },
+    kumiki_view: { name: "slot.x" },
+    kumiki_refs: { name: "slot.x" },
+    kumiki_history: { name: "slot.x" },
+    kumiki_auto_patch: { testName: "t" },
+    kumiki_run_scenario: { scenario: { steps: [] } },
+    kumiki_episode: { episodeId: "ep_0001" },
+  };
+
+  it("every tool that opens a file reports a missing one as an error", async () => {
+    // Enumerated from the live server rather than listed here: a tool added
+    // without the guard is the failure this is for, and a hand-written list
+    // would not contain it.
+    //
+    // Selected on `properties` rather than `required`, because the four tools
+    // that accept `source` OR `path` have neither as required — and those four
+    // are exactly the ones that answer with a sentence when they fail, so a
+    // list that skips them tests the guard where it was never in doubt.
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const withPath = tools.filter(
+        (t) =>
+          (t.inputSchema.properties as Record<string, unknown> | undefined)?.path !== undefined,
+      );
+      expect(withPath.map((t) => t.name)).toContain("kumiki_check");
+      expect(withPath.length).toBeGreaterThan(14);
+      for (const t of withPath) {
+        const res = await client.callTool({
+          name: t.name,
+          arguments: { path: join(workdir, "does-not-exist.kumiki"), ...(ARGS[t.name] ?? {}) },
+        });
+        expect(res.isError, `${t.name} reported a missing file as success`).toBe(true);
+        const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+        expect(body.startsWith("{"), `${t.name} used a different envelope: ${body}`).toBe(true);
+        const parsed = JSON.parse(body) as { error?: { kind: string; message: string } };
+        expect(parsed.error, `${t.name} used a different envelope`).toBeDefined();
+      }
+    });
+  });
+
+  it("a tool that succeeds is not flagged", async () => {
+    await withClient(async (client) => {
+      const res = await client.callTool({ name: "kumiki_check", arguments: { path: FIX_A11Y } });
+      expect(res.isError ?? false).toBe(false);
+    });
+  });
+
+  it("refs and view give the same answer for a name that is not defined", async () => {
+    await withClient(async (client) => {
+      for (const name of ["kumiki_refs", "kumiki_view"]) {
+        const res = await client.callTool({
+          name,
+          arguments: { path: FIX_COUNTER_TESTS, name: "slot.nope" },
+        });
+        expect(res.isError, name).toBe(true);
+        const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+        const parsed = JSON.parse(body) as { error: { message: string } };
+        expect(parsed.error.message, name).toBe('Definition "slot.nope" not found');
+      }
+    });
+  });
+});
+
+// `isError` follows one rule so no tool needs its own: it is set exactly when
+// the matching CLI verb would exit non-zero. These tools report a failed build
+// / smoke / scenario as a sentence with no machine-readable field beside it,
+// so this flag is the only thing a client can branch on.
+describe("isError mirrors the CLI's exit code", () => {
+  let workdir: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-dom-"));
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  async function flag(name: string, args: Record<string, unknown>): Promise<boolean> {
+    let out = false;
+    await withClient(async (client) => {
+      const res = await client.callTool({ name, arguments: args });
+      out = res.isError === true;
+    });
+    return out;
+  }
+
+  it("flags a check / build that failed on well-formed input", async () => {
+    // The file exists and parses, and neither tool throws — `validate` catches
+    // and `compile` returns `{kind: "fail"}`. So this is the tool running,
+    // producing its answer, and the answer being "this failed".
+    expect(await flag("kumiki_check", { path: FIX_COUNTER_TYPO })).toBe(true);
+    expect(await flag("kumiki_build", { path: FIX_COUNTER_TYPO })).toBe(true);
+  });
+
+  it("flags a smoke run on a file that compiles", async () => {
+    // Deliberately not the typo fixture: that one fails to compile, so the
+    // throw would reach the guard and this would pass without the smoke
+    // branch existing. This one is `ok` to `check` and panics when clicked.
+    expect(await flag("kumiki_smoke", { path: FIX_SMOKE_PANICS })).toBe(true);
+    expect(await flag("kumiki_smoke", { path: FIX_COUNTER_TESTS })).toBe(false);
+  });
+
+  it("does not flag a warning, which `kumiki check` exits 0 for", async () => {
+    const res = await flag("kumiki_check", { path: FIX_WARNING_ONLY, strictA11y: false });
+    expect(res).toBe(false);
+    // …and the warning is still reported, so this is not silence.
+    await withClient(async (client) => {
+      expect(await callTool(client, "kumiki_check", { path: FIX_WARNING_ONLY })).toContain("W0212");
+    });
+  });
+
+  it("flags a failing test run and a filter that matches nothing", async () => {
+    expect(await flag("kumiki_test", { path: FIX_FAILING_SINGLE })).toBe(true);
+    expect(await flag("kumiki_test", { path: FIX_COUNTER_TESTS, filter: "nope*" })).toBe(true);
+    expect(await flag("kumiki_test", { path: FIX_COUNTER_TESTS })).toBe(false);
+  });
+
+  it("flags a scenario whose step failed", async () => {
+    const failing = {
+      steps: [{ expect: { state: { count: 99 } } }],
+    };
+    expect(await flag("kumiki_run_scenario", { path: FIX_COUNTER_TESTS, scenario: failing })).toBe(
+      true,
+    );
+    const passing = { steps: [{ expect: { noErrors: true } }] };
+    expect(await flag("kumiki_run_scenario", { path: FIX_COUNTER_TESTS, scenario: passing })).toBe(
+      false,
+    );
+  });
+
+  it("flags a fix that leaves the file with errors, in either mode", async () => {
+    const file = join(workdir, "typo.kumiki");
+    copyFileSync(FIX_COUNTER_TYPO, file);
+    // Dry run: proposals exist, nothing is repaired, the file is unchanged.
+    expect(await flag("kumiki_fix", { path: file })).toBe(true);
+    expect(await flag("kumiki_fix", { path: file, apply: true })).toBe(false);
+    // Now clean.
+    expect(await flag("kumiki_fix", { path: file })).toBe(false);
+
+    // Apply is not success by itself: this file has a second error no patch
+    // covers, so the write lands and the file is still broken.
+    const partial = join(workdir, "partial.kumiki");
+    writeFileSync(
+      partial,
+      `${readFileSync(FIX_COUNTER_TYPO, "utf8")}
+tile Orphan = column(zzz.show)
+`,
+    );
+    expect(await flag("kumiki_fix", { path: partial, apply: true })).toBe(true);
+  });
+
+  it("flags an auto-patch that only proposed, and an unknown test name", async () => {
+    const file = join(workdir, "failing.kumiki");
+    copyFileSync(FIX_FAILING_SINGLE, file);
+    expect(
+      await flag("kumiki_auto_patch", { path: file, testName: "greet-should-say-planet" }),
+    ).toBe(true);
+    expect(await flag("kumiki_auto_patch", { path: file, testName: "no-such-test" })).toBe(true);
+    expect(
+      await flag("kumiki_auto_patch", {
+        path: file,
+        testName: "greet-should-say-planet",
+        apply: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("flags an episode id and a spec document that name nothing", async () => {
+    const file = join(workdir, "counter.kumiki");
+    copyFileSync(FIX_COUNTER_TESTS, file);
+    writeFileSync(`${file}.kumiki-episodes.jsonl`, "");
+    expect(await flag("kumiki_episode", { path: file, episodeId: "ep_nope" })).toBe(true);
+    expect(await flag("kumiki_spec_get", { doc: "langauge" })).toBe(true);
+    expect(await flag("kumiki_spec_get", { doc: "language" })).toBe(false);
+  });
+
+  it("offers `test` and `motion` as layer filters, which the store labels", async () => {
+    // The enum used to be written out by hand and had drifted from the labels
+    // `listDefs` puts on definitions, so these two were listed but could not
+    // be filtered to.
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const list = tools.find((t) => t.name === "kumiki_list");
+      const layer = (list?.inputSchema.properties as { layer?: { enum?: string[] } } | undefined)
+        ?.layer;
+      expect(layer?.enum).toContain("test");
+      expect(layer?.enum).toContain("motion");
+      expect(layer?.enum).toContain("slot");
     });
   });
 });

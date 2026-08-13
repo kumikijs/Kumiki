@@ -50,6 +50,7 @@ export {
 export {
   directDeps,
   findReferences,
+  LAYERS,
   listDefs,
   load,
   type Store,

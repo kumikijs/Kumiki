@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import type { Command } from "commander";
-import { listDefs, load } from "../store.ts";
+import { Argument, type Command } from "commander";
+import { LAYERS, listDefs, load } from "../store.ts";
 
 const USAGE = "Usage: kumiki list <input.kumiki> [layer]";
 
@@ -17,7 +17,11 @@ export function registerList(program: Command): void {
     .command("list")
     .description("List every definition in a .kumiki file (optionally filtered by layer)")
     .argument("[input]", "input .kumiki file")
-    .argument("[layer]", "layer name to filter by")
+    // Validated against the labels the store puts on definitions, so a word
+    // that labels nothing is rejected rather than answered with the empty
+    // output a real-but-unused label produces. Commander does the check, which
+    // also puts the alternatives in `--help` without a second copy of the list.
+    .addArgument(new Argument("[layer]", "definition label to filter by").choices([...LAYERS]))
     .allowExcessArguments(false)
     .action((input: string | undefined, layer: string | undefined) => {
       if (!input) {

@@ -621,7 +621,9 @@ test title-text =
     const file = join(dir, "behavioral.kumiki");
     writeFileSync(file, BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text"]);
-    expect(code).toBe(0);
+    // Proposing is not repairing: the test still fails when the process ends,
+    // which is what the exit code reports.
+    expect(code).toBe(1);
     expect(out).toContain('replace "Helo" with "Hello"');
     // File untouched (AC4).
     expect(readFileSync(file, "utf8")).toContain('heading("Helo")');
@@ -1087,7 +1089,9 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
   }, () => {
     const file = write("hide.kumiki", "slot count : Int = 0\ntile App = column(text(cout.show))\n");
     const { stdout, stderr, code } = runCli(["fix", file]);
-    expect(code).toBe(0);
+    // A dry run proposes; it does not repair. The file still has both errors
+    // when the process ends, so the exit code has to say so.
+    expect(code).toBe(1);
     expect(stdout).toContain('fix: replace "cout" with "count"');
     expect(stdout).toContain("(no auto-patch for 1 of 2)");
     // The stable kebab reason rides along — a repair loop branches on it.
