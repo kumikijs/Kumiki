@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "label": "nothing has happened yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "submits": 0, "cancels": 0 },
+        "domIncludes": ["submits=0 cancels=0"]
+      }
+    },
+    {
+      "label": "cancel is type=\"button\": it runs its own reducer and does NOT submit",
+      "do": { "clickText": "cancel" },
+      "expect": {
+        "noErrors": true,
+        "state": { "submits": 0, "cancels": 1 },
+        "domIncludes": ["submits=0 cancels=1"]
+      }
+    },
+    {
+      "label": "send is type=\"submit\": it submits the form it sits in",
+      "do": { "clickText": "send" },
+      "expect": {
+        "noErrors": true,
+        "state": { "submits": 1, "cancels": 1 },
+        "domIncludes": ["submits=1 cancels=1"]
+      }
+    }
+  ]
+}

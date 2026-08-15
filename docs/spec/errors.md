@@ -516,10 +516,11 @@ An application passes a different number of arguments than the thing it applies 
 | `emit E(...)` | one argument, or none when `in=Unit` | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
+| `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
 
 The tile and effect forms are the ones that used to go unreported: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`; an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch; and a tile that declares no `in=` but is *given* an argument mounts and renders normally, silently dropping the value the caller meant to pass.
 
-Built-in calls are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them.
+Built-in *calls* are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them. A **method** is checked when its lowering reads a fixed number of arguments — `t.format()` used to pass `check` and then kill `build` with a bare `TypeError` carrying no position. Only the minimum is enforced: `get-or` and `slice` branch on how many they were given.
 
 **Fix**: Pass the declared number of arguments, or change the declaration.
 
@@ -562,6 +563,30 @@ An `Int` position is given a literal outside the range JavaScript represents exa
 A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — that is a type mistake, not a precision one.
 
 **Fix**: Use a value inside the safe range, or carry the number as `Text`.
+
+### E0218 `for-over-non-list`
+
+A `for` iterates a `Map` or a `Set` directly. The iteration target of `for` is a list ([Tile Layer Invariants](./language.md#_1-7-2-invariants), inv. 5), and both of those are keyed objects at runtime — the program compiles and then throws where the loop is used: `.map is not a function` in a tile, `object is not iterable` in a reducer.
+
+> `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
+
+A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted.
+
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
+
+**Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
+
+### W0213 `handler-on-inert-tile` (warning)
+
+A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
+
+> `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+`onKeyDown`, `onMouseEnter`, `onFocus` and `onBlur` are never reported: the runtime attaches those listeners to whatever element the tile produced. That is about the listener, not about the event reaching it — `focus` and `blur` do not bubble, so a container that is not focusable never fires them, and `keydown` reaches a container only from a focusable descendant. Reporting those would take a focusability analysis this check does not do.
+
+[W0212](#w0212-ui-event-tile-mismatch) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target cannot fire `<ev>`. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
+
+**Fix**: Move the handler onto the tile that fires the event, or wrap the content in a `button`. To react to a click anywhere in a region, subscribe a reducer with `on=ui.click(<the clickable child>)`.
 
 ## E03xx — Capabilities and Purity
 

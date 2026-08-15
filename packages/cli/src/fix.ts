@@ -92,6 +92,23 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * The identifier at `pos`, when the expression starting there IS that
+ * identifier and nothing more. `null` for anything a suffix cannot simply be
+ * appended to — a call, an index, an existing field access — because the
+ * diagnostic gives the start of the expression and not its end.
+ */
+function identifierAt(store: Store, pos: Pos): string | null {
+  const line = store.lines[pos.line - 1];
+  if (line === undefined) return null;
+  const rest = line.slice(pos.col - 1);
+  const m = /^[A-Za-z_][A-Za-z0-9_-]*/.exec(rest);
+  if (!m) return null;
+  const after = rest.slice(m[0].length);
+  if (/^[.([]/.test(after)) return null;
+  return m[0];
+}
+
+/**
  * Replace `missing` with `replacement` at exactly the reported position.
  *
  * The name-suggest branches historically replaced the first `\b`-delimited
@@ -552,6 +569,30 @@ export function planFixesExplained(
           });
           return need + replaced;
         },
+      });
+    }
+    if (err.code === "E0218") {
+      // Message shape: `"for" iterates a List, but this is a <T> — iterate its
+      // .<remedy>`. The repair is a suffix on the iterated expression, and the
+      // diagnostic's position is where that expression starts — so this only
+      // fires when the expression is a plain name whose end is unambiguous.
+      // `for t in issues[$1].tags` reports at `issues`, and appending there
+      // would produce `issues.keys[$1].tags`.
+      const remedy = /iterate its (\.[a-z-]+)/.exec(err.message)?.[1];
+      if (!remedy) {
+        skip(err.code, "e0218-remedy-extract-failed", err.message);
+        continue;
+      }
+      const name = identifierAt(store, err.pos);
+      if (!name) {
+        skip(err.code, "e0218-target-not-a-plain-name", err.message);
+        continue;
+      }
+      patches.push({
+        code: err.code,
+        message: err.message,
+        description: `append "${remedy}" to "${name}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, name, `${name}${remedy}`),
       });
     }
     // Default classifier: this diagnostic code has no repair branch at all.

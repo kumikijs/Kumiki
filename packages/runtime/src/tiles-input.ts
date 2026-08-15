@@ -267,6 +267,11 @@ export const inputTiles: TileRenderers = {
     const b = document.createElement("button");
     b.dataset.kumikiTile = "button";
     b.textContent = node.text;
+    // Only when the tile said so: a `<button>` with no type submits the form it
+    // is in, and that default is the one forms.md §5.2.2 describes. Writing
+    // `type="button"` here for every button would silently un-submit every
+    // form that relies on it.
+    if (node.type) b.setAttribute("type", node.type);
     if (node.disabled) b.disabled = true;
     const id = tileId(node);
     if (id) b.id = id;
@@ -520,6 +525,19 @@ export const inputPatchers: TilePatchers = {
   button(el, _oldNode, newNode) {
     const b = el as HTMLButtonElement;
     if (b.textContent !== newNode.text) b.textContent = newNode.text;
+    // A conditional can swap one button for another with a different `type`,
+    // so this is reconciled like every other attribute — and a node that stops
+    // carrying one loses the attribute rather than keeping what the previous
+    // render set, which is what `create` and the SSR path produce for it.
+    //
+    // Compared against the ATTRIBUTE, not `b.type`: that property reports the
+    // browser's resolved value, so an absent or invalid attribute reads back as
+    // "submit" and the comparison would be true on every single reconcile.
+    const nextType = newNode.type ? String(newNode.type) : null;
+    if (b.getAttribute("type") !== nextType) {
+      if (nextType === null) b.removeAttribute("type");
+      else b.setAttribute("type", nextType);
+    }
     b.disabled = !!newNode.disabled;
     reconcileId(b, newNode);
     setHandlers(b, inputHandlers(newNode));

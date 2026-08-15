@@ -1,0 +1,34 @@
+# Feature: `button(type=…)` decides whether a button inside a form submits it.
+#
+# A `<button>` in a form submits by default — that is HTML, not Kumiki. So a
+# button meant to do something else (Cancel, Reset, a toolbar action) has to say
+# `type="button"`, and forms.md §5.2.2 gives `type="submit"` as the way to
+# submit. Neither reached the DOM: the compiler dropped the argument and the
+# renderer never wrote the attribute, so every button in a form submitted it.
+#
+# The scenario is the whole point: clicking Cancel must leave `submits` at 0,
+# and clicking Send must raise it.
+
+slot draft   : Text = ""
+slot submits : Int  = 0
+slot cancels : Int  = 0
+
+reducer send   on=ui.submit(Wrapper)   do= submits := submits + 1
+reducer cancel on=ui.click(CancelBtn)  do= cancels := cancels + 1
+
+tile CancelBtn = button(text="cancel", type="button", onClick=cancel)
+tile SendBtn   = button(text="send", type="submit")
+
+tile Wrapper = column(
+                 form(
+                   input(bind=draft, placeholder="say something"),
+                   row(CancelBtn, SendBtn) {gap: "sm"}))
+
+tile App = column(
+             Wrapper,
+             text("submits=" + submits.show + " cancels=" + cancels.show))
+
+app ButtonType
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

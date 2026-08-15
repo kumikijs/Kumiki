@@ -116,10 +116,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // to commit is invisible from the DOM, so a built artifact that stayed
     // silent about it would be the defect this budget is meant to protect
     // against, not the size.
+    // Bumped to 58KB with `policy=queue` (spec/runtime.md §10.4.3) and
+    // `Time.format`'s pattern substitution. Both ride in modules every app
+    // ships — the dispatcher in core.ts, the formatter in stdlib.js — because
+    // per-app pruning is by module, not by function. A counter pays for them;
+    // the alternative is a policy that silently runs in parallel and a
+    // formatter that silently ignores its pattern.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(57_000);
+    expect(total).toBeLessThan(58_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

@@ -55,7 +55,18 @@ function isPanic(e: unknown): e is KumikiPanic {
 export type TileNode = (
   | { kind: "page" | "column" | "row" | "card" | "box"; children: TileNode[]; props?: TileProps }
   | { kind: "heading" | "text"; text: string; props?: TileProps }
-  | { kind: "button"; text: string; props?: TileProps; loading?: boolean; disabled?: boolean }
+  | {
+      kind: "button";
+      text: string;
+      props?: TileProps;
+      loading?: boolean;
+      disabled?: boolean;
+      /**
+       * `submit` / `button` / `reset`. Absent means the tile did not say, and
+       * the HTML default applies — which is `submit` inside a form.
+       */
+      type?: string;
+    }
   | {
       kind: "input";
       props?: TileProps;
@@ -2137,12 +2148,24 @@ function makeEffectDispatcher(
     token?: string;
     effectName?: string;
   };
+  // `policy=queue` (§10.4.3): one chain per effect id. `tail` is the promise
+  // every new dispatch appends to, so at most one invocation of that id is in
+  // flight; `pending` is the entries that have not started yet, which is what
+  // `dispose()` has to release — each already claimed an episode token.
+  type QueueEntry = { token: string; effectName: string };
+  type Queue = { tail: Promise<void>; pending: QueueEntry[] };
   type RunState = {
     inflight: Map<string, AbortController>;
     timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
+    queues: Map<string, Queue>;
   };
-  const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
+  const state: RunState = {
+    inflight: new Map(),
+    timers: new Map(),
+    onceSeen: new Map(),
+    queues: new Map(),
+  };
 
   const launch = async (
     eff: EffectSpec,
@@ -2204,6 +2227,16 @@ function makeEffectDispatcher(
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+          }
+          // A queued entry that has not started is the same pending launch as
+          // a debounce timer: it holds an episode token and would run after
+          // the user pressed Cancel unless it is released here.
+          const q = state.queues.get(target);
+          if (q) {
+            const waiting = q.pending.splice(0, q.pending.length);
+            for (const e of waiting) {
+              if (e.token) onPolicyCancel?.(e.token, e.effectName);
+            }
           }
           const t = state.timers.get(target);
           // Only debounce timers represent a pending launch we want to drop.
@@ -2267,6 +2300,38 @@ function makeEffectDispatcher(
         state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
         return;
       }
+      if (policy.kind === "queue") {
+        // Claim the episode token NOW, like the debounce branch: this launch
+        // happens when the ones before it finish, and a token taken then would
+        // attach the effect-start to whatever episode is on top by that point
+        // rather than to the one that emitted (spec §10.5.1).
+        const token = onLaunch?.(eff.name, input) ?? "";
+        const entry: QueueEntry = { token, effectName: eff.name };
+        const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
+        q.pending.push(entry);
+        const runNext = async (): Promise<void> => {
+          const idx = q.pending.indexOf(entry);
+          // Gone from `pending` means something already released this entry's
+          // token — `dispose()`, or a cancel by id — so there is nothing left
+          // to run.
+          if (idx === -1) return;
+          q.pending.splice(idx, 1);
+          await launch(eff, input, key, token);
+        };
+        // Both arms, so a rejection anywhere in the chain does not skip every
+        // later `onFulfilled` — that would leave this id's queue dead for the
+        // rest of the mount, with each stranded entry still holding the
+        // episode token it claimed.
+        //
+        // No test reaches it: `launch` catches its own failures, and every
+        // caller between here and it does too, so there is no path today that
+        // rejects. It stays because the alternative is a policy whose failure
+        // mode is silent and permanent, resting on a property of code three
+        // layers away that nothing states.
+        q.tail = q.tail.then(runNext, runNext);
+        state.queues.set(id, q);
+        return;
+      }
       if (policy.kind === "throttle") {
         if (state.timers.has(id)) return;
         const h = setTimeout(() => state.timers.delete(id), policy.ms);
@@ -2302,6 +2367,17 @@ function makeEffectDispatcher(
           onPolicyCancel?.(t.token, t.effectName);
         }
       }
+      // Queued launches that never started hold a claimed effect-start on an
+      // episode that has already closed — the same debt the debounce drain
+      // above settles. Clearing `pending` is also what tells the chained thunk
+      // not to run.
+      for (const q of state.queues.values()) {
+        const waiting = q.pending.splice(0, q.pending.length);
+        for (const e of waiting) {
+          if (e.token) onPolicyCancel?.(e.token, e.effectName);
+        }
+      }
+      state.queues.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
     },

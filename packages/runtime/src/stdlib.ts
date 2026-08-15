@@ -6,6 +6,22 @@
 
 import { KumikiPanic, type RefinementRejection, refinementRejectionOf, tokenRef } from "./core.ts";
 
+/**
+ * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
+ *
+ * A blank — `null`, `undefined`, `""`, whitespace — is not zero here. `Number`
+ * says it is, and the epoch is a date that looks real, which is the worst
+ * thing an absent field can render as.
+ */
+function instantOf(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (raw === "") return Number.NaN;
+  const n = Number(raw);
+  if (Number.isFinite(n)) return n;
+  const parsed = _stdlibCore.parseTime(raw);
+  return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
+}
+
 export const _stdlibCore = {
   /**
    * Record a slot write against its refinement and return the value unchanged
@@ -39,6 +55,65 @@ export const _stdlibCore = {
    */
   token(group: string, path: string[]): string {
     return tokenRef(group, path);
+  },
+  /**
+   * `Time.parse(text)` (stdlib.md §2.2.8) — `Some(ms)`, or `None` for text that
+   * names no instant.
+   *
+   * A **date-only** string is read as LOCAL midnight, not the UTC midnight
+   * `Date.parse` gives it. `format` renders local fields, so the UTC reading
+   * round-trips to the day before west of Greenwich: `"2026-08-14"` from a
+   * `type="date"` input would come back as `2026-08-13` in Los Angeles. The two
+   * halves have to agree on which clock a zone-less string is on, and the one
+   * the reader is looking at is the only defensible answer.
+   */
+  parseTime(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    // No early return for a blank: `Date.parse("")` is already NaN, and a
+    // branch that cannot change an answer is a branch the next reader has to
+    // re-derive.
+    const raw = String(text ?? "").trim();
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    const ms = dateOnly
+      ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime()
+      : Date.parse(raw);
+    return Number.isFinite(ms) ? _stdlibCore.Some(ms) : _stdlibCore.None;
+  },
+  /**
+   * `Time.format(pattern)` (stdlib.md §2.2.8). A `Time` is a millisecond
+   * number, and the pattern is a template: `yyyy MM dd HH mm ss` are replaced
+   * by the fields of that instant and everything else is copied through, so
+   * `"yyyy-MM-dd HH:mm"` and `"dd/MM/yyyy"` both work.
+   *
+   * **Local time.** The string has no zone in it, so it is read as the reader's
+   * wall clock. Rendering UTC fields instead would show the wrong day to
+   * everyone whose local date differs from the UTC one at that moment — after
+   * midnight east of Greenwich, and in the evening west of it.
+   */
+  formatTime(ms: unknown, pattern: unknown): string {
+    // A `Time` is a millisecond number, and everything the compiler produces
+    // is one. It can still arrive as text from outside the language — a JSON
+    // payload mapped into a `Time` field, or state persisted by a build whose
+    // `Time.parse` stored the string it was given. Reading those rather than
+    // rendering a NaN date is the difference between a date and a bug report.
+    //
+    // `null`, `""` and other blanks are NOT 1970: `Number(null)` is 0, so
+    // taking the numeric branch first would render the epoch for a field that
+    // is simply absent — a date that looks real. Those, and text that names no
+    // instant, render as NaN where they can be seen.
+    const d = new Date(instantOf(ms));
+    const p = typeof pattern === "string" ? pattern : String(pattern ?? "");
+    const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+    const fields: Record<string, string> = {
+      yyyy: pad(d.getFullYear(), 4),
+      MM: pad(d.getMonth() + 1),
+      dd: pad(d.getDate()),
+      HH: pad(d.getHours()),
+      mm: pad(d.getMinutes()),
+      ss: pad(d.getSeconds()),
+    };
+    // One pass over the whole pattern: replacing token by token would let the
+    // digits of an earlier substitution match a later token.
+    return p.replace(/yyyy|MM|dd|HH|mm|ss/g, (tok) => fields[tok] ?? tok);
   },
   mapSize(m: unknown): number {
     if (m instanceof Map) return m.size;

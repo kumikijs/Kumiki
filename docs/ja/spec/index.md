@@ -93,6 +93,8 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0215](./errors.md#e0215-unknown-record-field) | `unknown-record-field` | type | コア |
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | コア |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | コア |
+| [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | コア |
+| [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |
@@ -188,4 +190,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `68-name-uniqueness.kumiki` | type, slot, fn | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | コア | [§1.2](./language.md#_1-2-字句) |
+| `71-button-type.kumiki` | slot, reducer, tile | フォーム | [§5.2.2](./forms.md#_5-2-2-submit-の挙動) |
+| `72-time-format.kumiki` | slot, fn, tile | 標準ライブラリ | [§2.2.8](./stdlib.md#_2-2-8-time) |
+| `73-effect-policy-queue.kumiki` | slot, effect, reducer | ライフサイクル | [§10.4.3](./runtime.md#_10-4-3-policy-処理) |
 <!-- examples:end -->

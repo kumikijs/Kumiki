@@ -33,7 +33,7 @@ import { isTileExpr } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
-import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
+import { KNOWN_MEMBERS, KNOWN_METHODS, METHOD_MIN_ARGS } from "./codegen.ts";
 import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
@@ -42,7 +42,7 @@ import { STDLIB_TYPES } from "./stdlib-types.ts";
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
-import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
+import { HANDLER_NAMES, HANDLER_PROP_TILES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
 import {
   describeDuplicate,
   duplicateSubRoutes,
@@ -649,9 +649,59 @@ function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
   return elementType(inferType(iter, sym, ctx), sym);
 }
 
+/**
+ * `for` iterates a list (language.md §1.7.2 inv. 5). A `Map` and a `Set` are
+ * both plain objects at runtime — keyed by field, not indexed — so iterating
+ * one compiles and then throws where it is used: `.map is not a function` in a
+ * tile, `object is not iterable` in a reducer. The spec's answer is to name the
+ * list you meant, and both types have one.
+ *
+ * Silent when the type is unknown: `null` from `inferType` means "cannot tell",
+ * never "not a collection".
+ */
+function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  const t = unaliasType(inferType(iter, sym, ctx), sym);
+  if (t?.kind !== "TypeApp") return;
+  const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
+  if (!remedy) return;
+  // A `Map` has two lists in it and they bind different things, so the message
+  // names both: `.keys` was not necessarily what the loop wanted.
+  const alternative = t.name === "Map" ? " (or .values, which binds the value)" : "";
+  errors.push({
+    code: "E0218",
+    kind: "for-over-non-list",
+    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}${alternative}`,
+    pos: iter.pos,
+  });
+}
+
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+}
+
+/**
+ * `button(type=…)` takes one of the three HTML values. A literal outside them
+ * is worth reporting because of which way it fails: an invalid `type`
+ * attribute resolves to `submit`, so `type="submmit"` on a button written NOT
+ * to submit makes it submit the form it is in — the failure direction with the
+ * most damage. Only literals are checked; an expression is unresolvable here,
+ * exactly as `input(type=…)` treats one.
+ */
+const BUTTON_TYPES = new Set(["submit", "button", "reset"]);
+
+function checkButtonType(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  if (t.name !== "button") return;
+  const arg = t.args.find((a) => a.name === "type");
+  if (!arg) return;
+  const v = arg.value as Expr;
+  if (v.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `button type="${v.value}" is not one of submit / button / reset; an invalid type submits`,
+    pos: v.pos,
+  });
 }
 
 /**
@@ -724,6 +774,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
   switch (t.kind) {
     case "TileFor": {
       checkExpr(t.iter, sym, errors, ctx);
+      checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
       checkTileExpr(t.body, sym, errors, inner);
@@ -823,6 +874,7 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, errors);
   checkIconName(t, sym, errors);
+  checkButtonType(t, errors);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");
@@ -873,6 +925,7 @@ function checkTileCall(
     // Named arg whose name is an event-handler binds a reducer rather than a slot ref.
     if (arg.name && HANDLER_NAMES.has(arg.name)) {
       const expr = v as Expr;
+      checkHandlerTarget(t.name, arg.name, expr.pos, errors);
       if (expr.kind !== "Ref") {
         errors.push({
           code: "E0201",
@@ -895,6 +948,7 @@ function checkTileCall(
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
       const ref = prop.value;
+      checkHandlerTarget(t.name, prop.name, ref.pos, errors);
       if (ref.kind !== "Ref") {
         errors.push({
           code: "E0201",
@@ -945,6 +999,35 @@ function checkTileCall(
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
+}
+
+/**
+ * A handler prop written on a tile whose renderer never reads it.
+ * `row(text("card"), onClick=open)` compiles, renders, and does nothing: the
+ * container renderer wires layout and style, and clicks reach whatever
+ * descendant handles them — or nothing.
+ *
+ * A warning rather than an error, matching W0212: the same silent-drop
+ * situation, and the same reason to report it rather than break the build.
+ * `W0212` cannot see this one — it asks about `ui.<ev>(Tile)` selectors, and a
+ * container with any clickable descendant satisfies it.
+ */
+function checkHandlerTarget(
+  tileName: string,
+  handler: string,
+  pos: Pos,
+  errors: KumikiError[],
+): void {
+  if (!BUILTIN_TILES.has(tileName)) return;
+  const allowed = HANDLER_PROP_TILES[handler];
+  if (allowed == null || allowed.has(tileName)) return;
+  errors.push({
+    code: "W0213",
+    kind: "handler-on-inert-tile",
+    severity: "warning",
+    message: `"${handler}" on ${tileName}() is dropped — ${tileName} does not fire it. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    pos,
+  });
 }
 
 /**
@@ -1184,6 +1267,7 @@ function checkStmt(
 ): void {
   if (s.kind === "ForStmt") {
     checkExpr(s.iter, sym, errors, ctx);
+    checkIterationTarget(s.iter, sym, errors, ctx);
     const inner = innerScope(ctx);
     bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
     // A loop body executes multiple times; track writes inside its own scope
@@ -1551,6 +1635,20 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           message: `Method ".${e.method}" is not implemented by the runtime`,
           pos: e.pos,
         });
+      }
+      {
+        // A method whose lowering reads arguments it was not given crashes
+        // codegen with a bare `TypeError` and no position — so `check` says ok
+        // and `build` dies. Reported here, where the position is.
+        const min = METHOD_MIN_ARGS.get(e.method);
+        if (min !== undefined && e.args.length < min) {
+          errors.push({
+            code: "E0213",
+            kind: "call-arity-mismatch",
+            message: `Method ".${e.method}" expects ${min} argument(s) but got ${e.args.length}`,
+            pos: e.pos,
+          });
+        }
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);

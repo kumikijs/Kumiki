@@ -72,6 +72,44 @@ export const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = O
   UI_LIFTS.map((l) => [l.ev, l.tiles]),
 );
 
+/** The tile set a `ui.<ev>(Tile)` selector lifts to, looked up by handler name. */
+function liftTilesFor(handler: string): ReadonlySet<string> | null {
+  return UI_LIFTS.find((l) => l.handler === handler)?.tiles ?? null;
+}
+
+/**
+ * Which tile kinds honour a handler prop that is written on them directly —
+ * `button(text="x", onClick=r)`, `row(...) {onKeyDown: r}`. `null` means the
+ * runtime attaches the listener whatever the tile is.
+ *
+ * Not the same question as `UI_EVENT_TILE_KINDS`, which answers where a
+ * `ui.<ev>(Tile)` *selector* lands, so the sets are related but not equal:
+ * `editable` reads `onInput` in its own renderer while no `ui.input` selector
+ * lifts to it. Deriving an entry from the lift table imports that table's gaps,
+ * so each one below says which it is.
+ *
+ * The four `null`s are the handlers `applyUiEventHandlers` installs on
+ * whatever element the tile produced. That is about the LISTENER, not about
+ * the event reaching it: `focus` and `blur` do not bubble, so a `div` with no
+ * `tabindex` never fires them, and `keydown` reaches a container only from a
+ * focusable descendant. Reporting them would need to know about focusability,
+ * which is a different check from this one.
+ */
+export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
+  onClick: liftTilesFor("onClick"),
+  onChange: liftTilesFor("onChange"),
+  onSubmit: liftTilesFor("onSubmit"),
+  // `editable` is an input tile (§2.3.4) whose renderer dispatches `onInput`
+  // itself; the lift table omits it because no `ui.input(Tile)` selector
+  // reaches it, which is a separate gap.
+  onInput: new Set([...(liftTilesFor("onInput") ?? []), "editable"]),
+  onKeyDown: null,
+  onMouseEnter: null,
+  onFocus: null,
+  onBlur: null,
+  onClose: new Set(["modal", "drawer", "popover"]),
+};
+
 /**
  * All handler-prop names that bind a reducer rather than a value, in both the
  * `f(onX=r)` and `f() {onX: r}` forms. Read by codegen (capture the explicit
