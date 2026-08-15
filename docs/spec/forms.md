@@ -99,6 +99,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 - If even one fails, it is not called (individual error displays do appear)
 - If strict-mode switching is needed, apply `strict=false` to the relevant input
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
+- `type` is written through to the DOM verbatim and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`
 
 ---
 

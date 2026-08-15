@@ -99,6 +99,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 - 1 つでも失敗していれば呼ばれない（個別の error 表示は出る）
 - 厳密モード切替が必要なら `strict=false` を該当入力に
 - `button(type="submit")` をクリックするか、`input` で Enter キーで発火
+- `type` はそのまま DOM に書かれ、意味を持つのは form の中だけである。`type` を書かなかったボタンは HTML の既定に従う — すなわち `submit` になるので、form の中にあって送信させたくないボタンには `type="button"` が必要である
 
 ---
 

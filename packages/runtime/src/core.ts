@@ -55,7 +55,18 @@ function isPanic(e: unknown): e is KumikiPanic {
 export type TileNode = (
   | { kind: "page" | "column" | "row" | "card" | "box"; children: TileNode[]; props?: TileProps }
   | { kind: "heading" | "text"; text: string; props?: TileProps }
-  | { kind: "button"; text: string; props?: TileProps; loading?: boolean; disabled?: boolean }
+  | {
+      kind: "button";
+      text: string;
+      props?: TileProps;
+      loading?: boolean;
+      disabled?: boolean;
+      /**
+       * `submit` / `button` / `reset`. Absent means the tile did not say, and
+       * the HTML default applies — which is `submit` inside a form.
+       */
+      type?: string;
+    }
   | {
       kind: "input";
       props?: TileProps;

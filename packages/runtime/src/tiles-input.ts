@@ -267,6 +267,11 @@ export const inputTiles: TileRenderers = {
     const b = document.createElement("button");
     b.dataset.kumikiTile = "button";
     b.textContent = node.text;
+    // Only when the tile said so: a `<button>` with no type submits the form it
+    // is in, and that default is the one forms.md §5.2.2 describes. Writing
+    // `type="button"` here for every button would silently un-submit every
+    // form that relies on it.
+    if (node.type) b.type = node.type;
     if (node.disabled) b.disabled = true;
     const id = tileId(node);
     if (id) b.id = id;
@@ -520,6 +525,11 @@ export const inputPatchers: TilePatchers = {
   button(el, _oldNode, newNode) {
     const b = el as HTMLButtonElement;
     if (b.textContent !== newNode.text) b.textContent = newNode.text;
+    // A conditional can swap one button for another with a different `type`,
+    // so this is reconciled like every other attribute. Back to the browser's
+    // own default when the new node does not say.
+    const nextType = newNode.type ?? "submit";
+    if (b.type !== nextType) b.type = nextType;
     b.disabled = !!newNode.disabled;
     reconcileId(b, newNode);
     setHandlers(b, inputHandlers(newNode));

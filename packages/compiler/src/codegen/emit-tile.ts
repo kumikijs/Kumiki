@@ -207,7 +207,12 @@ function tileCallJs(
       case "button": {
         const textArg = t.args.find((a) => a.name === "text");
         const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
-        return `({ kind: "button", text: _s.show(${textJs}), props: ${propsObj} })`;
+        // `type=` decides whether this button submits the form it is inside
+        // (forms.md §5.2.2). Emitted only when written, so a button that says
+        // nothing keeps the HTML default rather than being given one here.
+        const typeArg = t.args.find((a) => a.name === "type");
+        const typeField = typeArg ? `type: ${jsOfExpr(asExpr(typeArg.value), ctx)}, ` : "";
+        return `({ kind: "button", text: _s.show(${textJs}), ${typeField}props: ${propsObj} })`;
       }
       case "input": {
         const fields: string[] = [`kind: "input"`];

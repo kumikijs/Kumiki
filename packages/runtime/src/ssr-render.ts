@@ -90,7 +90,10 @@ export function renderTileToString(node: TileNode): string {
       return el(
         "button",
         {
-          type: "button",
+          // What the tile said, or nothing — the same choice the client
+          // renderer makes. Writing `button` here regardless meant the served
+          // HTML did not submit and the hydrated page did.
+          type: node.type,
           "data-kumiki-tile": "button",
           disabled: node.disabled,
         },
