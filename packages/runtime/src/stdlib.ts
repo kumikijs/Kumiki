@@ -40,6 +40,32 @@ export const _stdlibCore = {
   token(group: string, path: string[]): string {
     return tokenRef(group, path);
   },
+  /**
+   * `Time.format(pattern)` (stdlib.md §2.2.8). A `Time` is a millisecond
+   * number, and the pattern is a template: `yyyy MM dd HH mm ss` are replaced
+   * by the fields of that instant and everything else is copied through, so
+   * `"yyyy-MM-dd HH:mm"` and `"dd/MM/yyyy"` both work.
+   *
+   * **Local time.** The string has no zone in it, so it is read as the reader's
+   * wall clock — rendering the UTC fields would show a different day to
+   * everyone east of Greenwich in the evening.
+   */
+  formatTime(ms: unknown, pattern: unknown): string {
+    const d = new Date(Number(ms));
+    const p = typeof pattern === "string" ? pattern : String(pattern ?? "");
+    const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+    const fields: Record<string, string> = {
+      yyyy: pad(d.getFullYear(), 4),
+      MM: pad(d.getMonth() + 1),
+      dd: pad(d.getDate()),
+      HH: pad(d.getHours()),
+      mm: pad(d.getMinutes()),
+      ss: pad(d.getSeconds()),
+    };
+    // One pass over the whole pattern: replacing token by token would let the
+    // digits of an earlier substitution match a later token.
+    return p.replace(/yyyy|MM|dd|HH|mm|ss/g, (tok) => fields[tok] ?? tok);
+  },
   mapSize(m: unknown): number {
     if (m instanceof Map) return m.size;
     if (m && typeof m === "object") return Object.keys(m as object).length;

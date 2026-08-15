@@ -124,6 +124,14 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         if (qualifier === "Float") {
           return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(_n) : _s.None; })(${a})`;
         }
+        if (qualifier === "Time") {
+          // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one
+          // has to produce that number. Falling into the generic branch below
+          // wrapped the raw text in `Some`, and every later operation — `diff`,
+          // `plus`, `format` — read a string where it needed a number and
+          // produced `NaN`.
+          return `((_v) => { const _n = Date.parse(String(_v)); return Number.isFinite(_n) ? _s.Some(_n) : _s.None; })(${a})`;
+        }
         return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
       }
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
@@ -484,8 +492,10 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "trim":
       return `((${recvJs}) || "").trim()`;
     case "format":
-      // Time.format(pattern) — minimal: produce the ISO date portion regardless of pattern.
-      return `(new Date(${recvJs})).toISOString().slice(0, 10)`;
+      // Time.format(pattern) — the pattern is the caller's, not ours. This
+      // used to render the ISO date whatever was asked for, so every
+      // `"yyyy-MM-dd HH:mm"` in an app lost its time and shifted its day.
+      return `_s.formatTime(${recvJs}, ${argRaw(args[0]!)})`;
     case "plus":
       // Time.plus(durationMs) / Duration.plus — both stored as raw ms numbers.
       return `((${recvJs}) + (${argRaw(args[0]!)}))`;

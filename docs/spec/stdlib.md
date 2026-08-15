@@ -224,6 +224,21 @@ diff(other)                 : Duration
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 ```
 
+`format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:
+
+| token | field |
+|---|---|
+| `yyyy` | year, 4 digits |
+| `MM` | month, `01`–`12` |
+| `dd` | day of month, `01`–`31` |
+| `HH` | hour, `00`–`23` |
+| `mm` | minute, `00`–`59` |
+| `ss` | second, `00`–`59` |
+
+The fields are **local** ones. The result carries no timezone in it, so it is read as the reader's wall clock — rendering UTC fields would show the previous day to everyone whose evening is the next UTC day.
+
+`Time.parse` yields the instant as a millisecond number, the same representation §2.2.9 gives every `Time`; text that names no instant is `None`.
+
 ### 2.2.9 Duration
 
 ```

@@ -190,4 +190,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | コア | [§1.2](./language.md#_1-2-字句) |
 | `71-button-type.kumiki` | slot, reducer, tile | フォーム | [§5.2.2](./forms.md#_5-2-2-submit-の挙動) |
+| `72-time-format.kumiki` | slot, fn, tile | 標準ライブラリ | [§2.2.8](./stdlib.md#_2-2-8-time) |
 <!-- examples:end -->

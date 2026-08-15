@@ -3,7 +3,7 @@
 // `packages/compiler/test/spec-divergences.test.ts`.
 
 import type { AppShape, TileNode } from "@kumikijs/runtime";
-import { inputPatchers, inputTiles, renderToString } from "@kumikijs/runtime";
+import { _stdlib, inputPatchers, inputTiles, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const btn = (over: Partial<Extract<TileNode, { kind: "button" }>> = {}) =>
@@ -59,5 +59,45 @@ describe("button(type=…) reaches the DOM", () => {
     const { html } = await renderToString(app, {});
     expect(html).toContain('type="submit"');
     expect(html).not.toContain('type="button"');
+  });
+});
+
+// stdlib.md §2.2.8: `format(pattern) : Text`. The pattern was ignored — the
+// codegen produced the ISO date whatever was asked for, so an app that wrote
+// "yyyy-MM-dd HH:mm" rendered a date with no time, in UTC.
+describe("Time.format honours its pattern", () => {
+  // Expectations are derived from the same instant through `Date`'s own
+  // getters, never written out: this suite runs in JST locally and UTC in CI,
+  // and a hardcoded string would pin whichever one wrote it.
+  const at = new Date(2026, 7, 14, 21, 5, 9).getTime();
+  const two = (n: number) => String(n).padStart(2, "0");
+  const d = new Date(at);
+
+  it("substitutes each field the spec names", () => {
+    expect(_stdlib.formatTime(at, "yyyy-MM-dd HH:mm")).toBe(
+      `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`,
+    );
+    expect(_stdlib.formatTime(at, "ss")).toBe(two(d.getSeconds()));
+  });
+
+  it("copies through anything that is not a token", () => {
+    expect(_stdlib.formatTime(at, "on dd/MM/yyyy at HH:mm:ss")).toBe(
+      `on ${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()} at ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`,
+    );
+    expect(_stdlib.formatTime(at, "")).toBe("");
+  });
+
+  it("reads the instant in local time", () => {
+    // The rendered day is the reader's day. Formatting UTC fields would show
+    // yesterday to everyone whose evening is the previous UTC day.
+    expect(_stdlib.formatTime(at, "dd")).toBe(two(d.getDate()));
+    expect(_stdlib.formatTime(at, "HH")).toBe(two(d.getHours()));
+  });
+
+  it("does not re-scan what it just substituted", () => {
+    // A month of `11` next to a `mm` token, or a year whose digits form one:
+    // replacing token by token would let the output of one match the next.
+    const nov = new Date(2026, 10, 3, 0, 0, 0).getTime();
+    expect(_stdlib.formatTime(nov, "MMmm")).toBe("1100");
   });
 });

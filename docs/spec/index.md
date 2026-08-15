@@ -190,4 +190,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
 | `71-button-type.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
+| `72-time-format.kumiki` | slot, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
 <!-- examples:end -->

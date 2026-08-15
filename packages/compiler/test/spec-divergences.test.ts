@@ -147,3 +147,31 @@ app A
     init   = []
 `;
 }
+
+// stdlib.md §2.2.8/§2.2.9: `format(pattern) : Text`, and a `Time` is a
+// millisecond number. Codegen honoured neither — `format` produced the ISO
+// date whatever the pattern said, and `Time.parse` wrapped the raw text.
+describe("Time lowers to the representation the spec gives it", () => {
+  it("passes the pattern to the formatter instead of discarding it", () => {
+    const src = app(
+      "text(stamp(Time.now))",
+      `fn stamp(t: Time) -> Text = t.format("yyyy-MM-dd HH:mm")`,
+    );
+    const js = build(src);
+    expect(js).toContain('_s.formatTime(t, "yyyy-MM-dd HH:mm")');
+    expect(js).not.toContain("toISOString");
+  });
+
+  it("parses a Time into milliseconds, not into the text it was given", () => {
+    // `Date.parse` of junk is NaN, which is what `None` is for — so the
+    // Option this returns still means what its type says.
+    const src = app(
+      "text(shown(iso))",
+      `slot iso : Text = ""
+fn shown(s: Text) -> Text = match Time.parse(s) with | Some(t) -> t.format("yyyy") | None -> "?"`,
+    );
+    const js = build(src);
+    expect(js).toContain("Date.parse");
+    expect(js).toContain("_s.formatTime");
+  });
+});

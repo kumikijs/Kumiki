@@ -1,0 +1,32 @@
+# Feature: `Time.format(pattern)` renders an instant the way the caller asked.
+#
+# A `Time` is a millisecond number, and `format` is the only way to show one.
+# The pattern was ignored: whatever was written, the ISO date came back — so
+# "yyyy-MM-dd HH:mm" lost its time, and the date was the UTC one rather than
+# the reader's. `yyyy MM dd HH mm ss` are the fields; everything else in the
+# pattern is copied through, and the fields are the reader's local ones.
+#
+# The instant is parsed from a fixed string rather than taken from `Time.now`,
+# so what renders depends only on the formatter.
+
+slot iso : Text = "2026-08-14T21:05:09"
+
+fn at(text: Text) -> Option(Time) = Time.parse(text)
+fn ymd(t: Time)  -> Text = t.format("yyyy-MM-dd")
+fn stamp(t: Time) -> Text = t.format("yyyy-MM-dd HH:mm")
+fn wordy(t: Time) -> Text = t.format("dd/MM/yyyy")
+
+tile App = column(
+             match at(iso) with
+             | Some(t) -> column(
+                            text("ymd: " + ymd(t)),
+                            text("stamp: " + stamp(t)),
+                            text("wordy: " + wordy(t)),
+                            text("year: " + t.format("yyyy")),
+                            text("literal: " + t.format("[on] dd")))
+             | None -> text("unparsed"))
+
+app TimeFormat
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
