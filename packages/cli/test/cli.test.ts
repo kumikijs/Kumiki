@@ -121,8 +121,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // ships — the dispatcher in core.ts, the formatter in stdlib.js — because
     // per-app pruning is by module, not by function. A counter pays for them;
     // the alternative is a policy that silently runs in parallel and a
-    // formatter that silently ignores its pattern, which is what this issue
-    // was.
+    // formatter that silently ignores its pattern.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

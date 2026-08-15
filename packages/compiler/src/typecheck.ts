@@ -664,10 +664,13 @@ function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[
   if (t?.kind !== "TypeApp") return;
   const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
   if (!remedy) return;
+  // A `Map` has two lists in it and they bind different things, so the message
+  // names both: `.keys` was not necessarily what the loop wanted.
+  const alternative = t.name === "Map" ? " (or .values, which binds the value)" : "";
   errors.push({
     code: "E0218",
     kind: "for-over-non-list",
-    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}`,
+    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}${alternative}`,
     pos: iter.pos,
   });
 }
@@ -675,6 +678,30 @@ function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+}
+
+/**
+ * `button(type=…)` takes one of the three HTML values. A literal outside them
+ * is worth reporting because of which way it fails: an invalid `type`
+ * attribute resolves to `submit`, so `type="submmit"` on a button written NOT
+ * to submit makes it submit the form it is in — the failure direction with the
+ * most damage. Only literals are checked; an expression is unresolvable here,
+ * exactly as `input(type=…)` treats one.
+ */
+const BUTTON_TYPES = new Set(["submit", "button", "reset"]);
+
+function checkButtonType(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  if (t.name !== "button") return;
+  const arg = t.args.find((a) => a.name === "type");
+  if (!arg) return;
+  const v = arg.value as Expr;
+  if (v.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `button type="${v.value}" is not one of submit / button / reset; an invalid type submits`,
+    pos: v.pos,
+  });
 }
 
 /**
@@ -847,6 +874,7 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, errors);
   checkIconName(t, sym, errors);
+  checkButtonType(t, errors);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");

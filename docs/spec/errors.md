@@ -570,6 +570,8 @@ A `for` iterates a `Map` or a `Set` directly. The iteration target of `for` is a
 
 > `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
 
+A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted.
+
 Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.

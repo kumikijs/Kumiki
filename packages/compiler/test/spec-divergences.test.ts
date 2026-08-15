@@ -43,6 +43,16 @@ describe("button(type=…) reaches the tile node", () => {
     expect(node.slice(0, node.indexOf("props:"))).not.toContain("type");
   });
 
+  it("rejects a literal type that is not one of the three", () => {
+    // The direction matters: an invalid `type` attribute resolves to `submit`,
+    // so a typo on a button written NOT to submit makes it submit.
+    const src = app("Bad", 'tile Bad = button(text="x", type="submmit")');
+    expect(codes(src)).toEqual(["E0201"]);
+    for (const ok of ["submit", "button", "reset"]) {
+      expect(codes(app("Ok", `tile Ok = button(text="x", type="${ok}")`)), ok).toEqual([]);
+    }
+  });
+
   it("takes an expression, not only a literal", () => {
     const src = app(
       "Send",
