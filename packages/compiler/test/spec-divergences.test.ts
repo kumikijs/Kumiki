@@ -218,13 +218,13 @@ tile InBtn = button(text="in", onClick=open)`;
     expect(diags('row(text("card")) {onBlur: open}')).toEqual([]);
   });
 
-  it("leaves a user-defined tile alone", () => {
-    // Only the builtin renderers are known here; a user tile's body decides,
-    // and it is checked where it is defined.
+  it("leaves a handler on a user-defined tile alone", () => {
+    // Only the builtin renderers are known here. `Row {onClick: open}` names a
+    // user tile, whose body decides whether the handler lands — and that body
+    // is checked where it is written.
     const src = `${REDUCER}
-tile Row = row(text("x"))
-tile Card = column(Row)
-tile App = column(Card)
+tile Row = row(text("x"), InBtn)
+tile App = column(Row {onClick: open}, text(n.show))
 app A
     caps   = []
     routes = {"/" -> App, "/404" -> App}

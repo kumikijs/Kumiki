@@ -101,11 +101,28 @@ describe("Time.format honours its pattern", () => {
     expect(_stdlib.formatTime(at, "HH")).toBe(two(d.getHours()));
   });
 
-  it("does not re-scan what it just substituted", () => {
-    // A month of `11` next to a `mm` token, or a year whose digits form one:
-    // replacing token by token would let the output of one match the next.
-    const nov = new Date(2026, 10, 3, 0, 0, 0).getTime();
-    expect(_stdlib.formatTime(nov, "MMmm")).toBe("1100");
+  it("keeps MM and mm apart", () => {
+    // The pattern language is case-sensitive, and the two tokens differ only
+    // by case: a lookup that lowercased would render the month as the minute.
+    const nov = new Date(2026, 10, 3, 0, 45, 0).getTime();
+    expect(_stdlib.formatTime(nov, "MM mm")).toBe("11 45");
+  });
+
+  // Whether the fields are local or UTC is only observable where the two
+  // differ, so this says nothing on a UTC machine — which is what CI runs. It
+  // still earns its place: locally it is the only thing that catches a
+  // `getUTCDate()` slipping into the formatter.
+  it.skipIf(new Date().getTimezoneOffset() === 0)("renders the local day, not the UTC one", () => {
+    // 00:30 local, which is the previous day in UTC east of Greenwich and
+    // the next day west of it.
+    const justAfterMidnight = new Date(2026, 7, 14, 0, 30, 0);
+    const local = justAfterMidnight.getTime();
+    expect(_stdlib.formatTime(local, "dd HH")).toBe(
+      `${two(justAfterMidnight.getDate())} ${two(justAfterMidnight.getHours())}`,
+    );
+    expect(_stdlib.formatTime(local, "dd HH")).not.toBe(
+      `${two(justAfterMidnight.getUTCDate())} ${two(justAfterMidnight.getUTCHours())}`,
+    );
   });
 });
 
