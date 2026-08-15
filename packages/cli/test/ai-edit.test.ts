@@ -3079,6 +3079,38 @@ describe("planTestPatchExplained: skip-reason classification", () => {
 });
 
 describe("FixFromTestOutcome.reason propagation and printer", () => {
+  it("runFixFromTest: Tier-1 lands both repairs when one line holds two", async () => {
+    // The tier-1 loop composes the same plan `applyFixPlan` does, and writes
+    // without a regression gate — so a repair that moved another's column
+    // failed silently here instead of rolling back.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-tier1-two-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot seen : Bool = false",
+        "reducer clicked on=ui.click(B) do= seen := $route.path == $route.pattern",
+        'tile B = button(text="go")',
+        "tile App = column(B)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test clicked",
+        "        given  = {slots: {seen: false}, event: {type: ui.click, target: B}}",
+        "        expect = {slots: {seen: true}}",
+        "",
+      ].join("\n"),
+    );
+    const outcome = await runFixFromTest(file, "t", true);
+    // Both, not one: a plan that lands half its patches leaves the file still
+    // holding the diagnostic it reported as repaired.
+    expect(outcome.compileFixes).toBe(2);
+    expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("runFixFromTest: Tier-2 no-patch surfaces the tier planner's reason", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-outcome-reason-"));
     const file = join(dir, "in.kumiki");

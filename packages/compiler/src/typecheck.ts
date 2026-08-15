@@ -1228,7 +1228,6 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       });
     }
   }
-  if (ctx.routeBind === "bound") ctx.localBinds.add("$route");
   // `tile.mount(X)` fires when *that* tile enters the rendered tree, so an
   // undeclared `X` is the same dead subscription E0211 reports for a `ui.*`
   // selector — and there is no `_` here to exempt: the wildcard exists for
@@ -1600,21 +1599,25 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Unit":
       return;
     case "Ref":
-      // Before the localBinds lookup so the two can never disagree: `$route`
-      // is in localBinds exactly when the runtime binds it, and the reducer
-      // that does not get one needs to hear why rather than be told the name
-      // does not exist.
-      if (e.name === "$route" && ctx.routeBind === "unbound") {
-        errors.push({
-          code: "E0119",
-          kind: "route-bind-out-of-scope",
-          message:
-            `"$route" is only bound in a route.enter / route.leave / route.error reducer ` +
-            `and in a link's prefetch target; here it is applied with a payload that has ` +
-            `none, so every field off it reads undefined. Read the "route" slot instead — ` +
-            `it holds the current route and is in scope everywhere`,
-          pos: e.pos,
-        });
+      // `$route` is not a name in a table — it is a payload field the runtime
+      // fills in for some reducers and not others, so the reducer's own trigger
+      // is what puts it in scope. Answered here rather than by seeding
+      // localBinds, so there is one place that decides. `routeBind` is unset
+      // outside a reducer, where the name means nothing at all and the
+      // undefined-name report below is the right one.
+      if (ctx.routeBind !== undefined && e.name === "$route") {
+        if (ctx.routeBind === "unbound") {
+          errors.push({
+            code: "E0119",
+            kind: "route-bind-out-of-scope",
+            message:
+              `"$route" is only bound in a route.enter / route.leave / route.error reducer ` +
+              `and in a link's prefetch target; here it is applied with a payload that has ` +
+              `none, so every field off it reads undefined. Read the "route" slot instead — ` +
+              `it holds the current route and is in scope everywhere`,
+            pos: e.pos,
+          });
+        }
         return;
       }
       if (ctx.localBinds.has(e.name)) return;
