@@ -2148,12 +2148,24 @@ function makeEffectDispatcher(
     token?: string;
     effectName?: string;
   };
+  // `policy=queue` (§10.4.3): one chain per effect id. `tail` is the promise
+  // every new dispatch appends to, so at most one invocation of that id is in
+  // flight; `pending` is the entries that have not started yet, which is what
+  // `dispose()` has to release — each already claimed an episode token.
+  type QueueEntry = { token: string; effectName: string };
+  type Queue = { tail: Promise<void>; pending: QueueEntry[] };
   type RunState = {
     inflight: Map<string, AbortController>;
     timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
+    queues: Map<string, Queue>;
   };
-  const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
+  const state: RunState = {
+    inflight: new Map(),
+    timers: new Map(),
+    onceSeen: new Map(),
+    queues: new Map(),
+  };
 
   const launch = async (
     eff: EffectSpec,
@@ -2278,6 +2290,26 @@ function makeEffectDispatcher(
         state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
         return;
       }
+      if (policy.kind === "queue") {
+        // Claim the episode token NOW, like the debounce branch: this launch
+        // happens when the ones before it finish, and a token taken then would
+        // attach the effect-start to whatever episode is on top by that point
+        // rather than to the one that emitted (spec §10.5.1).
+        const token = onLaunch?.(eff.name, input) ?? "";
+        const entry: QueueEntry = { token, effectName: eff.name };
+        const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
+        q.pending.push(entry);
+        q.tail = q.tail.then(async () => {
+          const idx = q.pending.indexOf(entry);
+          // Gone from `pending` means `dispose()` already released this entry's
+          // token — the mount is over, so there is nothing left to run.
+          if (idx === -1) return;
+          q.pending.splice(idx, 1);
+          await launch(eff, input, key, token);
+        });
+        state.queues.set(id, q);
+        return;
+      }
       if (policy.kind === "throttle") {
         if (state.timers.has(id)) return;
         const h = setTimeout(() => state.timers.delete(id), policy.ms);
@@ -2313,6 +2345,17 @@ function makeEffectDispatcher(
           onPolicyCancel?.(t.token, t.effectName);
         }
       }
+      // Queued launches that never started hold a claimed effect-start on an
+      // episode that has already closed — the same debt the debounce drain
+      // above settles. Clearing `pending` is also what tells the chained thunk
+      // not to run.
+      for (const q of state.queues.values()) {
+        const waiting = q.pending.splice(0, q.pending.length);
+        for (const e of waiting) {
+          if (e.token) onPolicyCancel?.(e.token, e.effectName);
+        }
+      }
+      state.queues.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
     },

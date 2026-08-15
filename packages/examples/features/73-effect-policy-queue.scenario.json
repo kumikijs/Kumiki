@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "nothing sent yet",
+      "expect": { "noErrors": true, "state": { "log": "", "pending": 0 } }
+    },
+    {
+      "label": "one click emits three, and all three arrive in the order they were emitted",
+      "do": { "clickText": "send" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "abc", "pending": 0 },
+        "domIncludes": ["log=abc", "pending=0"]
+      }
+    }
+  ]
+}

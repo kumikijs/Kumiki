@@ -2,8 +2,15 @@
 // toolchain actually did. The compiler halves live in
 // `packages/compiler/test/spec-divergences.test.ts`.
 
-import type { AppShape, TileNode } from "@kumikijs/runtime";
-import { _stdlib, inputPatchers, inputTiles, renderToString } from "@kumikijs/runtime";
+import type { AppShape, Episode, TileNode } from "@kumikijs/runtime";
+import {
+  _stdlib,
+  createEpisodeLogger,
+  inputPatchers,
+  inputTiles,
+  mount,
+  renderToString,
+} from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const btn = (over: Partial<Extract<TileNode, { kind: "button" }>> = {}) =>
@@ -99,5 +106,94 @@ describe("Time.format honours its pattern", () => {
     // replacing token by token would let the output of one match the next.
     const nov = new Date(2026, 10, 3, 0, 0, 0).getTime();
     expect(_stdlib.formatTime(nov, "MMmm")).toBe("1100");
+  });
+});
+
+// runtime.md §10.4.3: `policy=queue` executes sequentially, FIFO. The
+// dispatcher had no `queue` branch, so it fell through to the default and ran
+// every emit in parallel — the one policy whose whole purpose is that it does
+// not.
+describe("policy=queue runs one at a time", () => {
+  function makeQueueApp(): { app: AppShape; log: string[]; peak: () => number } {
+    const log: string[] = [];
+    let live = 0;
+    let peak = 0;
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: ["log.write"],
+      effects: {
+        work: {
+          name: "work",
+          cap: "log.write",
+          policy: { kind: "queue" },
+          invoke: async (input) => {
+            live += 1;
+            peak = Math.max(peak, live);
+            log.push(`start ${String(input)}`);
+            await new Promise((r) => setTimeout(r, 20));
+            log.push(`end ${String(input)}`);
+            live -= 1;
+            return { kind: "ok", value: null };
+          },
+        },
+      },
+      init: [],
+      reducers: [
+        {
+          name: "go",
+          selector: { tile: "Go" },
+          event: { kind: "ui", ev: "click" },
+          apply: () => ({
+            slots: {},
+            emits: [
+              { effect: "work", args: ["a"] },
+              { effect: "work", args: ["b"] },
+              { effect: "work", args: ["c"] },
+            ],
+          }),
+        },
+      ],
+      root: (): TileNode => ({ kind: "column", children: [btn({ text: "go" })] }),
+    };
+    return { app, log, peak: () => peak };
+  }
+
+  it("never has two invocations in flight, and keeps the order they were emitted", async () => {
+    const { app, log, peak } = makeQueueApp();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const { dispose } = mount(app, host);
+    const dispatch = (app as unknown as { _dispatch: (n: string, el: object) => void })._dispatch;
+    try {
+      dispatch("go", {});
+      // Three 20ms invocations back to back; wait for all of them plus slack.
+      await new Promise((r) => setTimeout(r, 200));
+      expect(peak()).toBe(1);
+      expect(log).toEqual(["start a", "end a", "start b", "end b", "start c", "end c"]);
+    } finally {
+      dispose();
+      host.remove();
+    }
+  });
+
+  it("releases a queued launch that unmount cancelled", async () => {
+    // Each queued entry claims its episode token when it is dispatched, so an
+    // entry that never runs has to give it back — otherwise the episode that
+    // emitted it waits for an effect-end that is never coming. The two entries
+    // still waiting at unmount become `effect-cancel` steps; without the drain
+    // they run after the mount is gone and land as two more `effect-end`s.
+    const { app } = makeQueueApp();
+    const logger = createEpisodeLogger();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const { dispose } = mount(app, host, { episodeLogger: logger });
+    (app as unknown as { _dispatch: (n: string, el: object) => void })._dispatch("go", {});
+    await new Promise((r) => setTimeout(r, 5));
+    dispose();
+    await new Promise((r) => setTimeout(r, 120));
+    host.remove();
+    const steps = logger.list().flatMap((e: Episode) => e.steps.map((st) => st.kind));
+    expect(steps.filter((k) => k === "effect-cancel")).toHaveLength(2);
+    expect(steps.filter((k) => k === "effect-end")).toHaveLength(1);
   });
 });

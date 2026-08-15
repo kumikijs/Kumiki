@@ -94,7 +94,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | core |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | core |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | core |
-| [W0213](./errors.md#w0213-handler-on-inert-tile) | `handler-on-inert-tile` | tile | core |
+| [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
@@ -192,4 +192,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
 | `71-button-type.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
 | `72-time-format.kumiki` | slot, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
+| `73-effect-policy-queue.kumiki` | slot, effect, reducer | lifecycle | [§10.4.3](./runtime.md#_10-4-3-policy-handling) |
 <!-- examples:end -->

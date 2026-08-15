@@ -271,7 +271,7 @@ export const inputTiles: TileRenderers = {
     // is in, and that default is the one forms.md §5.2.2 describes. Writing
     // `type="button"` here for every button would silently un-submit every
     // form that relies on it.
-    if (node.type) b.type = node.type;
+    if (node.type) b.setAttribute("type", node.type);
     if (node.disabled) b.disabled = true;
     const id = tileId(node);
     if (id) b.id = id;
@@ -528,8 +528,11 @@ export const inputPatchers: TilePatchers = {
     // A conditional can swap one button for another with a different `type`,
     // so this is reconciled like every other attribute. Back to the browser's
     // own default when the new node does not say.
+    // `submit` is what a `<button>` with no type does, so a node that stops
+    // carrying one goes back to the browser's own default rather than keeping
+    // whatever the previous render set.
     const nextType = newNode.type ?? "submit";
-    if (b.type !== nextType) b.type = nextType;
+    if (b.type !== nextType) b.setAttribute("type", nextType);
     b.disabled = !!newNode.disabled;
     reconcileId(b, newNode);
     setHandlers(b, inputHandlers(newNode));
