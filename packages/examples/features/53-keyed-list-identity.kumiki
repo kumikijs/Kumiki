@@ -1,45 +1,49 @@
 # Feature: stable tile identity via `TileNode.key` (spec/runtime.md §10.3.10).
-# `for id in ids Row(id) {key: id.show}` gives each Row a stable identity so
-# the reconciler preserves DOM identity across insert / remove / reorder —
-# each Row's `<input>` value the user typed survives when items in front of
-# it are dropped. Without the key, the entire list subtree would rebuild on
-# every length change and the browser-side input state would be lost.
+# `for id in ids Row(id) {key: id.show}` gives each Row a stable identity, so
+# the reconciler pairs children across renders by key and survives removal and
+# reorder without rebuilding the subtree — each Row's `<input>` keeps the text
+# the user typed into it, and keeps the same DOM element.
+#
+# The loop has a container to itself, and that is load-bearing. Keyed matching
+# is all-or-nothing per parent (§10.3.10): a `for` sharing a parent with the
+# heading and the button row would put unkeyed siblings in that child list, the
+# keys would never be consulted, and every length change would rebuild the
+# whole column — heading, buttons, inputs and all. `RowList` is the parent
+# whose children are only the loop.
 
 slot ids : List(Int) = [1, 2, 3, 4]
 
-# Drop the head. `ids := [2,3,4]` on click. The keyed reconciler recognises
-# that ids 2, 3, 4 are the SAME instances as before and reuses their DOM
-# elements — including the `<input>` inside each Row.
+# Drop the head: `ids := [2,3,4]`. The keyed reconciler recognises that 2, 3
+# and 4 are the same instances as before and reuses their DOM elements —
+# including the `<input>` inside each Row, and whatever is typed in it.
 reducer dropHead on=ui.click(DropBtn)
     do= ids := ids.tail
 
-# Reverse-append: pop the head into a spare slot and put it back at the end.
-# The rotate-like effect exercises reorder — the same 4 tiles remain, only
-# their sibling order changes. Under keyed reconcile the `<input>` values
-# follow their rows rather than being reset by position.
-slot tail : List(Int) = []
+# Rotate: move the head to the end. The same rows remain, only their sibling
+# order changes — which is the other half of what keys buy. Under keyed
+# matching the inputs follow their rows instead of being reset by position, and
+# only the moved row is touched (§10.3.10, "a keyed reorder moves the minimum").
+reducer rotate on=ui.click(RotateBtn)
+    do= match ids.head with
+            | Some(h) -> ids := ids.tail.concat([h])
+            | None    -> ()
 
-reducer rotate on=ui.click(RotateBtn) do=
-    tail := ids;
-    ids := []
-
-reducer rotateBack on=ui.click(RestoreBtn) do=
-    ids := tail;
-    tail := []
-
+# Each input is addressable by its row id, so a test can type into one row and
+# then look for that same text after the list has changed shape.
 tile Row in=Int
-    = row(text($1.show), input(placeholder="type here"))
+    = row(text($1.show), input(placeholder="type here", id="row-" + $1.show))
       {gap: "sm"}
 
 tile DropBtn    = button(text="drop first")
-tile RotateBtn  = button(text="clear")
-tile RestoreBtn = button(text="restore")
+tile RotateBtn  = button(text="rotate")
+
+tile RowList = column(for id in ids Row(id) {key: id.show}) {gap: "sm"}
 
 tile App
     = column(
         heading("keyed list identity"),
-        row(DropBtn, RotateBtn, RestoreBtn) {gap: "sm"},
-        for id in ids Row(id) {key: id.show}
+        row(DropBtn, RotateBtn) {gap: "sm"},
+        RowList
       ) {gap: "md", pad: "md"}
 
 app KeyedListIdentity
