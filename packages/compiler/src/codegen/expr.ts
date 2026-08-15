@@ -129,8 +129,9 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
           // has to produce that number. Falling into the generic branch below
           // wrapped the raw text in `Some`, and every later operation — `diff`,
           // `plus`, `format` — read a string where it needed a number and
-          // produced `NaN`.
-          return `((_v) => { const _n = Date.parse(String(_v)); return Number.isFinite(_n) ? _s.Some(_n) : _s.None; })(${a})`;
+          // produced `NaN`. The zone rule for a date-only string lives with the
+          // formatter that has to agree with it.
+          return `_s.parseTime(${a})`;
         }
         return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
       }
@@ -253,6 +254,58 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
  * (E0801) at `check` time instead of letting them throw or misbehave at runtime.
  * Keep this in exact sync with the `switch (method)` cases.
  */
+/**
+ * How many arguments a method's lowering reads. Every entry here dereferences
+ * that many with `!`, so a call written with fewer crashes codegen — no file,
+ * no line, no diagnostic. The typechecker reports the shortfall instead
+ * (E0213); `check` and `build` then agree about the same program.
+ *
+ * Only the minimum is listed. `slice` takes one or two and spreads whatever it
+ * is given, so it is absent — a count is only a contract where the lowering
+ * treats it as one.
+ */
+export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
+  ["add", 1],
+  ["chunk", 1],
+  ["clamp", 2],
+  ["concat", 1],
+  ["contains", 1],
+  ["diff", 1],
+  ["ends-with", 1],
+  ["filter", 1],
+  ["find", 1],
+  ["flat-map", 1],
+  ["fold", 2],
+  ["format", 1],
+  ["get", 1],
+  // One shape takes a default, the other a key AND a default; the lowering
+  // branches on the count, so one is the floor.
+  ["get-or", 1],
+  ["has", 1],
+  ["insert", 2],
+  ["intersect", 1],
+  ["join", 1],
+  ["map", 1],
+  ["map-err", 1],
+  ["max", 1],
+  ["merge", 1],
+  ["min", 1],
+  ["minus", 1],
+  ["or", 1],
+  ["plus", 1],
+  ["prepend", 1],
+  ["push", 1],
+  ["remove", 1],
+  ["replace", 2],
+  ["sort-by", 1],
+  ["split", 1],
+  ["starts-with", 1],
+  ["toggle", 1],
+  ["union", 1],
+  ["update", 2],
+  ["zip", 1],
+]);
+
 export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "filter",
   "map",

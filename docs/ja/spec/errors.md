@@ -503,10 +503,11 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
+| 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
 
 tile と effect の形は、これまで報告されていなかったものである：`in=` の宣言する引数無しで呼ばれた tile は `$1` が束縛されないまま mount し `_d_1 is not defined` で死ぬ。入力無しで emit された effect は最初の dispatch で `Cannot destructure property … of 'input'` を投げる。そして `in=` を宣言していない tile に引数を*渡した*場合は、mount も描画も正常に通り、呼び出し側が渡したつもりの値だけが静かに捨てられる。
 
-組み込み呼び出しは arity を検査しない。いくつかは lowering の時点で引数を完全に無視する（`Decoder.Json(Text)` は引数に関わらずセンチネルへ落ちる）ため、個数が契約として意味を持たない。
+組み込み**呼び出し**は arity を検査しない。いくつかは lowering の時点で引数を完全に無視する（`Decoder.Json(Text)` は引数に関わらずセンチネルへ落ちる）ため、個数が契約として意味を持たない。**メソッド**は、lowering が決まった数の引数を読む場合に検査する — `t.format()` は以前 `check` を通り、位置情報を持たない素の `TypeError` で `build` を殺していた。強制するのは最小個数だけである：`get-or` と `slice` は渡された個数で分岐する。
 
 **修正**：宣言どおりの個数を渡すか、宣言の側を変える。
 
@@ -552,7 +553,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0218 `for-over-non-list`
 
-`for` が `Map` または `Set` を直接反復している。`for` の反復対象はリストであり（[タイル層の不変条件](./language.md#_1-7-2-invariants) inv. 5）、この 2 つはランタイムではキー付きオブジェクトである — プログラムはコンパイルを通り、ループが使われる場所で投げる：タイルなら `.map is not a function`、reducer なら `object is not iterable`。
+`for` が `Map` または `Set` を直接反復している。`for` の反復対象はリストであり（[タイル層の不変条件](./language.md#_1-7-2-不変条件) inv. 5）、この 2 つはランタイムではキー付きオブジェクトである — プログラムはコンパイルを通り、ループが使われる場所で投げる：タイルなら `.map is not a function`、reducer なら `object is not iterable`。
 
 > `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
 
@@ -562,11 +563,11 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### W0213 `handler-on-inert-tile` (warning)
 
-ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` と `onInput` は input 系、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
+ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
-`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムがタイルの生成した要素にそのまま付けるので、どのタイルでも機能する。
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付ける。ただしそれは「リスナが付く」ことであって「イベントが届く」ことではない — `focus` と `blur` はバブリングしないので、フォーカス可能でないコンテナでは発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch) は同じ黙殺を反対側から見たもの — `<ev>` を発火できないタイルを対象にした `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 

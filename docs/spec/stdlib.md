@@ -235,9 +235,11 @@ format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 | `mm` | minute, `00`–`59` |
 | `ss` | second, `00`–`59` |
 
-The fields are **local** ones. The result carries no timezone in it, so it is read as the reader's wall clock — rendering UTC fields would show the previous day to everyone whose evening is the next UTC day.
+Every occurrence of a token is replaced, including one inside a word: `format("summer dd")` renders `su05er 14`, because `mm` is a token wherever it appears. There is no escape — a pattern is tokens and separators (`-`, `/`, `:`, spaces), not prose.
 
-`Time.parse` yields the instant as a millisecond number, the same representation §2.2.9 gives every `Time`; text that names no instant is `None`.
+The fields are **local** ones. The result carries no timezone in it, so it is read as the reader's wall clock; UTC fields would show the wrong day to every reader whose local date differs from the UTC one at that moment — after midnight east of Greenwich, and during the evening west of it.
+
+`Time.parse` yields the instant as a millisecond number, the same representation §2.2.9 gives every `Time`; text that names no instant — including the empty string — is `None`. A **date-only** string is read as **local** midnight, not the UTC midnight the platform's own parser gives it: `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string.
 
 ### 2.2.9 Duration
 

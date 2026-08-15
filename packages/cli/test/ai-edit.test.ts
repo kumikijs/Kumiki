@@ -202,6 +202,30 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("appends the Set accessor, not a prefix of it (E0218)", () => {
+    // `.to-list` is two words: a remedy pattern that stopped at the first
+    // hyphen would propose `.to`, which parses and means nothing.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-set-"));
+    const file = join(dir, "forset.kumiki");
+    writeFileSync(
+      file,
+      `slot tags : Set(Text) = {}
+tile App = column(for t in tags text(t))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain('append ".to-list" to "tags" at 2:28');
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("for t in tags.to-list");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("declines when the iterated expression is not a plain name (E0218)", () => {
     // The diagnostic points at where the expression starts, so appending there
     // would produce `pick.keys(names)`. Reported as a skip with its reason

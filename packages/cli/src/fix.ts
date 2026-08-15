@@ -92,17 +92,6 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * Replace `missing` with `replacement` at exactly the reported position.
- *
- * The name-suggest branches historically replaced the first `\b`-delimited
- * match on the diagnostic's line, which is not the same thing: Kumiki
- * identifiers are kebab-case and `\b` matches either side of a `-`, so the
- * first match on `n := re-laod(laod(n))` is inside `re-laod` even when the
- * diagnostic points at `laod`. Returns the text unchanged when the position
- * does not hold `missing` — the caller's regression gate then rolls the patch
- * back rather than writing a rewrite of something else.
- */
-/**
  * The identifier at `pos`, when the expression starting there IS that
  * identifier and nothing more. `null` for anything a suffix cannot simply be
  * appended to — a call, an index, an existing field access — because the
@@ -119,6 +108,17 @@ function identifierAt(store: Store, pos: Pos): string | null {
   return m[0];
 }
 
+/**
+ * Replace `missing` with `replacement` at exactly the reported position.
+ *
+ * The name-suggest branches historically replaced the first `\b`-delimited
+ * match on the diagnostic's line, which is not the same thing: Kumiki
+ * identifiers are kebab-case and `\b` matches either side of a `-`, so the
+ * first match on `n := re-laod(laod(n))` is inside `re-laod` even when the
+ * diagnostic points at `laod`. Returns the text unchanged when the position
+ * does not hold `missing` — the caller's regression gate then rolls the patch
+ * back rather than writing a rewrite of something else.
+ */
 function replaceAt(text: string, pos: Pos, missing: string, replacement: string): string {
   const lines = text.split(/\r?\n/);
   const idx = pos.line - 1;

@@ -526,13 +526,18 @@ export const inputPatchers: TilePatchers = {
     const b = el as HTMLButtonElement;
     if (b.textContent !== newNode.text) b.textContent = newNode.text;
     // A conditional can swap one button for another with a different `type`,
-    // so this is reconciled like every other attribute. Back to the browser's
-    // own default when the new node does not say.
-    // `submit` is what a `<button>` with no type does, so a node that stops
-    // carrying one goes back to the browser's own default rather than keeping
-    // whatever the previous render set.
-    const nextType = newNode.type ?? "submit";
-    if (b.type !== nextType) b.setAttribute("type", nextType);
+    // so this is reconciled like every other attribute — and a node that stops
+    // carrying one loses the attribute rather than keeping what the previous
+    // render set, which is what `create` and the SSR path produce for it.
+    //
+    // Compared against the ATTRIBUTE, not `b.type`: that property reports the
+    // browser's resolved value, so an absent or invalid attribute reads back as
+    // "submit" and the comparison would be true on every single reconcile.
+    const nextType = newNode.type ? String(newNode.type) : null;
+    if (b.getAttribute("type") !== nextType) {
+      if (nextType === null) b.removeAttribute("type");
+      else b.setAttribute("type", nextType);
+    }
     b.disabled = !!newNode.disabled;
     reconcileId(b, newNode);
     setHandlers(b, inputHandlers(newNode));

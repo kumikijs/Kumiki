@@ -8,13 +8,21 @@
 #
 # The instant is parsed from a fixed string rather than taken from `Time.now`,
 # so what renders depends only on the formatter.
+#
+# Two things the pattern does NOT do: it has no escape, so a token inside a
+# word is still a token (`"summer dd"` renders `su05er 14`); and text that
+# names no instant is `None` rather than a date — the arm below renders it.
 
-slot iso : Text = "2026-08-14T21:05:09"
+slot iso  : Text = "2026-08-14T21:05:09"
+slot junk : Text = "not a date"
 
 fn at(text: Text) -> Option(Time) = Time.parse(text)
 fn ymd(t: Time)  -> Text = t.format("yyyy-MM-dd")
 fn stamp(t: Time) -> Text = t.format("yyyy-MM-dd HH:mm")
 fn wordy(t: Time) -> Text = t.format("dd/MM/yyyy")
+fn junkDay(s: Text) -> Text = match at(s) with | Some(t) -> ymd(t) | None -> "none"
+# `mm` is a token wherever it appears, including inside `summer`.
+fn shown(s: Text) -> Text = match at(s) with | Some(t) -> t.format("summer dd") | None -> "?"
 
 tile App = column(
              match at(iso) with
@@ -24,7 +32,9 @@ tile App = column(
                             text("wordy: " + wordy(t)),
                             text("year: " + t.format("yyyy")),
                             text("literal: " + t.format("[on] dd")))
-             | None -> text("unparsed"))
+             | None -> text("unparsed"),
+             text("junk: " + junkDay(junk)),
+             text("literal: " + shown(iso)))
 
 app TimeFormat
     caps   = []

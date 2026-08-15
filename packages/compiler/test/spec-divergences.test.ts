@@ -97,6 +97,20 @@ app A
     expect(diags[0]?.message).toContain(".to-list");
   });
 
+  it("sees through a type alias", () => {
+    // The check unaliases before asking what the collection is; without that a
+    // `type Names = Map(...)` iterates straight past it.
+    const src = `type Names = Map(Text, Text)
+slot names : Names = {}
+tile App = column(for k in names text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual(["E0218"]);
+  });
+
   it("accepts the two forms the spec names, and a plain List", () => {
     const src = `${MAP}
 ${SET}
@@ -163,15 +177,17 @@ describe("Time lowers to the representation the spec gives it", () => {
   });
 
   it("parses a Time into milliseconds, not into the text it was given", () => {
-    // `Date.parse` of junk is NaN, which is what `None` is for — so the
-    // Option this returns still means what its type says.
+    // The instant, and the rule for which clock a zone-less string is on, live
+    // in one runtime helper: the generic `T.parse` branch that wrapped the raw
+    // text in `Some` satisfies neither assertion below.
     const src = app(
       "text(shown(iso))",
       `slot iso : Text = ""
 fn shown(s: Text) -> Text = match Time.parse(s) with | Some(t) -> t.format("yyyy") | None -> "?"`,
     );
     const js = build(src);
-    expect(js).toContain("Date.parse");
+    expect(js).toContain("_s.parseTime(");
+    expect(js).not.toMatch(/_s\.Some\(String\(/);
     expect(js).toContain("_s.formatTime");
   });
 });
@@ -206,6 +222,13 @@ tile InBtn = button(text="in", onClick=open)`;
   it("says nothing about the tiles that do fire it", () => {
     expect(diags('column(button(text="a", onClick=open))')).toEqual([]);
     expect(diags('column(check(label="a", onChange=open))')).toEqual([]);
+    // `editable` dispatches `onInput` from its own renderer. No `ui.input`
+    // selector reaches it, so deriving this entry from the lift table alone
+    // told the reader to delete working code.
+    expect(diags('column(editable(value="a", onInput=open))')).toEqual([]);
+    // The overlay row is the one hand-written entry in the table.
+    expect(diags('column(modal(text("a"), onClose=open))')).toEqual([]);
+    expect(diags('column(drawer(text("a"), onClose=open))')).toEqual([]);
   });
 
   it("says nothing about the four the runtime attaches to any element", () => {

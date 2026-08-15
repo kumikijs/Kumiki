@@ -4,7 +4,14 @@
       "label": "the pattern decides the output, not the formatter",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["ymd: 2026-08-14", "wordy: 14/08/2026", "year: 2026", "literal: [on] 14"]
+        "domIncludes": [
+          "ymd: 2026-08-14",
+          "wordy: 14/08/2026",
+          "year: 2026",
+          "literal: [on] 14",
+          "junk: none",
+          "literal: su05er 14"
+        ]
       }
     },
     {

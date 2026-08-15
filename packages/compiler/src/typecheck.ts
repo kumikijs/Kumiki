@@ -33,7 +33,7 @@ import { isTileExpr } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
-import { KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen.ts";
+import { KNOWN_MEMBERS, KNOWN_METHODS, METHOD_MIN_ARGS } from "./codegen.ts";
 import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
@@ -1607,6 +1607,20 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           message: `Method ".${e.method}" is not implemented by the runtime`,
           pos: e.pos,
         });
+      }
+      {
+        // A method whose lowering reads arguments it was not given crashes
+        // codegen with a bare `TypeError` and no position — so `check` says ok
+        // and `build` dies. Reported here, where the position is.
+        const min = METHOD_MIN_ARGS.get(e.method);
+        if (min !== undefined && e.args.length < min) {
+          errors.push({
+            code: "E0213",
+            kind: "call-arity-mismatch",
+            message: `Method ".${e.method}" expects ${min} argument(s) but got ${e.args.length}`,
+            pos: e.pos,
+          });
+        }
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);

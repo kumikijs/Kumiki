@@ -2228,6 +2228,16 @@ function makeEffectDispatcher(
             ic.abort();
             state.inflight.delete(target);
           }
+          // A queued entry that has not started is the same pending launch as
+          // a debounce timer: it holds an episode token and would run after
+          // the user pressed Cancel unless it is released here.
+          const q = state.queues.get(target);
+          if (q) {
+            const waiting = q.pending.splice(0, q.pending.length);
+            for (const e of waiting) {
+              if (e.token) onPolicyCancel?.(e.token, e.effectName);
+            }
+          }
           const t = state.timers.get(target);
           // Only debounce timers represent a pending launch we want to drop.
           // A throttle timer is the open-window marker for an already-issued
@@ -2299,14 +2309,21 @@ function makeEffectDispatcher(
         const entry: QueueEntry = { token, effectName: eff.name };
         const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
         q.pending.push(entry);
-        q.tail = q.tail.then(async () => {
+        const runNext = async (): Promise<void> => {
           const idx = q.pending.indexOf(entry);
-          // Gone from `pending` means `dispose()` already released this entry's
-          // token — the mount is over, so there is nothing left to run.
+          // Gone from `pending` means something already released this entry's
+          // token — `dispose()`, or a cancel by id — so there is nothing left
+          // to run.
           if (idx === -1) return;
           q.pending.splice(idx, 1);
           await launch(eff, input, key, token);
-        });
+        };
+        // Both arms, so a rejection anywhere in the chain does not skip every
+        // later `onFulfilled` — that would leave this id's queue dead for the
+        // rest of the mount, with each stranded entry still holding the
+        // episode token it claimed. `launch` catches its own failures today;
+        // the second arm is what keeps that from being load-bearing.
+        q.tail = q.tail.then(runNext, runNext);
         state.queues.set(id, q);
         return;
       }
