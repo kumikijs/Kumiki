@@ -32,7 +32,7 @@ import {
   viewHash,
   viewHistory,
 } from "@kumikijs/cli";
-import { check, collectTimerNames, variantTagsOf } from "@kumikijs/compiler";
+import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Re-materialize the `node:fs` namespace as a plain object so per-test
@@ -178,6 +178,54 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
 });
 
 describe("kumiki fix: auto-patch suggestions", () => {
+  it("appends the list accessor a `for` over a Map is missing (E0218)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-for-"));
+    const file = join(dir, "formap.kumiki");
+    writeFileSync(
+      file,
+      `slot names : Map(Text, Text) = {}
+tile App = column(for k in names text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain('append ".keys" to "names" at 2:28');
+    // The patch has to produce a file that compiles — appending in the wrong
+    // place is worse than proposing nothing.
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("for k in names.keys");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("declines when the iterated expression is not a plain name (E0218)", () => {
+    // The diagnostic points at where the expression starts, so appending there
+    // would produce `pick.keys(names)`. Reported as a skip with its reason
+    // rather than repaired wrongly.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-for2-"));
+    const file = join(dir, "formap2.kumiki");
+    writeFileSync(
+      file,
+      `slot names : Map(Text, Text) = {}
+fn pick(m: Map(Text, Text)) -> Map(Text, Text) = m
+tile App = column(for k in pick(names) text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.find((sk) => sk.code === "E0218")?.reason).toBe("e0218-target-not-a-plain-name");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("suggests did-you-mean for an undef slot reference", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-"));
     const file = join(dir, "broken.kumiki");

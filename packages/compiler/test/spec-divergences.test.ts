@@ -53,3 +53,97 @@ tile Send = button(text="send", type=mode)`,
     expect(codes(src)).toEqual([]);
   });
 });
+
+// language.md §1.7.2 inv. 5: the iteration target of `for` is `Map.keys`,
+// `Set.to-list`, or a `List`. A `Map` and a `Set` are both keyed objects at
+// runtime, so iterating one compiled and then threw where the loop was used.
+describe("for over a Map or a Set is E0218", () => {
+  const MAP = "slot names : Map(Text, Text) = {}";
+  const SET = "slot tags : Set(Text) = {}";
+
+  it("reports the tile form", () => {
+    const src = `${MAP}
+tile App = column(for k in names text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual(["E0218"]);
+  });
+
+  it("reports the reducer form, which is a different node", () => {
+    // Covering only the tile form would leave `do= for k in m …` compiling and
+    // throwing `object is not iterable` at the first dispatch.
+    const src = `${MAP}
+slot n : Int = 0
+reducer count on=app.start do=
+    for k in names
+        n := n + 1
+${appTail()}`;
+    expect(codes(src)).toEqual(["E0218"]);
+  });
+
+  it("reports a Set, which is a keyed object too", () => {
+    const src = `${SET}
+tile App = column(for t in tags text(t))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const diags = check(parse(lex(src)));
+    expect(diags.map((d) => d.code)).toEqual(["E0218"]);
+    expect(diags[0]?.message).toContain(".to-list");
+  });
+
+  it("accepts the two forms the spec names, and a plain List", () => {
+    const src = `${MAP}
+${SET}
+slot xs : List(Text) = []
+tile App = column(
+             for k in names.keys text(k),
+             for t in tags.to-list text(t),
+             for x in xs text(x))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("stays silent when the type cannot be determined", () => {
+    // `null` from the inferencer means "cannot tell", never "not a list". Here
+    // the name does not resolve at all: that is one mistake, and it already
+    // has a diagnostic — E0218 must not pile a second complaint on top of it.
+    const src = `tile App = column(for r in nope text(r))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual(["E0103"]);
+  });
+
+  it("accepts a List that comes back from a fn", () => {
+    const src = `slot xs : List(Text) = []
+fn rows(ys: List(Text)) -> List(Text) = ys
+tile App = column(for r in rows(xs) text(r))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual([]);
+  });
+});
+
+function appTail(): string {
+  return `tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+}

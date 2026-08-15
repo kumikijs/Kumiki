@@ -563,6 +563,16 @@ A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — th
 
 **Fix**: Use a value inside the safe range, or carry the number as `Text`.
 
+### E0218 `for-over-non-list`
+
+A `for` iterates a `Map` or a `Set` directly. The iteration target of `for` is a list ([Tile Layer Invariants](./language.md#_1-7-2-invariants), inv. 5), and both of those are keyed objects at runtime — the program compiles and then throws where the loop is used: `.map is not a function` in a tile, `object is not iterable` in a reducer.
+
+> `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
+
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
+
+**Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`

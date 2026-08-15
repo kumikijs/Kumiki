@@ -649,6 +649,29 @@ function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
   return elementType(inferType(iter, sym, ctx), sym);
 }
 
+/**
+ * `for` iterates a list (language.md §1.7.2 inv. 5). A `Map` and a `Set` are
+ * both plain objects at runtime — keyed by field, not indexed — so iterating
+ * one compiles and then throws where it is used: `.map is not a function` in a
+ * tile, `object is not iterable` in a reducer. The spec's answer is to name the
+ * list you meant, and both types have one.
+ *
+ * Silent when the type is unknown: `null` from `inferType` means "cannot tell",
+ * never "not a collection".
+ */
+function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  const t = unaliasType(inferType(iter, sym, ctx), sym);
+  if (t?.kind !== "TypeApp") return;
+  const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
+  if (!remedy) return;
+  errors.push({
+    code: "E0218",
+    kind: "for-over-non-list",
+    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}`,
+    pos: iter.pos,
+  });
+}
+
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
@@ -724,6 +747,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
   switch (t.kind) {
     case "TileFor": {
       checkExpr(t.iter, sym, errors, ctx);
+      checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
       checkTileExpr(t.body, sym, errors, inner);
@@ -1184,6 +1208,7 @@ function checkStmt(
 ): void {
   if (s.kind === "ForStmt") {
     checkExpr(s.iter, sym, errors, ctx);
+    checkIterationTarget(s.iter, sym, errors, ctx);
     const inner = innerScope(ctx);
     bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
     // A loop body executes multiple times; track writes inside its own scope

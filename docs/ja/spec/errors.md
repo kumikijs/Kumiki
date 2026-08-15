@@ -550,6 +550,16 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 **修正**：安全範囲内の値を使うか、その数値を `Text` として持つ。
 
+### E0218 `for-over-non-list`
+
+`for` が `Map` または `Set` を直接反復している。`for` の反復対象はリストであり（[タイル層の不変条件](./language.md#_1-7-2-invariants) inv. 5）、この 2 つはランタイムではキー付きオブジェクトである — プログラムはコンパイルを通り、ループが使われる場所で投げる：タイルなら `.map is not a function`、reducer なら `object is not iterable`。
+
+> `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
+
+ループの両方の形 — タイルの中と reducer の `do=` ブロックの中 — で報告される。型が決定できない対象は報告しない。
+
+**修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する。`kumiki fix` が接尾辞を提案する。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`
