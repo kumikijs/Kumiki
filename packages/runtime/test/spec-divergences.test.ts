@@ -71,11 +71,12 @@ describe("button(type=…) reaches the DOM", () => {
     const { html } = await renderToString(app, {});
     expect(html).toContain('type="submit"');
     expect(html).not.toContain('type="button"');
-    // The typeless button carries no type at all — `?? "submit"` here would
+    // The typeless button carries no type AT ALL — `?? "submit"` here would
     // keep the assertion above green while reintroducing the divergence in the
-    // other direction, since the client leaves the attribute off.
-    const plain = html.slice(html.indexOf("plain") - 200, html.indexOf("plain"));
-    expect(plain.slice(plain.lastIndexOf("<button"))).not.toContain("type=");
+    // other direction, since the client renderer leaves the attribute off.
+    const tags = [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
+    expect(tags).toHaveLength(2);
+    expect(tags.filter((t) => t.includes("type="))).toHaveLength(1);
   });
 });
 

@@ -68,8 +68,10 @@ export const _stdlibCore = {
    * the reader is looking at is the only defensible answer.
    */
   parseTime(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    // No early return for a blank: `Date.parse("")` is already NaN, and a
+    // branch that cannot change an answer is a branch the next reader has to
+    // re-derive.
     const raw = String(text ?? "").trim();
-    if (raw === "") return _stdlibCore.None;
     const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
     const ms = dateOnly
       ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime()

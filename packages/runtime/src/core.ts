@@ -2321,8 +2321,13 @@ function makeEffectDispatcher(
         // Both arms, so a rejection anywhere in the chain does not skip every
         // later `onFulfilled` — that would leave this id's queue dead for the
         // rest of the mount, with each stranded entry still holding the
-        // episode token it claimed. `launch` catches its own failures today;
-        // the second arm is what keeps that from being load-bearing.
+        // episode token it claimed.
+        //
+        // No test reaches it: `launch` catches its own failures, and every
+        // caller between here and it does too, so there is no path today that
+        // rejects. It stays because the alternative is a policy whose failure
+        // mode is silent and permanent, resting on a property of code three
+        // layers away that nothing states.
         q.tail = q.tail.then(runNext, runNext);
         state.queues.set(id, q);
         return;

@@ -64,6 +64,48 @@ tile Send = button(text="send", type=mode)`,
   });
 });
 
+// A method whose lowering reads arguments it was not given crashed codegen
+// with a bare `TypeError` and no position — `check` said ok and `build` died.
+// The class is older than `format`: 36 other methods dereference their first
+// argument the same way.
+describe("a method called with too few arguments is E0213", () => {
+  it("reports the zero-arg call `check` used to pass", () => {
+    const src = app("text(stamp(Time.now))", "fn stamp(t: Time) -> Text = t.format()");
+    expect(codes(src)).toEqual(["E0213"]);
+  });
+
+  it("covers the methods that were already like this, not only the new one", () => {
+    const joinSrc = app(
+      "text(j(xs))",
+      `slot xs : List(Text) = []
+fn j(l: List(Text)) -> Text = l.join()`,
+    );
+    expect(codes(joinSrc)).toEqual(["E0213"]);
+  });
+
+  it("enforces the minimum, not an exact count", () => {
+    // `get-or` is one method with two shapes — the lowering branches on how
+    // many it was given, so only the floor is a contract.
+    const one = app(
+      "text(v(m))",
+      `slot m : Map(Text, Text) = {}
+fn v(x: Map(Text, Text)) -> Text = x.get-or("k", "fallback")`,
+    );
+    expect(codes(one)).toEqual([]);
+    const opt = app(
+      "text(v(m))",
+      `slot m : Map(Text, Text) = {}
+fn v(x: Map(Text, Text)) -> Text = x.get("k").get-or("fallback")`,
+    );
+    expect(codes(opt)).toEqual([]);
+  });
+
+  it("says nothing about a method that takes none", () => {
+    const src = app("text(n.show)", "slot n : Int = 0");
+    expect(codes(src)).toEqual([]);
+  });
+});
+
 // language.md §1.7.2 inv. 5: the iteration target of `for` is `Map.keys`,
 // `Set.to-list`, or a `List`. A `Map` and a `Set` are both keyed objects at
 // runtime, so iterating one compiled and then threw where the loop was used.
