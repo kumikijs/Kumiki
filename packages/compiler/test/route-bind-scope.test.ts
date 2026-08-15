@@ -102,6 +102,19 @@ describe("where $route really is bound", () => {
     expect(codes(src)).toEqual([]);
   });
 
+  it("finds the prefetching link inside the loop that renders the list", () => {
+    // Where one actually appears: a link per row, each prefetching the reducer
+    // that loads the row it points at. A collector that only looked at the top
+    // level of a tile body would miss every real use.
+    const src = program(
+      "ui.click(Other)",
+      'seen := $route.params.get-or("id", "")',
+      `slot posts : List(Text) = []
+tile Ahead = column(for p in posts link(to="/posts/" + p) {text: p, prefetch: subject, prefetch-args: {"id": p}})\n`,
+    ).replace("tile Page = column(Btn, Other)", "tile Page = column(Btn, Other, Ahead)");
+    expect(codes(src)).toEqual([]);
+  });
+
   it("accepts the string form of the same prefetch target", () => {
     const src = program(
       "ui.click(Other)",

@@ -1682,7 +1682,7 @@ export async function runFixFromTest(
       };
     }
     let text = readFileSync(path, "utf8");
-    for (const p of patches) text = p.apply(text);
+    for (const p of rightToLeft(patches)) text = p.apply(text);
     try {
       atomicWriteFileSync(path, text);
     } catch (e) {
