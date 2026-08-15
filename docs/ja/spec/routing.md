@@ -145,6 +145,8 @@ reducer cleanupOnLeave
 
 `$route` は新（または旧）ルートを表す bind。
 
+**`$route` が束縛されるのは、ここと他 2 箇所だけである。** ランタイムがこれをペイロードに入れるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が[プリフェッチ](#_3-8-プリフェッチ)の対象に指名した reducer である。それ以外の reducer から読むと [E0119](./errors.md#e0119-route-bind-out-of-scope) になる：ペイロードにルートが無いので、失敗するのではなくフィールドがすべて `undefined` を返す。それらの外側の reducer が欲しいのは [`route` slot](#_3-2-現在のルート状態) — ランタイムが保守しており、同じルートを保持し、どの層からも読める。
+
 ---
 
 ## 3.5 ガード

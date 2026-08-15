@@ -1,0 +1,89 @@
+{
+  "effects": {
+    "loadSession": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "Some",
+          "_0": { "userId": "9c1f2b40-6d3a-4e58-9a71-0b2c3d4e5f60", "token": "tkn" }
+        }
+      }
+    ],
+    "fetchIndex": [{ "outcome": "ok", "value": ["3f7c1a2e-5b6d-4c8e-9f10-2a3b4c5d6e7f"] }],
+    "fetchPost": [
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "3f7c1a2e-5b6d-4c8e-9f10-2a3b4c5d6e7f",
+          "title": "Keys and identity",
+          "body": "First draft.",
+          "authorId": "9c1f2b40-6d3a-4e58-9a71-0b2c3d4e5f60",
+          "publishedAt": 1700000000000,
+          "tags": ["kumiki"]
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "3f7c1a2e-5b6d-4c8e-9f10-2a3b4c5d6e7f",
+          "title": "Keys and identity",
+          "body": "First draft.",
+          "authorId": "9c1f2b40-6d3a-4e58-9a71-0b2c3d4e5f60",
+          "publishedAt": 1700000000000,
+          "tags": ["kumiki"]
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "3f7c1a2e-5b6d-4c8e-9f10-2a3b4c5d6e7f",
+          "title": "Keys and identity, revised",
+          "body": "First draft.",
+          "authorId": "9c1f2b40-6d3a-4e58-9a71-0b2c3d4e5f60",
+          "publishedAt": 1700000000000,
+          "tags": ["kumiki"]
+        }
+      }
+    ],
+    "savePost": [
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "3f7c1a2e-5b6d-4c8e-9f10-2a3b4c5d6e7f",
+          "title": "Keys and identity, revised",
+          "body": "First draft.",
+          "authorId": "9c1f2b40-6d3a-4e58-9a71-0b2c3d4e5f60",
+          "publishedAt": 1700000000000,
+          "tags": ["kumiki"]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "label": "boot — the stored session is restored and the index loads",
+      "expect": {
+        "noErrors": true,
+        "state": { "session": { "_tag": "Some" }, "postIndex": { "_tag": "Loaded" } }
+      }
+    },
+    {
+      "label": "the editor route fills its slot from the fetched post — the reducer that decides this runs on fetchPost.ok, where no route is bound to a payload",
+      "do": { "navigate": "/posts/3f7c1a2e-5b6d-4c8e-9f10-2a3b4c5d6e7f/edit" },
+      "expect": {
+        "noErrors": true,
+        "state": { "editor": { "_tag": "Some", "_0": { "title": "Keys and identity" } } },
+        "domIncludes": ["Edit Post", "Save"]
+      }
+    },
+    {
+      "label": "saving reads the id off the route, so the put carries the post's own id and the reply lands under it",
+      "do": { "clickText": "Save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "editSaving": false, "editor": { "_tag": "None" } },
+        "domIncludes": ["Keys and identity, revised"]
+      }
+    }
+  ]
+}

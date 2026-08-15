@@ -76,6 +76,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | スタイル |
+| [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | ルーティング |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |

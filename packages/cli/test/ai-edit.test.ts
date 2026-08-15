@@ -250,6 +250,61 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("rewrites an out-of-scope $route to the slot that holds it (E0119)", () => {
+    // The two name the same route. The bind is only filled in for a route
+    // lifecycle reducer, and the slot is readable from all of them — so the
+    // repair is the `$`, and the patched file has to compile.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-route-"));
+    const file = join(dir, "route.kumiki");
+    writeFileSync(
+      file,
+      `slot seen : Text = ""
+reducer clicked on=ui.click(Btn) do= seen := $route.path
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain(
+      'read the "route" slot instead of "$route" at 2:46',
+    );
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("seen := route.path");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lands both repairs when one line holds two, and the first shifts the second", () => {
+    // `$route` → `route` is a character shorter, so a left-to-right pass moves
+    // the second diagnostic's column by one. The regression gate reads a
+    // diagnostic as `code@line:col`, so the moved one counted as introduced and
+    // the whole plan was rolled back — with the file still holding both errors.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-two-"));
+    const file = join(dir, "two.kumiki");
+    writeFileSync(
+      file,
+      `slot seen : Bool = false
+reducer clicked on=ui.click(Btn) do= seen := $route.path == $route.pattern
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file);
+    expect(result.applied).toBe(2);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("suggests did-you-mean for an undef slot reference", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-"));
     const file = join(dir, "broken.kumiki");

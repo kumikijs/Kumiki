@@ -391,7 +391,7 @@ issue.copy(status=Done, priority=High)
 | `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
-| `$route` | route.enter/leave 時の Route |
+| `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
 | `$now` | 現在時刻 |
 
 ### 1.6.6 例

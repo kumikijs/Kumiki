@@ -330,6 +330,16 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：綴りを直すか、theme を宣言する。`kumiki fix` が最も近い theme 名または slot 名を提案する。
 
+### E0119 `route-bind-out-of-scope`
+
+reducer が `$route` を読んでいるが、その reducer のペイロードにランタイムはルートを入れない。`$route` が束縛されるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が `prefetch` に指名した reducer — プリフェッチと実際の遷移で 1 つの body を共有できるよう、後者は前者と同じ束縛で発火する（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)、[§3.8](./routing.md#_3-8-プリフェッチ)）。それ以外のトリガは、ルートを含まないペイロードで reducer を適用する。
+
+> `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; here it is applied with a payload that has none, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
+
+この検査がないと、読みは空オブジェクトに落ちる。`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す — それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref--undef-slot)）である。
+
+**修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-現在のルート状態)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`

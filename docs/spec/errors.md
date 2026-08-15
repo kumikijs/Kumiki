@@ -343,6 +343,16 @@ A name that resolves to neither leaves the runtime looking up a theme that was n
 
 **Fix**: Correct the spelling, or declare the theme. `kumiki fix` proposes the closest theme or slot name.
 
+### E0119 `route-bind-out-of-scope`
+
+A reducer reads `$route`, but the runtime does not put one in that reducer's payload. `$route` is bound in a `route.enter` / `route.leave` / `route.error` reducer, and in the reducer a link names as its `prefetch` target — which fires with the same binding so one body can serve both the prefetch and the navigation ([Routing §3.4](./routing.md#_3-4-route-lifecycle), [§3.8](./routing.md#_3-8-prefetch)). Every other trigger applies the reducer with a payload that has no route in it.
+
+> `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; here it is applied with a payload that has none, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
+
+Without this check the read lowered to an empty object, so `$route.params.get-or("id", "")` returned the fallback and `$route.pattern` returned `undefined` — every comparison against them was false and the reducer's whole body quietly did nothing. A `fn` or a tile body is not applied with a payload at all, so `$route` there is an undefined name ([E0103](#e0103-undef-ref--undef-slot)) rather than this.
+
+**Fix**: Read the `route` slot ([Routing §3.2](./routing.md#_3-2-current-route-state)), which the runtime maintains and every layer can read. `kumiki fix` proposes the rewrite.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`

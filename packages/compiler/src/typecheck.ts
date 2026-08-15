@@ -29,7 +29,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { assertNever, isTileExpr } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
@@ -174,6 +174,12 @@ type SymbolTable = {
   effects: Map<string, EffectDef>;
   /** Names declared by `timer(d, name=N)` triggers — the `stop-timer` namespace. */
   timerNames: Set<string>;
+  /**
+   * Reducers a `link {prefetch: R}` names (routing.md §3.8). The prefetch fires
+   * that reducer with the same binding as `route.enter`, so `$route` is in
+   * scope in it however else it is triggered.
+   */
+  prefetchTargets: Set<string>;
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
   motions: Set<string>;
   /** Names declared by `theme N = {…}` — the `app.theme` namespace. */
@@ -204,6 +210,7 @@ function checkAll(
     fns: new Map(),
     effects: new Map(),
     timerNames: new Set(),
+    prefetchTargets: new Set(),
     motions: new Set(),
     themes: new Set(),
     iconDomain,
@@ -251,6 +258,12 @@ function checkAll(
         sym.app = def;
         break;
     }
+  }
+
+  // Collected across the whole program before any definition is checked: the
+  // tile that prefetches a reducer may be written below it.
+  for (const def of program.defs) {
+    if (def.kind === "TileDef") collectPrefetchTargets(def.body, sym.prefetchTargets);
   }
 
   const index = buildDefIndex(program);
@@ -630,6 +643,13 @@ type Ctx = {
    * variable as an Int.
    */
   localTypes: Map<string, TypeExpr>;
+  /**
+   * Whether the runtime fills `$route` into this reducer's payload. Set only
+   * for `kind: "reducer"` — a `fn` or a tile is not applied with a payload at
+   * all, so `$route` there is a name that does not exist (E0103) rather than a
+   * bind read out of its scope (E0119).
+   */
+  routeBind?: "bound" | "unbound";
 };
 
 /**
@@ -1140,12 +1160,59 @@ function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
   }
 }
 
+/**
+ * Whether the runtime applies this reducer with a `$route` in its payload.
+ * Three places do (`core.ts`): the route lifecycle chain (`route.enter` /
+ * `route.leave` / `route.error`), and a link's prefetch, which fires its target
+ * with a synthetic route built from `prefetch-args` so the prefetch and the
+ * navigation can share one reducer body (routing.md §3.8). Every other trigger
+ * passes a payload with no route in it.
+ */
+function bindsRoute(r: ReducerDef, sym: SymbolTable): boolean {
+  if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return true;
+  return sym.prefetchTargets.has(r.name);
+}
+
+/**
+ * Every reducer a `link {prefetch: …}` names, in either form the prop accepts
+ * (bare ident or string literal — the same pair `checkTileProp` resolves). The
+ * walk is the whole tile body, not only its top level: a prefetching link is
+ * usually inside the `for` that renders the list it links into.
+ */
+function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      collectPrefetchTargets(expr.body, out);
+      return;
+    case "TileIf":
+      collectPrefetchTargets(expr.consequent, out);
+      collectPrefetchTargets(expr.alternate, out);
+      return;
+    case "TileMatch":
+      for (const arm of expr.arms) collectPrefetchTargets(arm.body, out);
+      return;
+    case "TileCall": {
+      if (expr.name === "link") {
+        const v = expr.props.find((p) => p.name === "prefetch")?.value;
+        if (v?.kind === "Ref") out.add(v.name);
+        else if (v?.kind === "Str") out.add(v.value);
+      }
+      for (const a of expr.args) if (isTileExpr(a.value)) collectPrefetchTargets(a.value, out);
+      return;
+    }
+    default:
+      assertNever(expr);
+  }
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
+    routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
@@ -1161,9 +1228,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       });
     }
   }
-  if (r.on.kind === "LifecycleEvent") {
-    if (r.on.name.startsWith("route.")) ctx.localBinds.add("$route");
-  }
+  if (ctx.routeBind === "bound") ctx.localBinds.add("$route");
   // `tile.mount(X)` fires when *that* tile enters the rendered tree, so an
   // undeclared `X` is the same dead subscription E0211 reports for a `ui.*`
   // selector — and there is no `_` here to exempt: the wildcard exists for
@@ -1252,7 +1317,6 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   }
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");
-  ctx.localBinds.add("$route");
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
@@ -1536,6 +1600,23 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Unit":
       return;
     case "Ref":
+      // Before the localBinds lookup so the two can never disagree: `$route`
+      // is in localBinds exactly when the runtime binds it, and the reducer
+      // that does not get one needs to hear why rather than be told the name
+      // does not exist.
+      if (e.name === "$route" && ctx.routeBind === "unbound") {
+        errors.push({
+          code: "E0119",
+          kind: "route-bind-out-of-scope",
+          message:
+            `"$route" is only bound in a route.enter / route.leave / route.error reducer ` +
+            `and in a link's prefetch target; here it is applied with a payload that has ` +
+            `none, so every field off it reads undefined. Read the "route" slot instead — ` +
+            `it holds the current route and is in scope everywhere`,
+          pos: e.pos,
+        });
+        return;
+      }
       if (ctx.localBinds.has(e.name)) return;
       if (sym.slots.has(e.name)) {
         if (ctx.kind === "fn") {

@@ -28,6 +28,19 @@ export type AutoPatch = {
   /** Free-form description of the fix to be applied. */
   description: string;
   apply: (text: string) => string;
+  /**
+   * Where in the source this patch writes. Present on every patch `planFixes`
+   * produces; absent on the whole-file rewrites `planTestPatch` builds, which
+   * are applied one at a time.
+   *
+   * `applyFixPlan` composes patches from the right so that one repair never
+   * moves the column another was measured at. A rewrite that changes a
+   * fragment's length shifts everything after it on its line, and the
+   * regression gate reads a diagnostic's identity as `code@line:col` — so a
+   * left-to-right pass turned the second repair on a line into an "introduced"
+   * diagnostic and rolled the whole plan back.
+   */
+  pos?: Pos;
 };
 
 /**
@@ -270,6 +283,19 @@ export function planFixesExplained(
     debugSkip(`planFixes:${code}`, reason, message);
   };
   for (const err of errors) {
+    // Every patch repairs exactly one diagnostic, so its position comes from
+    // the loop rather than from each branch — a branch that forgot to carry it
+    // would silently lose its place in the application order.
+    const add = (patch: Omit<AutoPatch, "pos">): void => {
+      patches.push({ ...patch, pos: err.pos });
+    };
+    // For the repairs that do NOT write where the diagnostic points: they add
+    // or extend a region elsewhere in the file, which moves every line after
+    // it. Carrying `err.pos` would sort them among the span repairs and leave
+    // those writing at a line that has moved.
+    const addElsewhere = (patch: Omit<AutoPatch, "pos">): void => {
+      patches.push({ ...patch });
+    };
     const beforePatches = patches.length;
     const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
@@ -287,7 +313,7 @@ export function planFixesExplained(
         skip(err.code, "no-close-name-suggestion", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -321,7 +347,7 @@ export function planFixesExplained(
         skip(err.code, "e0106-no-close-timer", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -356,7 +382,7 @@ export function planFixesExplained(
         skip(err.code, "e0116-no-close-callee", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -387,7 +413,7 @@ export function planFixesExplained(
         skip(err.code, "e0117-no-close-type", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -418,7 +444,7 @@ export function planFixesExplained(
         skip(err.code, "e0104-no-close-effect", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -444,7 +470,7 @@ export function planFixesExplained(
         skip(err.code, "e0118-no-close-theme", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -470,7 +496,7 @@ export function planFixesExplained(
         skip(err.code, "e0216-no-close-tag", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -501,7 +527,7 @@ export function planFixesExplained(
         skip(err.code, "e0209-no-close-tag", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -544,7 +570,7 @@ export function planFixesExplained(
         skip(err.code, "e0301-cap-already-present-or-no-caps-field", err.message);
         continue;
       }
-      patches.push({
+      addElsewhere({
         code: err.code,
         message: err.message,
         description: `add capability "${cap}" to app.caps`,
@@ -552,7 +578,7 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0001") {
-      patches.push({
+      addElsewhere({
         code: err.code,
         message: err.message,
         description: `add "/404" -> NotFound to app.routes (you must define a NotFound tile)`,
@@ -588,11 +614,23 @@ export function planFixesExplained(
         skip(err.code, "e0218-target-not-a-plain-name", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `append "${remedy}" to "${name}" at ${err.pos.line}:${err.pos.col}`,
         apply: (text: string) => replaceAt(text, err.pos, name, `${name}${remedy}`),
+      });
+    }
+    if (err.code === "E0119") {
+      // The bind and the slot hold the same route, and the slot is in scope in
+      // every reducer — so dropping the `$` is the whole repair. The diagnostic
+      // points at the `$`, and `replaceAt` writes only if that is what is
+      // there, so a drifted position leaves the file alone.
+      add({
+        code: err.code,
+        message: err.message,
+        description: `read the "route" slot instead of "$route" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
       });
     }
     // Default classifier: this diagnostic code has no repair branch at all.
@@ -605,6 +643,20 @@ export function planFixesExplained(
     }
   }
   return { patches, skipped };
+}
+
+/**
+ * The patches in application order: latest position first, so a repair that
+ * changes a fragment's length never disturbs the column a repair to its left
+ * was measured at. Patches with no position keep their relative order and go
+ * last — they rewrite whole regions rather than a span, so nothing measured
+ * survives them anyway.
+ */
+function rightToLeft(patches: AutoPatch[]): AutoPatch[] {
+  return [...patches].sort((a, b) => {
+    if (!a.pos || !b.pos) return (a.pos ? 0 : 1) - (b.pos ? 0 : 1);
+    return b.pos.line - a.pos.line || b.pos.col - a.pos.col;
+  });
 }
 
 export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
@@ -698,7 +750,7 @@ export function applyFixPlan(
   // others and the no-op would still be reported as applied.
   let after = before;
   let applied = 0;
-  for (const p of plan.patches) {
+  for (const p of rightToLeft(plan.patches)) {
     const next = p.apply(after);
     if (next !== after) applied += 1;
     after = next;

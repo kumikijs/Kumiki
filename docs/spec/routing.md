@@ -145,6 +145,8 @@ reducer cleanupOnLeave
 
 `$route` is a bind representing the new (or old) route.
 
+**`$route` is bound here and in two other places, and nowhere else.** The runtime fills it into the payload of a `route.enter` / `route.leave` / `route.error` reducer, and of the reducer a link names as its [prefetch](#_3-8-prefetch) target. Reading it from any other reducer is [E0119](./errors.md#e0119-route-bind-out-of-scope): the payload has no route in it, so every field off it reads `undefined` rather than failing. What a reducer outside those wants is the [`route` slot](#_3-2-current-route-state) — the runtime maintains it, it holds the same route, and every layer can read it.
+
 ---
 
 ## 3.5 Guards
