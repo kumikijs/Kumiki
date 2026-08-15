@@ -81,6 +81,36 @@ export const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = O
  * explicit-only handler the overlay tiles (`modal`, `drawer`, `popover`)
  * accept via the late-flush path.
  */
+/** The tile set a `ui.<ev>(Tile)` selector lifts to, looked up by handler name. */
+function liftTilesFor(handler: string): ReadonlySet<string> | null {
+  return UI_LIFTS.find((l) => l.handler === handler)?.tiles ?? null;
+}
+
+/**
+ * Which tile kinds honour a handler prop that is written on them directly —
+ * `button(text="x", onClick=r)`, `row(...) {onKeyDown: r}`. `null` means every
+ * tile does.
+ *
+ * Not the same question as `UI_EVENT_TILE_KINDS`, which answers where a
+ * `ui.<ev>(Tile)` *selector* lands. Four of these are wired by the runtime's
+ * universal `applyUiEventHandlers` on whatever element the tile produced, so a
+ * container really does honour them; the rest are wired by an individual
+ * renderer, and a tile whose renderer does not look drops the handler with no
+ * trace. `onClose` is explicit-only — no ui-event lifts to it — and the overlay
+ * renderers are the ones that read it.
+ */
+export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
+  onClick: liftTilesFor("onClick"),
+  onChange: liftTilesFor("onChange"),
+  onInput: liftTilesFor("onInput"),
+  onSubmit: liftTilesFor("onSubmit"),
+  onKeyDown: null,
+  onMouseEnter: null,
+  onFocus: null,
+  onBlur: null,
+  onClose: new Set(["modal", "drawer", "popover"]),
+};
+
 export const HANDLER_NAMES: ReadonlySet<string> = new Set<string>([
   ...UI_LIFTS.map((l) => l.handler),
   "onClose",

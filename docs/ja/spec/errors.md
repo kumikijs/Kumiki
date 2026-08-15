@@ -560,6 +560,18 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 **修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する。`kumiki fix` が接尾辞を提案する。
 
+### W0213 `handler-on-inert-tile` (warning)
+
+ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` と `onInput` は input 系、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
+
+> `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムがタイルの生成した要素にそのまま付けるので、どのタイルでも機能する。
+
+[W0212](#w0212-ui-event-tile-mismatch) は同じ黙殺を反対側から見たもの — `<ev>` を発火できないタイルを対象にした `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
+
+**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`

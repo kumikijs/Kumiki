@@ -5,7 +5,12 @@ import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { buildDefIndex, referencesIn } from "../src/references.ts";
 import { check } from "../src/typecheck.ts";
-import { HANDLER_NAMES, UI_EVENT_TILE_KINDS, UI_LIFTS } from "../src/ui-lifts.ts";
+import {
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  UI_EVENT_TILE_KINDS,
+  UI_LIFTS,
+} from "../src/ui-lifts.ts";
 
 const ALL_UI_EVENT_KINDS: ReadonlyArray<UiEventKind> = [
   "click",
@@ -93,11 +98,12 @@ describe("HANDLER_NAMES (derived)", () => {
  * one the reference walker cannot see, which is how `rename` rewrites a program
  * into a different one.
  *
- * The tile kind is the same throughout on purpose. The checker gates handler
- * *names*, not which tile they sit on: `UI_LIFTS.tiles` drives W0212, which
- * applies to `ui.<ev>(T)` selectors rather than explicit handler bindings, so
- * `box(text("x"), onSubmit=bump)` typechecks clean despite `onSubmit`'s
- * `tiles` being `{form}`.
+ * The tile kind is the same throughout on purpose: what is under test is that
+ * a handler NAME resolves the same way through all three consumers, whatever
+ * tile it sits on. A `box` fires none of the constrained handlers, so each of
+ * those also draws a W0213 — expected below rather than filtered out, which
+ * keeps this file honest about the interaction. Which tiles honour which
+ * handler is `spec-divergences.test.ts`.
  */
 describe("every HANDLER_NAMES entry resolves as a reducer reference", () => {
   const BINDINGS = [
@@ -132,8 +138,12 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   for (const handler of HANDLER_NAMES) {
     for (const { form, bind } of BINDINGS) {
+      // A `box` honours the four the runtime attaches to any element and
+      // drops the rest, so the constrained ones are reported here.
+      const inert = HANDLER_PROP_TILES[handler] == null ? [] : ["W0213"];
+
       it(`${handler} (${form}) = <reducer> resolves for all three consumers`, () => {
-        expect(codesFor(bind(handler, "bump"))).toEqual([]);
+        expect(codesFor(bind(handler, "bump"))).toEqual(inert);
         expect(jsFor(bind(handler, "bump"))).toContain(`${handler}: _h("bump")`);
         expect(refsOf(bind(handler, "bump"))).toEqual(["reducer.bump"]);
       });
@@ -141,13 +151,38 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       it(`${handler} (${form}) = <undefined> reports exactly E0102`, () => {
         // E0103 would mean the value fell through to the ordinary-expression
         // path — the exact symptom of a half-wired handler name.
-        expect(codesFor(bind(handler, "nope"))).toEqual(["E0102"]);
+        expect(codesFor(bind(handler, "nope"))).toEqual([...inert, "E0102"]);
       });
 
       it(`${handler} (${form}) = <non-reference> reports exactly E0201`, () => {
         // Quieter than the undefined case under drift: nothing at all.
-        expect(codesFor(bind(handler, "1"))).toEqual(["E0201"]);
+        expect(codesFor(bind(handler, "1"))).toEqual([...inert, "E0201"]);
       });
     }
   }
+});
+
+// `HANDLER_PROP_TILES` answers "which tiles honour this handler when it is
+// written on them", which is not the question `UI_EVENT_TILE_KINDS` answers.
+// Both are read by checks that report dead handlers, so both have to stay
+// total over the handler names the language accepts.
+describe("HANDLER_PROP_TILES", () => {
+  it("has an entry for every handler name, including onClose", () => {
+    const missing = [...HANDLER_NAMES].filter((h) => !(h in HANDLER_PROP_TILES));
+    expect(missing).toEqual([]);
+  });
+
+  it("keeps the click set in step with the lift table", () => {
+    // Derived rather than written out: the runtime wires `onClick` in exactly
+    // the renderers a `ui.click(Tile)` selector lands on.
+    expect([...(HANDLER_PROP_TILES.onClick ?? [])].sort()).toEqual(
+      [...(UI_EVENT_TILE_KINDS.click ?? [])].sort(),
+    );
+  });
+
+  it("marks the universally-wired handlers as unconstrained", () => {
+    for (const h of ["onKeyDown", "onMouseEnter", "onFocus", "onBlur"]) {
+      expect(HANDLER_PROP_TILES[h], h).toBeNull();
+    }
+  });
 });

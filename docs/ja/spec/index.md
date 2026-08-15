@@ -94,6 +94,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | コア |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | コア |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | コア |
+| [W0213](./errors.md#w0213-handler-on-inert-tile) | `handler-on-inert-tile` | tile | コア |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |

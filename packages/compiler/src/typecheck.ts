@@ -42,7 +42,7 @@ import { STDLIB_TYPES } from "./stdlib-types.ts";
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
-import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
+import { HANDLER_NAMES, HANDLER_PROP_TILES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
 import {
   describeDuplicate,
   duplicateSubRoutes,
@@ -897,6 +897,7 @@ function checkTileCall(
     // Named arg whose name is an event-handler binds a reducer rather than a slot ref.
     if (arg.name && HANDLER_NAMES.has(arg.name)) {
       const expr = v as Expr;
+      checkHandlerTarget(t.name, arg.name, expr.pos, errors);
       if (expr.kind !== "Ref") {
         errors.push({
           code: "E0201",
@@ -919,6 +920,7 @@ function checkTileCall(
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
       const ref = prop.value;
+      checkHandlerTarget(t.name, prop.name, ref.pos, errors);
       if (ref.kind !== "Ref") {
         errors.push({
           code: "E0201",
@@ -969,6 +971,35 @@ function checkTileCall(
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
+}
+
+/**
+ * A handler prop written on a tile whose renderer never reads it.
+ * `row(text("card"), onClick=open)` compiles, renders, and does nothing: the
+ * container renderer wires layout and style, and clicks reach whatever
+ * descendant handles them — or nothing.
+ *
+ * A warning rather than an error, matching W0212: the same silent-drop
+ * situation, and the same reason to report it rather than break the build.
+ * `W0212` cannot see this one — it asks about `ui.<ev>(Tile)` selectors, and a
+ * container with any clickable descendant satisfies it.
+ */
+function checkHandlerTarget(
+  tileName: string,
+  handler: string,
+  pos: Pos,
+  errors: KumikiError[],
+): void {
+  if (!BUILTIN_TILES.has(tileName)) return;
+  const allowed = HANDLER_PROP_TILES[handler];
+  if (allowed == null || allowed.has(tileName)) return;
+  errors.push({
+    code: "W0213",
+    kind: "handler-on-inert-tile",
+    severity: "warning",
+    message: `"${handler}" on ${tileName}() is dropped — ${tileName} does not fire it. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    pos,
+  });
 }
 
 /**

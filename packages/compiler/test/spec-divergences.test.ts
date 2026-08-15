@@ -175,3 +175,61 @@ fn shown(s: Text) -> Text = match Time.parse(s) with | Some(t) -> t.format("yyyy
     expect(js).toContain("_s.formatTime");
   });
 });
+
+// A handler prop on a tile whose renderer never reads it. Codegen drops it,
+// the reducer never runs, and W0212 cannot see it: that check asks about
+// `ui.<ev>(Tile)` selectors, and a container passes as soon as any descendant
+// is clickable — which every card-with-a-button layout is.
+describe("a handler the tile cannot fire is W0213", () => {
+  const REDUCER = `slot n : Int = 0
+reducer open on=ui.click(InBtn) do= n := n + 1
+tile InBtn = button(text="in", onClick=open)`;
+
+  function diags(tile: string): { code: string; severity?: string; message: string }[] {
+    return check(parse(lex(app("Card", `${REDUCER}\ntile Card = ${tile}`))));
+  }
+
+  it("reports onClick on a container, as a warning", () => {
+    const [d, ...rest] = diags('row(text("card"), InBtn, onClick=open)');
+    expect(rest).toEqual([]);
+    expect(d?.code).toBe("W0213");
+    expect(d?.severity).toBe("warning");
+    // The message has to name where the handler does work, or the reader is
+    // left with "not here" and nowhere to go.
+    expect(d?.message).toContain("button");
+  });
+
+  it("reports the props form too, which is the other way to write it", () => {
+    expect(diags('row(text("card"), InBtn) {onClick: open}').map((e) => e.code)).toEqual(["W0213"]);
+  });
+
+  it("says nothing about the tiles that do fire it", () => {
+    expect(diags('column(button(text="a", onClick=open))')).toEqual([]);
+    expect(diags('column(check(label="a", onChange=open))')).toEqual([]);
+  });
+
+  it("says nothing about the four the runtime attaches to any element", () => {
+    // `applyUiEventHandlers` wires keydown / mouseenter / focus / blur on
+    // whatever element the tile produced, so a container honours them and a
+    // warning would be false.
+    expect(diags('row(text("card")) {onKeyDown: open}')).toEqual([]);
+    expect(diags('row(text("card")) {onMouseEnter: open}')).toEqual([]);
+    expect(diags('row(text("card")) {onFocus: open}')).toEqual([]);
+    expect(diags('row(text("card")) {onBlur: open}')).toEqual([]);
+  });
+
+  it("leaves a user-defined tile alone", () => {
+    // Only the builtin renderers are known here; a user tile's body decides,
+    // and it is checked where it is defined.
+    const src = `${REDUCER}
+tile Row = row(text("x"))
+tile Card = column(Row)
+tile App = column(Card)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual([]);
+  });
+});

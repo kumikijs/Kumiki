@@ -573,6 +573,18 @@ Fires for both forms of the loop — inside a tile and inside a reducer's `do=` 
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
 
+### W0213 `handler-on-inert-tile` (warning)
+
+A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` and `onInput` on the input tiles, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
+
+> `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+`onKeyDown`, `onMouseEnter`, `onFocus` and `onBlur` are never reported: the runtime attaches those to whatever element the tile produced, so any tile honours them.
+
+[W0212](#w0212-ui-event-tile-mismatch) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target cannot fire `<ev>`. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
+
+**Fix**: Move the handler onto the tile that fires the event, or wrap the content in a `button`. To react to a click anywhere in a region, subscribe a reducer with `on=ui.click(<the clickable child>)`.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
