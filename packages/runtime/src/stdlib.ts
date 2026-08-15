@@ -51,7 +51,14 @@ export const _stdlibCore = {
    * everyone east of Greenwich in the evening.
    */
   formatTime(ms: unknown, pattern: unknown): string {
-    const d = new Date(Number(ms));
+    // A `Time` is a millisecond number, and everything the compiler produces
+    // is one. It can still arrive as text from outside the language — a JSON
+    // payload mapped into a `Time` field, or state persisted by a build whose
+    // `Time.parse` stored the string it was given. Reading those rather than
+    // rendering `NaN-NaN-NaN` is the difference between a date and a bug
+    // report. Text that names no instant still renders as NaN, visibly.
+    const n = Number(ms);
+    const d = new Date(Number.isFinite(n) ? n : Date.parse(String(ms)));
     const p = typeof pattern === "string" ? pattern : String(pattern ?? "");
     const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
     const fields: Record<string, string> = {

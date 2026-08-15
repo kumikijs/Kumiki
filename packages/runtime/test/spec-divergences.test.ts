@@ -101,6 +101,21 @@ describe("Time.format honours its pattern", () => {
     expect(_stdlib.formatTime(at, "HH")).toBe(two(d.getHours()));
   });
 
+  it("reads an instant that arrived as text", () => {
+    // The compiler only ever produces a number here, but a `Time` field filled
+    // from a JSON payload — or from storage written by a build whose
+    // `Time.parse` kept the string — holds text. The old formatter handled
+    // those (it went through `new Date`), and dropping that would turn a date
+    // into `NaN-NaN-NaN` on exactly the paths no example covers.
+    const iso = "2026-08-14T21:05:09";
+    const asDate = new Date(iso);
+    expect(_stdlib.formatTime(iso, "yyyy-MM-dd HH:mm")).toBe(
+      `${asDate.getFullYear()}-${two(asDate.getMonth() + 1)}-${two(asDate.getDate())} ${two(asDate.getHours())}:${two(asDate.getMinutes())}`,
+    );
+    // A numeric string is the millisecond number it spells.
+    expect(_stdlib.formatTime(String(at), "yyyy")).toBe(_stdlib.formatTime(at, "yyyy"));
+  });
+
   it("keeps MM and mm apart", () => {
     // The pattern language is case-sensitive, and the two tokens differ only
     // by case: a lookup that lowercased would render the month as the minute.

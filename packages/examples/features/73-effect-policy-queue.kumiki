@@ -5,9 +5,12 @@
 # does not (runtime.md §10.4.3). Three emits from a single reducer overlapped.
 #
 # `log` below is written by the `.ok` reducer, so the order it ends up in is
-# the order the invocations *finished*. Under the old behaviour all three
-# started together and finished together; queued, each one waits for the one
-# before it.
+# the order the invocations finished. The scenario shows the result — one
+# click, three effects, `log=abc` — but it cannot tell FIFO from parallel:
+# scenario-tier effects resolve from scripted results in order either way.
+# What overlap is impossible is measured in
+# packages/runtime/test/spec-divergences.test.ts, which counts invocations in
+# flight against a provider that takes real time.
 
 slot log     : Text = ""
 slot pending : Int  = 0
