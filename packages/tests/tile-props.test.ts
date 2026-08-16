@@ -164,6 +164,13 @@ const BOTH_PATHS: Row[] = [
     claim: { style: { "box-shadow": "0 1px 2px rgba(0,0,0,0.1)" } },
   },
   {
+    // The theme has a `radius` scale and a separate `spacing` one; this read
+    // spacing, so `radius: "md"` was 16px where the theme says 8px.
+    name: "radius reads the radius scale, not the spacing scale",
+    tile: 'box(text("x")) {radius: "md"}',
+    claim: { style: { "border-radius": "8px" } },
+  },
+  {
     name: "grid rows mirror grid cols",
     tile: 'grid(text("x")) {cols: 2, rows: 3}',
     claim: {
