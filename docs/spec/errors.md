@@ -705,6 +705,16 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
 
+### E0705 `a11y-label-for`
+
+> `label for="<x>" names no tile — no id="<x>" in this program`
+
+A `label {for: "<x>"}` whose literal target matches no `id="<x>"` / `{id: "<x>"}` anywhere in the program. Such a label labels nothing: clicking it focuses no control, and a screen reader announces the field as unnamed — while the source reads as if the association were made.
+
+Only literals are resolved, on both sides. An id built at runtime (`{id: "row-" + t.id}`) is not part of the domain, and a `for` that is itself an expression is never looked up — the same literal-only discipline [E0704](#e0704-unknown-icon) applies to icon names.
+
+**Fix**: Give the control the id the label names, or correct the name. See [Forms](./forms.md).
+
 Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNames })`.
 
 ### E0704 `unknown-icon`

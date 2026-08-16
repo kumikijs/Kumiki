@@ -8,6 +8,23 @@ function propId(node: { props?: Record<string, unknown> }): string | undefined {
   return raw == null ? undefined : String(raw);
 }
 
+/**
+ * `width` / `height` / `loading` on an `<img>` (stdlib.md §2.3.5). The first
+ * two are what reserve the box before the bytes arrive — an image without them
+ * moves everything below it when it loads, which is the layout shift the SSR
+ * path exists to avoid. Shared by create and patch.
+ */
+function applyImageBox(img: HTMLImageElement, props?: Record<string, unknown>): void {
+  for (const name of ["width", "height"] as const) {
+    const v = props?.[name];
+    if (typeof v === "number" || typeof v === "string") img.setAttribute(name, String(v));
+    else img.removeAttribute(name);
+  }
+  const loading = props?.loading;
+  if (loading === "lazy" || loading === "eager") img.setAttribute("loading", loading);
+  else img.removeAttribute("loading");
+}
+
 export const mediaTiles: TileRenderers = {
   image(node) {
     const img = document.createElement("img");
@@ -15,6 +32,7 @@ export const mediaTiles: TileRenderers = {
     img.src = node.src;
     const alt = node.props?.alt;
     if (typeof alt === "string") img.alt = alt;
+    applyImageBox(img, node.props);
     const id = propId(node);
     if (id) img.id = id;
     return img;
@@ -45,6 +63,7 @@ export const mediaPatchers: TilePatchers = {
     // clears the cache-warmed decoded-image bitmap), so a bind-driven
     // rerender that leaves `src` untouched should not thrash the image.
     if (img.getAttribute("src") !== newNode.src) img.src = newNode.src;
+    applyImageBox(img, newNode.props);
     const alt = newNode.props?.alt;
     if (typeof alt === "string") {
       if (img.alt !== alt) img.alt = alt;

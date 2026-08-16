@@ -14,9 +14,22 @@
 // drift the parity test exists to catch.
 
 import type { StyleDecl, TileNode, TileProps } from "./core.ts";
-import { containerStyleDecls, pickBaseValue, textStyleDecls } from "./core.ts";
+import { commonAttrDecls, containerStyleDecls, pickBaseValue, textStyleDecls } from "./core.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
+
+/** The spinner a loading button carries, as the renderer builds it. */
+const BUTTON_SPINNER =
+  '<span data-kumiki-tile="spinner" role="status" aria-label="Loading" style="margin-right: 0.4em"></span>';
+
+/** What makes an `<hr>` vertical, as the renderer sets it. */
+const VERTICAL_DIVIDER_STYLE =
+  "align-self: stretch; width: 0; height: auto; border-top: none; border-left: 1px solid currentColor";
+
+/** A `width` / `height` attribute value, or nothing when the tile did not say. */
+function sizeAttr(v: unknown): string | undefined {
+  return typeof v === "number" || typeof v === "string" ? String(v) : undefined;
+}
 
 /**
  * What a kind paints of its own accord — `column`'s flex axis, `card`'s box
@@ -71,17 +84,11 @@ function baseDecls(node: TileNode): StyleDecl[] {
       return token ? [["font-size", token]] : [];
     }
     case "grid": {
-      const cols = node.props?.cols;
+      const rows = gridTracks(node.props?.rows);
       return [
         ["display", "grid"],
-        [
-          "grid-template-columns",
-          typeof cols === "number"
-            ? `repeat(${cols}, 1fr)`
-            : typeof cols === "string"
-              ? cols
-              : "repeat(3, 1fr)",
-        ],
+        ["grid-template-columns", gridTracks(node.props?.cols) ?? "repeat(3, 1fr)"],
+        ...(rows ? ([["grid-template-rows", rows]] as StyleDecl[]) : []),
       ];
     }
     case "overlay":
@@ -93,6 +100,13 @@ function baseDecls(node: TileNode): StyleDecl[] {
       // covers.
       return [];
   }
+}
+
+/** A grid track list: a count divides the axis equally, a string is CSS already. */
+function gridTracks(v: unknown): string | undefined {
+  if (typeof v === "number") return `repeat(${v}, 1fr)`;
+  if (typeof v === "string") return v;
+  return undefined;
 }
 
 /**
@@ -157,14 +171,31 @@ function serializeAttrs(attrs: Record<string, string | number | boolean | undefi
   return out;
 }
 
+/**
+ * One element of the output. The node comes first because every kind owes the
+ * same common attributes (`class`, `aria`, `test-id`, `role`) on top of what it
+ * writes for itself — folding them in here is what stops a new kind from
+ * quietly dropping them, and what makes the served attribute set the same one
+ * `applyCommonProps` puts on the mounted element.
+ *
+ * The common attributes come last so a tile that asks for a `role` overrides
+ * the one its kind assumes, exactly as on the client, where they are applied
+ * after the renderer has run.
+ */
 function el(
+  node: TileNode,
   tag: string,
   attrs: Record<string, string | number | boolean | undefined>,
   children: string,
 ): string {
-  const attrStr = serializeAttrs(attrs);
+  const attrStr = serializeAttrs({ ...attrs, ...commonAttrs(node) });
   if (VOID_TAGS.has(tag)) return `<${tag}${attrStr}>`;
   return `<${tag}${attrStr}>${children}</${tag}>`;
+}
+
+/** The common props of a node, in the shape `serializeAttrs` takes. */
+function commonAttrs(node: TileNode): Record<string, string> {
+  return Object.fromEntries(commonAttrDecls((node as { props?: TileProps }).props));
 }
 
 function renderChildren(children: TileNode[]): string {
@@ -203,6 +234,7 @@ export function renderTileToString(node: TileNode): string {
     case "card":
     case "box":
       return el(
+        node,
         "div",
         { "data-kumiki-tile": node.kind, style: containerStyle(node) },
         renderChildren(node.children),
@@ -215,24 +247,28 @@ export function renderTileToString(node: TileNode): string {
     case "fieldset":
     case "overlay":
       return el(
+        node,
         "div",
         { "data-kumiki-tile": node.kind, style: containerStyle(node) },
         renderChildren(node.children),
       );
     case "heading":
       return el(
+        node,
         "h1",
         { "data-kumiki-tile": "heading", style: textStyle(node) },
         escapeText(node.text),
       );
     case "text":
       return el(
+        node,
         "span",
         { "data-kumiki-tile": "text", style: textStyle(node) },
         escapeText(node.text),
       );
     case "label":
       return el(
+        node,
         "label",
         {
           "data-kumiki-tile": "label",
@@ -242,8 +278,15 @@ export function renderTileToString(node: TileNode): string {
         },
         escapeText(node.text),
       );
-    case "button":
+    case "button": {
+      // `loading` disables the button and puts a spinner in front of its
+      // label, the same two things the renderer does — a served button that
+      // looked idle while its work was in flight is clickable to a user who
+      // has not hydrated yet.
+      const loading = node.props?.loading === true;
+      const variant = node.props?.variant;
       return el(
+        node,
         "button",
         {
           // What the tile said, or nothing — the same choice the client
@@ -251,16 +294,20 @@ export function renderTileToString(node: TileNode): string {
           // HTML did not submit and the hydrated page did.
           type: node.type,
           "data-kumiki-tile": "button",
-          disabled: node.disabled,
+          disabled: loading || node.props?.disabled === true,
+          "aria-busy": loading ? "true" : undefined,
+          "data-kumiki-variant": typeof variant === "string" ? variant : undefined,
           id: tileIdOf(node),
         },
-        escapeText(node.text),
+        `${loading ? BUTTON_SPINNER : ""}${escapeText(node.text)}`,
       );
+    }
     case "input": {
       const bind = node.bindPath
         ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
         : (node.bind ?? undefined);
       return el(
+        node,
         "input",
         {
           type: node.type ?? "text",
@@ -281,6 +328,7 @@ export function renderTileToString(node: TileNode): string {
         ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
         : (node.bind ?? undefined);
       return el(
+        node,
         "textarea",
         {
           rows: node.rows,
@@ -294,6 +342,7 @@ export function renderTileToString(node: TileNode): string {
     }
     case "check":
       return el(
+        node,
         "input",
         {
           type: "checkbox",
@@ -304,6 +353,7 @@ export function renderTileToString(node: TileNode): string {
       );
     case "switch":
       return el(
+        node,
         "input",
         {
           type: "checkbox",
@@ -315,6 +365,7 @@ export function renderTileToString(node: TileNode): string {
       );
     case "radio":
       return el(
+        node,
         "input",
         {
           type: "radio",
@@ -338,6 +389,7 @@ export function renderTileToString(node: TileNode): string {
         )
         .join("");
       return el(
+        node,
         "select",
         { "data-kumiki-tile": "select", "data-kumiki-bind": bind, id: tileIdOf(node) },
         node.placeholder !== undefined
@@ -350,6 +402,7 @@ export function renderTileToString(node: TileNode): string {
         ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
         : (node.bind ?? undefined);
       return el(
+        node,
         "input",
         {
           type: "range",
@@ -365,25 +418,46 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "form":
-      return el("form", { "data-kumiki-tile": "form" }, renderChildren(node.children));
-    case "link":
-      return el("a", { href: node.to, "data-kumiki-tile": "link" }, escapeText(node.text));
+      return el(node, "form", { "data-kumiki-tile": "form" }, renderChildren(node.children));
+    case "link": {
+      const external = node.props?.external === true;
+      return el(
+        node,
+        "a",
+        {
+          href: node.to,
+          "data-kumiki-tile": "link",
+          target: external ? "_blank" : undefined,
+          rel: external ? "noopener noreferrer" : undefined,
+        },
+        escapeText(node.text),
+      );
+    }
     case "markdown":
       // Match the live renderer's safety posture: don't parse markdown on the
       // server (it would diverge from whatever client-side markdown lib runs
       // post-hydration). Surface the raw source as text so it is at least
       // crawlable; the client replaces this on first render.
-      return el("div", { "data-kumiki-tile": "markdown" }, escapeText(node.text));
+      return el(node, "div", { "data-kumiki-tile": "markdown" }, escapeText(node.text));
     case "image":
       // `alt` is read from the props, not hardcoded empty: a served page whose
       // stated purpose is that a screen reader and a crawler see something is
       // the last place to throw the alt text away.
       return el(
+        node,
         "img",
         {
           src: node.src,
           "data-kumiki-tile": "image",
           alt: typeof node.props?.alt === "string" ? node.props.alt : undefined,
+          // The box the image will occupy. Serving it is the whole point: an
+          // image with no dimensions moves everything below it when it loads.
+          width: sizeAttr(node.props?.width),
+          height: sizeAttr(node.props?.height),
+          loading:
+            node.props?.loading === "lazy" || node.props?.loading === "eager"
+              ? node.props.loading
+              : undefined,
           id: tileIdOf(node),
         },
         "",
@@ -400,6 +474,7 @@ export function renderTileToString(node: TileNode): string {
       const rest: TileProps = { ...(node.props ?? {}) };
       delete (rest as Record<string, unknown>).size;
       return el(
+        node,
         "span",
         {
           "data-kumiki-tile": "icon",
@@ -409,14 +484,29 @@ export function renderTileToString(node: TileNode): string {
         "",
       );
     }
-    case "divider":
-      return el("hr", { "data-kumiki-tile": "divider" }, "");
+    case "divider": {
+      const vertical = node.props?.orientation === "vertical";
+      return el(
+        node,
+        "hr",
+        {
+          "data-kumiki-tile": "divider",
+          "aria-orientation": vertical ? "vertical" : undefined,
+          style: vertical ? VERTICAL_DIVIDER_STYLE : undefined,
+        },
+        "",
+      );
+    }
     case "code":
-      return `<pre data-kumiki-tile="code"${
-        node.lang ? ` data-lang="${escapeAttr(node.lang)}"` : ""
-      }><code>${escapeText(node.text)}</code></pre>`;
+      return el(
+        node,
+        "pre",
+        { "data-kumiki-tile": "code", "data-lang": node.lang || undefined },
+        `<code>${escapeText(node.text)}</code>`,
+      );
     case "video":
       return el(
+        node,
         "video",
         {
           src: node.src,
@@ -428,22 +518,24 @@ export function renderTileToString(node: TileNode): string {
       );
     case "list":
       return el(
+        node,
         node.ordered ? "ol" : "ul",
         { "data-kumiki-tile": "list", style: containerStyle(node) },
         renderChildren(node.children),
       );
     case "list-item":
-      return el("li", { "data-kumiki-tile": "list-item" }, renderChildren(node.children));
+      return el(node, "li", { "data-kumiki-tile": "list-item" }, renderChildren(node.children));
     case "table":
-      return el("table", { "data-kumiki-tile": "table" }, renderChildren(node.children));
+      return el(node, "table", { "data-kumiki-tile": "table" }, renderChildren(node.children));
     case "table-head":
-      return el("thead", { "data-kumiki-tile": "table-head" }, renderChildren(node.children));
+      return el(node, "thead", { "data-kumiki-tile": "table-head" }, renderChildren(node.children));
     case "table-body":
-      return el("tbody", { "data-kumiki-tile": "table-body" }, renderChildren(node.children));
+      return el(node, "tbody", { "data-kumiki-tile": "table-body" }, renderChildren(node.children));
     case "table-row":
-      return el("tr", { "data-kumiki-tile": "table-row" }, renderChildren(node.children));
+      return el(node, "tr", { "data-kumiki-tile": "table-row" }, renderChildren(node.children));
     case "table-cell":
       return el(
+        node,
         "td",
         {
           colspan: node.colspan,
@@ -460,6 +552,7 @@ export function renderTileToString(node: TileNode): string {
       // client takes ownership of focus + close handlers on hydration.
       if (!node.open) return "";
       return el(
+        node,
         "div",
         {
           "data-kumiki-tile": node.kind,
@@ -470,12 +563,14 @@ export function renderTileToString(node: TileNode): string {
       );
     case "tooltip":
       return el(
+        node,
         "span",
         { "data-kumiki-tile": "tooltip", title: node.text },
         renderChildren(node.children),
       );
     case "toast":
       return el(
+        node,
         "div",
         {
           "data-kumiki-tile": "toast",
@@ -486,12 +581,14 @@ export function renderTileToString(node: TileNode): string {
       );
     case "progress":
       return el(
+        node,
         "progress",
         { value: node.value, max: node.max, "data-kumiki-tile": "progress" },
         "",
       );
     case "spinner":
       return el(
+        node,
         "span",
         {
           "data-kumiki-tile": "spinner",
@@ -502,20 +599,20 @@ export function renderTileToString(node: TileNode): string {
         "",
       );
     case "skeleton":
-      return el("div", { "data-kumiki-tile": "skeleton", style: styleAttr(node, []) }, "");
+      return el(node, "div", { "data-kumiki-tile": "skeleton", style: styleAttr(node, []) }, "");
     case "error":
       // Field-bound error messages depend on live refinement results — empty
       // on the server, the client renders the actual error on first render.
-      return el("div", { "data-kumiki-tile": "error", "data-field": node.field }, "");
+      return el(node, "div", { "data-kumiki-tile": "error", "data-field": node.field }, "");
     case "route-outlet":
-      return el("div", { "data-kumiki-tile": "route-outlet" }, renderChildren(node.children));
+      return el(node, "div", { "data-kumiki-tile": "route-outlet" }, renderChildren(node.children));
     case "details": {
       // Native <details> disclosure. SSR emits the current open state via
       // the `open` attribute so the server-painted collapse matches what
       // the client renders on hydration; children still emit inside so a
       // no-JS user (or search crawler) can read the content.
       const inner = `<summary>${escapeText(node.summary)}</summary>${renderChildren(node.children)}`;
-      return `<details data-kumiki-tile="details"${node.open ? " open" : ""}>${inner}</details>`;
+      return el(node, "details", { "data-kumiki-tile": "details", open: node.open }, inner);
     }
     case "editable": {
       // contenteditable div. `bind=`, if present, becomes `data-kumiki-bind`
@@ -526,6 +623,7 @@ export function renderTileToString(node: TileNode): string {
         ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
         : (node.bind ?? undefined);
       return el(
+        node,
         "div",
         {
           "data-kumiki-tile": "editable",

@@ -109,6 +109,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | ライフサイクル |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | ライフサイクル |
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | スタイル |
+| [E0705](./errors.md#e0705-a11y-label-for) | `a11y-label-for` | tile | ライフサイクル |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |

@@ -226,10 +226,12 @@ box(content) {
 
 | prop | 意味 |
 |---|---|
-| `w` | width。`"full"` / `"auto"` / `"sm"` / 数値（px） |
+| `w` | width。`"full"`（包含ボックス全体）/ 数値（px）/ 任意の CSS 長さ |
 | `h` | height |
 | `min-w`, `min-h`, `max-w`, `max-h` | min/max |
 | `aspect` | `"1/1"` / `"16/9"` 等 |
+
+`pad` / `gap` / `radius` / `shadow` と違い、これらはトークン名ではない——テーマに幅のスケールは存在せず、ここでの `"sm"` は中身のない名前になる。数値は px、それ以外は CSS としてそのまま渡る（`"auto"`、`"50vh"`、`"32rem"`）。唯一の略記が `"full"` である。
 
 ```kumiki
 image(src=url) {w: "full", max-w: 600, aspect: "16/9"}

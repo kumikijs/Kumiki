@@ -209,16 +209,18 @@ FAIL  counter-display
 
 E2E はランタイム外で実装する。Playwright / Cypress などの既存ツールを使う。Kumiki 側からは：
 
-- **`test-id` prop** をすべての tile に付けられる
-- **`data-kumiki-tile`** 属性がランタイムから自動付与される
-- **`window.__KUMIKI__`** で内部 slot を read-only で取り出せる（テスト時のみ）
+- **`test-id` prop** をすべての tile に付けられ、**`data-kumiki-test`** 属性になる
+- **`data-kumiki-tile`** 属性がランタイムから自動付与され、種別を名乗る
+- **`window.__kumikiApp.live`** がアプリの slot マップ——シナリオ層とブラウザ層が読む状態オラクルである
 
 ```javascript
 // Playwright 例
 await page.locator('[data-kumiki-test=add-btn]').click()
-const todos = await page.evaluate(() => window.__KUMIKI__.slots.todos)
+const todos = await page.evaluate(() => window.__kumikiApp.live.todos)
 expect(Object.keys(todos)).toHaveLength(1)
 ```
+
+`__kumikiApp` はコンパイルされたモジュール自身が公開する `AppShape` であり、`live` はその背後にある slot マップである。テスト用に取られた複写ではなく、ランタイムがそこから描画しているオブジェクトそのものである——読むのは安全だが、書くのは安全ではない。
 
 ## 8.9 設計上の判断記録
 

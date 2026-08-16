@@ -109,6 +109,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | style |
+| [E0705](./errors.md#e0705-a11y-label-for) | `a11y-label-for` | tile | lifecycle |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |

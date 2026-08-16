@@ -64,7 +64,7 @@ export type KumikiError = {
   severity?: "error" | "warning";
 };
 
-const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
+const A11Y_CODES = new Set(["E0701", "E0702", "E0703", "E0705"]);
 
 // `UI_EVENT_TILE_KINDS` is the W0212 gate, derived from the shared
 // `UI_LIFTS` table in `ui-lifts.ts` so codegen's handler-emission gate and
@@ -191,6 +191,13 @@ type SymbolTable = {
    * emission is gated by the strictIcons opt-in in `check()`.
    */
   iconDomain: Set<string>;
+  /**
+   * Every id a tile in this program declares literally — `{id: "x"}` or
+   * `id="x"`. It is what a `label {for: …}` has to name to associate with a
+   * control (`E0705`). Ids computed at runtime are not in it and cannot be:
+   * see `collectElementIds`.
+   */
+  elementIds: Set<string>;
   app?: AppDef;
 };
 
@@ -214,6 +221,7 @@ function checkAll(
     motions: new Set(),
     themes: new Set(),
     iconDomain,
+    elementIds: new Set(),
   };
 
   for (const def of program.defs) {
@@ -264,6 +272,7 @@ function checkAll(
   // tile that prefetches a reducer may be written below it.
   for (const def of program.defs) {
     if (def.kind === "TileDef") collectPrefetchTargets(def.body, sym.prefetchTargets);
+    if (def.kind === "TileDef") collectElementIds(def.body, sym.elementIds);
   }
 
   const index = buildDefIndex(program);
@@ -766,7 +775,25 @@ function checkIconName(
   });
 }
 
-function checkA11y(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+function checkA11y(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (t.name === "label") {
+    // A `for` that names nothing is a label that labels nothing: clicking it
+    // focuses no control, and a screen reader announces the field unnamed.
+    // Only a literal is resolvable — see `collectElementIds`.
+    const forProp = t.props.find((p) => p.name === "for")?.value;
+    if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
+      errors.push({
+        code: "E0705",
+        kind: "a11y-label-for",
+        message: `label for="${forProp.value}" names no tile — no id="${forProp.value}" in this program`,
+        pos: forProp.pos,
+      });
+    }
+  }
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
     const hasAria = t.props.some((p) => p.name === "aria-label");
@@ -906,7 +933,7 @@ function checkTileCall(
     });
   }
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
-  checkA11y(t, errors);
+  checkA11y(t, sym, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   if (t.name === "input") {
@@ -1223,6 +1250,42 @@ function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
         else if (v?.kind === "Str") out.add(v.value);
       }
       for (const a of expr.args) if (isTileExpr(a.value)) collectPrefetchTargets(a.value, out);
+      return;
+    }
+    default:
+      assertNever(expr);
+  }
+}
+
+/**
+ * Every id declared as a literal, in either form a tile accepts — `{id: "x"}`
+ * or `id="x"`. This is the domain `E0705` resolves a `label {for: …}` against.
+ *
+ * An id built at runtime (`{id: "todo-" + t.id}`) is not in it, and the check
+ * only ever looks up a literal `for`, so the pair that cannot be decided —
+ * computed id, computed `for` — is the pair neither side reaches. The same
+ * literal-only discipline `E0704` applies to icon names.
+ */
+function collectElementIds(expr: TileExpr, out: Set<string>): void {
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      collectElementIds(expr.body, out);
+      return;
+    case "TileIf":
+      collectElementIds(expr.consequent, out);
+      collectElementIds(expr.alternate, out);
+      return;
+    case "TileMatch":
+      for (const arm of expr.arms) collectElementIds(arm.body, out);
+      return;
+    case "TileCall": {
+      const fromProp = expr.props.find((p) => p.name === "id")?.value;
+      if (fromProp?.kind === "Str") out.add(fromProp.value);
+      const fromArg = expr.args.find((a) => a.name === "id")?.value;
+      if (fromArg !== undefined && !isTileExpr(fromArg) && fromArg.kind === "Str")
+        out.add(fromArg.value);
+      for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;
     }
     default:

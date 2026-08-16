@@ -14,12 +14,21 @@ const TMP_ROOT = join(here, "..", ".smoke-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
 
 export async function loadApp(kumikiPath: string): Promise<AppShape> {
-  const src = readFileSync(kumikiPath, "utf8");
+  return loadSource(readFileSync(kumikiPath, "utf8"), resolveCapabilities(kumikiPath));
+}
+
+/**
+ * The same pipeline from a source string rather than a file. Tests that vary
+ * one prop at a time need the source in the test body, next to what it asserts
+ * about the DOM — a fixture file per row would put the two halves of the claim
+ * in different files.
+ */
+export async function loadSource(src: string, capabilities: string[] = []): Promise<AppShape> {
   const result = compile(src, {
     runtimeSpecifier: "ignored",
     bundle: true,
     readRuntimeBundle: nodeRuntimeBundleReader,
-    capabilities: resolveCapabilities(kumikiPath),
+    capabilities,
   });
   if (result.kind !== "ok") {
     throw new Error(

@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "nothing has happened yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "busy": false, "saves": 0 },
+        "domIncludes": ["saves=0"]
+      }
+    },
+    {
+      "label": "save runs while the button is idle",
+      "do": { "clickText": "save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "saves": 1 },
+        "domIncludes": ["saves=1"]
+      }
+    },
+    {
+      "label": "start puts the save button in its loading state",
+      "do": { "clickText": "start" },
+      "expect": { "noErrors": true, "state": { "busy": true, "saves": 1 } }
+    },
+    {
+      "label": "a loading button is disabled — the click reaches no reducer",
+      "do": { "clickText": "save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "busy": true, "saves": 1 },
+        "domIncludes": ["saves=1"]
+      }
+    }
+  ]
+}

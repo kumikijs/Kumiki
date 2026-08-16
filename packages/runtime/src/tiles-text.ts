@@ -13,7 +13,26 @@ import {
 // Per-link state slot (#190): the click listener reads the current
 // navigation target here rather than closing over the create-time value,
 // so a link tile reused across a `to=` change still routes correctly.
-const LINK_STATE = new WeakMap<HTMLElement, { to: string }>();
+const LINK_STATE = new WeakMap<HTMLElement, { to: string; external: boolean }>();
+
+function isExternal(props?: TileProps): boolean {
+  return props?.external === true;
+}
+
+/**
+ * `external` on a link (stdlib.md §2.3.3). It opens in a new browsing context,
+ * and `rel` goes with it: without `noopener` the page that opens gets a handle
+ * on this one through `window.opener`.
+ */
+function applyExternal(a: HTMLAnchorElement, props?: TileProps): void {
+  if (isExternal(props)) {
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  } else {
+    a.removeAttribute("target");
+    a.removeAttribute("rel");
+  }
+}
 
 const ICON_SIZE_TOKENS: Record<string, string> = {
   sm: "16px",
@@ -83,9 +102,13 @@ export const textTiles: TileRenderers = {
     // `to=` changed (e.g. same <a> flipped from "/page" to "/"), the click
     // still routes to the correct target — otherwise the stale closure would
     // keep navigating to the original destination.
-    LINK_STATE.set(a, { to: node.to });
+    LINK_STATE.set(a, { to: node.to, external: isExternal(node.props) });
+    applyExternal(a, node.props);
     a.addEventListener("click", (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      // An external link leaves the app (§3.8): the router has no route for
+      // where it goes, so it stays the browser's navigation.
+      if (LINK_STATE.get(a)?.external) return;
       // Resolve BEFORE preventDefault: a link outside any live mount (stale
       // node, disposed app) degrades to the browser's native navigation via
       // `href` instead of becoming a dead link.
@@ -233,7 +256,8 @@ export const textPatchers: TilePatchers = {
     if (a.getAttribute("href") !== newNode.to) a.href = newNode.to;
     if (a.textContent !== newNode.text) a.textContent = newNode.text;
     // Route the click listener at the CURRENT `to` — see LINK_STATE note.
-    LINK_STATE.set(a, { to: newNode.to });
+    LINK_STATE.set(a, { to: newNode.to, external: isExternal(newNode.props) });
+    applyExternal(a, newNode.props);
     // Do NOT re-arm prefetch. Prefetch is a fire-once side effect (§3.8),
     // and re-observing on every patch would defeat the dedupe by target URL.
   },

@@ -58,9 +58,8 @@ export type TileNode = (
   | {
       kind: "button";
       text: string;
+      /** `loading`, `disabled` and `variant` live here — see `applyButtonState`. */
       props?: TileProps;
-      loading?: boolean;
-      disabled?: boolean;
       /**
        * `submit` / `button` / `reset`. Absent means the tile did not say, and
        * the HTML default applies — which is `submit` inside a form.
@@ -2978,6 +2977,12 @@ function makeMappingTileCtx(
       const el = renderer ? renderer(node, ctx) : wrap.renderMissingTile(node);
       wrap.applyMotion(el, node.props);
       wrap.applyUiEventHandlers(el, node.props);
+      // Last, so a tile's own `class` / `aria` / `role` reaches every kind
+      // without each renderer repeating it — including host-registered kinds
+      // (#71), which no renderer here can reach. It runs after the motion
+      // classes for the same reason it adds rather than assigns: the runtime
+      // owns classes on this element too.
+      applyCommonProps(el, node.props);
       map.set(node, el);
       return el;
     },
@@ -3217,6 +3222,14 @@ function reconcileNode(
       // `applyUiEventHandlers` wires on every tile via the create ctx, live in
       // this shared UI_HANDLER_STATE and are refreshed here.
       refreshUiHandlerSlot(oldEl, (newNode as { props?: TileProps }).props);
+      // The common props are applied outside the per-kind renderers, so no
+      // patcher re-applies them; without this a `class` bound to a slot keeps
+      // the token it was first rendered with.
+      patchCommonProps(
+        oldEl,
+        (oldNode as { props?: TileProps }).props,
+        (newNode as { props?: TileProps }).props,
+      );
       touched.push(tileTouchedId(newNode));
       // Fall through to the children reconcile below — a container tile may
       // have both attribute AND child changes in the same render.
@@ -4175,19 +4188,68 @@ export function containerStyleDecls(
   const out: StyleDecl[] = [];
   const gap = pick(props.gap);
   if (gap !== undefined) out.push(["gap", mapToken(String(gap))]);
+  const gapX = pick(props.gap_x);
+  if (gapX !== undefined) out.push(["column-gap", mapToken(String(gapX))]);
+  const gapY = pick(props.gap_y);
+  if (gapY !== undefined) out.push(["row-gap", mapToken(String(gapY))]);
   const align = pick(props.align);
   if (align !== undefined) out.push(["align-items", mapAlign(String(align))]);
   const justify = pick(props.justify);
   if (justify !== undefined) out.push(["justify-content", mapJustify(String(justify))]);
+  // `pad` first: the per-axis props refine it, so each has to be able to
+  // overwrite the shorthand's contribution on the axis it names.
   const pad = pick(props.pad);
   if (pad !== undefined) out.push(["padding", mapToken(String(pad))]);
-  const mw = props["max-w"] ?? props.maxWidth;
-  if (mw !== undefined) out.push(["max-width", typeof mw === "number" ? `${mw}px` : String(mw)]);
+  const padX = pick(props.pad_x);
+  if (padX !== undefined) {
+    out.push(["padding-left", mapToken(String(padX))], ["padding-right", mapToken(String(padX))]);
+  }
+  const padY = pick(props.pad_y);
+  if (padY !== undefined) {
+    out.push(["padding-top", mapToken(String(padY))], ["padding-bottom", mapToken(String(padY))]);
+  }
+  // Sizing (style.md §4.4.7). Each is the same question — how big — so they
+  // share one value mapping rather than five.
+  for (const [prop, css] of SIZING_PROPS) {
+    const v = pick(props[prop]);
+    if (v !== undefined) out.push([css, mapLength(v)]);
+  }
+  // `wrap` is a boolean, so it never survives the scalar pick the sizing props
+  // go through.
+  if (typeof props.wrap === "boolean") out.push(["flex-wrap", props.wrap ? "wrap" : "nowrap"]);
   if (typeof props.bg === "string") out.push(["background", mapColor(props.bg as string)]);
   if (typeof props.radius === "string")
-    out.push(["border-radius", mapToken(props.radius as string)]);
+    out.push(["border-radius", mapRadius(props.radius as string)]);
+  if (typeof props.shadow === "string") out.push(["box-shadow", mapShadow(props.shadow as string)]);
   out.push(...styleBlockDecls(props.style));
   return out;
+}
+
+/**
+ * The sizing props and the CSS property each one is. Names are the LOWERED
+ * form — the compiler maps a Kumiki name to a JS-safe key (`max-w` ->
+ * `max_w`), and that key is the only spelling the runtime reads. Reading
+ * `props["max-w"]` here type-checked and rendered nothing, which is how every
+ * app in the corpus set a page width that never applied.
+ */
+const SIZING_PROPS: ReadonlyArray<readonly [prop: string, css: string]> = [
+  ["w", "width"],
+  ["h", "height"],
+  ["min_w", "min-width"],
+  ["min_h", "min-height"],
+  ["max_w", "max-width"],
+  ["max_h", "max-height"],
+  ["aspect", "aspect-ratio"],
+];
+
+/**
+ * A size, as CSS. A number is pixels (the spec's spacing convention) and
+ * `"full"` is the whole of the containing box; anything else is already a CSS
+ * length (`"auto"`, `"50vh"`, `"16/9"`) and passes through.
+ */
+function mapLength(v: string | number): string {
+  if (typeof v === "number") return `${v}px`;
+  return v === "full" ? "100%" : v;
 }
 
 /**
@@ -4209,6 +4271,86 @@ export function textStyleDecls(props?: TileProps): StyleDecl[] {
 
 function setDecls(el: HTMLElement, decls: StyleDecl[]): void {
   for (const [k, v] of decls) el.style.setProperty(k, v);
+}
+
+/** An attribute a tile's props ask for. */
+export type AttrDecl = [name: string, value: string];
+
+/**
+ * The attributes every tile kind accepts, whatever it renders (stdlib.md
+ * §2.3.10). They are data for the same reason the style mapping is: the live
+ * renderers set them on an element and the SSR pass serialises them, and one
+ * table is what keeps a served page and a mounted one saying the same thing.
+ *
+ * `class` is the only one that is not simply "set the attribute" — the runtime
+ * puts its own classes on the same element (the animation classes, the state-
+ * style classes), so the author's tokens are added to what is there rather
+ * than written over it.
+ *
+ * Every prop is read by name. Nothing here enumerates `props`: a host tile
+ * (#71) owns its own props object, and a `Object.keys` against one that refuses
+ * enumeration throws on the render path, where the throw costs the whole tree.
+ * That is why a bare `aria-label` arrives already folded into `aria` — the
+ * compiler merges the two spellings, because only it can do so by name.
+ */
+export function commonAttrDecls(props?: TileProps): AttrDecl[] {
+  if (!props) return [];
+  const out: AttrDecl[] = [];
+  if (typeof props.class === "string" && props.class.trim() !== "")
+    out.push(["class", props.class]);
+
+  if (props.test_id !== undefined) out.push(["data-kumiki-test", String(props.test_id)]);
+  if (typeof props.role === "string") out.push(["role", props.role]);
+  const aria = props.aria;
+  if (aria !== null && typeof aria === "object" && !Array.isArray(aria)) {
+    for (const [key, value] of Object.entries(aria as Record<string, unknown>)) {
+      if (value === undefined || value === null) continue;
+      out.push([key.startsWith("aria-") ? key : `aria-${key}`, String(value)]);
+    }
+  }
+  return out;
+}
+
+/** The class tokens a decl list asks for, in order. */
+function classTokensOf(decls: AttrDecl[]): string[] {
+  const decl = decls.find(([name]) => name === "class");
+  return decl ? decl[1].split(/\s+/).filter((t) => t !== "") : [];
+}
+
+/**
+ * Move an element from the common props it was rendered with to the ones it
+ * has now. `before` is undefined on the create path, where there is nothing to
+ * take away.
+ *
+ * The patch path is why this is a diff rather than an apply: a reused element
+ * keeps whatever the last render put on it, so a `class` that flipped would
+ * otherwise accumulate both tokens and an `aria` key that disappeared would
+ * stay on the element forever.
+ */
+/** The common props on a freshly rendered element. */
+export function applyCommonProps(el: HTMLElement, props?: TileProps): void {
+  patchCommonProps(el, undefined, props);
+}
+
+export function patchCommonProps(
+  el: HTMLElement,
+  before: TileProps | undefined,
+  after: TileProps | undefined,
+): void {
+  const was = commonAttrDecls(before);
+  const now = commonAttrDecls(after);
+  const wasClasses = classTokensOf(was);
+  const nowClasses = classTokensOf(now);
+  for (const token of wasClasses) {
+    if (!nowClasses.includes(token)) el.classList.remove(token);
+  }
+  for (const token of nowClasses) el.classList.add(token);
+  for (const [name] of was) {
+    if (name !== "class" && !now.some(([n]) => n === name)) el.removeAttribute(name);
+  }
+  for (const [name, value] of now) {
+    if (name !== "class") el.setAttribute(name, value);
+  }
 }
 
 export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
@@ -4255,7 +4397,7 @@ function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (typeof t !== "string") return;
   ensureAnimationStyles();
   el.classList.add("kumiki-anim", `kumiki-anim-${t}`);
-  const d = props["transition-duration"];
+  const d = props.transition_duration;
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
 }
 
@@ -4622,6 +4764,43 @@ function mapToken(t: string): string {
       return t;
   }
 }
+/**
+ * One token lookup for every `theme` section that is a flat name-to-value map
+ * (`radius`, `shadow`). `fallback` carries the defaults style.md §4.2 prints,
+ * so a program with no `theme` definition still gets the documented scale.
+ * A name in neither is passed through as CSS, which is what lets
+ * `radius: "50%"` work.
+ */
+function mapThemeToken(section: string, name: string, fallback: Record<string, string>): string {
+  const theme = currentTheme();
+  const sec = theme?.[section];
+  if (sec && typeof sec === "object" && !Array.isArray(sec)) {
+    const v = (sec as Record<string, ThemeValue>)[name];
+    if (typeof v === "string") return v;
+    if (typeof v === "number") return `${v}px`;
+  }
+  return fallback[name] ?? name;
+}
+
+function mapRadius(r: string): string {
+  return mapThemeToken("radius", r, {
+    none: "0",
+    sm: "4px",
+    md: "8px",
+    lg: "16px",
+    pill: "999px",
+  });
+}
+
+function mapShadow(s: string): string {
+  return mapThemeToken("shadow", s, {
+    none: "none",
+    sm: "0 1px 2px rgba(0,0,0,0.1)",
+    md: "0 4px 8px rgba(0,0,0,0.1)",
+    lg: "0 8px 24px rgba(0,0,0,0.15)",
+  });
+}
+
 function mapAlign(a: string): string {
   switch (a) {
     case "start":

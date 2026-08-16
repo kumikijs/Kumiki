@@ -217,16 +217,18 @@ Non-literal divergences (numeric slots, wrong operators, effect-list mismatches)
 
 E2E is implemented outside the runtime. Use existing tools such as Playwright / Cypress. From the Kumiki side:
 
-- A **`test-id` prop** can be attached to every tile
-- The **`data-kumiki-tile`** attribute is automatically applied by the runtime
-- The **`window.__KUMIKI__`** exposes internal slots read-only (test-time only)
+- A **`test-id` prop** can be attached to every tile, and becomes the **`data-kumiki-test`** attribute
+- The **`data-kumiki-tile`** attribute is automatically applied by the runtime, naming the kind
+- **`window.__kumikiApp.live`** is the app's slot map — the state oracle the scenario and browser tiers read
 
 ```javascript
 // Playwright example
 await page.locator('[data-kumiki-test=add-btn]').click()
-const todos = await page.evaluate(() => window.__KUMIKI__.slots.todos)
+const todos = await page.evaluate(() => window.__kumikiApp.live.todos)
 expect(Object.keys(todos)).toHaveLength(1)
 ```
+
+`__kumikiApp` is the compiled module's own export of its `AppShape`; `live` is the slot map behind it. It is the same object the runtime renders from, not a copy taken for testing — reading it is safe, writing it is not.
 
 ## 8.9 Design Decision Record
 
