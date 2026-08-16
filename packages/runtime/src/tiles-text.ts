@@ -192,13 +192,12 @@ export const textTiles: TileRenderers = {
     const span = document.createElement("span");
     span.dataset.kumikiTile = "icon";
     span.dataset.kumikiIconName = node.name;
-    // `color` is resolved by applyTextProps against theme.colors; the inner
-    // SVG inherits via `fill="currentColor"`. `size` controls the SVG box only,
-    // so it is pulled out before applying the remaining props as text styling.
-    const props: TileProps = { ...(node.props ?? {}) };
-    const sizeRaw = props.size;
-    delete (props as Record<string, unknown>).size;
-    applyTextProps(span, props);
+    // `color` is resolved against theme.colors; the inner SVG inherits it via
+    // `fill="currentColor"`. `size` sizes the SVG box instead of the text, and
+    // naming the kind is what says so — the exclusion lives in one table both
+    // render paths read, rather than in a copy here.
+    const sizeRaw = node.props?.size;
+    applyTextProps(span, node.props, "icon");
 
     const d = resolveIconPath(node.name);
     if (!d) {
@@ -305,10 +304,8 @@ export const textPatchers: TilePatchers = {
     // rebuild the SVG. This preserves whatever ambient styles the parent
     // painted onto the span.
     const span = el as HTMLSpanElement;
-    const props: TileProps = { ...(newNode.props ?? {}) };
-    const sizeRaw = props.size;
-    delete (props as Record<string, unknown>).size;
-    applyTextProps(span, props);
+    const sizeRaw = newNode.props?.size;
+    applyTextProps(span, newNode.props, "icon");
     if (oldNode.name !== newNode.name) {
       span.dataset.kumikiIconName = newNode.name;
       const d = resolveIconPath(newNode.name);

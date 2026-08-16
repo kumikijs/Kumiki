@@ -4250,15 +4250,25 @@ export function propStyleDecls(
   // `wrap` is a boolean, so it never survives the scalar pick the sizing props
   // go through.
   if (typeof props.wrap === "boolean") out.push(["flex-wrap", props.wrap ? "wrap" : "nowrap"]);
-  if (typeof props.bg === "string") out.push(["background", mapColor(props.bg as string)]);
-  if (typeof props.radius === "string")
-    out.push(["border-radius", mapRadius(props.radius as string)]);
-  if (typeof props.shadow === "string") out.push(["box-shadow", mapShadow(props.shadow as string)]);
+  // Each of these reads a token name, so each goes through `token`: an empty
+  // one is the branch of a conditional that means "not said", and a declaration
+  // with an empty value is not a declaration. Left in, the mount path's
+  // `setProperty(prop, "")` *removes* the property — taking the kind's own base
+  // with it — while the server serialises `border-radius: `, which is invalid
+  // and ignored, so the two paths disagree about a `card`'s corners.
+  const bg = token(props.bg);
+  if (bg !== undefined) out.push(["background", mapColor(bg)]);
+  const radius = token(props.radius);
+  if (radius !== undefined) out.push(["border-radius", mapRadius(radius)]);
+  const shadow = token(props.shadow);
+  if (shadow !== undefined) out.push(["box-shadow", mapShadow(shadow)]);
   // The typography shorthands (style.md §4.3.1). They inherit, so a container
   // that sets `color` or `size` sets it for what is inside it.
   if (props.strike) out.push(["text-decoration", "line-through"]);
-  if (typeof props.color === "string") out.push(["color", mapColor(props.color as string)]);
-  if (typeof props.size === "string") out.push(["font-size", mapSize(props.size as string)]);
+  const color = token(props.color);
+  if (color !== undefined) out.push(["color", mapColor(color)]);
+  const size = token(props.size);
+  if (size !== undefined) out.push(["font-size", mapSize(size)]);
   if (props.weight === "bold") out.push(["font-weight", "700"]);
   // Last, so an explicit declaration wins over the shorthand for the same
   // property — `{radius: "md", style: {"border-radius": "50%"}}` is a circle.
@@ -4281,6 +4291,10 @@ const KIND_OWNED_PROPS: Record<string, readonly string[] | undefined> = {
   icon: ["size"],
   skeleton: ["h"],
 };
+
+/** A token name a tile wrote, or `undefined` when it wrote none. */
+const token = (v: unknown): string | undefined =>
+  typeof v === "string" && v !== "" ? v : undefined;
 
 /**
  * The sizing props and the CSS property each one is. Names are the LOWERED
@@ -4438,9 +4452,9 @@ export function patchCommonProps(
   }
 }
 
-export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
+export function applyContainerProps(el: HTMLElement, props?: TileProps, kind?: string): void {
   if (!props) return;
-  setDecls(el, propStyleDecls(props, pickForViewport));
+  setDecls(el, propStyleDecls(props, pickForViewport, kind));
   applyStateStyles(el, props);
   applyTransition(el, props);
 }
@@ -4658,9 +4672,9 @@ function stateStyleDecls(sub: Record<string, unknown>): string {
   return decls.join("; ");
 }
 
-export function applyTextProps(el: HTMLElement, props?: TileProps): void {
+export function applyTextProps(el: HTMLElement, props?: TileProps, kind?: string): void {
   if (!props) return;
-  setDecls(el, propStyleDecls(props, pickForViewport));
+  setDecls(el, propStyleDecls(props, pickForViewport, kind));
   applyStateStyles(el, props);
 }
 

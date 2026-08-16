@@ -226,6 +226,16 @@ const BOTH_PATHS: Row[] = [
     claim: { style: { "border-radius": "999px" } },
   },
   {
+    // The other branch of `{radius: if c then "pill" else ""}`. An empty token
+    // has to write nothing: on the mount path a declaration with an empty value
+    // REMOVES the property, taking the card's own corners with it, while the
+    // server serialises an invalid one and keeps them — the two paths
+    // disagreeing over a plain conditional.
+    name: "an empty token leaves the kind's own base alone",
+    tile: 'card(text("x")) {radius: "", bg: ""}',
+    claim: { style: { "border-radius": "8px", background: "" } },
+  },
+  {
     name: "a token the scale does not name is CSS already",
     tile: 'box(text("x")) {radius: "50%"}',
     claim: { style: { "border-radius": "50%" } },
