@@ -22,12 +22,40 @@ import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
 
+/**
+ * How much of the source a patch's `apply` disturbs — the only thing that
+ * decides what order a plan may be composed in.
+ *
+ * A repair whose replacement is a different length shifts everything after it,
+ * and the regression gate reads a diagnostic's identity as `code@line:col`. So
+ * a patch applied before another that writes to its left turns that other one's
+ * diagnostic into an "introduced" one and rolls the whole plan back.
+ *
+ * `span` is the precise case and composes from the right. `line` cannot: it
+ * rewrites the first match on its line wherever that is, so it can move a
+ * column no `pos` predicts, and it goes after every `span`. `region` is
+ * everything whose write this plan does not express as a position — text added
+ * or extended elsewhere in the file (which moves whole lines), and the
+ * offset-addressed splices `planTestPatch` builds, which are applied alone. It
+ * goes last.
+ */
+export type PatchAnchor =
+  | { kind: "span"; pos: Pos }
+  | { kind: "line"; pos: Pos }
+  | { kind: "region" };
+
 export type AutoPatch = {
   code: string;
   message: string;
   /** Free-form description of the fix to be applied. */
   description: string;
   apply: (text: string) => string;
+  /**
+   * What this patch disturbs. Required, so a new repair branch has to answer
+   * it — the previous optional field was silently omitted by two branches and
+   * they were composed as though they wrote where their diagnostic pointed.
+   */
+  anchor: PatchAnchor;
 };
 
 /**
@@ -109,6 +137,30 @@ function identifierAt(store: Store, pos: Pos): string | null {
 }
 
 /**
+ * Where line `line` (1-based) starts and where it ends, as offsets into `text`.
+ * `end` is the offset of the terminator, so on a CRLF file the slice
+ * `[start, end)` keeps the trailing `\r`. Neither consumer minds: a `\b`-search
+ * is unaffected by it (`\r` is not a word character), and no name a repair
+ * writes can contain one.
+ *
+ * Everything that edits a line goes through this rather than
+ * `split(/\r?\n/).join("\n")`, which rewrites every CRLF in the file to LF —
+ * a whole-file diff for a one-token repair, on the platform where CRLF is the
+ * default, with nothing said about it.
+ */
+function lineSpan(text: string, line: number): { start: number; end: number } | null {
+  let start = 0;
+  for (let n = 1; n < line; n++) {
+    const nl = text.indexOf("\n", start);
+    if (nl === -1) return null;
+    start = nl + 1;
+  }
+  if (start > text.length) return null;
+  const nl = text.indexOf("\n", start);
+  return { start, end: nl === -1 ? text.length : nl };
+}
+
+/**
  * Replace `missing` with `replacement` at exactly the reported position.
  *
  * The name-suggest branches historically replaced the first `\b`-delimited
@@ -120,14 +172,57 @@ function identifierAt(store: Store, pos: Pos): string | null {
  * back rather than writing a rewrite of something else.
  */
 function replaceAt(text: string, pos: Pos, missing: string, replacement: string): string {
-  const lines = text.split(/\r?\n/);
-  const idx = pos.line - 1;
-  const line = lines[idx];
-  if (line === undefined) return text;
+  const span = lineSpan(text, pos.line);
+  if (!span) return text;
+  const at = span.start + pos.col - 1;
+  if (at + missing.length > span.end) return text;
+  if (text.slice(at, at + missing.length) !== missing) return text;
+  return text.slice(0, at) + replacement + text.slice(at + missing.length);
+}
+
+/**
+ * Replace the first `\b`-delimited `missing` anywhere on line `pos.line`.
+ *
+ * The fallback for a diagnostic whose position is not the name it quotes —
+ * E0211 reports at the reducer and names the tile — where there is nothing to
+ * measure from and the line is the only handle. Which is why a patch built
+ * this way is anchored `line` and never composed as though it wrote at `pos`.
+ */
+function replaceOnLine(text: string, pos: Pos, missing: string, replacement: string): string {
+  const span = lineSpan(text, pos.line);
+  if (!span) return text;
+  const line = text.slice(span.start, span.end);
+  const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+  const at = line.search(re);
+  if (at === -1) return text;
+  return (
+    text.slice(0, span.start + at) + replacement + text.slice(span.start + at + missing.length)
+  );
+}
+
+/**
+ * The anchor a name-suggest repair deserves: `span` when the reported column
+ * really holds the name it quotes, `line` when it does not. Nothing declares
+ * which diagnostics are which — E0211's position is the reducer and its name
+ * is a tile, and the rest point at the name — so it is measured rather than
+ * listed, and a diagnostic that changes where it points changes anchor with it.
+ */
+function nameAnchor(store: Store, pos: Pos, missing: string): PatchAnchor {
+  const line = store.lines[pos.line - 1];
   const at = pos.col - 1;
-  if (line.slice(at, at + missing.length) !== missing) return text;
-  lines[idx] = line.slice(0, at) + replacement + line.slice(at + missing.length);
-  return lines.join("\n");
+  return line !== undefined && line.slice(at, at + missing.length) === missing
+    ? { kind: "span", pos }
+    : { kind: "line", pos };
+}
+
+/** Apply a name-suggest repair the way its anchor says it writes. */
+function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
+  return (text: string): string =>
+    anchor.kind === "span"
+      ? replaceAt(text, anchor.pos, missing, suggested)
+      : anchor.kind === "line"
+        ? replaceOnLine(text, anchor.pos, missing, suggested)
+        : text;
 }
 
 /**
@@ -270,6 +365,19 @@ export function planFixesExplained(
     debugSkip(`planFixes:${code}`, reason, message);
   };
   for (const err of errors) {
+    // Every patch repairs exactly one diagnostic, so the position comes from
+    // the loop and only the anchor is the branch's to choose.
+    const add = (patch: Omit<AutoPatch, "anchor">): void => {
+      patches.push({ ...patch, anchor: { kind: "span", pos: err.pos } });
+    };
+    const addAnchored = (anchor: PatchAnchor, patch: Omit<AutoPatch, "anchor">): void => {
+      patches.push({ ...patch, anchor });
+    };
+    // For the repairs that add or extend a region elsewhere in the file, which
+    // moves every line after it.
+    const addElsewhere = (patch: Omit<AutoPatch, "anchor">): void => {
+      patches.push({ ...patch, anchor: { kind: "region" } });
+    };
     const beforePatches = patches.length;
     const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
@@ -287,18 +395,12 @@ export function planFixesExplained(
         skip(err.code, "no-close-name-suggestion", err.message);
         continue;
       }
-      patches.push({
+      const anchor = nameAnchor(store, err.pos, missing);
+      addAnchored(anchor, {
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
-        apply: (text: string) => {
-          const lines = text.split(/\r?\n/);
-          const idx = err.pos.line - 1;
-          const line = lines[idx] ?? "";
-          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
-          lines[idx] = line.replace(re, suggested);
-          return lines.join("\n");
-        },
+        apply: applyNameFix(anchor, missing, suggested),
       });
     }
     if (err.code === "E0106") {
@@ -321,18 +423,12 @@ export function planFixesExplained(
         skip(err.code, "e0106-no-close-timer", err.message);
         continue;
       }
-      patches.push({
+      const anchor = nameAnchor(store, err.pos, missing);
+      addAnchored(anchor, {
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
-        apply: (text: string) => {
-          const lines = text.split(/\r?\n/);
-          const idx = err.pos.line - 1;
-          const line = lines[idx] ?? "";
-          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
-          lines[idx] = line.replace(re, suggested);
-          return lines.join("\n");
-        },
+        apply: applyNameFix(anchor, missing, suggested),
       });
     }
     if (err.code === "E0116") {
@@ -356,7 +452,7 @@ export function planFixesExplained(
         skip(err.code, "e0116-no-close-callee", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -387,7 +483,7 @@ export function planFixesExplained(
         skip(err.code, "e0117-no-close-type", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -418,7 +514,7 @@ export function planFixesExplained(
         skip(err.code, "e0104-no-close-effect", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -444,7 +540,7 @@ export function planFixesExplained(
         skip(err.code, "e0118-no-close-theme", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -470,7 +566,7 @@ export function planFixesExplained(
         skip(err.code, "e0216-no-close-tag", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
@@ -501,18 +597,12 @@ export function planFixesExplained(
         skip(err.code, "e0209-no-close-tag", err.message);
         continue;
       }
-      patches.push({
+      const anchor = nameAnchor(store, err.pos, missing);
+      addAnchored(anchor, {
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
-        apply: (text: string) => {
-          const lines = text.split(/\r?\n/);
-          const idx = err.pos.line - 1;
-          const line = lines[idx] ?? "";
-          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
-          lines[idx] = line.replace(re, suggested);
-          return lines.join("\n");
-        },
+        apply: applyNameFix(anchor, missing, suggested),
       });
     }
     if (err.code === "E0301") {
@@ -544,7 +634,7 @@ export function planFixesExplained(
         skip(err.code, "e0301-cap-already-present-or-no-caps-field", err.message);
         continue;
       }
-      patches.push({
+      addElsewhere({
         code: err.code,
         message: err.message,
         description: `add capability "${cap}" to app.caps`,
@@ -552,7 +642,7 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0001") {
-      patches.push({
+      addElsewhere({
         code: err.code,
         message: err.message,
         description: `add "/404" -> NotFound to app.routes (you must define a NotFound tile)`,
@@ -588,11 +678,24 @@ export function planFixesExplained(
         skip(err.code, "e0218-target-not-a-plain-name", err.message);
         continue;
       }
-      patches.push({
+      add({
         code: err.code,
         message: err.message,
         description: `append "${remedy}" to "${name}" at ${err.pos.line}:${err.pos.col}`,
         apply: (text: string) => replaceAt(text, err.pos, name, `${name}${remedy}`),
+      });
+    }
+    if (err.code === "E0119") {
+      // The slot holds the current route and is in scope in every reducer, and
+      // a reducer this fires in was never going to get a bind — so dropping the
+      // `$` is the whole repair. The diagnostic points at the `$`, and
+      // `replaceAt` writes only if that is what is there, so a drifted position
+      // leaves the file alone.
+      add({
+        code: err.code,
+        message: err.message,
+        description: `read the "route" slot instead of "$route" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
       });
     }
     // Default classifier: this diagnostic code has no repair branch at all.
@@ -605,6 +708,30 @@ export function planFixesExplained(
     }
   }
   return { patches, skipped };
+}
+
+/**
+ * The order a plan may be composed in, by how much of the source each patch
+ * disturbs (see `PatchAnchor`): every `span` first and from the right, then
+ * every `line`, then every `region`. Within a tier the plan's own order is
+ * kept, which for `line` matters: two repairs of the same misspelling on one
+ * line each take the first remaining match.
+ *
+ * This is only about not invalidating the *positions* patches were measured
+ * at. A diagnostic that no patch repairs still moves when a patch to its left
+ * lands, and the regression gate — which compares `code@line:col` — still
+ * calls the moved one introduced and rolls the plan back. Ordering cannot
+ * reach that; only a position-independent identity could.
+ */
+const ANCHOR_TIER: Record<PatchAnchor["kind"], number> = { span: 0, line: 1, region: 2 };
+
+function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
+  return [...patches].sort((a, b) => {
+    const tier = ANCHOR_TIER[a.anchor.kind] - ANCHOR_TIER[b.anchor.kind];
+    if (tier !== 0) return tier;
+    if (a.anchor.kind !== "span" || b.anchor.kind !== "span") return 0;
+    return b.anchor.pos.line - a.anchor.pos.line || b.anchor.pos.col - a.anchor.pos.col;
+  });
 }
 
 export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
@@ -698,7 +825,7 @@ export function applyFixPlan(
   // others and the no-op would still be reported as applied.
   let after = before;
   let applied = 0;
-  for (const p of plan.patches) {
+  for (const p of applicationOrder(plan.patches)) {
     const next = p.apply(after);
     if (next !== after) applied += 1;
     after = next;
@@ -768,6 +895,8 @@ export function applyFixPlan(
       after: before,
       remaining: plan.errors,
       regressionBlocked: true,
+      blocked:
+        introduced.length > 0 ? { reason: "introduced", introduced } : { reason: "resolved-none" },
     };
   }
   try {
@@ -809,12 +938,19 @@ export type FixApplyResult = {
    */
   parseError?: string;
   /**
-   * True when the composed patch would have introduced *more* diagnostics
-   * than the pre-patch file had — the regression gate rolled the write back
-   * and `applied` is `0`. Absent means either the patch cleanly applied or
-   * there was nothing to apply.
+   * True when the regression gate rolled the write back and `applied` is `0`.
+   * Absent means either the patch cleanly applied or there was nothing to
+   * apply. `blocked` says which of the gate's two conditions it was.
    */
   regressionBlocked?: boolean;
+  /**
+   * Why the gate rolled back. `introduced` carries the diagnostics the
+   * re-check reported that the original did not — which is not the same as
+   * "new failures": the gate reads a diagnostic's identity as `code@line:col`,
+   * so a diagnostic no patch repaired appears here when a patch to its left
+   * moved it. Naming them is what lets a reader tell the two apart.
+   */
+  blocked?: { reason: "introduced"; introduced: KumikiError[] } | { reason: "resolved-none" };
   /**
    * Raw filesystem error message when the composed patches passed the
    * regression gate but the write threw (EACCES / ENOSPC / EBUSY, …). When
@@ -891,8 +1027,20 @@ export function fixCmd(
     // introduced new errors" and never that it broke the file's syntax.
     if (result.parseError) {
       console.log(`fixes broke the file: ${result.parseError}`);
+    } else if (result.blocked?.reason === "resolved-none") {
+      console.log("(auto-patch rolled back — it resolved none of the reported diagnostics)");
+    } else if (result.blocked?.reason === "introduced") {
+      // Named rather than summarised as "new errors": the commonest cause is a
+      // diagnostic no patch repaired that a repair to its left moved, and the
+      // position in this list is what shows that.
+      const where = result.blocked.introduced
+        .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
+        .join(", ");
+      console.log(
+        `(auto-patch rolled back — the re-check reported ${where}, which it did not before)`,
+      );
     } else if (result.regressionBlocked) {
-      console.log("(auto-patch rolled back — it would have introduced new errors)");
+      console.log("(auto-patch rolled back)");
     } else {
       console.log("(no auto-patches available)");
     }
@@ -1410,6 +1558,7 @@ function planExactLiteralPatchExplained(
       description: `replace ${actualLit} with ${expectedLit} (from failing test "${r.name}" @ ${at})`,
       apply: (text: string) =>
         text.slice(0, hit) + expectedLit + text.slice(hit + actualLit.length),
+      anchor: { kind: "region" },
     },
   };
 }
@@ -1491,6 +1640,7 @@ function planPartialStringPatchExplained(
       message: `test "${r.name}" failed at ${at}`,
       description: `replace "${midA}" with "${midE}" inside "${target.body}" (from failing test "${r.name}" @ ${at})`,
       apply: (text: string) => text.slice(0, target.start) + patchedLit + text.slice(target.end),
+      anchor: { kind: "region" },
     },
   };
 }
@@ -1587,6 +1737,7 @@ function planArithmeticPatchExplained(
       message: `test "${r.name}" failed at ${at}`,
       description: newDesc,
       apply: (text: string) => text.slice(0, start) + newLine + text.slice(end),
+      anchor: { kind: "region" },
     },
   };
 }
@@ -1630,7 +1781,7 @@ export async function runFixFromTest(
       };
     }
     let text = readFileSync(path, "utf8");
-    for (const p of patches) text = p.apply(text);
+    for (const p of applicationOrder(patches)) text = p.apply(text);
     try {
       atomicWriteFileSync(path, text);
     } catch (e) {

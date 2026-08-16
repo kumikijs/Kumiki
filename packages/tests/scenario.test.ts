@@ -470,6 +470,26 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
+  // The blog's editor route reaches its slot through two reducers that are NOT
+  // route reducers — one on `fetchPost.ok`, one on the Save click. Both used to
+  // read `$route`, which the runtime only fills in for a route lifecycle
+  // reducer, so the comparison against the route was made against `undefined`
+  // and the editor never opened: the route rendered a spinner forever. The
+  // route slot is what those two read now, and this scenario is what says so.
+  it("runs the blog editor route end to end (route slot outside a route reducer)", async () => {
+    const dir = join(examples, "apps", "03-blog");
+    const app = await loadApp(join(dir, "app.kumiki"));
+    const scenario = JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario;
+    const report = await runScenario(app, freshRoot(), scenario);
+    if (!report.ok) {
+      const detail = report.steps
+        .flatMap((s, i) => [...s.errors, ...s.failures].map((m) => `step ${i}: ${m}`))
+        .join("\n");
+      throw new Error(`blog scenario failed:\n${detail}`);
+    }
+    expect(report.ok).toBe(true);
+  });
+
   // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
   // definition order". The 11-multi-subscribe app puts two reducers on
   // ui.click(SaveBtn) — clicking the button must advance BOTH slots, not just

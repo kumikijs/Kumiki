@@ -1,0 +1,61 @@
+{
+  "steps": [
+    {
+      "label": "four rows, each input addressable by its row id",
+      "expect": {
+        "noErrors": true,
+        "state": { "ids": [1, 2, 3, 4] },
+        "elementState": { "#row-2": { "value": "" }, "#row-4": { "value": "" } }
+      }
+    },
+    {
+      "label": "the user types into rows 2 and 4 — text the app never stores, so only the element itself can carry it",
+      "do": { "fill": "#row-2", "value": "typed into two" },
+      "expect": { "elementState": { "#row-2": { "value": "typed into two" } } }
+    },
+    { "do": { "fill": "#row-4", "value": "typed into four" } },
+    {
+      "label": "seed a browser-owned marker on row 2; surviving the re-render is what says the same element is still mounted",
+      "do": { "setProperty": "#row-2", "property": "dataset.identityProbe", "value": "seeded" }
+    },
+    {
+      "label": "drop the head — row 1 goes, and rows 2 and 4 keep both their element and their text",
+      "do": { "clickText": "drop first" },
+      "expect": {
+        "noErrors": true,
+        "state": { "ids": [2, 3, 4] },
+        "elementState": {
+          "#row-2[data-identity-probe='seeded']": { "value": "typed into two" },
+          "#row-4": { "value": "typed into four" }
+        }
+      }
+    },
+    {
+      "label": "rotate — row 2 moves from first to last and takes its element, its marker and its text with it",
+      "do": { "clickText": "rotate" },
+      "expect": {
+        "noErrors": true,
+        "state": { "ids": [3, 4, 2] },
+        "elementState": {
+          "#row-2[data-identity-probe='seeded']": { "value": "typed into two" },
+          "#row-4": { "value": "typed into four" }
+        }
+      }
+    },
+    {
+      "label": "focus survives a reorder natively: a keyed pass leaves the rows whose order already ascends exactly where they are",
+      "do": { "focus": "#row-4" },
+      "expect": { "focused": "#row-4" }
+    },
+    {
+      "label": "rotate again — 3 moves to the end, 4 and 2 keep their places, so the focused input is never re-attached. Fired directly rather than by clicking the button, which would take the focus this step is about",
+      "do": { "dispatch": "rotate" },
+      "expect": {
+        "noErrors": true,
+        "state": { "ids": [4, 2, 3] },
+        "focused": "#row-4",
+        "elementState": { "#row-4": { "value": "typed into four" } }
+      }
+    }
+  ]
+}

@@ -250,6 +250,176 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("rewrites an out-of-scope $route to the slot that holds it (E0119)", () => {
+    // The two name the same route. The bind is only filled in for a route
+    // lifecycle reducer, and the slot is readable from all of them — so the
+    // repair is the `$`, and the patched file has to compile.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-route-"));
+    const file = join(dir, "route.kumiki");
+    writeFileSync(
+      file,
+      `slot seen : Text = ""
+reducer clicked on=ui.click(Btn) do= seen := $route.path
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain(
+      'read the "route" slot instead of "$route" at 2:46',
+    );
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("seen := route.path");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lands both repairs when one line holds two, and the first shifts the second", () => {
+    // `$route` → `route` is a character shorter, so a left-to-right pass moves
+    // the second diagnostic's column by one. The regression gate reads a
+    // diagnostic as `code@line:col`, so the moved one counted as introduced and
+    // the whole plan was rolled back — with the file still holding both errors.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-two-"));
+    const file = join(dir, "two.kumiki");
+    writeFileSync(
+      file,
+      `slot seen : Bool = false
+reducer clicked on=ui.click(Btn) do= seen := $route.path == $route.pattern
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(2);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lands a line-scanning repair beside a positioned one on the same line", () => {
+    // The two families write differently: a name suggestion rewrites the first
+    // match on its line, wherever that is, and `$route` → `route` writes at the
+    // reported column. Composing them right-to-left by position is not enough —
+    // the rightmost `countr` patch rewrites the LEFTMOST one, moves `$route`,
+    // and the positioned patch then declines. Every span goes before every
+    // line-scan for that reason.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-mixed-"));
+    const file = join(dir, "mixed.kumiki");
+    writeFileSync(
+      file,
+      `slot counter : Text = ""
+slot seen : Text = ""
+reducer clicked on=ui.click(Btn) do= seen := countr + $route.path + countr
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(3);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("seen := counter + route.path + counter");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("repairs a diagnostic that does not point at the name it quotes (E0211)", () => {
+    // E0211 reports at the start of the selector and names the tile inside it,
+    // so there is nothing to measure from and the line is the only handle. This
+    // is the whole reason a name suggestion has a line-anchored form at all: a
+    // repair that insisted on writing at the reported column would find
+    // `ui.click(` there, decline, and take the plan down with it.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-selector-"));
+    const file = join(dir, "selector.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+reducer inc on=ui.click(Buton) do= n := n + 1
+tile Button = button(text="+")
+tile App = column(Button, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(1);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("on=ui.click(Button)");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("names what the gate saw when a diagnostic it cannot repair simply moved", () => {
+    // The gate reads a diagnostic as `code@line:col`, so an unrepairable one to
+    // the right of a repair that lands looks introduced. Ordering cannot reach
+    // this — the message must at least say what it saw, because "it would have
+    // introduced new errors" is false here and sends the reader looking for an
+    // error that does not exist.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-moved-"));
+    const file = join(dir, "moved.kumiki");
+    const source = `slot seen : Text = ""
+reducer clicked on=ui.click(B) do= seen := $route.path + qqqqqqqqqq
+tile B = button(text="go")
+tile App = column(B)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    writeFileSync(file, source);
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(result.blocked?.reason).toBe("introduced");
+    if (result.blocked?.reason === "introduced") {
+      // The same E0103 the file already had, one column to the left.
+      expect(result.blocked.introduced.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toEqual([
+        "E0103@2:57",
+      ]);
+      expect(result.remaining.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toContain(
+        "E0103@2:58",
+      );
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves the file's line endings alone", () => {
+    // A repair used to round-trip the whole file through
+    // `split(/\r?\n/).join("\n")`, so one token's rewrite silently rewrote every
+    // CRLF in the file — on the platform where CRLF is the default.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-crlf-"));
+    const file = join(dir, "crlf.kumiki");
+    const source = [
+      'slot counter : Text = ""',
+      "reducer clicked on=ui.click(Btn) do= counter := $route.path",
+      'tile Btn = button(text="go")',
+      "tile App = column(Btn)",
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+      "",
+    ].join("\r\n");
+    writeFileSync(file, source);
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(1);
+    const after = readFileSync(file, "utf8");
+    expect(after).toBe(source.replace("$route.path", "route.path"));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("suggests did-you-mean for an undef slot reference", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-"));
     const file = join(dir, "broken.kumiki");
@@ -3024,6 +3194,38 @@ describe("planTestPatchExplained: skip-reason classification", () => {
 });
 
 describe("FixFromTestOutcome.reason propagation and printer", () => {
+  it("runFixFromTest: Tier-1 lands both repairs when one line holds two", async () => {
+    // The tier-1 loop composes the same plan `applyFixPlan` does, and writes
+    // without a regression gate — so a repair that moved another's column
+    // failed silently here instead of rolling back.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-tier1-two-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot seen : Bool = false",
+        "reducer clicked on=ui.click(B) do= seen := $route.path == $route.pattern",
+        'tile B = button(text="go")',
+        "tile App = column(B)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test clicked",
+        "        given  = {slots: {seen: false}, event: {type: ui.click, target: B}}",
+        "        expect = {slots: {seen: true}}",
+        "",
+      ].join("\n"),
+    );
+    const outcome = await runFixFromTest(file, "t", true);
+    // Both, not one: a plan that lands half its patches leaves the file still
+    // holding the diagnostic it reported as repaired.
+    expect(outcome.compileFixes).toBe(2);
+    expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("runFixFromTest: Tier-2 no-patch surfaces the tier planner's reason", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-outcome-reason-"));
     const file = join(dir, "in.kumiki");

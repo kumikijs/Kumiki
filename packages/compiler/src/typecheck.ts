@@ -29,7 +29,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { assertNever, isTileExpr } from "./ast.ts";
 import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
@@ -174,6 +174,12 @@ type SymbolTable = {
   effects: Map<string, EffectDef>;
   /** Names declared by `timer(d, name=N)` triggers — the `stop-timer` namespace. */
   timerNames: Set<string>;
+  /**
+   * Reducers a `link {prefetch: R}` names (routing.md §3.8). The prefetch fires
+   * its target with the same binding as `route.enter`, so `$route` is in scope
+   * *on that path*.
+   */
+  prefetchTargets: Set<string>;
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
   motions: Set<string>;
   /** Names declared by `theme N = {…}` — the `app.theme` namespace. */
@@ -204,6 +210,7 @@ function checkAll(
     fns: new Map(),
     effects: new Map(),
     timerNames: new Set(),
+    prefetchTargets: new Set(),
     motions: new Set(),
     themes: new Set(),
     iconDomain,
@@ -251,6 +258,12 @@ function checkAll(
         sym.app = def;
         break;
     }
+  }
+
+  // Collected across the whole program before any definition is checked: the
+  // tile that prefetches a reducer may be written below it.
+  for (const def of program.defs) {
+    if (def.kind === "TileDef") collectPrefetchTargets(def.body, sym.prefetchTargets);
   }
 
   const index = buildDefIndex(program);
@@ -502,13 +515,23 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index
       pos: ref.pos ?? slot.pos,
     });
   }
-  const ctx: Ctx = { kind: "slot-init", localBinds: new Set(), localTypes: new Map() };
+  const ctx: Ctx = {
+    kind: "slot-init",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+  };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);
 }
 
 function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const ctx: Ctx = { kind: "tile", localBinds: new Set(), localTypes: new Map() };
+  const ctx: Ctx = {
+    kind: "tile",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+  };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
     ctx.localBinds.add("$1");
@@ -630,6 +653,17 @@ type Ctx = {
    * variable as an Int.
    */
   localTypes: Map<string, TypeExpr>;
+  /**
+   * Whether the runtime fills `$route` into the payload this expression is
+   * evaluated with. Required, so every scope has to answer it — the field was
+   * optional for one commit and `app.init`, which builds a reducer `Ctx`,
+   * silently went without.
+   *
+   * `no-payload` is a `fn`, a tile or a slot initializer: they are not applied
+   * with a payload at all, so `$route` there is a name that does not exist
+   * (E0103) rather than a bind read out of its scope (E0119).
+   */
+  routeBind: "bound" | "unbound" | "no-payload";
 };
 
 /**
@@ -1140,12 +1174,69 @@ function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
   }
 }
 
+/**
+ * Whether the runtime *may* apply this reducer with a `$route` in its payload.
+ * Two things do (`core.ts`): the route lifecycle chain (`route.enter` /
+ * `route.leave` / `route.error`), and a link's prefetch, which fires its target
+ * with a synthetic route built from `prefetch-args` so the prefetch and the
+ * navigation can share one reducer body (routing.md §3.8). Every other trigger
+ * passes a payload with no route in it.
+ *
+ * "May", because a prefetch target is exempted by NAME. The prefetch resolves
+ * its reducer by name and binds a route only on that path; the same reducer
+ * reached through its own `on=` trigger gets the routeless payload like any
+ * other. A reducer has one trigger and this check has no path sensitivity, so
+ * the choice is between exempting the name and reporting every prefetch target
+ * that is also, say, click-triggered — where the read is legitimate on one path
+ * and empty on the other. Exempting is the side that never rejects a working
+ * program; what it costs is that `prefetch: R` on a reducer triggered some
+ * other way turns the check off for `R` entirely.
+ */
+function bindsRoute(r: ReducerDef, sym: SymbolTable): boolean {
+  if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return true;
+  return sym.prefetchTargets.has(r.name);
+}
+
+/**
+ * Every reducer a `link {prefetch: …}` names, in either form the prop accepts
+ * (bare ident or string literal — the same pair `checkTileProp` resolves). The
+ * walk is the whole tile body, not only its top level: a prefetching link is
+ * usually inside the `for` that renders the list it links into.
+ */
+function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      collectPrefetchTargets(expr.body, out);
+      return;
+    case "TileIf":
+      collectPrefetchTargets(expr.consequent, out);
+      collectPrefetchTargets(expr.alternate, out);
+      return;
+    case "TileMatch":
+      for (const arm of expr.arms) collectPrefetchTargets(arm.body, out);
+      return;
+    case "TileCall": {
+      if (expr.name === "link") {
+        const v = expr.props.find((p) => p.name === "prefetch")?.value;
+        if (v?.kind === "Ref") out.add(v.name);
+        else if (v?.kind === "Str") out.add(v.value);
+      }
+      for (const a of expr.args) if (isTileExpr(a.value)) collectPrefetchTargets(a.value, out);
+      return;
+    }
+    default:
+      assertNever(expr);
+  }
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
+    routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
@@ -1160,9 +1251,6 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
         pos: r.on.effectPos,
       });
     }
-  }
-  if (r.on.kind === "LifecycleEvent") {
-    if (r.on.name.startsWith("route.")) ctx.localBinds.add("$route");
   }
   // `tile.mount(X)` fires when *that* tile enters the rendered tree, so an
   // undeclared `X` is the same dead subscription E0211 reports for a `ui.*`
@@ -1252,7 +1340,6 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   }
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");
-  ctx.localBinds.add("$route");
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
@@ -1536,6 +1623,27 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Unit":
       return;
     case "Ref":
+      // `$route` is not a name in a table — it is a payload field the runtime
+      // fills in for some reducers and not others, so the reducer's own trigger
+      // is what puts it in scope. Answered here rather than by seeding
+      // localBinds, so there is one place that decides. Where there is no
+      // payload at all the name means nothing, and the undefined-name report
+      // below is the right one.
+      if (e.name === "$route" && ctx.routeBind !== "no-payload") {
+        if (ctx.routeBind === "unbound") {
+          errors.push({
+            code: "E0119",
+            kind: "route-bind-out-of-scope",
+            message:
+              `"$route" is only bound in a route.enter / route.leave / route.error reducer ` +
+              `and in a link's prefetch target; nothing binds one here, so every field off ` +
+              `it reads undefined. Read the "route" slot instead — ` +
+              `it holds the current route and is in scope everywhere`,
+            pos: e.pos,
+          });
+        }
+        return;
+      }
       if (ctx.localBinds.has(e.name)) return;
       if (sym.slots.has(e.name)) {
         if (ctx.kind === "fn") {
@@ -2554,6 +2662,7 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
     kind: "fn",
     localBinds: new Set(),
     localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
   for (const p of fn.params) ctx.localBinds.add(p.name);
@@ -2614,6 +2723,7 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
     checkExpr(eff.mapRequest, sym, errors, {
       kind: "slot-init", // treat as pure context (no slots, no fns)
       localBinds: new Set(["$1"]),
+      routeBind: "no-payload",
       localTypes: new Map(),
     });
 }
@@ -3037,6 +3147,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    routeBind: "no-payload",
   });
 }
 
@@ -3083,6 +3194,11 @@ function checkApp(
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(app.caps),
+    // `app.init` runs once at mount, before any route reducer, and the runtime
+    // evaluates these entries with no payload at all — so a `$route` here is
+    // out of scope for the same reason it is in a click reducer, and deserves
+    // the same report rather than "undefined name".
+    routeBind: "unbound",
   };
   for (const e of app.init) {
     // An init entry is an effect call by the grammar (§1.12). `checkExpr` would

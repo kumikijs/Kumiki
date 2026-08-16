@@ -131,6 +131,7 @@ Events fired on route switches:
 |---|---|
 | `route.leave(pattern)` | Just before leaving the old route |
 | `route.enter(pattern)` | Just after entering the new route |
+| `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
 
 ```kumiki
 reducer loadTodoOnEnter
@@ -144,6 +145,10 @@ reducer cleanupOnLeave
 ```
 
 `$route` is a bind representing the new (or old) route.
+
+**`$route` is bound on the route lifecycle path and on the prefetch path, and nowhere else.** The runtime fills it into the payload of a `route.enter` / `route.leave` / `route.error` reducer, and into the payload it fires the reducer a link names as its [prefetch](#_3-8-prefetch) target with. Reading it from any other reducer is [E0119](./errors.md#e0119-route-bind-out-of-scope): the payload has no route in it, so every field off it reads `undefined` rather than failing. What a reducer outside those wants is the [`route` slot](#_3-2-current-route-state) — the runtime maintains it, it holds the current route, and every layer can read it.
+
+The check reads that as a property of the *reducer*, because a reducer has one trigger: a prefetch target is exempt by name. So a reducer that is both a prefetch target and triggered some other way may read `$route` on either path, and gets an empty one on the trigger the prefetch did not fire. Naming a reducer in `prefetch` is what turns the check off for it.
 
 ---
 

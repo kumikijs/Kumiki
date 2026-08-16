@@ -30,6 +30,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
 | `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
+| `E0119` | `$route` in a reducer the runtime does not bind one in (anything but `route.enter` / `route.leave` / `route.error` and a link's prefetch target) | read the `route` slot instead; try `kumiki_fix` |
 | `E0201` | a value does not have the type its position requires (slot init, assignment, `fn` argument / return, tile `in=`, operator operand) | correct the value, or widen the declared type |
 | `E0202` | an `emit` argument does not match the effect's `in=` | pass a value of the declared type |
 | `E0211` | a reducer's `ui.*` selector or `tile.mount` / `tile.unmount` names an undeclared tile | declare the tile or fix the name; try `kumiki_fix` |
