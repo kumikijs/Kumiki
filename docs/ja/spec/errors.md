@@ -55,6 +55,8 @@ type KumikiError = {
 | `E0209` | あり | scrutinee union の variant タグに対する近傍名の提案（組み込みの `Option` / `Result` と、別名を辿ったユーザ `TypeDef` の body）。 |
 | `E0211` | あり | セレクタの対象について、宣言済み tile 名に対する近傍名の提案。 |
 | `E0216` | あり | 宣言された union の variant タグに対する近傍名の提案。解決方法はパターン側の E0209 と同じ。 |
+| `E0119` | あり | 報告位置の `$route` を `route` に書き換える — slot が現在のルートを保持し、どの reducer からも読める。 |
+| `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
 | `E0004` | なし | どちらの app が意図されたものか、もう一方の routes を統合すべきかはユーザの意図である。 |
@@ -334,9 +336,9 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 reducer が `$route` を読んでいるが、その reducer のペイロードにランタイムはルートを入れない。`$route` が束縛されるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が `prefetch` に指名した reducer — プリフェッチと実際の遷移で 1 つの body を共有できるよう、後者は前者と同じ束縛で発火する（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)、[§3.8](./routing.md#_3-8-プリフェッチ)）。それ以外のトリガは、ルートを含まないペイロードで reducer を適用する。
 
-> `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; here it is applied with a payload that has none, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
+> `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
-この検査がないと、読みは空オブジェクトに落ちる。`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す — それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref--undef-slot)）である。
+この検査がないと、読みは空オブジェクトに落ちる：`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す。それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。
 
 **修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-現在のルート状態)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
 

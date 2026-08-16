@@ -128,7 +128,7 @@ describe("reconcile diagnostics reach the smoke report", () => {
   // and a button row, which made that child list mixed — keyed matching is
   // all-or-nothing per parent, so every length change rebuilt the whole column
   // and the example demonstrated the opposite of its own comment. Asserted as
-  // "nothing reported at all" rather than "no child-count-change": a
+  // "no reconcile fallback of any reason" rather than "no child-count-change": a
   // `wrapped-children` or `unplaceable-insert` here would mean the keyed pass
   // stood down for a different reason, and the identity claim would be just as
   // untrue.

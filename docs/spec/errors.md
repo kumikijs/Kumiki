@@ -62,6 +62,8 @@ typo` is caught rather than accepted).
 | `E0117` | yes | Close-name suggestion against type names — the program's own `type` definitions first, then the primitives, the standard library's domain types, and the generic constructors (scoped — a slot or fn whose name is close is not a candidate). |
 | `E0118` | yes | Close-name suggestion against declared theme names and slot names — the two namespaces `app.theme` accepts (scoped — a tile or reducer whose name is close is not a candidate). |
 | `E0216` | yes | Close-name suggestion against variant tags of the declared union, the same resolution E0209 uses on the pattern side. |
+| `E0119` | yes | Rewrite `$route` to `route` at the reported position — the slot holds the current route and is readable from every reducer. |
+| `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
 | `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
@@ -347,9 +349,9 @@ A name that resolves to neither leaves the runtime looking up a theme that was n
 
 A reducer reads `$route`, but the runtime does not put one in that reducer's payload. `$route` is bound in a `route.enter` / `route.leave` / `route.error` reducer, and in the reducer a link names as its `prefetch` target — which fires with the same binding so one body can serve both the prefetch and the navigation ([Routing §3.4](./routing.md#_3-4-route-lifecycle), [§3.8](./routing.md#_3-8-prefetch)). Every other trigger applies the reducer with a payload that has no route in it.
 
-> `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; here it is applied with a payload that has none, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
+> `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
-Without this check the read lowered to an empty object, so `$route.params.get-or("id", "")` returned the fallback and `$route.pattern` returned `undefined` — every comparison against them was false and the reducer's whole body quietly did nothing. A `fn` or a tile body is not applied with a payload at all, so `$route` there is an undefined name ([E0103](#e0103-undef-ref--undef-slot)) rather than this.
+Without this check the read lowers to an empty object: `$route.params.get-or("id", "")` returns the fallback and `$route.pattern` returns `undefined`, so every comparison against them is false and the reducer's whole body quietly does nothing. A `fn` or a tile body is not applied with a payload at all, so `$route` there is an undefined name ([E0103](#e0103-undef-ref-undef-slot)) rather than this.
 
 **Fix**: Read the `route` slot ([Routing §3.2](./routing.md#_3-2-current-route-state)), which the runtime maintains and every layer can read. `kumiki fix` proposes the rewrite.
 

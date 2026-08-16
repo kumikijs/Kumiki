@@ -176,8 +176,8 @@ type SymbolTable = {
   timerNames: Set<string>;
   /**
    * Reducers a `link {prefetch: R}` names (routing.md §3.8). The prefetch fires
-   * that reducer with the same binding as `route.enter`, so `$route` is in
-   * scope in it however else it is triggered.
+   * its target with the same binding as `route.enter`, so `$route` is in scope
+   * *on that path*.
    */
   prefetchTargets: Set<string>;
   /** Names declared by `motion N = {…}` — the `motion` prop namespace. */
@@ -644,10 +644,11 @@ type Ctx = {
    */
   localTypes: Map<string, TypeExpr>;
   /**
-   * Whether the runtime fills `$route` into this reducer's payload. Set only
-   * for `kind: "reducer"` — a `fn` or a tile is not applied with a payload at
-   * all, so `$route` there is a name that does not exist (E0103) rather than a
-   * bind read out of its scope (E0119).
+   * Whether the runtime fills `$route` into the payload this expression is
+   * evaluated with. Set wherever there is a payload to speak of — a reducer
+   * body, and `app.init`, which has none. Left unset for a `fn` or a tile,
+   * which are not applied with a payload at all: `$route` there is a name that
+   * does not exist (E0103) rather than a bind read out of its scope (E0119).
    */
   routeBind?: "bound" | "unbound";
 };
@@ -1161,12 +1162,22 @@ function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
 }
 
 /**
- * Whether the runtime applies this reducer with a `$route` in its payload.
- * Three places do (`core.ts`): the route lifecycle chain (`route.enter` /
+ * Whether the runtime *may* apply this reducer with a `$route` in its payload.
+ * Two things do (`core.ts`): the route lifecycle chain (`route.enter` /
  * `route.leave` / `route.error`), and a link's prefetch, which fires its target
  * with a synthetic route built from `prefetch-args` so the prefetch and the
  * navigation can share one reducer body (routing.md §3.8). Every other trigger
  * passes a payload with no route in it.
+ *
+ * "May", because a prefetch target is exempted by NAME. The prefetch resolves
+ * its reducer by name and binds a route only on that path; the same reducer
+ * reached through its own `on=` trigger gets the routeless payload like any
+ * other. A reducer has one trigger and this check has no path sensitivity, so
+ * the choice is between exempting the name and reporting every prefetch target
+ * that is also, say, click-triggered — where the read is legitimate on one path
+ * and empty on the other. Exempting is the side that never rejects a working
+ * program; what it costs is that `prefetch: R` on a reducer triggered some
+ * other way turns the check off for `R` entirely.
  */
 function bindsRoute(r: ReducerDef, sym: SymbolTable): boolean {
   if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return true;
@@ -1612,8 +1623,8 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             kind: "route-bind-out-of-scope",
             message:
               `"$route" is only bound in a route.enter / route.leave / route.error reducer ` +
-              `and in a link's prefetch target; here it is applied with a payload that has ` +
-              `none, so every field off it reads undefined. Read the "route" slot instead — ` +
+              `and in a link's prefetch target; nothing binds one here, so every field off ` +
+              `it reads undefined. Read the "route" slot instead — ` +
               `it holds the current route and is in scope everywhere`,
             pos: e.pos,
           });
@@ -3167,6 +3178,11 @@ function checkApp(
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(app.caps),
+    // `app.init` runs once at mount, before any route reducer, and the runtime
+    // evaluates these entries with no payload at all — so a `$route` here is
+    // out of scope for the same reason it is in a click reducer, and deserves
+    // the same report rather than "undefined name".
+    routeBind: "unbound",
   };
   for (const e of app.init) {
     // An init entry is an effect call by the grammar (§1.12). `checkExpr` would

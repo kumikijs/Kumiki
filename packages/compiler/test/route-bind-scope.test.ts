@@ -64,6 +64,24 @@ describe("$route outside a route lifecycle reducer", () => {
     expect(codes(program("timer(1s)", "seen := $route.path"))).toEqual(["E0119"]);
   });
 
+  it("is reported in app.init, which runs before any route with no payload at all", () => {
+    const src = `slot seen : Text = ""
+
+effect ping cap=log.write
+            in=Text
+            out=Result(Unit, Text)
+            map-request={level: "info", message: $1}
+
+tile Page = column(text(seen))
+
+app A
+    caps   = [log.write]
+    routes = {"/" -> Page, "/404" -> Page}
+    init   = [ping($route.path)]
+`;
+    expect(codes(src)).toEqual(["E0119"]);
+  });
+
   it("names the slot that reads the same route, because it is in scope here", () => {
     const [d] = diagnose(program("ui.click(Btn)", "seen := $route.path"));
     expect(d?.message).toContain('"route"');
@@ -91,38 +109,89 @@ describe("where $route really is bound", () => {
     expect(codes(program('route.error("/posts/:id")', "seen := $route.path"))).toEqual([]);
   });
 
-  it("accepts it in a reducer a link names as its prefetch target", () => {
-    // §3.8: the prefetch fires with the same argument binding as route.enter,
-    // so the reducer it names is a route reducer wherever it is triggered from.
+  it("accepts it in the reducer a link prefetches, which is normally a route reducer too", () => {
+    // §3.8: the prefetch fires its target with the same binding as route.enter,
+    // precisely so one body can serve the prefetch and the navigation. That
+    // body is a `route.enter` reducer, and this is the shape the exemption is
+    // written for.
     const src = program(
-      "ui.click(Other)",
+      'route.enter("/posts/:id")',
       'seen := $route.params.get-or("id", "")',
       'tile Ahead = link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}\n',
     ).replace("tile Page = column(Btn, Other)", "tile Page = column(Btn, Other, Ahead)");
     expect(codes(src)).toEqual([]);
   });
+});
 
-  it("finds the prefetching link inside the loop that renders the list", () => {
-    // Where one actually appears: a link per row, each prefetching the reducer
-    // that loads the row it points at. A collector that only looked at the top
-    // level of a tile body would miss every real use.
-    const src = program(
-      "ui.click(Other)",
-      'seen := $route.params.get-or("id", "")',
+// Every test below reads `$route` from a reducer whose OWN trigger binds none,
+// and expects silence. That silence is the over-approximation, not a guarantee:
+// `bindsRoute` exempts a prefetch target by name, and a reducer reached through
+// its own trigger gets the routeless payload like any other. The check has no
+// path sensitivity to tell the two apart, and exempting is the side that never
+// rejects a working program.
+describe("the prefetch exemption is by name, so it covers the reducer's other triggers too", () => {
+  const prefetching = (tile: string, trigger = "ui.click(Other)"): string =>
+    program(trigger, 'seen := $route.params.get-or("id", "")', `${tile}\n`).replace(
+      "tile Page = column(Btn, Other)",
+      "tile Page = column(Btn, Other, Ahead)",
+    );
+
+  it("finds a bare-ident target", () => {
+    expect(
+      codes(
+        prefetching(
+          'tile Ahead = link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("finds the string form of the same prop", () => {
+    expect(
+      codes(
+        prefetching(
+          'tile Ahead = link(to="/posts/7") {text: "7", prefetch: "subject", prefetch-args: {"id": "7"}}',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  // The collector has to reach a link wherever a tile body can put one. A
+  // branch it does not descend into makes the exemption invisible, which turns
+  // a working program into a false E0119 — so each wrapper is its own case.
+  const wrapped: [string, string][] = [
+    [
+      "a for loop, which is where a per-row prefetch actually lives",
       `slot posts : List(Text) = []
-tile Ahead = column(for p in posts link(to="/posts/" + p) {text: p, prefetch: subject, prefetch-args: {"id": p}})\n`,
-    ).replace("tile Page = column(Btn, Other)", "tile Page = column(Btn, Other, Ahead)");
-    expect(codes(src)).toEqual([]);
-  });
-
-  it("accepts the string form of the same prefetch target", () => {
-    const src = program(
-      "ui.click(Other)",
-      "seen := $route.path",
-      'tile Ahead = link(to="/posts/7") {text: "7", prefetch: "subject", prefetch-args: {"id": "7"}}\n',
-    ).replace("tile Page = column(Btn, Other)", "tile Page = column(Btn, Other, Ahead)");
-    expect(codes(src)).toEqual([]);
-  });
+tile Ahead = column(for p in posts link(to="/posts/" + p) {text: p, prefetch: subject, prefetch-args: {"id": p}})`,
+    ],
+    [
+      "a when",
+      `slot ready : Bool = false
+tile Ahead = column(when(ready, link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}))`,
+    ],
+    [
+      "either branch of an if",
+      `slot ready : Bool = false
+tile Ahead = column(if ready then text("wait") else link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}})`,
+    ],
+    [
+      "any arm of a match",
+      `slot pick : Option(Text) = None
+tile Ahead = column(match pick with
+          | None    -> text("none")
+          | Some(p) -> link(to="/posts/" + p) {text: p, prefetch: subject, prefetch-args: {"id": p}})`,
+    ],
+    [
+      "a tile argument, which is a tile expression of its own",
+      `tile Ahead = column(card(link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}))`,
+    ],
+  ];
+  for (const [where, tile] of wrapped) {
+    it(`descends into ${where}`, () => {
+      expect(codes(prefetching(tile))).toEqual([]);
+    });
+  }
 });
 
 describe("every position the bind can hide in", () => {
