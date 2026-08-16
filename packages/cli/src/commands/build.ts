@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
-import { capsFor } from "./_shared/caps.ts";
+import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -46,10 +46,11 @@ export async function buildCmd(inputArg: string, outdirArg: string): Promise<voi
   const inputPath = resolve(process.cwd(), inputArg);
   const outdir = resolve(process.cwd(), outdirArg);
   const source = readFileSync(inputPath, "utf8");
+  const caps = capsFor(inputPath);
   const baseOpts = {
     runtimeSpecifier: "./runtime/core.js",
     runtimeModulesDir: "./runtime",
-    capabilities: capsFor(inputPath),
+    capabilities: caps.capabilities,
   };
   const first = compile(source, baseOpts);
   if (first.kind === "fail") {
@@ -59,6 +60,7 @@ export async function buildCmd(inputArg: string, outdirArg: string): Promise<voi
     for (const err of first.errors) {
       console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
     }
+    reportCapabilitySearch(first.errors, caps);
     process.exit(1);
   }
   for (const w of first.warnings) {

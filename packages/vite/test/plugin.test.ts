@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
 
@@ -49,7 +50,7 @@ async function importModule(code: string): Promise<AppShape> {
 
 describe("vite-plugin-kumiki", () => {
   it("compiles a .kumiki file to a default-exported, self-contained module (bundle)", async () => {
-    const code = await runTransform(COUNTER);
+    const code = await runTransform(COUNTER, { bundle: true });
     expect(code).toContain("export default App;");
     // bundled: runtime inlined, no bare external import left behind
     expect(code).not.toMatch(/^import \{[^}]*\} from "@kumikijs\/runtime"/m);
@@ -73,8 +74,8 @@ describe("vite-plugin-kumiki", () => {
     expect(a.live).not.toBe(b.live);
   });
 
-  it("keeps the runtime as an external import when bundle is false", async () => {
-    const code = await runTransform(COUNTER, { bundle: false });
+  it("keeps the runtime as an external import by default", async () => {
+    const code = await runTransform(COUNTER);
     expect(code).toContain("export default App;");
     expect(code).toMatch(/from "@kumikijs\/runtime"/);
   });
@@ -196,8 +197,13 @@ describe("vite-plugin-kumiki", () => {
   it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", async () => {
     const dir = mkdtempSync(join(TMP, "types-"));
     const file = join(dir, "app.kumiki");
+    // A slot named the way Kumiki allows and TypeScript does not, next to a
+    // user type named after one of the generated helpers: this file is written
+    // into the user's project, so it has to survive their `tsc`.
     const src = `
       slot count : Int = 0
+      slot last-error : Text = ""
+      type Slots = { seen: Int }
       effect track cap=telemetry.track in={name: Text} out=Unit
       reducer fire on=ui.click(B) do= emit track({name: "x"})
       tile B = button(text="b")
@@ -213,8 +219,23 @@ describe("vite-plugin-kumiki", () => {
     const genPath = `${file}.gen.ts`;
     expect(existsSync(genPath)).toBe(true);
     const gen = readFileSync(genPath, "utf8");
-    expect(gen).toContain("export interface Slots {");
+    expect(gen).toContain("export interface KumikiSlots {");
     expect(gen).toContain("count: number;");
-    expect(gen).toMatch(/"telemetry\.track"\??: Provider<\{ name: string \}, null>/);
+    expect(gen).toContain('"last-error": string;');
+    expect(gen).toMatch(/"telemetry\.track"\??: KumikiProvider<\{ name: string \}, null>/);
+    // The generated declaration is only useful if the project it lands in
+    // still compiles.
+    const program = ts.createProgram([genPath], {
+      noEmit: true,
+      strict: true,
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      skipLibCheck: true,
+    });
+    const diagnostics = ts
+      .getPreEmitDiagnostics(program)
+      .map((d) => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`);
+    expect(diagnostics).toEqual([]);
   });
 });

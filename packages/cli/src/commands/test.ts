@@ -25,7 +25,7 @@ export function registerTest(program: Command): void {
           process.exit(2);
         }
         const inputPath = resolve(process.cwd(), input);
-        await testCmd(inputPath, filter, capsFor(inputPath), {
+        await testCmd(inputPath, filter, capsFor(inputPath).capabilities, {
           coverage: Boolean(options.coverage),
           watch: Boolean(options.watch),
         });

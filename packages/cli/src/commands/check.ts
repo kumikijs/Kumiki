@@ -3,7 +3,7 @@ import { check, type KumikiError } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
 import { load } from "../store.ts";
-import { capsFor } from "./_shared/caps.ts";
+import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
 
 const USAGE =
@@ -78,12 +78,13 @@ export async function checkCmd(
       );
     }
   }
+  const caps = capsFor(inputPath);
   const all = check(store.program, {
     strictA11y,
     strictIcons,
     strictSelectorId,
     iconNames,
-    capabilities: capsFor(inputPath),
+    capabilities: caps.capabilities,
   });
   const filtered = filterByScope(all, scopes);
   const warnings = filtered.filter((d) => d.severity === "warning");
@@ -91,6 +92,7 @@ export async function checkCmd(
   for (const d of [...warnings, ...errors]) {
     console.error(`${d.code} ${d.kind} at ${d.pos.line}:${d.pos.col}: ${d.message}`);
   }
+  reportCapabilitySearch(errors, caps);
   if (errors.length > 0) process.exit(1);
   console.log(
     warnings.length > 0

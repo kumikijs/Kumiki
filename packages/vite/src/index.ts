@@ -9,19 +9,31 @@
 // Node during build/dev).
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { compile, generateDts } from "@kumikijs/compiler";
+import { fileURLToPath } from "node:url";
+import { type CompileResult, compile, generateDts, LexError, ParseError } from "@kumikijs/compiler";
 import {
+  type CapabilityLookup,
+  describeCapabilitySearch,
   nodeRuntimeBundleReader,
   resolveBuiltinIcons,
-  resolveCapabilities,
+  resolveCapabilityManifest,
 } from "@kumikijs/compiler/node";
-import type { Plugin } from "vite";
+import { normalizePath, type Plugin, type Rollup } from "vite";
 
 export type KumikiPluginOptions = {
   /**
    * Inline the @kumikijs/runtime into each compiled module so it is
-   * self-contained. When false, the module `import`s "@kumikijs/runtime"
-   * (deduplicated by the bundler). Default: true.
+   * self-contained. Default: false — the module `import`s "@kumikijs/runtime"
+   * and the bundler ships one copy.
+   *
+   * Turning this on duplicates the runtime as soon as anything else imports
+   * it, which the documented way to use this plugin does (`mount` /
+   * `defineKumikiElement` come from the same package): the counter example
+   * builds to 129 kB inlined against 82 kB shared, and each further `.kumiki`
+   * import adds another copy. The copies do not merely take space — the
+   * runtime keeps module-level state, and the injected state-style sheet is
+   * found by DOM id while its sequence counter restarts per copy. Use it only
+   * for a module that must stand alone with no runtime dependency.
    */
   bundle?: boolean;
   /**
@@ -62,17 +74,68 @@ function writeIfChanged(path: string, content: string): void {
 
 const KUMIKI_RE = /\.kumiki$/;
 
+/** The specifier the generated module imports when the runtime is not inlined. */
+const RUNTIME_SPECIFIER = "@kumikijs/runtime";
+
 /** Strip a Vite id's query/suffix (`/abs/app.kumiki?import` → `/abs/app.kumiki`). */
 function cleanId(id: string): string {
   const q = id.indexOf("?");
   return q === -1 ? id : id.slice(0, q);
 }
 
+/**
+ * Where this plugin's own copy of the runtime lives — the fallback for a
+ * project that installed `@kumikijs/vite` alone. `@kumikijs/runtime` is a
+ * dependency of this package, so it is always on disk; under a strict
+ * node_modules layout it is not resolvable *from the project*, and without
+ * this the generated `import` would simply fail. Resolved through the import
+ * conditions, since the runtime's `exports` map defines no `require` entry.
+ */
+function pluginLocalRuntime(): string | null {
+  try {
+    return normalizePath(fileURLToPath(import.meta.resolve(RUNTIME_SPECIFIER)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Render a failure that reached us as an exception — a lex or parse error, or
+ * a malformed capability manifest — as a diagnostic Vite can place. Both
+ * carry a source position; anything else is reported against the file alone,
+ * because a stack of compiler frames in the overlay tells the author nothing
+ * about their source.
+ */
+function reportThrown(ctx: Rollup.PluginContext, e: unknown, file: string): never {
+  const message = `Kumiki compile failed (${file}):\n  ${e instanceof Error ? e.message : String(e)}`;
+  const pos = e instanceof ParseError || e instanceof LexError ? e.pos : null;
+  if (pos) ctx.error({ message, id: file, loc: { file, line: pos.line, column: pos.col } });
+  ctx.error({ message, id: file });
+}
+
 export function kumiki(options: KumikiPluginOptions = {}): Plugin {
-  const bundle = options.bundle ?? true;
+  const bundle = options.bundle ?? false;
+  // Vite's project root, once it is known: the capability-manifest search
+  // stops there rather than guessing from `package.json`.
+  let root: string | undefined;
   return {
     name: "vite-plugin-kumiki",
     enforce: "pre",
+    config() {
+      // Two copies of the runtime on disk (a project's own install plus this
+      // plugin's) would otherwise both be bundled.
+      return { resolve: { dedupe: [RUNTIME_SPECIFIER] } };
+    },
+    configResolved(resolved) {
+      root = resolved.root;
+    },
+    async resolveId(source, importer, opts) {
+      if (source !== RUNTIME_SPECIFIER) return null;
+      // The project's own resolution wins, so the app and the compiled module
+      // share one copy; this only answers when there is nothing to share.
+      const own = await this.resolve(source, importer, { ...opts, skipSelf: true });
+      return own ? null : pluginLocalRuntime();
+    },
     async transform(code, id) {
       const file = cleanId(id);
       if (!KUMIKI_RE.test(file)) return null;
@@ -94,18 +157,33 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         }
       }
 
+      let caps: CapabilityLookup;
+      try {
+        caps = resolveCapabilityManifest(file, root ? { root } : {});
+      } catch (e) {
+        reportThrown(this, e, file);
+      }
+
       const baseOpts = {
-        runtimeSpecifier: "@kumikijs/runtime",
+        runtimeSpecifier: RUNTIME_SPECIFIER,
         exportApp: true,
         bundle,
         ...(bundle ? { readRuntimeBundle: nodeRuntimeBundleReader } : {}),
-        capabilities: resolveCapabilities(file),
+        capabilities: caps.capabilities,
         ...(options.strictA11y ? { strictA11y: true as const } : {}),
         ...(options.strictIcons ? { strictIcons: true as const, iconNames } : {}),
         ...(options.strictSelectorId ? { strictSelectorId: true as const } : {}),
       } as const;
 
-      const first = compile(code, baseOpts);
+      // A lex or parse error leaves `compile` as an exception rather than a
+      // result — the likeliest failure while typing, and the one that used to
+      // reach the overlay as a stack trace with no line to jump to.
+      let first: CompileResult;
+      try {
+        first = compile(code, baseOpts);
+      } catch (e) {
+        reportThrown(this, e, file);
+      }
       // Surface non-fatal warnings (W02xx) through Rollup's plugin context so
       // they show in Vite's overlay/build log without breaking the import.
       // Emit BEFORE the error-bail path so warnings detected alongside a
@@ -118,7 +196,13 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       }
       if (first.kind !== "ok") {
         const detail = first.errors.map((e) => `  ${e.code} ${e.message}`).join("\n");
-        const message = `Kumiki compile failed (${file}):\n${detail}`;
+        // A capability the manifest was supposed to register is the one error
+        // whose fix is a file the author cannot see from the message alone.
+        const note = first.errors.some((e) => e.code === "E0302")
+          ? `
+  ${describeCapabilitySearch(caps)}`
+          : "";
+        const message = `Kumiki compile failed (${file}):\n${detail}${note}`;
         // Hand the first error's source position to Rollup so Vite's overlay
         // links straight to the offending line instead of just naming the
         // file. `loc.column` is 1-based in the parser; Rollup expects the

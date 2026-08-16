@@ -28,7 +28,12 @@ export function registerFix(program: Command): void {
         const apply = Boolean(options.apply);
         const fixPath = resolve(process.cwd(), file);
         if (options.autoPatch !== undefined) {
-          const outcome = await fixFromTest(fixPath, options.autoPatch, apply, capsFor(fixPath));
+          const outcome = await fixFromTest(
+            fixPath,
+            options.autoPatch,
+            apply,
+            capsFor(fixPath).capabilities,
+          );
           // `ok` counts "a fix is available in dry-run" as success, which is a
           // proposal rather than a repair: the test still fails and the file
           // is untouched. The exit code answers the same question here as it
@@ -38,7 +43,7 @@ export function registerFix(program: Command): void {
           if (!repaired) process.exitCode = 1;
           return;
         }
-        process.exitCode = fixCmd(fixPath, apply, code, capsFor(fixPath));
+        process.exitCode = fixCmd(fixPath, apply, code, capsFor(fixPath).capabilities);
       },
     );
 }

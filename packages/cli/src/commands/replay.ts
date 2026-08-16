@@ -62,7 +62,7 @@ export function registerReplay(program: Command): void {
             process.exit(2);
           }
         }
-        await replayCmd(inputPath, capsFor(inputPath), {
+        await replayCmd(inputPath, capsFor(inputPath).capabilities, {
           fromLog: resolve(process.cwd(), options.fromLog),
           ...(episodeId !== undefined ? { episodeId } : {}),
           mocks,

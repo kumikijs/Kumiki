@@ -21,7 +21,7 @@ export function registerSmoke(program: Command): void {
         process.exit(2);
       }
       const inputPath = resolve(process.cwd(), input);
-      await smokeCmd(inputPath, capsFor(inputPath), {
+      await smokeCmd(inputPath, capsFor(inputPath).capabilities, {
         diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
       });
     });

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -518,6 +518,73 @@ describe("kumiki smoke with a manifest-registered capability", () => {
       encoding: "utf8",
     });
     expect(out).toContain("ok");
+  });
+});
+
+// The capability manifest registers names for a *project*, so it is looked for
+// from the source file up to the project root — and when a name is still not
+// accepted, the diagnostic says which manifest was read, or where one was
+// looked for. Before that, a manifest one directory up was ignored in silence.
+describe("kumiki check and the capability manifest", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "kumiki-caps-"));
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "p" }));
+    writeFileSync(join(root, "src", "app.kumiki"), CUSTOM_CAP_SRC);
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const CUSTOM_CAP_SRC = `slot sent : Int = 0
+effect track cap=telemetry.track in={name: Text} out=Unit
+reducer fire on=ui.click(B) do= emit track({name: "x"})
+tile B = button(text="b")
+tile App = column(B, text(sent.show))
+app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  function check(): { stdout: string; stderr: string; code: number } {
+    const res = spawnSync("npx", ["tsx", CLI_PATH, "check", join(root, "src", "app.kumiki")], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return {
+      stdout: res.stdout ?? "",
+      stderr: res.stderr ?? "",
+      code: res.status ?? (res.error ? 1 : 0),
+    };
+  }
+
+  it("reads a manifest at the project root, not only beside the source", { timeout: 30000 }, () => {
+    writeFileSync(
+      join(root, "kumiki.caps.json"),
+      JSON.stringify({ capabilities: ["telemetry.track"] }),
+    );
+    const { stdout, code } = check();
+    expect(code).toBe(0);
+    expect(stdout).toContain("ok");
+  });
+
+  it("names the directories it searched when there is no manifest", { timeout: 30000 }, () => {
+    const { stderr, code } = check();
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0302");
+    expect(stderr).toContain("no kumiki.caps.json found");
+    expect(stderr).toContain(join(root, "src"));
+  });
+
+  it("names the manifest it read when that manifest lacks the capability", {
+    timeout: 30000,
+  }, () => {
+    const manifest = join(root, "kumiki.caps.json");
+    writeFileSync(manifest, JSON.stringify({ capabilities: ["telemetry.identify"] }));
+    const { stderr, code } = check();
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0302");
+    expect(stderr).toContain(manifest);
   });
 });
 
