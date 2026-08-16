@@ -120,6 +120,69 @@ describe("the capability manifest a project actually has", () => {
     return out.code;
   }
 
+  /** `<outer>/app/src/x.kumiki`, with no package.json anywhere on the path. */
+  function nestedProject(): { outer: string; viteRoot: string; file: string } {
+    const outer = mkdtempSync(join(TMP, "root-"));
+    const viteRoot = join(outer, "app");
+    mkdirSync(join(viteRoot, "src"), { recursive: true });
+    const file = join(viteRoot, "src", "app.kumiki");
+    writeFileSync(file, CUSTOM_CAP_APP);
+    return { outer, viteRoot, file };
+  }
+
+  /** Tell the plugin what Vite resolved as the project root, as Vite would. */
+  function withRoot(plugin: ReturnType<typeof kumiki>, root: string): void {
+    const c = plugin.configResolved;
+    const fn = typeof c === "function" ? c : c?.handler;
+    fn?.call({} as never, { root } as never);
+  }
+
+  it("searches up to Vite's root, and no further", async () => {
+    const p = nestedProject();
+    // The capability is registered above the Vite root — out of the project as
+    // Vite understands it, so it does not count.
+    writeFileSync(
+      join(p.outer, "kumiki.caps.json"),
+      JSON.stringify({ capabilities: ["telemetry.track"] }),
+    );
+    const plugin = kumiki();
+    withRoot(plugin, p.viteRoot);
+    const t = plugin.transform;
+    const fn = typeof t === "function" ? t : t?.handler;
+    let reported: Reported | undefined;
+    const ctx = {
+      error(e: unknown): never {
+        reported = e as Reported;
+        throw new Error("ctx.error");
+      },
+      warn(): void {},
+    };
+    await expect(fn?.call(ctx as never, CUSTOM_CAP_APP, p.file)).rejects.toThrow();
+    expect(reported?.message).toContain("E0302");
+    expect(reported?.message).toContain(p.viteRoot);
+    expect(reported?.message).not.toContain(`${p.outer},`);
+  });
+
+  it("reads a manifest sitting at Vite's root itself", async () => {
+    const p = nestedProject();
+    writeFileSync(
+      join(p.viteRoot, "kumiki.caps.json"),
+      JSON.stringify({ capabilities: ["telemetry.track"] }),
+    );
+    const plugin = kumiki();
+    withRoot(plugin, p.viteRoot);
+    const t = plugin.transform;
+    const fn = typeof t === "function" ? t : t?.handler;
+    const ctx = {
+      error(e: unknown): never {
+        throw new Error(typeof e === "string" ? e : (e as { message: string }).message);
+      },
+      warn(): void {},
+    };
+    const out = (await fn?.call(ctx as never, CUSTOM_CAP_APP, p.file)) as { code: string };
+    expect(out.code).toContain("export default App;");
+  });
+
   it("accepts a manifest at the project root, not only beside the source", async () => {
     const p = project();
     writeFileSync(
