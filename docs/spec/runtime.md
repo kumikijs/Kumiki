@@ -813,6 +813,9 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 
 - HTML generation renders the tile of the initial route once on the **server-side** via `renderToString(app, options)` from `@kumikijs/runtime`.
 - The slot initial values may include the results of the effects emitted in `app.init` (not re-executed at hydration).
+- **The served HTML carries the same inline style the client would paint**: a tile's element, its kind's own layout (a `column`'s flex axis, a `card`'s frame, a `grid`'s tracks), and the declarations its props map to (`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`, and a text tile's `color` / `size` / `weight` / `strike`). Without them the first paint lays every container out as a block and the page reflows the moment hydration finishes, which is the shift SSR exists to remove.
+  - A **responsive** value (`{base, sm, md, …}`) collapses to its `base`: a breakpoint is a question about the viewport and the server has none.
+  - What is **not** served is what an inline declaration cannot carry: `transition`, the `hover:` / `focus:` / `active:` blocks and the `motion` layer are classes backed by injected CSS, and the client adds them on hydration. Nor are event handlers, focus state, or the resolved `icon` SVG — the icon's box is reserved so its arrival does not reflow.
 - Response bundle composition:
   - HTML (the result of initial tile rendering)
   - JSON (the snapshot envelope, structured as below)

@@ -3880,17 +3880,109 @@ function renderMissingTile(node: TileNode): HTMLElement {
   return span;
 }
 
+/**
+ * One CSS declaration a tile's props contribute, as `[property, value]`.
+ *
+ * The prop-to-style mapping is expressed as data rather than as writes to an
+ * element because two paths need it: the live renderers set it on a real
+ * element, and the SSR pass (`ssr-render.ts`) serialises it into a `style`
+ * attribute. When only the first existed, an SSR page was served with every
+ * flex container collapsed to a block and reflowed on hydration — the layout
+ * shift SSR exists to remove.
+ *
+ * What is NOT here is what a declaration list cannot carry: `transition` and
+ * the `hover:` / `focus:` / `active:` blocks are classes backed by injected
+ * CSS, and motion is the same. Those stay with the appliers below, and stay
+ * absent from the server's output.
+ */
+export type StyleDecl = [property: string, value: string];
+
+/**
+ * How a responsive `{base, sm, md, lg, xl}` value collapses to the one value a
+ * declaration can hold. The client asks the viewport; the server has none and
+ * takes the base. Injected rather than branched on, so there is one mapping
+ * with one difference in it rather than two mappings.
+ */
+export type ResponsivePick = (raw: unknown) => unknown;
+
+/** The value a server can know: the base, or the literal if it is not a map. */
+export const pickBaseValue: ResponsivePick = (raw) => {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return raw;
+  return (raw as Record<string, unknown>).base;
+};
+
+/** The largest matching breakpoint, falling back to the base. */
+const pickForViewport: ResponsivePick = (raw) => {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const m = raw as Record<string, unknown>;
+  const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
+    ["xl", "(min-width: 1280px)"],
+    ["lg", "(min-width: 1024px)"],
+    ["md", "(min-width: 768px)"],
+    ["sm", "(min-width: 640px)"],
+  ];
+  for (const [bp, q] of order) {
+    if (m[bp] !== undefined && window.matchMedia(q).matches) return m[bp];
+  }
+  return m.base;
+};
+
+/** The declarations a `style: { ... }` block contributes (spec/style.md §4.3). */
+function styleBlockDecls(raw: unknown): StyleDecl[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const out: StyleDecl[] = [];
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === undefined || value === null) continue;
+    out.push([key, typeof value === "number" ? `${value}px` : String(value)]);
+  }
+  return out;
+}
+
+/** The inline style a container tile's props contribute. */
+export function containerStyleDecls(
+  props?: TileProps,
+  pick: ResponsivePick = pickForViewport,
+): StyleDecl[] {
+  if (!props) return [];
+  const out: StyleDecl[] = [];
+  const gap = pick(props.gap);
+  if (gap !== undefined) out.push(["gap", mapToken(String(gap))]);
+  const align = pick(props.align);
+  if (align !== undefined) out.push(["align-items", mapAlign(String(align))]);
+  const justify = pick(props.justify);
+  if (justify !== undefined) out.push(["justify-content", mapJustify(String(justify))]);
+  const pad = pick(props.pad);
+  if (pad !== undefined) out.push(["padding", mapToken(String(pad))]);
+  const mw = props["max-w"] ?? props.maxWidth;
+  if (mw !== undefined) out.push(["max-width", typeof mw === "number" ? `${mw}px` : String(mw)]);
+  if (typeof props.bg === "string") out.push(["background", mapColor(props.bg as string)]);
+  if (typeof props.radius === "string")
+    out.push(["border-radius", mapToken(props.radius as string)]);
+  out.push(...styleBlockDecls(props.style));
+  return out;
+}
+
+/** The inline style a text tile's props contribute. */
+export function textStyleDecls(props?: TileProps): StyleDecl[] {
+  if (!props) return [];
+  const out: StyleDecl[] = [];
+  if (props.strike) out.push(["text-decoration", "line-through"]);
+  if (typeof props.color === "string") out.push(["color", mapColor(props.color as string)]);
+  if (typeof props.size === "string") out.push(["font-size", mapSize(props.size as string)]);
+  if (props.weight === "bold") out.push(["font-weight", "700"]);
+  out.push(...styleBlockDecls(props.style));
+  return out;
+}
+
+function setDecls(el: HTMLElement, decls: StyleDecl[]): void {
+  for (const [k, v] of decls) el.style.setProperty(k, v);
+}
+
 export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  applyResponsive(el, props.gap, (v) => (el.style.gap = mapToken(String(v))));
-  applyResponsive(el, props.align, (v) => (el.style.alignItems = mapAlign(String(v))));
-  applyResponsive(el, props.justify, (v) => (el.style.justifyContent = mapJustify(String(v))));
-  applyResponsive(el, props.pad, (v) => (el.style.padding = mapToken(String(v))));
-  const mw = props["max-w"] ?? props.maxWidth;
-  if (mw !== undefined) el.style.maxWidth = typeof mw === "number" ? `${mw}px` : String(mw);
-  if (typeof props.bg === "string") el.style.background = mapColor(props.bg as string);
-  if (typeof props.radius === "string") el.style.borderRadius = mapToken(props.radius as string);
-  applyStyleBlock(el, props.style);
+  setDecls(el, containerStyleDecls(props));
   applyStateStyles(el, props);
   applyTransition(el, props);
 }
@@ -3902,39 +3994,6 @@ export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
  * are resolved strings/numbers (`@token` references are already lowered by the
  * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
  */
-function applyStyleBlock(el: HTMLElement, raw: unknown): void {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (value === undefined || value === null) continue;
-    const v = typeof value === "number" ? `${value}px` : String(value);
-    el.style.setProperty(key, v);
-  }
-}
-
-/** Apply a value that may be a literal or a responsive `{base, sm, md, lg, xl}` map. */
-function applyResponsive(_el: HTMLElement, raw: unknown, set: (v: unknown) => void): void {
-  if (raw === undefined || raw === null) return;
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    set(raw);
-    return;
-  }
-  const m = raw as Record<string, unknown>;
-  if (m.base !== undefined) set(m.base);
-  // Pick the first matching breakpoint from largest to smallest.
-  const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
-    ["xl", "(min-width: 1280px)"],
-    ["lg", "(min-width: 1024px)"],
-    ["md", "(min-width: 768px)"],
-    ["sm", "(min-width: 640px)"],
-  ];
-  for (const [bp, q] of order) {
-    if (m[bp] !== undefined && window.matchMedia(q).matches) {
-      set(m[bp]);
-      return;
-    }
-  }
-}
-
 export function ensureAnimationStyles(): void {
   // Keyed by presence in the active style root, so each root (document head or a
   // shadow root) gets its own copy of the animation keyframes.
@@ -4150,11 +4209,7 @@ function stateStyleDecls(sub: Record<string, unknown>): string {
 
 export function applyTextProps(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  if (props.strike) el.style.textDecoration = "line-through";
-  if (typeof props.color === "string") el.style.color = mapColor(props.color as string);
-  if (typeof props.size === "string") el.style.fontSize = mapSize(props.size as string);
-  if (props.weight === "bold") el.style.fontWeight = "700";
-  applyStyleBlock(el, props.style);
+  setDecls(el, textStyleDecls(props));
   applyStateStyles(el, props);
 }
 

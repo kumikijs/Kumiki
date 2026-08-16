@@ -721,6 +721,9 @@ kumiki replay --until-step 5                # 途中まで
 
 - HTML 生成は **server-side** で初期 route の tile を 1 回描画
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
+- **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` の枠、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
+  - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
+  - **配信されない**のは、インライン宣言では運べないもの：`transition` と `hover:` / `focus:` / `active:` ブロック、`motion` 層は注入された CSS に紐づくクラスであり、hydration 時にクライアントが付ける。イベントハンドラ・フォーカス状態・解決済みの `icon` SVG も同様 — icon は箱だけ確保するので、到着してもリフローしない。
 - レスポンス bundle 構成：
   - HTML（初期 tile 描画結果）
   - JSON（初期 slot snapshot）

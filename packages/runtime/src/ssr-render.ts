@@ -7,9 +7,106 @@
 // the runtime ships zero DOM-emulation deps on the server side, which the
 // 30 KB bundle budget (§10.6.3) requires for Edge targets.
 
-import type { TileNode } from "./core.ts";
+import type { StyleDecl, TileNode, TileProps } from "./core.ts";
+import { containerStyleDecls, pickBaseValue, textStyleDecls } from "./core.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
+
+/**
+ * The declarations a live renderer writes on the element itself, before it
+ * looks at `props` — `column`'s flex axis, `card`'s frame, `grid`'s tracks.
+ * They live here rather than in a table the renderers also read, because the
+ * renderers are the per-app DCE unit (#71) and a shared table would ship every
+ * kind's base style to every app. What keeps the two copies honest is
+ * `ssr-parity.test.ts`, which renders one node per kind both ways and compares.
+ */
+function baseDecls(node: TileNode): StyleDecl[] {
+  switch (node.kind) {
+    case "page":
+    case "column":
+    case "stack":
+      return [
+        ["display", "flex"],
+        ["flex-direction", "column"],
+      ];
+    case "row":
+      return [
+        ["display", "flex"],
+        ["flex-direction", "row"],
+      ];
+    case "card":
+      return [
+        // The default only applies when the tile did not ask for padding, the
+        // same condition the renderer checks.
+        ...(node.props?.pad === undefined ? ([["padding", "16px"]] as StyleDecl[]) : []),
+        ["margin-bottom", "12px"],
+        ["border-radius", "8px"],
+      ];
+    case "scroll":
+      return [["overflow", "auto"]];
+    case "skeleton": {
+      const h = node.props?.h;
+      return [
+        ["background", "#eee"],
+        ["border-radius", "8px"],
+        ["min-height", "60px"],
+        ...(typeof h === "number" ? ([["height", `${h}px`]] as StyleDecl[]) : []),
+      ];
+    }
+    case "spinner": {
+      const size = node.props?.size;
+      const token =
+        typeof size === "string"
+          ? { sm: "0.75rem", md: "1rem", lg: "1.5rem", xl: "2rem" }[size]
+          : undefined;
+      return token ? [["font-size", token]] : [];
+    }
+    case "grid": {
+      const cols = node.props?.cols;
+      return [
+        ["display", "grid"],
+        [
+          "grid-template-columns",
+          typeof cols === "number"
+            ? `repeat(${cols}, 1fr)`
+            : typeof cols === "string"
+              ? cols
+              : "repeat(3, 1fr)",
+        ],
+      ];
+    }
+    case "overlay":
+      return [["position", "relative"]];
+    default:
+      return [];
+  }
+}
+
+/**
+ * The `style` attribute for a node: what its kind paints unconditionally, then
+ * what its props add. `undefined` when there is nothing to say, so a tile with
+ * no styling serialises without an empty attribute.
+ *
+ * Responsive values collapse to their base: a breakpoint is a viewport
+ * question and the server has no viewport. The client agrees on every viewport
+ * narrower than the first declared breakpoint, and re-styles on hydration
+ * otherwise.
+ */
+function styleAttr(node: TileNode, propDecls: StyleDecl[]): string | undefined {
+  const decls = [...baseDecls(node), ...propDecls];
+  if (decls.length === 0) return undefined;
+  return decls.map(([k, v]) => `${k}: ${v}`).join("; ");
+}
+
+/** The style attribute of a container tile — base plus container props. */
+function containerStyle(node: TileNode & { props?: TileProps }): string | undefined {
+  return styleAttr(node, containerStyleDecls(node.props, pickBaseValue));
+}
+
+/** The style attribute of a text tile — text props only; no kind paints a base. */
+function textStyle(node: TileNode & { props?: TileProps }): string | undefined {
+  return styleAttr(node, textStyleDecls(node.props));
+}
 
 function escapeAttr(value: string): string {
   return value
@@ -53,25 +150,36 @@ function renderChildren(children: TileNode[]): string {
 }
 
 /**
- * Serialise one `TileNode` (plus its descendants) to an HTML string. The
- * output mirrors the live renderers structurally (same outer element kind,
- * same `data-kumiki-bind` attributes where applicable) so a screen reader /
- * search-engine sees a usable initial paint, but it omits everything the
- * client owns: event handlers, focus state, motion classes, `_setSlot`
- * data-attrs. The client mount replaces this DOM wholesale on its first
+ * Serialise one `TileNode` (plus its descendants) to an HTML string.
+ *
+ * The output mirrors the live renderers: same outer element, same
+ * `data-kumiki-*` attributes, and the same inline style — the kind's own
+ * layout plus whatever its props map to (`containerStyleDecls` /
+ * `textStyleDecls` in core, the very functions the renderers apply). The style
+ * is the load-bearing half: without it the first paint lays every flex
+ * container out as a block and the page reflows on hydration, which is the
+ * shift SSR exists to remove.
+ *
+ * It omits what the client owns and an attribute cannot carry: event handlers,
+ * focus state, the class-backed layers (`transition`, the `hover:` / `focus:` /
+ * `active:` blocks, motion), and the resolved `icon` SVG — the icon's box is
+ * reserved so its arrival does not reflow. A responsive value collapses to its
+ * base, because a breakpoint is a question about a viewport the server does
+ * not have. The client mount replaces this DOM wholesale on its first
  * `render()` after hydration — node identity is NOT preserved on purpose.
  */
 export function renderTileToString(node: TileNode): string {
   switch (node.kind) {
     case "page":
     case "column":
-      return el("div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
     case "row":
-      return el("div", { "data-kumiki-tile": "row" }, renderChildren(node.children));
     case "card":
-      return el("div", { "data-kumiki-tile": "card" }, renderChildren(node.children));
     case "box":
-      return el("div", { "data-kumiki-tile": "box" }, renderChildren(node.children));
+      return el(
+        "div",
+        { "data-kumiki-tile": node.kind, style: containerStyle(node) },
+        renderChildren(node.children),
+      );
     case "grid":
     case "stack":
     case "region":
@@ -79,13 +187,34 @@ export function renderTileToString(node: TileNode): string {
     case "panel":
     case "fieldset":
     case "overlay":
-      return el("div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
+      return el(
+        "div",
+        { "data-kumiki-tile": node.kind, style: containerStyle(node) },
+        renderChildren(node.children),
+      );
     case "heading":
-      return el("h1", { "data-kumiki-tile": "heading" }, escapeText(node.text));
+      return el(
+        "h1",
+        { "data-kumiki-tile": "heading", style: textStyle(node) },
+        escapeText(node.text),
+      );
     case "text":
-      return el("span", { "data-kumiki-tile": "text" }, escapeText(node.text));
+      return el(
+        "span",
+        { "data-kumiki-tile": "text", style: textStyle(node) },
+        escapeText(node.text),
+      );
     case "label":
-      return el("label", { "data-kumiki-tile": "label" }, escapeText(node.text));
+      return el(
+        "label",
+        {
+          "data-kumiki-tile": "label",
+          // The renderer reads `for` off the props and sets `htmlFor`; without
+          // it a server-painted form has no label association until hydration.
+          for: typeof node.props?.for === "string" ? node.props.for : undefined,
+        },
+        escapeText(node.text),
+      );
     case "button":
       return el(
         "button",
@@ -218,11 +347,26 @@ export function renderTileToString(node: TileNode): string {
       return el("div", { "data-kumiki-tile": "markdown" }, escapeText(node.text));
     case "image":
       return el("img", { src: node.src, "data-kumiki-tile": "image", alt: "" }, "");
-    case "icon":
+    case "icon": {
       // Placeholder — the client renderer resolves the icon name against
       // `app.icons` and injects a real SVG path. SSR keeps the slot reserved
-      // so the layout doesn't reflow on hydration.
-      return el("span", { "data-kumiki-tile": "icon", "data-icon": node.name }, "");
+      // so the layout doesn't reflow on hydration, under the same attribute the
+      // client writes so the two are one element and not two.
+      //
+      // `size` is deliberately not a text style here: it sizes the SVG box, and
+      // the renderer pulls it out of the props before styling the span.
+      const rest: TileProps = { ...(node.props ?? {}) };
+      delete (rest as Record<string, unknown>).size;
+      return el(
+        "span",
+        {
+          "data-kumiki-tile": "icon",
+          "data-kumiki-icon-name": node.name,
+          style: styleAttr(node, textStyleDecls(rest)),
+        },
+        "",
+      );
+    }
     case "divider":
       return el("hr", { "data-kumiki-tile": "divider" }, "");
     case "code":
@@ -243,7 +387,7 @@ export function renderTileToString(node: TileNode): string {
     case "list":
       return el(
         node.ordered ? "ol" : "ul",
-        { "data-kumiki-tile": "list" },
+        { "data-kumiki-tile": "list", style: containerStyle(node) },
         renderChildren(node.children),
       );
     case "list-item":
@@ -305,9 +449,18 @@ export function renderTileToString(node: TileNode): string {
         "",
       );
     case "spinner":
-      return el("div", { "data-kumiki-tile": "spinner", role: "status" }, "");
+      return el(
+        "span",
+        {
+          "data-kumiki-tile": "spinner",
+          role: "status",
+          "aria-label": "Loading",
+          style: styleAttr(node, []),
+        },
+        "",
+      );
     case "skeleton":
-      return el("div", { "data-kumiki-tile": "skeleton" }, "");
+      return el("div", { "data-kumiki-tile": "skeleton", style: styleAttr(node, []) }, "");
     case "error":
       // Field-bound error messages depend on live refinement results — empty
       // on the server, the client renders the actual error on first render.
