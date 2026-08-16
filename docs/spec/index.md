@@ -195,4 +195,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `71-button-type.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
 | `72-time-format.kumiki` | slot, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
 | `73-effect-policy-queue.kumiki` | slot, effect, reducer | lifecycle | [§10.4.3](./runtime.md#_10-4-3-policy-handling) |
+| `74-common-tile-props.kumiki` | slot, reducer, tile | style | [§2.3.10](./stdlib.md#_2-3-10-common-specification-of-props) |
 <!-- examples:end -->

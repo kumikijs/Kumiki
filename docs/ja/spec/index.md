@@ -195,4 +195,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `71-button-type.kumiki` | slot, reducer, tile | フォーム | [§5.2.2](./forms.md#_5-2-2-submit-の挙動) |
 | `72-time-format.kumiki` | slot, fn, tile | 標準ライブラリ | [§2.2.8](./stdlib.md#_2-2-8-time) |
 | `73-effect-policy-queue.kumiki` | slot, effect, reducer | ライフサイクル | [§10.4.3](./runtime.md#_10-4-3-policy-処理) |
+| `74-common-tile-props.kumiki` | slot, reducer, tile | スタイル | [§2.3.10](./stdlib.md#_2-3-10-props-の共通仕様) |
 <!-- examples:end -->
