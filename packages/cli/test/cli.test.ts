@@ -128,10 +128,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // counter mounted once pays for the indirection and the attach path it
     // never calls — the alternative is what this replaced, where a second mount
     // silently froze the first and the docs said the two would share a state.
+    // Bumped to 65KB when the documented tile props started reaching the DOM
+    // (spec/stdlib.md §2.3.10, style.md §4.3.1 + §4.4.7): the common-prop
+    // attributes and their reconcile diff in core.js, the sizing and theme-token
+    // mappings, and per-kind props on button / image / link / divider. A counter
+    // uses `gap` and nothing else, and still ships the table — the alternative
+    // is what this replaced, where an app wrote `max-w` or `class` and the
+    // build was the same size because the prop did nothing at all.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(65_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

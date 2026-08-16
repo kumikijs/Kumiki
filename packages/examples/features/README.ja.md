@@ -36,6 +36,7 @@
 | [15-checkbox](https://github.com/kumikijs/Kumiki/blob/main/examples/features/15-checkbox.kumiki) | チェックボックスと disabled |
 | [16-conditional-ui](https://github.com/kumikijs/Kumiki/blob/main/examples/features/16-conditional-ui.kumiki) | `when(...)` による条件描画 |
 | [17-theme](https://github.com/kumikijs/Kumiki/blob/main/examples/features/17-theme.kumiki) | テーマトークンと動的テーマ切替 |
+| [74-common-tile-props](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/74-common-tile-props.kumiki) | すべての tile が受ける props（`class` / `aria` / `test-id` / `role`）、サイズの略記、読み込み中は無効化されるボタン |
 
 ## アプリレベル
 

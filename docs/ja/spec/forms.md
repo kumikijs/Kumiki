@@ -113,7 +113,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 | `onInput` | reducer name | input イベントで呼ばれる（onChange より高頻度） |
 | `placeholder` | `Text` | プレースホルダ |
 | `disabled` | `Bool` | 無効化 |
-| `readonly` | `Bool` | 読み取り専用 |
+| `readonly` | `Bool` | 読み取り専用（`select` のように読み取り専用状態を持たないコントロールは無視する） |
 | `required` | `Bool` | 必須 |
 | `auto-focus` | `Bool` | マウント時にフォーカス |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off` 等 |

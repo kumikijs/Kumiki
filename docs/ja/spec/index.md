@@ -109,6 +109,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | ライフサイクル |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | ライフサイクル |
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | スタイル |
+| [E0705](./errors.md#e0705-a11y-label-for) | `a11y-label-for` | tile | ライフサイクル |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
@@ -194,4 +195,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `71-button-type.kumiki` | slot, reducer, tile | フォーム | [§5.2.2](./forms.md#_5-2-2-submit-の挙動) |
 | `72-time-format.kumiki` | slot, fn, tile | 標準ライブラリ | [§2.2.8](./stdlib.md#_2-2-8-time) |
 | `73-effect-policy-queue.kumiki` | slot, effect, reducer | ライフサイクル | [§10.4.3](./runtime.md#_10-4-3-policy-処理) |
+| `74-common-tile-props.kumiki` | slot, reducer, tile | スタイル | [§2.3.10](./stdlib.md#_2-3-10-props-の共通仕様) |
 <!-- examples:end -->

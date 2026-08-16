@@ -82,12 +82,19 @@ function attrsOf(el: HTMLElement): Record<string, string> {
   return out;
 }
 
+// Prop names are the LOWERED form, which is the only spelling the runtime
+// reads: the compiler maps a Kumiki name to a JS-safe key, so `max-w` arrives
+// as `max_w`. Written the other way, this fixture agreed with a runtime that
+// read `props["max-w"]` — and both sides were dead for every compiled app.
 const CONTAINER_PROPS = {
   gap: "sm",
   align: "center",
   justify: "between",
   pad: "lg",
-  "max-w": 720,
+  max_w: 720,
+  w: "full",
+  wrap: true,
+  shadow: "sm",
   bg: "surface",
   radius: "md",
   style: { "letter-spacing": "0.02em" },

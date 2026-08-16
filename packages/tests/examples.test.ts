@@ -6,7 +6,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, type KumikiError } from "@kumikijs/compiler";
+import { A11Y_CODES, compile, type KumikiError } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
 import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -57,6 +57,24 @@ function expectCompiles(file: string): void {
   expect(result.js.length).toBeGreaterThan(0);
 }
 
+/**
+ * The a11y band (`E070x`) is opt-in, so nothing in the default gate reports a
+ * button with no name, an image with no `alt`, or a label whose `for` names no
+ * control. The corpus is the language's own documentation — an example that
+ * would fail the check an author is told to turn on is teaching the wrong
+ * thing, so the corpus holds itself to it even though a user's program is not
+ * required to.
+ */
+function expectPassesStrictA11y(file: string): void {
+  const result = compile(readFileSync(file, "utf8"), {
+    runtimeSpecifier: "./runtime.js",
+    capabilities: resolveCapabilities(file),
+    strictA11y: true,
+  });
+  const a11y = result.kind === "fail" ? result.errors.filter((e) => A11Y_CODES.has(e.code)) : [];
+  expect(fmtErrors(a11y)).toBe("");
+}
+
 describe("feature examples", () => {
   const files = listFeatureExamples();
   it("there are feature examples to check", () => {
@@ -65,6 +83,7 @@ describe("feature examples", () => {
   for (const file of files) {
     it(`compiles ${file.split(/[\\/]/).slice(-1)[0]}`, () => {
       expectCompiles(file);
+      expectPassesStrictA11y(file);
     });
   }
 });
@@ -78,6 +97,7 @@ describe("app examples", () => {
     const label = file.split(/[\\/]/).slice(-2).join("/");
     it(`compiles ${label}`, () => {
       expectCompiles(file);
+      expectPassesStrictA11y(file);
     });
   }
 });

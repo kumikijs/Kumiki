@@ -203,11 +203,14 @@ scroll(longList) {h: 400}
 
 ### 4.4.5 divider
 
-A horizontal line (`<hr>`). For separators:
+A rule (`<hr>`). For separators:
 
 ```kumiki
 column(A, divider(), B)
+row(A, divider() {orientation: "vertical"}, B)
 ```
+
+`orientation` takes `horizontal` (the default) or `vertical`; a vertical rule stretches to the height of the row it is in.
 
 ### 4.4.6 box
 
@@ -226,10 +229,12 @@ box(content) {
 
 | prop | Meaning |
 |---|---|
-| `w` | width. `"full"` / `"auto"` / `"sm"` / number (px) |
+| `w` | width. `"full"` (the whole containing box) / a number (px) / any CSS length |
 | `h` | height |
 | `min-w`, `min-h`, `max-w`, `max-h` | min/max |
 | `aspect` | `"1/1"` / `"16/9"`, etc. |
+
+Unlike `pad` / `gap` / `radius` / `shadow`, these are not token names: there is no width scale in the theme, so `"sm"` here would be a name with nothing behind it. A number is pixels and anything else is passed through as CSS (`"auto"`, `"50vh"`, `"32rem"`), with `"full"` as the one shorthand.
 
 ```kumiki
 image(src=url) {w: "full", max-w: 600, aspect: "16/9"}

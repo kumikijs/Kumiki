@@ -109,6 +109,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | style |
+| [E0705](./errors.md#e0705-a11y-label-for) | `a11y-label-for` | tile | lifecycle |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
@@ -194,4 +195,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `71-button-type.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
 | `72-time-format.kumiki` | slot, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
 | `73-effect-policy-queue.kumiki` | slot, effect, reducer | lifecycle | [§10.4.3](./runtime.md#_10-4-3-policy-handling) |
+| `74-common-tile-props.kumiki` | slot, reducer, tile | style | [§2.3.10](./stdlib.md#_2-3-10-common-specification-of-props) |
 <!-- examples:end -->

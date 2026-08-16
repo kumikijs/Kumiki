@@ -20,7 +20,7 @@ import { indexedDelete, indexedQuery, indexedRead, indexedWrite } from "./effect
 import { sessionRead, sessionWrite, storageRead, storageWrite } from "./effects-storage.ts";
 import { installToast } from "./effects-toast.ts";
 import { routing } from "./router.ts";
-import { type RenderToStringResult, renderToString } from "./ssr.ts";
+import type { RenderToStringResult } from "./ssr.ts";
 import { _stdlibCore } from "./stdlib.ts";
 import { _stdlibTest } from "./testkit.ts";
 import { collectionPatchers, collectionTiles } from "./tiles-collection.ts";

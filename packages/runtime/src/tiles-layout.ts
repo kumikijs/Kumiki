@@ -7,6 +7,7 @@ import {
   type TileCtx,
   type TileNode,
   type TilePatchers,
+  type TileProps,
   type TileRenderers,
 } from "./core.ts";
 
@@ -16,6 +17,46 @@ function appendChildren(el: HTMLElement, children: TileNode[], ctx: TileCtx): vo
   for (const child of children) {
     if (child != null) el.appendChild(ctx.render(child));
   }
+}
+
+/**
+ * A grid's tracks (style.md §4.4.2). `cols` and `rows` take the same two
+ * shapes: a count, which divides the axis equally, or a CSS track list. Only
+ * `cols` has a default — a grid with no `rows` grows one row per line of
+ * content, which is what a grid does.
+ */
+function applyGridTracks(div: HTMLElement, props?: TileProps): void {
+  div.style.gridTemplateColumns = gridTracks(props?.cols) ?? "repeat(3, 1fr)";
+  const rows = gridTracks(props?.rows);
+  if (rows) div.style.gridTemplateRows = rows;
+  else div.style.removeProperty("grid-template-rows");
+}
+
+function gridTracks(v: unknown): string | undefined {
+  if (typeof v === "number") return `repeat(${v}, 1fr)`;
+  if (typeof v === "string") return v;
+  return undefined;
+}
+
+/**
+ * `orientation` on a divider (style.md §4.4.5). A vertical rule separates
+ * columns rather than rows: it takes its height from the row it sits in and
+ * draws on its left edge, since an `<hr>`'s own border is the horizontal one.
+ */
+function applyDividerOrientation(hr: HTMLElement, props?: TileProps): void {
+  if (props?.orientation !== "vertical") {
+    hr.removeAttribute("aria-orientation");
+    for (const p of ["align-self", "width", "height", "border-left", "border-top"]) {
+      hr.style.removeProperty(p);
+    }
+    return;
+  }
+  hr.setAttribute("aria-orientation", "vertical");
+  hr.style.alignSelf = "stretch";
+  hr.style.width = "0";
+  hr.style.height = "auto";
+  hr.style.borderTop = "none";
+  hr.style.borderLeft = "1px solid currentColor";
 }
 
 function renderFlexColumn(node: Node<"page" | "column">, ctx: TileCtx): HTMLElement {
@@ -75,17 +116,15 @@ export const layoutTiles: TileRenderers = {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "grid";
     div.style.display = "grid";
-    const cols = node.props?.cols;
-    if (typeof cols === "number") div.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    else if (typeof cols === "string") div.style.gridTemplateColumns = cols;
-    else div.style.gridTemplateColumns = "repeat(3, 1fr)";
+    applyGridTracks(div, node.props);
     applyContainerProps(div, node.props);
     appendChildren(div, node.children, ctx);
     return div;
   },
-  divider() {
+  divider(node) {
     const hr = document.createElement("hr");
     hr.dataset.kumikiTile = "divider";
+    applyDividerOrientation(hr, node.props);
     return hr;
   },
   "route-outlet"(node, ctx) {
@@ -124,15 +163,11 @@ export const layoutPatchers: TilePatchers = {
   scroll: patchContainer,
   grid(el, _oldNode, newNode) {
     const div = el as HTMLDivElement;
-    const cols = newNode.props?.cols;
-    if (typeof cols === "number") div.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    else if (typeof cols === "string") div.style.gridTemplateColumns = cols;
-    else div.style.gridTemplateColumns = "repeat(3, 1fr)";
+    applyGridTracks(div, newNode.props);
     applyContainerProps(div, newNode.props);
   },
-  divider() {
-    // Nothing patchable — an <hr> with no data props. Present so the reconcile
-    // takes the patch path (identity-preserving) instead of a full rebuild.
+  divider(el, _oldNode, newNode) {
+    applyDividerOrientation(el as HTMLElement, newNode.props);
   },
   "route-outlet"() {
     // No own data — subtree children reconcile handles the inner routing.

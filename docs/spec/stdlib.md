@@ -301,6 +301,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `code` | code | `lang` |
 | `markdown` | Markdown rendering | (content is the argument) |
 
+`link` `external` opens the link in a new browsing context (`target="_blank"`, with the `rel="noopener noreferrer"` that has to accompany it) and leaves it to the browser rather than the router.
+
 ### 2.3.3 Media Elements
 
 | Element | Role | Main props |
@@ -308,6 +310,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `image` | image | `src`, `alt`, `width`, `height`, `loading` |
 | `icon` | icon | `name`, `size` |
 | `video` | video | `src`, `controls`, `autoplay` |
+
+`image` `width` / `height` are written as attributes, which is what reserves the box before the image arrives; `loading` takes `lazy` or `eager`.
 
 ### 2.3.4 Input Elements
 
@@ -322,6 +326,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
+
+`button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
 
 ### 2.3.5 Forms
 
@@ -379,13 +385,22 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 Every tile accepts the following common props (built-in):
 
-| prop | Type | Meaning |
+| prop | Type | Becomes |
 |---|---|---|
-| `class` | `Text` | style class name |
-| `style` | `Map(Text, Text)` | inline style (minimal use recommended) |
-| `aria` | `Map(Text, Text)` | ARIA attributes |
-| `key` | `Text` | uniquely identifies an element within a for |
-| `test-id` | `Text` | ID for testing |
+| `class` | `Text` | class tokens, **added** to the classes the runtime puts on the element |
+| `style` | `Map(Text, Text)` | inline style declarations — each key is a CSS property, applied after the shorthands so it wins (minimal use recommended) |
+| `aria` | `Map(Text, Text)` | one `aria-*` attribute per entry; a key already spelled `aria-…` is not prefixed twice |
+| `key` | `Text` | tile identity across renders — lifted out of the props, never an attribute |
+| `test-id` | `Text` | the `data-kumiki-test` attribute ([Testing §8.8](./testing.md#_8-8-integration-tests-browser-driven)) |
+| `id` | `Text` | the element's `id`, and the `#id` half of a reducer's selector ([§1.6.2](./language.md#_1-6-2-selectors)) |
+| `role` | `Text` | the `role` attribute, replacing whatever the tile kind assumes |
+| `aria-*` | `Text` | that ARIA attribute, written on its own instead of through the `aria` map |
+
+`class` / `style` are the escape hatch [Style §4.1](./style.md#_4-1-policy) describes. All of the above apply to **every kind**, and so do the style shorthands ([§4.3.1](./style.md#_4-3-1-shorthand-properties)) and the sizing props ([§4.4.7](./style.md#_4-4-7-sizing)): the runtime writes them outside the per-kind renderers, so a `max-w` on an `image` and a `bg` on a `button` land, and a tile a host registered ([Runtime §10.3.10](./runtime.md#_10-3-10-stable-tile-identity)) gets them too.
+
+A kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size` picks the size of the thing rather than a typography token, and a `skeleton`'s `h` is its placeholder height.
+
+Both rendering paths write them: what a mounted element carries, a served page carries. The exception is the class-backed layers (`transition`, the `hover:` / `focus:` / `active:` blocks, `motion`), which are injected CSS and exist only after hydration.
 
 ---
 

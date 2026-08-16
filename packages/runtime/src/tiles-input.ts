@@ -22,7 +22,13 @@ import type {
   TileProps,
   TileRenderers,
 } from "./core.ts";
-import { _setPathHelper, resolveApp, warnUnresolvedEvent } from "./core.ts";
+import {
+  _setPathHelper,
+  attrValue,
+  ensureAnimationStyles,
+  resolveApp,
+  warnUnresolvedEvent,
+} from "./core.ts";
 
 /** The app owning the mount tree `el` sits in; warns once when there is none. */
 function liveApp(el: Element): MountedApp | undefined {
@@ -167,8 +173,7 @@ function reconcileSelectOptions(
   const currentKey = valueKey(currentValue);
   const existing: HTMLOptionElement[] = Array.from(sel.options);
   const firstOption = existing[0];
-  const hasPlaceholder =
-    firstOption !== undefined && firstOption.disabled && firstOption.value === "";
+  const hasPlaceholder = firstOption?.disabled === true && firstOption.value === "";
   if (placeholder != null) {
     if (hasPlaceholder && firstOption !== undefined) {
       firstOption.textContent = String(placeholder);
@@ -262,17 +267,100 @@ function setBooleanAttr(inp: HTMLElement, name: string, on: boolean): void {
   }
 }
 
+/**
+ * `disabled`, `readonly` and `auto-complete` on a control (forms.md §5.3, the
+ * common props for input elements). All three were documented and read by
+ * nothing.
+ *
+ * Which of them an element takes is decided by the element: a `<select>` has no
+ * `readOnly`, a `<div contenteditable>` has no `disabled`. Asking it is what
+ * keeps this one function instead of a per-kind list that would fall behind the
+ * next kind. Shared by create and patch, so a `disabled` bound to a slot
+ * follows it.
+ */
+function applyControlState(el: HTMLElement, props?: TileProps): void {
+  // A contenteditable div has neither property, and the way to take input away
+  // from one is to stop it being editable.
+  if (el.isContentEditable || el.getAttribute("contenteditable") !== null) {
+    el.setAttribute(
+      "contenteditable",
+      props?.disabled === true || props?.readonly === true ? "false" : "true",
+    );
+  }
+  if ("disabled" in el) {
+    (el as HTMLElement & { disabled: boolean }).disabled = props?.disabled === true;
+  }
+  if ("readOnly" in el) {
+    (el as HTMLElement & { readOnly: boolean }).readOnly = props?.readonly === true;
+  }
+  const auto = attrValue(props?.auto_complete);
+  if (auto !== undefined) el.setAttribute("autocomplete", String(auto));
+  else el.removeAttribute("autocomplete");
+}
+
+/**
+ * `disabled`, `loading` and `variant` on a `<button>` (stdlib.md §2.3.4,
+ * forms.md §5.8). Shared by create and patch, so a `loading=` bound to a slot
+ * turns the spinner on and off rather than only ever on.
+ *
+ * `loading` means "this button's work is in flight": it disables the button
+ * (forms.md: a loading button is not clickable), says so with `aria-busy`, and
+ * puts a spinner in front of the label. The spinner is hidden from assistive
+ * technology — a labelled one would join the button's accessible name through
+ * name-from-content and turn "Save" into "Loading Save", which is the one thing
+ * a busy button must not do to the name a user is listening for.
+ */
+function applyButtonState(b: HTMLButtonElement, props?: TileProps): void {
+  const loading = props?.loading === true;
+  b.disabled = loading || props?.disabled === true;
+  if (loading) b.setAttribute("aria-busy", "true");
+  else b.removeAttribute("aria-busy");
+  const variant = attrValue(props?.variant);
+  if (variant !== undefined) b.dataset.kumikiVariant = String(variant);
+  else delete b.dataset.kumikiVariant;
+  const spinner = b.querySelector('[data-kumiki-tile="spinner"]');
+  if (loading && !spinner) b.insertBefore(buttonSpinner(), b.firstChild);
+  else if (!loading && spinner) spinner.remove();
+}
+
+/**
+ * Write the button's label without disturbing anything else inside it. The
+ * label is the trailing text node; the spinner, when there is one, sits before
+ * it.
+ */
+function setButtonLabel(b: HTMLButtonElement, text: string): void {
+  const last = b.lastChild;
+  if (last && last.nodeType === Node.TEXT_NODE) {
+    if (last.nodeValue !== text) last.nodeValue = text;
+    return;
+  }
+  b.appendChild(document.createTextNode(text));
+}
+
+/** The in-button spinner. Same element the `spinner` tile renders, so one rule set styles both. */
+function buttonSpinner(): HTMLElement {
+  ensureAnimationStyles();
+  const s = document.createElement("span");
+  s.dataset.kumikiTile = "spinner";
+  s.setAttribute("aria-hidden", "true");
+  s.style.marginRight = "0.4em";
+  return s;
+}
+
 export const inputTiles: TileRenderers = {
   button(node) {
     const b = document.createElement("button");
     b.dataset.kumikiTile = "button";
-    b.textContent = node.text;
+    // A text NODE rather than `textContent`, because the label is not the only
+    // thing in a button: a loading button also holds a spinner, and assigning
+    // `textContent` on the next render would take it back out.
+    b.appendChild(document.createTextNode(node.text));
     // Only when the tile said so: a `<button>` with no type submits the form it
     // is in, and that default is the one forms.md §5.2.2 describes. Writing
     // `type="button"` here for every button would silently un-submit every
     // form that relies on it.
     if (node.type) b.setAttribute("type", node.type);
-    if (node.disabled) b.disabled = true;
+    applyButtonState(b, node.props);
     const id = tileId(node);
     if (id) b.id = id;
     setHandlers(b, inputHandlers(node));
@@ -335,6 +423,7 @@ export const inputTiles: TileRenderers = {
         state.onChange({ ...(state.el ?? {}), value: inp.value });
       }
     });
+    applyControlState(inp, node.props);
     return inp;
   },
   textarea(node) {
@@ -360,6 +449,7 @@ export const inputTiles: TileRenderers = {
       const state = INPUT_STATE.get(ta);
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: ta.value });
     });
+    applyControlState(ta, node.props);
     return ta;
   },
   check(node) {
@@ -377,6 +467,7 @@ export const inputTiles: TileRenderers = {
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
     });
     wrap.appendChild(inp);
+    applyControlState(inp, node.props);
     return wrap;
   },
   radio(node) {
@@ -401,6 +492,7 @@ export const inputTiles: TileRenderers = {
       if (state?.onClick) state.onClick(state.el ?? {});
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
     });
+    applyControlState(inp, node.props);
     return wrap;
   },
   select(node) {
@@ -423,6 +515,7 @@ export const inputTiles: TileRenderers = {
       }
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: matched.value });
     });
+    applyControlState(sel, node.props);
     return sel;
   },
   slider(node) {
@@ -448,6 +541,7 @@ export const inputTiles: TileRenderers = {
       const state = INPUT_STATE.get(inp);
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: Number(inp.value) });
     });
+    applyControlState(inp, node.props);
     return inp;
   },
   switch(node) {
@@ -466,6 +560,7 @@ export const inputTiles: TileRenderers = {
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
     });
     wrap.appendChild(inp);
+    applyControlState(inp, node.props);
     return wrap;
   },
   form(node, ctx: TileCtx) {
@@ -488,6 +583,7 @@ export const inputTiles: TileRenderers = {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "editable";
     div.contentEditable = "true";
+    applyControlState(div, node.props);
     const id = tileId(node);
     if (id) div.id = id;
     if (node.bind) bindDataset(div, node.bind, node.bindPath);
@@ -524,7 +620,7 @@ function formHandlers(node: {
 export const inputPatchers: TilePatchers = {
   button(el, _oldNode, newNode) {
     const b = el as HTMLButtonElement;
-    if (b.textContent !== newNode.text) b.textContent = newNode.text;
+    setButtonLabel(b, newNode.text);
     // A conditional can swap one button for another with a different `type`,
     // so this is reconciled like every other attribute — and a node that stops
     // carrying one loses the attribute rather than keeping what the previous
@@ -538,7 +634,7 @@ export const inputPatchers: TilePatchers = {
       if (nextType === null) b.removeAttribute("type");
       else b.setAttribute("type", nextType);
     }
-    b.disabled = !!newNode.disabled;
+    applyButtonState(b, newNode.props);
     reconcileId(b, newNode);
     setHandlers(b, inputHandlers(newNode));
   },
@@ -573,6 +669,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.value !== nextValue && !IME_COMPOSING.has(inp)) inp.value = nextValue;
     }
     setHandlers(inp, inputHandlers(newNode));
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   textarea(el, _oldNode, newNode) {
     const ta = el as HTMLTextAreaElement;
@@ -586,6 +683,7 @@ export const inputPatchers: TilePatchers = {
     // IME guard as above: don't dismiss the IME candidate window mid-compose.
     if (ta.value !== nextValue && !IME_COMPOSING.has(ta)) ta.value = nextValue;
     setHandlers(ta, inputHandlers(newNode));
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   check(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
@@ -600,6 +698,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
       setHandlers(inp, inputHandlers(newNode));
     }
+    applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
   },
   radio(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
@@ -631,6 +730,7 @@ export const inputPatchers: TilePatchers = {
     } else if (span) {
       wrap.removeChild(span);
     }
+    applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
   },
   select(el, _oldNode, newNode) {
     const sel = el as HTMLSelectElement;
@@ -638,6 +738,7 @@ export const inputPatchers: TilePatchers = {
     const options = (newNode.options ?? []) as Array<{ label: unknown; value: unknown }>;
     reconcileSelectOptions(sel, newNode.placeholder, options, newNode.value);
     setHandlers(sel, { ...inputHandlers(newNode), selectOptions: options });
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   slider(el, _oldNode, newNode) {
     const inp = el as HTMLInputElement;
@@ -654,6 +755,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.value !== nextValue && document.activeElement !== inp) inp.value = nextValue;
     }
     setHandlers(inp, { ...inputHandlers(newNode), isSlider: true });
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   switch(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
@@ -668,6 +770,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
       setHandlers(inp, inputHandlers(newNode));
     }
+    applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
   },
   form(el, _oldNode, newNode) {
     const form = el as HTMLFormElement;
@@ -676,6 +779,7 @@ export const inputPatchers: TilePatchers = {
   },
   editable(el, _oldNode, newNode) {
     const div = el as HTMLDivElement;
+    applyControlState(div, (newNode as { props?: TileProps }).props);
     reconcileId(div, newNode);
     if (newNode.bind) bindDataset(div, newNode.bind, newNode.bindPath);
     else clearBindDataset(div);

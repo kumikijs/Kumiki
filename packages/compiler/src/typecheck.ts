@@ -64,7 +64,13 @@ export type KumikiError = {
   severity?: "error" | "warning";
 };
 
-const A11Y_CODES = new Set(["E0701", "E0702", "E0703"]);
+/**
+ * The accessibility band, which `--strict-a11y` turns on. Exported so a caller
+ * that wants "did this fail a11y?" asks the same set the filter uses, rather
+ * than matching the `E07` prefix — that prefix also covers strict-icons and the
+ * testing-DSL invariants.
+ */
+export const A11Y_CODES = new Set(["E0701", "E0702", "E0703", "E0705"]);
 
 // `UI_EVENT_TILE_KINDS` is the W0212 gate, derived from the shared
 // `UI_LIFTS` table in `ui-lifts.ts` so codegen's handler-emission gate and
@@ -191,6 +197,13 @@ type SymbolTable = {
    * emission is gated by the strictIcons opt-in in `check()`.
    */
   iconDomain: Set<string>;
+  /**
+   * Every id a tile in this program declares literally — `{id: "x"}` or
+   * `id="x"`. It is what a `label {for: …}` has to name to associate with a
+   * control (`E0705`). Ids computed at runtime are not in it and cannot be:
+   * see `collectElementIds`.
+   */
+  elementIds: Set<string>;
   app?: AppDef;
 };
 
@@ -214,6 +227,7 @@ function checkAll(
     motions: new Set(),
     themes: new Set(),
     iconDomain,
+    elementIds: new Set(),
   };
 
   for (const def of program.defs) {
@@ -264,6 +278,7 @@ function checkAll(
   // tile that prefetches a reducer may be written below it.
   for (const def of program.defs) {
     if (def.kind === "TileDef") collectPrefetchTargets(def.body, sym.prefetchTargets);
+    if (def.kind === "TileDef") collectElementIds(def.body, sym.elementIds);
   }
 
   const index = buildDefIndex(program);
@@ -766,7 +781,28 @@ function checkIconName(
   });
 }
 
-function checkA11y(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+function checkA11y(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (t.name === "label") {
+    // A `for` that names nothing is a label that labels nothing: clicking it
+    // focuses no control, and a screen reader announces the field unnamed.
+    // Read from both spellings, the same two `collectElementIds` gathers ids
+    // from — a `for` written as an argument reaches the DOM exactly as the
+    // block form does, so a check that saw only one would bless the other.
+    // Only a literal is resolvable; see `collectElementIds`.
+    const forProp = writtenValue(t, "for");
+    if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
+      errors.push({
+        code: "E0705",
+        kind: "a11y-label-for",
+        message: `label for="${forProp.value}" names no tile — no id="${forProp.value}" in this program`,
+        pos: forProp.pos,
+      });
+    }
+  }
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
     const hasAria = t.props.some((p) => p.name === "aria-label");
@@ -906,7 +942,7 @@ function checkTileCall(
     });
   }
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
-  checkA11y(t, errors);
+  checkA11y(t, sym, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   if (t.name === "input") {
@@ -1223,6 +1259,53 @@ function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
         else if (v?.kind === "Str") out.add(v.value);
       }
       for (const a of expr.args) if (isTileExpr(a.value)) collectPrefetchTargets(a.value, out);
+      return;
+    }
+    default:
+      assertNever(expr);
+  }
+}
+
+/**
+ * Every id declared as a literal, in either form a tile accepts — `{id: "x"}`
+ * or `id="x"`. This is the domain `E0705` resolves a `label {for: …}` against.
+ *
+ * An id built at runtime (`{id: "todo-" + t.id}`) is not in it, and the check
+ * only ever looks up a literal `for`. A computed `for` is therefore never
+ * reported; a literal one against a computed id is, which is the right answer —
+ * one literal name cannot address a control per row — and `errors.md` says so
+ * along with the fix. The same literal-only discipline `E0704` applies to icon
+ * names.
+ */
+/**
+ * A value a tile-call was given under `name`, in either form it accepts: the
+ * props block (`{for: "x"}`) or a named argument (`for="x"`). The block form
+ * wins, matching what codegen emits when a tile writes both.
+ */
+function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
+  const fromProp = t.props.find((p) => p.name === name)?.value;
+  if (fromProp !== undefined) return fromProp;
+  const fromArg = t.args.find((a) => a.name === name)?.value;
+  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
+}
+
+function collectElementIds(expr: TileExpr, out: Set<string>): void {
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      collectElementIds(expr.body, out);
+      return;
+    case "TileIf":
+      collectElementIds(expr.consequent, out);
+      collectElementIds(expr.alternate, out);
+      return;
+    case "TileMatch":
+      for (const arm of expr.arms) collectElementIds(arm.body, out);
+      return;
+    case "TileCall": {
+      const id = writtenValue(expr, "id");
+      if (id?.kind === "Str") out.add(id.value);
+      for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;
     }
     default:

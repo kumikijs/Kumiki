@@ -36,6 +36,7 @@ Minimal examples, one feature per file. Each file is a self-contained, working K
 | [15-checkbox](https://github.com/kumikijs/Kumiki/blob/main/examples/features/15-checkbox.kumiki) | checkbox and disabled |
 | [16-conditional-ui](https://github.com/kumikijs/Kumiki/blob/main/examples/features/16-conditional-ui.kumiki) | conditional rendering with `when(...)` |
 | [17-theme](https://github.com/kumikijs/Kumiki/blob/main/examples/features/17-theme.kumiki) | theme tokens and dynamic theme switching |
+| [74-common-tile-props](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/74-common-tile-props.kumiki) | the props every tile accepts (`class` / `aria` / `test-id` / `role`), the sizing shorthands, and a button that is disabled while it loads |
 
 ## App level
 

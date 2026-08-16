@@ -58,9 +58,8 @@ export type TileNode = (
   | {
       kind: "button";
       text: string;
+      /** `loading`, `disabled` and `variant` live here — see `applyButtonState`. */
       props?: TileProps;
-      loading?: boolean;
-      disabled?: boolean;
       /**
        * `submit` / `button` / `reset`. Absent means the tile did not say, and
        * the HTML default applies — which is `submit` inside a form.
@@ -1168,8 +1167,13 @@ export function getRenderingApp(): MountedApp | undefined {
  * Bracket a render pass. Saved/restored (not just cleared) because a custom
  * element inside the tree can synchronously mount a nested Kumiki app while
  * the outer render is still on the stack.
+ *
+ * Exported for the SSR pass, which is a render pass with no DOM: without the
+ * bracket `currentTheme()` is null on the server and every token falls back to
+ * its default, so a themed page was served with the *unthemed* spacing,
+ * colours, radii and shadows and re-styled itself on hydration.
  */
-function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
   const prev = renderingApp;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
@@ -2978,6 +2982,15 @@ function makeMappingTileCtx(
       const el = renderer ? renderer(node, ctx) : wrap.renderMissingTile(node);
       wrap.applyMotion(el, node.props);
       wrap.applyUiEventHandlers(el, node.props);
+      // Last, so a tile's own `class` / `aria` / `role` / `id` and everything
+      // its style props say reach every kind without each renderer repeating
+      // it — including host-registered kinds (#71), which no renderer here can
+      // reach, and the kinds whose renderers style nothing (an `image`, a
+      // `button`), where a `max-w` used to be dropped on the floor. It runs
+      // after the motion classes for the same reason it adds rather than
+      // assigns: the runtime owns classes on this element too.
+      applyCommonProps(el, node.props);
+      setDecls(el, propStyleDecls(node.props, pickForViewport, node.kind));
       map.set(node, el);
       return el;
     },
@@ -3217,6 +3230,21 @@ function reconcileNode(
       // `applyUiEventHandlers` wires on every tile via the create ctx, live in
       // this shared UI_HANDLER_STATE and are refreshed here.
       refreshUiHandlerSlot(oldEl, (newNode as { props?: TileProps }).props);
+      // The common props and the prop-derived style are applied outside the
+      // per-kind renderers, so no patcher re-applies them; without this a
+      // `class` bound to a slot keeps the token it was first rendered with,
+      // and a `max-w` that went away stays on the element.
+      patchCommonProps(
+        oldEl,
+        (oldNode as { props?: TileProps }).props,
+        (newNode as { props?: TileProps }).props,
+      );
+      patchPropStyle(
+        oldEl,
+        (oldNode as { props?: TileProps }).props,
+        (newNode as { props?: TileProps }).props,
+        newNode.kind,
+      );
       touched.push(tileTouchedId(newNode));
       // Fall through to the children reconcile below — a container tile may
       // have both attribute AND child changes in the same render.
@@ -4117,9 +4145,17 @@ export type StyleDecl = [property: string, value: string];
  */
 export type ResponsivePick = (raw: unknown) => string | number | undefined;
 
-/** A prop value a declaration can hold; anything else is not one. */
+/**
+ * A prop value a declaration can hold; anything else is not one.
+ *
+ * The empty string is not one either. A conditional writes it for the branch
+ * that means "nothing" (`{max-w: if wide then 600 else ""}`), and a declaration
+ * with an empty value is not a declaration — on the mount path it removes the
+ * property, so the served page has to leave it out rather than serialise
+ * `max-width: `.
+ */
 const asScalar = (v: unknown): string | number | undefined =>
-  typeof v === "string" || typeof v === "number" ? v : undefined;
+  (typeof v === "string" && v !== "") || typeof v === "number" ? v : undefined;
 
 /** The value a server can know: the base, or the literal if it is not a map. */
 export const pickBaseValue: ResponsivePick = (raw) => {
@@ -4167,53 +4203,258 @@ function styleBlockDecls(raw: unknown): StyleDecl[] {
  * differently, and a default would let a new one inherit the viewport answer
  * on a machine that has no viewport.
  */
-export function containerStyleDecls(
+export function propStyleDecls(
   props: TileProps | undefined,
   pick: ResponsivePick,
+  kind?: string,
 ): StyleDecl[] {
   if (!props) return [];
+  const owned = kind === undefined ? undefined : KIND_OWNED_PROPS[kind];
+  if (owned) {
+    const rest: TileProps = { ...props };
+    for (const name of owned) delete (rest as Record<string, unknown>)[name];
+    props = rest;
+  }
   const out: StyleDecl[] = [];
   const gap = pick(props.gap);
   if (gap !== undefined) out.push(["gap", mapToken(String(gap))]);
+  const gapX = pick(props.gap_x);
+  if (gapX !== undefined) out.push(["column-gap", mapToken(String(gapX))]);
+  const gapY = pick(props.gap_y);
+  if (gapY !== undefined) out.push(["row-gap", mapToken(String(gapY))]);
   const align = pick(props.align);
   if (align !== undefined) out.push(["align-items", mapAlign(String(align))]);
   const justify = pick(props.justify);
   if (justify !== undefined) out.push(["justify-content", mapJustify(String(justify))]);
+  // `pad` first: the per-axis props refine it, so each has to be able to
+  // overwrite the shorthand's contribution on the axis it names.
   const pad = pick(props.pad);
   if (pad !== undefined) out.push(["padding", mapToken(String(pad))]);
-  const mw = props["max-w"] ?? props.maxWidth;
-  if (mw !== undefined) out.push(["max-width", typeof mw === "number" ? `${mw}px` : String(mw)]);
-  if (typeof props.bg === "string") out.push(["background", mapColor(props.bg as string)]);
-  if (typeof props.radius === "string")
-    out.push(["border-radius", mapToken(props.radius as string)]);
+  const padX = pick(props.pad_x);
+  if (padX !== undefined) {
+    out.push(["padding-left", mapToken(String(padX))], ["padding-right", mapToken(String(padX))]);
+  }
+  const padY = pick(props.pad_y);
+  if (padY !== undefined) {
+    out.push(["padding-top", mapToken(String(padY))], ["padding-bottom", mapToken(String(padY))]);
+  }
+  // Sizing (style.md §4.4.7). Each is the same question — how big — so they
+  // share one value mapping rather than six.
+  for (const [prop, css] of SIZING_PROPS) {
+    const v = pick(props[prop]);
+    if (v !== undefined) out.push([css, mapLength(v)]);
+  }
+  // `aspect` is a ratio, not a length: `1` means 1/1, and `1px` means nothing.
+  const aspect = pick(props.aspect);
+  if (aspect !== undefined) out.push(["aspect-ratio", String(aspect)]);
+  // `wrap` is a boolean, so it never survives the scalar pick the sizing props
+  // go through.
+  if (typeof props.wrap === "boolean") out.push(["flex-wrap", props.wrap ? "wrap" : "nowrap"]);
+  // Each of these reads a token name, so each goes through `token`: an empty
+  // one is the branch of a conditional that means "not said", and a declaration
+  // with an empty value is not a declaration. Left in, the mount path's
+  // `setProperty(prop, "")` *removes* the property — taking the kind's own base
+  // with it — while the server serialises `border-radius: `, which is invalid
+  // and ignored, so the two paths disagree about a `card`'s corners.
+  const bg = token(props.bg);
+  if (bg !== undefined) out.push(["background", mapColor(bg)]);
+  const radius = token(props.radius);
+  if (radius !== undefined) out.push(["border-radius", mapRadius(radius)]);
+  const shadow = token(props.shadow);
+  if (shadow !== undefined) out.push(["box-shadow", mapShadow(shadow)]);
+  // The typography shorthands (style.md §4.3.1). They inherit, so a container
+  // that sets `color` or `size` sets it for what is inside it.
+  if (props.strike) out.push(["text-decoration", "line-through"]);
+  const color = token(props.color);
+  if (color !== undefined) out.push(["color", mapColor(color)]);
+  const size = token(props.size);
+  if (size !== undefined) out.push(["font-size", mapSize(size)]);
+  if (props.weight === "bold") out.push(["font-weight", "700"]);
+  // Last, so an explicit declaration wins over the shorthand for the same
+  // property — `{radius: "md", style: {"border-radius": "50%"}}` is a circle.
   out.push(...styleBlockDecls(props.style));
   return out;
 }
 
 /**
- * The inline style a text tile's props contribute. No `pick`, because no text
- * prop is responsive: each is read only when it is already a string. The day
- * one becomes a map, this needs the same parameter its container sibling has —
- * resolving it here would reach for `window` on a server.
+ * Props a kind maps itself, which the shared mapping must therefore leave
+ * alone. A `spinner`'s `size` picks the size of the spinner, not a typography
+ * token; an `icon`'s sizes the SVG box; a `skeleton`'s `h` is its placeholder
+ * height. Without this the shared mapping would run last and overwrite the
+ * kind's answer with the general one.
+ *
+ * Both render paths read this table, so an exception cannot exist on one side
+ * only.
  */
-export function textStyleDecls(props?: TileProps): StyleDecl[] {
-  if (!props) return [];
-  const out: StyleDecl[] = [];
-  if (props.strike) out.push(["text-decoration", "line-through"]);
-  if (typeof props.color === "string") out.push(["color", mapColor(props.color as string)]);
-  if (typeof props.size === "string") out.push(["font-size", mapSize(props.size as string)]);
-  if (props.weight === "bold") out.push(["font-weight", "700"]);
-  out.push(...styleBlockDecls(props.style));
-  return out;
+const KIND_OWNED_PROPS: Record<string, readonly string[] | undefined> = {
+  spinner: ["size"],
+  icon: ["size"],
+  skeleton: ["h"],
+};
+
+/** A token name a tile wrote, or `undefined` when it wrote none. */
+const token = (v: unknown): string | undefined =>
+  typeof v === "string" && v !== "" ? v : undefined;
+
+/**
+ * The sizing props and the CSS property each one is. Names are the LOWERED
+ * form — the compiler maps a Kumiki name to a JS-safe key (`max-w` ->
+ * `max_w`), and that key is the only spelling the runtime reads. Reading
+ * `props["max-w"]` here type-checked and rendered nothing, which is how every
+ * app in the corpus set a page width that never applied.
+ */
+const SIZING_PROPS: ReadonlyArray<readonly [prop: string, css: string]> = [
+  ["w", "width"],
+  ["h", "height"],
+  ["min_w", "min-width"],
+  ["min_h", "min-height"],
+  ["max_w", "max-width"],
+  ["max_h", "max-height"],
+];
+
+/**
+ * A size, as CSS. A number is pixels (the spec's spacing convention) and
+ * `"full"` is the whole of the containing box; anything else is already a CSS
+ * length (`"auto"`, `"50vh"`, `"16/9"`) and passes through.
+ */
+function mapLength(v: string | number): string {
+  if (typeof v === "number") return `${v}px`;
+  return v === "full" ? "100%" : v;
 }
 
 function setDecls(el: HTMLElement, decls: StyleDecl[]): void {
   for (const [k, v] of decls) el.style.setProperty(k, v);
 }
 
-export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
+/**
+ * Move an element from the style its props asked for last render to the one
+ * they ask for now. `before` is undefined on the create path.
+ *
+ * The removal half is what a re-applying `setProperty` loop cannot do: a
+ * conditional that swaps two containers of the same kind reuses the element,
+ * and without this the one that no longer sets `max-width` keeps the other's.
+ * Only properties these props set are ever removed — a kind's own base layout
+ * is not in the list, so it survives.
+ */
+export function patchPropStyle(
+  el: HTMLElement,
+  before: TileProps | undefined,
+  after: TileProps | undefined,
+  kind?: string,
+): void {
+  const was = propStyleDecls(before, pickForViewport, kind);
+  const now = propStyleDecls(after, pickForViewport, kind);
+  for (const [prop] of was) {
+    if (!now.some(([p]) => p === prop)) el.style.removeProperty(prop);
+  }
+  setDecls(el, now);
+}
+
+/** An attribute a tile's props ask for. */
+export type AttrDecl = [name: string, value: string];
+
+/**
+ * The attributes every tile kind accepts, whatever it renders (stdlib.md
+ * §2.3.10). They are data for the same reason the style mapping is: the live
+ * renderers set them on an element and the SSR pass serialises them, and one
+ * table is what keeps a served page and a mounted one saying the same thing.
+ *
+ * `class` is the only one that is not simply "set the attribute" — the runtime
+ * puts its own classes on the same element (the animation classes, the state-
+ * style classes), so the author's tokens are added to what is there rather
+ * than written over it.
+ *
+ * Every prop is read by name. Nothing here enumerates `props`: a host tile
+ * (#71) owns its own props object, and a `Object.keys` against one that refuses
+ * enumeration throws on the render path, where the throw costs the whole tree.
+ * That is why a bare `aria-label` arrives already folded into `aria` — the
+ * compiler merges the two spellings, because only it can do so by name.
+ */
+export function commonAttrDecls(props?: TileProps): AttrDecl[] {
+  if (!props) return [];
+  const out: AttrDecl[] = [];
+  if (typeof props.class === "string" && props.class.trim() !== "")
+    out.push(["class", props.class]);
+
+  // An empty value is the branch of a conditional that means "not said", so it
+  // writes no attribute rather than an empty one.
+  if (attrValue(props.id) !== undefined) out.push(["id", String(props.id)]);
+  if (attrValue(props.test_id) !== undefined) out.push(["data-kumiki-test", String(props.test_id)]);
+  if (attrValue(props.role) !== undefined) out.push(["role", String(props.role)]);
+  // A map, or nothing: a `Text` here would spread into `aria-0` / `aria-1`,
+  // one attribute per character.
+  const aria = props.aria;
+  if (aria !== null && typeof aria === "object" && !Array.isArray(aria)) {
+    for (const [key, value] of Object.entries(aria as Record<string, unknown>)) {
+      if (value === undefined || value === null) continue;
+      // A key that cannot name an ARIA attribute is not one. This is also what
+      // catches a non-map `aria`: the compiler merges the two spellings by
+      // spreading, and spreading a `Text` yields `{0: "h", 1: "i"}` — one
+      // attribute per character.
+      if (!/^[a-zA-Z][\w-]*$/.test(key)) continue;
+      out.push([key.startsWith("aria-") ? key : `aria-${key}`, String(value)]);
+    }
+  }
+  return out;
+}
+
+/** A prop that becomes an attribute, or `undefined` when the tile did not say. */
+export function attrValue(v: unknown): string | number | undefined {
+  if (typeof v === "number") return v;
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/** The class tokens a decl list asks for, in order. */
+function classTokensOf(decls: AttrDecl[]): string[] {
+  const decl = decls.find(([name]) => name === "class");
+  return decl ? decl[1].split(/\s+/).filter((t) => t !== "") : [];
+}
+
+/**
+ * Move an element from the common props it was rendered with to the ones it
+ * has now. `before` is undefined on the create path, where there is nothing to
+ * take away.
+ *
+ * The patch path is why this is a diff rather than an apply: a reused element
+ * keeps whatever the last render put on it, so a `class` that flipped would
+ * otherwise accumulate both tokens and an `aria` key that disappeared would
+ * stay on the element forever.
+ *
+ * Removal is by attribute name, so a prop that stops being written also clears
+ * the value a renderer had put under the same name at create time — a `spinner`
+ * whose `aria` map loses its `label` is left with no `aria-label` rather than
+ * the renderer's "Loading". The alternative is to leave the author's stale
+ * value in place, which is worse: it says something untrue rather than nothing.
+ */
+/** The common props on a freshly rendered element. */
+export function applyCommonProps(el: HTMLElement, props?: TileProps): void {
+  patchCommonProps(el, undefined, props);
+}
+
+export function patchCommonProps(
+  el: HTMLElement,
+  before: TileProps | undefined,
+  after: TileProps | undefined,
+): void {
+  const was = commonAttrDecls(before);
+  const now = commonAttrDecls(after);
+  const wasClasses = classTokensOf(was);
+  const nowClasses = classTokensOf(now);
+  for (const token of wasClasses) {
+    if (!nowClasses.includes(token)) el.classList.remove(token);
+  }
+  for (const token of nowClasses) el.classList.add(token);
+  for (const [name] of was) {
+    if (name !== "class" && !now.some(([n]) => n === name)) el.removeAttribute(name);
+  }
+  for (const [name, value] of now) {
+    if (name !== "class") el.setAttribute(name, value);
+  }
+}
+
+export function applyContainerProps(el: HTMLElement, props?: TileProps, kind?: string): void {
   if (!props) return;
-  setDecls(el, containerStyleDecls(props, pickForViewport));
+  setDecls(el, propStyleDecls(props, pickForViewport, kind));
   applyStateStyles(el, props);
   applyTransition(el, props);
 }
@@ -4255,7 +4496,7 @@ function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (typeof t !== "string") return;
   ensureAnimationStyles();
   el.classList.add("kumiki-anim", `kumiki-anim-${t}`);
-  const d = props["transition-duration"];
+  const d = props.transition_duration;
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
 }
 
@@ -4431,9 +4672,9 @@ function stateStyleDecls(sub: Record<string, unknown>): string {
   return decls.join("; ");
 }
 
-export function applyTextProps(el: HTMLElement, props?: TileProps): void {
+export function applyTextProps(el: HTMLElement, props?: TileProps, kind?: string): void {
   if (!props) return;
-  setDecls(el, textStyleDecls(props));
+  setDecls(el, propStyleDecls(props, pickForViewport, kind));
   applyStateStyles(el, props);
 }
 
@@ -4622,6 +4863,43 @@ function mapToken(t: string): string {
       return t;
   }
 }
+/**
+ * One token lookup for every `theme` section that is a flat name-to-value map
+ * (`radius`, `shadow`). `fallback` carries the defaults style.md §4.2 prints,
+ * so a program with no `theme` definition still gets the documented scale.
+ * A name in neither is passed through as CSS, which is what lets
+ * `radius: "50%"` work.
+ */
+function mapThemeToken(section: string, name: string, fallback: Record<string, string>): string {
+  const theme = currentTheme();
+  const sec = theme?.[section];
+  if (sec && typeof sec === "object" && !Array.isArray(sec)) {
+    const v = (sec as Record<string, ThemeValue>)[name];
+    if (typeof v === "string") return v;
+    if (typeof v === "number") return `${v}px`;
+  }
+  return fallback[name] ?? name;
+}
+
+function mapRadius(r: string): string {
+  return mapThemeToken("radius", r, {
+    none: "0",
+    sm: "4px",
+    md: "8px",
+    lg: "16px",
+    pill: "999px",
+  });
+}
+
+function mapShadow(s: string): string {
+  return mapThemeToken("shadow", s, {
+    none: "none",
+    sm: "0 1px 2px rgba(0,0,0,0.1)",
+    md: "0 4px 8px rgba(0,0,0,0.1)",
+    lg: "0 8px 24px rgba(0,0,0,0.15)",
+  });
+}
+
 function mapAlign(a: string): string {
   switch (a) {
     case "start":

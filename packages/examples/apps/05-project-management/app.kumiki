@@ -898,7 +898,7 @@ tile ProjectPage
 
 tile NewTaskTitleInput       = input(bind=draftTask.title, placeholder="Task title", id="task-title", required=true)
 tile NewTaskDescriptionInput = textarea(bind=draftTask.description, placeholder="Description", rows=4, id="task-desc")
-tile NewTaskPrioritySelect   = select(bind=draftTask.priority, options=priorityOptions(), placeholder="Priority")
+tile NewTaskPrioritySelect   = select(bind=draftTask.priority, options=priorityOptions(), placeholder="Priority", id="task-priority")
 tile NewTaskAssigneeInput    = input(bind=draftTask.assignee, placeholder="Assignee", id="task-assignee")
 tile NewTaskTagsInput        = input(bind=draftTask.tags, placeholder="Comma-separated tags", id="task-tags")
 tile NewTaskDueDateInput     = input(bind=draftTask.dueDate, type="date", id="task-due")
@@ -944,8 +944,8 @@ tile NewTaskPage
 tile TaskTitleInput       = input(value=routeTitleValue(route, tasks), id="t-title", placeholder="Title")
 tile TaskDescriptionInput = textarea(value=routeDescriptionValue(route, tasks), id="t-desc", rows=6, placeholder="Description")
 tile TaskAssigneeInput    = input(value=routeAssigneeValue(route, tasks), id="t-assignee", placeholder="Assignee")
-tile TaskStatusSelect     = select(value=routeStatusValue(route, tasks), options=statusOptions(), placeholder="Status")
-tile TaskPrioritySelect   = select(value=routePriorityValue(route, tasks), options=priorityOptions(), placeholder="Priority")
+tile TaskStatusSelect     = select(value=routeStatusValue(route, tasks), options=statusOptions(), placeholder="Status", id="t-status")
+tile TaskPrioritySelect   = select(value=routePriorityValue(route, tasks), options=priorityOptions(), placeholder="Priority", id="t-priority")
 tile TaskDueDateInput     = input(value=routeDueDateValue(route, tasks), type="date", id="t-due")
 
 fn routeTitleValue(r: Route, ts: Map(TaskId, Task)) -> Text

@@ -113,7 +113,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 | `onInput` | reducer name | Called on the input event (more frequent than onChange) |
 | `placeholder` | `Text` | Placeholder |
 | `disabled` | `Bool` | Disable |
-| `readonly` | `Bool` | Read-only |
+| `readonly` | `Bool` | Read-only (a control that has no read-only state, such as a `select`, ignores it) |
 | `required` | `Bool` | Required |
 | `auto-focus` | `Bool` | Focus on mount |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off`, etc. |
