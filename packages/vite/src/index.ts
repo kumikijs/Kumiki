@@ -200,8 +200,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         // A capability the manifest was supposed to register is the one error
         // whose fix is a file the author cannot see from the message alone.
         const note = first.errors.some((e) => e.code === "E0302")
-          ? `
-  ${describeCapabilitySearch(caps)}`
+          ? `\n  ${describeCapabilitySearch(caps)}`
           : "";
         const message = `Kumiki compile failed (${file}):\n${detail}${note}`;
         // Hand the first error's source position to Rollup so Vite's overlay
