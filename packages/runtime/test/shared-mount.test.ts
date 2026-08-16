@@ -1,4 +1,4 @@
-// One `AppShape` mounted into more than one host. `docs/spec/runtime.md` §10.9
+// One `AppShape` mounted into more than one host. `docs/spec/runtime.md` §10.9.1
 // says passing the default export rather than the `createApp` factory "shares
 // one instance across all elements of that tag" — which is only a sentence
 // worth writing if every element stays live.
@@ -232,6 +232,131 @@ describe("one AppShape mounted into two hosts", () => {
         bootstrapEpisode: { id: "e", trigger: { kind: "ssr.hydrate" }, steps: [] },
       } as never),
     ).toThrow(/already mounted/);
+  });
+
+  it("refuses a view that wants its own style root", () => {
+    // A view in its own shadow root would paint there while every injected
+    // <style> stayed in the first view's root, and the shadow boundary would
+    // leave it completely unstyled. Loud beats invisible.
+    const app = makeCounter();
+    mount(app, freshRoot());
+    const shadowHost = freshRoot();
+    const root = shadowHost.attachShadow({ mode: "open" });
+    expect(() => mount(app, shadowHost, { styleRoot: root })).toThrow(/styleRoot/);
+  });
+
+  it("says which options it ignored rather than dropping them silently", () => {
+    const app = makeCounter();
+    mount(app, freshRoot());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      mount(app, freshRoot(), {
+        providers: { "log.write": async () => ({ kind: "ok", value: null }) },
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain("providers");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not register a shape whose mount threw", () => {
+    // `mount(app, el, { hydrate: true })` without a bootstrap episode is a
+    // public call that throws by contract. If the shape were registered before
+    // that point, every later mount would attach into an app with no `init`, no
+    // timers and no handle to dispose it with.
+    const app = makeCounter();
+    const failed = freshRoot();
+    expect(() => mount(app, failed, { hydrate: true })).toThrow(/bootstrapEpisode/);
+
+    const good = freshRoot();
+    mount(app, good);
+    clickIn(good);
+    expect(app.live?.count).toBe(1);
+    expect(readAll([good])).toEqual(["-:1"]);
+    // The host of the failed attempt is not a view of anything.
+    expect(failed.childElementCount).toBe(0);
+  });
+
+  it("fires tile.mount once per render, however many hosts show it", () => {
+    const mounted = vi.fn();
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "onRowMount",
+          event: { kind: "lifecycle", name: 'tile.mount("Row")' },
+          apply: () => {
+            mounted();
+            return { slots: {}, emits: [] };
+          },
+        },
+      ],
+      root: () => ({
+        kind: "column",
+        children: [{ kind: "text", text: "row", props: { _tile: "Row" } }],
+      }),
+    };
+    mount(app, freshRoot());
+    mount(app, freshRoot());
+    // One mount of one tile, not one per host: these reducers carry
+    // subscriptions and fetches, and a second host is not a second mount.
+    expect(mounted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not unmount every tile because a render panicked", () => {
+    const unmounted = vi.fn();
+    let broken = false;
+    const app: AppShape = {
+      slots: { n: { value: 0 } },
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [
+        {
+          name: "onRowUnmount",
+          event: { kind: "lifecycle", name: 'tile.unmount("Row")' },
+          apply: () => {
+            unmounted();
+            return { slots: {}, emits: [] };
+          },
+        },
+      ],
+      root: () => ({
+        kind: "column",
+        children: [
+          { kind: "text", text: "row", props: { _tile: "Row" } },
+          // A tile kind with no renderer registered would only warn, so throw
+          // from the tree itself: `text` reads `.text`, and a getter that
+          // throws is a render panic with the tree already picked.
+          {
+            kind: "text",
+            get text(): string {
+              if (broken) throw new Error("boom");
+              return "ok";
+            },
+          } as never,
+        ],
+      }),
+    };
+    const app2 = app as Counter;
+    mount(app, freshRoot());
+    expect(unmounted).not.toHaveBeenCalled();
+
+    broken = true;
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      app2._setSlot?.("n", 1);
+    } finally {
+      err.mockRestore();
+    }
+    // The tree still says Row is mounted; only the painting failed. Firing
+    // `tile.unmount` here would run its unsubscribes and leave notifications
+    // for a tile that never left.
+    expect(unmounted).not.toHaveBeenCalled();
   });
 
   it("delivers an imperative slot write to the element it was called on", () => {

@@ -101,7 +101,15 @@ const TEXT_PROPS = {
   style: { "text-transform": "uppercase" },
 };
 
-/** One representative node per kind the server pass knows how to render. */
+/**
+ * A node per kind this pair is claimed to agree on. NOT every kind
+ * `renderTileToString` handles: `check` / `switch` / `radio` wrap their input
+ * in a `<label>` on the client and do not on the server, `modal` / `drawer` /
+ * `popover` differ on what a closed overlay even is, and `markdown` is raw text
+ * on one side and parsed runs on the other. Those are divergences this table
+ * does not yet watch rather than agreements it verifies — the harness also
+ * compares the root element only, so a kind with children is checked shallowly.
+ */
 const NODES: [string, TileNode][] = [
   ["page", { kind: "page", children: [], props: CONTAINER_PROPS }],
   ["column", { kind: "column", children: [], props: CONTAINER_PROPS }],
@@ -126,7 +134,19 @@ const NODES: [string, TileNode][] = [
   ["icon", { kind: "icon", name: "star", props: { ...TEXT_PROPS, size: "lg" } }],
   ["button", { kind: "button", text: "Send", type: "submit" }],
   ["input", { kind: "input", value: "v", placeholder: "p", id: "i", required: true }],
+  // The other form an id arrives in. `input(id=…)` sets the field, `{id: …}`
+  // sets the prop, and the renderers read both — the server read only the
+  // first, so `label(for=…)` pointed at nothing on a served page.
+  ["input (id in props)", { kind: "input", value: "", props: { id: "from-props" } }],
+  ["button (id in props)", { kind: "button", text: "Send", props: { id: "send" } }],
+  ["image", { kind: "image", src: "/a.png", props: { alt: "A cat", id: "pic" } }],
+  ["image (no alt)", { kind: "image", src: "/a.png" }],
   ["spinner", { kind: "spinner" }],
+  // The two kinds whose base style reads a prop, which is the half of
+  // `baseDecls` a bare node leaves unexercised.
+  ["spinner (sized)", { kind: "spinner", props: { size: "lg" } }],
+  ["skeleton", { kind: "skeleton" }],
+  ["skeleton (h)", { kind: "skeleton", props: { h: 120 } }],
   ["progress", { kind: "progress", value: 3, max: 10 }],
 ];
 
@@ -140,6 +160,19 @@ describe("the server pass renders what the client renders", () => {
       expect(styleOf(server), "style").toEqual(styleOf(client));
     });
   }
+
+  it("escapes what it puts in text and in an attribute", () => {
+    // The only defence in a string-concatenated HTML builder, and nothing was
+    // exercising it: the parity harness compares elements, and a browser parses
+    // an injected tag into an element just as happily as an escaped one.
+    const text = serverElement({ kind: "text", text: '<script>alert("x")</script> & more' });
+    expect(text.querySelector("script")).toBeNull();
+    expect(text.textContent).toBe('<script>alert("x")</script> & more');
+
+    const img = serverElement({ kind: "image", src: "/a.png", props: { alt: '" onerror="boom' } });
+    expect(img.getAttribute("alt")).toBe('" onerror="boom');
+    expect(img.hasAttribute("onerror")).toBe(false);
+  });
 
   it("resolves a responsive value to its base, which is all a server can know", () => {
     // `{base, md}` picks a breakpoint from `window.matchMedia` on the client.

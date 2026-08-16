@@ -36,8 +36,9 @@ the next reconcile diffs against) and what it says is shared, because the state
 is. What the app owns once belongs to the first mount — `app.init`, `app.start`,
 the timers, the router, the effect dispatcher — so a second view does not re-run
 initialization or double a timer's ticks. Disposing a view leaves the others
-interactive; the app is torn down with the last one, after which the shape mounts
-fresh. Adding a view with `hydrate` throws rather than overlaying a server
+interactive; the app is torn down with the last one, after which the shape starts
+over — initialization, timers and router run again, while `app.live` keeps
+whatever the app had written. Adding a view with `hydrate` throws rather than overlaying a server
 snapshot onto a state that is already live.
 
 Apps built with `createApp()` per instance are unaffected, and the multi-mount

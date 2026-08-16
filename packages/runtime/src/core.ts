@@ -629,6 +629,9 @@ export type MountOptions = {
    * render: the `app.init` effects are NOT re-dispatched and the bootstrap
    * episode replaces the local init causal chain. Lifecycle reducers
    * (`app.start`, `route.enter`) still fire as usual (§10.6.2 step 5).
+   *
+   * Refused when the shape is already mounted: a snapshot overlays a state that
+   * is about to be built, and this app's is already live.
    */
   hydrate?: boolean;
 };
@@ -1011,7 +1014,7 @@ const appByRoot = new WeakMap<Element, MountedApp>();
 /**
  * The live mount of an `AppShape`, if it has one. A shape carries the app's
  * state, so mounting it into a second host is a second *view* of one app
- * (runtime.md §10.9: passing the compiled default export rather than the
+ * (runtime.md §10.9.1: passing the compiled default export rather than the
  * `createApp` factory "shares one instance across all elements") — not a
  * second app. Before this, the second mount overwrote the shape's imperative
  * seams and the first host froze: its own buttons re-rendered the other one.
@@ -1022,16 +1025,85 @@ const appByRoot = new WeakMap<Element, MountedApp>();
  * last view is disposed. Keyed by the shape, so a `createApp()` per element
  * (independent state) is unaffected.
  */
-const mountedShapes = new WeakMap<
-  AppShape,
-  { attach: (target: HTMLElement, options: MountOptions) => MountHandle }
->();
+const mountedShapes = new WeakMap<AppShape, { attach: (target: HTMLElement) => MountHandle }>();
 
 /** What a mount (or an additional view of one) gives its caller back. */
 export type MountHandle = {
   dispose: () => void;
   episodes: () => ReturnType<EpisodeLogger["list"]>;
 };
+
+/**
+ * Options that describe the APP rather than the host, answered before a second
+ * mount of one shape is allowed to become a view of it.
+ *
+ * Three tiers, because they fail differently:
+ *
+ * - **Refused.** Honouring them would need machinery this app already has and
+ *   cannot have twice. `styleRoot` / `styleHost` are the sharp one: a view in
+ *   its own shadow root would paint there while every injected `<style>` —
+ *   theme, animations, state blocks, motion — stayed in the first view's root,
+ *   and the shadow boundary would leave it completely unstyled. Style roots are
+ *   per document, not per view; an app that needs one per element needs an app
+ *   per element.
+ * - **Ignored, and said so.** They configure something the running app already
+ *   decided. The first mount's answer stands and a warning names what was
+ *   dropped, because a provider that never fires is otherwise indistinguishable
+ *   from a capability that does nothing.
+ * - **Silent.** The `mount` entry point supplies these itself (`tiles`,
+ *   `routing`, `builtins`, …), so they arrive on every call and say nothing
+ *   about the caller's intent.
+ */
+const VIEW_REFUSED = [
+  "hydrate",
+  "ssrSnapshot",
+  "bootstrapEpisode",
+  "styleRoot",
+  "styleHost",
+] as const;
+const VIEW_IGNORED = [
+  "providers",
+  "router",
+  "initialPath",
+  "episodeLogger",
+  "onDiagnostic",
+] as const;
+
+/**
+ * Whether the caller actually asked for this option, as opposed to defaulting
+ * it. An empty record or array counts as not asking — `defineKumikiElement`
+ * hands `mount` a providers map on every element whether the host registered
+ * one or not. Emptiness is only consulted for plain records and arrays: a
+ * `ShadowRoot` has no own enumerable keys and is very much an answer.
+ */
+function optionGiven(value: unknown): boolean {
+  if (value === undefined || value === false) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function rejectViewOptions(options: MountOptions): void {
+  const record = options as unknown as Record<string, unknown>;
+  const refused = VIEW_REFUSED.filter((k) => optionGiven(record[k]));
+  if (refused.length > 0) {
+    throw new Error(
+      `mount: this AppShape is already mounted, so a second mount is another view of the same app (runtime.md §10.9.1). ${refused.join(", ")} cannot be given per view — it configures the app itself, which is already running. Mount a \`createApp()\` instance for an independent one.`,
+    );
+  }
+  const ignored = VIEW_IGNORED.filter((k) => optionGiven(record[k]));
+  if (ignored.length > 0) {
+    console.warn(
+      `kumiki: this AppShape is already mounted, so ${ignored.join(", ")} was ignored — the mount that started the app owns it. Mount a \`createApp()\` instance to give this host its own.`,
+    );
+  }
+}
 
 /** Non-null only while a mount's synchronous render pass is running. */
 let renderingApp: MountedApp | null = null;
@@ -1127,6 +1199,14 @@ export function warnUnresolvedEvent(el: Element, what: string): void {
  * builtin effects passed via options. Generated apps from `kumiki build` call
  * this with just the modules they import; the package-entry `mount` wraps it
  * with the full built-in set for back-compat.
+ *
+ * **Mounting an `AppShape` that is already mounted adds a view of it** rather
+ * than starting a second app (§10.9.1) — the shape carries the state, so the
+ * hosts show the same slots and initialization runs once. The options that
+ * describe the app then belong to the mount that started it: some are refused
+ * and some are ignored with a warning (see `VIEW_REFUSED` / `VIEW_IGNORED`),
+ * `hydrate` among the refused. Pass a `createApp()` instance for an
+ * independent app.
  */
 export function mountCore(
   app: AppShape,
@@ -1139,7 +1219,10 @@ export function mountCore(
   // copy of every timer, and overwrite the seams the running views dispatch
   // through.
   const running = mountedShapes.get(app);
-  if (running) return running.attach(target, options);
+  if (running) {
+    rejectViewOptions(options);
+    return running.attach(target);
+  }
   // Episode logger (§10.5). Null when the host did not opt in — every record
   // call below short-circuits via the `?.` optional chain, so the no-logger
   // path stays zero-cost.
@@ -1231,7 +1314,7 @@ export function mountCore(
 
   /**
    * One host this app is painted into. A shape can be mounted more than once
-   * (runtime.md §10.9: passing the default export rather than `createApp`
+   * (runtime.md §10.9.1: passing the default export rather than `createApp`
    * shares one instance across every element), and everything about *where* it
    * is painted is per view — the mounted element, the tree that produced it,
    * and the node→element map the next reconcile diffs against. Everything
@@ -1239,7 +1322,12 @@ export function mountCore(
    */
   type MountView = {
     target: HTMLElement;
-    /** Whether this view adopts server HTML already sitting in its target. */
+    /**
+     * Whether this view's target already holds server HTML. The one branch it
+     * gates REPLACES that HTML wholesale (§10.6.2) rather than adopting it —
+     * node-preserving hydration is not implemented — so what it buys is that
+     * the served DOM and the client's never end up as siblings.
+     */
     hydrate: boolean;
     root: HTMLElement | null;
     /**
@@ -1250,42 +1338,38 @@ export function mountCore(
      */
     tree: TileNode | null;
     map: TileElementMap;
-    /** What this view's last reconcile freshly built (see `lastRenderTouched`). */
-    touched: string[];
   };
+  /** What one pass produced: the tree it painted, and what it freshly built. */
+  type PassResult = { tree: TileNode | null; touched: string[] };
   const newView = (into: HTMLElement, hydrate: boolean): MountView => ({
     target: into,
     hydrate,
     root: null,
     tree: null,
     map: new WeakMap(),
-    touched: [],
   });
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
   /**
-   * Add a view of this already-running app. Options that describe the *app*
-   * (router, providers, snapshot, loggers) belong to the mount that started
-   * it; what an additional view brings is a host to paint into.
+   * Add a view of this already-running app. It takes a host and nothing else:
+   * everything else a mount can be given describes the app, which this one
+   * already has — `rejectViewOptions` is what says so, before the call.
    */
-  const attach = (into: HTMLElement, viewOptions: MountOptions): MountHandle => {
-    if (viewOptions.hydrate) {
-      throw new Error(
-        "mountCore: this app is already mounted, so its state is live; `hydrate` overlays a server snapshot onto a fresh one. Mount a `createApp()` instance instead.",
-      );
-    }
+  const attach = (into: HTMLElement): MountHandle => {
     const view = newView(into, false);
     views.push(view);
     registerAppRoot(into, app);
-    withRenderingApp(app, () => renderPass(view));
+    withRenderingApp(app, () => {
+      renderPass(view);
+    });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
   };
-  mountedShapes.set(app, { attach });
   // #189: identifiers the most recent reconcile pass freshly built. Consumed
   // by `applyReducer` when it fires the trailing `signal-update` step so
   // `binds-updated` lists the tiles/binds the diff actually patched. Empty
   // after a full-render / panic-fallback pass (those are not a diff). With
-  // several views it is their union: the reducer patched all of them.
+  // several views it is all of theirs, one entry per view that touched a
+  // given id: the reducer patched every view, and the sole consumer dedups.
   let lastRenderTouched: string[] = [];
   let disposed = false;
   // Named timers (`timer(d, name=N)`) are addressable so a reducer can
@@ -1305,10 +1389,9 @@ export function mountCore(
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
-        const view = views[i]!;
-        const rendered = renderPass(view);
-        if (i === 0) tree = rendered;
-        touched.push(...view.touched);
+        const pass = renderPass(views[i]!);
+        if (i === 0) tree = pass.tree;
+        touched.push(...pass.touched);
       }
       lastRenderTouched = touched;
       // Fired once per render, not once per view: `tile.mount(X)` is a fact
@@ -1321,8 +1404,9 @@ export function mountCore(
   // render-time app resolution (theme tokens, icon lookup — the tree is still
   // detached, so `resolveApp` cannot walk it) lands on this mount's app.
   // Returns the tree it painted, or null if it panicked.
-  const renderPass = (view: MountView): TileNode | null => {
+  const renderPass = (view: MountView): PassResult => {
     const target = view.target;
+    let touched: string[] = [];
     // Focus / caret snapshot — kept as a fallback for panic / reconcile-
     // bailout paths that swap DOM wholesale via `target.replaceChild` (or
     // route-error retry). On the reconcile happy path (#187 keyed diff +
@@ -1373,7 +1457,7 @@ export function mountCore(
     // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
     // `newMap` (and recursively for its children). Reconcile also writes into
     // `newMap` when it decides to *reuse* an old element (bypassing render).
-    // Either way, `newMap` becomes `currentMap` at the end of the pass so
+    // Either way, `newMap` becomes `view.map` at the end of the pass so
     // next round can find each mounted node's live element in O(1).
     let newMap: TileElementMap = new WeakMap();
     let tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
@@ -1391,13 +1475,13 @@ export function mountCore(
     // Reset for this pass. The reconcile branch overwrites with the diff's
     // touched set; every other branch (full-render, panic recovery) leaves it
     // empty — those paths intentionally do not carry per-tile attribution.
-    view.touched = [];
+    touched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
       if (view.tree && view.root) {
         // Diff path: reuse unchanged tile DOM in place, rebuild only changed
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
-        // differ from `currentRoot` if the root tile itself was rebuilt.
+        // differ from `view.root` if the root tile itself was rebuilt.
         try {
           const rec = reconcileTree({
             oldNode: view.tree,
@@ -1410,7 +1494,7 @@ export function mountCore(
             diag,
           });
           dom = rec.el;
-          view.touched = rec.touched;
+          touched = rec.touched;
         } catch (reconcileErr) {
           // Reconcile itself broke — safety net: rebuild the whole tree and
           // swap wholesale, recording the panic so the failure is visible in
@@ -1539,7 +1623,15 @@ export function mountCore(
       }
     }
 
-    return panicked ? null : renderedTree;
+    // The tree, not "the tree if this view survived": a panic is about how a
+    // view painted, and `tile.mount(X)` is about what the app is showing. When
+    // this returned null on panic, every mounted tile counted as unmounted, so
+    // a render panic fired `tile.unmount` for all of them — unsubscribes,
+    // leave notifications, whatever those reducers do — and the recovery render
+    // fired `tile.mount` right back. `view.tree` below is the separate
+    // question of what the next reconcile may diff against, and that one does
+    // reset on panic.
+    return { tree: renderedTree, touched };
   };
 
   /**
@@ -2056,11 +2148,19 @@ export function mountCore(
   }
 
   render();
+  // Registered here rather than beside `views`, because everything between the
+  // two can throw — `hydrate` without a bootstrap episode is a public call that
+  // does. A record left behind by a mount that never finished would turn every
+  // later `mount(app, …)` into a view of a half-built app: no `app.init`, no
+  // timers, no router, and no handle in anyone's hands to dispose it with.
+  mountedShapes.set(app, { attach });
   /**
    * Drop one view. The app itself — timers, router, host listeners, the effect
    * dispatcher — outlives it as long as another view is painting; the last one
    * out turns off the lights, and un-registers the shape so a later `mount`
-   * starts a fresh one.
+   * starts it over. `app.live` is the shape's own and is deliberately left
+   * alone: what a later mount gets is a running app again, not a reset one —
+   * `createApp()` is what returns a shape at its declared defaults.
    */
   function disposeView(view: MountView): void {
     const at = views.indexOf(view);
@@ -3755,7 +3855,7 @@ function replaceWithFreshTile(
   const parent = oldEl.parentNode;
   // No parent → the caller's `oldEl` is detached from the live tree. If we
   // silently returned `fresh` the caller would install a floating subtree as
-  // `currentRoot` and every subsequent `_rerender` would run against DOM the
+  // the view's root and every subsequent `_rerender` would run against DOM the
   // user cannot see. Throw so the outer reconcile catch bails to a full
   // rebuild + `target.replaceChild(...)` and the failure is recorded.
   if (!parent) {
@@ -3997,9 +4097,8 @@ function renderMissingTile(node: TileNode): HTMLElement {
  * The prop-to-style mapping is expressed as data rather than as writes to an
  * element because two paths need it: the live renderers set it on a real
  * element, and the SSR pass (`ssr-render.ts`) serialises it into a `style`
- * attribute. When only the first existed, an SSR page was served with every
- * flex container collapsed to a block and reflowed on hydration — the layout
- * shift SSR exists to remove.
+ * attribute. When only the first existed, a served page carried none of what a
+ * tile's props say about it.
  *
  * What is NOT here is what a declaration list cannot carry: `transition` and
  * the `hover:` / `focus:` / `active:` blocks are classes backed by injected
@@ -4014,19 +4113,21 @@ export type StyleDecl = [property: string, value: string];
  * takes the base. Injected rather than branched on, so there is one mapping
  * with one difference in it rather than two mappings.
  */
-export type ResponsivePick = (raw: unknown) => unknown;
+export type ResponsivePick = (raw: unknown) => string | number | undefined;
+
+/** A prop value a declaration can hold; anything else is not one. */
+const asScalar = (v: unknown): string | number | undefined =>
+  typeof v === "string" || typeof v === "number" ? v : undefined;
 
 /** The value a server can know: the base, or the literal if it is not a map. */
 export const pickBaseValue: ResponsivePick = (raw) => {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) return raw;
-  return (raw as Record<string, unknown>).base;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
+  return asScalar((raw as Record<string, unknown>).base);
 };
 
 /** The largest matching breakpoint, falling back to the base. */
 const pickForViewport: ResponsivePick = (raw) => {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) return raw;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
   const m = raw as Record<string, unknown>;
   const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
     ["xl", "(min-width: 1280px)"],
@@ -4035,12 +4136,19 @@ const pickForViewport: ResponsivePick = (raw) => {
     ["sm", "(min-width: 640px)"],
   ];
   for (const [bp, q] of order) {
-    if (m[bp] !== undefined && window.matchMedia(q).matches) return m[bp];
+    if (m[bp] !== undefined && window.matchMedia(q).matches) return asScalar(m[bp]);
   }
-  return m.base;
+  return asScalar(m.base);
 };
 
-/** The declarations a `style: { ... }` block contributes (spec/style.md §4.3). */
+/**
+ * The declarations a `style: { ... }` block contributes (spec/style.md §4.3) —
+ * each key becomes a CSS property verbatim. Keys are kebab-case CSS property
+ * names (`background`, `padding`, `border-radius`, `box-shadow`, …) and their
+ * values are resolved strings/numbers (`@token` references are already lowered
+ * by the compiler). Numbers fall back to `px`, matching the spec's spacing
+ * convention.
+ */
 function styleBlockDecls(raw: unknown): StyleDecl[] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const out: StyleDecl[] = [];
@@ -4051,10 +4159,15 @@ function styleBlockDecls(raw: unknown): StyleDecl[] {
   return out;
 }
 
-/** The inline style a container tile's props contribute. */
+/**
+ * The inline style a container tile's props contribute. `pick` is required
+ * rather than defaulted: the two callers answer the breakpoint question
+ * differently, and a default would let a new one inherit the viewport answer
+ * on a machine that has no viewport.
+ */
 export function containerStyleDecls(
-  props?: TileProps,
-  pick: ResponsivePick = pickForViewport,
+  props: TileProps | undefined,
+  pick: ResponsivePick,
 ): StyleDecl[] {
   if (!props) return [];
   const out: StyleDecl[] = [];
@@ -4075,7 +4188,12 @@ export function containerStyleDecls(
   return out;
 }
 
-/** The inline style a text tile's props contribute. */
+/**
+ * The inline style a text tile's props contribute. No `pick`, because no text
+ * prop is responsive: each is read only when it is already a string. The day
+ * one becomes a map, this needs the same parameter its container sibling has —
+ * resolving it here would reach for `window` on a server.
+ */
 export function textStyleDecls(props?: TileProps): StyleDecl[] {
   if (!props) return [];
   const out: StyleDecl[] = [];
@@ -4093,18 +4211,11 @@ function setDecls(el: HTMLElement, decls: StyleDecl[]): void {
 
 export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  setDecls(el, containerStyleDecls(props));
+  setDecls(el, containerStyleDecls(props, pickForViewport));
   applyStateStyles(el, props);
   applyTransition(el, props);
 }
 
-/**
- * Apply a `style: { ... }` block (spec/style.md §4.3) — each key is set as a CSS
- * property on the element verbatim. Keys are kebab-case CSS property names
- * (`background`, `padding`, `border-radius`, `box-shadow`, …) and their values
- * are resolved strings/numbers (`@token` references are already lowered by the
- * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
- */
 export function ensureAnimationStyles(): void {
   // Keyed by presence in the active style root, so each root (document head or a
   // shadow root) gets its own copy of the animation keyframes.
@@ -4329,7 +4440,8 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
 // share a NAME but differ in content will cache-hit each other and skip
 // re-injection — the shared style host keeps whichever applied last. That is
 // part of the style-root contention this registry deliberately does not solve
-// (see the multi-mount changeset); give co-mounted apps distinct theme names
+// (see `mountedShapes`, which refuses a per-view style root for the same
+// reason); give co-mounted apps distinct theme names
 // or isolate them in shadow roots.
 let lastAppliedThemeName: string | null = null;
 /**

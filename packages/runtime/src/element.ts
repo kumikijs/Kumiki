@@ -79,7 +79,7 @@ export function defineKumikiElement(
   // Pass the compiled module's `createApp` factory to give each element instance
   // its own independent state; pass a single `AppShape` and every element of
   // this tag is a view of ONE app — same slots, all of them live, initialized
-  // once (runtime.md §10.9). (A factory's closures bind to each call's own
+  // once (runtime.md §10.9.1). (A factory's closures bind to each call's own
   // `live`.)
   const makeApp: () => AppShape = typeof app === "function" ? app : () => app;
 

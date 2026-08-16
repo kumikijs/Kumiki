@@ -1,11 +1,17 @@
 // SSR tile walker (docs/spec/runtime.md §10.6.1). Walks a `TileNode` tree and
 // produces an HTML string — no DOM, no `happy-dom`, no `tiles-*.ts`. Each
 // `tiles-*.ts` renderer is designed for the live mount path (handler attach,
-// focus restoration, motion classes, `_setSlot` write-back). None of those
-// produce useful initial paint; the SSR pass only owns the first-byte HTML
-// the client will hydrate over. Keeping the walker self-contained here means
-// the runtime ships zero DOM-emulation deps on the server side, which the
-// 30 KB bundle budget (§10.6.3) requires for Edge targets.
+// focus restoration, motion classes, `_setSlot` write-back), and reaching for
+// one would drag a DOM in; the SSR pass only owns the first-byte HTML the
+// client will hydrate over. That is what keeps the server side free of
+// DOM-emulation deps, which the 30 KB bundle budget (§10.6.3) requires for Edge
+// targets.
+//
+// What it does share with the renderers is the prop-to-style mapping, imported
+// from `core.ts` as data (`containerStyleDecls` / `textStyleDecls`). `core.ts`
+// touches no DOM at module scope — `ssr.ts` already imports values from it —
+// and the alternative is a second copy of the mapping, which is exactly the
+// drift the parity test exists to catch.
 
 import type { StyleDecl, TileNode, TileProps } from "./core.ts";
 import { containerStyleDecls, pickBaseValue, textStyleDecls } from "./core.ts";
@@ -13,12 +19,15 @@ import { containerStyleDecls, pickBaseValue, textStyleDecls } from "./core.ts";
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 
 /**
- * The declarations a live renderer writes on the element itself, before it
- * looks at `props` — `column`'s flex axis, `card`'s frame, `grid`'s tracks.
- * They live here rather than in a table the renderers also read, because the
+ * What a kind paints of its own accord — `column`'s flex axis, `card`'s box
+ * metrics, `grid`'s tracks — as opposed to what its props map to. Some of it
+ * reads a prop (a `grid`'s `cols`, a `skeleton`'s `h`), which is why this is
+ * "the kind's own layout" rather than "before it looks at props".
+ *
+ * It lives here rather than in a table the renderers also read, because the
  * renderers are the per-app DCE unit (#71) and a shared table would ship every
  * kind's base style to every app. What keeps the two copies honest is
- * `ssr-parity.test.ts`, which renders one node per kind both ways and compares.
+ * `ssr-parity.test.ts`, which renders a node per kind both ways and compares.
  */
 function baseDecls(node: TileNode): StyleDecl[] {
   switch (node.kind) {
@@ -78,6 +87,10 @@ function baseDecls(node: TileNode): StyleDecl[] {
     case "overlay":
       return [["position", "relative"]];
     default:
+      // A kind whose renderer paints nothing of its own. New kinds land here
+      // by default, so a renderer that starts painting a base style diverges
+      // silently — `ssr-parity.test.ts` is what notices, for the kinds it
+      // covers.
       return [];
   }
 }
@@ -101,6 +114,17 @@ function styleAttr(node: TileNode, propDecls: StyleDecl[]): string | undefined {
 /** The style attribute of a container tile — base plus container props. */
 function containerStyle(node: TileNode & { props?: TileProps }): string | undefined {
   return styleAttr(node, containerStyleDecls(node.props, pickBaseValue));
+}
+
+/**
+ * The id a tile carries, from either form the renderers accept: a positional
+ * argument (`input(id="x")`) or the props block (`{id: "x"}`). The server read
+ * only the first, so a `label(for=…)` on a served page pointed at a control
+ * with no id until hydration gave it one.
+ */
+function tileIdOf(node: TileNode): string | undefined {
+  const raw = (node as { id?: unknown }).id ?? (node as { props?: { id?: unknown } }).props?.id;
+  return raw == null ? undefined : String(raw);
 }
 
 /** The style attribute of a text tile — text props only; no kind paints a base. */
@@ -161,9 +185,12 @@ function renderChildren(children: TileNode[]): string {
  * shift SSR exists to remove.
  *
  * It omits what the client owns and an attribute cannot carry: event handlers,
- * focus state, the class-backed layers (`transition`, the `hover:` / `focus:` /
- * `active:` blocks, motion), and the resolved `icon` SVG — the icon's box is
- * reserved so its arrival does not reflow. A responsive value collapses to its
+ * focus state, the class-backed layers (`transition`, the `hover:` / `focus:`
+ * / `active:` blocks, motion), everything the theme stylesheet paints (a
+ * `card`'s surface and shadow, the control rings) because the client injects
+ * those rules at mount, and the resolved `icon` SVG — the placeholder is the
+ * renderer's own element under the renderer's own attribute, but empty until
+ * the path resolves. A responsive value collapses to its
  * base, because a breakpoint is a question about a viewport the server does
  * not have. The client mount replaces this DOM wholesale on its first
  * `render()` after hydration — node identity is NOT preserved on purpose.
@@ -225,6 +252,7 @@ export function renderTileToString(node: TileNode): string {
           type: node.type,
           "data-kumiki-tile": "button",
           disabled: node.disabled,
+          id: tileIdOf(node),
         },
         escapeText(node.text),
       );
@@ -239,7 +267,7 @@ export function renderTileToString(node: TileNode): string {
           value: node.value ?? "",
           placeholder: node.placeholder,
           required: node.required,
-          id: node.id,
+          id: tileIdOf(node),
           accept: node.accept,
           multiple: node.multiple,
           "data-kumiki-tile": "input",
@@ -257,7 +285,7 @@ export function renderTileToString(node: TileNode): string {
         {
           rows: node.rows,
           placeholder: node.placeholder,
-          id: node.id,
+          id: tileIdOf(node),
           "data-kumiki-tile": "textarea",
           "data-kumiki-bind": bind,
         },
@@ -311,7 +339,7 @@ export function renderTileToString(node: TileNode): string {
         .join("");
       return el(
         "select",
-        { "data-kumiki-tile": "select", "data-kumiki-bind": bind },
+        { "data-kumiki-tile": "select", "data-kumiki-bind": bind, id: tileIdOf(node) },
         node.placeholder !== undefined
           ? `<option value="" disabled${node.value === undefined ? " selected" : ""}>${escapeText(node.placeholder)}</option>${opts}`
           : opts,
@@ -331,6 +359,7 @@ export function renderTileToString(node: TileNode): string {
           step: node.step,
           "data-kumiki-tile": "slider",
           "data-kumiki-bind": bind,
+          id: tileIdOf(node),
         },
         "",
       );
@@ -346,12 +375,25 @@ export function renderTileToString(node: TileNode): string {
       // crawlable; the client replaces this on first render.
       return el("div", { "data-kumiki-tile": "markdown" }, escapeText(node.text));
     case "image":
-      return el("img", { src: node.src, "data-kumiki-tile": "image", alt: "" }, "");
+      // `alt` is read from the props, not hardcoded empty: a served page whose
+      // stated purpose is that a screen reader and a crawler see something is
+      // the last place to throw the alt text away.
+      return el(
+        "img",
+        {
+          src: node.src,
+          "data-kumiki-tile": "image",
+          alt: typeof node.props?.alt === "string" ? node.props.alt : undefined,
+          id: tileIdOf(node),
+        },
+        "",
+      );
     case "icon": {
       // Placeholder — the client renderer resolves the icon name against
-      // `app.icons` and injects a real SVG path. SSR keeps the slot reserved
-      // so the layout doesn't reflow on hydration, under the same attribute the
-      // client writes so the two are one element and not two.
+      // `app.icons` and injects a real SVG path. Under the same attribute the
+      // client writes, so hydration meets one element rather than two; it is
+      // still empty and unsized until the path arrives, which does move what
+      // follows it.
       //
       // `size` is deliberately not a text style here: it sizes the SVG box, and
       // the renderer pulls it out of the props before styling the span.
