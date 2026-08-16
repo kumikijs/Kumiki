@@ -122,10 +122,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // per-app pruning is by module, not by function. A counter pays for them;
     // the alternative is a policy that silently runs in parallel and a
     // formatter that silently ignores its pattern.
+    // Bumped to 60KB with per-view mounting (spec/runtime.md §10.9.1): the render
+    // pass takes a view record instead of closure locals, and a shape already
+    // mounted attaches another view rather than starting a second app. A
+    // counter mounted once pays for the indirection and the attach path it
+    // never calls — the alternative is what this replaced, where a second mount
+    // silently froze the first and the docs said the two would share a state.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(58_000);
+    expect(total).toBeLessThan(60_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
