@@ -21,6 +21,8 @@ import { loadSource } from "./helpers/load.js";
 type Claim = {
   /** Selector for the element under test; the root tile's element when absent. */
   at?: string;
+  /** The element name, lower-case, when the claim is about which element it is. */
+  tag?: string;
   /** `null` asserts the attribute is absent. */
   attrs?: Record<string, string | null>;
   /** CSS property -> value, read through the CSSOM on both sides. */
@@ -74,6 +76,7 @@ async function serverElement(tile: string, at?: string): Promise<HTMLElement> {
 }
 
 function check(el: HTMLElement, claim: Claim): void {
+  if (claim.tag !== undefined) expect(el.tagName.toLowerCase()).toBe(claim.tag);
   for (const [attr, value] of Object.entries(claim.attrs ?? {})) {
     expect(el.getAttribute(attr), `attribute ${attr}`).toBe(value);
   }
@@ -172,6 +175,39 @@ const BOTH_PATHS: Row[] = [
     name: "radius reads the radius scale, not the spacing scale",
     tile: 'box(text("x")) {radius: "md"}',
     claim: { style: { "border-radius": "8px" } },
+  },
+  {
+    // The kinds whose renderers style nothing of their own: without the shared
+    // pass these reach neither path, and the `image` line is the only code
+    // example style.md §4.4.7 has.
+    name: "an image is sized by the same props a container is",
+    tile: 'image(src="/a.png", alt="c") {w: "full", max-w: 600, aspect: "16/9"}',
+    claim: { style: { width: "100%", "max-width": "600px", "aspect-ratio": "16 / 9" } },
+  },
+  {
+    name: "a button takes the style shorthands forms.md writes on it",
+    tile: 'button(text="go") {bg: "primary", max-w: 200}',
+    claim: { style: { background: "#0070f3", "max-width": "200px" } },
+  },
+  {
+    name: "id is an attribute on a kind that does not lift it",
+    tile: 'column(text("x")) {id: "main"}',
+    claim: { attrs: { id: "main" } },
+  },
+  {
+    name: "a check is the label that wraps it, on both paths",
+    tile: 'check(value=true) {class: "cb"}',
+    claim: { tag: "label", attrs: { class: "cb", "data-kumiki-tile": "check" } },
+  },
+  {
+    name: "a disabled check disables the control inside the label",
+    tile: "check(value=true) {disabled: true}",
+    claim: { at: "input", attrs: { disabled: "", type: "checkbox" } },
+  },
+  {
+    name: "a select is not given a read-only state it does not have",
+    tile: 'select(bind=draft, options=[], placeholder="pick") {readonly: true}',
+    claim: { attrs: { readonly: null } },
   },
   {
     name: "min-h and a false wrap are declarations too",
@@ -431,6 +467,49 @@ async function mountBound(): Promise<{ root: HTMLElement; flip: () => Promise<vo
     },
   };
 }
+
+describe("a token resolves against the app's theme (#251)", () => {
+  // Both passes are render passes, so both have to resolve `@token` references
+  // against the app's own theme. The server had no bracket at all, so a themed
+  // page was served with the built-in defaults and re-styled on hydration.
+  const THEMED = `theme T = {
+  colors: {primary: "#123456"},
+  spacing: {md: "33px"},
+  radius: {md: "3px"},
+  shadow: {sm: "0 0 9px red"}
+}
+
+tile Probe = box(text("x")) {pad: "md", radius: "md", shadow: "sm", bg: "primary"}
+
+app P
+  caps   = []
+  theme  = T
+  routes = {"/" -> Probe, "/404" -> Probe}
+  init   = []
+`;
+  const themed = {
+    padding: "33px",
+    "border-radius": "3px",
+    "box-shadow": "0 0 9px red",
+    background: "#123456",
+  };
+
+  it("client", async () => {
+    const app = await loadSource(THEMED);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    mount(app, target);
+    check(target.firstElementChild as HTMLElement, { style: themed });
+  });
+
+  it("server", async () => {
+    const app = await loadSource(THEMED);
+    const { html } = await renderToString(app);
+    const holder = document.createElement("div");
+    holder.innerHTML = html;
+    check(holder.firstElementChild as HTMLElement, { style: themed });
+  });
+});
 
 describe("an external link leaves the app (#251)", () => {
   /** Click the link and report whether the runtime took the navigation over. */
