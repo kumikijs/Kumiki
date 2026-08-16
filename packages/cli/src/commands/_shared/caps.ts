@@ -1,10 +1,10 @@
+import type { KumikiError } from "@kumikijs/compiler";
 import {
   type CapabilityLookup,
   CapabilityManifestError,
   describeCapabilitySearch,
   resolveCapabilityManifest,
 } from "@kumikijs/compiler/node";
-import type { KumikiError } from "@kumikijs/compiler";
 
 /**
  * The capabilities registered for an input file, with the manifest they came

@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { kumiki, type KumikiPluginOptions } from "../src/index.ts";
+import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TMP = join(here, "test-tmp");

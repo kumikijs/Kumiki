@@ -122,8 +122,9 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
     name: "vite-plugin-kumiki",
     enforce: "pre",
     config() {
-      // Two copies of the runtime on disk (a project's own install plus this
-      // plugin's) would otherwise both be bundled.
+      // A project with two copies of the runtime on disk (its own install plus
+      // a nested one) would otherwise bundle both; the resolution below only
+      // guarantees that the compiled module and the app agree.
       return { resolve: { dedupe: [RUNTIME_SPECIFIER] } };
     },
     configResolved(resolved) {

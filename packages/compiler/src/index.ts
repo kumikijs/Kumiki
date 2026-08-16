@@ -34,7 +34,7 @@ export { generateDts } from "./dts.ts";
 // `LexError` travels with `ParseError`: both escape `compile()` as exceptions
 // carrying a source position, and a caller that renders them as diagnostics
 // (the Vite plugin's overlay, the CLI) cannot narrow what it cannot name.
-export { lex, LexError } from "./lexer.ts";
+export { LexError, lex } from "./lexer.ts";
 export { ParseError, parse } from "./parser.ts";
 export {
   buildDefIndex,
