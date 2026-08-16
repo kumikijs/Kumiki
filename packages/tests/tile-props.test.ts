@@ -237,6 +237,11 @@ const CLIENT_ONLY: Row[] = [
     tile: 'column(text("x")) {class: "wide", transition: "fade"}',
     claim: { attrs: { class: "kumiki-anim kumiki-anim-fade wide" } },
   },
+  {
+    name: "transition-duration picks the animation's speed",
+    tile: 'column(text("x")) {transition: "fade", transition-duration: "slow"}',
+    claim: { attrs: { class: "kumiki-anim kumiki-anim-fade kumiki-anim-slow" } },
+  },
 ];
 
 /**
@@ -256,7 +261,8 @@ tile Probe = column(
                text("x") {class: if lit then "lit" else "dim",
                           test-id: if lit then "after" else "before",
                           aria: if lit then {label: "on"} else {}},
-               button(text="save") {loading: lit})
+               button(text=if lit then "saving" else "save") {loading: lit},
+               image(src="/a.png", alt="A cat", width=if lit then 200 else 100))
 `;
 
 async function mountBound(): Promise<{ root: HTMLElement; flip: () => Promise<void> }> {
@@ -321,6 +327,44 @@ describe("common props survive a re-render (#251)", () => {
     expect(text.getAttribute("aria-label")).toBe(null);
   });
 
+  it("keeps the same spinner element while the label changes", async () => {
+    // Re-creating it would restart its animation mid-flight — a visible
+    // stutter on exactly the button the user is waiting for. The label moves
+    // here and `loading` does not, so the spinner has no reason to be touched.
+    const app = await loadSource(`slot n : Int = 0
+
+reducer bump on=ui.click(Bump) do= n := n + 1
+
+tile Bump  = button(text="bump")
+tile Probe = column(Bump, button(text="uploading " + n.show) {loading: true})
+
+app P
+  caps   = []
+  routes = {"/" -> Probe, "/404" -> Probe}
+  init   = []
+`);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    mount(app, target);
+    const root = target.firstElementChild as HTMLElement;
+    const busy = root.querySelectorAll('[data-kumiki-tile="button"]')[1] as HTMLButtonElement;
+    const spinner = busy.querySelector('[data-kumiki-tile="spinner"]');
+    expect(spinner).not.toBe(null);
+    (root.querySelector('[data-kumiki-tile="button"]') as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(String(busy.textContent).includes("uploading 1")).toBe(true);
+    expect(busy.querySelector('[data-kumiki-tile="spinner"]')).toBe(spinner);
+  });
+
+  it("resizes an image in place", async () => {
+    const { root, flip } = await mountBound();
+    const img = root.querySelector('[data-kumiki-tile="image"]') as HTMLElement;
+    expect(img.getAttribute("width")).toBe("100");
+    await flip();
+    expect(root.querySelector('[data-kumiki-tile="image"]')).toBe(img);
+    expect(img.getAttribute("width")).toBe("200");
+  });
+
   it("turns a button's spinner on and back off", async () => {
     const { root, flip } = await mountBound();
     const save = root.querySelectorAll('[data-kumiki-tile="button"]')[1] as HTMLButtonElement;
@@ -330,7 +374,7 @@ describe("common props survive a re-render (#251)", () => {
     expect(save.disabled).toBe(true);
     expect(save.querySelector('[data-kumiki-tile="spinner"]')).not.toBe(null);
     // The label is still the button's accessible name with a spinner in front.
-    expect(save.textContent).toContain("save");
+    expect(String(save.textContent).includes("saving")).toBe(true);
     await flip();
     expect(save.disabled).toBe(false);
     expect(save.querySelector('[data-kumiki-tile="spinner"]')).toBe(null);
