@@ -279,6 +279,14 @@ function setBooleanAttr(inp: HTMLElement, name: string, on: boolean): void {
  * follows it.
  */
 function applyControlState(el: HTMLElement, props?: TileProps): void {
+  // A contenteditable div has neither property, and the way to take input away
+  // from one is to stop it being editable.
+  if (el.isContentEditable || el.getAttribute("contenteditable") !== null) {
+    el.setAttribute(
+      "contenteditable",
+      props?.disabled === true || props?.readonly === true ? "false" : "true",
+    );
+  }
   if ("disabled" in el) {
     (el as HTMLElement & { disabled: boolean }).disabled = props?.disabled === true;
   }
@@ -575,6 +583,7 @@ export const inputTiles: TileRenderers = {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "editable";
     div.contentEditable = "true";
+    applyControlState(div, node.props);
     const id = tileId(node);
     if (id) div.id = id;
     if (node.bind) bindDataset(div, node.bind, node.bindPath);
@@ -770,6 +779,7 @@ export const inputPatchers: TilePatchers = {
   },
   editable(el, _oldNode, newNode) {
     const div = el as HTMLDivElement;
+    applyControlState(div, (newNode as { props?: TileProps }).props);
     reconcileId(div, newNode);
     if (newNode.bind) bindDataset(div, newNode.bind, newNode.bindPath);
     else clearBindDataset(div);

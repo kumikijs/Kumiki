@@ -630,7 +630,8 @@ export function renderTileToString(node: TileNode): string {
         "div",
         {
           "data-kumiki-tile": "editable",
-          contenteditable: "true",
+          contenteditable:
+            node.props?.disabled === true || node.props?.readonly === true ? "false" : "true",
           "data-kumiki-bind": bind,
         },
         escapeText(node.text ?? ""),

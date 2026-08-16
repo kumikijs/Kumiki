@@ -205,6 +205,12 @@ const BOTH_PATHS: Row[] = [
     claim: { at: "input", attrs: { disabled: "", type: "checkbox" } },
   },
   {
+    // The way to take input away from a contenteditable is to stop it being one.
+    name: "a disabled editable is not editable",
+    tile: "editable(bind=draft) {disabled: true}",
+    claim: { attrs: { contenteditable: "false" } },
+  },
+  {
     name: "a select is not given a read-only state it does not have",
     tile: 'select(bind=draft, options=[], placeholder="pick") {readonly: true}',
     claim: { attrs: { readonly: null } },
