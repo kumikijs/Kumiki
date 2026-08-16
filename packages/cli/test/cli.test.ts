@@ -576,6 +576,19 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     expect(stderr).toContain(join(root, "src"));
   });
 
+  it("says the same thing from build, which fails on the same diagnostic", {
+    timeout: 30000,
+  }, () => {
+    const res = spawnSync(
+      "npx",
+      ["tsx", CLI_PATH, "build", join(root, "src", "app.kumiki"), join(root, "out")],
+      { stdio: "pipe", shell: true, encoding: "utf8" },
+    );
+    expect(res.status).toBe(1);
+    expect(res.stderr ?? "").toContain("E0302");
+    expect(res.stderr ?? "").toContain("no kumiki.caps.json found");
+  });
+
   it("names the manifest it read when that manifest lacks the capability", {
     timeout: 30000,
   }, () => {
