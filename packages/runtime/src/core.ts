@@ -1394,9 +1394,11 @@ export function mountCore(
         touched.push(...pass.touched);
       }
       lastRenderTouched = touched;
-      // Fired once per render, not once per view: `tile.mount(X)` is a fact
-      // about the app's tree, which every view paints from, and firing it per
-      // view would run the reducer once for each host the app happens to be in.
+      // Fired once from the app's tree, which every view paints from, rather
+      // than from each view's pass. Repeating the call would be harmless today
+      // — the diff is set-based, so a second one has nothing new to report —
+      // but a view that carried its own `prevMountedTiles` would fire
+      // `tile.mount(X)` once per host, and these reducers subscribe and fetch.
       syncMountedTiles(tree);
     });
   };
