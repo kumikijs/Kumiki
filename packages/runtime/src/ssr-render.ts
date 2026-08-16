@@ -26,6 +26,19 @@ const BUTTON_SPINNER =
 const VERTICAL_DIVIDER_STYLE =
   "align-self: stretch; width: 0; height: auto; border-top: none; border-left: 1px solid currentColor";
 
+/**
+ * What a control's `disabled` / `readonly` / `auto-complete` serialise to. A
+ * served form whose fields look enabled but are not is worse than one that
+ * looks the way it will behave once the page hydrates.
+ */
+function controlAttrs(props?: TileProps): Record<string, string | boolean | undefined> {
+  return {
+    disabled: props?.disabled === true ? true : undefined,
+    readonly: props?.readonly === true ? true : undefined,
+    autocomplete: typeof props?.auto_complete === "string" ? props.auto_complete : undefined,
+  };
+}
+
 /** A `width` / `height` attribute value, or nothing when the tile did not say. */
 function sizeAttr(v: unknown): string | undefined {
   return typeof v === "number" || typeof v === "string" ? String(v) : undefined;
@@ -317,6 +330,7 @@ export function renderTileToString(node: TileNode): string {
           id: tileIdOf(node),
           accept: node.accept,
           multiple: node.multiple,
+          ...controlAttrs(node.props),
           "data-kumiki-tile": "input",
           "data-kumiki-bind": bind,
         },
@@ -334,6 +348,7 @@ export function renderTileToString(node: TileNode): string {
           rows: node.rows,
           placeholder: node.placeholder,
           id: tileIdOf(node),
+          ...controlAttrs(node.props),
           "data-kumiki-tile": "textarea",
           "data-kumiki-bind": bind,
         },
@@ -391,7 +406,12 @@ export function renderTileToString(node: TileNode): string {
       return el(
         node,
         "select",
-        { "data-kumiki-tile": "select", "data-kumiki-bind": bind, id: tileIdOf(node) },
+        {
+          "data-kumiki-tile": "select",
+          "data-kumiki-bind": bind,
+          id: tileIdOf(node),
+          ...controlAttrs(node.props),
+        },
         node.placeholder !== undefined
           ? `<option value="" disabled${node.value === undefined ? " selected" : ""}>${escapeText(node.placeholder)}</option>${opts}`
           : opts,

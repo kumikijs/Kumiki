@@ -36,6 +36,9 @@ type Row = {
 
 function sourceOf(tile: string): string {
   return [
+    // A slot the control rows can bind to; unused by the rest.
+    'slot draft : Text = ""',
+    "",
     `tile Probe = ${tile}`,
     "",
     "app P",
@@ -205,6 +208,21 @@ const BOTH_PATHS: Row[] = [
     claim: { attrs: { "data-kumiki-variant": "ghost" } },
   },
   {
+    name: "a control the spec calls disabled is disabled",
+    tile: "input(bind=draft, disabled=true)",
+    claim: { attrs: { disabled: "" } },
+  },
+  {
+    name: "readonly and auto-complete reach a control too",
+    tile: 'textarea(bind=draft, readonly=true, auto-complete="off")',
+    claim: { attrs: { readonly: "", autocomplete: "off" } },
+  },
+  {
+    name: "a select says whether it is disabled",
+    tile: 'select(bind=draft, options=[], placeholder="pick") {disabled: true}',
+    claim: { attrs: { disabled: "" } },
+  },
+  {
     name: "image alt survives the argument form",
     tile: 'image(src="/a.png", alt="A cat")',
     claim: { attrs: { alt: "A cat" } },
@@ -258,7 +276,8 @@ const CLIENT_ONLY: Row[] = [
  * diffs them — and a reused element keeps whatever the first render put on it.
  */
 const BOUND_APP = `
-slot lit : Bool = false
+slot lit  : Bool = false
+slot name : Text = ""
 
 reducer flip on=ui.click(Flip) do= lit := !lit
 
@@ -269,7 +288,8 @@ tile Probe = column(
                           test-id: if lit then "after" else "before",
                           aria: if lit then {label: "on"} else {}},
                button(text=if lit then "saving" else "save") {loading: lit},
-               image(src="/a.png", alt="A cat", width=if lit then 200 else 100))
+               image(src="/a.png", alt="A cat", width=if lit then 200 else 100),
+               input(bind=name, disabled=lit))
 `;
 
 async function mountBound(): Promise<{ root: HTMLElement; flip: () => Promise<void> }> {
@@ -361,6 +381,15 @@ app P
     await new Promise((r) => setTimeout(r, 0));
     expect(String(busy.textContent).includes("uploading 1")).toBe(true);
     expect(busy.querySelector('[data-kumiki-tile="spinner"]')).toBe(spinner);
+  });
+
+  it("disables a control in place", async () => {
+    const { root, flip } = await mountBound();
+    const input = root.querySelector('[data-kumiki-tile="input"]') as HTMLInputElement;
+    expect(input.disabled).toBe(false);
+    await flip();
+    expect(root.querySelector('[data-kumiki-tile="input"]')).toBe(input);
+    expect(input.disabled).toBe(true);
   });
 
   it("resizes an image in place", async () => {

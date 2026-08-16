@@ -262,6 +262,29 @@ function setBooleanAttr(inp: HTMLElement, name: string, on: boolean): void {
 }
 
 /**
+ * `disabled`, `readonly` and `auto-complete` on a control (forms.md §5.3, the
+ * common props for input elements). All three were documented and read by
+ * nothing.
+ *
+ * Which of them an element takes is decided by the element: a `<select>` has no
+ * `readOnly`, a `<div contenteditable>` has no `disabled`. Asking it is what
+ * keeps this one function instead of a per-kind list that would fall behind the
+ * next kind. Shared by create and patch, so a `disabled` bound to a slot
+ * follows it.
+ */
+function applyControlState(el: HTMLElement, props?: TileProps): void {
+  if ("disabled" in el) {
+    (el as HTMLElement & { disabled: boolean }).disabled = props?.disabled === true;
+  }
+  if ("readOnly" in el) {
+    (el as HTMLElement & { readOnly: boolean }).readOnly = props?.readonly === true;
+  }
+  const auto = props?.auto_complete;
+  if (typeof auto === "string") el.setAttribute("autocomplete", auto);
+  else el.removeAttribute("autocomplete");
+}
+
+/**
  * `disabled`, `loading` and `variant` on a `<button>` (stdlib.md §2.3.4,
  * forms.md §5.8). Shared by create and patch, so a `loading=` bound to a slot
  * turns the spinner on and off rather than only ever on.
@@ -385,6 +408,7 @@ export const inputTiles: TileRenderers = {
         state.onChange({ ...(state.el ?? {}), value: inp.value });
       }
     });
+    applyControlState(inp, node.props);
     return inp;
   },
   textarea(node) {
@@ -410,6 +434,7 @@ export const inputTiles: TileRenderers = {
       const state = INPUT_STATE.get(ta);
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: ta.value });
     });
+    applyControlState(ta, node.props);
     return ta;
   },
   check(node) {
@@ -427,6 +452,7 @@ export const inputTiles: TileRenderers = {
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
     });
     wrap.appendChild(inp);
+    applyControlState(inp, node.props);
     return wrap;
   },
   radio(node) {
@@ -451,6 +477,7 @@ export const inputTiles: TileRenderers = {
       if (state?.onClick) state.onClick(state.el ?? {});
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
     });
+    applyControlState(inp, node.props);
     return wrap;
   },
   select(node) {
@@ -473,6 +500,7 @@ export const inputTiles: TileRenderers = {
       }
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: matched.value });
     });
+    applyControlState(sel, node.props);
     return sel;
   },
   slider(node) {
@@ -498,6 +526,7 @@ export const inputTiles: TileRenderers = {
       const state = INPUT_STATE.get(inp);
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: Number(inp.value) });
     });
+    applyControlState(inp, node.props);
     return inp;
   },
   switch(node) {
@@ -516,6 +545,7 @@ export const inputTiles: TileRenderers = {
       if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
     });
     wrap.appendChild(inp);
+    applyControlState(inp, node.props);
     return wrap;
   },
   form(node, ctx: TileCtx) {
@@ -623,6 +653,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.value !== nextValue && !IME_COMPOSING.has(inp)) inp.value = nextValue;
     }
     setHandlers(inp, inputHandlers(newNode));
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   textarea(el, _oldNode, newNode) {
     const ta = el as HTMLTextAreaElement;
@@ -636,6 +667,7 @@ export const inputPatchers: TilePatchers = {
     // IME guard as above: don't dismiss the IME candidate window mid-compose.
     if (ta.value !== nextValue && !IME_COMPOSING.has(ta)) ta.value = nextValue;
     setHandlers(ta, inputHandlers(newNode));
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   check(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
@@ -650,6 +682,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
       setHandlers(inp, inputHandlers(newNode));
     }
+    applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
   },
   radio(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
@@ -681,6 +714,7 @@ export const inputPatchers: TilePatchers = {
     } else if (span) {
       wrap.removeChild(span);
     }
+    applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
   },
   select(el, _oldNode, newNode) {
     const sel = el as HTMLSelectElement;
@@ -688,6 +722,7 @@ export const inputPatchers: TilePatchers = {
     const options = (newNode.options ?? []) as Array<{ label: unknown; value: unknown }>;
     reconcileSelectOptions(sel, newNode.placeholder, options, newNode.value);
     setHandlers(sel, { ...inputHandlers(newNode), selectOptions: options });
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   slider(el, _oldNode, newNode) {
     const inp = el as HTMLInputElement;
@@ -704,6 +739,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.value !== nextValue && document.activeElement !== inp) inp.value = nextValue;
     }
     setHandlers(inp, { ...inputHandlers(newNode), isSlider: true });
+    applyControlState(el, (newNode as { props?: TileProps }).props);
   },
   switch(el, _oldNode, newNode) {
     const wrap = el as HTMLLabelElement;
@@ -718,6 +754,7 @@ export const inputPatchers: TilePatchers = {
       if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
       setHandlers(inp, inputHandlers(newNode));
     }
+    applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
   },
   form(el, _oldNode, newNode) {
     const form = el as HTMLFormElement;

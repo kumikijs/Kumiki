@@ -390,7 +390,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `aria` | `Map(Text, Text)` | エントリごとに `aria-*` 属性。すでに `aria-…` で始まるキーは二重に付けない |
 | `key` | `Text` | レンダーをまたいだ tile の同一性。props から引き上げられ、属性にはならない |
 | `test-id` | `Text` | `data-kumiki-test` 属性（[テスト §8.8](./testing.md#_8-8-統合テストブラウザ騆動)） |
-| `id` | `Text` | 要素の `id`。reducer セレクタの `#id` 部分でもある（[§1.6.2](./language.md#_1-6-2-tile-セレクタ)） |
+| `id` | `Text` | 要素の `id`。reducer セレクタの `#id` 部分でもある（[§1.6.2](./language.md#_1-6-2-セレクタ)） |
 | `role` | `Text` | `role` 属性。tile の種別が前提とする値を上書きする |
 | `aria-*` | `Text` | その ARIA 属性。`aria` マップを介さず単体で書く形 |
 
