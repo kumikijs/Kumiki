@@ -11,7 +11,14 @@
 //     posted body, matching the `kumiki run --episode-log` format.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,6 +87,37 @@ describe("kumiki dev", () => {
     // Substitution happens BEFORE Vite transforms — both the import and the
     // hot.accept boundary share the same specifier shape; rely on the basename
     // to confirm without coupling to Vite's URL-rewriting choices.
+  });
+
+  it("reads a capability manifest at the project root, as check does", async () => {
+    // The dev server makes the .kumiki file's own directory Vite's root so the
+    // static `import App` resolves. The manifest search must not inherit that
+    // root: a file that `kumiki check` accepts has to compile here too.
+    const projectRoot = mkdtempSync(join(tmpdir(), "kumiki-dev-caps-"));
+    mkdirSync(join(projectRoot, "src"), { recursive: true });
+    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ name: "p" }));
+    writeFileSync(
+      join(projectRoot, "kumiki.caps.json"),
+      JSON.stringify({ capabilities: ["telemetry.track"] }),
+    );
+    const file = join(projectRoot, "src", "app.kumiki");
+    writeFileSync(
+      file,
+      `slot sent : Int = 0
+effect track cap=telemetry.track in={name: Text} out=Unit
+reducer fire on=ui.click(B) do= emit track({name: "x"})
+tile B = button(text="b")
+tile App = column(B, text(sent.show))
+app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    expect(runCli(["check", file]).code).toBe(0);
+
+    const { server, url } = await startDevServer(file, { port: 0 });
+    close = () => server.close();
+    const res = await fetch(new URL("/app.kumiki?import", url));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("export default App;");
   });
 
   it("appends one JSONL line per /__kumiki/episode POST when --episode-log is set", async () => {

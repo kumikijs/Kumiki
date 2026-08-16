@@ -115,9 +115,6 @@ function reportThrown(ctx: Rollup.PluginContext, e: unknown, file: string): neve
 
 export function kumiki(options: KumikiPluginOptions = {}): Plugin {
   const bundle = options.bundle ?? false;
-  // Vite's project root, once it is known: the capability-manifest search
-  // stops there rather than guessing from `package.json`.
-  let root: string | undefined;
   return {
     name: "vite-plugin-kumiki",
     enforce: "pre",
@@ -126,9 +123,6 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       // a nested one) would otherwise bundle both; the resolution below only
       // guarantees that the compiled module and the app agree.
       return { resolve: { dedupe: [RUNTIME_SPECIFIER] } };
-    },
-    configResolved(resolved) {
-      root = resolved.root;
     },
     async resolveId(source, importer, opts) {
       if (source !== RUNTIME_SPECIFIER) return null;
@@ -158,9 +152,14 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         }
       }
 
+      // Not bounded by Vite's `root`: `kumiki dev` makes the `.kumiki` file's
+      // own directory the root so the static `import App` resolves, and a
+      // manifest that `kumiki check` reads has to be the manifest the dev
+      // server reads. One rule — up to the nearest `package.json` — is the
+      // only way every tool agrees about one file.
       let caps: CapabilityLookup;
       try {
-        caps = resolveCapabilityManifest(file, root ? { root } : {});
+        caps = resolveCapabilityManifest(file);
       } catch (e) {
         reportThrown(this, e, file);
       }

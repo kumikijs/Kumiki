@@ -809,7 +809,7 @@ mount(App, document.getElementById("root"));
 
 - **ランタイムは共有され、複製されない** — コンパイル済みモジュールは `import "@kumikijs/runtime"` をそのまま保ち、バンドラが 1 つだけ載せる。上の例がまさにそれに依存している（`mount` は同じパッケージから来る）。`bundle: true` は代わりにランタイムをモジュールへインライン展開する — 単体で完結させたいモジュール向け。そうすると、他にランタイムを import するものがあれば 2 つ目のコピーが載り（counter で 82 kB に対し 129 kB、`.kumiki` を 1 つ import するごとにさらに 1 コピー）、コピー同士はランタイムのモジュールレベル状態を共有しない。プラグインは、プロジェクト側で解決できるならそちらを、できなければ自身の依存を解決するので、`@kumikijs/vite` だけを入れたプロジェクトでもビルドは通り、いずれの場合もコピーは 1 つ。
 - **オプション** — `bundle`（デフォルト `false`、上記）。`types`（デフォルト `false`：型付き provider 記述のために `KumikiSlots` / `KumikiProviders` ヘルパを持つ兄弟ファイル `<name>.kumiki.gen.ts` を出力する。内容が変わったときだけ書き込む — プログラム自身の `Slots` / `Providers` 型と衝突しないよう接頭辞を付けている）。
-- **capability** — `kumiki.caps.json` は自動で解決される（CLI と同じ）：ソースファイルのディレクトリからプロジェクトルート（プラグインでは Vite の `root`）まで遡る。[カスタム capability の登録](./stdlib.md#_2-5-standard-capabilities) を参照。
+- **capability** — `kumiki.caps.json` は CLI と同じ規則で自動解決される：ソースファイルのディレクトリから、最も近い `package.json` を持つディレクトリまで遡る。Vite の `root` では区切らない — `kumiki dev` は静的な `import App` を解決するために `.kumiki` ファイル自身のディレクトリを root にするため、`kumiki check` が読むマニフェストと dev サーバが読むマニフェストが食い違ってしまう。[カスタム capability の登録](./stdlib.md#_2-5-standard-capabilities) を参照。
 - **失敗は位置を持つ** — 型エラーもパースエラーも字句エラーも、ファイル・行・列を持つ診断として Vite のオーバレイに届くので、該当行へ飛べる。
 - **import に型を付ける** — 同梱の ambient 型を 1 度参照すれば `import App from "./x.kumiki"` は `AppShape` として型付けされる：
 

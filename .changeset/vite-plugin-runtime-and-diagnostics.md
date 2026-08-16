@@ -38,7 +38,7 @@ frames with no line to jump to. Both now arrive with file, line and column.
 ever checked the directory holding the `.kumiki` file; a manifest at the project
 root — where the rest of a Vite project's configuration lives — was ignored
 without a word. It is now searched for from the source file up to the project
-root (Vite's `root`, else the nearest `package.json`), nearest wins, and a
+root — the nearest `package.json` — nearest manifest wins, and a
 malformed manifest on that path is an error naming the file rather than a
 silent fall-through. `E0302` now says which manifest was read, or which
 directories were searched — in the plugin and in `kumiki check` / `kumiki
