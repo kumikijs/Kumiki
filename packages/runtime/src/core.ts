@@ -1008,6 +1008,31 @@ export type MountedApp = AppShape & {
 
 const appByRoot = new WeakMap<Element, MountedApp>();
 
+/**
+ * The live mount of an `AppShape`, if it has one. A shape carries the app's
+ * state, so mounting it into a second host is a second *view* of one app
+ * (runtime.md §10.9: passing the compiled default export rather than the
+ * `createApp` factory "shares one instance across all elements") — not a
+ * second app. Before this, the second mount overwrote the shape's imperative
+ * seams and the first host froze: its own buttons re-rendered the other one.
+ *
+ * `attach` adds a view to the running mount and returns that view's handle;
+ * everything the app owns once — `app.init`, `app.start`, timers, the router,
+ * the effect dispatcher — belongs to the first mount and is torn down when the
+ * last view is disposed. Keyed by the shape, so a `createApp()` per element
+ * (independent state) is unaffected.
+ */
+const mountedShapes = new WeakMap<
+  AppShape,
+  { attach: (target: HTMLElement, options: MountOptions) => MountHandle }
+>();
+
+/** What a mount (or an additional view of one) gives its caller back. */
+export type MountHandle = {
+  dispose: () => void;
+  episodes: () => ReturnType<EpisodeLogger["list"]>;
+};
+
 /** Non-null only while a mount's synchronous render pass is running. */
 let renderingApp: MountedApp | null = null;
 
@@ -1107,7 +1132,14 @@ export function mountCore(
   app: AppShape,
   target: HTMLElement,
   options: MountOptions = {},
-): { dispose: () => void; episodes: () => ReturnType<EpisodeLogger["list"]> } {
+): MountHandle {
+  // A shape that is already mounted gets another view of the same app rather
+  // than a second app. Everything below this line is the first mount's
+  // business, and running it again would fire `app.init` twice, start a second
+  // copy of every timer, and overwrite the seams the running views dispatch
+  // through.
+  const running = mountedShapes.get(app);
+  if (running) return running.attach(target, options);
   // Episode logger (§10.5). Null when the host did not opt in — every record
   // call below short-circuits via the `?.` optional chain, so the no-logger
   // path stays zero-cost.
@@ -1152,7 +1184,6 @@ export function mountCore(
   const tiles = options.tiles ?? {};
   const tilePatchers = options.tilePatchers ?? {};
   const ctxWrap = { applyMotion, applyUiEventHandlers, renderMissingTile };
-  let currentMap: TileElementMap = new WeakMap();
 
   // Routing source: provided by the router feature module. A mount without
   // `options.routing` has no router at all — route-slot reads stay static and
@@ -1198,16 +1229,63 @@ export function mountCore(
   const scrollSaved = new Map<string, { x: number; y: number }>();
   let lastNavSource: "push" | "replace" | "pop" = "push";
 
-  let currentRoot: HTMLElement | null = null;
-  // Previously rendered tile tree, kept as the "old" side of the next
-  // reconcile. Cleared to null after a panic-fallback render so the following
-  // pass restarts from a full mount rather than diffing against a discarded
-  // tree.
-  let currentTree: TileNode | null = null;
+  /**
+   * One host this app is painted into. A shape can be mounted more than once
+   * (runtime.md §10.9: passing the default export rather than `createApp`
+   * shares one instance across every element), and everything about *where* it
+   * is painted is per view — the mounted element, the tree that produced it,
+   * and the node→element map the next reconcile diffs against. Everything
+   * about *what* it says is shared, because the state is.
+   */
+  type MountView = {
+    target: HTMLElement;
+    /** Whether this view adopts server HTML already sitting in its target. */
+    hydrate: boolean;
+    root: HTMLElement | null;
+    /**
+     * Previously rendered tile tree, kept as the "old" side of the next
+     * reconcile. Cleared to null after a panic-fallback render so the following
+     * pass restarts from a full mount rather than diffing against a discarded
+     * tree.
+     */
+    tree: TileNode | null;
+    map: TileElementMap;
+    /** What this view's last reconcile freshly built (see `lastRenderTouched`). */
+    touched: string[];
+  };
+  const newView = (into: HTMLElement, hydrate: boolean): MountView => ({
+    target: into,
+    hydrate,
+    root: null,
+    tree: null,
+    map: new WeakMap(),
+    touched: [],
+  });
+  const ownView = newView(target, options.hydrate === true);
+  const views: MountView[] = [ownView];
+  /**
+   * Add a view of this already-running app. Options that describe the *app*
+   * (router, providers, snapshot, loggers) belong to the mount that started
+   * it; what an additional view brings is a host to paint into.
+   */
+  const attach = (into: HTMLElement, viewOptions: MountOptions): MountHandle => {
+    if (viewOptions.hydrate) {
+      throw new Error(
+        "mountCore: this app is already mounted, so its state is live; `hydrate` overlays a server snapshot onto a fresh one. Mount a `createApp()` instance instead.",
+      );
+    }
+    const view = newView(into, false);
+    views.push(view);
+    registerAppRoot(into, app);
+    withRenderingApp(app, () => renderPass(view));
+    return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
+  };
+  mountedShapes.set(app, { attach });
   // #189: identifiers the most recent reconcile pass freshly built. Consumed
   // by `applyReducer` when it fires the trailing `signal-update` step so
   // `binds-updated` lists the tiles/binds the diff actually patched. Empty
-  // after a full-render / panic-fallback pass (those are not a diff).
+  // after a full-render / panic-fallback pass (those are not a diff). With
+  // several views it is their union: the reducer patched all of them.
   let lastRenderTouched: string[] = [];
   let disposed = false;
   // Named timers (`timer(d, name=N)`) are addressable so a reducer can
@@ -1220,15 +1298,31 @@ export function mountCore(
   let prevMountedTiles = new Set<string>();
   const render = (): void => {
     // Late effect results (e.g. an in-flight fetch that resolves after the app
-    // was disposed) must not touch the DOM — `currentRoot` has already been
+    // was disposed) must not touch the DOM — each view's root has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
     if (disposed) return;
-    withRenderingApp(app, renderPass);
+    withRenderingApp(app, () => {
+      const touched: string[] = [];
+      let tree: TileNode | null = null;
+      for (let i = 0; i < views.length; i++) {
+        const view = views[i]!;
+        const rendered = renderPass(view);
+        if (i === 0) tree = rendered;
+        touched.push(...view.touched);
+      }
+      lastRenderTouched = touched;
+      // Fired once per render, not once per view: `tile.mount(X)` is a fact
+      // about the app's tree, which every view paints from, and firing it per
+      // view would run the reducer once for each host the app happens to be in.
+      syncMountedTiles(tree);
+    });
   };
-  // The full render pass, bracketed by `withRenderingApp` so render-time app
-  // resolution (theme tokens, icon lookup — the tree is still detached, so
-  // `resolveApp` cannot walk it) lands on this mount's app.
-  const renderPass = (): void => {
+  // One view's render pass. `render` brackets it with `withRenderingApp` so
+  // render-time app resolution (theme tokens, icon lookup — the tree is still
+  // detached, so `resolveApp` cannot walk it) lands on this mount's app.
+  // Returns the tree it painted, or null if it panicked.
+  const renderPass = (view: MountView): TileNode | null => {
+    const target = view.target;
     // Focus / caret snapshot — kept as a fallback for panic / reconcile-
     // bailout paths that swap DOM wholesale via `target.replaceChild` (or
     // route-error retry). On the reconcile happy path (#187 keyed diff +
@@ -1297,18 +1391,18 @@ export function mountCore(
     // Reset for this pass. The reconcile branch overwrites with the diff's
     // touched set; every other branch (full-render, panic recovery) leaves it
     // empty — those paths intentionally do not carry per-tile attribution.
-    lastRenderTouched = [];
+    view.touched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
-      if (currentTree && currentRoot) {
+      if (view.tree && view.root) {
         // Diff path: reuse unchanged tile DOM in place, rebuild only changed
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
         // differ from `currentRoot` if the root tile itself was rebuilt.
         try {
           const rec = reconcileTree({
-            oldNode: currentTree,
-            oldEl: currentRoot,
-            oldMap: currentMap,
+            oldNode: view.tree,
+            oldEl: view.root,
+            oldMap: view.map,
             newNode: renderedTree,
             newMap,
             ctx: tileCtx,
@@ -1316,7 +1410,7 @@ export function mountCore(
             diag,
           });
           dom = rec.el;
-          lastRenderTouched = rec.touched;
+          view.touched = rec.touched;
         } catch (reconcileErr) {
           // Reconcile itself broke — safety net: rebuild the whole tree and
           // swap wholesale, recording the panic so the failure is visible in
@@ -1330,15 +1424,15 @@ export function mountCore(
             location: "reconcile",
           });
           dom = fullRender(renderedTree);
-          target.replaceChild(dom, currentRoot);
+          target.replaceChild(dom, view.root);
         }
       } else {
         // Initial mount, or first render after a panic reset — no old tree
         // to diff against.
         dom = tileCtx.render(renderedTree);
-        if (currentRoot) {
-          target.replaceChild(dom, currentRoot);
-        } else if (options.hydrate && target.firstChild) {
+        if (view.root) {
+          target.replaceChild(dom, view.root);
+        } else if (view.hydrate && target.firstChild) {
           // §10.6.2: the SSR HTML is already in `target` (the host injected it
           // before calling `hydrate`). Replace it with the CSR-rendered tree
           // wholesale so we never end up with SSR + CSR DOM as siblings. True
@@ -1383,21 +1477,21 @@ export function mountCore(
       }
       // Panic path always swaps wholesale (never diffs against a possibly-
       // corrupt tree).
-      if (currentRoot) {
-        target.replaceChild(dom, currentRoot);
-      } else if (options.hydrate && target.firstChild) {
+      if (view.root) {
+        target.replaceChild(dom, view.root);
+      } else if (view.hydrate && target.firstChild) {
         target.replaceChildren(dom);
       } else {
         target.appendChild(dom);
       }
     }
-    currentRoot = dom;
+    view.root = dom;
     // On panic (either the primary render threw and no route.error recovered
     // it, or the recovery render also threw), abandon the diff baseline so the
     // next render starts from a clean full mount. Otherwise carry the fresh
     // tree + map forward as the next pass's `old` side.
-    currentTree = panicked ? null : renderedTree;
-    currentMap = newMap;
+    view.tree = panicked ? null : renderedTree;
+    view.map = newMap;
 
     // On the happy patch path element identity is preserved, so this `focus()`
     // degrades to a no-op — the browser cursor is already on the still-mounted
@@ -1445,22 +1539,27 @@ export function mountCore(
       }
     }
 
-    // tile.mount(X) / tile.unmount(X): walk the tree, diff against the previous
-    // render's set, fire the lifecycle reducer for each newly-present / newly-
-    // absent user tile (§7.1.6). The set is updated BEFORE the reducer fires so
-    // a re-render kicked off by the reducer sees the post-mount snapshot — that
-    // is what prevents mount events from re-firing every reducer cycle.
-    const nowMounted = renderedTree ? collectMountedTiles(renderedTree) : new Set<string>();
-    if (nowMounted.size > 0 || prevMountedTiles.size > 0) {
-      const toMount: string[] = [];
-      const toUnmount: string[] = [];
-      for (const n of nowMounted) if (!prevMountedTiles.has(n)) toMount.push(n);
-      for (const n of prevMountedTiles) if (!nowMounted.has(n)) toUnmount.push(n);
-      prevMountedTiles = nowMounted;
-      for (const n of toMount) fireLifecycle(`tile.mount(${JSON.stringify(n)})`);
-      for (const n of toUnmount) fireLifecycle(`tile.unmount(${JSON.stringify(n)})`);
-    }
+    return panicked ? null : renderedTree;
   };
+
+  /**
+   * tile.mount(X) / tile.unmount(X): walk the tree, diff against the previous
+   * render's set, fire the lifecycle reducer for each newly-present / newly-
+   * absent user tile (§7.1.6). The set is updated BEFORE the reducer fires so
+   * a re-render kicked off by the reducer sees the post-mount snapshot — that
+   * is what prevents mount events from re-firing every reducer cycle.
+   */
+  function syncMountedTiles(tree: TileNode | null): void {
+    const nowMounted = tree ? collectMountedTiles(tree) : new Set<string>();
+    if (nowMounted.size === 0 && prevMountedTiles.size === 0) return;
+    const toMount: string[] = [];
+    const toUnmount: string[] = [];
+    for (const n of nowMounted) if (!prevMountedTiles.has(n)) toMount.push(n);
+    for (const n of prevMountedTiles) if (!nowMounted.has(n)) toUnmount.push(n);
+    prevMountedTiles = nowMounted;
+    for (const n of toMount) fireLifecycle(`tile.mount(${JSON.stringify(n)})`);
+    for (const n of toUnmount) fireLifecycle(`tile.unmount(${JSON.stringify(n)})`);
+  }
 
   function fireLifecycle(name: string): void {
     for (const r of app.reducers) {
@@ -1957,18 +2056,30 @@ export function mountCore(
   }
 
   render();
+  /**
+   * Drop one view. The app itself — timers, router, host listeners, the effect
+   * dispatcher — outlives it as long as another view is painting; the last one
+   * out turns off the lights, and un-registers the shape so a later `mount`
+   * starts a fresh one.
+   */
+  function disposeView(view: MountView): void {
+    const at = views.indexOf(view);
+    if (at === -1) return;
+    views.splice(at, 1);
+    view.target.replaceChildren();
+    unregisterAppRoot(view.target, app);
+    if (views.length > 0) return;
+    disposed = true;
+    for (const h of anonTimers) clearInterval(h);
+    for (const h of namedTimers.values()) clearInterval(h);
+    namedTimers.clear();
+    routerUnsub?.();
+    for (const unsub of lifecycleUnsubs) unsub();
+    dispatcher.dispose();
+    mountedShapes.delete(app);
+  }
   return {
-    dispose: () => {
-      disposed = true;
-      for (const h of anonTimers) clearInterval(h);
-      for (const h of namedTimers.values()) clearInterval(h);
-      namedTimers.clear();
-      routerUnsub?.();
-      for (const unsub of lifecycleUnsubs) unsub();
-      target.replaceChildren();
-      unregisterAppRoot(target, app);
-      dispatcher.dispose();
-    },
+    dispose: () => disposeView(ownView),
     /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
     episodes: () => episode?.list() ?? [],
   };
