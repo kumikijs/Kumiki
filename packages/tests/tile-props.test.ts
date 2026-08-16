@@ -226,6 +226,13 @@ const BOTH_PATHS: Row[] = [
     claim: { style: { "border-radius": "999px" } },
   },
   {
+    // A kind that maps a prop itself keeps it: an icon's `size` sizes the SVG
+    // box, so the shared mapping must not also make it a font size.
+    name: "a kind that owns a prop is not given the general answer for it",
+    tile: 'icon(name="check") {size: "lg", color: "muted"}',
+    claim: { style: { "font-size": "", color: "#888" } },
+  },
+  {
     // The other branch of `{radius: if c then "pill" else ""}`. An empty token
     // has to write nothing: on the mount path a declaration with an empty value
     // REMOVES the property, taking the card's own corners with it, while the
