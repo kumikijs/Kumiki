@@ -515,13 +515,23 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index
       pos: ref.pos ?? slot.pos,
     });
   }
-  const ctx: Ctx = { kind: "slot-init", localBinds: new Set(), localTypes: new Map() };
+  const ctx: Ctx = {
+    kind: "slot-init",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+  };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);
 }
 
 function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const ctx: Ctx = { kind: "tile", localBinds: new Set(), localTypes: new Map() };
+  const ctx: Ctx = {
+    kind: "tile",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+  };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
     ctx.localBinds.add("$1");
@@ -645,12 +655,15 @@ type Ctx = {
   localTypes: Map<string, TypeExpr>;
   /**
    * Whether the runtime fills `$route` into the payload this expression is
-   * evaluated with. Set wherever there is a payload to speak of — a reducer
-   * body, and `app.init`, which has none. Left unset for a `fn` or a tile,
-   * which are not applied with a payload at all: `$route` there is a name that
-   * does not exist (E0103) rather than a bind read out of its scope (E0119).
+   * evaluated with. Required, so every scope has to answer it — the field was
+   * optional for one commit and `app.init`, which builds a reducer `Ctx`,
+   * silently went without.
+   *
+   * `no-payload` is a `fn`, a tile or a slot initializer: they are not applied
+   * with a payload at all, so `$route` there is a name that does not exist
+   * (E0103) rather than a bind read out of its scope (E0119).
    */
-  routeBind?: "bound" | "unbound";
+  routeBind: "bound" | "unbound" | "no-payload";
 };
 
 /**
@@ -1613,10 +1626,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // `$route` is not a name in a table — it is a payload field the runtime
       // fills in for some reducers and not others, so the reducer's own trigger
       // is what puts it in scope. Answered here rather than by seeding
-      // localBinds, so there is one place that decides. `routeBind` is unset
-      // outside a reducer, where the name means nothing at all and the
-      // undefined-name report below is the right one.
-      if (ctx.routeBind !== undefined && e.name === "$route") {
+      // localBinds, so there is one place that decides. Where there is no
+      // payload at all the name means nothing, and the undefined-name report
+      // below is the right one.
+      if (e.name === "$route" && ctx.routeBind !== "no-payload") {
         if (ctx.routeBind === "unbound") {
           errors.push({
             code: "E0119",
@@ -2649,6 +2662,7 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
     kind: "fn",
     localBinds: new Set(),
     localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
   for (const p of fn.params) ctx.localBinds.add(p.name);
@@ -2709,6 +2723,7 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
     checkExpr(eff.mapRequest, sym, errors, {
       kind: "slot-init", // treat as pure context (no slots, no fns)
       localBinds: new Set(["$1"]),
+      routeBind: "no-payload",
       localTypes: new Map(),
     });
 }
@@ -3132,6 +3147,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    routeBind: "no-payload",
   });
 }
 
