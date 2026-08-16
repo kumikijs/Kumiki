@@ -221,6 +221,19 @@ describe("one AppShape mounted into two hosts", () => {
     expect(readAll([b])).toEqual(["-:2"]);
   });
 
+  it("refuses to add a view that wants to hydrate", () => {
+    // A snapshot overlays a *fresh* state. This app's is already live, and the
+    // views painting it would silently jump to whatever the server had.
+    const app = makeCounter();
+    mount(app, freshRoot());
+    expect(() =>
+      mount(app, freshRoot(), {
+        hydrate: true,
+        bootstrapEpisode: { id: "e", trigger: { kind: "ssr.hydrate" }, steps: [] },
+      } as never),
+    ).toThrow(/already mounted/);
+  });
+
   it("delivers an imperative slot write to the element it was called on", () => {
     // The custom-element form of the same defect: `el.setSlot` goes through the
     // shape's `_setSlot`, which the second mount had overwritten.

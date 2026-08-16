@@ -144,8 +144,23 @@ describe("the server pass renders what the client renders", () => {
   it("resolves a responsive value to its base, which is all a server can know", () => {
     // `{base, md}` picks a breakpoint from `window.matchMedia` on the client.
     // There is no viewport on the server, so the base is what it emits — and
-    // the client agrees whenever no breakpoint matches.
+    // the client agrees on every viewport below the first declared breakpoint.
+    // This is the one place the two paths are allowed to differ, which is why
+    // it is asserted on the server alone rather than through the parity table.
     const node: TileNode = { kind: "row", children: [], props: { gap: { base: "sm", md: "xl" } } };
     expect(styleOf(serverElement(node)).gap).toBe("8px");
+  });
+
+  it("lets a card's own padding prop suppress the default even when it resolves to nothing", () => {
+    // Asking for padding is what turns the default off, and a responsive map
+    // with no base asks for it — the renderer reads the prop's presence, not
+    // its resolved value, and so does the server. Also not a parity case: at a
+    // wide enough viewport the client resolves the `md` arm and the server
+    // cannot.
+    const node: TileNode = { kind: "card", children: [], props: { pad: { md: "xl" } } };
+    // Read through a longhand: the CSSOM expands the `padding` shorthand, so
+    // the shorthand name is absent from a parsed declaration list either way.
+    expect(styleOf(serverElement(node))["padding-top"]).toBeUndefined();
+    expect(styleOf(serverElement({ kind: "card", children: [] }))["padding-top"]).toBe("16px");
   });
 });
