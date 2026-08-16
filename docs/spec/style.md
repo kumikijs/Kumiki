@@ -203,11 +203,14 @@ scroll(longList) {h: 400}
 
 ### 4.4.5 divider
 
-A horizontal line (`<hr>`). For separators:
+A rule (`<hr>`). For separators:
 
 ```kumiki
 column(A, divider(), B)
+row(A, divider() {orientation: "vertical"}, B)
 ```
+
+`orientation` takes `horizontal` (the default) or `vertical`; a vertical rule stretches to the height of the row it is in.
 
 ### 4.4.6 box
 

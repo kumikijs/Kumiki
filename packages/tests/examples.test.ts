@@ -6,7 +6,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, type KumikiError } from "@kumikijs/compiler";
+import { A11Y_CODES, compile, type KumikiError } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
 import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -71,7 +71,7 @@ function expectPassesStrictA11y(file: string): void {
     capabilities: resolveCapabilities(file),
     strictA11y: true,
   });
-  const a11y = result.kind === "fail" ? result.errors.filter((e) => e.code.startsWith("E07")) : [];
+  const a11y = result.kind === "fail" ? result.errors.filter((e) => A11Y_CODES.has(e.code)) : [];
   expect(fmtErrors(a11y)).toBe("");
 }
 

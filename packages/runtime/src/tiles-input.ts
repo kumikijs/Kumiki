@@ -22,7 +22,13 @@ import type {
   TileProps,
   TileRenderers,
 } from "./core.ts";
-import { _setPathHelper, ensureAnimationStyles, resolveApp, warnUnresolvedEvent } from "./core.ts";
+import {
+  _setPathHelper,
+  attrValue,
+  ensureAnimationStyles,
+  resolveApp,
+  warnUnresolvedEvent,
+} from "./core.ts";
 
 /** The app owning the mount tree `el` sits in; warns once when there is none. */
 function liveApp(el: Element): MountedApp | undefined {
@@ -279,8 +285,8 @@ function applyControlState(el: HTMLElement, props?: TileProps): void {
   if ("readOnly" in el) {
     (el as HTMLElement & { readOnly: boolean }).readOnly = props?.readonly === true;
   }
-  const auto = props?.auto_complete;
-  if (typeof auto === "string") el.setAttribute("autocomplete", auto);
+  const auto = attrValue(props?.auto_complete);
+  if (auto !== undefined) el.setAttribute("autocomplete", String(auto));
   else el.removeAttribute("autocomplete");
 }
 
@@ -290,17 +296,19 @@ function applyControlState(el: HTMLElement, props?: TileProps): void {
  * turns the spinner on and off rather than only ever on.
  *
  * `loading` means "this button's work is in flight": it disables the button
- * (forms.md: a loading button is not clickable), says so to assistive
- * technology, and puts a spinner in front of the label — in front, so the label
- * stays readable and the button keeps its accessible name.
+ * (forms.md: a loading button is not clickable), says so with `aria-busy`, and
+ * puts a spinner in front of the label. The spinner is hidden from assistive
+ * technology — a labelled one would join the button's accessible name through
+ * name-from-content and turn "Save" into "Loading Save", which is the one thing
+ * a busy button must not do to the name a user is listening for.
  */
 function applyButtonState(b: HTMLButtonElement, props?: TileProps): void {
   const loading = props?.loading === true;
   b.disabled = loading || props?.disabled === true;
   if (loading) b.setAttribute("aria-busy", "true");
   else b.removeAttribute("aria-busy");
-  const variant = props?.variant;
-  if (typeof variant === "string") b.dataset.kumikiVariant = variant;
+  const variant = attrValue(props?.variant);
+  if (variant !== undefined) b.dataset.kumikiVariant = String(variant);
   else delete b.dataset.kumikiVariant;
   const spinner = b.querySelector('[data-kumiki-tile="spinner"]');
   if (loading && !spinner) b.insertBefore(buttonSpinner(), b.firstChild);
@@ -326,8 +334,7 @@ function buttonSpinner(): HTMLElement {
   ensureAnimationStyles();
   const s = document.createElement("span");
   s.dataset.kumikiTile = "spinner";
-  s.setAttribute("role", "status");
-  s.setAttribute("aria-label", "Loading");
+  s.setAttribute("aria-hidden", "true");
   s.style.marginRight = "0.4em";
   return s;
 }

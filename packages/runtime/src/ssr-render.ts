@@ -8,40 +8,58 @@
 // targets.
 //
 // What it does share with the renderers is the prop-to-style mapping, imported
-// from `core.ts` as data (`containerStyleDecls` / `textStyleDecls`). `core.ts`
+// from `core.ts` as data (`propStyleDecls`, applied to every kind). `core.ts`
 // touches no DOM at module scope — `ssr.ts` already imports values from it —
 // and the alternative is a second copy of the mapping, which is exactly the
 // drift the parity test exists to catch.
 
 import type { StyleDecl, TileNode, TileProps } from "./core.ts";
-import { commonAttrDecls, containerStyleDecls, pickBaseValue, textStyleDecls } from "./core.ts";
+import { attrValue, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 
 /** The spinner a loading button carries, as the renderer builds it. */
 const BUTTON_SPINNER =
-  '<span data-kumiki-tile="spinner" role="status" aria-label="Loading" style="margin-right: 0.4em"></span>';
+  '<span data-kumiki-tile="spinner" aria-hidden="true" style="margin-right: 0.4em"></span>';
 
 /** What makes an `<hr>` vertical, as the renderer sets it. */
-const VERTICAL_DIVIDER_STYLE =
-  "align-self: stretch; width: 0; height: auto; border-top: none; border-left: 1px solid currentColor";
+const VERTICAL_DIVIDER_DECLS: StyleDecl[] = [
+  ["align-self", "stretch"],
+  ["width", "0"],
+  ["height", "auto"],
+  ["border-top", "none"],
+  ["border-left", "1px solid currentColor"],
+];
 
 /**
  * What a control's `disabled` / `readonly` / `auto-complete` serialise to. A
  * served form whose fields look enabled but are not is worse than one that
  * looks the way it will behave once the page hydrates.
  */
-function controlAttrs(props?: TileProps): Record<string, string | boolean | undefined> {
+/** `attrValue` where the attribute is a string, not a number. */
+function stringAttr(v: unknown): string | undefined {
+  const value = attrValue(v);
+  return value === undefined ? undefined : String(value);
+}
+
+function controlAttrs(
+  props: TileProps | undefined,
+  takesReadonly = false,
+): Record<string, string | boolean | undefined> {
   return {
     disabled: props?.disabled === true ? true : undefined,
-    readonly: props?.readonly === true ? true : undefined,
-    autocomplete: typeof props?.auto_complete === "string" ? props.auto_complete : undefined,
+    // Only where the element has the state to be in: a `<select>` and a
+    // checkbox have no `readOnly`, and the mount path skips them by asking the
+    // element. Serialising it anyway would put an attribute on the served page
+    // that hydration then takes away.
+    readonly: takesReadonly && props?.readonly === true ? true : undefined,
+    autocomplete: stringAttr(props?.auto_complete),
   };
 }
 
-/** A `width` / `height` attribute value, or nothing when the tile did not say. */
-function sizeAttr(v: unknown): string | undefined {
-  return typeof v === "number" || typeof v === "string" ? String(v) : undefined;
+/** `controlAttrs` for an `<input>` nested inside its own markup. */
+function controlAttrString(props?: TileProps): string {
+  return serializeAttrs(controlAttrs(props, true));
 }
 
 /**
@@ -106,6 +124,11 @@ function baseDecls(node: TileNode): StyleDecl[] {
     }
     case "overlay":
       return [["position", "relative"]];
+    case "divider":
+      // A vertical rule separates columns rather than rows: it takes its height
+      // from the row it is in and draws on its left edge, an `<hr>`'s own
+      // border being the horizontal one.
+      return node.props?.orientation === "vertical" ? VERTICAL_DIVIDER_DECLS : [];
     default:
       // A kind whose renderer paints nothing of its own. New kinds land here
       // by default, so a renderer that starts painting a base style diverges
@@ -132,15 +155,13 @@ function gridTracks(v: unknown): string | undefined {
  * narrower than the first declared breakpoint, and re-styles on hydration
  * otherwise.
  */
-function styleAttr(node: TileNode, propDecls: StyleDecl[]): string | undefined {
-  const decls = [...baseDecls(node), ...propDecls];
+function styleAttr(node: TileNode): string | undefined {
+  const decls = [
+    ...baseDecls(node),
+    ...propStyleDecls((node as { props?: TileProps }).props, pickBaseValue, node.kind),
+  ];
   if (decls.length === 0) return undefined;
   return decls.map(([k, v]) => `${k}: ${v}`).join("; ");
-}
-
-/** The style attribute of a container tile — base plus container props. */
-function containerStyle(node: TileNode & { props?: TileProps }): string | undefined {
-  return styleAttr(node, containerStyleDecls(node.props, pickBaseValue));
 }
 
 /**
@@ -152,11 +173,6 @@ function containerStyle(node: TileNode & { props?: TileProps }): string | undefi
 function tileIdOf(node: TileNode): string | undefined {
   const raw = (node as { id?: unknown }).id ?? (node as { props?: { id?: unknown } }).props?.id;
   return raw == null ? undefined : String(raw);
-}
-
-/** The style attribute of a text tile — text props only; no kind paints a base. */
-function textStyle(node: TileNode & { props?: TileProps }): string | undefined {
-  return styleAttr(node, textStyleDecls(node.props));
 }
 
 function escapeAttr(value: string): string {
@@ -201,7 +217,7 @@ function el(
   attrs: Record<string, string | number | boolean | undefined>,
   children: string,
 ): string {
-  const attrStr = serializeAttrs({ ...attrs, ...commonAttrs(node) });
+  const attrStr = serializeAttrs({ style: styleAttr(node), ...attrs, ...commonAttrs(node) });
   if (VOID_TAGS.has(tag)) return `<${tag}${attrStr}>`;
   return `<${tag}${attrStr}>${children}</${tag}>`;
 }
@@ -222,8 +238,8 @@ function renderChildren(children: TileNode[]): string {
  *
  * The output mirrors the live renderers: same outer element, same
  * `data-kumiki-*` attributes, and the same inline style — the kind's own
- * layout plus whatever its props map to (`containerStyleDecls` /
- * `textStyleDecls` in core, the very functions the renderers apply). The style
+ * layout plus whatever its props map to (`propStyleDecls` in core, the very
+ * mapping the mount path applies to every element). The style
  * is the load-bearing half: without it the first paint lays every flex
  * container out as a block and the page reflows on hydration, which is the
  * shift SSR exists to remove.
@@ -246,12 +262,7 @@ export function renderTileToString(node: TileNode): string {
     case "row":
     case "card":
     case "box":
-      return el(
-        node,
-        "div",
-        { "data-kumiki-tile": node.kind, style: containerStyle(node) },
-        renderChildren(node.children),
-      );
+      return el(node, "div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
     case "grid":
     case "stack":
     case "region":
@@ -259,26 +270,11 @@ export function renderTileToString(node: TileNode): string {
     case "panel":
     case "fieldset":
     case "overlay":
-      return el(
-        node,
-        "div",
-        { "data-kumiki-tile": node.kind, style: containerStyle(node) },
-        renderChildren(node.children),
-      );
+      return el(node, "div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
     case "heading":
-      return el(
-        node,
-        "h1",
-        { "data-kumiki-tile": "heading", style: textStyle(node) },
-        escapeText(node.text),
-      );
+      return el(node, "h1", { "data-kumiki-tile": "heading" }, escapeText(node.text));
     case "text":
-      return el(
-        node,
-        "span",
-        { "data-kumiki-tile": "text", style: textStyle(node) },
-        escapeText(node.text),
-      );
+      return el(node, "span", { "data-kumiki-tile": "text" }, escapeText(node.text));
     case "label":
       return el(
         node,
@@ -309,7 +305,7 @@ export function renderTileToString(node: TileNode): string {
           "data-kumiki-tile": "button",
           disabled: loading || node.props?.disabled === true,
           "aria-busy": loading ? "true" : undefined,
-          "data-kumiki-variant": typeof variant === "string" ? variant : undefined,
+          "data-kumiki-variant": attrValue(variant),
           id: tileIdOf(node),
         },
         `${loading ? BUTTON_SPINNER : ""}${escapeText(node.text)}`,
@@ -330,7 +326,7 @@ export function renderTileToString(node: TileNode): string {
           id: tileIdOf(node),
           accept: node.accept,
           multiple: node.multiple,
-          ...controlAttrs(node.props),
+          ...controlAttrs(node.props, true),
           "data-kumiki-tile": "input",
           "data-kumiki-bind": bind,
         },
@@ -348,7 +344,7 @@ export function renderTileToString(node: TileNode): string {
           rows: node.rows,
           placeholder: node.placeholder,
           id: tileIdOf(node),
-          ...controlAttrs(node.props),
+          ...controlAttrs(node.props, true),
           "data-kumiki-tile": "textarea",
           "data-kumiki-bind": bind,
         },
@@ -356,41 +352,37 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "check":
+      // The wrapping <label> is the element the mount path builds and the one
+      // the common props land on, so it is the element hydration has to meet.
       return el(
         node,
-        "input",
-        {
-          type: "checkbox",
-          checked: node.checked,
-          "data-kumiki-tile": "check",
-        },
-        "",
+        "label",
+        { "data-kumiki-tile": "check" },
+        `<input type="checkbox"${node.checked ? " checked" : ""}${controlAttrString(node.props)}>`,
       );
     case "switch":
       return el(
         node,
-        "input",
-        {
-          type: "checkbox",
-          role: "switch",
-          checked: node.checked,
-          "data-kumiki-tile": "switch",
-        },
-        "",
+        "label",
+        { "data-kumiki-tile": "switch", role: "switch" },
+        `<input type="checkbox"${node.checked ? " checked" : ""}${controlAttrString(node.props)}>`,
       );
-    case "radio":
+    case "radio": {
+      const label = typeof node.props?.label === "string" ? node.props.label : "";
+      const inner = serializeAttrs({
+        type: "radio",
+        name: node.group,
+        value: node.value === undefined ? undefined : String(node.value),
+        checked: node.selected,
+        ...controlAttrs(node.props, true),
+      });
       return el(
         node,
-        "input",
-        {
-          type: "radio",
-          name: node.group,
-          value: node.value === undefined ? undefined : String(node.value),
-          checked: node.selected,
-          "data-kumiki-tile": "radio",
-        },
-        "",
+        "label",
+        { "data-kumiki-tile": "radio" },
+        `<input${inner}>${label ? `<span>${escapeText(label)}</span>` : ""}`,
       );
+    }
     case "select": {
       const bind = node.bindPath
         ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
@@ -430,6 +422,7 @@ export function renderTileToString(node: TileNode): string {
           min: node.min,
           max: node.max,
           step: node.step,
+          ...controlAttrs(node.props, true),
           "data-kumiki-tile": "slider",
           "data-kumiki-bind": bind,
           id: tileIdOf(node),
@@ -472,8 +465,8 @@ export function renderTileToString(node: TileNode): string {
           alt: typeof node.props?.alt === "string" ? node.props.alt : undefined,
           // The box the image will occupy. Serving it is the whole point: an
           // image with no dimensions moves everything below it when it loads.
-          width: sizeAttr(node.props?.width),
-          height: sizeAttr(node.props?.height),
+          width: attrValue(node.props?.width),
+          height: attrValue(node.props?.height),
           loading:
             node.props?.loading === "lazy" || node.props?.loading === "eager"
               ? node.props.loading
@@ -489,34 +482,25 @@ export function renderTileToString(node: TileNode): string {
       // still empty and unsized until the path arrives, which does move what
       // follows it.
       //
-      // `size` is deliberately not a text style here: it sizes the SVG box, and
-      // the renderer pulls it out of the props before styling the span.
-      const rest: TileProps = { ...(node.props ?? {}) };
-      delete (rest as Record<string, unknown>).size;
+      // `size` sizes the SVG box; it also lands on the span as a `font-size`,
+      // on both paths, where it is inert against a sized `<svg>`.
       return el(
         node,
         "span",
-        {
-          "data-kumiki-tile": "icon",
-          "data-kumiki-icon-name": node.name,
-          style: styleAttr(node, textStyleDecls(rest)),
-        },
+        { "data-kumiki-tile": "icon", "data-kumiki-icon-name": node.name },
         "",
       );
     }
-    case "divider": {
-      const vertical = node.props?.orientation === "vertical";
+    case "divider":
       return el(
         node,
         "hr",
         {
           "data-kumiki-tile": "divider",
-          "aria-orientation": vertical ? "vertical" : undefined,
-          style: vertical ? VERTICAL_DIVIDER_STYLE : undefined,
+          "aria-orientation": node.props?.orientation === "vertical" ? "vertical" : undefined,
         },
         "",
       );
-    }
     case "code":
       return el(
         node,
@@ -540,7 +524,7 @@ export function renderTileToString(node: TileNode): string {
       return el(
         node,
         node.ordered ? "ol" : "ul",
-        { "data-kumiki-tile": "list", style: containerStyle(node) },
+        { "data-kumiki-tile": "list" },
         renderChildren(node.children),
       );
     case "list-item":
@@ -614,12 +598,11 @@ export function renderTileToString(node: TileNode): string {
           "data-kumiki-tile": "spinner",
           role: "status",
           "aria-label": "Loading",
-          style: styleAttr(node, []),
         },
         "",
       );
     case "skeleton":
-      return el(node, "div", { "data-kumiki-tile": "skeleton", style: styleAttr(node, []) }, "");
+      return el(node, "div", { "data-kumiki-tile": "skeleton" }, "");
     case "error":
       // Field-bound error messages depend on live refinement results — empty
       // on the server, the client renders the actual error on first render.

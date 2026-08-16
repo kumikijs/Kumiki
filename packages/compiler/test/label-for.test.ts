@@ -60,9 +60,31 @@ app P
     expect(codes(src)).not.toContain("E0705");
   });
 
+  it("reports the argument form too — it reaches the DOM the same way", () => {
+    expect(codes(program('column(label(text="Name", for="nope"))'))).toContain("E0705");
+  });
+
+  it("resolves against an id written as an argument or a prop, either way", () => {
+    const src = program('column(label(text="Name", for="name"), input(bind=draft) {id: "name"})');
+    expect(codes(src)).not.toContain("E0705");
+  });
+
   it("says nothing about a for that is not a literal", () => {
     const src = program('column(label(text="Name") {for: "row-" + draft})');
     expect(codes(src)).not.toContain("E0705");
+  });
+
+  it("reports a literal for against a computed id, and says so on purpose", () => {
+    // One literal name cannot address a control per row. The fix is to build
+    // the `for` the same way the id is built, which the check then skips.
+    const computed = program(
+      'column(label(text="Name") {for: "row-1"}, input(bind=draft) {id: "row-" + draft})',
+    );
+    expect(codes(computed)).toContain("E0705");
+    const both = program(
+      'column(label(text="Name") {for: "row-" + draft}, input(bind=draft) {id: "row-" + draft})',
+    );
+    expect(codes(both)).not.toContain("E0705");
   });
 
   it("stays quiet without the opt-in", () => {

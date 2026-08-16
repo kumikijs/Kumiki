@@ -1,14 +1,7 @@
-import type { Expr, TileExpr, UiEventKind } from "../ast.ts";
+import { type Expr, isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, UI_LIFTS } from "../ui-lifts.ts";
 import { type EvalCtx, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
-
-/**
- * The tile-expression kinds, as they appear in `TileArg.value`. An argument
- * holding one of these is a child tile rather than prop data; no `Expr` kind
- * shares a name with them.
- */
-const TILE_EXPR_KINDS = new Set(["TileCall", "TileFor", "TileWhen", "TileIf", "TileMatch"]);
 
 /**
  * Author-supplied `{key: expr}` on a tile-call's props block, as a JS
@@ -20,6 +13,31 @@ export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string
   const keyProp = t.props.find((p) => p.name === "key");
   if (!keyProp) return null;
   return `_s.show(${jsOfExpr(keyProp.value, ctx)})`;
+}
+
+/**
+ * Names that never become prop data, whichever way they are written.
+ *
+ * One predicate rather than one list per loop: the top-level props, the `el`
+ * payload and the named-argument fold all have to agree about what is not a
+ * prop, and three copies of the list is three places for them to stop agreeing.
+ * `forEl` adds the two the reducer payload alone excludes.
+ */
+function isNotPropData(tile: string, name: string, forEl = false): boolean {
+  if (HANDLER_NAMES.has(name)) return true;
+  // `key` is lifted to the TileNode's top level by `_wk` at the tile-call
+  // boundary; it must not also flow into `props` or `el`.
+  if (name === "key") return true;
+  // §3.8 link prefetch — the link tile lifts these into top-level fields, and
+  // their value space (a reducer name / an argument record) is not slot data.
+  if (tile === "link" && (name === "prefetch" || name === "prefetch-args")) return true;
+  // §4.3 style block — a CSS prop bag the runtime applies to `el.style`. It is
+  // not reducer data, and shipping it twice re-evaluates every `@token` ref.
+  if (forEl && name === "style") return true;
+  // An lvalue (`todos[i].done`), not a value: lowering it emits a read of the
+  // slot under a name nothing consults.
+  if (forEl && name === "bind") return true;
+  return false;
 }
 
 /** The ARIA a tile asked for: the `aria` map, plus each `aria-*` written on its own. */
@@ -90,13 +108,7 @@ export function propsFor(
       recordExplicit(p.name, p.value as Expr);
       continue;
     }
-    // §3.8 link prefetch — the link tile lifts these into top-level fields, so
-    // do not also echo them through `props` (the bare-ident `prefetch: foo`
-    // value would otherwise emit as a JS variable reference at codegen).
-    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
-    // `key` is lifted to the TileNode's top level by `_wk` at the tile-call
-    // boundary; it must not also flow into `props` or `el`.
-    if (p.name === "key") continue;
+    if (isNotPropData(t.name, p.name)) continue;
     if (collectAria(p.name, () => jsOfExpr(p.value, ctx), aria)) continue;
     entries.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
@@ -156,22 +168,13 @@ export function propsFor(
   // Build `el` from explicit {name: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
-    if (HANDLER_NAMES.has(p.name)) continue;
-    // §3.8 link prefetch — these are runtime-side fields, not slot data; their
-    // value space (reducer-name ident / argument record) doesn't belong in `el`.
-    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
-    // §4.3 style block — a CSS prop bag the runtime applies to el.style. It's
-    // not reducer data, and shipping it twice (top-level + el) re-evaluates
-    // every `@token` ref needlessly.
-    if (p.name === "style") continue;
-    // See the `key` note in the top-level props loop above.
-    if (p.name === "key") continue;
+    if (isNotPropData(t.name, p.name, true)) continue;
     if (p.name === "aria" || p.name.startsWith("aria-")) continue;
     elProps.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   // A named argument carries the same prop as the block form of the same name.
   // The spec writes the two interchangeably — `button(text="Log in",
-  // loading=loginPending)` in forms.md §5.4 next to `{variant: "ghost"}` in
+  // loading=loginPending)` in forms.md §5.2 next to `{variant: "ghost"}` in
   // §5.9 — so they have to arrive alike. Per-kind lowering lifts the arguments
   // each tile names (`text`, `src`, `type`, `bind`, …) into top-level TileNode
   // fields; every OTHER named argument used to be dropped here, which is how
@@ -188,15 +191,11 @@ export function propsFor(
   const written = new Set(t.props.map((p) => p.name));
   for (const a of t.args) {
     if (!a.name || written.has(a.name)) continue;
-    if (HANDLER_NAMES.has(a.name) || a.name === "key") continue;
-    // `bind` is an lvalue (`todos[i].done`), not a value; lowering it would
-    // emit a read of the slot under a name nothing consults.
-    if (a.name === "bind") continue;
-    if (t.name === "link" && (a.name === "prefetch" || a.name === "prefetch-args")) continue;
-    // Children arrive as arguments too (`modal(body=SomeTile)`). A tile is not
+    if (isNotPropData(t.name, a.name, true)) continue;
+    // Children arrive as arguments too (`card(header=Some(…))`). A tile is not
     // prop data, and lowering one here would build a second copy of its node.
-    if (TILE_EXPR_KINDS.has(a.value.kind)) continue;
-    const js = jsOfExpr(a.value as Expr, ctx);
+    if (isTileExpr(a.value)) continue;
+    const js = jsOfExpr(a.value, ctx);
     if (collectAria(a.name, () => js, aria)) continue;
     entries.push(`${jsProperty(a.name)}: ${js}`);
     elProps.push(`${jsProperty(a.name)}: ${js}`);

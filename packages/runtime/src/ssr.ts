@@ -37,6 +37,7 @@ import {
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
+  withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
 import { renderTileToString } from "./ssr-render.ts";
@@ -151,7 +152,9 @@ export async function renderToString(
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
 
-    const html = renderTileToString(pickRootTile(app, live));
+    // Inside the render bracket, so `@token` references resolve against this
+    // app's theme rather than the built-in fallbacks.
+    const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
     for (const [k, meta] of Object.entries(app.slots)) {

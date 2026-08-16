@@ -203,11 +203,14 @@ scroll(longList) {h: 400}
 
 ### 4.4.5 divider
 
-水平線（`<hr>`）。区切り用：
+区切り線（`<hr>`）：
 
 ```kumiki
 column(A, divider(), B)
+row(A, divider() {orientation: "vertical"}, B)
 ```
+
+`orientation` は `horizontal`（既定）または `vertical` を取る。垂直の線は入っている行の高さいっぱいに伸びる。
 
 ### 4.4.6 box
 

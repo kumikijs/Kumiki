@@ -39,7 +39,7 @@ function gridTracks(v: unknown): string | undefined {
 }
 
 /**
- * `orientation` on a divider (stdlib.md §2.3.2). A vertical rule separates
+ * `orientation` on a divider (style.md §4.4.5). A vertical rule separates
  * columns rather than rows: it takes its height from the row it sits in and
  * draws on its left edge, since an `<hr>`'s own border is the horizontal one.
  */

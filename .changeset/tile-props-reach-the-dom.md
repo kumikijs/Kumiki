@@ -22,16 +22,26 @@ the a11y check and rendered no `alt`. Every named argument now folds into the
 props — the generalization of the `id` fold that already existed for selector
 matching — so it reaches the renderers and the `$el` payload from either form.
 
-Now applied, client and server alike: `class` (added to the runtime's own
-classes, not over them), `aria` and a bare `aria-*`, `test-id` as
-`data-kumiki-test`, `role`, and the sizing shorthands `w` / `h` / `min-w` /
-`min-h` / `max-w` / `max-h` / `aspect` / `wrap` / `pad-x` / `pad-y` / `gap-x` /
-`gap-y` / `shadow`, plus a grid's `rows`. `radius` and `shadow` read the theme
-sections of those names rather than the spacing scale. Per tile: a `button`'s
-`loading` (disabled, `aria-busy`, a spinner in front of the label), `disabled`
-and `variant`; an `image`'s `width` / `height` / `loading`; a `link`'s
-`external`; a `divider`'s `orientation`. They are diffed on the reconcile's
-patch path too, so a `class` bound to a slot swaps rather than accumulates.
+Now applied to **every kind**, client and server alike, because the mapping
+moved out of the per-kind renderers and into the one pass that sees every
+element: `class` (added to the runtime's own classes, not over them), `aria` and
+a bare `aria-*`, `test-id` as `data-kumiki-test`, `role`, `id`, the style
+shorthands (`bg`, `color`, `pad`, `pad-x` / `pad-y`, `gap-x` / `gap-y`,
+`radius`, `shadow`, `size`, `weight`) and the sizing props (`w`, `h`, `min-w`,
+`min-h`, `max-w`, `max-h`, `aspect`, `wrap`) — so a `max-w` on an `image` and a
+`bg` on a `button`, both of which the spec's own examples write, now land. A
+kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size`, a
+`skeleton`'s `h`. `radius` and `shadow` read the theme sections of those names
+rather than the spacing scale, and the SSR pass resolves the theme at all,
+which it did not: a themed page was served with the unthemed defaults.
+
+Per tile: a `button`'s `loading` (disabled, `aria-busy`, a spinner in front of
+the label), `disabled` and `variant`; an `image`'s `width` / `height` /
+`loading`; a `link`'s `external`; a `divider`'s `orientation`; and the input
+family's `disabled` / `readonly` / `auto-complete`, which forms.md §5.3 calls
+their common props. All of it is diffed on the reconcile's patch path, so a
+`class` bound to a slot swaps rather than accumulates and a `max-w` that goes
+away leaves.
 
 **New diagnostic `E0705` (`a11y-label-for`)**, under `--strict-a11y`: a
 `label {for: "x"}` whose literal target matches no `id="x"` anywhere in the

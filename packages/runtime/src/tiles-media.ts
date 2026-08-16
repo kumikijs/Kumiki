@@ -1,6 +1,6 @@
 // Media tile renderers (#71): image and video.
 
-import type { TilePatchers, TileRenderers } from "./core.ts";
+import { attrValue, type TilePatchers, type TileRenderers } from "./core.ts";
 
 /** Read `{id: "..."}` from a tile's props (§1.6.2), when the tile kind doesn't lift `id` to a top-level field. */
 function propId(node: { props?: Record<string, unknown> }): string | undefined {
@@ -9,15 +9,15 @@ function propId(node: { props?: Record<string, unknown> }): string | undefined {
 }
 
 /**
- * `width` / `height` / `loading` on an `<img>` (stdlib.md §2.3.5). The first
+ * `width` / `height` / `loading` on an `<img>` (stdlib.md §2.3.3). The first
  * two are what reserve the box before the bytes arrive — an image without them
  * moves everything below it when it loads, which is the layout shift the SSR
  * path exists to avoid. Shared by create and patch.
  */
 function applyImageBox(img: HTMLImageElement, props?: Record<string, unknown>): void {
   for (const name of ["width", "height"] as const) {
-    const v = props?.[name];
-    if (typeof v === "number" || typeof v === "string") img.setAttribute(name, String(v));
+    const v = attrValue(props?.[name]);
+    if (v !== undefined) img.setAttribute(name, String(v));
     else img.removeAttribute(name);
   }
   const loading = props?.loading;

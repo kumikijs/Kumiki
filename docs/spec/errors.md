@@ -711,9 +711,11 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 A `label {for: "<x>"}` whose literal target matches no `id="<x>"` / `{id: "<x>"}` anywhere in the program. Such a label labels nothing: clicking it focuses no control, and a screen reader announces the field as unnamed — while the source reads as if the association were made.
 
-Only literals are resolved, on both sides. An id built at runtime (`{id: "row-" + t.id}`) is not part of the domain, and a `for` that is itself an expression is never looked up — the same literal-only discipline [E0704](#e0704-unknown-icon) applies to icon names.
+Only literals are resolved, on both sides. A `for` that is itself an expression is never looked up, and an id built at runtime (`{id: "row-" + t.id}`) is not part of the domain — the same literal-only discipline [E0704](#e0704-unknown-icon) applies to icon names.
 
-**Fix**: Give the control the id the label names, or correct the name. See [Forms](./forms.md).
+That second half has a consequence worth stating: a **literal** `for` against a **computed** id is reported. It is the right report — one literal name cannot address a control per row — but the fix is not "add an id".
+
+**Fix**: Give the control the id the label names, or correct the name. Where the id is built per row, build the `for` the same way (`label(text="Name") {for: "row-" + t.id}`) — a computed `for` is not looked up, because the pair is undecidable at check time. See [Forms](./forms.md).
 
 Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNames })`.
 

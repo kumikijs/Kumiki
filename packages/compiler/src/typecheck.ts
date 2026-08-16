@@ -64,7 +64,13 @@ export type KumikiError = {
   severity?: "error" | "warning";
 };
 
-const A11Y_CODES = new Set(["E0701", "E0702", "E0703", "E0705"]);
+/**
+ * The accessibility band, which `--strict-a11y` turns on. Exported so a caller
+ * that wants "did this fail a11y?" asks the same set the filter uses, rather
+ * than matching the `E07` prefix — that prefix also covers strict-icons and the
+ * testing-DSL invariants.
+ */
+export const A11Y_CODES = new Set(["E0701", "E0702", "E0703", "E0705"]);
 
 // `UI_EVENT_TILE_KINDS` is the W0212 gate, derived from the shared
 // `UI_LIFTS` table in `ui-lifts.ts` so codegen's handler-emission gate and
@@ -783,8 +789,11 @@ function checkA11y(
   if (t.name === "label") {
     // A `for` that names nothing is a label that labels nothing: clicking it
     // focuses no control, and a screen reader announces the field unnamed.
-    // Only a literal is resolvable — see `collectElementIds`.
-    const forProp = t.props.find((p) => p.name === "for")?.value;
+    // Read from both spellings, the same two `collectElementIds` gathers ids
+    // from — a `for` written as an argument reaches the DOM exactly as the
+    // block form does, so a check that saw only one would bless the other.
+    // Only a literal is resolvable; see `collectElementIds`.
+    const forProp = writtenValue(t, "for");
     if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
       errors.push({
         code: "E0705",
@@ -1262,10 +1271,24 @@ function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
  * or `id="x"`. This is the domain `E0705` resolves a `label {for: …}` against.
  *
  * An id built at runtime (`{id: "todo-" + t.id}`) is not in it, and the check
- * only ever looks up a literal `for`, so the pair that cannot be decided —
- * computed id, computed `for` — is the pair neither side reaches. The same
- * literal-only discipline `E0704` applies to icon names.
+ * only ever looks up a literal `for`. A computed `for` is therefore never
+ * reported; a literal one against a computed id is, which is the right answer —
+ * one literal name cannot address a control per row — and `errors.md` says so
+ * along with the fix. The same literal-only discipline `E0704` applies to icon
+ * names.
  */
+/**
+ * A value a tile-call was given under `name`, in either form it accepts: the
+ * props block (`{for: "x"}`) or a named argument (`for="x"`). The block form
+ * wins, matching what codegen emits when a tile writes both.
+ */
+function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
+  const fromProp = t.props.find((p) => p.name === name)?.value;
+  if (fromProp !== undefined) return fromProp;
+  const fromArg = t.args.find((a) => a.name === name)?.value;
+  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
+}
+
 function collectElementIds(expr: TileExpr, out: Set<string>): void {
   switch (expr.kind) {
     case "TileFor":
@@ -1280,11 +1303,8 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
       for (const arm of expr.arms) collectElementIds(arm.body, out);
       return;
     case "TileCall": {
-      const fromProp = expr.props.find((p) => p.name === "id")?.value;
-      if (fromProp?.kind === "Str") out.add(fromProp.value);
-      const fromArg = expr.args.find((a) => a.name === "id")?.value;
-      if (fromArg !== undefined && !isTileExpr(fromArg) && fromArg.kind === "Str")
-        out.add(fromArg.value);
+      const id = writtenValue(expr, "id");
+      if (id?.kind === "Str") out.add(id.value);
       for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;
     }

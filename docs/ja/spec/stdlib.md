@@ -309,6 +309,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `icon` | アイコン | `name`, `size` |
 | `video` | 動画 | `src`, `controls`, `autoplay` |
 
+`image` の `width` / `height` は属性として書かれる——画像が到着する前に領域を確保するのはこれである。`loading` は `lazy` または `eager` を取る。
+
 ### 2.3.4 入力要素
 
 | 要素 | 役割 | 主な props |
@@ -322,11 +324,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
 | `switch` | トグル | `value`, `onClick`, `onChange` |
 
-`button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
-
-`link` の `external` はリンクを新しい閲覧文脈で開き（`target="_blank"` と、伴わなければならない `rel="noopener noreferrer"`）、ルータではなくブラウザに委ねる。
-
-`image` の `width` / `height` は属性として書かれる——画像が到着する前に領域を確保するのはこれである。`loading` は `lazy` または `eager` を取る。
+`button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く（[フォーム §5.8](./forms.md#_5-8-サブミット中の-ui)）。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
 
 ### 2.3.5 フォーム
 
@@ -386,15 +384,17 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | prop | 型 | 何になるか |
 |---|---|---|
 | `class` | `Text` | class トークン。ランタイム自身が付ける class に**追加**される |
-| `style` | `Map(Text, Text)` | インラインスタイル宣言。キーが CSS プロパティ名（最小限の使用を推奨） |
+| `style` | `Map(Text, Text)` | インラインスタイル宣言。キーが CSS プロパティ名。略記のあとに適用されるので競合時はこちらが勝つ（最小限の使用を推奨） |
 | `aria` | `Map(Text, Text)` | エントリごとに `aria-*` 属性。すでに `aria-…` で始まるキーは二重に付けない |
 | `key` | `Text` | レンダーをまたいだ tile の同一性。props から引き上げられ、属性にはならない |
-| `test-id` | `Text` | `data-kumiki-test` 属性（[テスト §8.8](./testing.md#_8-8-統合テストブラウザ騆動)） |
+| `test-id` | `Text` | `data-kumiki-test` 属性（[テスト §8.8](./testing.md#_8-8-統合テストブラウザ駆動)） |
 | `id` | `Text` | 要素の `id`。reducer セレクタの `#id` 部分でもある（[§1.6.2](./language.md#_1-6-2-セレクタ)） |
 | `role` | `Text` | `role` 属性。tile の種別が前提とする値を上書きする |
 | `aria-*` | `Text` | その ARIA 属性。`aria` マップを介さず単体で書く形 |
 
-`class` / `style` は [スタイル §4.1](./style.md#_4-1-方針) が述べる逃げ道であり、すべての種別に適用される——ランタイムはこれらを種別ごとのレンダラの外側で書くため、ホストが登録した tile（§10.3.10）にも適用される。
+`class` / `style` は [スタイル §4.1](./style.md#_4-1-方針) が述べる逃げ道である。上記はすべて**どの種別にも**適用され、スタイルの略記（[§4.3.1](./style.md#_4-3-1-短縮プロパティ)）とサイズの props（[§4.4.7](./style.md#_4-4-7-サイズ)）も同様である——ランタイムはこれらを種別ごとのレンダラの外側で書くため、`image` の `max-w` も `button` の `bg` も届き、ホストが登録した tile（§10.3.10）にも適用される。
+
+その prop を自分で写像する種別はそちらが優先する：`spinner` と `icon` の `size` はタイポグラフィトークンではなくそのものの大きさを選び、`skeleton` の `h` はプレースホルダの高さである。
 
 両方のレンダリング経路がこれらを書く——マウントされた要素が持つものは、配信されたページも持つ。例外は class を介す層（`transition`、`hover:` / `focus:` / `active:` ブロック、`motion`）で、これらは注入 CSS でありハイドレーション後にのみ存在する。
 

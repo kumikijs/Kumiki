@@ -20,7 +20,7 @@ function isExternal(props?: TileProps): boolean {
 }
 
 /**
- * `external` on a link (stdlib.md §2.3.3). It opens in a new browsing context,
+ * `external` on a link (stdlib.md §2.3.2). It opens in a new browsing context,
  * and `rel` goes with it: without `noopener` the page that opens gets a handle
  * on this one through `window.opener`.
  */

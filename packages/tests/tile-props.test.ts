@@ -174,6 +174,41 @@ const BOTH_PATHS: Row[] = [
     claim: { style: { "border-radius": "8px" } },
   },
   {
+    name: "min-h and a false wrap are declarations too",
+    tile: 'row(text("x")) {min-h: 40, wrap: false}',
+    claim: { style: { "min-height": "40px", "flex-wrap": "nowrap" } },
+  },
+  {
+    name: "radius takes the whole scale, and a value outside it passes through",
+    tile: 'box(text("x")) {radius: "pill"}',
+    claim: { style: { "border-radius": "999px" } },
+  },
+  {
+    name: "a token the scale does not name is CSS already",
+    tile: 'box(text("x")) {radius: "50%"}',
+    claim: { style: { "border-radius": "50%" } },
+  },
+  {
+    name: "shadow none is none",
+    tile: 'card(text("x")) {shadow: "none"}',
+    claim: { style: { "box-shadow": "none" } },
+  },
+  {
+    name: "loading written as an argument is the same button",
+    tile: 'button(text="go", loading=true)',
+    claim: { attrs: { disabled: "", "aria-busy": "true" } },
+  },
+  {
+    name: "a bare aria-label outranks the same key in the aria map",
+    tile: 'region(text("x")) {aria: {label: "from the map"}, aria-label: "written on its own"}',
+    claim: { attrs: { "aria-label": "written on its own" } },
+  },
+  {
+    name: "an aria that is not a map writes no attribute at all",
+    tile: 'text("z") {aria: "hi"}',
+    claim: { attrs: { "aria-0": null, "aria-1": null } },
+  },
+  {
     name: "grid rows mirror grid cols",
     tile: 'grid(text("x")) {cols: 2, rows: 3}',
     claim: {
@@ -198,9 +233,11 @@ const BOTH_PATHS: Row[] = [
     claim: { attrs: { disabled: "", "aria-busy": "true" } },
   },
   {
-    name: "a loading button carries a spinner",
+    // Hidden from assistive technology: a labelled spinner would join the
+    // button's accessible name and make it "Loading go".
+    name: "a loading button carries a spinner, and it is not part of the name",
     tile: 'button(text="go") {loading: true}',
-    claim: { at: '[data-kumiki-tile="spinner"]', attrs: { role: "status" } },
+    claim: { at: '[data-kumiki-tile="spinner"]', attrs: { "aria-hidden": "true", role: null } },
   },
   {
     name: "variant is a selector hook",
@@ -268,6 +305,92 @@ const CLIENT_ONLY: Row[] = [
     claim: { attrs: { class: "kumiki-anim kumiki-anim-fade kumiki-anim-slow" } },
   },
 ];
+
+/**
+ * Every prop that can go away, going away.
+ *
+ * The create path and the patch path are different code, and only the patch
+ * path can be wrong about *removal* — a prop that stops being written has to
+ * take its attribute or declaration with it. `BOUND_APP` above moves props from
+ * one value to another; this moves them to absent.
+ */
+const REMOVAL_APP = `
+slot set : Bool = true
+
+reducer drop on=ui.click(Flip) do= set := !set
+
+tile Flip  = button(text="flip")
+tile Probe = column(
+               Flip,
+               button(text="go") {variant: if set then "ghost" else ""},
+               image(src="/a.png", alt="A cat") {width: if set then 120 else ""},
+               divider() {orientation: if set then "vertical" else "horizontal"},
+               link(to="/next", text="next") {external: set},
+               grid(text("g")) {cols: 2, rows: if set then 3 else ""},
+               text("t") {class: if set then "lit" else "", test-id: if set then "t" else "",
+                          role: if set then "note" else "", max-w: if set then 400 else ""},
+               input(bind=draft) {disabled: set, auto-complete: if set then "off" else ""})
+`;
+
+describe("a prop that goes away takes its mark with it (#251)", () => {
+  it("removes what the previous render wrote", async () => {
+    const app = await loadSource(
+      `slot draft : Text = ""
+${REMOVAL_APP}
+app P
+  caps   = []
+  routes = {"/" -> Probe, "/404" -> Probe}
+  init   = []
+`,
+    );
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    mount(app, target);
+    const root = target.firstElementChild as HTMLElement;
+    const at = (sel: string): HTMLElement => root.querySelector(sel) as HTMLElement;
+    const go = root.querySelectorAll('[data-kumiki-tile="button"]')[1] as HTMLElement;
+    const img = at('[data-kumiki-tile="image"]');
+    const hr = at('[data-kumiki-tile="divider"]');
+    const a = at('[data-kumiki-tile="link"]');
+    const grid = at('[data-kumiki-tile="grid"]');
+    // The grid holds a text tile of its own, so take the marked one: the last.
+    const texts = root.querySelectorAll('[data-kumiki-tile="text"]');
+    const text = texts[texts.length - 1] as HTMLElement;
+    const input = at('[data-kumiki-tile="input"]') as HTMLInputElement;
+
+    expect(go.getAttribute("data-kumiki-variant")).toBe("ghost");
+    expect(img.getAttribute("width")).toBe("120");
+    expect(hr.getAttribute("aria-orientation")).toBe("vertical");
+    expect(a.getAttribute("target")).toBe("_blank");
+    expect(grid.style.getPropertyValue("grid-template-rows")).toBe("repeat(3, 1fr)");
+    expect(text.getAttribute("class")).toBe("lit");
+    expect(text.getAttribute("data-kumiki-test")).toBe("t");
+    expect(text.getAttribute("role")).toBe("note");
+    expect(text.style.getPropertyValue("max-width")).toBe("400px");
+    expect(input.disabled).toBe(true);
+    expect(input.getAttribute("autocomplete")).toBe("off");
+
+    (root.querySelector('[data-kumiki-tile="button"]') as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Every element was reused: this is the patch path, not a rebuild.
+    expect(root.querySelectorAll('[data-kumiki-tile="button"]')[1]).toBe(go);
+    const after = root.querySelectorAll('[data-kumiki-tile="text"]');
+    expect(after[after.length - 1]).toBe(text);
+    expect(go.getAttribute("data-kumiki-variant")).toBe(null);
+    expect(img.getAttribute("width")).toBe(null);
+    expect(hr.getAttribute("aria-orientation")).toBe(null);
+    expect(a.getAttribute("target")).toBe(null);
+    expect(a.getAttribute("rel")).toBe(null);
+    expect(grid.style.getPropertyValue("grid-template-rows")).toBe("");
+    expect(text.getAttribute("class")).toBe("");
+    expect(text.getAttribute("data-kumiki-test")).toBe(null);
+    expect(text.getAttribute("role")).toBe(null);
+    expect(text.style.getPropertyValue("max-width")).toBe("");
+    expect(input.disabled).toBe(false);
+    expect(input.getAttribute("autocomplete")).toBe(null);
+  });
+});
 
 /**
  * A tile whose common props are bound to a slot, plus the button that flips it.
