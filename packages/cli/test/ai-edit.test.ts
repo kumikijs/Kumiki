@@ -334,6 +334,33 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("repairs a diagnostic that does not point at the name it quotes (E0211)", () => {
+    // E0211 reports at the start of the selector and names the tile inside it,
+    // so there is nothing to measure from and the line is the only handle. This
+    // is the whole reason a name suggestion has a line-anchored form at all: a
+    // repair that insisted on writing at the reported column would find
+    // `ui.click(` there, decline, and take the plan down with it.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-selector-"));
+    const file = join(dir, "selector.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+reducer inc on=ui.click(Buton) do= n := n + 1
+tile Button = button(text="+")
+tile App = column(Button, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(1);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("on=ui.click(Button)");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("names what the gate saw when a diagnostic it cannot repair simply moved", () => {
     // The gate reads a diagnostic as `code@line:col`, so an unrepairable one to
     // the right of a repair that lands looks introduced. Ordering cannot reach

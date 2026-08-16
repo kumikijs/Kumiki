@@ -137,8 +137,11 @@ function identifierAt(store: Store, pos: Pos): string | null {
 }
 
 /**
- * Where line `line` (1-based) starts and where its content ends, as offsets
- * into `text`. `end` excludes the terminator, including a `\r` before it.
+ * Where line `line` (1-based) starts and where it ends, as offsets into `text`.
+ * `end` is the offset of the terminator, so on a CRLF file the slice
+ * `[start, end)` keeps the trailing `\r`. Neither consumer minds: a `\b`-search
+ * is unaffected by it (`\r` is not a word character), and no name a repair
+ * writes can contain one.
  *
  * Everything that edits a line goes through this rather than
  * `split(/\r?\n/).join("\n")`, which rewrites every CRLF in the file to LF —
@@ -154,9 +157,7 @@ function lineSpan(text: string, line: number): { start: number; end: number } | 
   }
   if (start > text.length) return null;
   const nl = text.indexOf("\n", start);
-  let end = nl === -1 ? text.length : nl;
-  if (end > start && text[end - 1] === "\r") end -= 1;
-  return { start, end };
+  return { start, end: nl === -1 ? text.length : nl };
 }
 
 /**
