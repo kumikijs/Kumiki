@@ -65,14 +65,15 @@ export function parseEpisodeLogText(raw: string): unknown[] {
 /** Thrown when a `kumiki.caps.json` exists but is malformed. */
 export class CapabilityManifestError extends Error {}
 
+/**
+ * The outcome of one manifest search. A union rather than a record with a
+ * nullable field, so "no manifest, but here are some capabilities" is not a
+ * value anything can construct or has to consider.
+ */
 export type CapabilityLookup = {
-  /** Names registered by the manifest that was found; `[]` when there was none. */
-  capabilities: string[];
-  /** The manifest the names came from, or `null` when none was found. */
-  manifestPath: string | null;
   /** The directories consulted, nearest first — what a diagnostic reports. */
   searched: string[];
-};
+} & ({ manifestPath: string; capabilities: string[] } | { manifestPath: null; capabilities: [] });
 
 /** Where the search stops: a project root has a `package.json`. */
 function isProjectRoot(dir: string): boolean {
@@ -82,8 +83,13 @@ function isProjectRoot(dir: string): boolean {
 /**
  * Resolve project-registered capabilities for a `.kumiki` file, searching its
  * own directory and then each parent up to (and including) the project root —
- * the directory named by `root`, or the nearest one holding a `package.json`,
- * or the filesystem root. The nearest manifest wins; the rest are not read.
+ * the nearest directory holding a `package.json`, or the filesystem root when
+ * there is none. The nearest manifest wins; the rest are not read.
+ *
+ * There is deliberately no way to pass a different root. Every tool has to
+ * agree about one file: `kumiki dev` serves from the `.kumiki` file's own
+ * directory, so a root taken from the host's configuration would have made the
+ * dev server read a different manifest than `kumiki check` reads.
  *
  * The walk exists because the manifest registers capabilities for a *project*:
  * a Vite app keeps its sources in `src/` and its config at the root, and a
@@ -94,11 +100,7 @@ function isProjectRoot(dir: string): boolean {
  * path exists but is malformed — a broken manifest is never silently skipped
  * in favour of one further up.
  */
-export function resolveCapabilityManifest(
-  kumikiFilePath: string,
-  opts: { root?: string } = {},
-): CapabilityLookup {
-  const stopAt = opts.root ? resolve(opts.root) : null;
+export function resolveCapabilityManifest(kumikiFilePath: string): CapabilityLookup {
   const searched: string[] = [];
   let dir = dirname(resolve(kumikiFilePath));
   for (;;) {
@@ -108,16 +110,28 @@ export function resolveCapabilityManifest(
       return { capabilities: readManifest(manifestPath), manifestPath, searched };
     }
     const parent = dirname(dir);
-    const atStop = stopAt ? dir === stopAt : isProjectRoot(dir);
-    if (atStop || parent === dir) return { capabilities: [], manifestPath: null, searched };
+    // `parent === dir` is the filesystem root: a `.kumiki` outside any project
+    // still terminates.
+    if (isProjectRoot(dir) || parent === dir) {
+      return { capabilities: [], manifestPath: null, searched };
+    }
     dir = parent;
   }
 }
 
 function readManifest(manifestPath: string): string[] {
+  // Read and parse are separate so an unreadable file (a directory of that
+  // name, a permission error, a delete between the check and the read) is not
+  // reported as invalid JSON.
+  let text: string;
+  try {
+    text = readFileSync(manifestPath, "utf8");
+  } catch (e) {
+    throw new CapabilityManifestError(`${manifestPath}: cannot read — ${(e as Error).message}`);
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+    raw = JSON.parse(text);
   } catch (e) {
     throw new CapabilityManifestError(`${manifestPath}: invalid JSON — ${(e as Error).message}`);
   }
@@ -133,9 +147,9 @@ function readManifest(manifestPath: string): string[] {
  * toolchain would read.
  */
 export function describeCapabilitySearch(lookup: CapabilityLookup): string {
-  return lookup.manifestPath
-    ? `registered capabilities come from ${lookup.manifestPath}`
-    : `no kumiki.caps.json found (searched: ${lookup.searched.join(", ")})`;
+  return lookup.manifestPath === null
+    ? `no kumiki.caps.json found (searched: ${lookup.searched.join(", ")})`
+    : `registered capabilities come from ${lookup.manifestPath}`;
 }
 
 /**
@@ -143,11 +157,8 @@ export function describeCapabilitySearch(lookup: CapabilityLookup): string {
  * resolveCapabilityManifest} without the provenance. Pass the result as
  * `compile(src, { capabilities })` / `check(program, { capabilities })`.
  */
-export function resolveCapabilities(
-  kumikiFilePath: string,
-  opts: { root?: string } = {},
-): string[] {
-  return resolveCapabilityManifest(kumikiFilePath, opts).capabilities;
+export function resolveCapabilities(kumikiFilePath: string): string[] {
+  return resolveCapabilityManifest(kumikiFilePath).capabilities;
 }
 
 /**

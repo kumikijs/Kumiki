@@ -24,9 +24,9 @@ export function capsFor(inputPath: string): CapabilityLookup {
 }
 
 /**
- * Print where the accepted capability names came from, when a diagnostic says
- * one of them was not accepted. Silent otherwise — the provenance is only
- * interesting to an author who is looking for the manifest.
+ * Print where the accepted capability names came from, when a diagnostic says a
+ * name in `app.caps` was not among them. Silent otherwise — the provenance is
+ * what turns "unknown capability" into a file to edit.
  */
 export function reportCapabilitySearch(diagnostics: KumikiError[], caps: CapabilityLookup): void {
   if (!diagnostics.some((d) => d.code === "E0302")) return;

@@ -486,7 +486,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 各エントリは `group.action` 形式（小文字・ドット区切り）の capability 名で、裸の文字列でも `description` を持つオブジェクトでもよい。登録された名前は `app.caps` で受理され、それに紐づく effect（`effect track cap=telemetry.track …`）は emit 可能になり、capability 境界で dispatch される — 標準 effect と全く同様に scenario でモックできる。標準集合に既にある名前は再宣言してはならない。
 
-**マニフェストを探す場所。** マニフェストは*プロジェクト*に対して capability を登録するものなので、`.kumiki` ファイルのあるディレクトリから 1 階層ずつ上へ、プロジェクトルート（最も近い `package.json` を持つディレクトリ。ツールがルートを明示した場合はそれ、いずれも無ければファイルシステムのルート）まで含めて探索する。読まれるのは**最も近い**マニフェスト 1 つだけで、それより上は参照しない。探索経路上に存在するが壊れているマニフェストは、そのファイル名を挙げたエラーになる — 黙って上のマニフェストへ落ちることはない。それでも `app.caps` の名前が未登録なら [E0302](./errors.md#e0302-unknown-capability) が報告され、読んだマニフェスト、または探索したディレクトリを併せて示す。
+**マニフェストを探す場所。** マニフェストは*プロジェクト*に対して capability を登録するものなので、`.kumiki` ファイルのあるディレクトリから 1 階層ずつ上へ、プロジェクトルート（最も近い `package.json` を持つディレクトリ。無ければファイルシステムのルート）まで含めて探索する。この上限はどのツールでも同じで、ホスト側のプロジェクトルート（Vite の `root`。`kumiki dev` では `.kumiki` ファイル自身のディレクトリ）で狭められることはない — 1 つのファイルは、どのツールが読んでも 1 つのマニフェストに解決されなければならない。読まれるのは**最も近い**マニフェスト 1 つだけで、それより上は参照しない。探索経路上に存在するが壊れているマニフェストは、そのファイル名を挙げたエラーになる — 黙って上のマニフェストへ落ちることはない。それでも `app.caps` の名前が未登録なら [E0302](./errors.md#e0302-unknown-capability) が報告され、`kumiki check` / `kumiki build` と Vite プラグインは読んだマニフェスト、または探索したディレクトリを併せて示す。
 
 これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
 

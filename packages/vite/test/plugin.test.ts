@@ -194,7 +194,12 @@ describe("vite-plugin-kumiki", () => {
     expect(w.message).toContain("W0212");
   });
 
-  it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", async () => {
+  // Runs a whole TypeScript program over the generated file, which is far
+  // heavier than the rest of this suite and past Vitest's 5 s default when the
+  // machine is loaded.
+  it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", {
+    timeout: 30_000,
+  }, async () => {
     const dir = mkdtempSync(join(TMP, "types-"));
     const file = join(dir, "app.kumiki");
     // A slot named the way Kumiki allows and TypeScript does not, next to a

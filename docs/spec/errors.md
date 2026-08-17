@@ -616,7 +616,7 @@ An entry in `app.caps` is neither a standard capability ([Standard Capabilities]
 
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
-**Fix**: Use a standard capability, correct the spelling, or register the custom capability in a `kumiki.caps.json` — beside the `.kumiki` file or anywhere up to the project root. The report names the manifest that was read, or the directories searched when none was found. See [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities).
+**Fix**: Use a standard capability, correct the spelling, or register the custom capability in a `kumiki.caps.json` — beside the `.kumiki` file or anywhere up to the project root. `kumiki check`, `kumiki build` and the Vite plugin name the manifest that was read, or the directories searched when none was found. See [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities).
 
 ### E0303 `invalid-cancel-target`
 

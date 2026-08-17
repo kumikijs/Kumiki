@@ -31,9 +31,11 @@ const EPISODE_ENDPOINT = "/__kumiki/episode";
  * Programmatic entry — used by tests. Returns the running server plus the
  * resolved URL so the test can probe it without parsing stdout.
  *
- * Capability resolution lives in `@kumikijs/vite` (it reads the target's
- * sibling `kumiki.caps.json`), so the dev server doesn't take a capabilities
- * parameter — passing one would duplicate the work the plugin already does.
+ * Capability resolution lives in `@kumikijs/vite` (it searches for a
+ * `kumiki.caps.json` from the target's own directory up to the project root,
+ * as `kumiki check` does — deliberately not bounded by the root below), so the
+ * dev server doesn't take a capabilities parameter: passing one would
+ * duplicate the work the plugin already does.
  */
 export async function startDevServer(
   kumikiPath: string,

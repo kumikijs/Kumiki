@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { type CompileResult, compile, generateDts, LexError, ParseError } from "@kumikijs/compiler";
 import {
   type CapabilityLookup,
+  CapabilityManifestError,
   describeCapabilitySearch,
   nodeRuntimeBundleReader,
   resolveBuiltinIcons,
@@ -28,18 +29,17 @@ export type KumikiPluginOptions = {
    *
    * Turning this on duplicates the runtime as soon as anything else imports
    * it, which the documented way to use this plugin does (`mount` /
-   * `defineKumikiElement` come from the same package): the counter example
-   * builds to 129 kB inlined against 82 kB shared, and each further `.kumiki`
-   * import adds another copy. The copies do not merely take space — the
-   * runtime keeps module-level state, and the injected state-style sheet is
-   * found by DOM id while its sequence counter restarts per copy. Use it only
-   * for a module that must stand alone with no runtime dependency.
+   * `defineKumikiElement` come from the same package), and each further
+   * `.kumiki` import adds another copy. The copies do not merely take space —
+   * the runtime keeps module-level state, and the injected state-style sheet
+   * is found by DOM id while its sequence counter restarts per copy. Use it
+   * only for a module that must stand alone with no runtime dependency.
    */
   bundle?: boolean;
   /**
-   * Emit a sibling `<name>.kumiki.gen.ts` of typed helpers (Slots / Providers)
-   * for each compiled file, for type-safe provider authoring. Written only when
-   * its contents change. Default: false.
+   * Emit a sibling `<name>.kumiki.gen.ts` of typed helpers (`KumikiSlots` /
+   * `KumikiProviders`) for each compiled file, for type-safe provider
+   * authoring. Written only when its contents change. Default: false.
    */
   types?: boolean;
   /**
@@ -89,27 +89,42 @@ function cleanId(id: string): string {
  * dependency of this package, so it is always on disk; under a strict
  * node_modules layout it is not resolvable *from the project*, and without
  * this the generated `import` would simply fail. Resolved through the import
- * conditions, since the runtime's `exports` map defines no `require` entry.
+ * conditions, since the runtime's `exports` map defines no `require` entry —
+ * which is why this needs the synchronous `import.meta.resolve` of Node 20.6,
+ * the floor this package declares.
+ *
+ * A failure here is never routine: the package is a hard dependency of this
+ * one. It is reported rather than swallowed, because what the author would see
+ * otherwise is Vite's generic "failed to resolve import" naming a specifier
+ * they never wrote.
  */
-function pluginLocalRuntime(): string | null {
+function pluginLocalRuntime(ctx: Rollup.PluginContext): string | null {
   try {
     return normalizePath(fileURLToPath(import.meta.resolve(RUNTIME_SPECIFIER)));
-  } catch {
+  } catch (e) {
+    ctx.warn(`${RUNTIME_SPECIFIER} could not be resolved from the plugin: ${(e as Error).message}`);
     return null;
   }
 }
 
 /**
- * Render a failure that reached us as an exception — a lex or parse error, or
- * a malformed capability manifest — as a diagnostic Vite can place. Both
- * carry a source position; anything else is reported against the file alone,
- * because a stack of compiler frames in the overlay tells the author nothing
- * about their source.
+ * Render a failure about the author's source that reached us as an exception —
+ * a lex or parse error, which carry a position, or a malformed capability
+ * manifest, which names a file — as a diagnostic Vite can place. A stack of
+ * compiler frames in the overlay tells the author nothing about their source.
+ *
+ * Anything else is a defect in the toolchain rather than in the source, and is
+ * rethrown untouched: its stack and `cause` are the whole of what a bug report
+ * would carry, and flattening it to one line would throw that away.
  */
 function reportThrown(ctx: Rollup.PluginContext, e: unknown, file: string): never {
-  const message = `Kumiki compile failed (${file}):\n  ${e instanceof Error ? e.message : String(e)}`;
-  const pos = e instanceof ParseError || e instanceof LexError ? e.pos : null;
-  if (pos) ctx.error({ message, id: file, loc: { file, line: pos.line, column: pos.col } });
+  const located = e instanceof ParseError || e instanceof LexError;
+  if (!located && !(e instanceof CapabilityManifestError)) throw e;
+  const message = `Kumiki compile failed (${file}):\n  ${(e as Error).message}`;
+  if (located) {
+    const pos = (e as ParseError | LexError).pos;
+    ctx.error({ message, id: file, loc: { file, line: pos.line, column: pos.col } });
+  }
   ctx.error({ message, id: file });
 }
 
@@ -129,7 +144,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       // The project's own resolution wins, so the app and the compiled module
       // share one copy; this only answers when there is nothing to share.
       const own = await this.resolve(source, importer, { ...opts, skipSelf: true });
-      return own ? null : pluginLocalRuntime();
+      return own ? null : pluginLocalRuntime(this);
     },
     async transform(code, id) {
       const file = cleanId(id);

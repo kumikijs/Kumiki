@@ -89,7 +89,11 @@ describe("kumiki dev", () => {
     // to confirm without coupling to Vite's URL-rewriting choices.
   });
 
-  it("reads a capability manifest at the project root, as check does", async () => {
+  // Spawns `kumiki check` through tsx *and* starts a dev server — well past
+  // Vitest's 5 s default whenever the machine is busy.
+  it("reads a capability manifest at the project root, as check does", {
+    timeout: 60_000,
+  }, async () => {
     // The dev server makes the .kumiki file's own directory Vite's root so the
     // static `import App` resolves. The manifest search must not inherit that
     // root: a file that `kumiki check` accepts has to compile here too.

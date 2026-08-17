@@ -7,7 +7,9 @@
 // DOM id while its sequence counter restarts per copy), so the copies disagree.
 //
 // The assertions run a real `vite build` and count copies against a baseline
-// measured from a project that imports the runtime and nothing else.
+// measured from a project that imports the runtime and nothing else — a ratio,
+// not a byte count, so they stay true as the runtime grows. The sizes those
+// copies cost are recorded once, in runtime.md §10.8.1.
 
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -56,7 +58,7 @@ mount(App, document.body);
 `;
 
 describe("the built app carries one runtime", () => {
-  // One `vite build` each, so the whole file shares a single baseline.
+  // Three `vite build`s: the baseline, then the two modes measured against it.
   it("ships exactly the runtime the importer already imports", async () => {
     const baseline = marks(
       await buildProject(`import { mount } from "@kumikijs/runtime";\nconsole.log(mount);\n`),

@@ -5,7 +5,7 @@
 // where the toolchain had looked.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, parse, resolve } from "node:path";
 import {
   CapabilityManifestError,
   resolveCapabilities,
@@ -69,11 +69,28 @@ describe("kumiki.caps.json resolution", () => {
     expect(resolveCapabilities(p.file)).toEqual(["telemetry.track"]);
   });
 
-  it("stops at an explicit root, that directory included", () => {
+  it("terminates at the filesystem root when nothing on the path is a project", () => {
+    // A `.kumiki` opened outside any project: the walk has to end somewhere,
+    // and `dirname` of the root is the root itself.
+    const fsRoot = parse(process.cwd()).root;
+    const found = resolveCapabilityManifest(join(fsRoot, "loose.kumiki"));
+    expect(found.searched.at(-1)).toBe(fsRoot);
+  });
+
+  it("reads the nearest manifest even when it is the broken one", () => {
+    // Falling through to the valid one further up would compile the file
+    // against capabilities its own directory does not register.
     const p = project();
+    writeFileSync(join(p.src, "kumiki.caps.json"), "{ not json");
     manifest(p.pkg, "telemetry.track");
-    expect(resolveCapabilities(p.file, { root: p.pkg })).toEqual(["telemetry.track"]);
-    expect(resolveCapabilities(p.file, { root: p.src })).toEqual([]);
+    let thrown: unknown;
+    try {
+      resolveCapabilities(p.file);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(CapabilityManifestError);
+    expect((thrown as Error).message).toContain(join(p.src, "kumiki.caps.json"));
   });
 
   it("reports the directories it consulted, nearest first", () => {

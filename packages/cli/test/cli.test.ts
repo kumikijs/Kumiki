@@ -558,7 +558,9 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     };
   }
 
-  it("reads a manifest at the project root, not only beside the source", { timeout: 30000 }, () => {
+  it("reads a manifest at the project root, not only beside the source", {
+    timeout: 60_000,
+  }, () => {
     writeFileSync(
       join(root, "kumiki.caps.json"),
       JSON.stringify({ capabilities: ["telemetry.track"] }),
@@ -568,7 +570,7 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     expect(stdout).toContain("ok");
   });
 
-  it("names the directories it searched when there is no manifest", { timeout: 30000 }, () => {
+  it("names the directories it searched when there is no manifest", { timeout: 60_000 }, () => {
     const { stderr, code } = check();
     expect(code).toBe(1);
     expect(stderr).toContain("E0302");
@@ -576,8 +578,23 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     expect(stderr).toContain(join(root, "src"));
   });
 
+  it("says nothing about manifests when the diagnostic is not about capabilities", {
+    timeout: 60_000,
+  }, () => {
+    writeFileSync(
+      join(root, "src", "app.kumiki"),
+      `tile App = column(text(nope))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const { stderr, code } = check();
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0103");
+    expect(stderr).not.toContain("kumiki.caps.json");
+  });
+
   it("says the same thing from build, which fails on the same diagnostic", {
-    timeout: 30000,
+    timeout: 60_000,
   }, () => {
     const res = spawnSync(
       "npx",
@@ -590,7 +607,7 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("names the manifest it read when that manifest lacks the capability", {
-    timeout: 30000,
+    timeout: 60_000,
   }, () => {
     const manifest = join(root, "kumiki.caps.json");
     writeFileSync(manifest, JSON.stringify({ capabilities: ["telemetry.identify"] }));

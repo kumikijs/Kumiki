@@ -2,6 +2,7 @@
 "@kumikijs/compiler": minor
 "@kumikijs/vite": minor
 "@kumikijs/cli": minor
+"@kumikijs/mcp": minor
 ---
 
 fix: let the Vite plugin do what a bundler plugin is for.
@@ -42,4 +43,8 @@ root — the nearest `package.json` — nearest manifest wins, and a
 malformed manifest on that path is an error naming the file rather than a
 silent fall-through. `E0302` now says which manifest was read, or which
 directories were searched — in the plugin and in `kumiki check` / `kumiki
-build` alike.
+build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
+its `path` inputs get the widened search too.
+
+The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
+`import.meta.resolve` synchronous — the runtime fallback above is built on it.

@@ -120,29 +120,13 @@ describe("the capability manifest a project actually has", () => {
     return out.code;
   }
 
-  it("is not narrowed by the root a dev server happens to serve from", async () => {
-    // `kumiki dev` makes the .kumiki file's own directory Vite's root, so a
-    // search bounded by that root would read a different manifest than
-    // `kumiki check` reads for the very same file.
-    const p = project();
-    writeFileSync(
-      join(p.root, "kumiki.caps.json"),
-      JSON.stringify({ capabilities: ["telemetry.track"] }),
-    );
-    const plugin = kumiki();
-    const c = plugin.configResolved;
-    const fn = typeof c === "function" ? c : c?.handler;
-    fn?.call({} as never, { root: dirname(p.file) } as never);
-    const t = plugin.transform;
-    const transformFn = typeof t === "function" ? t : t?.handler;
-    const ctx = {
-      error(e: unknown): never {
-        throw new Error(typeof e === "string" ? e : (e as { message: string }).message);
-      },
-      warn(): void {},
-    };
-    const out = (await transformFn?.call(ctx as never, CUSTOM_CAP_APP, p.file)) as { code: string };
-    expect(out.code).toContain("export default App;");
+  it("takes no root from Vite, so no root can narrow the search", () => {
+    // `kumiki dev` makes the .kumiki file's own directory Vite's root; a plugin
+    // that read a root from anywhere in the config would read a different
+    // manifest there than `kumiki check` reads for the very same file. The
+    // behavioural half of this claim is `packages/cli/test/dev.test.ts`, which
+    // drives a real dev server; this pins that there is no such input at all.
+    expect(kumiki().configResolved).toBeUndefined();
   });
 
   it("accepts a manifest at the project root, not only beside the source", async () => {
@@ -170,6 +154,20 @@ describe("the capability manifest a project actually has", () => {
     const r = await failureOf(CUSTOM_CAP_APP, p.file);
     expect(r.message).toContain("E0302");
     expect(r.message).toContain(manifest);
+  });
+
+  it("says nothing about manifests when the failure is not about capabilities", async () => {
+    // The provenance is an answer to "which file registers this name"; on a
+    // type error it is noise in front of the line the author has to fix.
+    const p = project();
+    const r = await failureOf(
+      `tile App = column(text(nope))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+      p.file,
+    );
+    expect(r.message).toContain("E0103");
+    expect(r.message).not.toContain("kumiki.caps.json");
+    expect(r.message).not.toContain("registered capabilities");
   });
 
   it("reports a malformed manifest as a located failure, not a thrown exception", async () => {
