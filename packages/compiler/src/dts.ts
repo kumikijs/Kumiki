@@ -42,7 +42,11 @@ type Ctx = {
   /** Kumiki type name → the identifier it is declared under here. */
   userTypes: ReadonlyMap<string, string>;
   expanding: Set<string>;
-  /** Type parameters of the declaration being emitted — they render as themselves. */
+  /**
+   * Type parameters of the declaration being emitted, under the identifiers
+   * they were declared with here. Consulted before {@link userTypes}, which is
+   * what makes a parameter shadow a type of the same name.
+   */
   typeParams: ReadonlyMap<string, string>;
 };
 
@@ -129,14 +133,33 @@ const HELPER_SLOTS = "KumikiSlots";
 const HELPER_PROVIDERS = "KumikiProviders";
 
 /**
+ * Names no TypeScript type alias or type parameter may take (`TS2457`), all of
+ * which are ordinary Kumiki type names. Seeded into the taken set, so a
+ * `type string` is declared as `string_2` rather than as a file that does not
+ * parse. `null` is a Kumiki keyword and so cannot be one of these.
+ */
+const TS_RESERVED_TYPE_NAMES = [
+  "any",
+  "bigint",
+  "boolean",
+  "never",
+  "number",
+  "object",
+  "string",
+  "symbol",
+  "undefined",
+  "unknown",
+  "void",
+];
+
+/**
  * A declaration name TypeScript can take. Unlike a field, a type alias cannot
- * be quoted, so a Kumiki name carrying `-` or `.` is rewritten the way codegen
+ * be quoted, so a Kumiki name carrying `-` is rewritten the way codegen
  * rewrites a binding — and then made unique, because `a-b` and `a_b` are two
  * Kumiki types and would otherwise become one TypeScript declaration.
  */
 function allocTypeName(name: string, taken: Set<string>): string {
-  const base = name.replace(/[-.]/g, "_");
-  const safe = TS_IDENT.test(base) ? base : `_${base.replace(/[^A-Za-z0-9_$]/g, "_")}`;
+  const safe = name.replace(/-/g, "_");
   let candidate = safe;
   for (let n = 2; taken.has(candidate); n++) candidate = `${safe}_${n}`;
   taken.add(candidate);
@@ -164,7 +187,12 @@ export function generateDts(program: Program): string {
   const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
   const slots = program.defs.filter((d): d is SlotDef => d.kind === "SlotDef");
   const effects = program.defs.filter((d): d is EffectDef => d.kind === "EffectDef");
-  const taken = new Set([HELPER_PROVIDER, HELPER_SLOTS, HELPER_PROVIDERS]);
+  const taken = new Set([
+    HELPER_PROVIDER,
+    HELPER_SLOTS,
+    HELPER_PROVIDERS,
+    ...TS_RESERVED_TYPE_NAMES,
+  ]);
   const ctx: Ctx = {
     userTypes: new Map(types.map((t) => [t.name, allocTypeName(t.name, taken)])),
     expanding: new Set(),
@@ -185,10 +213,15 @@ export function generateDts(program: Program): string {
   out.push("");
 
   for (const t of types) {
-    // A type parameter is a Kumiki name too, so it needs the same rewrite; it
-    // is scoped to this alias, so shadowing a global of the same identifier is
-    // what Kumiki means as well.
-    const typeParams = new Map(t.params.map((p) => [p, allocTypeName(p, new Set())]));
+    // A type parameter is a Kumiki name too, so it needs the same rewrite —
+    // and the same uniquing, against a set seeded from the module's own names:
+    // two parameters that lower alike would otherwise become one, and a
+    // parameter that lowers onto a declared type's identifier would silently
+    // capture every reference to that type inside the alias. The set is a
+    // copy, so parameter names — scoped to this alias — do not shift the
+    // numbering of the aliases that follow.
+    const paramTaken = new Set(taken);
+    const typeParams = new Map(t.params.map((p) => [p, allocTypeName(p, paramTaken)]));
     const params = t.params.length > 0 ? `<${[...typeParams.values()].join(", ")}>` : "";
     // The alias body may name its own parameters; without them in scope they
     // resolve to nothing and every generic alias emits `unknown`.

@@ -97,6 +97,92 @@ describe("generateDts output compiles", () => {
     expect(sType).not.toBe(tType);
   });
 
+  it("emits a generic alias with its parameters", () => {
+    const gen = dtsOf(`
+      type Box(T) = { x: T }
+      slot s : Box(Int) = {x: 1}
+      ${APP_TAIL}
+    `);
+    expect(gen).toContain("export type Box<T> = { x: T };");
+    expect(gen).toContain("s: Box<number>;");
+    expect(tscDiagnostics(gen)).toEqual([]);
+  });
+
+  it("keeps two type parameters that lower to the same identifier apart", () => {
+    const gen = dtsOf(`
+      type Box(a-b, a_b) = { x: a-b, y: a_b }
+      slot s : Box(Int, Text) = {x: 1, y: ""}
+      ${APP_TAIL}
+    `);
+    expect(tscDiagnostics(gen)).toEqual([]);
+    const params = /export type Box<([^>]*)>/.exec(gen)?.[1]?.split(", ");
+    expect(params).toHaveLength(2);
+    expect(params?.[0]).not.toBe(params?.[1]);
+  });
+
+  it("does not let a type parameter capture a type declared beside it", () => {
+    // `f-oo` is the parameter and `f_oo` the record; lowering both to the same
+    // identifier makes the alias read as though the field referred to itself.
+    // TypeScript is silent about that — it is a valid declaration meaning the
+    // wrong thing — so the assertion is on the resolved reference.
+    const gen = dtsOf(`
+      type f_oo = { a: Int }
+      type Box(f-oo) = { x: f-oo, y: f_oo }
+      slot s : Box(Int) = {x: 1, y: {a: 1}}
+      ${APP_TAIL}
+    `);
+    expect(tscDiagnostics(gen)).toEqual([]);
+    const box = /export type Box<(\w+)> = \{ x: (\w+); y: (\w+) \};/.exec(gen);
+    expect(box).not.toBeNull();
+    const [, param, x, y] = box as RegExpExecArray;
+    expect(x).toBe(param);
+    expect(y).not.toBe(param);
+    expect(gen).toContain(`export type ${y} = { a: number };`);
+  });
+
+  it("keeps a parameter that shadows a declared type meaning the parameter", () => {
+    const gen = dtsOf(`
+      type T = { a: Int }
+      type Box(T) = { x: T }
+      slot s : Box(Int) = {x: 1}
+      ${APP_TAIL}
+    `);
+    expect(tscDiagnostics(gen)).toEqual([]);
+    const box = /export type Box<(\w+)> = \{ x: (\w+) \};/.exec(gen);
+    expect(box).not.toBeNull();
+    const [, param, x] = box as RegExpExecArray;
+    // Kumiki shadows too, so `x` is the parameter — but it must not be spelled
+    // like the record, or the alias would read as the record for a reader.
+    expect(x).toBe(param);
+    expect(gen).toContain("export type T = { a: number };");
+    expect(param).not.toBe("T");
+  });
+
+  it("does not declare a type under a name TypeScript reserves", () => {
+    // Every one of these is a legal Kumiki type name and an illegal TypeScript
+    // alias name (TS2457).
+    for (const reserved of [
+      "any",
+      "unknown",
+      "never",
+      "number",
+      "bigint",
+      "boolean",
+      "string",
+      "symbol",
+      "object",
+      "undefined",
+      "void",
+    ]) {
+      const gen = dtsOf(`
+        type ${reserved} = { a: Int }
+        slot s : ${reserved} = {a: 1}
+        ${APP_TAIL}
+      `);
+      expect(tscDiagnostics(gen), `type ${reserved}`).toEqual([]);
+    }
+  });
+
   it("keeps its own helper name when a user type claims it", () => {
     const gen = dtsOf(`
       type KumikiSlots = { a: Int }
