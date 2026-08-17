@@ -9,10 +9,15 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { generateDts, lex, parse } from "@kumikijs/compiler";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const TMP_ROOT = resolve(__dirname, "test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
+
+// Every case here starts a TypeScript program, which is an order of magnitude
+// more work than the rest of this package's tests and past the 5 s default on a
+// loaded CI runner.
+vi.setConfig({ testTimeout: 30_000 });
 
 const dtsOf = (src: string): string => generateDts(parse(lex(src)));
 
@@ -160,8 +165,9 @@ describe("generateDts output compiles", () => {
 
   it("does not declare a type under a name TypeScript reserves", () => {
     // Every one of these is a legal Kumiki type name and an illegal TypeScript
-    // alias name (TS2457).
-    for (const reserved of [
+    // alias name (TS2457). One source declaring all of them is one program to
+    // check, and any name left unreserved shows up in the same diagnostics.
+    const reserved = [
       "any",
       "unknown",
       "never",
@@ -173,14 +179,14 @@ describe("generateDts output compiles", () => {
       "object",
       "undefined",
       "void",
-    ]) {
-      const gen = dtsOf(`
-        type ${reserved} = { a: Int }
-        slot s : ${reserved} = {a: 1}
-        ${APP_TAIL}
-      `);
-      expect(tscDiagnostics(gen), `type ${reserved}`).toEqual([]);
-    }
+    ];
+    const gen = dtsOf(`
+      ${reserved.map((r) => `type ${r} = { a: Int }`).join("\n")}
+      ${reserved.map((r, i) => `slot s${i} : ${r} = {a: 1}`).join("\n")}
+      ${APP_TAIL}
+    `);
+    for (const r of reserved) expect(gen).not.toContain(`export type ${r} =`);
+    expect(tscDiagnostics(gen)).toEqual([]);
   });
 
   it("keeps its own helper name when a user type claims it", () => {
