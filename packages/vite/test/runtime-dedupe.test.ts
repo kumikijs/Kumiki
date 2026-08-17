@@ -12,6 +12,7 @@
 // copies cost are recorded once, in runtime.md §10.8.1.
 
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
@@ -26,9 +27,17 @@ mkdirSync(TMP, { recursive: true });
 /** A literal the runtime carries and nothing else does — one hit set per copy. */
 const RUNTIME_MARK = "kumiki-state-styles";
 
-/** Build a one-entry project and return the concatenated output. */
-async function buildProject(main: string, opts?: KumikiPluginOptions): Promise<string> {
-  const root = mkdtempSync(join(TMP, "build-"));
+/**
+ * Build a one-entry project and return the concatenated output. `where` is the
+ * directory the throwaway project is created under — inside the workspace by
+ * default, where `@kumikijs/runtime` resolves from the project itself.
+ */
+async function buildProject(
+  main: string,
+  opts?: KumikiPluginOptions,
+  where: string = TMP,
+): Promise<string> {
+  const root = mkdtempSync(join(where, "build-"));
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "app.kumiki"), readFileSync(COUNTER, "utf8"));
   writeFileSync(join(root, "src", "main.ts"), main);
@@ -70,6 +79,20 @@ describe("the built app carries one runtime", () => {
 
     const bundled = marks(await buildProject(MOUNTS_THE_APP, { bundle: true }));
     expect(bundled).toBe(baseline * 2);
+  }, 60_000);
+
+  it("builds where the project cannot resolve the runtime at all", async () => {
+    // The shape the default only works in because of the plugin's fallback: a
+    // project that installed @kumikijs/vite and nothing else. Outside the
+    // workspace there is no node_modules to walk up to, so if the fallback
+    // stopped answering, this build would fail to resolve the import rather
+    // than quietly ship two copies.
+    const out = await buildProject(
+      MOUNTS_THE_APP,
+      undefined,
+      mkdtempSync(join(tmpdir(), "kumiki-")),
+    );
+    expect(out).toContain(RUNTIME_MARK);
   }, 60_000);
 
   it("compiles to a module that imports the runtime by default", async () => {
