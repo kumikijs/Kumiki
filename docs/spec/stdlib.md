@@ -546,6 +546,8 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 Toast
 
+The banner the runtime renders carries `data-kumiki-toast` (the marker a test selects on) and `data-level`.
+
 ```kumiki fragment
 effect toast       cap=notification.show
                    in={kind: Text, text: Text, duration: Option(Duration)}

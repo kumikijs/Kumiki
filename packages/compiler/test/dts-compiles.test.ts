@@ -236,9 +236,9 @@ describe("generateDts output compiles", () => {
 
 describe("the standard library's Route", () => {
   it("carries every field the router produces", () => {
-    // routing.md §3.2 lists five; the runtime's `parseLocation` builds five;
-    // stdlib.md's row (and this table) had three, so `route.pattern` typed as
-    // `unknown` in a generated provider signature.
+    // routing.md §3.2 lists five and the runtime builds all five; stdlib.md's
+    // row (and this table) had three, so `route.pattern` typed as `unknown` in
+    // a generated provider signature.
     const gen = dtsOf(`slot r : Route = {path: "/", pattern: "/", params: {}, query: {}, hash: None}
       tile App = column(text(r.path))
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]

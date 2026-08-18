@@ -364,6 +364,12 @@ describe("toast honours the record the spec documents", () => {
     expect(banner()).not.toBeNull();
   });
 
+  it("treats a negative duration as no duration at all", async () => {
+    await fire({ kind: "info", text: "Odd", duration: { _tag: "Some", _0: -1 } });
+    vi.advanceTimersByTime(3_001);
+    expect(banner()).toBeNull();
+  });
+
   it("stays for the duration the emitter asked for", async () => {
     await fire({ kind: "info", text: "Slow", duration: { _tag: "Some", _0: 10_000 } });
     vi.advanceTimersByTime(3_000);

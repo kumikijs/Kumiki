@@ -23,11 +23,12 @@
 //     clean.
 
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { check, type KumikiError, LexError, lex, parse, ParseError } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = resolve(__dirname, "..", "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const docsRoot = join(repoRoot, "docs");
 
 const KINDS = ["fragment", "snippet", "invalid"] as const;

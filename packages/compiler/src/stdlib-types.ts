@@ -70,9 +70,11 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  // Every field the router builds (runtime/src/router.ts `parseLocation`), which
-  // is what routing.md §3.2 documents. `pattern` and `hash` were missing here,
-  // so a provider signature generated for a `Route` typed them as `unknown`.
+  // The five fields routing.md §3.2 documents, which is what a program reads.
+  // (`parseLocation` also carries `childPattern` for `route-outlet`; that one
+  // is runtime bookkeeping and is deliberately not part of the type.)
+  // `pattern` and `hash` were missing here, so a provider signature generated
+  // for a `Route` typed them as `unknown`.
   def(
     "Route",
     record({

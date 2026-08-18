@@ -357,6 +357,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `tooltip` | ツールチップ | `text`, `placement` |
 | `popover` | ポップオーバー | `open`, `onClose`, `placement` |
 | `toast` | トースト通知 | `kind`（info/success/warn/error — `data-level` として載るだけで、組み込みの見た目は持たない）、`text`、`duration`（kind 別のデフォルトは [ライフサイクル §7.7](./lifecycle.md#_7-7-トースト) 参照） |
+| `details` | ネイティブの `<details>` 開閉（#190） — `summary` がヘッダのラベル、子要素が折りたたまれるパネルになる | `summary`, `open` |
 
 ### 2.3.8 フィードバック
 
@@ -512,6 +513,8 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 ```
 
 ### 2.6.2 トースト
+
+ランタイムが描画するバナーは `data-kumiki-toast`（テストが選択に使うマーカ）と `data-level` を持つ。
 
 ```kumiki fragment
 effect toast       cap=notification.show
