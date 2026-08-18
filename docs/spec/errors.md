@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
-A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
+A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
 
-Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. The lexer throws `LexError` and the parser throws `ParseError` — both carry `message` + `pos` but no `code`, by design (single-shot; no recovery). The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) therefore extracts implementation-side codes from `typecheck.ts` only.
+The checker's codes come from `packages/compiler/src/typecheck.ts`; `E0000` is assigned by the two tools named above. The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) extracts the implementation side from every file that assigns a code, so a code invented in a tool and documented nowhere fails the same way as one invented in the checker.
 
 ## The Code System
 
@@ -88,6 +88,14 @@ unique source position:
   writes the failing slot.
 
 ## E00xx — Structure
+
+### E0000 `parse-error`
+
+The source could not be lexed or parsed. Not produced by the checker: the parser throws, and a tool that has to return a *list* of diagnostics synthesizes this code so an empty list still means a clean file. `message` is the parser's own sentence and `pos` the token it stopped at.
+
+> `Parse error at <line>:<col>: <what was expected>`
+
+**Fix**: Correct the syntax at the reported position. Every other code in this document presumes a file that parses.
 
 ### E0001 `missing-404`
 

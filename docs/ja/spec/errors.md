@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
-パースエラーは `ParseError`（`message` + `pos`）として `throw` される。パース段は最初のエラーで停止するため、コードは付与されない。
+パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。
 
-コード付き診断は `packages/compiler/src/typecheck.ts` からのみ発行される。lexer は `LexError` を、parser は `ParseError` を throw する — どちらも `message` + `pos` は持つが `code` は持たない設計（single-shot、リカバリ無し）。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は実装側のコード集合をこの `typecheck.ts` からのみ抽出する。
+チェッカのコードは `packages/compiler/src/typecheck.ts` から発行され、`E0000` は上記 2 つのツールが付与する。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は、コードを付与するすべてのファイルから実装側の集合を抽出する — ツール側で発明されドキュメント化されていないコードは、チェッカ側で発明された場合とまったく同じように失敗する。
 
 ## コード体系
 
@@ -75,6 +75,14 @@ type KumikiError = {
 - **reducer の算術修復**：失敗した slot を書く reducer がちょうど 1 つのとき、`slot := slot ± N` を期待される差分に合わせて書き換える（符号の反転・オペランドの変更）。
 
 ## E00xx — 構造
+
+### E0000 `parse-error`
+
+ソースを字句解析／構文解析できなかった。チェッカは生成しない — parser は throw するので、診断の*リスト*を返さなければならないツールが、空のリスト = クリーンという意味を保つためにこのコードを合成する。`message` は parser 自身の文言、`pos` は停止したトークンの位置。
+
+> `Parse error at <line>:<col>: <what was expected>`
+
+**修正**：報告された位置の構文を直す。この文書の他のコードはすべて、パースできるファイルを前提にしている。
 
 ### E0001 `missing-404`
 

@@ -3,18 +3,23 @@
 // (docs/spec/errors.md) and JA (docs/ja/spec/errors.md) tracks.
 //
 // Design decision (documented in docs/spec/errors.md / docs/ja/spec/errors.md
-// under "The Form of an Error" / "エラーの形"): coded diagnostics are emitted
-// only by packages/compiler/src/typecheck.ts. The lexer throws `LexError` and
-// the parser throws `ParseError` — both carry `message` + `pos` but no
-// `code`, by design (single-shot; no recovery). This test therefore extracts
-// implementation-side codes from typecheck.ts only.
+// under "The Form of an Error" / "エラーの形"): the checker's coded diagnostics
+// come from packages/compiler/src/typecheck.ts. The lexer throws `LexError`
+// and the parser throws `ParseError` — both carry `message` + `pos` but no
+// `code`, by design (single-shot; no recovery).
+//
+// Two tools nevertheless have to put a parse failure *into* a diagnostic list —
+// `kumiki fix`'s rollback report and the MCP tools' JSON envelope — and both
+// synthesize `E0000` for it. So the implementation side of this guard is every
+// file that emits a code, not the checker alone: a code invented in a tool and
+// documented nowhere is the same drift as one invented in the checker.
 //
 // If a new code is introduced, add it to typecheck.ts AND to both errors.md
 // files in the same PR. If a code is removed from typecheck.ts, drop its
 // section from both errors.md files in the same PR. The symmetric-difference
 // assertion below will fail the CI until both sides agree.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -55,17 +60,23 @@ function report(label: string, implSide: Set<string>, specSide: Set<string>): st
   }
   if (missingInImpl.length > 0) {
     lines.push(
-      `[${label}] spec documents but impl no longer emits: ${missingInImpl.join(", ")} — drop the section from the spec (or restore the code in typecheck.ts).`,
+      `[${label}] spec documents but impl no longer emits: ${missingInImpl.join(", ")} — drop the section from the spec (or restore the code in the emitter that lost it).`,
     );
   }
   return lines.join("\n");
 }
 
-describe("spec ⇆ typecheck diagnostic code-set drift", () => {
-  const implSrc = readFileSync(
-    path.join(repoRoot, "packages", "compiler", "src", "typecheck.ts"),
-    "utf8",
-  );
+/** Every file that assigns a diagnostic code, checker and tools alike. */
+const EMITTERS = [
+  ["packages", "compiler", "src", "typecheck.ts"],
+  ["packages", "cli", "src", "fix.ts"],
+  ["packages", "mcp", "src", "index.ts"],
+];
+
+describe("spec ⇆ implementation diagnostic code-set drift", () => {
+  const implSrc = EMITTERS.map((parts) =>
+    readFileSync(path.join(repoRoot, ...parts), "utf8"),
+  ).join("\n");
   const specEnSrc = readFileSync(path.join(repoRoot, "docs", "spec", "errors.md"), "utf8");
   const specJaSrc = readFileSync(path.join(repoRoot, "docs", "ja", "spec", "errors.md"), "utf8");
   const implCodes = collect(implSrc, CODE_RE);
@@ -78,13 +89,35 @@ describe("spec ⇆ typecheck diagnostic code-set drift", () => {
     expect(specJaCodes.size).toBeGreaterThan(MIN_CODES);
   });
 
-  it("EN spec (docs/spec/errors.md) documents exactly the codes typecheck.ts emits", () => {
+  it("EN spec (docs/spec/errors.md) documents exactly the codes the implementation emits", () => {
     const msg = report("EN", implCodes, specEnCodes);
     if (msg !== "") expect.fail(msg);
   });
 
-  it("JA spec (docs/ja/spec/errors.md) documents exactly the codes typecheck.ts emits", () => {
+  it("JA spec (docs/ja/spec/errors.md) documents exactly the codes the implementation emits", () => {
     const msg = report("JA", implCodes, specJaCodes);
     if (msg !== "") expect.fail(msg);
+  });
+
+  // errors.md is the one place a code is defined. A second table elsewhere in
+  // the spec — ai-edit.md carried one, giving E0302 two incompatible meanings —
+  // makes "the code is a permanent contract" untrue of the document that says
+  // it. Any code named anywhere in the spec has to resolve here.
+  it("names no diagnostic code the spec does not define", () => {
+    const unknown: string[] = [];
+    for (const [track, defined] of [
+      ["docs/spec", specEnCodes],
+      ["docs/ja/spec", specJaCodes],
+    ] as [string, Set<string>][]) {
+      const dir = path.join(repoRoot, ...track.split("/"));
+      for (const name of readdirSync(dir)) {
+        if (!name.endsWith(".md") || name === "errors.md") continue;
+        const text = readFileSync(path.join(dir, name), "utf8");
+        for (const code of text.match(/E\d{4}|W\d{4}/g) ?? []) {
+          if (!defined.has(code)) unknown.push(`${track}/${name}: ${code}`);
+        }
+      }
+    }
+    expect([...new Set(unknown)].sort()).toEqual([]);
   });
 });
