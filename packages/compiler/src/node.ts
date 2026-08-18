@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseCapabilityManifest } from "./capabilities.ts";
 
@@ -66,24 +66,99 @@ export function parseEpisodeLogText(raw: string): unknown[] {
 export class CapabilityManifestError extends Error {}
 
 /**
- * Resolve project-registered capabilities from a `kumiki.caps.json` in the same
- * directory as the given `.kumiki` file. Returns `[]` when no manifest exists;
- * throws `CapabilityManifestError` (with the path) when one exists but is
- * invalid. Pass the result as `compile(src, { capabilities })` /
- * `check(program, { capabilities })`.
+ * The outcome of one manifest search. A union rather than a record with a
+ * nullable field, so "no manifest, but here are some capabilities" is not a
+ * value anything can construct or has to consider.
  */
-export function resolveCapabilities(kumikiFilePath: string): string[] {
-  const manifestPath = join(dirname(kumikiFilePath), "kumiki.caps.json");
-  if (!existsSync(manifestPath)) return [];
+export type CapabilityLookup = {
+  /** The directories consulted, nearest first — what a diagnostic reports. */
+  searched: string[];
+} & ({ manifestPath: string; capabilities: string[] } | { manifestPath: null; capabilities: [] });
+
+/** Where the search stops: a project root has a `package.json`. */
+function isProjectRoot(dir: string): boolean {
+  return existsSync(join(dir, "package.json"));
+}
+
+/**
+ * Resolve project-registered capabilities for a `.kumiki` file, searching its
+ * own directory and then each parent up to (and including) the project root —
+ * the nearest directory holding a `package.json`, or the filesystem root when
+ * there is none. The nearest manifest wins; the rest are not read.
+ *
+ * There is deliberately no way to pass a different root. Every tool has to
+ * agree about one file: `kumiki dev` serves from the `.kumiki` file's own
+ * directory, so a root taken from the host's configuration would have made the
+ * dev server read a different manifest than `kumiki check` reads.
+ *
+ * The walk exists because the manifest registers capabilities for a *project*:
+ * a Vite app keeps its sources in `src/` and its config at the root, and a
+ * manifest put where the rest of the project's configuration lives was
+ * previously ignored without a word.
+ *
+ * Throws `CapabilityManifestError` (naming the path) when a manifest on the
+ * path exists but is malformed — a broken manifest is never silently skipped
+ * in favour of one further up.
+ */
+export function resolveCapabilityManifest(kumikiFilePath: string): CapabilityLookup {
+  const searched: string[] = [];
+  let dir = dirname(resolve(kumikiFilePath));
+  for (;;) {
+    searched.push(dir);
+    const manifestPath = join(dir, "kumiki.caps.json");
+    if (existsSync(manifestPath)) {
+      return { capabilities: readManifest(manifestPath), manifestPath, searched };
+    }
+    const parent = dirname(dir);
+    // `parent === dir` is the filesystem root: a `.kumiki` outside any project
+    // still terminates.
+    if (isProjectRoot(dir) || parent === dir) {
+      return { capabilities: [], manifestPath: null, searched };
+    }
+    dir = parent;
+  }
+}
+
+function readManifest(manifestPath: string): string[] {
+  // Read and parse are separate so an unreadable file (a directory of that
+  // name, a permission error, a delete between the check and the read) is not
+  // reported as invalid JSON.
+  let text: string;
+  try {
+    text = readFileSync(manifestPath, "utf8");
+  } catch (e) {
+    throw new CapabilityManifestError(`${manifestPath}: cannot read — ${(e as Error).message}`);
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+    raw = JSON.parse(text);
   } catch (e) {
     throw new CapabilityManifestError(`${manifestPath}: invalid JSON — ${(e as Error).message}`);
   }
   const result = parseCapabilityManifest(raw);
   if (!result.ok) throw new CapabilityManifestError(`${manifestPath}: ${result.error}`);
   return result.manifest.capabilities;
+}
+
+/**
+ * One line saying where a capability lookup got its names, or where it looked
+ * and found nothing. What `E0302 unknown-capability` is missing on its own:
+ * the fix is a file, and the author cannot see from the code which file the
+ * toolchain would read.
+ */
+export function describeCapabilitySearch(lookup: CapabilityLookup): string {
+  return lookup.manifestPath === null
+    ? `no kumiki.caps.json found (searched: ${lookup.searched.join(", ")})`
+    : `registered capabilities come from ${lookup.manifestPath}`;
+}
+
+/**
+ * The registered capability names for a `.kumiki` file — {@link
+ * resolveCapabilityManifest} without the provenance. Pass the result as
+ * `compile(src, { capabilities })` / `check(program, { capabilities })`.
+ */
+export function resolveCapabilities(kumikiFilePath: string): string[] {
+  return resolveCapabilityManifest(kumikiFilePath).capabilities;
 }
 
 /**

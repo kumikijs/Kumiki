@@ -478,7 +478,7 @@ Writing a capability in `app.caps` that is neither standard nor registered is a 
 
 #### Registering custom capabilities (`kumiki.caps.json`)
 
-A project can extend the accepted set with a **`kumiki.caps.json`** manifest placed in the same directory as the `.kumiki` file:
+A project can extend the accepted set with a **`kumiki.caps.json`** manifest:
 
 ```json
 {
@@ -489,6 +489,8 @@ A project can extend the accepted set with a **`kumiki.caps.json`** manifest pla
 ```
 
 Each entry is a capability name in `group.action` form (lowercase, dot-separated) — either a bare string or an object with a `description`. A registered name is then accepted in `app.caps`, and an effect bound to it (`effect track cap=telemetry.track …`) becomes emittable and is dispatched at the capability boundary — and is mockable in scenarios exactly like a standard effect. A name already in the standard set must not be re-declared.
+
+**Where the manifest is looked for.** The manifest registers capabilities for a *project*, so it is searched for from the directory holding the `.kumiki` file upwards, one directory at a time, up to and including the project root — the nearest directory holding a `package.json`, or the filesystem root when there is none. The bound is the same for every tool: a host's own notion of a project root (Vite's `root`, which for `kumiki dev` is the `.kumiki` file's own directory) does not narrow it, because one file must resolve to one manifest whichever tool reads it. The **nearest** manifest is the one that is read; the rest are not consulted. A manifest on that path that exists but is malformed is an error naming the file, never a silent fall-through to one further up. When a name in `app.caps` is still unregistered, [E0302](./errors.md#e0302-unknown-capability) is reported, and `kumiki check` / `kumiki build` / the Vite plugin name the manifest they read, or the directories they searched.
 
 This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
 

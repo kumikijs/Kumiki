@@ -31,7 +31,11 @@ export {
   inlineRuntime,
 } from "./compile.ts";
 export { generateDts } from "./dts.ts";
-export { lex } from "./lexer.ts";
+// `LexError` travels with `ParseError`: both escape `compile()` as exceptions
+// carrying a source position, and a caller that renders them as located
+// diagnostics — the Vite plugin, whose overlay links to the line — cannot
+// narrow what it cannot name.
+export { LexError, lex } from "./lexer.ts";
 export { ParseError, parse } from "./parser.ts";
 export {
   buildDefIndex,

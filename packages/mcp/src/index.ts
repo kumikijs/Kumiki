@@ -89,8 +89,9 @@ function readSource(input: { source?: string | undefined; path?: string | undefi
 }
 
 /**
- * Registered capabilities for an input: from the `kumiki.caps.json` next to a
- * `path`, or an explicit `capabilities` list when only `source` is given.
+ * Registered capabilities for an input: from the nearest `kumiki.caps.json` at
+ * or above a `path` (searched up to the project root), or an explicit
+ * `capabilities` list when only `source` is given.
  */
 function capsForInput(input: {
   path?: string | undefined;
@@ -354,7 +355,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
         strictA11y: z
           .boolean()
@@ -401,7 +402,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
       },
     },
@@ -436,7 +437,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
       },
     },
@@ -476,7 +477,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
       },
     },
@@ -783,7 +784,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+            "Project-registered capabilities. Defaults to the nearest kumiki.caps.json at or above the path.",
           ),
       },
     },
@@ -849,7 +850,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+            "Project-registered capabilities. Defaults to the nearest kumiki.caps.json at or above the path.",
           ),
       },
     },
@@ -882,7 +883,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+            "Project-registered capabilities. Defaults to the nearest kumiki.caps.json at or above the path.",
           ),
       },
     },

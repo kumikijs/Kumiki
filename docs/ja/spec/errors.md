@@ -603,7 +603,7 @@ effect が要求するケイパビリティが `app.caps` で宣言されてい�
 
 > `Unknown capability "<name>" in app.caps — use a standard capability or register it in kumiki.caps.json`
 
-**修正**：標準ケイパビリティを使うか、綴りを直すか、`.kumiki` ファイルと同じディレクトリの `kumiki.caps.json` にカスタムケイパビリティを登録する。詳細は [標準ケイパビリティ](./stdlib.md#_2-5-standard-capabilities)。
+**修正**：標準ケイパビリティを使うか、綴りを直すか、`kumiki.caps.json` にカスタムケイパビリティを登録する（`.kumiki` ファイルの隣でも、プロジェクトルートまでの任意の階層でもよい）。`kumiki check` / `kumiki build` と Vite プラグインは、読まれたマニフェスト、または見つからなかった場合の探索ディレクトリを併記する。詳細は [標準ケイパビリティ](./stdlib.md#_2-5-standard-capabilities)。
 
 ### E0303 `invalid-cancel-target`
 

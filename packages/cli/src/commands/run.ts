@@ -32,7 +32,12 @@ export function registerRun(program: Command): void {
         const runOpts: { episodeLog?: string } = options.episodeLog
           ? { episodeLog: resolve(process.cwd(), options.episodeLog) }
           : {};
-        await runCmd(inputPath, resolve(process.cwd(), scenario), capsFor(inputPath), runOpts);
+        await runCmd(
+          inputPath,
+          resolve(process.cwd(), scenario),
+          capsFor(inputPath).capabilities,
+          runOpts,
+        );
       },
     );
 }

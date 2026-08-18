@@ -16,7 +16,7 @@ describe("generateDts", () => {
       tile App = column(B)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     `);
-    expect(dts).toContain("export interface Slots {");
+    expect(dts).toContain("export interface KumikiSlots {");
     expect(dts).toContain("count: number;");
     expect(dts).toContain("label: string;");
     expect(dts).toContain("ready: boolean;");
@@ -32,10 +32,12 @@ describe("generateDts", () => {
       app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     `);
     // typed input record, Unit output → null
-    expect(dts).toMatch(/"telemetry\.track"\??:\s*Provider<\{ name: string; n: number \}, null>/);
-    expect(dts).toContain("export interface Providers {");
-    // a self-contained Provider<In, Out> helper alias is emitted
-    expect(dts).toContain("export type Provider<");
+    expect(dts).toMatch(
+      /"telemetry\.track"\??:\s*KumikiProvider<\{ name: string; n: number \}, null>/,
+    );
+    expect(dts).toContain("export interface KumikiProviders {");
+    // a self-contained KumikiProvider<In, Out> helper alias is emitted
+    expect(dts).toContain("export type KumikiProvider<");
   });
 
   it("does NOT emit standard-capability effects as providers (they are built-in)", () => {
