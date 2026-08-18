@@ -245,7 +245,7 @@ describe("the standard library's Route", () => {
     `);
     expect(gen).toContain("path: string");
     expect(gen).toContain("pattern: string");
-    expect(gen).toContain("hash: { _tag: \"Some\"; _0: string } | { _tag: \"None\" }");
+    expect(gen).toContain('hash: { _tag: "Some"; _0: string } | { _tag: "None" }');
     expect(tscDiagnostics(gen)).toEqual([]);
   });
 });

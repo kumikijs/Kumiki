@@ -74,9 +74,9 @@ const EMITTERS = [
 ];
 
 describe("spec ⇆ implementation diagnostic code-set drift", () => {
-  const implSrc = EMITTERS.map((parts) =>
-    readFileSync(path.join(repoRoot, ...parts), "utf8"),
-  ).join("\n");
+  const implSrc = EMITTERS.map((parts) => readFileSync(path.join(repoRoot, ...parts), "utf8")).join(
+    "\n",
+  );
   const specEnSrc = readFileSync(path.join(repoRoot, "docs", "spec", "errors.md"), "utf8");
   const specJaSrc = readFileSync(path.join(repoRoot, "docs", "ja", "spec", "errors.md"), "utf8");
   const implCodes = collect(implSrc, CODE_RE);

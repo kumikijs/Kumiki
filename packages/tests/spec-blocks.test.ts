@@ -132,7 +132,9 @@ describe("every kumiki block in docs/ is what it says it is", () => {
       const r = compileBlock(b);
       if (!r.ok) failures.push(`${at(b)} — ${r.message}`);
       else if (r.diagnostics.length > 0) {
-        failures.push(`${at(b)} — ${r.diagnostics.map((d) => `${d.code} ${d.message}`).join("; ")}`);
+        failures.push(
+          `${at(b)} — ${r.diagnostics.map((d) => `${d.code} ${d.message}`).join("; ")}`,
+        );
       }
     }
     expect(failures).toEqual([]);
@@ -212,7 +214,9 @@ describe("every kumiki block in docs/ is what it says it is", () => {
       const index = en.indexOf(b);
       const mate = ja[index] as Block;
       if (mate.meta !== b.meta) {
-        failures.push(`${at(b)} is "${b.meta || "(none)"}" but ${at(mate)} is "${mate.meta || "(none)"}"`);
+        failures.push(
+          `${at(b)} is "${b.meta || "(none)"}" but ${at(mate)} is "${mate.meta || "(none)"}"`,
+        );
       }
     }
     expect([...new Set(failures)]).toEqual([]);
