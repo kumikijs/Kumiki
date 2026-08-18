@@ -25,7 +25,12 @@ import {
   smoke,
   type TestResult,
 } from "@kumikijs/runtime";
-import { installTestDoubles, readHttpFixture, useHttpFixture } from "./harness.ts";
+import {
+  type HttpFixture,
+  installTestDoubles,
+  readHttpFixture,
+  useHttpFixture,
+} from "./harness.ts";
 
 let domReady = false;
 export function ensureDom(): void {
@@ -105,21 +110,34 @@ export async function loadApp(
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
-  opts: { sourcePath?: string; diagnosticsAsIssues?: boolean } = {},
+  opts: {
+    sourcePath?: string;
+    diagnosticsAsIssues?: boolean;
+    /** Overrides the fixture read from `sourcePath`; for a source with no file. */
+    httpFixture?: HttpFixture | null;
+    /** Milliseconds to settle after each step. Default 20, as the CLI drives it. */
+    settleMs?: number;
+  } = {},
 ): Promise<SmokeReport> {
   ensureDom();
   // Effects run for real here (unlike `runScenario`, which replaces every
   // `invoke`), so the http capability is answered by the example's own
   // `.http.json`. Without a path there is no fixture, and any request reports
   // itself rather than reaching a host.
-  useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
+  useHttpFixture(
+    opts.httpFixture !== undefined
+      ? opts.httpFixture
+      : opts.sourcePath
+        ? readHttpFixture(opts.sourcePath)
+        : null,
+  );
   const app = await loadApp(source, capabilities, opts);
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
     return await smoke(app, root, {
-      settleMs: 20,
+      settleMs: opts.settleMs ?? 20,
       diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
     });
   } finally {

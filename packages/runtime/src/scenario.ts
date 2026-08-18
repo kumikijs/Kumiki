@@ -377,8 +377,14 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     // Dispatched on the form itself, which is what the `form` tile listens for.
     // Clicking a submit button does not submit a form in a synthetic event, and
     // a form written without one has nothing to click.
-    const form = root.querySelector<HTMLFormElement>(a.submit);
-    if (!form) throw new Error(`no form matching selector ${a.submit}`);
+    //
+    // The selector may also name something inside the form: a page with two
+    // forms on it has no way to tell them apart otherwise, since a `form` tile
+    // carries no id of its own unless its author gave it one, and its fields
+    // usually do.
+    const el = root.querySelector<HTMLElement>(a.submit);
+    const form = el?.closest("form");
+    if (!form) throw new Error(`no form at or above selector ${a.submit}`);
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     return;
   }

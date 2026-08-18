@@ -1,0 +1,79 @@
+{
+  "effects": {
+    "loadIssues": [{ "outcome": "ok", "value": { "_tag": "None" } }],
+    "loadComments": [{ "outcome": "ok", "value": { "_tag": "None" } }]
+  },
+  "steps": [
+    {
+      "label": "storage has nothing stored, so the list is ready and empty",
+      "expect": {
+        "noErrors": true,
+        "state": { "ready": true },
+        "domIncludes": ["Issues", "No issues"]
+      }
+    },
+    {
+      "label": "the new-issue route renders its form",
+      "do": { "navigate": "/new" },
+      "expect": { "noErrors": true, "domIncludes": ["New Issue", "Title", "Tags"] }
+    },
+    {
+      "label": "the fields bind into the draft record, field by field",
+      "do": { "fill": "#new-title", "value": "Login button does nothing" },
+      "expect": { "noErrors": true, "state": { "draft": { "title": "Login button does nothing" } } }
+    },
+    {
+      "do": { "fill": "#new-body", "value": "Clicking Sign in on /login has no effect." },
+      "expect": { "noErrors": true }
+    },
+    {
+      "do": { "fill": "#new-tags", "value": "auth, regression" },
+      "expect": { "noErrors": true, "state": { "draft": { "tags": "auth, regression" } } }
+    },
+    {
+      "label": "submitting creates the issue, clears the draft, and navigates to the new issue",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "title": "", "tags": "" } },
+        "domIncludes": ["Login button does nothing", "#auth", "#regression", "Comments"],
+        "domExcludes": ["No issues"]
+      }
+    },
+    {
+      "label": "the tag form on the detail page adds a tag to the issue the route names",
+      "do": { "fill": "input[placeholder='Add tag...']", "value": "p1" },
+      "expect": { "noErrors": true, "state": { "tagDraft": "p1" } }
+    },
+    {
+      "label": "named by the field inside it, because the detail page carries two forms",
+      "do": { "submit": "input[placeholder='Add tag...']" },
+      "expect": { "noErrors": true, "state": { "tagDraft": "" }, "domIncludes": ["#p1"] }
+    },
+    {
+      "do": {
+        "fill": "textarea[placeholder='Write a comment...']",
+        "value": "Reproduced on Firefox too."
+      },
+      "expect": { "noErrors": true, "state": { "commentDraft": "Reproduced on Firefox too." } }
+    },
+    {
+      "label": "the comment is filed against the issue the route names",
+      "do": { "submit": "textarea[placeholder='Write a comment...']" },
+      "expect": {
+        "noErrors": true,
+        "state": { "commentDraft": "" },
+        "domIncludes": ["Reproduced on Firefox too.", "me"]
+      }
+    },
+    {
+      "label": "deleting the issue removes it and returns to a list that is empty again",
+      "do": { "clickText": "Delete issue" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["No issues"],
+        "domExcludes": ["Login button does nothing"]
+      }
+    }
+  ]
+}

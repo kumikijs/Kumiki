@@ -47,8 +47,8 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toContain("domContains");
   });
 
-  // The whole reason this matters: every `.browser.json` in the corpus asserts
-  // only browser-tier properties, so before this they all passed vacuously.
+  // The whole reason this matters: a fixture written for the browser tier
+  // asserts things a headless DOM has no answer for, and passed anyway.
   it("names the tier that owns a browser-only expect key", async () => {
     const r = await run({ steps: [{ expect: { animating: [".spin"] } as never }] });
     expect(r.ok).toBe(false);

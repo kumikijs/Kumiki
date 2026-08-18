@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "the link is in the viewport at mount, so its prefetch reducer has already run",
+      "expect": {
+        "noErrors": true,
+        "state": { "prefetched": 1, "lastId": "abc-123" },
+        "domIncludes": ["prefetched: 1", "lastId: abc-123"]
+      }
+    },
+    {
+      "label": "and only once, however long the link stays there",
+      "do": { "wait": 60 },
+      "expect": { "noErrors": true, "state": { "prefetched": 1 } }
+    },
+    {
+      "label": "arriving at the route runs the same reducer, which is the point of sharing it",
+      "do": { "navigate": "/todos/abc-123" },
+      "expect": { "noErrors": true, "state": { "prefetched": 2, "lastId": "abc-123" } }
+    }
+  ]
+}

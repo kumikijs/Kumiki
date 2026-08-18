@@ -22,6 +22,7 @@ export {
 export {
   type HttpFixture,
   type HttpResponseFixture,
+  httpRequests,
   installTestDoubles,
   readHttpFixture,
   useHttpFixture,

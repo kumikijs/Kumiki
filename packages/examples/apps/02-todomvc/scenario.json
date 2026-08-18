@@ -1,0 +1,43 @@
+{
+  "effects": {
+    "loadTodos": [{ "outcome": "ok", "value": { "_tag": "None" } }]
+  },
+  "steps": [
+    {
+      "label": "storage answers 'nothing stored yet', so the list is ready and empty",
+      "expect": {
+        "noErrors": true,
+        "state": { "ready": true, "draft": "" },
+        "domIncludes": ["Todos", "0 items left"]
+      }
+    },
+    {
+      "label": "typing goes into the draft slot, not into the list",
+      "do": { "fill": "input[type='text']", "value": "buy milk" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": "buy milk" },
+        "domExcludes": ["1 items left"]
+      }
+    },
+    {
+      "label": "submitting the form is what adds the todo — the form has no button to click",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": "" },
+        "domIncludes": ["buy milk", "1 items left"]
+      }
+    },
+    {
+      "label": "checking the row marks it done",
+      "do": { "click": "input[type='checkbox']" },
+      "expect": { "noErrors": true, "domIncludes": ["0 items left"] }
+    },
+    {
+      "label": "and clearing completed removes it",
+      "do": { "clickText": "Clear completed" },
+      "expect": { "noErrors": true, "domExcludes": ["buy milk"] }
+    }
+  ]
+}

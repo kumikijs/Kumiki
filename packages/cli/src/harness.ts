@@ -42,7 +42,7 @@ export type HttpFixture = Record<string, HttpResponseFixture | HttpResponseFixtu
 
 let currentFixture: HttpFixture | null = null;
 let cursors: Record<string, number> = {};
-let installed = false;
+let requestLog: string[] = [];
 
 /**
  * Point the `fetch` double at one example's scripted responses. Passing `null`
@@ -52,6 +52,17 @@ let installed = false;
 export function useHttpFixture(fixture: HttpFixture | null): void {
   currentFixture = fixture;
   cursors = {};
+  requestLog = [];
+}
+
+/**
+ * Every request the double has answered since the fixture was set, as
+ * `"<METHOD> <path>"`. What a retry ladder or a `policy=latest` cancellation
+ * actually did is otherwise invisible: the app reports the same final state
+ * whether it took one attempt or three.
+ */
+export function httpRequests(): string[] {
+  return [...requestLog];
 }
 
 /** Read `<source>.http.json` beside a `.kumiki` file; `null` when there is none. */
@@ -71,13 +82,13 @@ export function readHttpFixture(kumikiPath: string): HttpFixture | null {
 }
 
 /**
- * Install the doubles onto `globalThis`. Idempotent, and safe to call from a
- * vitest setup file as well as from the CLI's happy-dom registration — the
- * fixture table is swapped per example by `useHttpFixture`.
+ * Install the doubles onto `globalThis`, replacing whatever is there. Call it
+ * from a vitest setup file, and again after anything that rebuilds the realm —
+ * `GlobalRegistrator.register` overwrites both globals, so a version that
+ * installed only once would leave the second realm undoubled and the tier back
+ * on the network. The fixture table is swapped per example by `useHttpFixture`.
  */
 export function installTestDoubles(): void {
-  if (installed) return;
-  installed = true;
   installFetchDouble();
   installIntersectionObserverDouble();
 }
@@ -88,6 +99,7 @@ function installFetchDouble(): void {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const method = (init?.method ?? "GET").toUpperCase();
     const target = new URL(url, "http://localhost/");
+    requestLog.push(`${method} ${target.pathname}${target.search}`);
     const fixture = lookup(method, target);
     if (!fixture) {
       // Reported, not merely thrown: `httpFetch` turns every rejection into an

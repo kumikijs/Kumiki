@@ -1,0 +1,38 @@
+{
+  "effects": {
+    "loadQuote": [
+      {
+        "outcome": "err",
+        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+      },
+      {
+        "outcome": "err",
+        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+      },
+      {
+        "outcome": "ok",
+        "value": { "text": "Make it work, make it right, make it fast.", "author": "Kent Beck" }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "label": "idle before the first attempt",
+      "expect": { "noErrors": true, "domIncludes": ["Click to load."] }
+    },
+    {
+      "label": "the first two attempts fail with 5xx, so the app is still loading rather than failed",
+      "do": { "clickText": "Load quote" },
+      "expect": { "noErrors": true, "domExcludes": ["request failed", "Kent Beck"] }
+    },
+    {
+      "label": "after the exponential backoff (200ms, then 400ms) the third attempt succeeds — one wait, not one step per tick",
+      "do": { "wait": 900 },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Make it work, make it right, make it fast.", "Kent Beck"],
+        "domExcludes": ["request failed"]
+      }
+    }
+  ]
+}
