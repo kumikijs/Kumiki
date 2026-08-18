@@ -7,10 +7,12 @@ import {
   type AppShape,
   type LocationLike,
   type NavContext,
+  NONE,
   overridableInvoke,
   type ParsedRoute,
   type Router,
   type RoutingImpl,
+  someOf,
 } from "./core.ts";
 
 function historyRouter(): Router {
@@ -76,7 +78,11 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
   const query: Record<string, string> = {};
   const params = new URLSearchParams(loc.search);
   for (const [k, v] of params.entries()) query[k] = v;
-  const hash = loc.hash ? loc.hash.slice(1) : null;
+  // `Route.hash` is `Option(Text)` (routing.md §3.2), so it is built the way
+  // every other Option is — a bare string here would match neither arm of a
+  // `match route.hash`, and `is-some` would answer `false` for a hash that is
+  // right there in the URL.
+  const hash = loc.hash ? someOf(loc.hash.slice(1)) : NONE;
   if (!routes) return { path, pattern: path, params: {}, query, hash };
   // First pass: non-redirect routes.
   for (const r of routes) {

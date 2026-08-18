@@ -363,3 +363,35 @@ describe("toast honours the record the spec documents", () => {
     expect(banner()?.getAttribute("aria-live")).toBe("polite");
   });
 });
+
+// routing.md §3.2 types `Route.hash` as `Option(Text)`, and the compiler's
+// standard-library table now says so too — so `match route.hash with | Some(h)`
+// has to meet the tagged representation every other Option uses. The router
+// built a bare `string | null`, which matches neither arm: the subtree rendered
+// empty and `is-some` answered a confident `false`, with nothing thrown for a
+// smoke run to catch.
+describe("route.hash is the Option the type says it is", () => {
+  const routeOf = (path: string): Record<string, unknown> => {
+    const app: AppShape = {
+      slots: { route: { value: null } },
+      caps: [],
+      reducers: [],
+      effects: {},
+      init: [],
+      routes: [{ pattern: "/", tile: () => ({ kind: "page", children: [] }) }],
+    };
+    const target = document.createElement("div");
+    const handle = mount(app, target, { router: "memory", initialPath: path });
+    const route = app.live?.route as Record<string, unknown>;
+    handle.dispose();
+    return route;
+  };
+
+  it("carries Some(fragment) when the location has one", () => {
+    expect(routeOf("/#section").hash).toEqual({ _tag: "Some", _0: "section" });
+  });
+
+  it("carries None when it does not", () => {
+    expect(routeOf("/").hash).toEqual({ _tag: "None" });
+  });
+});
