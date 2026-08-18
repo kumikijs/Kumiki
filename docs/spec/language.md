@@ -656,17 +656,17 @@ unop        ::= '-' | '!'
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
 - **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
 
-  ```kumiki
-  # ❌ literal patterns — not supported
-  match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
+```kumiki snippet
+# ❌ literal patterns — not supported
+match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
 
-  # ✅ branch on a value with if/else
-  if label == "Overdue" then red else if label == "Today" then amber else gray
+# ✅ branch on a value with if/else
+if label == "Overdue" then red else if label == "Today" then amber else gray
 
-  # ✅ or lift the cases into a union and match the variant
-  type Urgency = Overdue | Today | Later
-  match urgency with | Overdue -> red | Today -> amber | Later -> gray
-  ```
+# ✅ or lift the cases into a union and match the variant
+type Urgency = Overdue | Today | Later
+match urgency with | Overdue -> red | Today -> amber | Later -> gray
+```
 
 ### 1.9.2 Alternatives to Higher-Order Functions
 

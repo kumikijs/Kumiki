@@ -39,6 +39,21 @@ const HEADING_RE = /^### (E\d{4}|W\d{4})\b/gm;
 // deliberately shrunk.
 const MIN_CODES = 30;
 
+/**
+ * Markdown under `dir`. The English pass skips `ja/`, which the Japanese pass
+ * walks against its own catalog.
+ */
+function markdownUnder(dir: string, skipJa: boolean, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    if (skipJa && entry.name === "ja") continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) markdownUnder(full, skipJa, out);
+    else if (entry.name.endsWith(".md")) out.push(full);
+  }
+  return out;
+}
+
 function collect(source: string, re: RegExp): Set<string> {
   const set = new Set<string>();
   for (const m of source.matchAll(re)) set.add(m[1]!);
@@ -104,17 +119,20 @@ describe("spec ⇆ implementation diagnostic code-set drift", () => {
   // makes "the code is a permanent contract" untrue of the document that says
   // it. Any code named anywhere in the spec has to resolve here.
   it("names no diagnostic code the spec does not define", () => {
+    // Every document, not only `docs/spec`: the guide names codes too, and one
+    // deleted tomorrow would leave it holding a dangling reference — the
+    // ai-edit.md failure this guard exists to prevent, one directory over.
     const unknown: string[] = [];
     for (const [track, defined] of [
-      ["docs/spec", specEnCodes],
-      ["docs/ja/spec", specJaCodes],
+      ["docs", specEnCodes],
+      ["docs/ja", specJaCodes],
     ] as [string, Set<string>][]) {
       const dir = path.join(repoRoot, ...track.split("/"));
-      for (const name of readdirSync(dir)) {
-        if (!name.endsWith(".md") || name === "errors.md") continue;
-        const text = readFileSync(path.join(dir, name), "utf8");
+      for (const file of markdownUnder(dir, track === "docs")) {
+        if (file.endsWith("errors.md")) continue;
+        const text = readFileSync(file, "utf8");
         for (const code of text.match(/E\d{4}|W\d{4}/g) ?? []) {
-          if (!defined.has(code)) unknown.push(`${track}/${name}: ${code}`);
+          if (!defined.has(code)) unknown.push(`${path.relative(repoRoot, file)}: ${code}`);
         }
       }
     }

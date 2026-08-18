@@ -404,9 +404,14 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 > `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
 
+```kumiki invalid
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", bind=avatar)
+```
+
 **修正**: `bind=` を外し、change イベントからファイルを取り出す reducer を追加する：
 
-```kumiki invalid
+```kumiki fragment
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*")
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -419,9 +424,14 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 > `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
 > `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
 
+```kumiki invalid
+slot draft : Text = ""
+tile Picker = input(type="text", bind=draft, accept="image/*")
+```
+
 **修正**: `type="file"` を付けてファイルピッカーにするか、`accept` / `multiple` prop を取り除く：
 
-```kumiki invalid
+```kumiki fragment
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head

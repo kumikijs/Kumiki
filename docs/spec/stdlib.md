@@ -90,7 +90,7 @@ fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
 
 ```kumiki snippet
 m.get-or(k, default)         # Map: default if there is no value
-opt.get-or(default)          ; Option: default if None, v if Some(v)
+opt.get-or(default)          # Option: default if None, v if Some(v)
 ```
 
 `.filter` **can be used on both List and Map**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):

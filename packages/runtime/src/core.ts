@@ -728,7 +728,7 @@ export type AppShape = {
  * app does not pull the stdlib into its module graph for two object literals.
  */
 export type OptionOf<T> = { _tag: "Some"; _0: T } | { _tag: "None" };
-export const someOf = <T,>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
+export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
 export const NONE: OptionOf<never> = { _tag: "None" };
 
 export type ParsedRoute = {

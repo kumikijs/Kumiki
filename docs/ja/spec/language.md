@@ -638,6 +638,19 @@ unop        ::= '-' | '!'
 - **`null` / `undefined` 禁止**
 - **`while` ループ禁止**
 - **代入式禁止**（`:=` は statement、式中で使えない）
+- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
+
+```kumiki snippet
+# ❌ リテラルパターン — サポートされない
+match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
+
+# ✅ if/else で値によって分岐する
+if label == "Overdue" then red else if label == "Today" then amber else gray
+
+# ✅ あるいはケースを union に持ち上げて variant に match する
+type Urgency = Overdue | Today | Later
+match urgency with | Overdue -> red | Today -> amber | Later -> gray
+```
 
 ### 1.9.2 高階関数の代わり
 
