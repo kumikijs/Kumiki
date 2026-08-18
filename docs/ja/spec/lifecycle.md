@@ -273,7 +273,7 @@ reducer notifySave
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
 
-`kind` は `info` / `success` / `warning` / `error` のいずれか。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warning 5s, error 0=手動閉じ）。
+`kind` は `info` / `success` / `warn` / `error` のいずれかで、DOM には `data-level` として載る — ランタイムは見た目を与えない。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warn 5s, error 0 = 閉じるまで残る）。`Some(Duration.ms(0))` は同じことを明示的に頼む書き方。
 
 ランタイムは画面右下にトーストスタックを管理する組み込み tile を持つ。
 
@@ -289,7 +289,7 @@ reducer notifySave
 | `label {for: "x"}` は存在する `id="x"` を指すこと | [E0705](./errors.md#e0705-a11y-label-for)、`--strict-a11y` 時 |
 | キーボード操作 (Tab/Enter/Esc) はランタイムが自動 | ランタイム保証 |
 | フォーカス管理: `modal` は trap focus | ランタイム保証 |
-| `aria-live` 領域: `toast` と `error` で自動 | ランタイム保証 |
+| `aria-live` 領域: `toast`（`role="status"`、polite）と `error`（`role="alert"`、assertive）で自動 — tile も `toast` effect のバナーも、クライアント／サーバとも | ランタイム保証 |
 
 検査される行は**デフォルト off、on のときはエラー**。`--strict-a11y` を付けなければコンパイラはこれらを警告として報告するのではなく完全に除外するため、ビルドは何も言わない。フラグを付けるとビルドが落ちる。ランタイム保証はどちらでも成立する。
 

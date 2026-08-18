@@ -356,7 +356,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `drawer` | ドロワー | `open`, `onClose`, `side` |
 | `tooltip` | ツールチップ | `text`, `placement` |
 | `popover` | ポップオーバー | `open`, `onClose`, `placement` |
-| `toast` | トースト通知 | `kind`（info/success/warn/error — `data-kumiki-toast-kind` として載るだけで、組み込みの見た目は持たない）、`text`、`duration` |
+| `toast` | トースト通知 | `kind`（info/success/warn/error — `data-level` として載るだけで、組み込みの見た目は持たない）、`text`、`duration`（kind 別のデフォルトは [ライフサイクル §7.7](./lifecycle.md#_7-7-トースト) 参照） |
 
 ### 2.3.8 フィードバック
 

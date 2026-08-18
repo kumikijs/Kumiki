@@ -10,6 +10,7 @@ import {
   inputTiles,
   installToast,
   mount,
+  statusTiles,
   renderToString,
 } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -336,8 +337,31 @@ describe("toast honours the record the spec documents", () => {
 
   it("marks the kind on the element rather than choosing an appearance", async () => {
     await fire({ kind: "success", text: "Saved" });
-    expect(banner()?.dataset.kumikiToastKind).toBe("success");
+    // `data-level` is the attribute the toast *tile* already writes; one
+    // author-facing concept, one attribute name.
+    expect(banner()?.dataset.level).toBe("success");
     expect(banner()?.textContent).toBe("Saved");
+  });
+
+  it("uses the per-kind default when the emitter says nothing", async () => {
+    // lifecycle.md §7.7: info 3s, success 3s, warn 5s, error 0 = manual close.
+    await fire({ kind: "warn", text: "Careful" });
+    vi.advanceTimersByTime(3_001);
+    expect(banner()).not.toBeNull();
+    vi.advanceTimersByTime(2_000);
+    expect(banner()).toBeNull();
+  });
+
+  it("leaves an error toast up until it is dismissed", async () => {
+    await fire({ kind: "error", text: "Failed" });
+    vi.advanceTimersByTime(600_000);
+    expect(banner()).not.toBeNull();
+  });
+
+  it("takes zero as the emitter asking for no timer", async () => {
+    await fire({ kind: "info", text: "Sticky", duration: { _tag: "Some", _0: 0 } });
+    vi.advanceTimersByTime(600_000);
+    expect(banner()).not.toBeNull();
   });
 
   it("stays for the duration the emitter asked for", async () => {
@@ -348,7 +372,7 @@ describe("toast honours the record the spec documents", () => {
     expect(banner()).toBeNull();
   });
 
-  it("falls back to three seconds when the emitter says None", async () => {
+  it("falls back to the kind's default when the emitter says None", async () => {
     await fire({ kind: "info", text: "Quick", duration: { _tag: "None" } });
     vi.advanceTimersByTime(2_999);
     expect(banner()).not.toBeNull();
@@ -393,5 +417,42 @@ describe("route.hash is the Option the type says it is", () => {
 
   it("carries None when it does not", () => {
     expect(routeOf("/").hash).toEqual({ _tag: "None" });
+  });
+});
+
+// lifecycle.md §7.8 lists "aria-live regions: automatic for toast and error" as
+// a runtime guarantee. It held for none of the three paths that render one: the
+// toast tile and the error tile wrote no ARIA at all, on the client or the
+// server.
+describe("the announced regions §7.8 promises", () => {
+  const node = (kind: "toast" | "error", over: Record<string, unknown> = {}): TileNode =>
+    ({ kind, ...(kind === "toast" ? { text: "hi" } : { field: "email" }), ...over }) as TileNode;
+
+  it("announces the toast tile politely", () => {
+    const el = statusTiles.toast?.(node("toast"), () => null) as HTMLElement;
+    expect(el.getAttribute("role")).toBe("status");
+    expect(el.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("announces the error tile assertively — it is why the user stopped", () => {
+    const el = statusTiles.error?.(node("error"), () => null) as HTMLElement;
+    expect(el.getAttribute("role")).toBe("alert");
+    expect(el.getAttribute("aria-live")).toBe("assertive");
+  });
+
+  it("serves the same attributes rather than adding them on hydration", async () => {
+    const { html } = await renderToString(
+      {
+        slots: {},
+        caps: [],
+        reducers: [],
+        effects: {},
+        init: [],
+        routes: [{ pattern: "/", tile: () => ({ kind: "page", children: [node("toast")] }) }],
+      } as unknown as AppShape,
+      { path: "/" },
+    );
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
   });
 });

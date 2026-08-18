@@ -280,7 +280,7 @@ reducer notifySave
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
 
-`kind` is one of `info` / `success` / `warning` / `error`. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warning 5s, error 0 = manual close).
+`kind` is one of `info` / `success` / `warn` / `error`, and reaches the DOM as `data-level` — the runtime attaches no appearance to it. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warn 5s, error 0 = stays until dismissed); `Some(Duration.ms(0))` asks for the same thing explicitly.
 
 The runtime has a built-in tile that manages a toast stack at the bottom-right of the screen.
 
@@ -296,7 +296,7 @@ The runtime has a built-in tile that manages a toast stack at the bottom-right o
 | A `label {for: "x"}` must name an `id="x"` that exists | [E0705](./errors.md#e0705-a11y-label-for), under `--strict-a11y` |
 | Keyboard operations (Tab/Enter/Esc) are automatic in the runtime | Runtime guarantee |
 | Focus management: `modal` traps focus | Runtime guarantee |
-| `aria-live` regions: automatic for `toast` and `error` | Runtime guarantee |
+| `aria-live` regions: automatic for `toast` (`role="status"`, polite) and `error` (`role="alert"`, assertive) — the tiles and the `toast` effect's banner alike, client and server | Runtime guarantee |
 
 The checked rows are **off by default and errors when on**: without `--strict-a11y` the compiler filters them out entirely rather than reporting them as warnings, so a build is silent about them; with the flag they fail the build. The runtime guarantees hold either way.
 

@@ -359,7 +359,7 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `drawer` | drawer | `open`, `onClose`, `side` |
 | `tooltip` | tooltip | `text`, `placement` |
 | `popover` | popover | `open`, `onClose`, `placement` |
-| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-kumiki-toast-kind`, with no built-in appearance), `text`, `duration` |
+| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-level`, with no built-in appearance), `text`, `duration` (see [Lifecycle §7.7](./lifecycle.md#_7-7-toasts) for the per-kind defaults) |
 | `details` | native `<details>` disclosure (#190) — `summary` labels the header; children make up the collapsible panel | `summary`, `open` |
 
 ### 2.3.8 Feedback
