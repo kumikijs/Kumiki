@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "an empty store renders the list, not the spinner",
+      "expect": { "visible": ["Todos", "0 items left"] }
+    },
+    {
+      "do": { "fill": "input[type='text']", "value": "buy milk" }
+    },
+    {
+      "label": "a real browser submit reaches the reducer — the form has no button to click, and this is the path a user takes with Enter",
+      "do": { "submit": "input[type='text']" },
+      "expect": {
+        "visible": ["buy milk", "1 items left"],
+        "elementState": { "input[type='text']": { "value": "" } }
+      }
+    },
+    {
+      "label": "the write is debounced by 300ms, so one wait replaces a step per tick",
+      "do": { "wait": 500 },
+      "expect": { "noErrors": true, "visible": ["1 items left"] }
+    },
+    {
+      "do": { "click": "input[type='checkbox']" },
+      "expect": { "visible": ["0 items left"] }
+    },
+    {
+      "do": { "clickText": "Clear completed" },
+      "expect": { "hidden": ["buy milk"] }
+    }
+  ]
+}

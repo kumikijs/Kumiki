@@ -43,6 +43,8 @@ pnpm exec turbo run typecheck test lint build
 すべて緑であること。特に:
 
 - **新しい example は必ず check + build + smoke が通る**（`packages/tests/` が自動検証する）。`check`/`build` は構文・型・codegen までしか保証しない。**実際に mount して操作して落ちないか**は `kumiki smoke <file>`（= `packages/tests/` の runtime smoke）で検証する。「コンパイルは通るが動かすとエラー/何も描画されない」バグはここで捕まえる。
+- **example はネットワークに出ない。** http effect を emit する example は、隣に `<source>.http.json` を置く — `{"GET /api/quote": {"json": …}}`、retry のはしごのように応答を変えたい場合は最後の要素が繰り返される配列。エントリのないリクエストは報告されて実行を失敗させるので、fixture の欠落がアプリ自身の `.err` reducer に隠れることはない。
+- **app example は必ず `scenario.json` を持つ**。`packages/tests/` がそれを実行する。コンパイルが通り `smoke` を生き延びることは、そのアプリが目的を果たすかについて何も言っていない。それを書き留める場所が scenario である。feature example も同様に `<name>.scenario.json` を追加できる。
 - **lint の inline 抑制（`@biome-ignore` 等）は禁止**。足したくなったら設計を直す。
 - **依存バージョンを直書きしない**。`pnpm add` で最新を入れ、共通バージョンは `pnpm-workspace.yaml` の catalog に置く。
 

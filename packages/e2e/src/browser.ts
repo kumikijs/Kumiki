@@ -21,7 +21,11 @@ export type Action =
    * #190 fixtures to seed browser-owned state a Kumiki reducer has no way
    * to produce (e.g. `<video>.currentTime = 3` before triggering a re-render).
    */
-  | { setProperty: string; property: string; value: unknown };
+  | { setProperty: string; property: string; value: unknown }
+  /** Submit the form at, or above, the element the selector matches. */
+  | { submit: string }
+  /** Wait this many milliseconds on top of the step's own settle. */
+  | { wait: number };
 
 export type Expect = {
   noErrors?: boolean;
@@ -53,6 +57,80 @@ export type Expect = {
 
 export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
 export type Scenario = { steps: ScenarioStep[] };
+
+/**
+ * The closed sets this tier answers for — the headless runner's, plus the
+ * browser-only names it adds. Kept as lists rather than derived from the types
+ * because the check is what makes a fixture's claim falsifiable: a key nobody
+ * evaluates is a fixture that passes having asserted nothing.
+ */
+const EXPECT_KEYS = [
+  "noErrors",
+  "errorIncludes",
+  "state",
+  "domIncludes",
+  "domExcludes",
+  "focused",
+  "visible",
+  "hidden",
+  "animating",
+  "elementState",
+] as const;
+
+const ACTION_KEYS = [
+  "dispatch",
+  "clickText",
+  "click",
+  "focus",
+  "blur",
+  "fill",
+  "choose",
+  "navigate",
+  "submit",
+  "wait",
+  "setProperty",
+] as const;
+
+/** Fields that accompany an action kind rather than naming one. */
+const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
+
+/**
+ * Every problem in a fixture, in the order they appear. Empty for one this
+ * tier can execute.
+ */
+export function validateScenario(scenario: Scenario): string[] {
+  const problems: string[] = [];
+  // `effects` is the scenario tier's capability-boundary mock, and this tier
+  // drives a real browser on purpose. Silently ignoring it would let a fixture
+  // believe its HTTP was stubbed while the request went out for real.
+  if ((scenario as { effects?: unknown }).effects !== undefined) {
+    problems.push('"effects" is not supported by the browser tier: it drives a real browser');
+  }
+  const steps = scenario.steps ?? [];
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step) continue;
+    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
+    if (step.do !== undefined) {
+      const kinds = Object.keys(step.do as Record<string, unknown>).filter(
+        (k) => !(ACTION_MODIFIERS as readonly string[]).includes(k),
+      );
+      const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
+      if (unknown.length > 0) {
+        problems.push(`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`);
+      } else if (kinds.length === 0) {
+        problems.push(`${where}: "do" names no action (${ACTION_KEYS.join(", ")})`);
+      } else if (kinds.length > 1) {
+        problems.push(`${where}: "do" names ${kinds.join(" and ")}; a step does exactly one thing`);
+      }
+    }
+    for (const key of Object.keys((step.expect ?? {}) as Record<string, unknown>)) {
+      if ((EXPECT_KEYS as readonly string[]).includes(key)) continue;
+      problems.push(`${where}: unknown expect key "${key}" (${EXPECT_KEYS.join(", ")})`);
+    }
+  }
+  return problems;
+}
 
 export type StepResult = {
   label?: string;
@@ -263,6 +341,25 @@ async function serveScenario(
   page.on("pageerror", onPageError);
   await page.route(KUMIKI_ROUTE_GLOB, onRoute);
 
+  const problems = validateScenario(scenario);
+  if (problems.length > 0) {
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
+    return {
+      ok: false,
+      steps: [
+        {
+          label: "scenario document",
+          errors: [],
+          state: {},
+          visibleText: "",
+          failures: problems,
+        },
+      ],
+    };
+  }
+
   try {
     await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
     await page.waitForFunction(readyExpr, null, { timeout: 5000 });
@@ -355,12 +452,33 @@ function describeAction(a: Action): string {
   if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
+  if ("submit" in a) return `submit ${a.submit}`;
+  if ("wait" in a) return `wait ${a.wait}ms`;
   if ("setProperty" in a)
     return `setProperty ${a.setProperty}.${a.property}=${JSON.stringify(a.value)}`;
   return `navigate ${a.navigate}`;
 }
 
 async function performAction(page: Page, a: Action): Promise<void> {
+  if ("wait" in a) {
+    await page.waitForTimeout(a.wait);
+    return;
+  }
+  if ("submit" in a) {
+    // `requestSubmit()` rather than a synthetic event: this tier exists to run
+    // the real thing, so constraint validation and the browser's own submit
+    // sequence are part of what it verifies. The selector may name the form or
+    // anything inside it, as at the scenario tier.
+    await page
+      .locator(a.submit)
+      .first()
+      .evaluate((el: Element) => {
+        const form = el instanceof HTMLFormElement ? el : el.closest("form");
+        if (!form) throw new Error("no form at or above the selector");
+        form.requestSubmit();
+      });
+    return;
+  }
   if ("dispatch" in a) {
     await page.evaluate(
       (arg: { n: string; p: Record<string, unknown> }) =>

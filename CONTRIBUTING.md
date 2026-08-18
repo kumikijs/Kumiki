@@ -43,6 +43,8 @@ pnpm exec turbo run typecheck test lint build
 Everything must be green. In particular:
 
 - **Every new example must pass check + build + smoke** (`packages/tests/` verifies this automatically). `check`/`build` only guarantee syntax, types, and codegen. Whether it **actually mounts and survives interaction** is verified by `kumiki smoke <file>` (= the runtime smoke in `packages/tests/`). "Compiles but errors / renders nothing when run" bugs are caught here.
+- **An example never reaches the network.** An example that emits an http effect ships a sibling `<source>.http.json` — `{"GET /api/quote": {"json": …}}`, or an array whose last entry repeats when a retry ladder needs different answers. A request with no entry is reported and fails the run, so a missing fixture cannot hide behind an app's own `.err` reducer.
+- **Every app example ships a `scenario.json`**, and `packages/tests/` runs it. Compiling and surviving `smoke` says nothing about whether the app does what it is for; the scenario is where that is written down. A feature example may add `<name>.scenario.json` the same way.
 - **Inline lint suppression (`@biome-ignore`, etc.) is forbidden**. If you want to add one, fix the design instead.
 - **Don't hardcode dependency versions**. Install the latest with `pnpm add`, and put shared versions in the catalog of `pnpm-workspace.yaml`.
 
