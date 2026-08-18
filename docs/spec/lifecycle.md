@@ -25,7 +25,7 @@
 
 Fires exactly once at app startup. It arrives **after** the effect list declared in `app.init = [...]` has been emitted.
 
-```kumiki
+```kumiki fragment
 reducer boot
     on=app.start
     do= emit loadSession()
@@ -39,7 +39,7 @@ Effects emitted inside the `app.start` reducer are **passed synchronously to the
 
 The timing at which the browser fires `beforeunload`. Only processing that completes in a short time can be executed (browser specification).
 
-```kumiki
+```kumiki fragment
 reducer cleanup
     on=app.stop
     do= emit persist(todos)         # only synchronous storage.write is practical
@@ -49,7 +49,7 @@ reducer cleanup
 
 Corresponds to the `visibilitychange` event. When you want to pause state on tab switching:
 
-```kumiki
+```kumiki fragment
 reducer pause on=app.hidden  do= timerPaused := true
 reducer resume on=app.visible do= timerPaused := false
                                  emit syncFromServer()
@@ -57,14 +57,14 @@ reducer resume on=app.visible do= timerPaused := false
 
 ### 7.1.4 app.online / app.offline
 
-```kumiki
+```kumiki fragment
 reducer onlineSync   on=app.online   do= emit retryQueued()
 reducer showOffline  on=app.offline  do= emit toast({kind: "warn", text: "Offline"})
 ```
 
 ### 7.1.5 timer
 
-```kumiki
+```kumiki fragment
 reducer poll
     on=timer(5s)
     do= emit fetchUpdates()
@@ -78,7 +78,7 @@ reducer poll
 
 A timer can be given a name so that a reducer can stop it explicitly:
 
-```kumiki
+```kumiki fragment
 slot remaining : Int = 10
 
 reducer tick on=timer(1s, name=countdown) do= remaining := remaining - 1
@@ -90,7 +90,7 @@ reducer stop on=ui.click(StopBtn)         do= stop-timer(countdown)
 - `stop-timer` is purely a control statement — it neither reads nor writes a slot nor emits an effect, so the reducer stays pure. The runtime clears the interval when it applies the reducer's result.
 - A stopped timer is **not** restarted automatically; it starts again only on remount. On `app` dispose, all timers (running or stopped) are cleared.
 
-```kumiki
+```kumiki fragment
 reducer tick on=timer(1s)   do= elapsed := elapsed + 1
 reducer poll on=timer(30s)  do= emit fetchUpdates()
 reducer fast on=timer(100ms) do= emit syncCursor()
@@ -100,7 +100,7 @@ reducer fast on=timer(100ms) do= emit syncCursor()
 
 The timing at which a specific tile appears in / disappears from the DOM.
 
-```kumiki
+```kumiki fragment
 reducer trackPageView
     on=tile.mount(SettingsPage)
     do= emit track({event: "settings_view", props: {}})
@@ -129,7 +129,7 @@ These are exceptions called **panics**. A panic is recorded in the episode log, 
 
 ### 7.2.3 The app.error reducer
 
-```kumiki
+```kumiki fragment
 slot lastError : Option(PanicInfo) = None
 
 reducer onPanic
@@ -141,7 +141,7 @@ reducer onPanic
 
 The `PanicInfo` type:
 
-```kumiki
+```kumiki fragment
 type PanicInfo = {
     message: Text,
     location: Text,         # e.g. `reducer "foo"` or `render`
@@ -163,7 +163,7 @@ The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Erro
 
 Capture rendering errors under a specific tile and show a fallback:
 
-```kumiki
+```kumiki fragment
 tile UserPage
     error-boundary = ErrorFallback
     = page(
@@ -189,7 +189,7 @@ When you write `error-boundary = X` in a tile definition, a panic during renderi
 
 When you want to show a loading display while awaiting the result of an async effect. Kumiki recommends **explicitly using the `LoadResult(T)` type**:
 
-```kumiki
+```kumiki fragment
 type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 slot user : LoadResult(User) = Idle
@@ -224,7 +224,7 @@ Network code is almost always written with `match`. This is the canonical patter
 
 Reaching `/404` is the same as a normal route. When route matching fails, the runtime sends you to `/404` via `nav.replace`.
 
-```kumiki
+```kumiki fragment
 tile NotFound = page(
                   heading("404"),
                   text("Page not found"),
@@ -233,7 +233,7 @@ tile NotFound = page(
 
 ### 7.5.2 Per-Route Error Fallback
 
-```kumiki
+```kumiki fragment
 reducer onRouteErr
     on=route.error("/todos/:id")
     do= toastError := Some("Failed to load todo")
@@ -246,7 +246,7 @@ reducer onRouteErr
 
 Kumiki **provides the equivalent of `window.confirm` as an effect**:
 
-```kumiki
+```kumiki snippet
 effect confirm cap=notification.show
                in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}
                out=Unit
@@ -270,7 +270,7 @@ In the runtime implementation, this is rendered as a **modal dialog tile** (not 
 
 ## 7.7 Toasts
 
-```kumiki
+```kumiki fragment
 effect toast cap=notification.show
              in={kind: Text, text: Text, duration: Option(Duration)}
              out=Unit
@@ -312,7 +312,7 @@ Whether to keep or discard slot values on a development hot reload:
 | `transient` | Discarded (returns to the initial value) |
 | `volatile` | Excluded from persistence (not written to the log either, discarded on reload) |
 
-```kumiki
+```kumiki fragment
 slot draft : Text             = ""        # kept on reload
 slot toast : Option(Toast)    transient = None  # discarded on reload
 slot password : Text          volatile  = ""    # not written to the episode log either

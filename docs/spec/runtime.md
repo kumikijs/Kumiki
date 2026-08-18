@@ -144,7 +144,7 @@ All slot changes within a single reducer execution are treated as **one batch**.
 
 Per-write rather than per-batch, because a batch is a map and only remembers the last value assigned to each slot. A `for` loop that leaves the slot's range and comes back would end on a legal value, and the illegal one it passed through — readable by every later statement, as below — would never be seen:
 
-```kumiki
+```kumiki fragment
 reducer drift on=ui.click(Btn)
     do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    # reaches 4
                                                 mirror := mirror + count }
@@ -160,7 +160,7 @@ via `console.error`, the same channel and contract as an unhandled effect error 
 
 The rule exists because the alternative — skipping only the rejected slot and writing the rest — half-applies the reducer, and lets a value the slot never took escape into a sibling slot, since statements later in the body read the batch under construction:
 
-```kumiki
+```kumiki fragment
 type Small = nominal Int where between(0, 3)
 slot count : Small = 0
 slot mirror : Int  = 0
@@ -172,7 +172,7 @@ reducer bump on=ui.click(Btn)
 
 A reachable bound is the program's business, not the runtime's. Write the guard:
 
-```kumiki
+```kumiki fragment
 reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
@@ -184,7 +184,7 @@ Two things a refinement does **not** gate:
 
 **The two combine into a trap.** A slot whose declared default violates its own refinement cannot be *reset* to that default from a reducer: `name := ""` on a `Text where nonempty` slot is a write like any other, so it discards the batch. Either widen the slot's type and refine at the boundary, or model the empty case with `Option`:
 
-```kumiki
+```kumiki fragment
 slot name : Text where nonempty = ""    # starts invalid — allowed
 reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 ```
@@ -210,7 +210,7 @@ You can **specify the theme by slot name**, like `app theme = themeName`. The ru
 - If `app.themeName` does not exist in `app.themes`, reads `_live[app.themeName]` to resolve the theme name
 - Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style
 
-```kumiki
+```kumiki snippet
 slot themeName : Text = "Light"
 theme Light = { colors: {bg: "#fff", fg: "#222"}, ... }
 theme Dark  = { colors: {bg: "#222", fg: "#eee"}, ... }

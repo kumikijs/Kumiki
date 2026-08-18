@@ -411,7 +411,7 @@ A value of type `EffectId` is used in an operation that is not defined on it. Th
 
 **Fix**: Remove `bind=`, and add a reducer that picks the file from the event:
 
-```kumiki
+```kumiki invalid
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*")
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -426,7 +426,7 @@ The `accept` and `multiple` props on `input` apply only when `type="file"`. They
 
 **Fix**: Either add `type="file"` to opt into a file picker, or remove the `accept` / `multiple` prop:
 
-```kumiki
+```kumiki invalid
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head

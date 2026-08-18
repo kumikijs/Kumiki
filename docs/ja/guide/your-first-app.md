@@ -4,7 +4,7 @@
 
 ## 1. 状態を宣言する（slot）
 
-```kumiki
+```kumiki fragment
 slot count : Int = 0
 ```
 
@@ -12,7 +12,7 @@ slot count : Int = 0
 
 ## 2. 更新を書く（reducer）
 
-```kumiki
+```kumiki fragment
 reducer inc on=ui.click(IncBtn) do= count := count + 1
 ```
 
@@ -20,7 +20,7 @@ reducer inc on=ui.click(IncBtn) do= count := count + 1
 
 ## 3. UI を組む（tile）
 
-```kumiki
+```kumiki fragment
 tile IncBtn = button(text="+1", onClick=inc)
 tile App    = column(heading("Count: " + count.show), IncBtn)
 ```
@@ -29,7 +29,7 @@ tile App    = column(heading("Count: " + count.show), IncBtn)
 
 ## 4. まとめる（app）
 
-```kumiki
+```kumiki fragment
 app Counter
     caps   = []
     routes = {"/" -> App, "/404" -> App}

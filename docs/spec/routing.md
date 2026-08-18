@@ -6,7 +6,7 @@ Kumiki routing **assumes an SPA**. It is based on the **History API**, not hash 
 
 Routes are declared in the `routes` field of `app`.
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = [nav.push, nav.replace, nav.back]
     routes = {
@@ -44,25 +44,25 @@ app TodoApp
 
 The runtime provides the standard slot `route`:
 
-```kumiki
+```kumiki fragment
 slot route : Route = Route.empty       # managed by the runtime
 ```
 
 The `Route` type is [provided by the standard library](./stdlib.md#213-domain-types-provided-by-the-standard-library):
 
-```kumiki
+```kumiki fragment
 type Route = {
     path: Text,                # "/todos/abc-123"
     pattern: Text,             # "/todos/:id"
-    params: Map(Text, Text),   ; {"id": "abc-123"}
-    query: Map(Text, Text),    ; ?foo=bar&baz=1 → {"foo":"bar","baz":"1"}
+    params: Map(Text, Text),   # {"id": "abc-123"}
+    query: Map(Text, Text),    # ?foo=bar&baz=1 → {"foo":"bar","baz":"1"}
     hash: Option(Text)         # #section
 }
 ```
 
 Referencing it from a tile:
 
-```kumiki
+```kumiki snippet
 tile TodoDetail = column(
                     heading("Todo " + route.params.get-or("id", "?")),
                     ...)
@@ -74,7 +74,7 @@ tile TodoDetail = column(
 
 ### 3.3.1 The link Element (recommended)
 
-```kumiki
+```kumiki fragment
 tile Nav = row(
              link(to="/")        {text: "Home"},
              link(to="/todos")   {text: "Todos"},
@@ -87,7 +87,7 @@ tile Nav = row(
 
 To transition from a reducer, emit an effect:
 
-```kumiki
+```kumiki fragment
 reducer save  on=ui.click(SaveBtn)
               do= emit persist(todos)
                   emit navigate({path: "/todos", params: {}})
@@ -95,7 +95,7 @@ reducer save  on=ui.click(SaveBtn)
 
 Built-in effects:
 
-```kumiki
+```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit
 effect navigate-replace cap=nav.replace  in={path: Text, params: Map(Text, Text)}    out=Unit
 effect navigate-back    cap=nav.back     in=Unit                                     out=Unit
@@ -103,7 +103,7 @@ effect navigate-back    cap=nav.back     in=Unit                                
 
 ### 3.3.3 Dynamic Path Construction
 
-```kumiki
+```kumiki snippet
 emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 ```
 
@@ -133,7 +133,7 @@ Events fired on route switches:
 | `route.enter(pattern)` | Just after entering the new route |
 | `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
 
-```kumiki
+```kumiki fragment
 reducer loadTodoOnEnter
     on=route.enter("/todos/:id")
     do= todos[$route.params.get-or("id", "")] := Loading
@@ -160,7 +160,7 @@ Cases where you want to block a route transition (unsaved changes, not logged in
 
 Emitting `emit navigate-replace(...)` inside a `route.enter(pattern)` reducer is treated as a redirect.
 
-```kumiki
+```kumiki fragment
 reducer requireAuth
     on=route.enter("/admin/*")
     do= if session.is-none
@@ -172,7 +172,7 @@ reducer requireAuth
 
 When you want to stop a transition if there are unsaved changes:
 
-```kumiki
+```kumiki fragment
 slot dirty : Bool = false
 
 reducer guardEdit
@@ -192,7 +192,7 @@ Using `/*` in a pattern lets you delegate sub-routes to a separate tile.
 
 ### 3.6.1 Parent Route
 
-```kumiki
+```kumiki fragment
 app App
     caps   = [nav.push]
     routes = {
@@ -205,7 +205,7 @@ app App
 
 The child route map is written in the tile definition via `sub-routes`:
 
-```kumiki
+```kumiki fragment
 tile SettingsLayout
     sub-routes = {
         "/settings/account" -> AccountSettings,
@@ -236,7 +236,7 @@ tile SettingsLayout
 
 Queries are read from `route.query`. For writing, they are not included in `navigate`'s `params` but passed via a separate `query` field.
 
-```kumiki
+```kumiki snippet
 emit navigate({
     path: "/search",
     params: {},
@@ -246,7 +246,7 @@ emit navigate({
 
 The `in` type of the `navigate` effect is an extended version that allows this:
 
-```kumiki
+```kumiki fragment
 effect navigate cap=nav.push
                 in={path: Text, params: Map(Text, Text), query: Map(Text, Text)}
                 out=Unit
@@ -260,7 +260,7 @@ effect navigate cap=nav.push
 
 When you want to fetch data ahead of time once a link enters the viewport:
 
-```kumiki
+```kumiki snippet
 link(to="/todos/abc-123") {
     text: "Todo abc-123",
     prefetch: loadTodo,           # name of the reducer to emit
@@ -278,7 +278,7 @@ Restores the scroll position when navigating back through history. Enabled by de
 
 A tile where you want to disable it:
 
-```kumiki
+```kumiki snippet
 tile Chat
     scroll-restoration = false
     = scroll(...)
@@ -286,7 +286,7 @@ tile Chat
 
 Scroll to the top on entering a specific route:
 
-```kumiki
+```kumiki fragment
 reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 ```
 
@@ -296,10 +296,10 @@ reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 
 ## 3.10 Redirects (static)
 
-```kumiki
+```kumiki fragment
 app App
     routes = {
-        "/old-path"  ->> "/new-path",     ; ->> is a redirect
+        "/old-path"  ->> "/new-path",     # ->> is a redirect
         "/new-path"  -> NewPage,
         "/404"       -> NotFound
     }
@@ -311,7 +311,7 @@ app App
 
 ## 3.11 Example: Routing with Authentication
 
-```kumiki
+```kumiki fragment
 type SessionId = nominal Text
 
 slot session : Option(SessionId) = None
@@ -330,8 +330,8 @@ reducer sessionLoaded
 reducer requireAuth
     on=route.enter("/app/*")
     do= if session.is-none
-        then let _ = (loginRedirect := Some(route.path))
-             in emit navigate-replace({path: "/login", params: {}, query: {}})
+        then { loginRedirect := Some(route.path)
+               emit navigate-replace({path: "/login", params: {}, query: {}}) }
         else ()
 
 reducer afterLogin

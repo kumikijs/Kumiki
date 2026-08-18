@@ -81,14 +81,14 @@ map(expr)                   : Map(K, V')       ; within expr, $1=key, $2=value
 
 `.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda can handle them as `$1=key, $2=value` via runtime destructuring:
 
-```kumiki
+```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
    = m.entries.sort-by($2.createdAt).map($1)
 ```
 
 `get-or` is a polymorphic method that **can also be used for Option**:
 
-```kumiki
+```kumiki snippet
 m.get-or(k, default)         # Map: default if there is no value
 opt.get-or(default)          ; Option: default if None, v if Some(v)
 ```
@@ -142,10 +142,10 @@ zip(other)                  : List(Tuple(T, U))
 
 **Parenthesis-free shortcut**: argument-less methods (`is-empty` / `length` / `reverse` / `sort` / `unique` / `head` / `tail` / `last`) **can omit `()` and be written like a field**:
 
-```kumiki
+```kumiki fragment
 slot todos : List(Todo) = []
 fn count() -> Int = todos.length              # parenthesis-free OK
-fn empty?() -> Bool = todos.is-empty          # same as above
+fn empty() -> Bool = todos.is-empty           # same as above
 fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
@@ -254,7 +254,7 @@ to-ms                       : Int
 
 Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
 
-```kumiki
+```kumiki fragment
 fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
 ```
@@ -537,7 +537,7 @@ The converse is checked too: emitting one of these without its capability in `ap
 
 ### 2.6.1 Navigation
 
-```kumiki
+```kumiki fragment
 effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text)}  out=Unit
 effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text)} out=Unit
 effect navigate-back   cap=nav.back  in=Unit  out=Unit
@@ -545,19 +545,19 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 Toast
 
-```kumiki
+```kumiki fragment
 effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
 ```
 
 ### 2.6.3 Log
 
-```kumiki
+```kumiki fragment
 effect log         cap=log.write    in={level: Text, message: Text, data: Map(Text, Text)}  out=Unit
 ```
 
 ### 2.6.4 Scroll
 
-```kumiki
+```kumiki snippet
 effect scroll-to   in={x: Int, y: Int}  out=Unit
 ```
 
@@ -565,7 +565,7 @@ The one standard effect with no capability: it moves the viewport of the page th
 
 ### 2.6.5 Confirm
 
-```kumiki
+```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
@@ -577,7 +577,7 @@ Rendered as a modal dialog tile rather than the native `confirm`, and it deliver
 
 Types such as `Money`, `Percent`, and `Decimal` are defined on the application side using `nominal`. Kumiki is unopinionated.
 
-```kumiki
+```kumiki fragment
 type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```

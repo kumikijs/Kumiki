@@ -19,7 +19,7 @@ Kumiki は **CSS を直接書かせない**。CSS のカスケード・特異度
 
 `theme` 定義で宣言する：
 
-```kumiki
+```kumiki fragment
 theme DefaultTheme = {
     colors: {
         bg:        "#ffffff",
@@ -75,7 +75,7 @@ theme-entry ::= identifier ':' (string | '{' theme-entry (',' theme-entry)* '}')
 
 ### 4.2.2 app への適用
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
@@ -89,7 +89,7 @@ app TodoApp
 
 tile prop の中でトークンを参照する場合、`@` 接頭辞を使う：
 
-```kumiki
+```kumiki fragment
 tile Card = box(
               column(
                 heading("Title"),
@@ -121,7 +121,7 @@ tile Card = box(
 | `size` | typography.size token name | `size: "lg"` |
 | `weight` | typography.weight token name | `weight: "bold"` |
 
-```kumiki
+```kumiki fragment
 tile Card = box(
               column(
                 heading("Title") {size: "lg", weight: "bold"},
@@ -144,7 +144,7 @@ tile Card = box(
 
 ### 4.4.1 row / column
 
-```kumiki
+```kumiki snippet
 row(A, B, C) {gap: "md", align: "center", justify: "between"}
 column(A, B, C) {gap: "sm", align: "stretch"}
 ```
@@ -158,7 +158,7 @@ column(A, B, C) {gap: "sm", align: "stretch"}
 
 ### 4.4.2 grid
 
-```kumiki
+```kumiki snippet
 grid(A, B, C, D) {cols: 2, gap: "md"}
 grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     # 数値 or 配列
 ```
@@ -174,13 +174,13 @@ grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     # 数値 or 配列
 
 `stack` は **vertical stack** — `column` と意味的に同等のレイアウト（子を縦並びに積む）。視覚的な「積み重ね」のニュアンスがほしい時に使う。
 
-```kumiki
+```kumiki snippet
 stack(Card1, Card2, Card3) {gap: "md"}
 ```
 
 **オーバーレイ（z 軸方向の重ね配置）.** z 軸方向に子を重ねるには `overlay` builtin を使う：
 
-```kumiki
+```kumiki snippet
 overlay(Content, when(modalOpen, Modal())) {align: "center"}
 ```
 
@@ -195,7 +195,7 @@ overlay(Content, when(modalOpen, Modal())) {align: "center"}
 | `scroll` | overflow auto なコンテナ。`h` 指定で固定高スクロール |
 | `fieldset` | form 内のフィールドグループ。`<fieldset>` 相当 |
 
-```kumiki
+```kumiki snippet
 panel(heading("Settings"), settingsForm) {bg: "surface", pad: "md"}
 region(navList) {role: "navigation", aria-label: "Main"}
 scroll(longList) {h: 400}
@@ -205,7 +205,7 @@ scroll(longList) {h: 400}
 
 区切り線（`<hr>`）：
 
-```kumiki
+```kumiki snippet
 column(A, divider(), B)
 row(A, divider() {orientation: "vertical"}, B)
 ```
@@ -216,7 +216,7 @@ row(A, divider() {orientation: "vertical"}, B)
 
 汎用コンテナ。pad/bg/radius/shadow などで装飾する：
 
-```kumiki
+```kumiki snippet
 box(content) {
     pad: "lg",
     bg: "primary",
@@ -236,7 +236,7 @@ box(content) {
 
 `pad` / `gap` / `radius` / `shadow` と違い、これらはトークン名ではない——テーマに幅のスケールは存在せず、ここでの `"sm"` は中身のない名前になる。数値は px、それ以外は CSS としてそのまま渡る（`"auto"`、`"50vh"`、`"32rem"`）。唯一の略記が `"full"` である。
 
-```kumiki
+```kumiki snippet
 image(src=url) {w: "full", max-w: 600, aspect: "16/9"}
 ```
 
@@ -246,7 +246,7 @@ image(src=url) {w: "full", max-w: 600, aspect: "16/9"}
 
 スタイル props はオブジェクトでブレイクポイント分岐できる：
 
-```kumiki
+```kumiki snippet
 column(A, B, C) {
     gap: {base: "sm", md: "md", lg: "lg"},
     pad: {base: "md", lg: "xl"}
@@ -265,7 +265,7 @@ grid(A, B, C, D) {
 
 複数 theme を定義し、`slot theme-name` を切り替える：
 
-```kumiki
+```kumiki snippet
 theme Light = {colors: {bg: "#fff", fg: "#000", ...}, ...}
 theme Dark  = {colors: {bg: "#0a0a0a", fg: "#fff", ...}, ...}
 
@@ -288,7 +288,7 @@ app App
 
 ### 4.6.1 OS 設定への追従
 
-```kumiki
+```kumiki fragment
 reducer initTheme
     on=app.start
     do= themeName := if prefers-dark() then "Dark" else "Light"
@@ -302,7 +302,7 @@ reducer initTheme
 
 タイルプリミティブは状態別 props を持つ：
 
-```kumiki
+```kumiki snippet
 button(text="Save") {
     bg: "primary",
     color: "bg",
@@ -320,13 +320,13 @@ button(text="Save") {
 
 `icon` 要素は名前で参照する：
 
-```kumiki
+```kumiki snippet
 icon(name="check") {size: "md", color: "success"}
 ```
 
 組み込みアイコンセットを提供予定（リストは後日）。カスタムアイコンは `theme.icons` でパス登録：
 
-```kumiki
+```kumiki snippet
 theme MyTheme = {
     ...,
     icons: {
@@ -348,7 +348,7 @@ theme MyTheme = {
 
 `when` で表示切替したタイルに自動適用される：
 
-```kumiki
+```kumiki snippet
 when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 ```
 
@@ -356,7 +356,7 @@ when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 
 再利用可能で任意（ただし閉じた文法）のアニメーション — スピナー、パルス、独自の入退場 — には **`motion`** を宣言する。これは `theme` と同格のトップレベル定義（純粋に表示用の定義で、7 つのロジックレイヤーには**含めない** — [レイヤ一覧](./language.md#_1-1-1-list-of-layers) 参照）であり、任意の tile の `motion` プロップから参照する。
 
-```kumiki
+```kumiki fragment
 motion Spin = {
     keyframes: {from: {rotate: 0}, to: {rotate: 360}},
     duration:  "slow",        # "fast" | "normal" | "slow"、または正の Int（ミリ秒）
@@ -394,7 +394,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
 
 例外：`<head>` への meta タグ・OG 画像などは `app.meta` で宣言：
 
-```kumiki
+```kumiki snippet
 app TodoApp
     ...
     meta = {

@@ -144,7 +144,7 @@ on reducer execution:
 
 バッチ単位ではなく書き込み単位なのは、バッチが map であり各 slot について最後に代入された値しか覚えていないからである。slot の範囲から出て戻ってくる `for` ループは合法な値で終わり、途中で通過した非合法な値 — 下記のとおり後続のすべての文から読める — は一度も検査されない:
 
-```kumiki
+```kumiki fragment
 reducer drift on=ui.click(Btn)
     do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    # 4 に到達する
                                                 mirror := mirror + count }
@@ -160,7 +160,7 @@ reducer drift on=ui.click(Btn)
 
 このルールがあるのは、もう一方の選択肢 — 拒否された slot だけを飛ばして残りを書く — が reducer を半分だけ適用し、さらに slot が一度も取らなかった値を隣の slot へ逃がしてしまうからである。body の後続文は構築途中のバッチを読むためだ:
 
-```kumiki
+```kumiki fragment
 type Small = nominal Int where between(0, 3)
 slot count : Small = 0
 slot mirror : Int  = 0
@@ -172,7 +172,7 @@ reducer bump on=ui.click(Btn)
 
 到達しうる境界はプログラム側の責任であって runtime の責任ではない。ガードは自分で書く:
 
-```kumiki
+```kumiki fragment
 reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
@@ -184,7 +184,7 @@ refinement が門番を**しない**ものが 2 つある:
 
 **この 2 つは組み合わさると罠になる**。宣言時の初期値が自身の refinement に違反している slot は、reducer からその初期値に*リセット*できない。`Text where nonempty` の slot に対する `name := ""` は他と変わらない書き込みなので、バッチを破棄する。slot の型を広げて境界で refine するか、空のケースを `Option` でモデル化すること:
 
-```kumiki
+```kumiki fragment
 slot name : Text where nonempty = ""    # 不正な値で始まる — 許される
 reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許されない
 ```
@@ -210,7 +210,7 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 - `app.themeName` が `app.themes` に存在しなければ、`_live[app.themeName]` を読んで theme 名を解決
 - 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルに反映
 
-```kumiki
+```kumiki snippet
 slot themeName : Text = "Light"
 theme Light = { colors: {bg: "#fff", fg: "#222"}, ... }
 theme Dark  = { colors: {bg: "#222", fg: "#eee"}, ... }

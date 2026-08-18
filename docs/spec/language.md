@@ -152,7 +152,7 @@ Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to writ
 
 ### 1.3.4 Examples
 
-```kumiki
+```kumiki fragment
 type UserId    = nominal Text where len-eq(36)
 type Email     = nominal Text where email
 type Url       = nominal Text where url
@@ -197,7 +197,7 @@ The initial value is required. A slot with no `=` would have to hold something b
 
 ### 1.4.3 Examples
 
-```kumiki
+```kumiki fragment
 slot todos       : Map(TodoId, Todo)              = {}
 slot filter      : Filter                         = All
 slot draft       : Text where len-lt(280)         = ""
@@ -241,7 +241,7 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 
 ### 1.5.3 Examples
 
-```kumiki
+```kumiki fragment
 effect loadUser  cap=http.get
                  in=UserId
                  out=Result(User, HttpError)
@@ -315,7 +315,7 @@ of them fire in definition order — see §1.6.4 Invariant 3.
 
 A selector is **`TileName`** or **`TileName#id`** only (CSS attribute selectors have been removed).
 
-```kumiki
+```kumiki snippet
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
 reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' is a built-in element, not a tile name
@@ -323,7 +323,7 @@ reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' is a built-in e
 
 To bind events directly to built-in elements (`button`, `input`, `form`, etc.), **create a wrapper tile**:
 
-```kumiki
+```kumiki snippet
 tile LoginForm = form(...) {id: "main"}
 
 reducer doLogin
@@ -333,7 +333,7 @@ reducer doLogin
 
 **`TileName#id`** narrows a subscription to dispatched elements whose `{id}` prop equals `id`. A bare `TileName` reducer still fires for every instance; an `#id`-scoped reducer fires **only** when the runtime sees a matching id. Use it to make intent explicit when several tiles wrap the same built-in element, so the wrong one cannot quietly trigger the wrong reducer:
 
-```kumiki
+```kumiki snippet
 tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
 tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
 
@@ -347,11 +347,11 @@ The `{id}` prop is also rendered as the element's native HTML `id` attribute. Mu
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
 
-```kumiki
+```kumiki snippet
 # These reducer statements:
 todos[id].done := true
 editor.title := "New"
-editor.get.body := "Body"        ; via Option (compiler expands to Option.map)
+editor.get.body := "Body"        # via Option (compiler expands to Option.map)
 
 # are internally expanded as:
 todos := todos.update(id, $1.copy(done=true))
@@ -363,7 +363,7 @@ editor := editor.map($1.copy(body="Body"))
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 
-```kumiki
+```kumiki snippet
 editor := editor.copy(title="New", body="Body", updatedAt=now)
 issue.copy(status=Done, priority=High)
 ```
@@ -402,7 +402,7 @@ issue.copy(status=Done, priority=High)
 
 ### 1.6.6 Examples
 
-```kumiki
+```kumiki fragment
 reducer addTodo
     on=ui.submit(NewTodoForm)
     do= let id = TodoId.fresh()
@@ -489,7 +489,7 @@ pattern      ::= identifier
 
 An event handler **takes a reducer name**:
 
-```kumiki
+```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
 ```
 
@@ -502,7 +502,7 @@ the argument as `$1`. **`$1` is available only when `in=` is declared** — usin
 `$1` in a tile with no `in=` is an undefined reference (E0103). Callers pass the
 argument positionally: `TodoRow(id)`.
 
-```kumiki
+```kumiki fragment
 tile TodoRow  in=TodoId
               = row(
                   check(value=todos[$1].done, onClick=toggle) {todoId: $1},
@@ -550,7 +550,7 @@ fn-param    ::= identifier ':' type-expr
 
 ### 1.8.4 Examples
 
-```kumiki
+```kumiki fragment
 fn matchFilter(t: Todo, f: Filter) -> Bool
    = match f with
        | All     -> true
@@ -575,7 +575,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
 
 ### 1.8.5 Calling from tile / reducer
 
-```kumiki
+```kumiki fragment
 tile TodoList = column(
                   for id in todos.keys
                     when(matchFilter(todos[id], filter), TodoRow(id)))
@@ -594,15 +594,15 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
 
 Since there are no lambdas, passing higher-order functions uses either a "fn name" or an "expression fragment":
 
-```kumiki
+```kumiki snippet
 items.map(double)         # registered fn name
-items.map($1 * 2)         ; expression fragment ($1 is the element)
+items.map($1 * 2)         # expression fragment ($1 is the element)
 items.filter(matchFilter($1, filter))  # embed a fn call in an expression fragment
 ```
 
 Partial application is **written explicitly** (no currying):
 
-```kumiki
+```kumiki snippet
 fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
@@ -670,11 +670,11 @@ unop        ::= '-' | '!'
 
 ### 1.9.2 Alternatives to Higher-Order Functions
 
-```kumiki
+```kumiki snippet
 items.map($1 * 2)                          # expression fragment
 items.map(formatPrice)                     # fn name
 items.filter(matchFilter($1, filter))      # fn call
-items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
+items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 ```
 
 ### 1.9.3 Short-Circuit Evaluation
@@ -753,7 +753,7 @@ emit-list  ::= effect-call (',' effect-call)*
 
 → [Routing](./routing.md), [HTTP / Storage](./http.md)
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = [storage.read, storage.write, http.get]
     routes = {"/" -> TodoList, "/todo/:id" -> TodoDetail, "/404" -> NotFound}
@@ -771,7 +771,7 @@ What a slot reference sees at that moment is its **declared default**. `route` i
 
 ## 1.13 Counterexamples
 
-```kumiki
+```kumiki snippet
 # ❌ local state
 tile Foo = let x = 0 in button(text=x.show)   # assignment inside a tile is not allowed (let binds an expression, but is not a substitute for a slot)
 

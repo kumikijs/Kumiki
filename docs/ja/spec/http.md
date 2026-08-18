@@ -20,7 +20,7 @@
 
 各メソッドに対応する高レベル effect が標準提供される：
 
-```kumiki
+```kumiki fragment
 effect http-get cap=http.get
                 in={
                   url: Url,
@@ -46,7 +46,7 @@ effect http-post cap=http.post
 
 ### 6.1.3 HttpBody 型
 
-```kumiki
+```kumiki fragment
 type HttpBody = Json(JsonValue)
               | Form(Map(Text, Text))
               | Multipart(Map(Text, FormValue))
@@ -57,11 +57,11 @@ type HttpBody = Json(JsonValue)
 
 ### 6.1.4 Decoder 型
 
-```kumiki
-type Decoder = Json(TypeRef)        # JSON を型に decode
-             | Text                  # 文字列のまま
-             | Bytes                 # バイト列のまま
-             | None                  # レスポンス本文を捨てる
+```kumiki snippet
+Decoder.Json(User)   # レスポンス JSON を型に decode
+Decoder.Text         # 文字列のまま
+Decoder.Bytes        # バイト列のまま
+Decoder.None         # レスポンス本文を捨てる
 ```
 
 レスポンスの decode は型安全。`Decoder.Json(User)` を指定すれば、レスポンス JSON が `User` 型に decode される。失敗は `HttpError` の `body` に格納される。
@@ -83,7 +83,7 @@ type Decoder = Json(TypeRef)        # JSON を型に decode
 
 ### 6.2.1 GET
 
-```kumiki
+```kumiki fragment
 type UserId = nominal Text where uuid
 type User   = {id: UserId, name: Text, email: Email}
 
@@ -104,7 +104,7 @@ reducer fetchUser
 
 実装時、Kumiki コンパイラは `loadUser` を以下に展開する：
 
-```kumiki
+```kumiki snippet
 emit http-get({
     url:     apiBase + "/users/" + $1.show,
     headers: {},
@@ -117,7 +117,7 @@ emit http-get({
 
 ### 6.2.2 POST
 
-```kumiki
+```kumiki fragment
 effect createTodo cap=http.post
                   in={text: Text}
                   out=Result(Todo, HttpError)
@@ -143,7 +143,7 @@ reducer added
 
 `app.http` で全 HTTP effect に自動付与する header を宣言できる：
 
-```kumiki
+```kumiki fragment
 app App
     caps   = [http.get, http.post, storage.read]
     routes = {"/" -> Home, "/404" -> NotFound}
@@ -168,7 +168,7 @@ app App
 
 ### 6.3.2 401 のグローバル処理
 
-```kumiki
+```kumiki fragment
 reducer handleUnauthorized
     on=app.http-401
     do= session := None
@@ -183,7 +183,7 @@ reducer handleUnauthorized
 
 `policy=latest` または `policy=latest-per-key(...)` で自動キャンセルされる。手動キャンセルは：
 
-```kumiki
+```kumiki fragment
 slot searchEffectId : EffectId = EffectId.none
 
 effect cancel cap=http.cancel in=EffectId out=Unit
@@ -214,7 +214,7 @@ reducer cancelSearch
 
 ## 6.5 リトライ
 
-```kumiki
+```kumiki fragment
 effect loadCritical cap=http.get
                     in=Text
                     out=Result(Text, HttpError)
@@ -235,7 +235,7 @@ effect loadCritical cap=http.get
 
 URL テンプレートや path パラメータを書きたい場合は、ユーザーがラッパ effect を宣言する：
 
-```kumiki
+```kumiki fragment
 slot apiBase : Url = "https://api.example.com"
 
 effect loadUser cap=http.get
@@ -266,7 +266,7 @@ effect loadUser cap=http.get
 
 ### 6.7.2 標準 effect (localStorage)
 
-```kumiki
+```kumiki fragment
 effect storage-read   cap=storage.read
                       in={key: Text, decode: Decoder}
                       out=Result(Option(Decoded), Text)
@@ -286,7 +286,7 @@ effect storage-clear  cap=storage.write
 
 ### 6.7.3 例
 
-```kumiki
+```kumiki snippet
 slot todos : Map(TodoId, Todo) = {}
 
 effect saveTodos cap=storage.write
@@ -319,7 +319,7 @@ reducer onChange
 
 `session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。
 
-```kumiki
+```kumiki fragment
 effect indexed-read cap=indexed.read
                     in={store: Text, key: Text, decode: Decoder}
                     out=Result(Option(Decoded), Text)
@@ -335,7 +335,7 @@ effect indexed-query cap=indexed.read
 
 IndexedDB の `store` は `app.indexed-db` で宣言：
 
-```kumiki
+```kumiki snippet
 app App
     ...
     indexed-db = {
@@ -354,14 +354,14 @@ app App
 
 ### 6.8.1 起動時ロード
 
-```kumiki
+```kumiki fragment
 reducer boot on=app.start do= emit loadAll()
 reducer loaded on=loadAll.ok($data, _) do= state := $data
 ```
 
 ### 6.8.2 変更を debounce で保存
 
-```kumiki
+```kumiki fragment
 effect save cap=storage.write
             in=Map(TodoId, Todo)
             out=Result(Unit, Text)
@@ -375,7 +375,7 @@ reducer afterChange
 
 ### 6.8.3 楽観的更新 + サーバ同期
 
-```kumiki
+```kumiki fragment
 reducer addOptimistic
     on=ui.submit(NewTodoForm)
     do= let id = TodoId.fresh()
@@ -429,7 +429,7 @@ Kumiki ランタイムは standard fetch を使うので、CORS の挙動はブ�
 
 `localStorage` にアクセストークンを保存するのは XSS 脆弱性のリスク。Kumiki のドキュメントとしては **HTTP-only cookie + `credentials: "include"`** を推奨する。
 
-```kumiki
+```kumiki snippet
 app App
     ...
     http = {
@@ -442,9 +442,8 @@ app App
 
 slot は episode log に**含まれる**。パスワード等を slot に置く場合は `volatile=true` を指定する：
 
-```kumiki
-slot password : Text = ""
-    volatile = true        # episode log に書き込まれない、リロードでも消える
+```kumiki fragment
+slot password : Text   volatile   = ""   # episode log に書き込まれない、リロードでも消える
 ```
 
 `volatile` slot は永続化対象から外れる。

@@ -398,7 +398,7 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 **修正**: `bind=` を外し、change イベントからファイルを取り出す reducer を追加する：
 
-```kumiki
+```kumiki invalid
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*")
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -413,7 +413,7 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 **修正**: `type="file"` を付けてファイルピッカーにするか、`accept` / `multiple` prop を取り除く：
 
-```kumiki
+```kumiki invalid
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head

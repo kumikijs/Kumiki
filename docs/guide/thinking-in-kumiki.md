@@ -26,7 +26,7 @@ Kumiki has no rules about the order of Hook calls, no dependency arrays, and no 
 
 Writing to the same **path shape** multiple times within a single reducer triggers [E0601](../spec/errors.md#e06xx---reducer-write-rules). This guarantees that "updates are consolidated in one place," making partial edits safe.
 
-```kumiki
+```kumiki snippet
 # NG: double write to tasks
 tasks := tasks.remove(id)
 tasks := tasks.filter(pred)

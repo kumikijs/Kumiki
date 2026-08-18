@@ -81,16 +81,16 @@ map(expr)                   : Map(K, V')       ; expr の中で $1=key, $2=value
 
 `.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda はランタイム destructure により `$1=key, $2=value` で扱える：
 
-```kumiki
+```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
    = m.entries.sort-by($2.createdAt).map($1)
 ```
 
 `get-or` は **Option 用にも使える** polymorphic method:
 
-```kumiki
+```kumiki snippet
 m.get-or(k, default)         # Map: 値がなければ default
-opt.get-or(default)          ; Option: None なら default、Some(v) なら v
+opt.get-or(default)          # Option: None なら default、Some(v) なら v
 ```
 
 `.filter` は **List と Map の両方に対して使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
@@ -142,10 +142,10 @@ zip(other)                  : List(Tuple(T, U))
 
 **括弧なしショートカット**: 引数なしメソッド（`is-empty` / `length` / `reverse` / `sort` / `unique` / `head` / `tail` / `last`）は **`()` を省略して field のように書ける**：
 
-```kumiki
+```kumiki fragment
 slot todos : List(Todo) = []
 fn count() -> Int = todos.length              # 括弧なし OK
-fn empty?() -> Bool = todos.is-empty          # 同上
+fn empty() -> Bool = todos.is-empty           # 同上
 fn norm() -> List(Todo) = todos.reverse       # 同上
 ```
 
@@ -254,7 +254,7 @@ to-ms                       : Int
 
 Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。
 
-```kumiki
+```kumiki fragment
 fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
 ```
@@ -504,7 +504,7 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 ### 2.6.1 ナビゲーション
 
-```kumiki
+```kumiki fragment
 effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text)}  out=Unit
 effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text)} out=Unit
 effect navigate-back   cap=nav.back  in=Unit  out=Unit
@@ -512,19 +512,19 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 トースト
 
-```kumiki
+```kumiki fragment
 effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
 ```
 
 ### 2.6.3 ログ
 
-```kumiki
+```kumiki fragment
 effect log         cap=log.write    in={level: Text, message: Text, data: Map(Text, Text)}  out=Unit
 ```
 
 ### 2.6.4 スクロール
 
-```kumiki
+```kumiki snippet
 effect scroll-to   in={x: Int, y: Int}  out=Unit
 ```
 
@@ -532,7 +532,7 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 
 ### 2.6.5 確認ダイアログ
 
-```kumiki
+```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
@@ -544,7 +544,7 @@ effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo:
 
 `Money`, `Percent`, `Decimal` などはアプリ側で `nominal` を使って定義する。Kumiki は意見を持たない。
 
-```kumiki
+```kumiki fragment
 type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```

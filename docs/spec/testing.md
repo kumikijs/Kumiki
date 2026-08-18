@@ -21,7 +21,7 @@ A `test` definition is **the sixth layer**. It is stored in the CRDT graph and r
 
 ## 8.2 Reducer Tests
 
-```kumiki
+```kumiki fragment
 test addTodo-basic =
     reducer-test addTodo
         given = {
@@ -57,7 +57,7 @@ A reducer-test asserts what the *running app* would do, so a batch a refinement 
 
 ### 8.2.4 Expecting a panic
 
-```kumiki
+```kumiki fragment
 test addTodo-empty =
     reducer-test addTodo
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
@@ -66,7 +66,7 @@ test addTodo-empty =
 
 ## 8.3 Property Tests
 
-```kumiki
+```kumiki fragment
 test toggle-is-involution =
     property-test
         for-all = {todoId: TodoId, todos: Map(TodoId, Todo)}
@@ -107,7 +107,7 @@ Each type has an automatic generator:
 
 Custom generators:
 
-```kumiki
+```kumiki snippet
 test foo =
     property-test
         for-all = {x: Int where between(0, 100)}
@@ -120,7 +120,7 @@ test foo =
 
 Compare a tile's structure against an expected value:
 
-```kumiki
+```kumiki fragment
 test counter-display =
     tile-test App
         given = {slots: {count: 5}, in: ()}
@@ -135,7 +135,7 @@ The snapshot is a deep structural comparison. Class names and styles are out of 
 
 Replace an effect's return value:
 
-```kumiki
+```kumiki fragment
 test loadUser-success =
     reducer-test fetchUser-flow
         given = {
@@ -159,7 +159,7 @@ The runner dispatches the triggering event, then drives the emit → result → 
 
 Replay an episode log recorded in production and verify the result:
 
-```kumiki
+```kumiki fragment
 test bug-2026-05-21 =
     episode-test
         load    = "fixtures/episode-2026-05-21.log"
