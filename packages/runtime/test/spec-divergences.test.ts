@@ -10,8 +10,8 @@ import {
   inputTiles,
   installToast,
   mount,
-  statusTiles,
   renderToString,
+  statusTiles,
 } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
