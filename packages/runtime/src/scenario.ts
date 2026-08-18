@@ -21,7 +21,10 @@ export type Action =
   | { blur: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
-  | { navigate: string };
+  | { navigate: string }
+  | { submit: string }
+  /** Settle for this many milliseconds — a debounce window, a retry backoff, a timer. */
+  | { wait: number };
 
 /** Assertions evaluated against the snapshot taken after a step. */
 export type Expect = {
@@ -44,6 +47,104 @@ export type Expect = {
 };
 
 export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
+
+/**
+ * The closed sets this runner answers for. A scenario naming anything outside
+ * them is rejected rather than skipped: `evaluateExpect` used to iterate the
+ * keys it knew and ignore the rest, so a document whose every assertion was
+ * browser-tier passed having checked nothing.
+ *
+ * The browser lists are named, not merely absent, so the failure says which
+ * tier owns the key instead of calling a real assertion a typo. They mirror
+ * `@kumikijs/e2e`'s `Expect` / `Action`; a key added there and not here reads
+ * as "unknown", which is the safe direction.
+ */
+const HEADLESS_EXPECT_KEYS = [
+  "noErrors",
+  "errorIncludes",
+  "state",
+  "domIncludes",
+  "domExcludes",
+] as const;
+const BROWSER_EXPECT_KEYS = ["focused", "visible", "hidden", "animating", "elementState"] as const;
+
+const HEADLESS_ACTION_KEYS = [
+  "dispatch",
+  "clickText",
+  "click",
+  "focus",
+  "blur",
+  "fill",
+  "choose",
+  "navigate",
+  "submit",
+  "wait",
+] as const;
+const BROWSER_ACTION_KEYS = ["setProperty"] as const;
+
+/** Fields that accompany an action kind rather than naming one. */
+const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
+
+const BROWSER_TIER = "a browser-tier assertion; run this fixture with @kumikijs/e2e";
+
+/**
+ * Every problem in a scenario document, described in the order they appear.
+ * Empty for a document this runner can execute.
+ */
+function validateScenario(scenario: Scenario): string[] {
+  const problems: string[] = [];
+  const steps = scenario.steps ?? [];
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step) continue;
+    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
+    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
+    if (step.expect !== undefined) problems.push(...validateExpect(step.expect, where));
+  }
+  return problems;
+}
+
+function validateAction(action: Action, where: string): string[] {
+  const keys = Object.keys(action as Record<string, unknown>);
+  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
+  const browser = kinds.filter((k) => (BROWSER_ACTION_KEYS as readonly string[]).includes(k));
+  if (browser.length > 0) {
+    return [`${where}: "${browser[0]}" is ${BROWSER_TIER}`];
+  }
+  const known = kinds.filter((k) => (HEADLESS_ACTION_KEYS as readonly string[]).includes(k));
+  const unknown = kinds.filter((k) => !(HEADLESS_ACTION_KEYS as readonly string[]).includes(k));
+  if (unknown.length > 0) {
+    return [`${where}: unknown action "${unknown[0]}" (${HEADLESS_ACTION_KEYS.join(", ")})`];
+  }
+  if (known.length === 0) {
+    return [`${where}: "do" names no action (${HEADLESS_ACTION_KEYS.join(", ")})`];
+  }
+  if (known.length > 1) {
+    return [`${where}: "do" names ${known.join(" and ")}; a step does exactly one thing`];
+  }
+  const kind = known[0];
+  const a = action as Record<string, unknown>;
+  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
+    return [`${where}: "${kind}" needs a string "value"`];
+  }
+  if (kind === "wait" && !(typeof a.wait === "number" && a.wait >= 0)) {
+    return [`${where}: "wait" needs a duration in milliseconds`];
+  }
+  return [];
+}
+
+function validateExpect(expect: Expect, where: string): string[] {
+  const problems: string[] = [];
+  for (const key of Object.keys(expect as Record<string, unknown>)) {
+    if ((HEADLESS_EXPECT_KEYS as readonly string[]).includes(key)) continue;
+    if ((BROWSER_EXPECT_KEYS as readonly string[]).includes(key)) {
+      problems.push(`${where}: "${key}" is ${BROWSER_TIER}`);
+      continue;
+    }
+    problems.push(`${where}: unknown expect key "${key}" (${HEADLESS_EXPECT_KEYS.join(", ")})`);
+  }
+  return problems;
+}
 
 /** A scripted effect outcome, returned in order each time the effect fires. */
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
@@ -169,6 +270,14 @@ export async function runScenario(
   if (opts.episodeLogger) mountOpts.episodeLogger = opts.episodeLogger;
 
   try {
+    // Before the mount, and all of them at once: a document this runner cannot
+    // execute is a mistake in the document, and running it half way would
+    // report a missing selector instead of the key that is wrong.
+    const problems = validateScenario(scenario);
+    if (problems.length > 0) {
+      steps.push(mkStep("scenario document", undefined, [], [], app, root, problems));
+      return finish();
+    }
     try {
       mount(app, root, mountOpts);
     } catch (e) {
@@ -188,7 +297,10 @@ export async function runScenario(
         } catch (e) {
           errorBuf.push(`action threw: ${errStr(e)}`);
         }
-        await settle(settleMs);
+        // `wait` is the whole action: it adds its duration to the settle this
+        // step would have had anyway, so a debounce window or a retry backoff
+        // is one step rather than dozens of empty ones.
+        await settle(settleMs + ("wait" in step.do ? step.do.wait : 0));
       }
       const expected = errorBuf.filter((e) =>
         (step.expect?.errorIncludes ?? []).some((s) => e.includes(s)),
@@ -253,10 +365,23 @@ function describeAction(a: Action): string {
   if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
+  if ("submit" in a) return `submit ${a.submit}`;
+  if ("wait" in a) return `wait ${a.wait}ms`;
   return `navigate ${a.navigate}`;
 }
 
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
+  // The waiting is the caller's: this step's settle is longer by `wait`.
+  if ("wait" in a) return;
+  if ("submit" in a) {
+    // Dispatched on the form itself, which is what the `form` tile listens for.
+    // Clicking a submit button does not submit a form in a synthetic event, and
+    // a form written without one has nothing to click.
+    const form = root.querySelector<HTMLFormElement>(a.submit);
+    if (!form) throw new Error(`no form matching selector ${a.submit}`);
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    return;
+  }
   if ("dispatch" in a) {
     app._dispatch?.(a.dispatch, a.payload ?? {});
     return;
