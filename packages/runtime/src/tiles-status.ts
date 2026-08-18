@@ -98,6 +98,10 @@ export const statusTiles: TileRenderers = {
   toast(node) {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "toast";
+    // lifecycle.md §7.8: a toast is announced. Politely — it reports something
+    // that has already happened and does not interrupt what the user is doing.
+    div.setAttribute("role", "status");
+    div.setAttribute("aria-live", "polite");
     if (node.level) div.dataset.level = node.level;
     div.style.padding = "8px 12px";
     div.style.borderRadius = "6px";
@@ -107,6 +111,10 @@ export const statusTiles: TileRenderers = {
   error(node) {
     const span = document.createElement("span");
     span.dataset.kumikiTile = "error";
+    // Assertively: an error is why the user's action did not go through, and
+    // a screen reader that waits for a pause may never mention it.
+    span.setAttribute("role", "alert");
+    span.setAttribute("aria-live", "assertive");
     span.dataset.field = node.field;
     span.style.color = "#c00";
     span.textContent = resolveFieldError(node.field);

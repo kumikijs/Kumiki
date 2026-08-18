@@ -260,34 +260,11 @@ All errors are structured:
 }
 ```
 
-### 9.6.1 Main Error Codes
+### 9.6.1 Where the codes are defined
 
-| code | Kind |
-|---|---|
-| `E0101` | undefined type |
-| `E0102` | undefined reducer |
-| `E0103` | undefined slot |
-| `E0104` | undefined effect |
-| `E0105` | undefined tile |
-| `E0106` | undefined fn |
-| `E0201` | type mismatch |
-| `E0202` | refinement violation |
-| `E0203` | insufficient union exhaustiveness |
-| `E0204` | nominal type confusion |
-| `E0301` | insufficient capability |
-| `E0302` | direct effect call |
-| `E0303` | slot write outside a reducer |
-| `E0304` | effect emit within a tile |
-| `E0305` | slot read/write / effect emit within a fn |
-| `E0306` | event selector is not a tile name |
-| `E0401` | direct recursion |
-| `E0402` | lambda use |
-| `E0403` | null use |
-| `E0404` | arbitrary predicate |
-| `E0501` | referential integrity violation (dangling) |
-| `E0502` | circular dependency |
-| `E0601` | multiple writes to the same slot |
-| `E0701` | a11y warning (label/alt, etc.) |
+[Error Code Specification](./errors.md) defines every code, normatively and in one place: what raises it, the message it carries, and the fix. Nothing here restates them — a second table is how `E0302` came to mean both "direct effect call" and "unknown capability", and a code whose meaning depends on which document you opened is not the permanent contract errors.md says it is.
+
+For automatic repair, the column that matters is errors.md's own **Auto-patch Coverage** table: it says, per code, whether `kumiki fix` can repair it and by what strategy. The loop below consumes that.
 
 ### 9.6.2 Automatic Repair Loop
 

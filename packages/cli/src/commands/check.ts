@@ -22,7 +22,7 @@ export type CheckScope = "types" | "refs" | "effects";
  */
 const SCOPE_BANDS: Record<CheckScope, readonly string[]> = {
   types: ["E02", "E04", "E06"],
-  refs: ["E01", "E05"],
+  refs: ["E01"],
   effects: ["E03"],
 };
 
@@ -126,7 +126,7 @@ export function registerCheck(program: Command): void {
     )
     .argument("[input]", "input .kumiki file")
     .option("--types", "narrow to type errors (E02*/E04*/E06*)")
-    .option("--refs", "narrow to reference errors (E01*/E05*)")
+    .option("--refs", "narrow to reference errors (E01*)")
     .option("--effects", "narrow to effect errors (E03*)")
     .allowExcessArguments(false)
     .action(async (input: string | undefined, options: CheckOptions) => {

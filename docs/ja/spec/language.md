@@ -152,7 +152,7 @@ one-of(v1, v2, ...)
 
 ### 1.3.4 例
 
-```kumiki
+```kumiki fragment
 type UserId    = nominal Text where len-eq(36)
 type Email     = nominal Text where email
 type Url       = nominal Text where url
@@ -197,7 +197,7 @@ modifier は最大 1 つ。`volatile` は `transient` がすることをすべ�
 
 ### 1.4.3 例
 
-```kumiki
+```kumiki fragment
 slot todos       : Map(TodoId, Todo)              = {}
 slot filter      : Filter                         = All
 slot draft       : Text where len-lt(280)         = ""
@@ -241,7 +241,7 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 
 ### 1.5.3 例
 
-```kumiki
+```kumiki fragment
 effect loadUser  cap=http.get
                  in=UserId
                  out=Result(User, HttpError)
@@ -311,30 +311,30 @@ path          ::= identifier
 
 セレクタは **`TileName`** または **`TileName#id`** のみ（CSS 属性セレクタは廃止）。
 
-```kumiki
+```kumiki snippet
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' は組み込み要素、tile 名ではない
+reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' は組み込み要素、tile 名ではない
 ```
 
 組み込み要素（`button`, `input`, `form` 等）にイベントを直接バインドするには、**ラッパ tile を作る**：
 
-```kumiki
+```kumiki snippet
 tile LoginForm = form(...) {id: "main"}
 
 reducer doLogin
-    on=ui.submit(LoginForm)         ; tile 名で参照
+    on=ui.submit(LoginForm)         # tile 名で参照
     do= emit login({...})
 ```
 
 **`TileName#id`** は、dispatch された要素の `{id}` プロップが `id` と一致する場合だけ subscription を発火させる。`TileName` だけの reducer は全インスタンスに対して発火するが、`#id` 付き reducer はランタイムが id 一致を確認した時のみ発火する。同じ組み込み要素をラップする tile が複数ある状況で意図を明示し、別の tile が誤って同じ reducer を起動するのを防ぐために使う:
 
-```kumiki
+```kumiki snippet
 tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
 tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
 
-reducer add  on=ui.submit(NewForm#new)   do= ...   ; "new" form のみ
-reducer save on=ui.submit(EditForm#edit) do= ...   ; "edit" form のみ
+reducer add  on=ui.submit(NewForm#new)   do= ...   # "new" form のみ
+reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 ```
 
 `{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。§1.6.4 Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
@@ -343,13 +343,13 @@ reducer save on=ui.submit(EditForm#edit) do= ...   ; "edit" form のみ
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
 
-```kumiki
-; これらの reducer 文は:
+```kumiki snippet
+# これらの reducer 文は:
 todos[id].done := true
 editor.title := "New"
-editor.get.body := "Body"        ; Option 経由（コンパイラが Option.map に展開）
+editor.get.body := "Body"        # Option 経由（コンパイラが Option.map に展開）
 
-; 内部的にこう展開される:
+# 内部的にこう展開される:
 todos := todos.update(id, $1.copy(done=true))
 editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
@@ -359,7 +359,7 @@ editor := editor.map($1.copy(body="Body"))
 
 **`.copy(field=value, ...)`**: record の immutable update を行うショートカット。method 呼び出しに見えるが、内部的には named-arg を集めて `recordCopy(rec, {field: value, ...})` に展開される。複数 field を 1 度に更新できる：
 
-```kumiki
+```kumiki snippet
 editor := editor.copy(title="New", body="Body", updatedAt=now)
 issue.copy(status=Done, priority=High)
 ```
@@ -396,7 +396,7 @@ issue.copy(status=Done, priority=High)
 
 ### 1.6.6 例
 
-```kumiki
+```kumiki fragment
 reducer addTodo
     on=ui.submit(NewTodoForm)
     do= let id = TodoId.fresh()
@@ -478,7 +478,7 @@ pattern      ::= identifier
 
 イベントハンドラは **reducer 名を渡す**：
 
-```kumiki
+```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
 ```
 
@@ -486,7 +486,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 ### 1.7.4 例
 
-```kumiki
+```kumiki fragment
 tile TodoRow  in=TodoId
               = row(
                   check(value=todos[$1].done, onClick=toggle) {todoId: $1},
@@ -534,7 +534,7 @@ fn-param    ::= identifier ':' type-expr
 
 ### 1.8.4 例
 
-```kumiki
+```kumiki fragment
 fn matchFilter(t: Todo, f: Filter) -> Bool
    = match f with
        | All     -> true
@@ -559,7 +559,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
 
 ### 1.8.5 tile / reducer からの呼び出し
 
-```kumiki
+```kumiki fragment
 tile TodoList = column(
                   for id in todos.keys
                     when(matchFilter(todos[id], filter), TodoRow(id)))
@@ -578,15 +578,15 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
 
 ラムダがないため、高階関数渡しは「fn 名」または「式断片」を使う：
 
-```kumiki
-items.map(double)         ; 登録済み fn 名
-items.map($1 * 2)         ; 式断片（$1 は要素）
-items.filter(matchFilter($1, filter))  ; fn 呼び出しを式断片に埋め込む
+```kumiki snippet
+items.map(double)         # 登録済み fn 名
+items.map($1 * 2)         # 式断片（$1 は要素）
+items.filter(matchFilter($1, filter))  # fn 呼び出しを式断片に埋め込む
 ```
 
 部分適用は **明示的に書く**（カリー化なし）：
 
-```kumiki
+```kumiki snippet
 fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
@@ -638,14 +638,27 @@ unop        ::= '-' | '!'
 - **`null` / `undefined` 禁止**
 - **`while` ループ禁止**
 - **代入式禁止**（`:=` は statement、式中で使えない）
+- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
+
+```kumiki snippet
+# ❌ リテラルパターン — サポートされない
+match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
+
+# ✅ if/else で値によって分岐する
+if label == "Overdue" then red else if label == "Today" then amber else gray
+
+# ✅ あるいはケースを union に持ち上げて variant に match する
+type Urgency = Overdue | Today | Later
+match urgency with | Overdue -> red | Today -> amber | Later -> gray
+```
 
 ### 1.9.2 高階関数の代わり
 
-```kumiki
-items.map($1 * 2)                          ; 式断片
-items.map(formatPrice)                     ; fn 名
-items.filter(matchFilter($1, filter))      ; fn 呼び出し
-items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
+```kumiki snippet
+items.map($1 * 2)                          # 式断片
+items.map(formatPrice)                     # fn 名
+items.filter(matchFilter($1, filter))      # fn 呼び出し
+items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 ```
 
 ### 1.9.3 短絡評価
@@ -722,7 +735,7 @@ emit-list  ::= effect-call (',' effect-call)*
 
 → [ルーティング](./routing.md), [HTTP / Storage](./http.md)
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = [storage.read, storage.write, http.get]
     routes = {"/" -> TodoList, "/todo/:id" -> TodoDetail, "/404" -> NotFound}
@@ -740,7 +753,7 @@ app TodoApp
 
 ## 1.13 反例
 
-```kumiki
+```kumiki snippet
 # ❌ ローカル状態
 tile Foo = let x = 0 in button(text=x.show)   # tile 内で代入は不可（let で式束縛は可、slot 代わりにはならない）
 

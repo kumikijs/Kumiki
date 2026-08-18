@@ -50,7 +50,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (nanoseconds) |
-| `Route` | `{path: Text, params: Map(Text, Text), query: Map(Text, Text)}` |
+| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
@@ -81,16 +81,16 @@ map(expr)                   : Map(K, V')       ; within expr, $1=key, $2=value
 
 `.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda can handle them as `$1=key, $2=value` via runtime destructuring:
 
-```kumiki
+```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
    = m.entries.sort-by($2.createdAt).map($1)
 ```
 
 `get-or` is a polymorphic method that **can also be used for Option**:
 
-```kumiki
-m.get-or(k, default)         ; Map: default if there is no value
-opt.get-or(default)          ; Option: default if None, v if Some(v)
+```kumiki snippet
+m.get-or(k, default)         # Map: default if there is no value
+opt.get-or(default)          # Option: default if None, v if Some(v)
 ```
 
 `.filter` **can be used on both List and Map**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):
@@ -142,11 +142,11 @@ zip(other)                  : List(Tuple(T, U))
 
 **Parenthesis-free shortcut**: argument-less methods (`is-empty` / `length` / `reverse` / `sort` / `unique` / `head` / `tail` / `last`) **can omit `()` and be written like a field**:
 
-```kumiki
+```kumiki fragment
 slot todos : List(Todo) = []
-fn count() -> Int = todos.length              ; parenthesis-free OK
-fn empty?() -> Bool = todos.is-empty          ; same as above
-fn norm() -> List(Todo) = todos.reverse       ; same as above
+fn count() -> Int = todos.length              # parenthesis-free OK
+fn empty() -> Bool = todos.is-empty           # same as above
+fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
 > **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
@@ -254,7 +254,7 @@ to-ms                       : Int
 
 Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
 
-```kumiki
+```kumiki fragment
 fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
 ```
@@ -354,11 +354,12 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 | Element | Role | Main props |
 |---|---|---|
+| `overlay` | z-axis stack: the first child is the base layer, each later child is placed over it — the substrate the rest of this table is built on ([Style §4.4.3](./style.md#_4-4-3-stack)) | `align` |
 | `modal` | modal | `open`, `onClose`, `title` |
 | `drawer` | drawer | `open`, `onClose`, `side` |
 | `tooltip` | tooltip | `text`, `placement` |
 | `popover` | popover | `open`, `onClose`, `placement` |
-| `toast` | toast notification | `kind` (info/success/warn/error), `text` |
+| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-level`, with no built-in appearance), `text`, `duration` (see [Lifecycle §7.7](./lifecycle.md#_7-7-toasts) for the per-kind defaults) |
 | `details` | native `<details>` disclosure (#190) — `summary` labels the header; children make up the collapsible panel | `summary`, `open` |
 
 ### 2.3.8 Feedback
@@ -537,7 +538,7 @@ The converse is checked too: emitting one of these without its capability in `ap
 
 ### 2.6.1 Navigation
 
-```kumiki
+```kumiki fragment
 effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text)}  out=Unit
 effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text)} out=Unit
 effect navigate-back   cap=nav.back  in=Unit  out=Unit
@@ -545,19 +546,23 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 Toast
 
-```kumiki
-effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
+The banner the runtime renders carries `data-kumiki-toast` (the marker a test selects on) and `data-level`.
+
+```kumiki fragment
+effect toast       cap=notification.show
+                   in={kind: Text, text: Text, duration: Option(Duration)}
+                   out=Unit
 ```
 
 ### 2.6.3 Log
 
-```kumiki
+```kumiki fragment
 effect log         cap=log.write    in={level: Text, message: Text, data: Map(Text, Text)}  out=Unit
 ```
 
 ### 2.6.4 Scroll
 
-```kumiki
+```kumiki snippet
 effect scroll-to   in={x: Int, y: Int}  out=Unit
 ```
 
@@ -565,7 +570,7 @@ The one standard effect with no capability: it moves the viewport of the page th
 
 ### 2.6.5 Confirm
 
-```kumiki
+```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
@@ -577,7 +582,7 @@ Rendered as a modal dialog tile rather than the native `confirm`, and it deliver
 
 Types such as `Money`, `Percent`, and `Decimal` are defined on the application side using `nominal`. Kumiki is unopinionated.
 
-```kumiki
+```kumiki fragment
 type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```

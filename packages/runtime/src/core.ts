@@ -722,12 +722,22 @@ export type AppShape = {
   _rerender?: () => void;
 };
 
+/**
+ * The tagged representation every `Option` uses (`stdlib.ts`'s `Some` / `None`).
+ * Declared here rather than imported from the stdlib module so a routing-only
+ * app does not pull the stdlib into its module graph for two object literals.
+ */
+export type OptionOf<T> = { _tag: "Some"; _0: T } | { _tag: "None" };
+export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
+export const NONE: OptionOf<never> = { _tag: "None" };
+
 export type ParsedRoute = {
   path: string;
   pattern: string;
   params: Record<string, string>;
   query: Record<string, string>;
-  hash: string | null;
+  /** `Option(Text)` — routing.md §3.2, and what a `match route.hash` expects. */
+  hash: OptionOf<string>;
   /** Matched sub-route pattern when the parent route delegates to `route-outlet` (§3.6). */
   childPattern?: string;
 };
@@ -752,7 +762,7 @@ export interface Router {
 }
 
 function emptyRoute(): ParsedRoute {
-  return { path: "/", pattern: "/", params: {}, query: {}, hash: null };
+  return { path: "/", pattern: "/", params: {}, query: {}, hash: NONE };
 }
 
 /**
@@ -2073,7 +2083,7 @@ export function mountCore(
       pattern: to,
       params: args,
       query: {},
-      hash: null,
+      hash: NONE,
     };
     applyReducer(r, { $route: syntheticRoute });
   };

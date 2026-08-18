@@ -18,7 +18,7 @@ Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/
 | [Runtime](./runtime.md) | Runtime implementation guide (signal graph, mount, dispatch, dispose) |
 | [AI Editing](./ai-edit.md) | AI editing API, CRDT ops, referential integrity |
 | [Testing](./testing.md) | Testing strategy |
-| [Error Codes](./errors.md) | Error code catalog (E0001..E08xx) |
+| [Error Codes](./errors.md) | Error code catalog (E0000..E08xx) |
 
 The three indices below are **machine-checked**: `packages/tests/spec-index.test.ts` verifies that every anchor link resolves, that the examples index lists exactly the `.kumiki` files under `packages/examples/features/` (fixtures, READMEs, `.scenario.json` files, and other non-`.kumiki` files are out of scope), that the diagnostic code index matches [Error Codes](./errors.md), and that the English and Japanese indices stay structurally in sync. Together with the compiler-side drift guard (`packages/compiler/test/spec-drift.test.ts`, implementation ⇆ errors.md), the spec ⇆ implementation ⇆ examples triangle is closed mechanically.
 
@@ -51,6 +51,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 <!-- codes:start -->
 | Code | Kind | Layer | Feature |
 |---|---|---|---|
+| [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | core |
 | [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | routing |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | lifecycle |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | core |

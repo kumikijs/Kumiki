@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
-A parse error is `throw`n as a `ParseError` (`message` + `pos`). Because the parse stage stops at the first error, no code is assigned.
+A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
 
-Coded diagnostics are emitted only by `packages/compiler/src/typecheck.ts`. The lexer throws `LexError` and the parser throws `ParseError` — both carry `message` + `pos` but no `code`, by design (single-shot; no recovery). The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) therefore extracts implementation-side codes from `typecheck.ts` only.
+The checker's codes come from `packages/compiler/src/typecheck.ts`; `E0000` is assigned by the two tools named above. The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) extracts the implementation side from every file that assigns a code, so a code invented in a tool and documented nowhere fails the same way as one invented in the checker.
 
 ## The Code System
 
@@ -88,6 +88,14 @@ unique source position:
   writes the failing slot.
 
 ## E00xx — Structure
+
+### E0000 `parse-error`
+
+The source could not be lexed or parsed. Not produced by the checker: the parser throws, and a tool that has to return a *list* of diagnostics synthesizes this code so an empty list still means a clean file. `message` is the parser's own sentence and `pos` the token it stopped at.
+
+> `Parse error at <line>:<col>: <what was expected>`
+
+**Fix**: Correct the syntax at the reported position. Every other code in this document presumes a file that parses.
 
 ### E0001 `missing-404`
 
@@ -409,9 +417,14 @@ A value of type `EffectId` is used in an operation that is not defined on it. Th
 
 > `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
 
+```kumiki invalid
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", bind=avatar)
+```
+
 **Fix**: Remove `bind=`, and add a reducer that picks the file from the event:
 
-```kumiki
+```kumiki fragment
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*")
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -424,9 +437,14 @@ The `accept` and `multiple` props on `input` apply only when `type="file"`. They
 > `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
 > `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
 
+```kumiki invalid
+slot draft : Text = ""
+tile Picker = input(type="text", bind=draft, accept="image/*")
+```
+
 **Fix**: Either add `type="file"` to opt into a file picker, or remove the `accept` / `multiple` prop:
 
-```kumiki
+```kumiki fragment
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -687,7 +705,7 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 
-A band for checks that either ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in, or that guard invariants of the testing DSL itself. `check()` filters the `strict*` codes out unless the matching flag is set; testing-DSL codes are always active because they only fire inside `test`/`episode-test`/`property-test` bodies.
+A band for checks that are **off** unless an explicit `strict*` opt-in turns them on, plus the ones that guard invariants of the testing DSL itself. There is no warning tier here: without the matching flag `check()` filters the `strict*` codes out entirely, so they neither print nor affect the exit code; with it they are errors. Testing-DSL codes are always active, because they only fire inside `test` / `episode-test` / `property-test` bodies.
 
 a11y checking is enabled via `check(program, { strictA11y: true })`.
 
@@ -747,7 +765,7 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). Calling a no-argument method with `()` is also caught by this band. For the list of standard library methods, see [Standard Library](./stdlib.md).
+**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). A no-argument method may be written with or without `()` — [Standard Library §2.2.3](./stdlib.md#_2-2-3-list-t) calls the bare form a shortcut, and both forms compile. For the list of standard library methods, see [Standard Library](./stdlib.md).
 
 **Fix**: Correct it to the right method name, or rewrite the operation using implemented means such as `match` / `fold`. If you need an unimplemented specification method, implement it in `packages/` and add a working example in `examples/`.
 

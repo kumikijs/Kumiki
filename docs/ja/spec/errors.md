@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
-パースエラーは `ParseError`（`message` + `pos`）として `throw` される。パース段は最初のエラーで停止するため、コードは付与されない。
+パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。
 
-コード付き診断は `packages/compiler/src/typecheck.ts` からのみ発行される。lexer は `LexError` を、parser は `ParseError` を throw する — どちらも `message` + `pos` は持つが `code` は持たない設計（single-shot、リカバリ無し）。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は実装側のコード集合をこの `typecheck.ts` からのみ抽出する。
+チェッカのコードは `packages/compiler/src/typecheck.ts` から発行され、`E0000` は上記 2 つのツールが付与する。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は、コードを付与するすべてのファイルから実装側の集合を抽出する — ツール側で発明されドキュメント化されていないコードは、チェッカ側で発明された場合とまったく同じように失敗する。
 
 ## コード体系
 
@@ -75,6 +75,14 @@ type KumikiError = {
 - **reducer の算術修復**：失敗した slot を書く reducer がちょうど 1 つのとき、`slot := slot ± N` を期待される差分に合わせて書き換える（符号の反転・オペランドの変更）。
 
 ## E00xx — 構造
+
+### E0000 `parse-error`
+
+ソースを字句解析／構文解析できなかった。チェッカは生成しない — parser は throw するので、診断の*リスト*を返さなければならないツールが、空のリスト = クリーンという意味を保つためにこのコードを合成する。`message` は parser 自身の文言、`pos` は停止したトークンの位置。
+
+> `Parse error at <line>:<col>: <what was expected>`
+
+**修正**：報告された位置の構文を直す。この文書の他のコードはすべて、パースできるファイルを前提にしている。
 
 ### E0001 `missing-404`
 
@@ -396,9 +404,14 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 > `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
 
+```kumiki invalid
+slot avatar : Option(File) = None
+tile AvatarPicker = input(type="file", bind=avatar)
+```
+
 **修正**: `bind=` を外し、change イベントからファイルを取り出す reducer を追加する：
 
-```kumiki
+```kumiki fragment
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*")
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -411,9 +424,14 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 > `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
 > `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
 
+```kumiki invalid
+slot draft : Text = ""
+tile Picker = input(type="text", bind=draft, accept="image/*")
+```
+
 **修正**: `type="file"` を付けてファイルピッカーにするか、`accept` / `multiple` prop を取り除く：
 
-```kumiki
+```kumiki fragment
 slot avatar : Option(File) = None
 tile AvatarPicker = input(type="file", accept="image/*", multiple=true)
 reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
@@ -674,7 +692,7 @@ keyframe ストップが閉じたアニメ可能集合（`opacity`, `translate-x
 
 ## E07xx — オプトイン検査（a11y／strict-icons／テスト DSL 不変条件）
 
-既定では警告として扱われ明示的な `strict*` オプトインで初めてエラーに昇格する検査、あるいはテスト DSL 自身の不変条件を守る検査の帯。`strict*` 系のコードは対応するフラグが立っていない限り `check()` が出力から除去する。テスト DSL 系のコードは `test` / `episode-test` / `property-test` 定義の内部でのみ発火するので、常時アクティブでよい。
+明示的な `strict*` オプトインが無い限り**無効**な検査と、テスト DSL 自身の不変条件を守る検査の帯。ここに警告レベルは存在しない — フラグが無ければ `check()` が `strict*` 系のコードを完全に除去するので、出力にも終了コードにも現れない。フラグが有れば通常のエラーになる。テスト DSL 系のコードは `test` / `episode-test` / `property-test` 定義の内部でのみ発火するので、常時アクティブでよい。
 
 a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
@@ -734,7 +752,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドを `()` 付きで呼んだ場合もこの帯で捕捉される。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
+**補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドは `()` 付きでも無しでも書ける — [標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が括弧なしをショートカットと呼んでおり、どちらの形もコンパイルできる。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
 
 **修正**：正しいメソッド名に直すか、その操作を `match` / `fold` など実装済みの手段で書き換える。未実装の仕様メソッドが必要なら、`packages/` に実装して `examples/` に動く例を足す。
 

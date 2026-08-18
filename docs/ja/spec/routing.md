@@ -6,7 +6,7 @@ Kumiki のルーティングは **SPA を前提**にしている。ハッシュ�
 
 `app` の `routes` フィールドで宣言する。
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = [nav.push, nav.replace, nav.back]
     routes = {
@@ -44,25 +44,25 @@ app TodoApp
 
 ランタイムは標準 slot `route` を提供する：
 
-```kumiki
-slot route : Route = Route.empty       ; ランタイムが管理
+```kumiki fragment
+slot route : Route = Route.empty       # ランタイムが管理
 ```
 
 `Route` 型は[標準ライブラリ](./stdlib.md#213-ドメイン型標準提供)：
 
-```kumiki
+```kumiki fragment
 type Route = {
-    path: Text,                ; "/todos/abc-123"
-    pattern: Text,             ; "/todos/:id"
-    params: Map(Text, Text),   ; {"id": "abc-123"}
-    query: Map(Text, Text),    ; ?foo=bar&baz=1 → {"foo":"bar","baz":"1"}
-    hash: Option(Text)         ; #section
+    path: Text,                # "/todos/abc-123"
+    pattern: Text,             # "/todos/:id"
+    params: Map(Text, Text),   # {"id": "abc-123"}
+    query: Map(Text, Text),    # ?foo=bar&baz=1 → {"foo":"bar","baz":"1"}
+    hash: Option(Text)         # #section
 }
 ```
 
 tile から参照：
 
-```kumiki
+```kumiki snippet
 tile TodoDetail = column(
                     heading("Todo " + route.params.get-or("id", "?")),
                     ...)
@@ -74,7 +74,7 @@ tile TodoDetail = column(
 
 ### 3.3.1 link 要素（推奨）
 
-```kumiki
+```kumiki fragment
 tile Nav = row(
              link(to="/")        {text: "Home"},
              link(to="/todos")   {text: "Todos"},
@@ -87,7 +87,7 @@ tile Nav = row(
 
 reducer から遷移するには effect を emit：
 
-```kumiki
+```kumiki fragment
 reducer save  on=ui.click(SaveBtn)
               do= emit persist(todos)
                   emit navigate({path: "/todos", params: {}})
@@ -95,7 +95,7 @@ reducer save  on=ui.click(SaveBtn)
 
 ビルトイン effect:
 
-```kumiki
+```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit
 effect navigate-replace cap=nav.replace  in={path: Text, params: Map(Text, Text)}    out=Unit
 effect navigate-back    cap=nav.back     in=Unit                                     out=Unit
@@ -103,11 +103,11 @@ effect navigate-back    cap=nav.back     in=Unit                                
 
 ### 3.3.3 動的パス構築
 
-```kumiki
+```kumiki snippet
 emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 ```
 
-`{name}` は params で置換される。未指定の `{name}` はコンパイル時警告。
+`{name}` は params で置換される。対応するエントリが無い `{name}` はそのままパスに残る — この対応関係を検査するものは現状ない。
 
 ### 3.3.4 ルータソース：`history` と `memory`
 
@@ -133,7 +133,7 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 | `route.enter(pattern)` | 新ルートに入った直後 |
 | `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-ライフサイクルイベント一覧)） |
 
-```kumiki
+```kumiki fragment
 reducer loadTodoOnEnter
     on=route.enter("/todos/:id")
     do= todos[$route.params.get-or("id", "")] := Loading
@@ -160,7 +160,7 @@ reducer cleanupOnLeave
 
 `route.enter(pattern)` の reducer 中で `emit navigate-replace(...)` を出すと、リダイレクトとして扱われる。
 
-```kumiki
+```kumiki fragment
 reducer requireAuth
     on=route.enter("/admin/*")
     do= if session.is-none
@@ -172,7 +172,7 @@ reducer requireAuth
 
 未保存変更があるなら遷移を止めたい場合：
 
-```kumiki
+```kumiki fragment
 slot dirty : Bool = false
 
 reducer guardEdit
@@ -192,7 +192,7 @@ reducer guardEdit
 
 ### 3.6.1 親ルート
 
-```kumiki
+```kumiki fragment
 app App
     caps   = [nav.push]
     routes = {
@@ -205,7 +205,7 @@ app App
 
 子ルートマップは tile 定義に `sub-routes` で書く：
 
-```kumiki
+```kumiki fragment
 tile SettingsLayout
     sub-routes = {
         "/settings/account" -> AccountSettings,
@@ -218,7 +218,7 @@ tile SettingsLayout
           column(
             link(to="/settings/account") {text: "Account"},
             link(to="/settings/billing") {text: "Billing"}),
-          route-outlet()))           ; 子ルートがここに描画される
+          route-outlet()))           # 子ルートがここに描画される
 ```
 
 `route-outlet()` は親ルート tile 内で子の描画位置を指定するプリミティブ。
@@ -236,7 +236,7 @@ tile SettingsLayout
 
 クエリは `route.query` から読む。書き込みは `navigate` の `params` には含まれず、別フィールド `query` で渡す。
 
-```kumiki
+```kumiki snippet
 emit navigate({
     path: "/search",
     params: {},
@@ -246,7 +246,7 @@ emit navigate({
 
 `navigate` effect の `in` 型はこれを許す拡張版：
 
-```kumiki
+```kumiki fragment
 effect navigate cap=nav.push
                 in={path: Text, params: Map(Text, Text), query: Map(Text, Text)}
                 out=Unit
@@ -260,10 +260,10 @@ effect navigate cap=nav.push
 
 リンクがビューポートに入ったときに先にデータを取りたい：
 
-```kumiki
+```kumiki snippet
 link(to="/todos/abc-123") {
     text: "Todo abc-123",
-    prefetch: loadTodo,           ; emit する reducer 名
+    prefetch: loadTodo,           # emit する reducer 名
     prefetch-args: {"id": "abc-123"}
 }
 ```
@@ -278,7 +278,7 @@ link(to="/todos/abc-123") {
 
 無効化したい tile：
 
-```kumiki
+```kumiki snippet
 tile Chat
     scroll-restoration = false
     = scroll(...)
@@ -286,7 +286,7 @@ tile Chat
 
 特定ルート進入時にトップへ：
 
-```kumiki
+```kumiki fragment
 reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 ```
 
@@ -296,10 +296,10 @@ reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 
 ## 3.10 リダイレクト（静的）
 
-```kumiki
+```kumiki fragment
 app App
     routes = {
-        "/old-path"  ->> "/new-path",     ; ->> はリダイレクト
+        "/old-path"  ->> "/new-path",     # ->> はリダイレクト
         "/new-path"  -> NewPage,
         "/404"       -> NotFound
     }
@@ -311,7 +311,7 @@ app App
 
 ## 3.11 例: 認証付きルーティング
 
-```kumiki
+```kumiki fragment
 type SessionId = nominal Text
 
 slot session : Option(SessionId) = None
@@ -330,8 +330,8 @@ reducer sessionLoaded
 reducer requireAuth
     on=route.enter("/app/*")
     do= if session.is-none
-        then let _ = (loginRedirect := Some(route.path))
-             in emit navigate-replace({path: "/login", params: {}, query: {}})
+        then { loginRedirect := Some(route.path)
+               emit navigate-replace({path: "/login", params: {}, query: {}}) }
         else ()
 
 reducer afterLogin

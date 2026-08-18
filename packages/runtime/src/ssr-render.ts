@@ -580,6 +580,7 @@ export function renderTileToString(node: TileNode): string {
           "data-kumiki-tile": "toast",
           "data-level": node.level,
           role: "status",
+          "aria-live": "polite",
         },
         escapeText(node.text ?? ""),
       );
@@ -606,7 +607,17 @@ export function renderTileToString(node: TileNode): string {
     case "error":
       // Field-bound error messages depend on live refinement results — empty
       // on the server, the client renders the actual error on first render.
-      return el(node, "div", { "data-kumiki-tile": "error", "data-field": node.field }, "");
+      return el(
+        node,
+        "div",
+        {
+          "data-kumiki-tile": "error",
+          "data-field": node.field,
+          role: "alert",
+          "aria-live": "assertive",
+        },
+        "",
+      );
     case "route-outlet":
       return el(node, "div", { "data-kumiki-tile": "route-outlet" }, renderChildren(node.children));
     case "details": {

@@ -4,7 +4,7 @@ Build a working Counter by adding the 7 layers one at a time. The finished versi
 
 ## 1. Declare State (slot)
 
-```kumiki
+```kumiki fragment
 slot count : Int = 0
 ```
 
@@ -12,7 +12,7 @@ A `slot` is mutable state. It has a type and an initial value.
 
 ## 2. Write Updates (reducer)
 
-```kumiki
+```kumiki fragment
 reducer inc on=ui.click(IncBtn) do= count := count + 1
 ```
 
@@ -20,7 +20,7 @@ reducer inc on=ui.click(IncBtn) do= count := count + 1
 
 ## 3. Assemble the UI (tile)
 
-```kumiki
+```kumiki fragment
 tile IncBtn = button(text="+1", onClick=inc)
 tile App    = column(heading("Count: " + count.show), IncBtn)
 ```
@@ -29,7 +29,7 @@ A `tile` is a UI component. `onClick=inc` binds the click to the reducer. `count
 
 ## 4. Tie It Together (app)
 
-```kumiki
+```kumiki fragment
 app Counter
     caps   = []
     routes = {"/" -> App, "/404" -> App}

@@ -21,7 +21,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 ## 8.2 Reducer テスト
 
-```kumiki
+```kumiki fragment
 test addTodo-basic =
     reducer-test addTodo
         given = {
@@ -55,7 +55,7 @@ reducer テストは*実行中のアプリ*の挙動を表明するものなの�
 
 ### 8.2.4 panic を期待
 
-```kumiki
+```kumiki fragment
 test addTodo-empty =
     reducer-test addTodo
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
@@ -64,7 +64,7 @@ test addTodo-empty =
 
 ## 8.3 Property テスト {#_8-3-property-tests}
 
-```kumiki
+```kumiki fragment
 test toggle-is-involution =
     property-test
         for-all = {todoId: TodoId, todos: Map(TodoId, Todo)}
@@ -103,7 +103,7 @@ property-test ::= 'property-test'
 
 カスタム生成器：
 
-```kumiki
+```kumiki snippet
 test foo =
     property-test
         for-all = {x: Int where between(0, 100)}
@@ -114,7 +114,7 @@ test foo =
 
 tile の構造を期待値と比較：
 
-```kumiki
+```kumiki fragment
 test counter-display =
     tile-test App
         given = {slots: {count: 5}, in: ()}
@@ -129,7 +129,7 @@ snapshot は深い構造比較。クラス名やスタイルは比較対象外�
 
 effect の戻り値を差し替える：
 
-```kumiki
+```kumiki fragment
 test loadUser-success =
     reducer-test fetchUser-flow
         given = {
@@ -151,16 +151,16 @@ test loadUser-success =
 
 実運用で記録した episode log を再生して結果を検証：
 
-```kumiki
+```kumiki fragment
 test bug-2026-05-21 =
     episode-test
         load    = "fixtures/episode-2026-05-21.log"
         mocks   = {
-            loadUser: from-log,        ; ログに記録された結果をそのまま返す
+            loadUser: from-log,        # ログに記録された結果をそのまま返す
             persist:  ignore
         }
         expect  = {
-            slots-equal: from-log,     ; 最終 slot がログの記録と一致
+            slots-equal: from-log,     # 最終 slot がログの記録と一致
             no-panics: true
         }
 ```

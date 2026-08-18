@@ -29,6 +29,7 @@ import {
   computeSlotDiffs,
   type EffectResult,
   type EmitSpec,
+  NONE,
   type ParsedRoute,
   panicInfo,
   pickRootTile,
@@ -125,7 +126,7 @@ export async function renderToString(
           search: "",
           hash: "",
         })
-      : { path: routePath, pattern: routePath, params: {}, query: {}, hash: null };
+      : { path: routePath, pattern: routePath, params: {}, query: {}, hash: NONE };
   live.route = parsedRoute;
 
   const now = options.now ?? (() => Date.now());
