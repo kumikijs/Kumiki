@@ -25,7 +25,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { check, type KumikiError, LexError, lex, parse, ParseError } from "@kumikijs/compiler";
+import { check, type KumikiError, LexError, lex, ParseError, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -46,7 +46,7 @@ type Block = {
 };
 
 /** A fence with leading whitespace — inside a list item, say. */
-const INDENTED_FENCE = /^[ 	]+```kumiki/;
+const INDENTED_FENCE = /^\s+```kumiki/;
 
 function markdownFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
