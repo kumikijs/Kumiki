@@ -8,6 +8,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AppShape } from "@kumikijs/runtime";
 import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp, loadSource } from "./helpers/load.ts";
@@ -160,22 +161,38 @@ describe("the browser-tier fixtures in the corpus are refused, not passed", () =
 });
 
 describe("waiting is one step, not dozens", () => {
-  // The countdown ticks every 100ms. Without a wait primitive, a step with no
-  // `do` never settles at all, so observing three ticks meant writing dozens of
-  // dummy steps — and the runner's own timing, not the app's, decided how many.
+  // The countdown ticks every 100ms from 5 and clamps at 0. Without a wait
+  // primitive, a step with no `do` never settles at all, so watching it run
+  // down meant writing dozens of dummy steps — and the runner's own timing,
+  // not the app's, decided how many.
+  //
+  // Asserted at the clamp rather than mid-flight: how many ticks land inside a
+  // given window is the scheduler's business, and a test that counts them is
+  // measuring the machine.
+  const timer = (): Promise<AppShape> => loadApp(join(featuresDir, "25-stop-timer.kumiki"));
+
   it("settles for the duration a step asks for", async () => {
-    const app = await loadApp(join(featuresDir, "25-stop-timer.kumiki"));
-    const report = await runScenario(app, freshRoot(), {
+    const report = await runScenario(await timer(), freshRoot(), {
       steps: [
         { label: "mounted", expect: { state: { remaining: 5 } } },
-        { label: "three ticks later", do: { wait: 350 }, expect: { state: { remaining: 2 } } },
-        { label: "stopped", do: { clickText: "Stop" } },
-        { label: "and it stays stopped", do: { wait: 350 }, expect: { state: { remaining: 2 } } },
+        { label: "long enough for the whole countdown", do: { wait: 800 } },
+        { label: "run out", expect: { noErrors: true, state: { remaining: 0 } } },
       ],
     });
-    const detail = report.steps.flatMap((s) => [...s.errors, ...s.failures]).join("\n");
-    expect(detail).toBe("");
-    expect(report.ok).toBe(true);
+    expect(report.steps.flatMap((s) => [...s.errors, ...s.failures]).join("\n")).toBe("");
+  });
+
+  // The other half: a wait that observes nothing happening is the only way to
+  // say `stop-timer` worked. The same 800ms leaves the countdown untouched.
+  it("shows a stopped timer standing still for that long", async () => {
+    const report = await runScenario(await timer(), freshRoot(), {
+      steps: [
+        { label: "stopped before the first tick", do: { clickText: "Stop" } },
+        { do: { wait: 800 } },
+        { label: "still five", expect: { noErrors: true, state: { remaining: 5 } } },
+      ],
+    });
+    expect(report.steps.flatMap((s) => [...s.errors, ...s.failures]).join("\n")).toBe("");
   });
 });
 

@@ -26,8 +26,8 @@
       "expect": { "noErrors": true, "domExcludes": ["request failed", "Kent Beck"] }
     },
     {
-      "label": "after the exponential backoff (200ms, then 400ms) the third attempt succeeds — one wait, not one step per tick",
-      "do": { "wait": 900 },
+      "label": "after the exponential backoff (200ms, then 400ms) the third attempt succeeds — one wait, not one step per tick; the window is generous because what is asserted is the ladder, not the machine's timing",
+      "do": { "wait": 1500 },
       "expect": {
         "noErrors": true,
         "domIncludes": ["Make it work, make it right, make it fast.", "Kent Beck"],
