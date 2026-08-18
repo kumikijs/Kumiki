@@ -153,10 +153,7 @@ export async function smoke(
       // appear after an action still get exercised) without looping forever.
       const fired = new Set<string>();
       for (let round = 0; round < maxInteractions; round++) {
-        const els = collectInteractive(root);
-        const next = els
-          .map((el, i): [HTMLElement, string] => [el, signature(el, i)])
-          .find(([, sig]) => !fired.has(sig));
+        const next = pickNext(root, fired);
         if (!next) break;
         const [el, sig] = next;
         fired.add(sig);
@@ -259,8 +256,65 @@ function describeFallback(f: ReconcileFallback): string {
   }
 }
 
+/**
+ * Elements that are content on their own, with no text in them. Counting *any*
+ * element instead would answer "rendered" for `tile App = column()`, which puts
+ * one empty `<div>` under the root and shows the user a blank page — the exact
+ * failure this tier is named for.
+ */
+const CONTENT_ELEMENTS = [
+  "img",
+  "svg",
+  "canvas",
+  "video",
+  "audio",
+  "iframe",
+  "object",
+  "embed",
+  "input",
+  "textarea",
+  "select",
+  "button",
+  "progress",
+  "meter",
+  "hr",
+  // A spinner or a skeleton is a screen with nothing written on it yet, and an
+  // app whose first paint is one is rendering. They announce themselves.
+  "[role='status']",
+  "[role='progressbar']",
+  "[aria-busy='true']",
+].join(", ");
+
 function hasContent(root: HTMLElement): boolean {
-  return root.childElementCount > 0 || (root.textContent ?? "").trim().length > 0;
+  if ((root.textContent ?? "").trim().length > 0) return true;
+  return root.querySelector(CONTENT_ELEMENTS) !== null;
+}
+
+/**
+ * The next element to exercise: an unfired field or control, and only once
+ * there are none left, an unfired `<form>`.
+ *
+ * The order is the point. `querySelectorAll` returns document order and a form
+ * precedes its own fields, so taking the first match would submit every form
+ * against the state the app mounted with — an empty draft against the
+ * `nonempty` constraint the reducer is written to expect.
+ */
+function pickNext(root: HTMLElement, fired: Set<string>): [HTMLElement, string] | null {
+  const unfired = (els: HTMLElement[]): [HTMLElement, string] | undefined =>
+    els
+      .map((el, i): [HTMLElement, string] => [el, signature(el, i)])
+      .find(([, sig]) => !fired.has(sig));
+  return unfired(collectInteractive(root)) ?? unfired(collectForms(root)) ?? null;
+}
+
+/**
+ * Forms are driven by dispatching `submit` on the form itself, which is what
+ * the runtime listens for. Nothing else reaches it: a synthetic click on a
+ * submit button does not submit a form in any DOM, and a form with no submit
+ * button has nothing to click in the first place.
+ */
+function collectForms(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>("form"));
 }
 
 function collectInteractive(root: HTMLElement): HTMLElement[] {
@@ -282,6 +336,7 @@ function collectInteractive(root: HTMLElement): HTMLElement[] {
 
 function actionFor(el: Element): string {
   const tag = el.tagName.toLowerCase();
+  if (tag === "form") return "submit";
   if (tag === "select") return "change";
   if (tag === "input" || tag === "textarea") return "input";
   return "click";
@@ -289,6 +344,10 @@ function actionFor(el: Element): string {
 
 function fire(el: HTMLElement): void {
   const tag = el.tagName.toLowerCase();
+  if (tag === "form") {
+    el.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    return;
+  }
   if (tag === "select") {
     const sel = el as HTMLSelectElement;
     if (sel.options.length > 1) sel.selectedIndex = sel.options.length - 1;
