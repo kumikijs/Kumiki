@@ -25,6 +25,7 @@ import {
   smoke,
   type TestResult,
 } from "@kumikijs/runtime";
+import { installTestDoubles, readHttpFixture, useHttpFixture } from "./harness.ts";
 
 let domReady = false;
 export function ensureDom(): void {
@@ -33,6 +34,10 @@ export function ensureDom(): void {
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
   // accept events constructed from the DOM realm).
   GlobalRegistrator.register({ url: "http://localhost/" });
+  // …then the doubles the DOM does not supply: a `fetch` that answers from the
+  // example's own fixture instead of the network, and an IntersectionObserver
+  // that actually notifies. Installed after registration, which overwrites both.
+  installTestDoubles();
   domReady = true;
 }
 
@@ -46,7 +51,7 @@ export type LoadedApp = AppShape & { live: Record<string, unknown> };
 export async function loadApp(
   source: string,
   capabilities: string[] = [],
-  opts: { includeTests?: boolean; sourcePath?: string } = {},
+  opts: { includeTests?: boolean; sourcePath?: string; moduleDir?: string } = {},
 ): Promise<LoadedApp> {
   const baseOpts = {
     runtimeSpecifier: "ignored",
@@ -83,7 +88,11 @@ export async function loadApp(
   }
 
   const patched = result.js.replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "");
-  const dir = mkdtempSync(join(tmpdir(), "kumiki-smoke-"));
+  // A fresh directory per call, so the same source loaded twice in one process
+  // is two modules rather than one cached one. `moduleDir` exists for a caller
+  // whose module resolver is confined to a project root (vitest): the default
+  // OS temp dir is outside it.
+  const dir = mkdtempSync(join(opts.moduleDir ?? tmpdir(), "kumiki-smoke-"));
   const file = join(dir, "app.mjs");
   writeFileSync(file, patched);
   await import(pathToFileURL(file).href);
@@ -99,6 +108,11 @@ export async function smokeSource(
   opts: { sourcePath?: string; diagnosticsAsIssues?: boolean } = {},
 ): Promise<SmokeReport> {
   ensureDom();
+  // Effects run for real here (unlike `runScenario`, which replaces every
+  // `invoke`), so the http capability is answered by the example's own
+  // `.http.json`. Without a path there is no fixture, and any request reports
+  // itself rather than reaching a host.
+  useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
   const app = await loadApp(source, capabilities, opts);
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
@@ -178,6 +192,10 @@ export async function runScenarioSource(
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
   ensureDom();
+  // A scenario scripts effects at the `invoke` boundary, so http never reaches
+  // `fetch` — the fixture is here for a capability the runner does not wrap,
+  // and to keep a stray request reported rather than live.
+  useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
   const app = await loadApp(source, capabilities, {
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });

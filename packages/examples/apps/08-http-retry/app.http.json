@@ -1,0 +1,5 @@
+{
+  "GET /quote": {
+    "json": { "text": "Make it work, make it right, make it fast.", "author": "Kent Beck" }
+  }
+}

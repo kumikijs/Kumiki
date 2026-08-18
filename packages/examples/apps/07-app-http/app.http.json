@@ -1,0 +1,5 @@
+{
+  "GET /quote": {
+    "json": { "text": "Simplicity is a great virtue.", "author": "Edsger W. Dijkstra" }
+  }
+}

@@ -1,0 +1,3 @@
+{
+  "GET /api/me": { "json": { "id": "u-1", "name": "Ada" } }
+}

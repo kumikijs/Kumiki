@@ -272,6 +272,9 @@ importers:
 
   packages/tests:
     devDependencies:
+      '@kumikijs/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@kumikijs/compiler':
         specifier: workspace:*
         version: link:../compiler

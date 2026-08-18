@@ -6,6 +6,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readHttpFixture, useHttpFixture } from "@kumikijs/cli";
 import { smoke } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp } from "./helpers/load.ts";
@@ -34,6 +35,11 @@ function appExamples(): string[] {
 }
 
 async function smokeFile(file: string): Promise<void> {
+  // Effects run for real under `smoke`, so an http-backed example is answered
+  // by its own `<source>.http.json`. An example with no fixture that reaches
+  // for the network reports the miss and fails here — the same way it does
+  // from `kumiki smoke`.
+  useHttpFixture(readHttpFixture(file));
   const app = await loadApp(file);
   const root = document.createElement("div");
   document.body.appendChild(root);
