@@ -290,15 +290,15 @@ The runtime has a built-in tile that manages a toast stack at the bottom-right o
 
 | Convention | Application |
 |---|---|
-| `button` must always have `text` or `aria-label` | Compile-time warning |
-| `image` must always have `alt` | Compile-time warning |
-| `link` must always have inner text or `aria-label` | Compile-time warning |
-| An `input` within a `form` must have a corresponding `label` | Compile-time warning |
+| `button` must always have `text` or `aria-label` | [E0701](./errors.md#e0701-a11y-button), under `--strict-a11y` |
+| `image` must always have `alt` | [E0702](./errors.md#e0702-a11y-image), under `--strict-a11y` |
+| `link` must always have inner text or `aria-label` | [E0703](./errors.md#e0703-a11y-link), under `--strict-a11y` |
+| A `label {for: "x"}` must name an `id="x"` that exists | [E0705](./errors.md#e0705-a11y-label-for), under `--strict-a11y` |
 | Keyboard operations (Tab/Enter/Esc) are automatic in the runtime | Runtime guarantee |
 | Focus management: `modal` traps focus | Runtime guarantee |
 | `aria-live` regions: automatic for `toast` and `error` | Runtime guarantee |
 
-These are at the "warning" level, and compilation passes. The `--strict-a11y` flag can promote warnings to errors.
+The checked rows are **off by default and errors when on**: without `--strict-a11y` the compiler filters them out entirely rather than reporting them as warnings, so a build is silent about them; with the flag they fail the build. The runtime guarantees hold either way.
 
 ---
 

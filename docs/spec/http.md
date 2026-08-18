@@ -13,12 +13,10 @@ All interaction with the outside world is done via **effects**. This section des
 | `http.put` | PUT |
 | `http.patch` | PATCH |
 | `http.delete` | DELETE |
-| `http.head` | HEAD |
-| `http.options` | OPTIONS |
 
 ### 6.1.2 Standard effect
 
-A high-level effect corresponding to each method is provided by the standard library:
+A program declares its own effect against the capability. The shape below is the one the toolchain expects for each method — the name is yours, the `cap` and the record are what the runtime dispatches on:
 
 ```kumiki fragment
 effect http-get cap=http.get
@@ -264,7 +262,7 @@ effect loadUser cap=http.get
 | `session.read`, `session.write` | sessionStorage |
 | `indexed.read`, `indexed.write`, `indexed.delete` | IndexedDB |
 
-### 6.7.2 Standard effect (localStorage)
+### 6.7.2 The declarations (localStorage)
 
 ```kumiki fragment
 effect storage-read   cap=storage.read

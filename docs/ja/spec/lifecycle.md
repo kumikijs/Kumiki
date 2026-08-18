@@ -283,15 +283,15 @@ reducer notifySave
 
 | 規約 | 適用 |
 |---|---|
-| `button` には必ず `text` または `aria-label` | コンパイル時警告 |
-| `image` には必ず `alt` | コンパイル時警告 |
-| `link` には必ず内側テキストか `aria-label` | コンパイル時警告 |
-| `form` 内の `input` には対応する `label` | コンパイル時警告 |
+| `button` には必ず `text` または `aria-label` | [E0701](./errors.md#e0701-a11y-button)、`--strict-a11y` 時 |
+| `image` には必ず `alt` | [E0702](./errors.md#e0702-a11y-image)、`--strict-a11y` 時 |
+| `link` には必ず内側テキストか `aria-label` | [E0703](./errors.md#e0703-a11y-link)、`--strict-a11y` 時 |
+| `label {for: "x"}` は存在する `id="x"` を指すこと | [E0705](./errors.md#e0705-a11y-label-for)、`--strict-a11y` 時 |
 | キーボード操作 (Tab/Enter/Esc) はランタイムが自動 | ランタイム保証 |
 | フォーカス管理: `modal` は trap focus | ランタイム保証 |
 | `aria-live` 領域: `toast` と `error` で自動 | ランタイム保証 |
 
-これらは「警告」レベルで、コンパイルは通る。`--strict-a11y` フラグで警告をエラーに昇格できる。
+検査される行は**デフォルト off、on のときはエラー**。`--strict-a11y` を付けなければコンパイラはこれらを警告として報告するのではなく完全に除外するため、ビルドは何も言わない。フラグを付けるとビルドが落ちる。ランタイム保証はどちらでも成立する。
 
 ---
 

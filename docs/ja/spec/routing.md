@@ -107,7 +107,7 @@ effect navigate-back    cap=nav.back     in=Unit                                
 emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 ```
 
-`{name}` は params で置換される。未指定の `{name}` はコンパイル時警告。
+`{name}` は params で置換される。対応するエントリが無い `{name}` はそのままパスに残る — この対応関係を検査するものは現状ない。
 
 ### 3.3.4 ルータソース：`history` と `memory`
 

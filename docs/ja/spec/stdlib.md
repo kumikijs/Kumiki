@@ -50,7 +50,7 @@ let id = emit fetchQuote()
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (ナノ秒) |
-| `Route` | `{path: Text, params: Map(Text, Text), query: Map(Text, Text)}` |
+| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-現在のルート状態) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
@@ -351,11 +351,12 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 
 | 要素 | 役割 | 主な props |
 |---|---|---|
+| `overlay` | z 軸のスタック。最初の子がベース層、以降の子はその上に重ねて置かれる — この表の他が乗る土台（[スタイル §4.4.3](./style.md#_4-4-3-stack)） | `align` |
 | `modal` | モーダル | `open`, `onClose`, `title` |
 | `drawer` | ドロワー | `open`, `onClose`, `side` |
 | `tooltip` | ツールチップ | `text`, `placement` |
 | `popover` | ポップオーバー | `open`, `onClose`, `placement` |
-| `toast` | トースト通知 | `kind` (info/success/warn/error), `text` |
+| `toast` | トースト通知 | `kind`（info/success/warn/error — `data-kumiki-toast-kind` として載るだけで、組み込みの見た目は持たない）、`text`、`duration` |
 
 ### 2.3.8 フィードバック
 
@@ -513,7 +514,9 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 ### 2.6.2 トースト
 
 ```kumiki fragment
-effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
+effect toast       cap=notification.show
+                   in={kind: Text, text: Text, duration: Option(Duration)}
+                   out=Unit
 ```
 
 ### 2.6.3 ログ

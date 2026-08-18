@@ -682,7 +682,7 @@ keyframe ストップが閉じたアニメ可能集合（`opacity`, `translate-x
 
 ## E07xx — オプトイン検査（a11y／strict-icons／テスト DSL 不変条件）
 
-既定では警告として扱われ明示的な `strict*` オプトインで初めてエラーに昇格する検査、あるいはテスト DSL 自身の不変条件を守る検査の帯。`strict*` 系のコードは対応するフラグが立っていない限り `check()` が出力から除去する。テスト DSL 系のコードは `test` / `episode-test` / `property-test` 定義の内部でのみ発火するので、常時アクティブでよい。
+明示的な `strict*` オプトインが無い限り**無効**な検査と、テスト DSL 自身の不変条件を守る検査の帯。ここに警告レベルは存在しない — フラグが無ければ `check()` が `strict*` 系のコードを完全に除去するので、出力にも終了コードにも現れない。フラグが有れば通常のエラーになる。テスト DSL 系のコードは `test` / `episode-test` / `property-test` 定義の内部でのみ発火するので、常時アクティブでよい。
 
 a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
@@ -742,7 +742,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドを `()` 付きで呼んだ場合もこの帯で捕捉される。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
+**補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドは `()` 付きでも無しでも書ける — [標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が括弧なしをショートカットと呼んでおり、どちらの形もコンパイルできる。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
 
 **修正**：正しいメソッド名に直すか、その操作を `match` / `fold` など実装済みの手段で書き換える。未実装の仕様メソッドが必要なら、`packages/` に実装して `examples/` に動く例を足す。
 

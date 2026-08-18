@@ -13,12 +13,10 @@
 | `http.put` | PUT |
 | `http.patch` | PATCH |
 | `http.delete` | DELETE |
-| `http.head` | HEAD |
-| `http.options` | OPTIONS |
 
 ### 6.1.2 標準 effect
 
-各メソッドに対応する高レベル effect が標準提供される：
+プログラムは capability に対して自分の effect を宣言する。以下は各メソッドでツールチェインが期待する形 — 名前は任意で、`cap` とレコードがランタイムの dispatch 先を決める：
 
 ```kumiki fragment
 effect http-get cap=http.get
@@ -264,7 +262,7 @@ effect loadUser cap=http.get
 | `session.read`, `session.write` | sessionStorage |
 | `indexed.read`, `indexed.write`, `indexed.delete` | IndexedDB |
 
-### 6.7.2 標準 effect (localStorage)
+### 6.7.2 宣言（localStorage）
 
 ```kumiki fragment
 effect storage-read   cap=storage.read

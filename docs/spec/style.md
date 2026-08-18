@@ -306,7 +306,7 @@ Tile primitives have per-state props:
 button(text="Save") {
     bg: "primary",
     color: "bg",
-    hover: {bg: "primary-dark"},      # warns if the token is undefined
+    hover: {bg: "primary-dark"},      # an unknown token is passed through as a CSS value
     focus: {shadow: "md"},
     disabled: {bg: "muted", color: "border"}
 }

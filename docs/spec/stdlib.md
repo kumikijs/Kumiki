@@ -50,7 +50,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (nanoseconds) |
-| `Route` | `{path: Text, params: Map(Text, Text), query: Map(Text, Text)}` |
+| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
@@ -354,11 +354,12 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 | Element | Role | Main props |
 |---|---|---|
+| `overlay` | z-axis stack: the first child is the base layer, each later child is placed over it — the substrate the rest of this table is built on ([Style §4.4.3](./style.md#_4-4-3-stack)) | `align` |
 | `modal` | modal | `open`, `onClose`, `title` |
 | `drawer` | drawer | `open`, `onClose`, `side` |
 | `tooltip` | tooltip | `text`, `placement` |
 | `popover` | popover | `open`, `onClose`, `placement` |
-| `toast` | toast notification | `kind` (info/success/warn/error), `text` |
+| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-kumiki-toast-kind`, with no built-in appearance), `text`, `duration` |
 | `details` | native `<details>` disclosure (#190) — `summary` labels the header; children make up the collapsible panel | `summary`, `open` |
 
 ### 2.3.8 Feedback
@@ -546,7 +547,9 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 ### 2.6.2 Toast
 
 ```kumiki fragment
-effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
+effect toast       cap=notification.show
+                   in={kind: Text, text: Text, duration: Option(Duration)}
+                   out=Unit
 ```
 
 ### 2.6.3 Log

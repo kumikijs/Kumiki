@@ -8,10 +8,11 @@ import {
   createEpisodeLogger,
   inputPatchers,
   inputTiles,
+  installToast,
   mount,
   renderToString,
 } from "@kumikijs/runtime";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const btn = (over: Partial<Extract<TileNode, { kind: "button" }>> = {}) =>
   ({ kind: "button", text: "go", ...over }) as Extract<TileNode, { kind: "button" }>;
@@ -307,5 +308,58 @@ describe("policy=queue runs one at a time", () => {
     const steps = logger.list().flatMap((e: Episode) => e.steps.map((st) => st.kind));
     expect(steps.filter((k) => k === "effect-cancel")).toHaveLength(2);
     expect(steps.filter((k) => k === "effect-end")).toHaveLength(1);
+  });
+});
+
+// stdlib.md §2.6.2 / lifecycle.md §7.7: `toast` takes a `kind` and an optional
+// `duration`. The runtime read neither — every toast looked the same and stayed
+// for a hardcoded three seconds, so `duration: Some(Duration.s(10))`, which the
+// example corpus writes, meant nothing.
+describe("toast honours the record the spec documents", () => {
+  const fire = async (input: unknown): Promise<void> => {
+    // `overridableInvoke` asks the app for a provider first; a host that
+    // registered none still has to answer.
+    const app = { effects: {}, provider: () => undefined } as unknown as AppShape;
+    installToast(app);
+    await app.effects.toast?.invoke(input, app);
+  };
+  const banner = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>("[data-kumiki-toast]");
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("marks the kind on the element rather than choosing an appearance", async () => {
+    await fire({ kind: "success", text: "Saved" });
+    expect(banner()?.dataset.kumikiToastKind).toBe("success");
+    expect(banner()?.textContent).toBe("Saved");
+  });
+
+  it("stays for the duration the emitter asked for", async () => {
+    await fire({ kind: "info", text: "Slow", duration: { _tag: "Some", _0: 10_000 } });
+    vi.advanceTimersByTime(3_000);
+    expect(banner()).not.toBeNull();
+    vi.advanceTimersByTime(7_001);
+    expect(banner()).toBeNull();
+  });
+
+  it("falls back to three seconds when the emitter says None", async () => {
+    await fire({ kind: "info", text: "Quick", duration: { _tag: "None" } });
+    vi.advanceTimersByTime(2_999);
+    expect(banner()).not.toBeNull();
+    vi.advanceTimersByTime(2);
+    expect(banner()).toBeNull();
+  });
+
+  it("is announced: a toast is a live region", async () => {
+    // lifecycle.md §7.8 promises `aria-live` for toasts as a runtime guarantee.
+    await fire({ kind: "error", text: "Failed" });
+    expect(banner()?.getAttribute("role")).toBe("status");
+    expect(banner()?.getAttribute("aria-live")).toBe("polite");
   });
 });

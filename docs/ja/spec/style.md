@@ -306,7 +306,7 @@ reducer initTheme
 button(text="Save") {
     bg: "primary",
     color: "bg",
-    hover: {bg: "primary-dark"},      # トークン未定義なら警告
+    hover: {bg: "primary-dark"},      # 未知のトークンは CSS 値としてそのまま渡る
     focus: {shadow: "md"},
     disabled: {bg: "muted", color: "border"}
 }

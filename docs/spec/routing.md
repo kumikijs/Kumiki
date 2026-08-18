@@ -107,7 +107,7 @@ effect navigate-back    cap=nav.back     in=Unit                                
 emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 ```
 
-`{name}` is substituted from params. An unspecified `{name}` produces a compile-time warning.
+`{name}` is substituted from params. A `{name}` with no matching entry is left in the path as written — nothing checks the pair today.
 
 ### 3.3.4 Router source: `history` vs `memory`
 

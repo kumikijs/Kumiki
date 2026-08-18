@@ -695,7 +695,7 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 
-A band for checks that either ship as warnings by default and are promoted to errors via an explicit `strict*` opt-in, or that guard invariants of the testing DSL itself. `check()` filters the `strict*` codes out unless the matching flag is set; testing-DSL codes are always active because they only fire inside `test`/`episode-test`/`property-test` bodies.
+A band for checks that are **off** unless an explicit `strict*` opt-in turns them on, plus the ones that guard invariants of the testing DSL itself. There is no warning tier here: without the matching flag `check()` filters the `strict*` codes out entirely, so they neither print nor affect the exit code; with it they are errors. Testing-DSL codes are always active, because they only fire inside `test` / `episode-test` / `property-test` bodies.
 
 a11y checking is enabled via `check(program, { strictA11y: true })`.
 
@@ -755,7 +755,7 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). Calling a no-argument method with `()` is also caught by this band. For the list of standard library methods, see [Standard Library](./stdlib.md).
+**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). A no-argument method may be written with or without `()` — [Standard Library §2.2.3](./stdlib.md#_2-2-3-list-t) calls the bare form a shortcut, and both forms compile. For the list of standard library methods, see [Standard Library](./stdlib.md).
 
 **Fix**: Correct it to the right method name, or rewrite the operation using implemented means such as `match` / `fold`. If you need an unimplemented specification method, implement it in `packages/` and add a working example in `examples/`.
 
