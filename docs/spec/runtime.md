@@ -146,7 +146,7 @@ Per-write rather than per-batch, because a batch is a map and only remembers the
 
 ```kumiki
 reducer drift on=ui.click(Btn)
-    do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    ; reaches 4
+    do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    # reaches 4
                                                 mirror := mirror + count }
 ```
 
@@ -166,8 +166,8 @@ slot count : Small = 0
 slot mirror : Int  = 0
 
 reducer bump on=ui.click(Btn)
-    do= count  := count + 1      ; at the ceiling, this value is rejected
-        mirror := count          ; ...and must not be readable here
+    do= count  := count + 1      # at the ceiling, this value is rejected
+        mirror := count          # ...and must not be readable here
 ```
 
 A reachable bound is the program's business, not the runtime's. Write the guard:
@@ -185,8 +185,8 @@ Two things a refinement does **not** gate:
 **The two combine into a trap.** A slot whose declared default violates its own refinement cannot be *reset* to that default from a reducer: `name := ""` on a `Text where nonempty` slot is a write like any other, so it discards the batch. Either widen the slot's type and refine at the boundary, or model the empty case with `Option`:
 
 ```kumiki
-slot name : Text where nonempty = ""    ; starts invalid — allowed
-reducer clear on=ui.click(Btn) do= name := ""    ; rejected — not allowed
+slot name : Text where nonempty = ""    # starts invalid — allowed
+reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 ```
 
 ### 10.3.4 Invariants of DOM Rendering
@@ -215,7 +215,7 @@ slot themeName : Text = "Light"
 theme Light = { colors: {bg: "#fff", fg: "#222"}, ... }
 theme Dark  = { colors: {bg: "#222", fg: "#eee"}, ... }
 reducer toggle on=ui.click(ThemeBtn) do= themeName := if themeName == "Light" then "Dark" else "Light"
-app App ... theme = themeName    ; ← pass the slot name
+app App ... theme = themeName    # ← pass the slot name
 ```
 
 ### 10.3.7 polymorphic collection methods

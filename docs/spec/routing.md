@@ -45,18 +45,18 @@ app TodoApp
 The runtime provides the standard slot `route`:
 
 ```kumiki
-slot route : Route = Route.empty       ; managed by the runtime
+slot route : Route = Route.empty       # managed by the runtime
 ```
 
 The `Route` type is [provided by the standard library](./stdlib.md#213-domain-types-provided-by-the-standard-library):
 
 ```kumiki
 type Route = {
-    path: Text,                ; "/todos/abc-123"
-    pattern: Text,             ; "/todos/:id"
+    path: Text,                # "/todos/abc-123"
+    pattern: Text,             # "/todos/:id"
     params: Map(Text, Text),   ; {"id": "abc-123"}
     query: Map(Text, Text),    ; ?foo=bar&baz=1 → {"foo":"bar","baz":"1"}
-    hash: Option(Text)         ; #section
+    hash: Option(Text)         # #section
 }
 ```
 
@@ -218,7 +218,7 @@ tile SettingsLayout
           column(
             link(to="/settings/account") {text: "Account"},
             link(to="/settings/billing") {text: "Billing"}),
-          route-outlet()))           ; child routes are rendered here
+          route-outlet()))           # child routes are rendered here
 ```
 
 `route-outlet()` is a primitive that specifies where children are rendered within the parent route tile.
@@ -263,7 +263,7 @@ When you want to fetch data ahead of time once a link enters the viewport:
 ```kumiki
 link(to="/todos/abc-123") {
     text: "Todo abc-123",
-    prefetch: loadTodo,           ; name of the reducer to emit
+    prefetch: loadTodo,           # name of the reducer to emit
     prefetch-args: {"id": "abc-123"}
 }
 ```

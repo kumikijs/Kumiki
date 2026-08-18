@@ -42,7 +42,7 @@ The timing at which the browser fires `beforeunload`. Only processing that compl
 ```kumiki
 reducer cleanup
     on=app.stop
-    do= emit persist(todos)         ; only synchronous storage.write is practical
+    do= emit persist(todos)         # only synchronous storage.write is practical
 ```
 
 ### 7.1.3 app.visible / app.hidden
@@ -144,10 +144,10 @@ The `PanicInfo` type:
 ```kumiki
 type PanicInfo = {
     message: Text,
-    location: Text,         ; e.g. `reducer "foo"` or `render`
+    location: Text,         # e.g. `reducer "foo"` or `render`
     episode-id: Text,
     cause: Option(Text),
-    category: Text          ; "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
+    category: Text          # "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
 }
 ```
 
@@ -260,7 +260,7 @@ reducer askDelete
             onNo:  noop
         })
 
-reducer doDelete on=ui.click(_) do= ...     ; Note: in practice it's cleaner to create a separately named reducer
+reducer doDelete on=ui.click(_) do= ...     # Note: in practice it's cleaner to create a separately named reducer
 reducer noop     on=ui.click(_) do= ()
 ```
 
@@ -313,9 +313,9 @@ Whether to keep or discard slot values on a development hot reload:
 | `volatile` | Excluded from persistence (not written to the log either, discarded on reload) |
 
 ```kumiki
-slot draft : Text             = ""        ; kept on reload
-slot toast : Option(Toast)    transient = None  ; discarded on reload
-slot password : Text          volatile  = ""    ; not written to the episode log either
+slot draft : Text             = ""        # kept on reload
+slot toast : Option(Toast)    transient = None  # discarded on reload
+slot password : Text          volatile  = ""    # not written to the episode log either
 ```
 
 ---

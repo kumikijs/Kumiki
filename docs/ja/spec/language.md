@@ -314,7 +314,7 @@ path          ::= identifier
 ```kumiki
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' は組み込み要素、tile 名ではない
+reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' は組み込み要素、tile 名ではない
 ```
 
 組み込み要素（`button`, `input`, `form` 等）にイベントを直接バインドするには、**ラッパ tile を作る**：
@@ -323,7 +323,7 @@ reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' は組み込み
 tile LoginForm = form(...) {id: "main"}
 
 reducer doLogin
-    on=ui.submit(LoginForm)         ; tile 名で参照
+    on=ui.submit(LoginForm)         # tile 名で参照
     do= emit login({...})
 ```
 
@@ -333,8 +333,8 @@ reducer doLogin
 tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
 tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
 
-reducer add  on=ui.submit(NewForm#new)   do= ...   ; "new" form のみ
-reducer save on=ui.submit(EditForm#edit) do= ...   ; "edit" form のみ
+reducer add  on=ui.submit(NewForm#new)   do= ...   # "new" form のみ
+reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 ```
 
 `{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。§1.6.4 Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
@@ -344,12 +344,12 @@ reducer save on=ui.submit(EditForm#edit) do= ...   ; "edit" form のみ
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
 
 ```kumiki
-; これらの reducer 文は:
+# これらの reducer 文は:
 todos[id].done := true
 editor.title := "New"
-editor.get.body := "Body"        ; Option 経由（コンパイラが Option.map に展開）
+editor.get.body := "Body"        # Option 経由（コンパイラが Option.map に展開）
 
-; 内部的にこう展開される:
+# 内部的にこう展開される:
 todos := todos.update(id, $1.copy(done=true))
 editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
@@ -579,9 +579,9 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
 ラムダがないため、高階関数渡しは「fn 名」または「式断片」を使う：
 
 ```kumiki
-items.map(double)         ; 登録済み fn 名
-items.map($1 * 2)         ; 式断片（$1 は要素）
-items.filter(matchFilter($1, filter))  ; fn 呼び出しを式断片に埋め込む
+items.map(double)         # 登録済み fn 名
+items.map($1 * 2)         # 式断片（$1 は要素）
+items.filter(matchFilter($1, filter))  # fn 呼び出しを式断片に埋め込む
 ```
 
 部分適用は **明示的に書く**（カリー化なし）：
@@ -642,9 +642,9 @@ unop        ::= '-' | '!'
 ### 1.9.2 高階関数の代わり
 
 ```kumiki
-items.map($1 * 2)                          ; 式断片
-items.map(formatPrice)                     ; fn 名
-items.filter(matchFilter($1, filter))      ; fn 呼び出し
+items.map($1 * 2)                          # 式断片
+items.map(formatPrice)                     # fn 名
+items.filter(matchFilter($1, filter))      # fn 呼び出し
 items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
 ```
 

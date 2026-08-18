@@ -39,7 +39,7 @@ effect http-post cap=http.post
                  }
                  out=Result(Decoded, HttpError)
 
-; put / patch / delete have the same shape
+# put / patch / delete have the same shape
 ```
 
 `http.get` and the like **cannot be used unless declared** (capability guard). They must be enumerated in `app.caps`.
@@ -58,10 +58,10 @@ type HttpBody = Json(JsonValue)
 ### 6.1.4 The Decoder Type
 
 ```kumiki
-type Decoder = Json(TypeRef)        ; decode JSON into a type
-             | Text                  ; keep as a string
-             | Bytes                 ; keep as a byte sequence
-             | None                  ; discard the response body
+type Decoder = Json(TypeRef)        # decode JSON into a type
+             | Text                  # keep as a string
+             | Bytes                 # keep as a byte sequence
+             | None                  # discard the response body
 ```
 
 Response decoding is type-safe. If you specify `Decoder.Json(User)`, the response JSON is decoded into the `User` type. Failures are stored in the `body` of `HttpError`.
@@ -444,7 +444,7 @@ slots **are included** in the episode log. When placing a password or the like i
 
 ```kumiki
 slot password : Text = ""
-    volatile = true        ; not written to the episode log, cleared on reload too
+    volatile = true        # not written to the episode log, cleared on reload too
 ```
 
 A `volatile` slot is excluded from persistence.

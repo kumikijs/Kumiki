@@ -45,18 +45,18 @@ app TodoApp
 ランタイムは標準 slot `route` を提供する：
 
 ```kumiki
-slot route : Route = Route.empty       ; ランタイムが管理
+slot route : Route = Route.empty       # ランタイムが管理
 ```
 
 `Route` 型は[標準ライブラリ](./stdlib.md#213-ドメイン型標準提供)：
 
 ```kumiki
 type Route = {
-    path: Text,                ; "/todos/abc-123"
-    pattern: Text,             ; "/todos/:id"
+    path: Text,                # "/todos/abc-123"
+    pattern: Text,             # "/todos/:id"
     params: Map(Text, Text),   ; {"id": "abc-123"}
     query: Map(Text, Text),    ; ?foo=bar&baz=1 → {"foo":"bar","baz":"1"}
-    hash: Option(Text)         ; #section
+    hash: Option(Text)         # #section
 }
 ```
 
@@ -218,7 +218,7 @@ tile SettingsLayout
           column(
             link(to="/settings/account") {text: "Account"},
             link(to="/settings/billing") {text: "Billing"}),
-          route-outlet()))           ; 子ルートがここに描画される
+          route-outlet()))           # 子ルートがここに描画される
 ```
 
 `route-outlet()` は親ルート tile 内で子の描画位置を指定するプリミティブ。
@@ -263,7 +263,7 @@ effect navigate cap=nav.push
 ```kumiki
 link(to="/todos/abc-123") {
     text: "Todo abc-123",
-    prefetch: loadTodo,           ; emit する reducer 名
+    prefetch: loadTodo,           # emit する reducer 名
     prefetch-args: {"id": "abc-123"}
 }
 ```

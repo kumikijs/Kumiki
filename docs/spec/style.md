@@ -144,7 +144,7 @@ Layout is expressed via **tile structure**, not CSS.
 
 ### 4.4.1 row / column
 
-```kumiki
+```kumiki snippet
 row(A, B, C) {gap: "md", align: "center", justify: "between"}
 column(A, B, C) {gap: "sm", align: "stretch"}
 ```
@@ -160,7 +160,7 @@ column(A, B, C) {gap: "sm", align: "stretch"}
 
 ```kumiki
 grid(A, B, C, D) {cols: 2, gap: "md"}
-grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     ; number or array
+grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     # number or array
 ```
 
 | prop | Value |
@@ -279,7 +279,7 @@ app App
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
     init   = []
-    theme  = themeName        ; points directly at a slot
+    theme  = themeName        # points directly at a slot
 ```
 
 When you specify a slot as in `theme = themeName`, the theme switches whenever that value changes.
@@ -306,7 +306,7 @@ Tile primitives have per-state props:
 button(text="Save") {
     bg: "primary",
     color: "bg",
-    hover: {bg: "primary-dark"},      ; warns if the token is undefined
+    hover: {bg: "primary-dark"},      # warns if the token is undefined
     focus: {shadow: "md"},
     disabled: {bg: "muted", color: "border"}
 }
@@ -354,8 +354,8 @@ Register custom names, or override any built-in, through `theme.icons`. Each val
 theme MyTheme = {
     ...,
     icons: {
-        logo:  "M3 3h18v18H3z..."     ; custom name
-        check: "M4 12l5 5L20 6"        ; overrides the built-in
+        logo:  "M3 3h18v18H3z..."     # custom name
+        check: "M4 12l5 5L20 6"        # overrides the built-in
     }
 }
 ```

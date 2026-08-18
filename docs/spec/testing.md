@@ -164,11 +164,11 @@ test bug-2026-05-21 =
     episode-test
         load    = "fixtures/episode-2026-05-21.log"
         mocks   = {
-            loadUser: from-log,        ; return the result recorded in the log as-is
+            loadUser: from-log,        # return the result recorded in the log as-is
             persist:  ignore
         }
         expect  = {
-            slots-equal: from-log,     ; final slots match the log's record
+            slots-equal: from-log,     # final slots match the log's record
             no-panics: true
         }
 ```

@@ -89,7 +89,7 @@ fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
 `get-or` は **Option 用にも使える** polymorphic method:
 
 ```kumiki
-m.get-or(k, default)         ; Map: 値がなければ default
+m.get-or(k, default)         # Map: 値がなければ default
 opt.get-or(default)          ; Option: None なら default、Some(v) なら v
 ```
 
@@ -144,9 +144,9 @@ zip(other)                  : List(Tuple(T, U))
 
 ```kumiki
 slot todos : List(Todo) = []
-fn count() -> Int = todos.length              ; 括弧なし OK
-fn empty?() -> Bool = todos.is-empty          ; 同上
-fn norm() -> List(Todo) = todos.reverse       ; 同上
+fn count() -> Int = todos.length              # 括弧なし OK
+fn empty?() -> Bool = todos.is-empty          # 同上
+fn norm() -> List(Todo) = todos.reverse       # 同上
 ```
 
 > **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。

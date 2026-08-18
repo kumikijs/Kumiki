@@ -89,7 +89,7 @@ fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
 `get-or` is a polymorphic method that **can also be used for Option**:
 
 ```kumiki
-m.get-or(k, default)         ; Map: default if there is no value
+m.get-or(k, default)         # Map: default if there is no value
 opt.get-or(default)          ; Option: default if None, v if Some(v)
 ```
 
@@ -144,9 +144,9 @@ zip(other)                  : List(Tuple(T, U))
 
 ```kumiki
 slot todos : List(Todo) = []
-fn count() -> Int = todos.length              ; parenthesis-free OK
-fn empty?() -> Bool = todos.is-empty          ; same as above
-fn norm() -> List(Todo) = todos.reverse       ; same as above
+fn count() -> Int = todos.length              # parenthesis-free OK
+fn empty?() -> Bool = todos.is-empty          # same as above
+fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
 > **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.

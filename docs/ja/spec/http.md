@@ -39,7 +39,7 @@ effect http-post cap=http.post
                  }
                  out=Result(Decoded, HttpError)
 
-; put / patch / delete も同じ形
+# put / patch / delete も同じ形
 ```
 
 `http.get` 等は **未指定なら使えない**（capability ガード）。`app.caps` に列挙必須。
@@ -58,10 +58,10 @@ type HttpBody = Json(JsonValue)
 ### 6.1.4 Decoder 型
 
 ```kumiki
-type Decoder = Json(TypeRef)        ; JSON を型に decode
-             | Text                  ; 文字列のまま
-             | Bytes                 ; バイト列のまま
-             | None                  ; レスポンス本文を捨てる
+type Decoder = Json(TypeRef)        # JSON を型に decode
+             | Text                  # 文字列のまま
+             | Bytes                 # バイト列のまま
+             | None                  # レスポンス本文を捨てる
 ```
 
 レスポンスの decode は型安全。`Decoder.Json(User)` を指定すれば、レスポンス JSON が `User` 型に decode される。失敗は `HttpError` の `body` に格納される。
@@ -444,7 +444,7 @@ slot は episode log に**含まれる**。パスワード等を slot に置く�
 
 ```kumiki
 slot password : Text = ""
-    volatile = true        ; episode log に書き込まれない、リロードでも消える
+    volatile = true        # episode log に書き込まれない、リロードでも消える
 ```
 
 `volatile` slot は永続化対象から外れる。

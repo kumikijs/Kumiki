@@ -146,7 +146,7 @@ on reducer execution:
 
 ```kumiki
 reducer drift on=ui.click(Btn)
-    do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    ; 4 に到達する
+    do= for d in [1, 1, 1, 1, -1, -1, -1, -1] { count  := count + d    # 4 に到達する
                                                 mirror := mirror + count }
 ```
 
@@ -166,8 +166,8 @@ slot count : Small = 0
 slot mirror : Int  = 0
 
 reducer bump on=ui.click(Btn)
-    do= count  := count + 1      ; 上限では、この値は拒否される
-        mirror := count          ; ...そしてここから読めてはならない
+    do= count  := count + 1      # 上限では、この値は拒否される
+        mirror := count          # ...そしてここから読めてはならない
 ```
 
 到達しうる境界はプログラム側の責任であって runtime の責任ではない。ガードは自分で書く:
@@ -185,8 +185,8 @@ refinement が門番を**しない**ものが 2 つある:
 **この 2 つは組み合わさると罠になる**。宣言時の初期値が自身の refinement に違反している slot は、reducer からその初期値に*リセット*できない。`Text where nonempty` の slot に対する `name := ""` は他と変わらない書き込みなので、バッチを破棄する。slot の型を広げて境界で refine するか、空のケースを `Option` でモデル化すること:
 
 ```kumiki
-slot name : Text where nonempty = ""    ; 不正な値で始まる — 許される
-reducer clear on=ui.click(Btn) do= name := ""    ; 拒否される — 許されない
+slot name : Text where nonempty = ""    # 不正な値で始まる — 許される
+reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許されない
 ```
 
 ### 10.3.4 DOM レンダリングの不変条件
@@ -215,7 +215,7 @@ slot themeName : Text = "Light"
 theme Light = { colors: {bg: "#fff", fg: "#222"}, ... }
 theme Dark  = { colors: {bg: "#222", fg: "#eee"}, ... }
 reducer toggle on=ui.click(ThemeBtn) do= themeName := if themeName == "Light" then "Dark" else "Light"
-app App ... theme = themeName    ; ← slot 名を渡す
+app App ... theme = themeName    # ← slot 名を渡す
 ```
 
 ### 10.3.7 polymorphic collection methods

@@ -160,7 +160,7 @@ column(A, B, C) {gap: "sm", align: "stretch"}
 
 ```kumiki
 grid(A, B, C, D) {cols: 2, gap: "md"}
-grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     ; 数値 or 配列
+grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     # 数値 or 配列
 ```
 
 | prop | 値 |
@@ -279,7 +279,7 @@ app App
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
     init   = []
-    theme  = themeName        ; slot を直接指す
+    theme  = themeName        # slot を直接指す
 ```
 
 `theme = themeName` のように slot を指定すると、その値が変わるたびにテーマが切り替わる。
@@ -306,7 +306,7 @@ reducer initTheme
 button(text="Save") {
     bg: "primary",
     color: "bg",
-    hover: {bg: "primary-dark"},      ; トークン未定義なら警告
+    hover: {bg: "primary-dark"},      # トークン未定義なら警告
     focus: {shadow: "md"},
     disabled: {bg: "muted", color: "border"}
 }
@@ -330,7 +330,7 @@ icon(name="check") {size: "md", color: "success"}
 theme MyTheme = {
     ...,
     icons: {
-        logo: "M3 3h18v18H3z..."     ; SVG path
+        logo: "M3 3h18v18H3z..."     # SVG path
     }
 }
 ```

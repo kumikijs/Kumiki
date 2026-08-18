@@ -318,7 +318,7 @@ A selector is **`TileName`** or **`TileName#id`** only (CSS attribute selectors 
 ```kumiki
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' is a built-in element, not a tile name
+reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' is a built-in element, not a tile name
 ```
 
 To bind events directly to built-in elements (`button`, `input`, `form`, etc.), **create a wrapper tile**:
@@ -327,7 +327,7 @@ To bind events directly to built-in elements (`button`, `input`, `form`, etc.), 
 tile LoginForm = form(...) {id: "main"}
 
 reducer doLogin
-    on=ui.submit(LoginForm)         ; reference by tile name
+    on=ui.submit(LoginForm)         # reference by tile name
     do= emit login({...})
 ```
 
@@ -337,8 +337,8 @@ reducer doLogin
 tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
 tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
 
-reducer add  on=ui.submit(NewForm#new)   do= ...   ; only the "new" form
-reducer save on=ui.submit(EditForm#edit) do= ...   ; only the "edit" form
+reducer add  on=ui.submit(NewForm#new)   do= ...   # only the "new" form
+reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 ```
 
 The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from §1.6.4 Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
@@ -348,12 +348,12 @@ The `{id}` prop is also rendered as the element's native HTML `id` attribute. Mu
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
 
 ```kumiki
-; These reducer statements:
+# These reducer statements:
 todos[id].done := true
 editor.title := "New"
 editor.get.body := "Body"        ; via Option (compiler expands to Option.map)
 
-; are internally expanded as:
+# are internally expanded as:
 todos := todos.update(id, $1.copy(done=true))
 editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
@@ -595,9 +595,9 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
 Since there are no lambdas, passing higher-order functions uses either a "fn name" or an "expression fragment":
 
 ```kumiki
-items.map(double)         ; registered fn name
+items.map(double)         # registered fn name
 items.map($1 * 2)         ; expression fragment ($1 is the element)
-items.filter(matchFilter($1, filter))  ; embed a fn call in an expression fragment
+items.filter(matchFilter($1, filter))  # embed a fn call in an expression fragment
 ```
 
 Partial application is **written explicitly** (no currying):
@@ -671,9 +671,9 @@ unop        ::= '-' | '!'
 ### 1.9.2 Alternatives to Higher-Order Functions
 
 ```kumiki
-items.map($1 * 2)                          ; expression fragment
-items.map(formatPrice)                     ; fn name
-items.filter(matchFilter($1, filter))      ; fn call
+items.map($1 * 2)                          # expression fragment
+items.map(formatPrice)                     # fn name
+items.filter(matchFilter($1, filter))      # fn call
 items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
 ```
 

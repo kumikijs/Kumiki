@@ -42,7 +42,7 @@ reducer boot
 ```kumiki
 reducer cleanup
     on=app.stop
-    do= emit persist(todos)         ; 同期 storage.write のみ実用的
+    do= emit persist(todos)         # 同期 storage.write のみ実用的
 ```
 
 ### 7.1.3 app.visible / app.hidden
@@ -144,7 +144,7 @@ reducer onPanic
 ```kumiki
 type PanicInfo = {
     message: Text,
-    location: Text,         ; "reducer:foo:line:42"
+    location: Text,         # "reducer:foo:line:42"
     episode-id: Text,
     cause: Option(Text)
 }
@@ -253,7 +253,7 @@ reducer askDelete
             onNo:  noop
         })
 
-reducer doDelete on=ui.click(_) do= ...     ; ※ 実装上は別名 reducer を作る方が綺麗
+reducer doDelete on=ui.click(_) do= ...     # ※ 実装上は別名 reducer を作る方が綺麗
 reducer noop     on=ui.click(_) do= ()
 ```
 
@@ -306,9 +306,9 @@ reducer notifySave
 | `volatile` | 永続化対象から外す（log にも書かれない、reload で破棄） |
 
 ```kumiki
-slot draft : Text             = ""        ; reload で維持
-slot toast : Option(Toast)    transient = None  ; reload で破棄
-slot password : Text          volatile  = ""    ; episode log にも書かれない
+slot draft : Text             = ""        # reload で維持
+slot toast : Option(Toast)    transient = None  # reload で破棄
+slot password : Text          volatile  = ""    # episode log にも書かれない
 ```
 
 ---

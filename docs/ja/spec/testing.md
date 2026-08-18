@@ -156,11 +156,11 @@ test bug-2026-05-21 =
     episode-test
         load    = "fixtures/episode-2026-05-21.log"
         mocks   = {
-            loadUser: from-log,        ; ログに記録された結果をそのまま返す
+            loadUser: from-log,        # ログに記録された結果をそのまま返す
             persist:  ignore
         }
         expect  = {
-            slots-equal: from-log,     ; 最終 slot がログの記録と一致
+            slots-equal: from-log,     # 最終 slot がログの記録と一致
             no-panics: true
         }
 ```
