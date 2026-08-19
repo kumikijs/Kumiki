@@ -10,7 +10,9 @@
         "$TURBO_ROOT$/docs/ja/spec/**/*.md",
         "$TURBO_ROOT$/packages/examples/features/**",
         "$TURBO_ROOT$/packages/examples/apps/**",
-        "$TURBO_ROOT$/packages/*/README*.md",
+        "$TURBO_ROOT$/README*.md",
+        "$TURBO_ROOT$/CONTRIBUTING*.md",
+        "$TURBO_ROOT$/packages/**/README*.md",
         "$TURBO_ROOT$/packages/cli/src/kumiki.ts"
       ]
     }
