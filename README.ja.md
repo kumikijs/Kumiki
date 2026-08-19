@@ -58,7 +58,7 @@ pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
 
 ## 運用モデル
 
-このリポジトリは「**見ればすべての疑問が解決する**」状態を目指す。質問・issue・バグ報告には、原則として **examples と tests を足すことで答える**。壊れた例は CI で弾かれる（[tests/](./tests/)）。詳しくは [CONTRIBUTING.md](./CONTRIBUTING.md)。
+このリポジトリは「**見ればすべての疑問が解決する**」状態を目指す。質問・issue・バグ報告には、原則として **examples と tests を足すことで答える**。壊れた例は CI で弾かれる（[packages/tests/](./packages/tests/)）。詳しくは [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## ライセンス
 

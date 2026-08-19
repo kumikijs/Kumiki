@@ -1,4 +1,4 @@
-// Mechanized guard for the READMEs under packages/examples/.
+// Mechanized guard for the READMEs that document this repository.
 //
 // Every command and cross-reference in those files used to be written against
 // the pre-monorepo layout (`examples/apps/…`, run from `packages/cli`), so all
@@ -12,9 +12,10 @@
 //   2. links — every relative link resolves on disk. Self-references must be
 //      relative: an absolute https://github.com/…/blob/… link is unresolvable
 //      from a checkout, and is how the previous rot got in. This rule covers
-//      every README under packages/, not just the examples: the same layout
-//      change broke links in packages/e2e and packages/icons, so a guard that
-//      stopped at one directory would leave the rot living next door.
+//      the root README/CONTRIBUTING and every README under packages/, not just
+//      the examples: the same layout change broke links in packages/e2e,
+//      packages/icons and the root README, so a guard that stopped at one
+//      directory would leave the rot living next door.
 //   3. commands — one documented invocation form, `pnpm kumiki <verb> …` from
 //      the repository root (the form the root README and CLAUDE.md use), whose
 //      verb the CLI registers and whose `packages/…` arguments exist.
@@ -30,17 +31,15 @@ import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
-const packagesRoot = join(repoRoot, "packages");
-const examplesPrefix = "examples/";
-const appsRoot = join(packagesRoot, "examples", "apps");
+const examplesPrefix = "packages/examples/";
+const appsRoot = join(repoRoot, "packages", "examples", "apps");
 
-// Both tracks of every README, keyed by the repo-relative path so a failure
-// names the file to open.
+// The two language tracks every README ships in.
 const EN = "README.md";
 const JA = "README.ja.md";
 
-// Comfortably under what the tree holds today (11 apps, 96 commands, 206
-// links across 37 READMEs) and far above zero, so a broken extractor fails
+// Comfortably under what the tree holds today (11 apps, 96 commands, 236
+// links across 41 documents) and far above zero, so a broken extractor fails
 // here instead of turning every rule below into a check on an empty set.
 const MIN_APPS = 11;
 const MIN_COMMANDS = 60;
@@ -57,19 +56,29 @@ function appDirs(): string[] {
     .sort();
 }
 
-// Every README under packages/, recursively, as a path relative to packages/ —
-// so a package or example group that grows its own README is covered without
-// editing a list here. Build outputs and installed dependencies carry READMEs
-// that are not ours to keep in step.
-const IGNORED_DIRS = new Set(["node_modules", "dist", ".smoke-tmp", "test-results"]);
+// Installed dependencies and build outputs carry READMEs that are not ours to
+// keep in step, and descending into them is most of what this scan would cost.
+const IGNORED_DIRS = new Set(["node_modules", "dist", ".smoke-tmp", "test-results", ".turbo"]);
+const ROOT_DOCS = [EN, JA, "CONTRIBUTING.md", "CONTRIBUTING.ja.md"];
 
-function readmes(): string[] {
-  return readdirSync(packagesRoot, { recursive: true })
-    .filter((p): p is string => typeof p === "string")
-    .map((p) => p.replace(/\\/g, "/"))
-    .filter((p) => !p.split("/").some((seg) => IGNORED_DIRS.has(seg)))
-    .filter((p) => p.endsWith(`/${EN}`) || p.endsWith(`/${JA}`))
-    .sort();
+// Every document that describes this repository to a reader: the root pair and
+// every README under packages/, recursively, so a package or example group that
+// grows one is covered without editing a list here. Paths come back relative to
+// the repository root, which is what the links inside them resolve against.
+// docs/ is left out on purpose — spec-index.test.ts already guards it.
+function docFiles(): string[] {
+  const out = ROOT_DOCS.filter((name) => existsSync(join(repoRoot, name)));
+  const descend = (rel: string): void => {
+    for (const entry of readdirSync(join(repoRoot, rel), { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRS.has(entry.name)) descend(`${rel}/${entry.name}`);
+      } else if (entry.name === EN || entry.name === JA) {
+        out.push(`${rel}/${entry.name}`);
+      }
+    }
+  };
+  descend("packages");
+  return out.sort();
 }
 
 const inExamples = (file: string): boolean => file.startsWith(examplesPrefix);
@@ -221,13 +230,13 @@ function lineCount(path: string): number {
   return lines.length;
 }
 
-const allReadmes = readmes();
-const exampleReadmes = allReadmes.filter(inExamples);
-const allLinks = allReadmes.flatMap((rel) => collectLinks(rel, read(join(packagesRoot, rel))));
+const allDocs = docFiles();
+const exampleReadmes = allDocs.filter(inExamples);
+const allLinks = allDocs.flatMap((rel) => collectLinks(rel, read(join(repoRoot, rel))));
 // Commands are read from the examples only: those are the READMEs that teach
 // the CLI, and they are the ones the single documented invocation form binds.
 const allCommands = exampleReadmes.flatMap((rel) =>
-  collectCommands(rel, read(join(packagesRoot, rel))),
+  collectCommands(rel, read(join(repoRoot, rel))),
 );
 
 describe("examples READMEs — shape", () => {
@@ -247,14 +256,14 @@ describe("examples READMEs — shape", () => {
   });
 
   it.each([EN, JA])("%s's index table lists exactly the apps on disk", (track) => {
-    const rows = appRows(read(join(packagesRoot, "examples", track)), track);
+    const rows = appRows(read(join(repoRoot, "packages", "examples", track)), track);
     const listed = rows.map((r) => r.name);
     expect(new Set(listed).size, `[${track}] duplicate rows in the apps table`).toBe(listed.length);
     expect(listed).toEqual(appDirs());
   });
 
   it.each([EN, JA])("%s's index table states each app's real size", (track) => {
-    const problems = appRows(read(join(packagesRoot, "examples", track)), track)
+    const problems = appRows(read(join(repoRoot, "packages", "examples", track)), track)
       .map((row) => {
         const actual = lineCount(join(appsRoot, row.name, "app.kumiki"));
         return row.lines === actual
@@ -295,7 +304,7 @@ describe("package READMEs — links", () => {
       .filter((l) => {
         const path = l.target.split("#")[0];
         if (path === "") return false;
-        return !existsSync(resolve(packagesRoot, dirname(l.file), path));
+        return !existsSync(resolve(repoRoot, dirname(l.file), path));
       });
     if (dead.length > 0) {
       expect.fail(
@@ -362,8 +371,8 @@ describe("examples READMEs — commands", () => {
       const dir = posix.dirname(c.file);
       // Only an app's own README is bound to its own files; the index README
       // one level up documents them all.
-      if (!/^examples\/apps\/[^/]+$/.test(dir)) continue;
-      const own = `packages/${dir}/`;
+      if (!/^packages\/examples\/apps\/[^/]+$/.test(dir)) continue;
+      const own = `${dir}/`;
       for (const arg of inputPaths(c)) {
         if (!arg.startsWith(own)) strays.push(`${c.file}: ${arg}`);
       }
