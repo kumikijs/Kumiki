@@ -77,6 +77,20 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toMatch(/two|more than one|exactly one/i);
   });
 
+  // `setTimeout(Infinity)` does not fit a 32-bit delay and runs at 1ms, so a
+  // step asking to wait forever ran as one asking not to wait — and passed.
+  it("refuses a wait that is not a finite duration", async () => {
+    const r = await run({ steps: [{ do: { wait: Number.POSITIVE_INFINITY } }] });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join("\n")).toMatch(/wait/);
+  });
+
+  it("refuses a wait longer than any observation window", async () => {
+    expect((await run({ steps: [{ do: { wait: 600_000 } }] })).ok).toBe(false);
+    expect((await run({ steps: [{ do: { wait: -1 } }] })).ok).toBe(false);
+    expect((await run({ steps: [{ do: { wait: "500" } as never }] })).ok).toBe(false);
+  });
+
   it("rejects an action that names none", async () => {
     const r = await run({ steps: [{ do: {} as never }] });
     expect(r.ok).toBe(false);
