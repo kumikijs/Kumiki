@@ -43,6 +43,19 @@ test("refuses a step that names two things to do", () => {
   expect(problems[0]).toContain("exactly one thing");
 });
 
+test("names a misspelled top-level key", () => {
+  const problems = validateScenario({
+    stpes: [{ expect: { noErrors: true } }],
+  } as unknown as Scenario);
+  expect(problems.join(" ")).toContain("stpes");
+});
+
+test("refuses a fixture with no steps", () => {
+  const problems = validateScenario({ steps: [] });
+  expect(problems).toHaveLength(1);
+  expect(problems[0]).toContain("asserts nothing");
+});
+
 // `effects` replaces every capability's result at the scenario tier. Accepting
 // it here silently would let a fixture believe its HTTP was stubbed while the
 // request left the machine.

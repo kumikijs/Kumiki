@@ -82,6 +82,29 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.ok).toBe(false);
   });
 
+  // A misspelled top-level key is the same failure one level up: `steps` reads
+  // as absent, so every assertion under it is skipped. It used to reach the
+  // runner's loop and throw `steps is not iterable` — after the mount, which is
+  // exactly what validating first is supposed to prevent.
+  it("names a misspelled top-level key instead of crashing on it", async () => {
+    const r = await run({ stpes: [{ expect: { state: { n: 999 } } }] } as unknown as Scenario);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join("\n")).toContain("stpes");
+  });
+
+  it("refuses a document whose steps are not a list", async () => {
+    const r = await run({ steps: { first: {} } } as unknown as Scenario);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join("\n")).toMatch(/"steps"/);
+  });
+
+  // A scenario with nothing in it asserted nothing and said so with `ok: true`.
+  it("refuses a document with no steps at all", async () => {
+    const r = await run({ steps: [] });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join("\n")).toMatch(/no steps|asserts nothing/i);
+  });
+
   // Reported together, and before the app is mounted: a document with three
   // mistakes in it should not need three runs to find them.
   it("reports every problem in the document at once, without mounting", async () => {

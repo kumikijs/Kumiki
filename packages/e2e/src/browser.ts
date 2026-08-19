@@ -106,7 +106,21 @@ export function validateScenario(scenario: Scenario): string[] {
   if ((scenario as { effects?: unknown }).effects !== undefined) {
     problems.push('"effects" is not supported by the browser tier: it drives a real browser');
   }
-  const steps = scenario.steps ?? [];
+  // A misspelled `steps` reads as absent, so every assertion under it is
+  // skipped and the fixture passes having checked nothing — the same failure
+  // the key lists below guard against, one level up.
+  for (const key of Object.keys(scenario as Record<string, unknown>)) {
+    if (key === "steps" || key === "effects") continue;
+    problems.push(`unknown scenario key "${key}" (steps)`);
+  }
+  if (!Array.isArray(scenario.steps)) {
+    problems.push('a fixture needs a "steps" array');
+    return problems;
+  }
+  if (scenario.steps.length === 0) {
+    problems.push("a fixture with no steps asserts nothing");
+  }
+  const steps = scenario.steps;
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     if (!step) continue;

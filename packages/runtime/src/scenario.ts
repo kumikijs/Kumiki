@@ -85,6 +85,9 @@ const BROWSER_ACTION_KEYS = ["setProperty"] as const;
 /** Fields that accompany an action kind rather than naming one. */
 const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
 
+/** The whole document is a closed set too — see `validateScenario`. */
+const SCENARIO_KEYS = ["steps", "effects", "defaultEffect"] as const;
+
 const BROWSER_TIER = "a browser-tier assertion; run this fixture with @kumikijs/e2e";
 
 /**
@@ -93,7 +96,24 @@ const BROWSER_TIER = "a browser-tier assertion; run this fixture with @kumikijs/
  */
 function validateScenario(scenario: Scenario): string[] {
   const problems: string[] = [];
-  const steps = scenario.steps ?? [];
+  // The document first. A misspelled `steps` is the same failure as a
+  // misspelled `expect` key one level up — every assertion under it is skipped
+  // — and it used to reach the loop below and throw `steps is not iterable`
+  // after the mount, which is what validating first exists to prevent.
+  for (const key of Object.keys(scenario as Record<string, unknown>)) {
+    if ((SCENARIO_KEYS as readonly string[]).includes(key)) continue;
+    problems.push(`unknown scenario key "${key}" (${SCENARIO_KEYS.join(", ")})`);
+  }
+  if (!Array.isArray(scenario.steps)) {
+    problems.push('a scenario needs a "steps" array');
+    return problems;
+  }
+  // Running an empty document reported `ok: true` for a scenario that asserted
+  // nothing, which is the one answer this runner must never give.
+  if (scenario.steps.length === 0) {
+    problems.push("a scenario with no steps asserts nothing");
+  }
+  const steps = scenario.steps;
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     if (!step) continue;
