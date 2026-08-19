@@ -10,6 +10,7 @@
     "lint": "biome check ."
   },
   "devDependencies": {
+    "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
     "happy-dom": "catalog:",

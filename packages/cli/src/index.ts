@@ -20,6 +20,14 @@ export {
   type SkipReason,
 } from "./fix.ts";
 export {
+  type HttpFixture,
+  type HttpResponseFixture,
+  httpRequests,
+  installTestDoubles,
+  readHttpFixture,
+  useHttpFixture,
+} from "./harness.ts";
+export {
   addDef,
   editDef,
   episodeLogPathFor,
@@ -37,6 +45,8 @@ export {
 } from "./mutate.ts";
 export {
   type Coverage,
+  type LoadedApp,
+  loadApp,
   runCmd,
   runScenarioSource,
   runTests,

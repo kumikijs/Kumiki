@@ -127,6 +127,7 @@ export {
 } from "./scenario.ts";
 export {
   describeDiagnostic,
+  SMOKE_CONTENT_SELECTORS,
   type SmokeDiagnostic,
   type SmokeIssue,
   type SmokeOptions,

@@ -1,0 +1,42 @@
+{
+  "effects": {
+    "fetchQuote": [
+      {
+        "outcome": "ok",
+        "value": {
+          "text": "Simplicity is prerequisite for reliability.",
+          "author": "Edsger W. Dijkstra"
+        }
+      },
+      { "outcome": "err", "value": { "status": 500, "message": "Server Error", "body": "" } }
+    ]
+  },
+  "steps": [
+    {
+      "label": "nothing is loaded, and the session header the app sends is its own slot",
+      "expect": {
+        "noErrors": true,
+        "state": { "state": { "_tag": "Idle" }, "session": "anon" },
+        "domIncludes": ["session: anon", "Click to load."]
+      }
+    },
+    {
+      "label": "the click loads the quote through the app-level base-url and headers",
+      "do": { "clickText": "Load quote" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Simplicity is prerequisite for reliability.", "Edsger W. Dijkstra"],
+        "domExcludes": ["Click to load."]
+      }
+    },
+    {
+      "label": "a failed request lands in the .err reducer instead of throwing",
+      "do": { "clickText": "Load quote" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["request failed"],
+        "domExcludes": ["Simplicity is prerequisite for reliability."]
+      }
+    }
+  ]
+}

@@ -603,7 +603,7 @@ export function renderTileToString(node: TileNode): string {
         "",
       );
     case "skeleton":
-      return el(node, "div", { "data-kumiki-tile": "skeleton" }, "");
+      return el(node, "div", { "data-kumiki-tile": "skeleton", "aria-busy": "true" }, "");
     case "error":
       // Field-bound error messages depend on live refinement results — empty
       // on the server, the client renders the actual error on first render.

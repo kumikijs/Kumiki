@@ -21,7 +21,11 @@ export type Action =
    * #190 fixtures to seed browser-owned state a Kumiki reducer has no way
    * to produce (e.g. `<video>.currentTime = 3` before triggering a re-render).
    */
-  | { setProperty: string; property: string; value: unknown };
+  | { setProperty: string; property: string; value: unknown }
+  /** Submit the form at, or above, the element the selector matches. */
+  | { submit: string }
+  /** Wait this many milliseconds on top of the step's own settle. */
+  | { wait: number };
 
 export type Expect = {
   noErrors?: boolean;
@@ -53,6 +57,116 @@ export type Expect = {
 
 export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
 export type Scenario = { steps: ScenarioStep[] };
+
+/**
+ * The closed sets this tier answers for — the headless runner's, plus the
+ * browser-only names it adds. Kept as lists rather than derived from the types
+ * because the check is what makes a fixture's claim falsifiable: a key nobody
+ * evaluates is a fixture that passes having asserted nothing.
+ */
+const EXPECT_KEYS = [
+  "noErrors",
+  "state",
+  "domIncludes",
+  "domExcludes",
+  "focused",
+  "visible",
+  "hidden",
+  "animating",
+  "elementState",
+] as const satisfies readonly (keyof Expect)[];
+
+/**
+ * Keys the scenario tier owns. `errorIncludes` asks the runner to *require* an
+ * error, and this tier treats every reported error as fatal — a fixture using
+ * it cannot pass either way, so it is named rather than accepted. It used to
+ * sit in the list above while `evaluateExpect` never read it, which is the
+ * exact vacuity the closed set exists to stop.
+ */
+const SCENARIO_EXPECT_KEYS = ["errorIncludes"] as const;
+
+const ACTION_KEYS = [
+  "dispatch",
+  "clickText",
+  "click",
+  "focus",
+  "blur",
+  "fill",
+  "choose",
+  "navigate",
+  "submit",
+  "wait",
+  "setProperty",
+] as const satisfies readonly ActionKind[];
+
+/** Fields that accompany an action kind rather than naming one. */
+const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
+
+/**
+ * Both lists are pinned to the types in both directions, at no runtime cost:
+ * `satisfies` rejects a listed key the type no longer has, and the assertions
+ * below reject a key the type has and the list forgot — the direction that
+ * matters, because a forgotten key is silently skipped.
+ */
+type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
+type Covers<Whole extends Part, Part> = Whole;
+type _ExpectKeysCovered = Covers<
+  keyof Expect,
+  (typeof EXPECT_KEYS)[number] | (typeof SCENARIO_EXPECT_KEYS)[number]
+>;
+type _ActionKindsCovered = Covers<
+  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
+  (typeof ACTION_KEYS)[number]
+>;
+
+/** How long a `wait` may ask for — the scenario tier's bound, so a fixture promotes unchanged. */
+const MAX_WAIT_MS = 60_000;
+
+/**
+ * Every problem in a fixture, in the order they appear. Empty for one this
+ * tier can execute.
+ */
+export function validateScenario(scenario: Scenario): string[] {
+  const problems: string[] = [];
+  // `effects` is the scenario tier's capability-boundary mock, and this tier
+  // drives a real browser on purpose. Silently ignoring it would let a fixture
+  // believe its HTTP was stubbed while the request went out for real.
+  if ((scenario as { effects?: unknown }).effects !== undefined) {
+    problems.push('"effects" is not supported by the browser tier: it drives a real browser');
+  }
+  // A misspelled `steps` reads as absent, so every assertion under it is
+  // skipped and the fixture passes having checked nothing — the same failure
+  // the key lists below guard against, one level up.
+  for (const key of Object.keys(scenario as Record<string, unknown>)) {
+    if (key === "steps" || key === "effects") continue;
+    problems.push(`unknown scenario key "${key}" (steps)`);
+  }
+  if (!Array.isArray(scenario.steps)) {
+    problems.push('a fixture needs a "steps" array');
+    return problems;
+  }
+  if (scenario.steps.length === 0) {
+    problems.push("a fixture with no steps asserts nothing");
+  }
+  const steps = scenario.steps;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step) continue;
+    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
+    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
+    for (const key of Object.keys((step.expect ?? {}) as Record<string, unknown>)) {
+      if ((EXPECT_KEYS as readonly string[]).includes(key)) continue;
+      if ((SCENARIO_EXPECT_KEYS as readonly string[]).includes(key)) {
+        problems.push(
+          `${where}: "${key}" is a scenario-tier assertion; this tier treats every reported error as fatal`,
+        );
+        continue;
+      }
+      problems.push(`${where}: unknown expect key "${key}" (${EXPECT_KEYS.join(", ")})`);
+    }
+  }
+  return problems;
+}
 
 export type StepResult = {
   label?: string;
@@ -263,6 +377,25 @@ async function serveScenario(
   page.on("pageerror", onPageError);
   await page.route(KUMIKI_ROUTE_GLOB, onRoute);
 
+  const problems = validateScenario(scenario);
+  if (problems.length > 0) {
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
+    return {
+      ok: false,
+      steps: [
+        {
+          label: "scenario document",
+          errors: [],
+          state: {},
+          visibleText: "",
+          failures: problems,
+        },
+      ],
+    };
+  }
+
   try {
     await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
     await page.waitForFunction(readyExpr, null, { timeout: 5000 });
@@ -347,6 +480,40 @@ const snapshotMultiStateFn = `(() => {
   return out;
 })()`;
 
+/**
+ * The kinds AND the values, matching the scenario tier. Both files open by
+ * promising the same scenario format, and `submit` / `wait` exist so a fixture
+ * can be promoted from tier 2 to tier 3 unchanged — a `{"wait": "500"}` that
+ * one tier refuses and the other hands to `waitForTimeout` breaks that promise.
+ */
+function validateAction(action: Action, where: string): string[] {
+  const keys = Object.keys(action as Record<string, unknown>);
+  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
+  const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
+  if (unknown.length > 0) {
+    return [`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`];
+  }
+  if (kinds.length === 0) return [`${where}: "do" names no action (${ACTION_KEYS.join(", ")})`];
+  if (kinds.length > 1) {
+    return [`${where}: "do" names ${kinds.join(" and ")}; a step does exactly one thing`];
+  }
+  const kind = kinds[0];
+  const a = action as Record<string, unknown>;
+  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
+    return [`${where}: "${kind}" needs a string "value"`];
+  }
+  if (kind === "setProperty" && typeof a.property !== "string") {
+    return [`${where}: "setProperty" needs a "property" name`];
+  }
+  if (
+    kind === "wait" &&
+    !(typeof a.wait === "number" && Number.isFinite(a.wait) && a.wait >= 0 && a.wait <= MAX_WAIT_MS)
+  ) {
+    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
+  }
+  return [];
+}
+
 function describeAction(a: Action): string {
   if ("dispatch" in a) return `dispatch ${a.dispatch}`;
   if ("clickText" in a) return `clickText "${a.clickText}"`;
@@ -355,12 +522,33 @@ function describeAction(a: Action): string {
   if ("blur" in a) return `blur ${a.blur}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
+  if ("submit" in a) return `submit ${a.submit}`;
+  if ("wait" in a) return `wait ${a.wait}ms`;
   if ("setProperty" in a)
     return `setProperty ${a.setProperty}.${a.property}=${JSON.stringify(a.value)}`;
   return `navigate ${a.navigate}`;
 }
 
 async function performAction(page: Page, a: Action): Promise<void> {
+  if ("wait" in a) {
+    await page.waitForTimeout(a.wait);
+    return;
+  }
+  if ("submit" in a) {
+    // `requestSubmit()` rather than a synthetic event: this tier exists to run
+    // the real thing, so constraint validation and the browser's own submit
+    // sequence are part of what it verifies. The selector may name the form or
+    // anything inside it, as at the scenario tier.
+    await page
+      .locator(a.submit)
+      .first()
+      .evaluate((el: Element) => {
+        const form = el instanceof HTMLFormElement ? el : el.closest("form");
+        if (!form) throw new Error("no form at or above the selector");
+        form.requestSubmit();
+      });
+    return;
+  }
   if ("dispatch" in a) {
     await page.evaluate(
       (arg: { n: string; p: Record<string, unknown> }) =>

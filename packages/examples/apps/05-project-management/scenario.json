@@ -1,0 +1,81 @@
+{
+  "effects": {
+    "loadProjects": [{ "outcome": "ok", "value": { "_tag": "None" } }],
+    "loadTasks": [{ "outcome": "ok", "value": { "_tag": "None" } }],
+    "loadComments": [{ "outcome": "ok", "value": { "_tag": "None" } }],
+    "loadTheme": [{ "outcome": "ok", "value": { "_tag": "None" } }]
+  },
+  "steps": [
+    {
+      "label": "nothing is stored, so the projects page offers its create form and nothing else",
+      "expect": {
+        "noErrors": true,
+        "state": { "ready": true, "themeName": "Light" },
+        "domIncludes": ["Projects", "Create new project", "No active projects yet."]
+      }
+    },
+    {
+      "do": { "fill": "#proj-name", "value": "Kumiki" },
+      "expect": { "noErrors": true, "state": { "draftProject": { "name": "Kumiki" } } }
+    },
+    {
+      "do": { "fill": "#proj-desc", "value": "An AI-first web framework language" },
+      "expect": { "noErrors": true }
+    },
+    {
+      "label": "creating the project clears the draft and lands on the project it just made",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draftProject": { "name": "", "description": "" } },
+        "domIncludes": ["Kumiki", "An AI-first web framework language", "+ New task"],
+        "domExcludes": ["No active projects yet."]
+      }
+    },
+    {
+      "label": "the new-task route is reached through the link, because only the app knows the id it generated",
+      "do": { "clickText": "+ New task" },
+      "expect": { "noErrors": true, "domIncludes": ["New task in Kumiki", "Due date"] }
+    },
+    {
+      "do": { "fill": "#task-title", "value": "Write the scenario" },
+      "expect": { "noErrors": true, "state": { "draftTask": { "title": "Write the scenario" } } }
+    },
+    {
+      "do": { "fill": "#task-tags", "value": "tests, docs" },
+      "expect": { "noErrors": true }
+    },
+    {
+      "label": "the task is created against the project the route names, and shows on its own page",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draftTask": { "title": "", "tags": "" } },
+        "domIncludes": ["Subtasks", "Comments", "No comments yet", "#tests", "#docs"]
+      }
+    },
+    {
+      "do": { "fill": "#comment-draft", "value": "Blocked on the wait primitive." },
+      "expect": { "noErrors": true, "state": { "commentDraft": "Blocked on the wait primitive." } }
+    },
+    {
+      "label": "the comment form is named by a field inside it — the page carries two forms and neither has an id",
+      "do": { "submit": "#comment-draft" },
+      "expect": {
+        "noErrors": true,
+        "state": { "commentDraft": "" },
+        "domIncludes": ["Blocked on the wait primitive."],
+        "domExcludes": ["No comments yet"]
+      }
+    },
+    {
+      "label": "settings toggles the theme slot the app is themed by",
+      "do": { "navigate": "/settings" },
+      "expect": { "noErrors": true, "domIncludes": ["Settings", "Theme"] }
+    },
+    {
+      "do": { "clickText": "Toggle Theme" },
+      "expect": { "noErrors": true, "state": { "themeName": "Dark" } }
+    }
+  ]
+}
