@@ -65,7 +65,7 @@ const HEADLESS_EXPECT_KEYS = [
   "state",
   "domIncludes",
   "domExcludes",
-] as const;
+] as const satisfies readonly (keyof Expect)[];
 const BROWSER_EXPECT_KEYS = ["focused", "visible", "hidden", "animating", "elementState"] as const;
 
 const HEADLESS_ACTION_KEYS = [
@@ -79,8 +79,22 @@ const HEADLESS_ACTION_KEYS = [
   "navigate",
   "submit",
   "wait",
-] as const;
+] as const satisfies readonly ActionKind[];
 const BROWSER_ACTION_KEYS = ["setProperty"] as const;
+
+/**
+ * The lists above are pinned to the types in both directions, at no runtime
+ * cost. `satisfies` rejects a listed key the type no longer has; the two
+ * assertions below reject a key the type has and the list forgot — which is
+ * the direction that matters, because a forgotten key is silently skipped.
+ */
+type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
+type Covers<Whole extends Part, Part> = Whole;
+type _ExpectKeysCovered = Covers<keyof Expect, (typeof HEADLESS_EXPECT_KEYS)[number]>;
+type _ActionKindsCovered = Covers<
+  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
+  (typeof HEADLESS_ACTION_KEYS)[number]
+>;
 
 /** Fields that accompany an action kind rather than naming one. */
 const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
@@ -89,6 +103,18 @@ const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
 const SCENARIO_KEYS = ["steps", "effects", "defaultEffect"] as const;
 
 const BROWSER_TIER = "a browser-tier assertion; run this fixture with @kumikijs/e2e";
+
+/**
+ * A minute is longer than any window a step should need to observe, and short
+ * enough that a fixture holding the suite open is a failure rather than a
+ * mystery. The finiteness check is not pedantry: `setTimeout(Infinity)` does not
+ * fit a 32-bit delay and clamps to 1ms, so "wait forever" would have run as "do
+ * not wait" — and passed.
+ */
+const MAX_WAIT_MS = 60_000;
+
+const isWaitable = (ms: unknown): boolean =>
+  typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= MAX_WAIT_MS;
 
 /**
  * Every problem in a scenario document, described in the order they appear.
@@ -147,8 +173,8 @@ function validateAction(action: Action, where: string): string[] {
   if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
     return [`${where}: "${kind}" needs a string "value"`];
   }
-  if (kind === "wait" && !(typeof a.wait === "number" && a.wait >= 0)) {
-    return [`${where}: "wait" needs a duration in milliseconds`];
+  if (kind === "wait" && !isWaitable(a.wait)) {
+    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
   }
   return [];
 }
@@ -306,6 +332,21 @@ export async function runScenario(
     }
     await settle(settleMs);
 
+    // The first paint is a step like any other. Without this, everything
+    // reported between `mount` and the first scripted action was dropped on the
+    // next line's `errorBuf = []` — so an `app.init` effect that failed with no
+    // `.err` reducer, or a first render that panicked, was reported by the
+    // runtime and then thrown away, and the run said `ok: true`.
+    //
+    // Only when it has something to say: a step is pushed here in the failing
+    // case alone, so a passing report still has one entry per scripted step and
+    // a caller reading `steps[0]` sees what it always saw.
+    if (errorBuf.length > 0) {
+      steps.push(
+        mkStep("mount", undefined, [...errorBuf], [...emitBuf], app, root, [], [...diagBuf]),
+      );
+    }
+
     for (const step of scenario.steps) {
       errorBuf = [];
       emitBuf.length = 0;
@@ -395,8 +436,10 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   if ("wait" in a) return;
   if ("submit" in a) {
     // Dispatched on the form itself, which is what the `form` tile listens for.
-    // Clicking a submit button does not submit a form in a synthetic event, and
-    // a form written without one has nothing to click.
+    // A `form` tile usually has no submit button to click, and where it has
+    // one, whether a synthetic click submits is activation behaviour that
+    // differs per DOM — dispatching on the form means the same thing in all of
+    // them.
     //
     // The selector may also name something inside the form: a page with two
     // forms on it has no way to tell them apart otherwise, since a `form` tile

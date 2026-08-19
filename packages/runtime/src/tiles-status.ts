@@ -81,6 +81,11 @@ export const statusTiles: TileRenderers = {
   skeleton(node) {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "skeleton";
+    // A skeleton is a region whose content has not arrived. `aria-busy` is what
+    // says so to assistive technology, and it is also the only thing that
+    // distinguishes this placeholder from an empty <div> for anything reading
+    // the tree — `kumiki smoke`'s "did this render anything" check included.
+    div.setAttribute("aria-busy", "true");
     div.style.background = "#eee";
     div.style.borderRadius = "8px";
     div.style.minHeight = "60px";

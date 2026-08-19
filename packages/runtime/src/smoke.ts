@@ -261,29 +261,32 @@ function describeFallback(f: ReconcileFallback): string {
  * element instead would answer "rendered" for `tile App = column()`, which puts
  * one empty `<div>` under the root and shows the user a blank page — the exact
  * failure this tier is named for.
+ *
+ * Every entry is a selector some tile actually produces, and
+ * `smoke-coverage.test.ts` mounts that tile for each one. A selector nothing
+ * renders is worse than a missing one: it reads as coverage while matching
+ * nothing, and the first version of this list carried seven of them while
+ * missing `skeleton` — which made an app whose first paint is a placeholder
+ * fail this tier.
  */
-const CONTENT_ELEMENTS = [
+export const SMOKE_CONTENT_SELECTORS = [
   "img",
   "svg",
-  "canvas",
   "video",
-  "audio",
-  "iframe",
-  "object",
-  "embed",
   "input",
   "textarea",
   "select",
   "button",
   "progress",
-  "meter",
   "hr",
+  "[contenteditable='true']",
   // A spinner or a skeleton is a screen with nothing written on it yet, and an
-  // app whose first paint is one is rendering. They announce themselves.
+  // app whose first paint is one is rendering. Both announce themselves.
   "[role='status']",
-  "[role='progressbar']",
   "[aria-busy='true']",
-].join(", ");
+] as const;
+
+const CONTENT_ELEMENTS = SMOKE_CONTENT_SELECTORS.join(", ");
 
 function hasContent(root: HTMLElement): boolean {
   if ((root.textContent ?? "").trim().length > 0) return true;
@@ -309,9 +312,13 @@ function pickNext(root: HTMLElement, fired: Set<string>): [HTMLElement, string] 
 
 /**
  * Forms are driven by dispatching `submit` on the form itself, which is what
- * the runtime listens for. Nothing else reaches it: a synthetic click on a
- * submit button does not submit a form in any DOM, and a form with no submit
- * button has nothing to click in the first place.
+ * the runtime listens for, for two reasons. A `form` tile usually has no submit
+ * button — `02-todomvc`'s is the shape the spec's own example uses — so there
+ * is nothing to click. And where there is a button, whether clicking it submits
+ * is activation behaviour that differs per DOM: happy-dom submits on a
+ * synthetic click even when the button's own handler calls `preventDefault`,
+ * because the event this harness builds is not cancelable. Dispatching on the
+ * form means the same thing everywhere.
  */
 function collectForms(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>("form"));

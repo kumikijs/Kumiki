@@ -66,7 +66,6 @@ export type Scenario = { steps: ScenarioStep[] };
  */
 const EXPECT_KEYS = [
   "noErrors",
-  "errorIncludes",
   "state",
   "domIncludes",
   "domExcludes",
@@ -75,7 +74,16 @@ const EXPECT_KEYS = [
   "hidden",
   "animating",
   "elementState",
-] as const;
+] as const satisfies readonly (keyof Expect)[];
+
+/**
+ * Keys the scenario tier owns. `errorIncludes` asks the runner to *require* an
+ * error, and this tier treats every reported error as fatal — a fixture using
+ * it cannot pass either way, so it is named rather than accepted. It used to
+ * sit in the list above while `evaluateExpect` never read it, which is the
+ * exact vacuity the closed set exists to stop.
+ */
+const SCENARIO_EXPECT_KEYS = ["errorIncludes"] as const;
 
 const ACTION_KEYS = [
   "dispatch",
@@ -89,10 +97,30 @@ const ACTION_KEYS = [
   "submit",
   "wait",
   "setProperty",
-] as const;
+] as const satisfies readonly ActionKind[];
 
 /** Fields that accompany an action kind rather than naming one. */
 const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
+
+/**
+ * Both lists are pinned to the types in both directions, at no runtime cost:
+ * `satisfies` rejects a listed key the type no longer has, and the assertions
+ * below reject a key the type has and the list forgot — the direction that
+ * matters, because a forgotten key is silently skipped.
+ */
+type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
+type Covers<Whole extends Part, Part> = Whole;
+type _ExpectKeysCovered = Covers<
+  keyof Expect,
+  (typeof EXPECT_KEYS)[number] | (typeof SCENARIO_EXPECT_KEYS)[number]
+>;
+type _ActionKindsCovered = Covers<
+  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
+  (typeof ACTION_KEYS)[number]
+>;
+
+/** How long a `wait` may ask for — the scenario tier's bound, so a fixture promotes unchanged. */
+const MAX_WAIT_MS = 60_000;
 
 /**
  * Every problem in a fixture, in the order they appear. Empty for one this
@@ -125,21 +153,15 @@ export function validateScenario(scenario: Scenario): string[] {
     const step = steps[i];
     if (!step) continue;
     const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
-    if (step.do !== undefined) {
-      const kinds = Object.keys(step.do as Record<string, unknown>).filter(
-        (k) => !(ACTION_MODIFIERS as readonly string[]).includes(k),
-      );
-      const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
-      if (unknown.length > 0) {
-        problems.push(`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`);
-      } else if (kinds.length === 0) {
-        problems.push(`${where}: "do" names no action (${ACTION_KEYS.join(", ")})`);
-      } else if (kinds.length > 1) {
-        problems.push(`${where}: "do" names ${kinds.join(" and ")}; a step does exactly one thing`);
-      }
-    }
+    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
     for (const key of Object.keys((step.expect ?? {}) as Record<string, unknown>)) {
       if ((EXPECT_KEYS as readonly string[]).includes(key)) continue;
+      if ((SCENARIO_EXPECT_KEYS as readonly string[]).includes(key)) {
+        problems.push(
+          `${where}: "${key}" is a scenario-tier assertion; this tier treats every reported error as fatal`,
+        );
+        continue;
+      }
       problems.push(`${where}: unknown expect key "${key}" (${EXPECT_KEYS.join(", ")})`);
     }
   }
@@ -457,6 +479,40 @@ const snapshotMultiStateFn = `(() => {
   });
   return out;
 })()`;
+
+/**
+ * The kinds AND the values, matching the scenario tier. Both files open by
+ * promising the same scenario format, and `submit` / `wait` exist so a fixture
+ * can be promoted from tier 2 to tier 3 unchanged — a `{"wait": "500"}` that
+ * one tier refuses and the other hands to `waitForTimeout` breaks that promise.
+ */
+function validateAction(action: Action, where: string): string[] {
+  const keys = Object.keys(action as Record<string, unknown>);
+  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
+  const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
+  if (unknown.length > 0) {
+    return [`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`];
+  }
+  if (kinds.length === 0) return [`${where}: "do" names no action (${ACTION_KEYS.join(", ")})`];
+  if (kinds.length > 1) {
+    return [`${where}: "do" names ${kinds.join(" and ")}; a step does exactly one thing`];
+  }
+  const kind = kinds[0];
+  const a = action as Record<string, unknown>;
+  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
+    return [`${where}: "${kind}" needs a string "value"`];
+  }
+  if (kind === "setProperty" && typeof a.property !== "string") {
+    return [`${where}: "setProperty" needs a "property" name`];
+  }
+  if (
+    kind === "wait" &&
+    !(typeof a.wait === "number" && Number.isFinite(a.wait) && a.wait >= 0 && a.wait <= MAX_WAIT_MS)
+  ) {
+    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
+  }
+  return [];
+}
 
 function describeAction(a: Action): string {
   if ("dispatch" in a) return `dispatch ${a.dispatch}`;

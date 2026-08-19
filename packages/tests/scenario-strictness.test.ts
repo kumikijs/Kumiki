@@ -183,6 +183,50 @@ describe("the browser-tier fixtures in the corpus are refused, not passed", () =
   }
 });
 
+// Everything the runtime reported between `mount` and the first scripted action
+// used to be dropped: the step loop opened by clearing the buffer. An
+// `app.start` effect that failed with no `.err` reducer — the shape an
+// unfixtured HTTP request takes — was reported by the runtime and thrown away,
+// and the run said `ok: true`.
+describe("the first paint is a step like any other", () => {
+  const BOOT = `slot n : Int = 0
+effect boot cap=storage.read
+            in=Unit
+            out=Result(Text, Text)
+            policy=once
+            map-request={key: "nope", decode: Decoder.Text()}
+reducer start on=app.start do= emit boot()
+tile App = column(text("n: " + n.show))
+app Boot
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("fails a run whose mount window reported an error", async () => {
+    const app = await loadSource(BOOT, ["storage.read"]);
+    const report = await runScenario(app, freshRoot(), {
+      effects: { boot: [{ outcome: "err", value: "storage unavailable" }] },
+      steps: [{ label: "after", expect: { noErrors: true } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.label).toBe("mount");
+    expect(report.steps[0]?.errors.join(" ")).toContain("storage unavailable");
+  });
+
+  // …and stays out of the way otherwise: a clean first paint adds no step, so
+  // a caller reading `steps[0]` still gets the first scripted one.
+  it("adds nothing when the mount window is clean", async () => {
+    const app = await loadSource(BOOT, ["storage.read"]);
+    const report = await runScenario(app, freshRoot(), {
+      effects: { boot: [{ outcome: "ok", value: "fine" }] },
+      steps: [{ label: "after", expect: { noErrors: true } }],
+    });
+    expect(report.ok).toBe(true);
+    expect(report.steps.map((st) => st.label)).toEqual(["after"]);
+  });
+});
+
 describe("waiting is one step, not dozens", () => {
   // The countdown ticks every 100ms from 5 and clamps at 0. Without a wait
   // primitive, a step with no `do` never settles at all, so watching it run

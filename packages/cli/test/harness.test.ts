@@ -2,11 +2,16 @@
 // green `kumiki smoke` means, so each of their promises is asserted here rather
 // than assumed by the corpus that depends on them.
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   type HttpFixture,
   httpRequests,
   installTestDoubles,
+  readHttpFixture,
   useHttpFixture,
 } from "../src/harness.ts";
 import { smokeSource } from "../src/smoke.ts";
@@ -104,6 +109,52 @@ describe("the fetch double answers from the fixture, never from a host", () => {
     const searching = QUOTE.replace('url: "/quote"', 'url: "/quote?q=" + "wood"');
     const report = await drive(searching, { "GET /quote": OK });
     expect(report.issues.map((i) => i.message)).toEqual([]);
+  });
+});
+
+describe("a fixture that is there, and one that is not", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const counter = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+  const quotes = resolve(here, "../../examples/apps/07-app-http/app.kumiki");
+
+  it("reads the fixture beside a source that has one", () => {
+    expect(readHttpFixture(quotes)).toHaveProperty("GET /quote");
+  });
+
+  it("returns null for a source with no fixture beside it", () => {
+    expect(readHttpFixture(counter)).toBeNull();
+  });
+
+  // A bare catch would call every read failure "no fixture", and the author
+  // would be told to add a file that is sitting right there — or, in an example
+  // that issues no request, told nothing at all.
+  it("does not call a directory in the fixture's place 'no fixture'", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fixture-"));
+    const source = join(dir, "app.kumiki");
+    writeFileSync(source, "");
+    mkdirSync(join(dir, "app.http.json"));
+    try {
+      expect(() => readHttpFixture(source)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // `replace(/\.kumiki$/, …)` is a no-op for a path that does not end in
+  // `.kumiki`, so the source itself was parsed as JSON and the author was told
+  // their `.kumiki` file was not valid JSON.
+  it("refuses a path that is not a Kumiki source", () => {
+    expect(() => readHttpFixture("somewhere/app.txt")).toThrow(/not a Kumiki source/);
+  });
+
+  // "add it to the .http.json" is unhelpful advice for an author who wrote the
+  // key and left its queue empty — the one way a queue can run out, since the
+  // documented rule is that the last entry repeats.
+  it("says an empty queue is empty rather than missing", async () => {
+    const report = await drive(QUOTE, { "GET /quote": [] });
+    const said = report.issues.map((i) => i.message).join("\n");
+    expect(said).toContain("queue");
+    expect(said).not.toContain("add it to the example");
   });
 });
 

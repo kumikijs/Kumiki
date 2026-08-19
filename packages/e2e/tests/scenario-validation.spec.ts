@@ -50,6 +50,30 @@ test("names a misspelled top-level key", () => {
   expect(problems.join(" ")).toContain("stpes");
 });
 
+// It was accepted here while `evaluateExpect` never read it: a fixture using it
+// asserted nothing, and if the error it asked for did occur, the tier's
+// always-fatal rule failed the run anyway. Per `testing.md` it is scenario-tier
+// only, so it is named as such.
+test("names the tier that owns errorIncludes", () => {
+  const problems = validateScenario({
+    steps: [{ expect: { errorIncludes: ["boom"] } as never }],
+  });
+  expect(problems).toHaveLength(1);
+  expect(problems[0]).toContain("scenario-tier");
+});
+
+// The value checks match the scenario tier's, because `submit` / `wait` exist
+// so a fixture can be promoted from tier 2 to tier 3 unchanged.
+test("refuses a wait that is not a duration", () => {
+  expect(validateScenario({ steps: [{ do: { wait: "500" } as never }] })).toHaveLength(1);
+  expect(validateScenario({ steps: [{ do: { wait: Number.POSITIVE_INFINITY } }] })).toHaveLength(1);
+  expect(validateScenario({ steps: [{ do: { wait: 500 } }] })).toEqual([]);
+});
+
+test("refuses a fill with no string value", () => {
+  expect(validateScenario({ steps: [{ do: { fill: "#a" } as never }] })).toHaveLength(1);
+});
+
 test("refuses a fixture with no steps", () => {
   const problems = validateScenario({ steps: [] });
   expect(problems).toHaveLength(1);

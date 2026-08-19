@@ -56,23 +56,34 @@ export function useHttpFixture(fixture: HttpFixture | null): void {
 }
 
 /**
- * Every request the double has answered since the fixture was set, as
- * `"<METHOD> <path>"`. What a retry ladder or a `policy=latest` cancellation
- * actually did is otherwise invisible: the app reports the same final state
- * whether it took one attempt or three.
+ * Every request the double has *seen* since the fixture was set, answered or
+ * not, as `"<METHOD> <path>"`. What a retry ladder or a `policy=latest`
+ * cancellation actually did is otherwise invisible: the app reports the same
+ * final state whether it took one attempt or three.
  */
 export function httpRequests(): string[] {
   return [...requestLog];
 }
 
-/** Read `<source>.http.json` beside a `.kumiki` file; `null` when there is none. */
+/**
+ * Read `<source>.http.json` beside a `.kumiki` file; `null` when there is none.
+ *
+ * Only a missing file means "no fixture". A permission error, or a directory in
+ * its place, is a different problem, and swallowing it would send the author
+ * looking for a file that is sitting right there — the miss message they would
+ * eventually see says "add it to the example's .http.json".
+ */
 export function readHttpFixture(kumikiPath: string): HttpFixture | null {
-  const path = kumikiPath.replace(/\.kumiki$/, ".http.json");
+  if (!kumikiPath.endsWith(".kumiki")) {
+    throw new Error(`not a Kumiki source, so nothing sits beside it: ${kumikiPath}`);
+  }
+  const path = `${kumikiPath.slice(0, -".kumiki".length)}.http.json`;
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
-    return null;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
   }
   try {
     return JSON.parse(raw) as HttpFixture;
@@ -100,36 +111,49 @@ function installFetchDouble(): void {
     const method = (init?.method ?? "GET").toUpperCase();
     const target = new URL(url, "http://localhost/");
     requestLog.push(`${method} ${target.pathname}${target.search}`);
-    const fixture = lookup(method, target);
-    if (!fixture) {
+    const found = lookup(method, target);
+    if (!found.found) {
       // Reported, not merely thrown: `httpFetch` turns every rejection into an
       // `HttpError`, so an app with an `.err` reducer would absorb this and the
-      // run would pass having tested nothing. `smoke` and `runScenario` both
-      // capture `console.error`, so this fails the run wherever it happens.
+      // run would pass having tested nothing. `smoke` fails on a captured
+      // `console.error`, and so does `runScenario` — including during the mount
+      // window, where an `app.init` effect fires.
       const key = `${method} ${target.pathname}${target.search}`;
       console.error(
-        `no HTTP fixture for ${key} — add it to the example's .http.json (the headless tiers never reach the network)`,
+        `no HTTP fixture for ${key} — ${found.why} (the headless tiers never reach the network)`,
       );
       throw new Error(`no HTTP fixture for ${key}`);
     }
     await waitATick(init?.signal ?? null);
-    return toResponse(fixture);
+    return toResponse(found.response);
   };
 }
 
+type Lookup =
+  | { found: true; response: HttpResponseFixture }
+  /** `why` is appended to the miss message, so an empty queue does not read as a missing key. */
+  | { found: false; why: string };
+
 /** Resolve one request to the next scripted response, advancing that key's queue. */
-function lookup(method: string, target: URL): HttpResponseFixture | null {
-  if (!currentFixture) return null;
+function lookup(method: string, target: URL): Lookup {
+  const miss = { found: false as const, why: "add it to the example's .http.json" };
+  if (!currentFixture) return miss;
   const withQuery = `${method} ${target.pathname}${target.search}`;
   const withoutQuery = `${method} ${target.pathname}`;
   const key = currentFixture[withQuery] !== undefined ? withQuery : withoutQuery;
   const entry = currentFixture[key];
-  if (entry === undefined) return null;
-  if (!Array.isArray(entry)) return entry;
-  if (entry.length === 0) return null;
+  if (entry === undefined) return miss;
+  if (!Array.isArray(entry)) return { found: true, response: entry };
+  // The documented rule is that the last entry repeats, so an empty array is
+  // the one way a queue can run out — named separately, because telling an
+  // author to add a fixture they already wrote helps nobody.
+  const first = entry[0];
+  if (first === undefined) {
+    return { found: false, why: `its queue in the .http.json is empty` };
+  }
   const idx = cursors[key] ?? 0;
   cursors[key] = idx + 1;
-  return entry[Math.min(idx, entry.length - 1)] ?? null;
+  return { found: true, response: entry[Math.min(idx, entry.length - 1)] ?? first };
 }
 
 /**
