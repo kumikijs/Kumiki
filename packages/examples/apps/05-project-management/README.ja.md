@@ -15,8 +15,15 @@
 
 ## 実行
 
+以下のコマンドはすべて**リポジトリルート**で実行する。
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/05-project-management/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/05-project-management/app.kumiki
+pnpm kumiki build packages/examples/apps/05-project-management/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/05-project-management/app.kumiki
+pnpm kumiki run packages/examples/apps/05-project-management/app.kumiki packages/examples/apps/05-project-management/scenario.json
 ```
 
-関連仕様: [language](../../../spec/language.md) / [stdlib](../../../spec/stdlib.md) / [style](../../../spec/style.md) / [errors](../../../spec/errors.md)
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。
+
+関連仕様: [language](../../../../docs/ja/spec/language.md) / [stdlib](../../../../docs/ja/spec/stdlib.md) / [style](../../../../docs/ja/spec/style.md) / [errors](../../../../docs/ja/spec/errors.md)

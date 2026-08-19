@@ -43,10 +43,6 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-function relative(path: string): string {
-  return path.slice(repoRoot.length + 1).replace(/\\/g, "/");
-}
-
 function appDirs(): string[] {
   return readdirSync(appsRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -70,18 +66,18 @@ function readmes(): string[] {
 // fence must use the same character and be at least as long as the opening one,
 // per CommonMark, so a 3-backtick line inside a 4-backtick fence does not close
 // it early.
-function* walk(md: string): Generator<{ line: string; inFence: boolean; info: string }> {
-  let fence: { char: string; len: number; info: string } | null = null;
+function* walk(md: string): Generator<{ line: string; inFence: boolean }> {
+  let fence: { char: string; len: number } | null = null;
   for (const line of md.split(/\r?\n/)) {
-    const m = line.match(/^\s{0,3}(`{3,}|~{3,})\s*(\S*)/);
+    const m = line.match(/^\s{0,3}(`{3,}|~{3,})/);
     if (m) {
       const char = m[1][0];
       const len = m[1].length;
-      if (fence === null) fence = { char, len, info: m[2] };
+      if (fence === null) fence = { char, len };
       else if (char === fence.char && len >= fence.len) fence = null;
       continue;
     }
-    yield { line, inFence: fence !== null, info: fence?.info ?? "" };
+    yield { line, inFence: fence !== null };
   }
 }
 
@@ -154,9 +150,7 @@ function inputPaths(command: Command): string[] {
 // from a test would execute the CLI.
 function registeredVerbs(): Set<string> {
   const src = read(join(repoRoot, "packages", "cli", "src", "kumiki.ts"));
-  const verbs = [...src.matchAll(/^\s*register(\w+)\(program\);/gm)].map((m) =>
-    m[1].toLowerCase(),
-  );
+  const verbs = [...src.matchAll(/^\s*register(\w+)\(program\);/gm)].map((m) => m[1].toLowerCase());
   if (verbs.length < 15) {
     throw new Error(
       `read ${verbs.length} verbs out of buildProgram() — the register(...) scan broke, so every command below would be called unknown`,
@@ -215,7 +209,9 @@ function lineCount(path: string): number {
 
 const allReadmes = readmes();
 const allLinks = allReadmes.flatMap((rel) => collectLinks(rel, read(join(examplesRoot, rel))));
-const allCommands = allReadmes.flatMap((rel) => collectCommands(rel, read(join(examplesRoot, rel))));
+const allCommands = allReadmes.flatMap((rel) =>
+  collectCommands(rel, read(join(examplesRoot, rel))),
+);
 
 describe("examples READMEs — shape", () => {
   it("has enough extractable content for the guards to be meaningful", () => {
@@ -226,9 +222,7 @@ describe("examples READMEs — shape", () => {
 
   it("every app directory carries both language tracks", () => {
     const missing = appDirs().flatMap((name) =>
-      [EN, JA]
-        .filter((f) => !existsSync(join(appsRoot, name, f)))
-        .map((f) => `apps/${name}/${f}`),
+      [EN, JA].filter((f) => !existsSync(join(appsRoot, name, f))).map((f) => `apps/${name}/${f}`),
     );
     if (missing.length > 0) {
       expect.fail(`${missing.length} README(s) missing:\n${missing.join("\n")}`);
@@ -339,7 +333,9 @@ describe("examples READMEs — commands", () => {
       }
     }
     if (dead.length > 0) {
-      expect.fail(`${dead.length} command argument(s) name a path that does not exist:\n${dead.join("\n")}`);
+      expect.fail(
+        `${dead.length} command argument(s) name a path that does not exist:\n${dead.join("\n")}`,
+      );
     }
   });
 
