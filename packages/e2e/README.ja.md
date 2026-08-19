@@ -19,22 +19,22 @@
 pnpm --filter @kumikijs/e2e exec playwright install chromium
 ```
 
-実行:
+リポジトリルートで実行:
 
 ```sh
-pnpm --filter @kumikijs/e2e exec tsx src/cli.ts <app.kumiki> <scenario.json> [--headed]
+pnpm exec tsx packages/e2e/src/cli.ts <app.kumiki> <scenario.browser.json> [--headed]
 ```
 
 例:
 
 ```sh
-pnpm --filter @kumikijs/e2e exec tsx src/cli.ts \
-  examples/apps/06-expenses/app.kumiki \
-  examples/apps/06-expenses/scenario.browser.json
+pnpm exec tsx packages/e2e/src/cli.ts \
+  packages/examples/apps/06-expenses/app.kumiki \
+  packages/examples/apps/06-expenses/scenario.browser.json
 ```
 
 ## いつ使うか
 
-3 層検証（[spec/testing.md](../../spec/testing.md) §8.10）の中で、これは最も重いが最も忠実な層。日常は `kumiki check` / `kumiki smoke` / `kumiki run`（happy-dom、高速・CI 標準）で回し、フォーカス・レイアウト・実描画に関わるバグや最終確認のときにこの tier を使う。
+3 層検証（[docs/spec/testing.md](../../docs/ja/spec/testing.md) §8.10）の中で、これは最も重いが最も忠実な層。日常は `kumiki check` / `kumiki smoke` / `kumiki run`（happy-dom、高速・CI 標準）で回し、フォーカス・レイアウト・実描画に関わるバグや最終確認のときにこの tier を使う。
 
 重い（ブラウザバイナリ）ため、既定の `turbo run test` には含めない。CI で常用する場合はワークフローに `playwright install chromium` を追加する。

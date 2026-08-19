@@ -11,7 +11,10 @@
 //      with the line count each app actually has.
 //   2. links — every relative link resolves on disk. Self-references must be
 //      relative: an absolute https://github.com/…/blob/… link is unresolvable
-//      from a checkout, and is how the previous rot got in.
+//      from a checkout, and is how the previous rot got in. This rule covers
+//      every README under packages/, not just the examples: the same layout
+//      change broke links in packages/e2e and packages/icons, so a guard that
+//      stopped at one directory would leave the rot living next door.
 //   3. commands — one documented invocation form, `pnpm kumiki <verb> …` from
 //      the repository root (the form the root README and CLAUDE.md use), whose
 //      verb the CLI registers and whose `packages/…` arguments exist.
@@ -27,17 +30,21 @@ import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
-const examplesRoot = join(repoRoot, "packages", "examples");
-const appsRoot = join(examplesRoot, "apps");
+const packagesRoot = join(repoRoot, "packages");
+const examplesPrefix = "examples/";
+const appsRoot = join(packagesRoot, "examples", "apps");
 
 // Both tracks of every README, keyed by the repo-relative path so a failure
 // names the file to open.
 const EN = "README.md";
 const JA = "README.ja.md";
 
+// Comfortably under what the tree holds today (11 apps, 96 commands, 206
+// links across 37 READMEs) and far above zero, so a broken extractor fails
+// here instead of turning every rule below into a check on an empty set.
 const MIN_APPS = 11;
-const MIN_COMMANDS = 30;
-const MIN_LINKS = 60;
+const MIN_COMMANDS = 60;
+const MIN_LINKS = 140;
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
@@ -50,15 +57,22 @@ function appDirs(): string[] {
     .sort();
 }
 
-// Every README under packages/examples/, recursively — so a future example
-// group that grows its own README is covered without editing this list.
+// Every README under packages/, recursively, as a path relative to packages/ —
+// so a package or example group that grows its own README is covered without
+// editing a list here. Build outputs and installed dependencies carry READMEs
+// that are not ours to keep in step.
+const IGNORED_DIRS = new Set(["node_modules", "dist", ".smoke-tmp", "test-results"]);
+
 function readmes(): string[] {
-  return readdirSync(examplesRoot, { recursive: true })
+  return readdirSync(packagesRoot, { recursive: true })
     .filter((p): p is string => typeof p === "string")
     .map((p) => p.replace(/\\/g, "/"))
-    .filter((p) => p.endsWith(`/${EN}`) || p.endsWith(`/${JA}`) || p === EN || p === JA)
+    .filter((p) => !p.split("/").some((seg) => IGNORED_DIRS.has(seg)))
+    .filter((p) => p.endsWith(`/${EN}`) || p.endsWith(`/${JA}`))
     .sort();
 }
+
+const inExamples = (file: string): boolean => file.startsWith(examplesPrefix);
 
 // Walk a markdown file line by line, reporting whether each line sits inside a
 // fenced code block. Links are read outside fences (a link in a code sample is
@@ -208,9 +222,12 @@ function lineCount(path: string): number {
 }
 
 const allReadmes = readmes();
-const allLinks = allReadmes.flatMap((rel) => collectLinks(rel, read(join(examplesRoot, rel))));
-const allCommands = allReadmes.flatMap((rel) =>
-  collectCommands(rel, read(join(examplesRoot, rel))),
+const exampleReadmes = allReadmes.filter(inExamples);
+const allLinks = allReadmes.flatMap((rel) => collectLinks(rel, read(join(packagesRoot, rel))));
+// Commands are read from the examples only: those are the READMEs that teach
+// the CLI, and they are the ones the single documented invocation form binds.
+const allCommands = exampleReadmes.flatMap((rel) =>
+  collectCommands(rel, read(join(packagesRoot, rel))),
 );
 
 describe("examples READMEs — shape", () => {
@@ -230,14 +247,14 @@ describe("examples READMEs — shape", () => {
   });
 
   it.each([EN, JA])("%s's index table lists exactly the apps on disk", (track) => {
-    const rows = appRows(read(join(examplesRoot, track)), track);
+    const rows = appRows(read(join(packagesRoot, "examples", track)), track);
     const listed = rows.map((r) => r.name);
     expect(new Set(listed).size, `[${track}] duplicate rows in the apps table`).toBe(listed.length);
     expect(listed).toEqual(appDirs());
   });
 
   it.each([EN, JA])("%s's index table states each app's real size", (track) => {
-    const problems = appRows(read(join(examplesRoot, track)), track)
+    const problems = appRows(read(join(packagesRoot, "examples", track)), track)
       .map((row) => {
         const actual = lineCount(join(appsRoot, row.name, "app.kumiki"));
         return row.lines === actual
@@ -271,14 +288,14 @@ describe("examples READMEs — shape", () => {
   });
 });
 
-describe("examples READMEs — links", () => {
+describe("package READMEs — links", () => {
   it("every relative link resolves on disk", () => {
     const dead = allLinks
       .filter((l) => !/^[a-z][a-z0-9+.-]*:/i.test(l.target))
       .filter((l) => {
         const path = l.target.split("#")[0];
         if (path === "") return false;
-        return !existsSync(resolve(examplesRoot, dirname(l.file), path));
+        return !existsSync(resolve(packagesRoot, dirname(l.file), path));
       });
     if (dead.length > 0) {
       expect.fail(
@@ -343,8 +360,10 @@ describe("examples READMEs — commands", () => {
     const strays: string[] = [];
     for (const c of allCommands) {
       const dir = posix.dirname(c.file);
-      if (dir === ".") continue;
-      const own = `packages/examples/${dir}/`;
+      // Only an app's own README is bound to its own files; the index README
+      // one level up documents them all.
+      if (!/^examples\/apps\/[^/]+$/.test(dir)) continue;
+      const own = `packages/${dir}/`;
       for (const arg of inputPaths(c)) {
         if (!arg.startsWith(own)) strays.push(`${c.file}: ${arg}`);
       }
@@ -358,10 +377,10 @@ describe("examples READMEs — commands", () => {
 
   it("the two language tracks of a README run the same commands", () => {
     const problems: string[] = [];
-    for (const rel of allReadmes) {
+    for (const rel of exampleReadmes) {
       if (!rel.endsWith(EN)) continue;
       const ja = rel.replace(new RegExp(`${EN}$`), JA);
-      if (!allReadmes.includes(ja)) continue;
+      if (!exampleReadmes.includes(ja)) continue;
       const lines = (f: string) => allCommands.filter((c) => c.file === f).map((c) => c.line);
       if (lines(rel).join("\n") !== lines(ja).join("\n")) {
         problems.push(`${rel}:\n  EN: ${lines(rel).join(" ; ")}\n  JA: ${lines(ja).join(" ; ")}`);
