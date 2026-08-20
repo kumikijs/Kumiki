@@ -17,7 +17,11 @@
         "$TURBO_ROOT$/packages/examples/features/**",
         "$TURBO_ROOT$/packages/examples/apps/**",
         "$TURBO_ROOT$/packages/cli/src/kumiki.ts",
-        "$TURBO_ROOT$/packages/cli/src/commands/*.ts"
+        "$TURBO_ROOT$/packages/cli/src/commands/*.ts",
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/packages/*/tsconfig*.json",
+        "$TURBO_ROOT$/packages/*/test/**",
+        "$TURBO_ROOT$/packages/e2e/tests/**"
       ]
     }
   }

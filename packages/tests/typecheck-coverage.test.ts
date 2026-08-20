@@ -18,7 +18,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -105,8 +105,14 @@ const parseHost: ts.ParseConfigFileHost = {
   },
 };
 
-/** The files `tsc -p <config>` would put in its program. */
-function programOf(configPath: string): Set<string> {
+/**
+ * The files `tsc -p <config>` would put in its program: as tsc writes them,
+ * and lowercased for the comparisons that have to survive Windows. Only the
+ * comparisons may use the lowercased form — a path handed back to git has to
+ * keep the case the filesystem gave it, or a case-sensitive checkout reads it
+ * as a path outside the repository.
+ */
+function programOf(configPath: string): { files: string[]; normed: Set<string> } {
   const parsed = ts.getParsedCommandLineOfConfigFile(configPath, undefined, parseHost);
   if (!parsed) throw new Error(`could not read ${configPath}`);
   const fatal = parsed.errors.filter((d) => d.category === ts.DiagnosticCategory.Error);
@@ -115,7 +121,7 @@ function programOf(configPath: string): Set<string> {
       `${configPath}: ${fatal.map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")).join("; ")}`,
     );
   }
-  return new Set(parsed.fileNames.map(norm));
+  return { files: parsed.fileNames, normed: new Set(parsed.fileNames.map(norm)) };
 }
 
 /** The subset of `paths` that git does not track, as git itself reports it. */
@@ -123,7 +129,7 @@ function ignoredByGit(paths: readonly string[]): string[] {
   if (paths.length === 0) return [];
   const result = spawnSync("git", ["check-ignore", "--stdin"], {
     cwd: packagesDir,
-    input: paths.join("\n"),
+    input: paths.map((p) => relative(packagesDir, p)).join("\n"),
     encoding: "utf8",
   });
   // 0 = some path is ignored, 1 = none is, anything else is git failing.
@@ -153,7 +159,7 @@ describe("test files are typechecked", () => {
     withTests.map((p) => [p.name, p] as const),
   )("%s typechecks every test file it ships", (_, pkg) => {
     const program = programOf(configOf(pkg));
-    const missing = pkg.testFiles.filter((f) => !program.has(norm(f)));
+    const missing = pkg.testFiles.filter((f) => !program.normed.has(norm(f)));
     expect(missing.map((f) => norm(f).slice(norm(packagesDir).length + 1))).toEqual([]);
   });
 
@@ -165,8 +171,8 @@ describe("test files are typechecked", () => {
     // differently depending on whether the suite had run first, so the
     // question asked here is git's: is any file of this package's own — its
     // installed dependencies aside — one that the repository does not track?
-    const owned = [...programOf(configOf(pkg))].filter(
-      (f) => f.startsWith(`${norm(pkg.dir)}/`) && !f.includes("/node_modules/"),
+    const owned = programOf(configOf(pkg)).files.filter(
+      (f) => norm(f).startsWith(`${norm(pkg.dir)}/`) && !norm(f).includes("/node_modules/"),
     );
     expect(ignoredByGit(owned)).toEqual([]);
   });
