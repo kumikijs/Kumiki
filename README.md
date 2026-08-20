@@ -58,7 +58,7 @@ If you're new, go to [docs/guide/getting-started.md](./docs/guide/getting-starte
 
 ## Operating model
 
-This repository aims for a state where "**looking at it resolves every question**". Questions, issues, and bug reports are, as a rule, **answered by adding examples and tests**. Broken examples are rejected by CI ([tests/](./tests/)). See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+This repository aims for a state where "**looking at it resolves every question**". Questions, issues, and bug reports are, as a rule, **answered by adding examples and tests**. Broken examples are rejected by CI ([packages/tests/](./packages/tests/)). See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 ## License
 

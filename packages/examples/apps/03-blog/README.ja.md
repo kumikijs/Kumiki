@@ -14,8 +14,15 @@
 
 ## 実行
 
+以下のコマンドはすべて**リポジトリルート**で実行する。
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/03-blog/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/03-blog/app.kumiki
+pnpm kumiki build packages/examples/apps/03-blog/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/03-blog/app.kumiki
+pnpm kumiki run packages/examples/apps/03-blog/app.kumiki packages/examples/apps/03-blog/scenario.json
 ```
 
-関連仕様: [routing](../../../spec/routing.md) / [http](../../../spec/http.md) / [lifecycle](../../../spec/lifecycle.md)
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。 `app.http.json` はその実行が応答に使う fixture である — ヘッドレスの階層はネットワークに出ない。
+
+関連仕様: [routing](../../../../docs/ja/spec/routing.md) / [http](../../../../docs/ja/spec/http.md) / [lifecycle](../../../../docs/ja/spec/lifecycle.md)

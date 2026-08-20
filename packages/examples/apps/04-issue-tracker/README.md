@@ -15,8 +15,15 @@ A mid-sized, CRUD-centric app (~726 lines). You'll learn a `Map`-based data mode
 
 ## Run
 
+Every command below is run **from the repository root**.
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/04-issue-tracker/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/04-issue-tracker/app.kumiki
+pnpm kumiki build packages/examples/apps/04-issue-tracker/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/04-issue-tracker/app.kumiki
+pnpm kumiki run packages/examples/apps/04-issue-tracker/app.kumiki packages/examples/apps/04-issue-tracker/scenario.json
 ```
 
-Related specs: [language](../../../spec/language.md) / [stdlib](../../../spec/stdlib.md) / [forms](../../../spec/forms.md)
+`scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI.
+
+Related specs: [language](../../../../docs/spec/language.md) / [stdlib](../../../../docs/spec/stdlib.md) / [forms](../../../../docs/spec/forms.md)

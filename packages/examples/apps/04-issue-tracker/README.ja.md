@@ -15,8 +15,15 @@ CRUD を中心とした中規模アプリ（~726 行）。`Map` 主体のデー�
 
 ## 実行
 
+以下のコマンドはすべて**リポジトリルート**で実行する。
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/04-issue-tracker/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/04-issue-tracker/app.kumiki
+pnpm kumiki build packages/examples/apps/04-issue-tracker/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/04-issue-tracker/app.kumiki
+pnpm kumiki run packages/examples/apps/04-issue-tracker/app.kumiki packages/examples/apps/04-issue-tracker/scenario.json
 ```
 
-関連仕様: [language](../../../spec/language.md) / [stdlib](../../../spec/stdlib.md) / [forms](../../../spec/forms.md)
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。
+
+関連仕様: [language](../../../../docs/ja/spec/language.md) / [stdlib](../../../../docs/ja/spec/stdlib.md) / [forms](../../../../docs/ja/spec/forms.md)

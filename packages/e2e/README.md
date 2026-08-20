@@ -19,22 +19,22 @@ A one-time browser install is required:
 pnpm --filter @kumikijs/e2e exec playwright install chromium
 ```
 
-Run:
+Run, from the repository root:
 
 ```sh
-pnpm --filter @kumikijs/e2e exec tsx src/cli.ts <app.kumiki> <scenario.json> [--headed]
+pnpm exec tsx packages/e2e/src/cli.ts <app.kumiki> <scenario.browser.json> [--headed]
 ```
 
 Example:
 
 ```sh
-pnpm --filter @kumikijs/e2e exec tsx src/cli.ts \
-  examples/apps/06-expenses/app.kumiki \
-  examples/apps/06-expenses/scenario.browser.json
+pnpm exec tsx packages/e2e/src/cli.ts \
+  packages/examples/apps/06-expenses/app.kumiki \
+  packages/examples/apps/06-expenses/scenario.browser.json
 ```
 
 ## When to use it
 
-Within the 3-layer verification ([spec/testing.md](../../spec/testing.md) §8.10), this is the heaviest but most faithful layer. Day to day, run `kumiki check` / `kumiki smoke` / `kumiki run` (happy-dom, fast, CI standard), and use this tier for bugs involving focus, layout, or real rendering, or for final confirmation.
+Within the 3-layer verification ([docs/spec/testing.md](../../docs/spec/testing.md) §8.10), this is the heaviest but most faithful layer. Day to day, run `kumiki check` / `kumiki smoke` / `kumiki run` (happy-dom, fast, CI standard), and use this tier for bugs involving focus, layout, or real rendering, or for final confirmation.
 
 Because it's heavy (browser binaries), it's not included in the default `turbo run test`. To use it routinely in CI, add `playwright install chromium` to the workflow.

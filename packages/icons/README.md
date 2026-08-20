@@ -10,7 +10,7 @@ import { check, ALL_ICONS, ICON_NAMES } from "@kumikijs/icons";
 
 You usually don't import this package by hand. `@kumikijs/vite` and the `kumiki` CLI scan compiled `.kumiki` sources for `icon(name="…")` literals and bake only the referenced paths into the generated `AppShape.icons`. Apps that don't use icons pay zero bundle cost.
 
-Custom icons go through `theme.icons` — see [spec/style.md §4.8](https://github.com/kumikijs/Kumiki/blob/main/docs/spec/style.md#48-icons) for the closed name set, props, and resolution order. A `theme.icons[name]` entry overrides any built-in of the same name.
+Custom icons go through `theme.icons` — see [spec/style.md §4.8](../../docs/spec/style.md#48-icons) for the closed name set, props, and resolution order. A `theme.icons[name]` entry overrides any built-in of the same name.
 
 ```kumiki
 theme MyTheme = {
