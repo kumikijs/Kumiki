@@ -1,31 +1,39 @@
 // Mechanized guard for the READMEs that document this repository.
 //
-// Every command and cross-reference in those files used to be written against
-// the pre-monorepo layout (`examples/apps/…`, run from `packages/cli`), so all
-// of them named a path that does not exist. Prose cannot be trusted to stay in
-// step with a directory that gains an example on every bug report, so the rules
-// below are the ones a reader relies on, stated as assertions:
+// Every command and cross-reference in the examples READMEs used to be written
+// against the pre-monorepo layout (`examples/apps/…`, run from `packages/cli`),
+// so all of them named a path that does not exist. Prose cannot be trusted to
+// stay in step with a directory that gains an example on every bug report, so
+// the rules below are the ones a reader relies on, stated as assertions:
 //
 //   1. shape — every app directory carries both language tracks, and the index
 //      table in packages/examples/README*.md lists exactly those directories,
-//      with the line count each app actually has.
-//   2. links — every relative link resolves on disk. Self-references must be
-//      relative: an absolute https://github.com/…/blob/… link is unresolvable
-//      from a checkout, and is how the previous rot got in. This rule covers
-//      the root README/CONTRIBUTING and every README under packages/, not just
-//      the examples: the same layout change broke links in packages/e2e,
-//      packages/icons and the root README, so a guard that stopped at one
-//      directory would leave the rot living next door.
+//      each row linking the app it names and stating its real line count.
+//   2. links — every relative link resolves on disk, every anchor names a real
+//      heading, and a label that is a file name agrees with what it points at.
+//      Self-references must be relative: an absolute https://github.com/…/blob/…
+//      link is unresolvable from a checkout, and is how the previous rot got in.
+//      These rules cover the root README/CONTRIBUTING and every README under
+//      packages/, not just the examples: the same layout change broke links in
+//      packages/e2e, packages/icons and the root README, so a guard that stopped
+//      at one directory would leave the rot living next door.
 //   3. commands — one documented invocation form, `pnpm kumiki <verb> …` from
-//      the repository root (the form the root README and CLAUDE.md use), whose
-//      verb the CLI registers and whose `packages/…` arguments exist.
+//      the repository root, whose verb the CLI registers and whose arguments
+//      exist. A weaker rule — every `packages/…` path in any fenced block
+//      exists — covers the documents that legitimately show another form.
 //   4. EN ⇆ JA — the two tracks of one README run the same commands.
+//   5. uniformity — every app README carries the same sections, so a reader who
+//      has read one knows where to look in the next.
+//   6. cache — every file these rules resolve to is one of the task's turbo
+//      inputs, because a rule that reads a file outside them can be satisfied by
+//      a cached run that never looked at it.
 //
-// Extraction floors (MIN_*) keep a broken regex from collapsing a set to empty
-// and passing silently, the same guard spec-index.test.ts carries.
+// Extraction is fail-loud rather than best-effort: an unterminated fence, a link
+// form the regex does not understand, or a scan that stops matching fails a test
+// instead of quietly shrinking the set every rule above is checked against.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, posix, resolve } from "node:path";
+import { existsSync, globSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -33,15 +41,17 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
 const examplesPrefix = "packages/examples/";
 const appsRoot = join(repoRoot, "packages", "examples", "apps");
+const turboConfig = join(here, "turbo.json");
 
 // The two language tracks every README ships in.
 const EN = "README.md";
 const JA = "README.ja.md";
 
-// Comfortably under what the tree holds today (11 apps, 96 commands, 236
-// links across 41 documents) and far above zero, so a broken extractor fails
-// here instead of turning every rule below into a check on an empty set.
-const MIN_APPS = 11;
+// Comfortably under what the tree holds today (96 commands, 236 links across 41
+// documents) and far above zero. There is deliberately no floor on the number
+// of apps: `appDirs()` is a directory read, which throws when it is pointed at
+// nothing, so it cannot collapse the way a regex can — and a floor there would
+// turn deleting an example into a failure that blames a broken extractor.
 const MIN_COMMANDS = 60;
 const MIN_LINKS = 140;
 
@@ -65,7 +75,11 @@ const ROOT_DOCS = [EN, JA, "CONTRIBUTING.md", "CONTRIBUTING.ja.md"];
 // every README under packages/, recursively, so a package or example group that
 // grows one is covered without editing a list here. Paths come back relative to
 // the repository root, which is what the links inside them resolve against.
-// docs/ is left out on purpose — spec-index.test.ts already guards it.
+//
+// docs/ is deliberately out of scope, and not because something else covers it:
+// it is published through VitePress, where a rendered page cannot resolve
+// `../../packages/examples/…`. Absolute URLs are the right form for that
+// audience and the wrong one for a README, so rule 2 must not reach it.
 function docFiles(): string[] {
   const out = ROOT_DOCS.filter((name) => existsSync(join(repoRoot, name)));
   const descend = (rel: string): void => {
@@ -89,7 +103,12 @@ const inExamples = (file: string): boolean => file.startsWith(examplesPrefix);
 // fence must use the same character and be at least as long as the opening one,
 // per CommonMark, so a 3-backtick line inside a 4-backtick fence does not close
 // it early.
-function* walk(md: string): Generator<{ line: string; inFence: boolean }> {
+//
+// An unterminated fence throws. Left alone it would mark every line to the end
+// of the file as fenced, silently removing them from the link rules — and in a
+// document outside packages/examples, where no commands are collected, nothing
+// downstream would notice.
+function* walk(file: string, md: string): Generator<{ line: string; inFence: boolean }> {
   let fence: { char: string; len: number } | null = null;
   for (const line of md.split(/\r?\n/)) {
     const m = line.match(/^\s{0,3}(`{3,}|~{3,})/);
@@ -102,29 +121,44 @@ function* walk(md: string): Generator<{ line: string; inFence: boolean }> {
     }
     yield { line, inFence: fence !== null };
   }
+  if (fence !== null) throw new Error(`unterminated code fence in ${file}`);
 }
 
 interface Link {
   file: string;
   target: string;
+  label: string;
   raw: string;
 }
 
-// Markdown links outside fenced blocks, minus in-page anchors and mailto:.
-// External http(s) links are kept: rule 2 below rejects the ones that point
-// back into this repository, which are the ones a checkout can resolve itself.
+// Every markdown link outside a fenced block, in-page anchors and mailto:
+// included — the rules below filter, so that what was collected can be compared
+// against the number of `](` occurrences and a link form the regex does not
+// understand fails loudly instead of vanishing.
 function collectLinks(file: string, md: string): Link[] {
   const out: Link[] = [];
-  for (const { line, inFence } of walk(md)) {
+  for (const { line, inFence } of walk(file, md)) {
     if (inFence) continue;
     for (const m of line.matchAll(/\[([^\]]*)\]\(([^)\s]+)\)/g)) {
-      const target = m[2];
-      if (target.startsWith("#") || target.startsWith("mailto:")) continue;
-      out.push({ file, target, raw: m[0] });
+      out.push({ file, target: m[2], label: m[1], raw: m[0] });
     }
   }
   return out;
 }
+
+// `](` outside fences: one per link the syntax can express, including the forms
+// collectLinks' regex does not match — a target carrying a title, a target with
+// a space in it. Compared against the collected count below.
+function countLinkOpenings(file: string, md: string): number {
+  let n = 0;
+  for (const { line, inFence } of walk(file, md)) {
+    if (!inFence) n += line.split("](").length - 1;
+  }
+  return n;
+}
+
+const isRelative = (target: string): boolean =>
+  !target.startsWith("#") && !/^[a-z][a-z0-9+.-]*:/i.test(target);
 
 interface Command {
   file: string;
@@ -133,50 +167,72 @@ interface Command {
   args: string[];
 }
 
-// `pnpm kumiki …` invocations inside fenced blocks. A line is a command if it
-// mentions the CLI at all — including the pre-monorepo `pnpm --filter
+// `pnpm kumiki …` invocations inside fenced blocks. A line qualifies when the
+// CLI is one of its tokens — including the pre-monorepo `pnpm --filter
 // @kumikijs/cli exec tsx src/kumiki.ts …` form, which rule 3 then rejects by
 // name rather than skipping it as unrecognized.
+//
+// Requiring the token is what keeps `└── app.kumiki`, an `import App from
+// "./app.kumiki"` sample, and the continuation half of a line ending in `\` out
+// of the set: they mention the word but invoke nothing, and treating them as
+// commands would fail the suite with a message blaming the invocation form.
 function collectCommands(file: string, md: string): Command[] {
   const out: Command[] = [];
-  for (const { line, inFence } of walk(md)) {
+  for (const { line, inFence } of walk(file, md)) {
     if (!inFence) continue;
     const text = line.trim();
-    if (!/\bkumiki\b/.test(text)) continue;
     if (text.startsWith("#")) continue;
     const tokens = text.split(/\s+/);
     const at = tokens.findIndex((t) => t === "kumiki" || t.endsWith("kumiki.ts"));
-    out.push({
-      file,
-      line: text,
-      verb: tokens[at + 1] ?? "",
-      args: tokens.slice(at + 2),
-    });
+    if (at === -1) continue;
+    out.push({ file, line: text, verb: tokens[at + 1] ?? "", args: tokens.slice(at + 2) });
   }
   return out;
 }
 
-// The arguments that name something the command reads. An output directory
-// (`./out`) is exempt because the command creates it; a flag is not a path.
-// Keying on "a source, a scenario, or a fixture" rather than on the
-// `packages/` prefix keeps the check from going quiet the moment a path is
-// written against the wrong root — which is the failure this file exists for.
+// Repository paths named anywhere inside a fenced block, whatever the command
+// around them. This is the rule that reaches the documents rule 3 cannot: the
+// root README and packages/e2e both run examples, and packages/cli documents
+// the installed-CLI form, so one invocation form cannot be imposed on all of
+// them — but every path they show still has to exist.
+function fencedPaths(file: string, md: string): string[] {
+  const out: string[] = [];
+  for (const { line, inFence } of walk(file, md)) {
+    if (!inFence) continue;
+    for (const token of line.trim().split(/\s+/)) {
+      const path = token.replace(/[,;)"'`]+$/, "");
+      if (!path.startsWith("packages/")) continue;
+      // A placeholder or a glob stands for a path rather than naming one.
+      if (/[<>*?]/.test(path)) continue;
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+// The arguments that name something the command reads. A flag is not a path,
+// and `./out` is not one either — it matches neither branch below, having no
+// source extension and not living under packages/. Matching on "a source, a
+// scenario, or a fixture" in addition to the `packages/` prefix keeps the check
+// awake when a path is written against the wrong root, which is the failure
+// this file exists for.
 function inputPaths(command: Command): string[] {
   return command.args.filter(
     (a) => !a.startsWith("-") && (/\.(kumiki|json|jsonl)$/.test(a) || a.startsWith("packages/")),
   );
 }
 
-// The verbs the CLI registers, read from the one place that decides them:
-// buildProgram() in packages/cli/src/kumiki.ts. Reading the source (rather than
-// importing) is deliberate — kumiki.ts runs main() on import, so importing it
-// from a test would execute the CLI.
+// The verbs the CLI answers to, read from the `.command("…")` calls that decide
+// them. Reading the sources rather than importing is deliberate: kumiki.ts runs
+// main() on import, so importing it from a test would execute the CLI.
 function registeredVerbs(): Set<string> {
-  const src = read(join(repoRoot, "packages", "cli", "src", "kumiki.ts"));
-  const verbs = [...src.matchAll(/^\s*register(\w+)\(program\);/gm)].map((m) => m[1].toLowerCase());
+  const dir = join(repoRoot, "packages", "cli", "src", "commands");
+  const verbs = readdirSync(dir)
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+    .flatMap((f) => [...read(join(dir, f)).matchAll(/\.command\(\s*"([\w-]+)"/g)].map((m) => m[1]));
   if (verbs.length < 15) {
     throw new Error(
-      `read ${verbs.length} verbs out of buildProgram() — the register(...) scan broke, so every command below would be called unknown`,
+      `read ${verbs.length} verbs out of packages/cli/src/commands — the .command("…") scan broke, so every command below would be called unknown`,
     );
   }
   return new Set(verbs);
@@ -200,6 +256,7 @@ function markedSection(md: string, name: string, file: string): string {
 
 interface AppRow {
   name: string;
+  target: string | null;
   lines: number | null;
 }
 
@@ -216,32 +273,88 @@ function appRows(md: string, file: string): AppRow[] {
         .slice(1, -1)
         .map((c) => c.trim()),
     );
-  return rows.map((cells) => ({
-    name: cells[0]?.match(/\[([^\]]+)\]/)?.[1] ?? cells[0] ?? "?",
-    lines: Number.parseInt(cells[1] ?? "", 10) || null,
-  }));
+  return rows.map((cells) => {
+    const link = cells[0]?.match(/\[([^\]]+)\]\(([^)\s]+)\)/);
+    return {
+      name: link?.[1] ?? cells[0] ?? "?",
+      target: link?.[2] ?? null,
+      lines: Number.parseInt(cells[1] ?? "", 10) || null,
+    };
+  });
 }
 
-// Lines as `wc -l` counts them: a trailing newline ends the last line rather
-// than starting an empty one.
+// Lines as `wc -l` counts them for a file that ends in a newline: the trailing
+// newline ends the last line rather than starting an empty one. A file without
+// a final newline counts one higher here than `wc -l` reports; every app.kumiki
+// ends with one.
 function lineCount(path: string): number {
   const lines = read(path).split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
   return lines.length;
 }
 
+// GitHub's heading slug, which is what a README's in-page anchors are resolved
+// against by GitHub and by npm. Deliberately not VitePress' slugger, the one
+// spec-index.test.ts borrows: VitePress emits `_4-8-icons` where GitHub emits
+// `48-icons`, and a README is not rendered by VitePress.
+function githubAnchors(md: string, file: string): Set<string> {
+  const seen = new Map<string, number>();
+  const anchors = new Set<string>();
+  for (const { line, inFence } of walk(file, md)) {
+    if (inFence) continue;
+    const m = line.match(/^#{1,6}\s+(.*)$/);
+    if (!m) continue;
+    const slug = m[1]
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+      .replace(/\s+/g, "-");
+    const n = seen.get(slug) ?? 0;
+    seen.set(slug, n + 1);
+    anchors.add(n === 0 ? slug : `${slug}-${n}`);
+  }
+  return anchors;
+}
+
+// The files this task declares as its cache inputs, expanded. A rule that reads
+// a file absent from this set can be satisfied by a cached run that never looked
+// at it — and the CI workflow restores .turbo, so that stale green is reachable
+// there too, not only locally.
+function declaredInputFiles(): Set<string> {
+  const config = JSON.parse(read(turboConfig)) as { tasks: { test: { inputs: string[] } } };
+  const patterns = config.tasks.test.inputs;
+  if (patterns.length < 5) throw new Error("read too few inputs out of packages/tests/turbo.json");
+  const out = new Set<string>();
+  for (const raw of patterns) {
+    // The package's own files, which no rule here resolves a link to.
+    if (raw === "$TURBO_DEFAULT$") continue;
+    const pattern = raw.startsWith("$TURBO_ROOT$/")
+      ? raw.slice("$TURBO_ROOT$/".length)
+      : `packages/tests/${raw}`;
+    for (const match of globSync(pattern, { cwd: repoRoot })) {
+      out.add(match.replace(/\\/g, "/"));
+    }
+  }
+  return out;
+}
+
 const allDocs = docFiles();
 const exampleReadmes = allDocs.filter(inExamples);
 const allLinks = allDocs.flatMap((rel) => collectLinks(rel, read(join(repoRoot, rel))));
+const relativeLinks = allLinks.filter((l) => isRelative(l.target));
 // Commands are read from the examples only: those are the READMEs that teach
 // the CLI, and they are the ones the single documented invocation form binds.
 const allCommands = exampleReadmes.flatMap((rel) =>
   collectCommands(rel, read(join(repoRoot, rel))),
 );
 
-describe("examples READMEs — shape", () => {
+const targetOf = (link: Link): string =>
+  resolve(repoRoot, dirname(link.file), link.target.split("#")[0]);
+
+const bare = (label: string): string => label.replace(/`/g, "");
+
+describe("READMEs — shape", () => {
   it("has enough extractable content for the guards to be meaningful", () => {
-    expect(appDirs().length).toBeGreaterThanOrEqual(MIN_APPS);
     expect(allLinks.length).toBeGreaterThanOrEqual(MIN_LINKS);
     expect(allCommands.length).toBeGreaterThanOrEqual(MIN_COMMANDS);
   });
@@ -262,6 +375,18 @@ describe("examples READMEs — shape", () => {
     expect(listed).toEqual(appDirs());
   });
 
+  it.each([EN, JA])("%s's index table links each row to the app it names", (track) => {
+    const problems = appRows(read(join(repoRoot, "packages", "examples", track)), track)
+      .map((row) => {
+        if (row.target === null) return `${row.name}: the row names an app but links nothing`;
+        return row.target === `./apps/${row.name}/`
+          ? null
+          : `${row.name}: the row links ${row.target}`;
+      })
+      .filter((p): p is string => p !== null);
+    if (problems.length > 0) expect.fail(problems.join("\n"));
+  });
+
   it.each([EN, JA])("%s's index table states each app's real size", (track) => {
     const problems = appRows(read(join(repoRoot, "packages", "examples", track)), track)
       .map((row) => {
@@ -274,38 +399,55 @@ describe("examples READMEs — shape", () => {
     if (problems.length > 0) expect.fail(problems.join("\n"));
   });
 
-  it("every app README follows the same section structure", () => {
-    const sections = (md: string) =>
-      md
-        .split(/\r?\n/)
-        .filter((l) => l.startsWith("## "))
-        .map((l) => l.slice(3).trim());
-    const problems: string[] = [];
+  // Exact equality, on purpose: a reader who has read one app README should
+  // know where to look in the next, so a section is added to all eleven or to
+  // none. Every shape is compared against every other rather than against a
+  // chosen baseline, so adding a `00-…` app cannot silently redefine what the
+  // rest are measured by.
+  it("every app README carries the same sections", () => {
+    const sections = (file: string) =>
+      [...walk(file, read(join(repoRoot, file)))]
+        .filter(({ line, inFence }) => !inFence && line.startsWith("## "))
+        .map(({ line }) => line.slice(3).trim())
+        .join(" / ");
     for (const track of [EN, JA]) {
-      const shape = new Map<string, string[]>();
-      for (const name of appDirs()) shape.set(name, sections(read(join(appsRoot, name, track))));
-      const reference = shape.get(appDirs()[0]) ?? [];
-      for (const [name, own] of shape) {
-        if (own.join(" / ") !== reference.join(" / ")) {
-          problems.push(`apps/${name}/${track}: [${own}] ≠ [${reference}]`);
-        }
+      const shapes = new Map<string, string[]>();
+      for (const name of appDirs()) {
+        const shape = sections(`packages/examples/apps/${name}/${track}`);
+        shapes.set(shape, [...(shapes.get(shape) ?? []), name]);
       }
-    }
-    if (problems.length > 0) {
-      expect.fail(`app READMEs disagree on their sections:\n${problems.join("\n")}`);
+      if (shapes.size > 1) {
+        expect.fail(
+          `[${track}] app READMEs disagree on their sections:\n${[...shapes]
+            .map(([shape, apps]) => `  ${apps.join(", ")}: ${shape}`)
+            .join("\n")}`,
+        );
+      }
     }
   });
 });
 
-describe("package READMEs — links", () => {
+describe("READMEs — links", () => {
+  it("every link the markdown expresses is one the scan understands", () => {
+    const problems = allDocs
+      .map((rel) => {
+        const md = read(join(repoRoot, rel));
+        const expected = countLinkOpenings(rel, md);
+        const actual = collectLinks(rel, md).length;
+        return expected === actual ? null : `${rel}: ${expected} link opening(s), ${actual} parsed`;
+      })
+      .filter((p): p is string => p !== null);
+    if (problems.length > 0) {
+      expect.fail(
+        `a link form the scan does not parse is invisible to every rule below:\n${problems.join("\n")}`,
+      );
+    }
+  });
+
   it("every relative link resolves on disk", () => {
-    const dead = allLinks
-      .filter((l) => !/^[a-z][a-z0-9+.-]*:/i.test(l.target))
-      .filter((l) => {
-        const path = l.target.split("#")[0];
-        if (path === "") return false;
-        return !existsSync(resolve(repoRoot, dirname(l.file), path));
-      });
+    const dead = relativeLinks.filter(
+      (l) => l.target.split("#")[0] !== "" && !existsSync(targetOf(l)),
+    );
     if (dead.length > 0) {
       expect.fail(
         `${dead.length} dead link(s):\n${dead.map((l) => `${l.file}: ${l.raw}`).join("\n")}`,
@@ -313,9 +455,44 @@ describe("package READMEs — links", () => {
     }
   });
 
+  it("every anchor on a relative link names a heading in the file it points at", () => {
+    const problems: string[] = [];
+    for (const link of relativeLinks) {
+      const [path, anchor] = link.target.split("#");
+      if (!anchor || !path.endsWith(".md")) continue;
+      const absolute = targetOf(link);
+      if (!existsSync(absolute)) continue; // the dead-link rule above reports it
+      if (!githubAnchors(read(absolute), path).has(anchor)) {
+        problems.push(`${link.file}: ${link.raw}`);
+      }
+    }
+    if (problems.length > 0) {
+      expect.fail(`${problems.length} anchor(s) name no heading:\n${problems.join("\n")}`);
+    }
+  });
+
+  // Narrow on purpose: a label that is a bare file name is claiming to be the
+  // path, so the two have to agree. A label that names a package
+  // (`@kumikijs/cli` → `./packages/cli/`) or carries prose is not.
+  it("a link whose label is a file name points at that file", () => {
+    const problems = relativeLinks
+      .filter((l) => /^[\w./-]+\.(md|kumiki|json|ts)$/.test(bare(l.label)))
+      .filter((l) => !l.target.split("#")[0].endsWith(bare(l.label)))
+      .map((l) => `${l.file}: ${l.raw}`);
+    if (problems.length > 0) {
+      expect.fail(
+        `${problems.length} link(s) label one file and point at another:\n${problems.join("\n")}`,
+      );
+    }
+  });
+
   it("references into this repository are relative, not absolute GitHub URLs", () => {
+    // The organisation is not pinned: this repository has moved orgs once, and
+    // GitHub redirects the old paths, so a link under the previous owner would
+    // work for a reader and be invisible to a rule that named only the current
+    // one.
     const absolute = allLinks.filter((l) =>
-      /^https?:\/\/(www\.)?github\.com\/kumikijs\/Kumiki\/(blob|tree)\//i.test(l.target),
+      /^https?:\/\/(www\.)?github\.com\/[^/]+\/Kumiki\/(blob|tree)\//i.test(l.target),
     );
     if (absolute.length > 0) {
       expect.fail(
@@ -327,8 +504,8 @@ describe("package READMEs — links", () => {
   });
 });
 
-describe("examples READMEs — commands", () => {
-  it("every command uses the documented invocation form", () => {
+describe("READMEs — commands", () => {
+  it("every command in the examples uses the documented invocation form", () => {
     const wrong = allCommands.filter((c) => !/^pnpm kumiki\b/.test(c.line));
     if (wrong.length > 0) {
       expect.fail(
@@ -337,6 +514,16 @@ describe("examples READMEs — commands", () => {
           .join("\n")}`,
       );
     }
+  });
+
+  // That form is a pnpm script, so it is only as real as the script.
+  it("the repository root still defines the kumiki script the form invokes", () => {
+    const pkg = JSON.parse(read(join(repoRoot, "package.json"))) as {
+      scripts?: Record<string, string>;
+    };
+    const script = pkg.scripts?.kumiki;
+    expect(script, 'the root package.json has no "kumiki" script').toBeDefined();
+    expect(script).toContain("packages/cli/src/kumiki.ts");
   });
 
   it("every command names a verb the CLI registers", () => {
@@ -365,6 +552,18 @@ describe("examples READMEs — commands", () => {
     }
   });
 
+  it("every repository path shown in a fenced block exists", () => {
+    const dead: string[] = [];
+    for (const rel of allDocs) {
+      for (const path of fencedPaths(rel, read(join(repoRoot, rel)))) {
+        if (!existsSync(join(repoRoot, path))) dead.push(`${rel}: ${path}`);
+      }
+    }
+    if (dead.length > 0) {
+      expect.fail(`${dead.length} path(s) shown in a code block do not exist:\n${dead.join("\n")}`);
+    }
+  });
+
   it("a command's paths belong to the example it documents", () => {
     const strays: string[] = [];
     for (const c of allCommands) {
@@ -372,9 +571,8 @@ describe("examples READMEs — commands", () => {
       // Only an app's own README is bound to its own files; the index README
       // one level up documents them all.
       if (!/^packages\/examples\/apps\/[^/]+$/.test(dir)) continue;
-      const own = `${dir}/`;
       for (const arg of inputPaths(c)) {
-        if (!arg.startsWith(own)) strays.push(`${c.file}: ${arg}`);
+        if (!arg.startsWith(`${dir}/`)) strays.push(`${c.file}: ${arg}`);
       }
     }
     if (strays.length > 0) {
@@ -384,17 +582,59 @@ describe("examples READMEs — commands", () => {
     }
   });
 
+  // Without this, the EN ⇆ JA comparison below is satisfied by two empty command
+  // lists, and a `Run` block could be emptied in both tracks while the
+  // section-shape rule — which only sees `## ` headings — stayed green.
+  it("every app README documents how to run its app", () => {
+    const silent = appDirs().flatMap((name) =>
+      [EN, JA]
+        .map((track) => `packages/examples/apps/${name}/${track}`)
+        .filter((rel) => !allCommands.some((c) => c.file === rel)),
+    );
+    if (silent.length > 0) {
+      expect.fail(`${silent.length} app README(s) show no command:\n${silent.join("\n")}`);
+    }
+  });
+
   it("the two language tracks of a README run the same commands", () => {
     const problems: string[] = [];
     for (const rel of exampleReadmes) {
       if (!rel.endsWith(EN)) continue;
-      const ja = rel.replace(new RegExp(`${EN}$`), JA);
-      if (!exampleReadmes.includes(ja)) continue;
+      const ja = `${rel.slice(0, -EN.length)}${JA}`;
+      if (!exampleReadmes.includes(ja)) {
+        problems.push(`${rel}: has no ${JA} counterpart`);
+        continue;
+      }
       const lines = (f: string) => allCommands.filter((c) => c.file === f).map((c) => c.line);
       if (lines(rel).join("\n") !== lines(ja).join("\n")) {
         problems.push(`${rel}:\n  EN: ${lines(rel).join(" ; ")}\n  JA: ${lines(ja).join(" ; ")}`);
       }
     }
     if (problems.length > 0) expect.fail(`command blocks diverge:\n${problems.join("\n")}`);
+  });
+});
+
+describe("READMEs — cache", () => {
+  it("every file these rules resolve to is one of the task's turbo inputs", () => {
+    const declared = declaredInputFiles();
+    const missing = new Set<string>();
+    for (const link of relativeLinks) {
+      if (link.target.split("#")[0] === "") continue;
+      const absolute = targetOf(link);
+      // A directory outlives any single file, and turbo hashes files, so only
+      // file targets can be pinned here.
+      if (!existsSync(absolute) || statSync(absolute).isDirectory()) continue;
+      const rel = relative(repoRoot, absolute).replace(/\\/g, "/");
+      if (!declared.has(rel)) missing.add(rel);
+    }
+    if (missing.size > 0) {
+      expect.fail(
+        `${missing.size} link target(s) sit outside packages/tests/turbo.json's inputs, so deleting one replays a cached green:\n${[
+          ...missing,
+        ]
+          .sort()
+          .join("\n")}`,
+      );
+    }
   });
 });

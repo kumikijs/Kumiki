@@ -12,7 +12,7 @@ All examples have parsing, type checking, and build verified in CI (→ [package
 
 One feature per file. It shows each element of the language with a minimal app focused on just that. A catalog for instantly answering "how do I write this syntax again?".
 
-[`features/README.md`](./features/) is a curated tour grouped by topic. The complete list of what is in the directory lives in the [spec index](../../docs/spec/index.md), which CI keeps in exact step with the files on disk.
+[`features/README.md`](./features/README.md) is a curated tour grouped by topic. The complete list of what is in the directory lives in the [spec index](../../docs/spec/index.md), which CI keeps in exact step with the files on disk.
 
 ### `apps/` — complete apps ordered by size
 

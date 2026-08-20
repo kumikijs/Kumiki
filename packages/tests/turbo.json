@@ -6,14 +6,18 @@
       "dependsOn": ["^build"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/docs/spec/**/*.md",
-        "$TURBO_ROOT$/docs/ja/spec/**/*.md",
-        "$TURBO_ROOT$/packages/examples/features/**",
-        "$TURBO_ROOT$/packages/examples/apps/**",
         "$TURBO_ROOT$/README*.md",
         "$TURBO_ROOT$/CONTRIBUTING*.md",
+        "$TURBO_ROOT$/LICENSE",
+        "$TURBO_ROOT$/NOTICE",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/docs/**/*.md",
         "$TURBO_ROOT$/packages/**/README*.md",
-        "$TURBO_ROOT$/packages/cli/src/kumiki.ts"
+        "$TURBO_ROOT$/packages/benchmarks/**/*.md",
+        "$TURBO_ROOT$/packages/examples/features/**",
+        "$TURBO_ROOT$/packages/examples/apps/**",
+        "$TURBO_ROOT$/packages/cli/src/kumiki.ts",
+        "$TURBO_ROOT$/packages/cli/src/commands/*.ts"
       ]
     }
   }
