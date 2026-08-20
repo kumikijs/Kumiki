@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 // not published — so this reaches for them directly, as `ui-lifts.test.ts` does.
 import {
   BUILTIN_CALLS,
+  CONSTANT_NAMESPACES,
   QUALIFIED_BUILTIN_CALLS,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
@@ -28,6 +29,27 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 }
 
 const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
+
+/**
+ * The generated body of `fn probe`, which is where a call site lands. Reading
+ * that one line rather than the module keeps the assertions honest: the whole
+ * module drags in the runtime helper prelude, whose own source contains most of
+ * these names.
+ */
+function loweringOf(callSite: string): string {
+  const src = `slot a : Int = 0
+fn probe() -> Text = (${callSite}).show
+tile App = column(text(probe()))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+  const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+  if (result.kind !== "ok") {
+    throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
+  }
+  const body = result.js.split("\n").find((l) => l.includes("function probe"));
+  if (body === undefined) throw new Error("no `function probe` in the generated module");
+  return body;
+}
 
 describe("E0116 undef-call", () => {
   it("reports a misspelled call to a user fn", () => {
@@ -250,26 +272,6 @@ describe("the checker accepts exactly what codegen lowers", () => {
     "Bytes.from-bytes": "Bytes.from-bytes([1])",
   };
 
-  /**
-   * The generated body of `fn probe`, which is where the call site lands. The
-   * whole module would drag in the runtime helper prelude, whose own source
-   * contains most of these names.
-   */
-  function loweringOf(callSite: string): string {
-    const src = `slot a : Int = 0
-fn probe() -> Text = (${callSite}).show
-tile App = column(text(probe()))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    if (result.kind !== "ok") {
-      throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
-    }
-    const body = result.js.split("\n").find((l) => l.includes("function probe"));
-    if (body === undefined) throw new Error("no `function probe` in the generated module");
-    return body;
-  }
-
   const named = [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS];
 
   it("has a call site for every builtin in the tables", () => {
@@ -308,5 +310,75 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       expect(BUILTIN_CALLS.has(name)).toBe(false);
       expect(QUALIFIED_BUILTIN_CALLS.has(name)).toBe(false);
     }
+  });
+});
+
+describe("a stdlib constant means the same thing without its parentheses", () => {
+  // `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
+  // `Decoder.None` with no parentheses, and `stdlib.md` §2.1.1.1 writes
+  // `EffectId.none` as a value. Only `EffectId.none` ever parsed that way — the
+  // parser carried a one-off for exactly that spelling — so every other constant
+  // fell through to a field read on a freshly built variant and emitted
+  // `undefined`. The runtime's storage handler ignores everything except
+  // `"json"`, so nothing at the smoke or scenario tier could tell; the emitted
+  // text is the only place this is visible.
+  const SENTINEL: Record<string, string> = {
+    "Decoder.Json": '"json"',
+    "Decoder.Text": '"text"',
+    "Decoder.Bytes": '"bytes"',
+    "Decoder.None": '"none"',
+    "EffectId.none": '""',
+  };
+
+  it("names every constant the parser reads without parentheses", () => {
+    const listed = new Set(Object.keys(SENTINEL));
+    const declared = new Set(
+      [...QUALIFIED_BUILTIN_CALLS].filter((n) =>
+        CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
+      ),
+    );
+    expect([...listed].sort()).toEqual([...declared].sort());
+  });
+
+  it("reads only namespaces whose members take no arguments", () => {
+    // `Duration.s` and `Bytes.from-text` are in the same table and need an
+    // argument, and codegen defaults a missing one to `0` / `""` — so parsing
+    // them without parentheses would turn a mistake into a silent zero, which
+    // is worse than the `undefined` this fixes.
+    const withArguments = [...QUALIFIED_BUILTIN_CALLS].filter((n) => !Object.hasOwn(SENTINEL, n));
+    for (const name of withArguments) {
+      expect(CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf("."))), name).toBe(false);
+    }
+  });
+
+  for (const [name, sentinel] of Object.entries(SENTINEL)) {
+    it(`${name} lowers to ${sentinel} with no parentheses`, () => {
+      const body = loweringOf(name);
+      expect(body).toContain(`_s.show(${sentinel})`);
+      expect(body).not.toContain("_tag:");
+    });
+
+    it(`${name} lowers the same way with them`, () => {
+      // `Decoder.Json(User)` is the form the spec uses for the one constant
+      // that takes a type argument; the argument is not read by the lowering.
+      const body = loweringOf(name.startsWith("Decoder.") ? `${name}(Text)` : `${name}()`);
+      expect(body).toContain(`_s.show(${sentinel})`);
+    });
+  }
+
+  it("reports a misspelt member of a constant namespace", () => {
+    // Without the parser reading these, `Decoder.Nope` was a field read on a
+    // variant: accepted by `check`, emitted as `undefined`.
+    expect(codes(inReducer("t := (Decoder.Nope).show"))).toEqual(["E0116"]);
+    expect(codes(inReducer("t := (EffectId.nope).show"))).toEqual(["E0116"]);
+  });
+
+  it("still reports one written with parentheses", () => {
+    expect(codes(inReducer("t := (Decoder.Nope(Text)).show"))).toEqual(["E0116"]);
+  });
+
+  it("accepts the constants themselves", () => {
+    expect(codes(inReducer("t := (Decoder.None).show"))).toEqual([]);
+    expect(codes(inReducer("t := (EffectId.none).show"))).toEqual([]);
   });
 });

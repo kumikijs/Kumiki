@@ -37,6 +37,7 @@ import type {
   TypeExpr,
   UiEventKind,
 } from "./ast.ts";
+import { CONSTANT_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
 
 export class ParseError extends Error {
@@ -1233,20 +1234,24 @@ class Parser {
       // capital-cased identifier; otherwise this is a method call on a value and
       // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
-      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). Bare
-      // form (no parens) so slot init / cancel-no-op reads cleanly; treated
-      // as a 0-arg Call so typecheck/codegen handle it via the same
-      // builtin-call channel as `Decoder.Json` / `TodoId.fresh`.
+      // A member of a constant namespace, written without parentheses:
+      // `EffectId.none` (stdlib §2.1.1.1), `Decoder.Text` / `Decoder.Bytes` /
+      // `Decoder.None` (http §6.1.4). Read as a 0-arg Call so typecheck and
+      // codegen handle it through the same builtin-call channel as
+      // `Decoder.Json(User)` / `TodoId.fresh()` — one decision site rather than
+      // three. Left to postfix parsing it becomes a field read on a variant of
+      // the qualifier's name, which emits `undefined` and which nothing objects
+      // to; the member being wrong is then an E0116 rather than silence.
       if (
-        name === "EffectId" &&
+        CONSTANT_NAMESPACES.has(name) &&
         this.matchOp(".") &&
-        this.matchTAt(1, "ident") &&
-        (this.peek(1) as { value: string }).value === "none" &&
+        (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")
       ) {
         this.next(); // .
-        this.next(); // none
-        return { kind: "Call", callee: "EffectId.none", args: [], pos: t.pos };
+        const memberTok = this.next();
+        const member = "value" in memberTok ? String(memberTok.value) : "";
+        return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
       }
       if (
         isQualifierReceiver &&

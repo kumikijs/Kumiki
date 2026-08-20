@@ -53,6 +53,21 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Qualifiers whose members are constants, so the parser reads
+ * `Qualifier.member` as a zero-argument call even without parentheses — which
+ * is how `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
+ * `Decoder.None` and how `stdlib.md` §2.1.1.1 writes `EffectId.none`. Without
+ * that, the paren-less form was a field read on a freshly built variant and
+ * emitted `undefined`, which `check` had no reason to object to.
+ *
+ * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`: `Duration.*`
+ * and `Bytes.*` take an argument, and codegen defaults a missing one to `0` /
+ * `""`, so reading `Duration.s` without parentheses would turn a mistake into a
+ * silent zero — worse than the `undefined` this rule exists to remove.
+ */
+export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "EffectId"]);
+
+/**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,
  * `Int.parse(t)`, `Time.show(v)`. The qualifier is not resolved against the
  * type table: codegen does not resolve it either, and a checker stricter than
