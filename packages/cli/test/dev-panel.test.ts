@@ -8,9 +8,15 @@
 //   - showError surfaces an HMR-time mount failure through the same overlay
 //   - HMR re-mount preserves `app.live` (PR review C3)
 
+import type { AppShape } from "@kumikijs/runtime";
 import { createEpisodeLogger } from "@kumikijs/runtime";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installDevPanel } from "../src/dev/panel.ts";
+
+/** The smallest app the panel can be handed: no slots, no reducers, nothing running. */
+function emptyApp(over: Partial<AppShape> = {}): AppShape {
+  return { slots: {}, caps: [], reducers: [], effects: {}, init: [], ...over };
+}
 
 function setupHost(): void {
   document.body.replaceChildren();
@@ -28,7 +34,7 @@ describe("installDevPanel", () => {
 
   it("renders 'no episodes yet' before the first push", () => {
     const logger = createEpisodeLogger();
-    installDevPanel({ logger, getApp: () => ({ slots: {}, reducers: [], effects: {} }) });
+    installDevPanel({ logger, getApp: emptyApp });
     expect(document.body.textContent).toContain("no episodes yet");
   });
 
@@ -39,7 +45,7 @@ describe("installDevPanel", () => {
     logger.endTrigger();
     const panel = installDevPanel({
       logger,
-      getApp: () => ({ slots: {}, reducers: [], effects: {} }),
+      getApp: emptyApp,
     });
     panel.push();
     const overlay = document.querySelector(".kdp-overlay");
@@ -56,7 +62,7 @@ describe("installDevPanel", () => {
     logger.endTrigger();
     const panel = installDevPanel({
       logger,
-      getApp: () => ({ slots: {}, reducers: [], effects: {} }),
+      getApp: emptyApp,
     });
     panel.push();
     expect(document.querySelector(".kdp-overlay")).toBeTruthy();
@@ -72,7 +78,7 @@ describe("installDevPanel", () => {
     const logger = createEpisodeLogger();
     const panel = installDevPanel({
       logger,
-      getApp: () => ({ slots: {}, reducers: [], effects: {} }),
+      getApp: emptyApp,
     });
     panel.showError("boom", "tile App");
     expect(document.querySelector(".kdp-overlay")).toBeTruthy();
@@ -93,7 +99,7 @@ describe("installDevPanel", () => {
     const logger = createEpisodeLogger();
     const panel = installDevPanel({
       logger,
-      getApp: () => ({ slots: {}, reducers: [], effects: {} }),
+      getApp: emptyApp,
     });
     panel.showError("mount() failed at HMR", "stack here");
     const overlay = document.querySelector(".kdp-overlay");
@@ -109,7 +115,7 @@ describe("installDevPanel", () => {
     logger.endTrigger();
     const panel = installDevPanel({
       logger,
-      getApp: () => ({ slots: {}, reducers: [], effects: {} }),
+      getApp: emptyApp,
     });
     panel.push();
     const head = document.querySelector(".kdp-episode-head") as HTMLElement;
@@ -149,7 +155,7 @@ describe("installDevPanel", () => {
     const logger = createEpisodeLogger();
     const panel = installDevPanel({
       logger,
-      getApp: () => ({ slots: {}, reducers: [], effects: {} }),
+      getApp: emptyApp,
     });
     logger.beginTrigger({ kind: "ui.click", target: "A" });
     logger.recordReducer("a", [], []);
@@ -172,12 +178,8 @@ describe("installDevPanel", () => {
 
   it("renders the current app.live snapshot in the inspector tab", () => {
     const logger = createEpisodeLogger();
-    const app = {
-      slots: { count: { value: 0 } },
-      reducers: [],
-      effects: {},
-      live: { count: 42, route: { name: "home" } },
-    };
+    const live = { count: 42, route: { name: "home" } };
+    const app = emptyApp({ slots: { count: { value: 0 } }, live });
     const panel = installDevPanel({ logger, getApp: () => app });
     const inspectorTab = document.querySelector('[data-tab="inspector"]') as HTMLButtonElement;
     inspectorTab.click();
@@ -187,7 +189,7 @@ describe("installDevPanel", () => {
 
     // Mutate the underlying live map and call onRemount — the inspector should
     // refresh from the new state (the HMR contract: panel re-reads via getApp).
-    app.live.count = 99;
+    live.count = 99;
     panel.onRemount();
     expect(inspector.textContent).toContain("99");
     expect(inspector.textContent).not.toContain("42");

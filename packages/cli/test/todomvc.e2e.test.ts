@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -142,9 +143,10 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     submitForm(root);
     await flush();
     // Toggle the first row done.
-    const firstCheckbox = root.querySelectorAll<HTMLInputElement>(
-      '[data-kumiki-tile="check"] input[type="checkbox"]',
-    )[0];
+    const firstCheckbox = defined(
+      root.querySelectorAll<HTMLInputElement>('[data-kumiki-tile="check"] input[type="checkbox"]')[0],
+      "a checkbox on the first row",
+    );
     firstCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
 
@@ -177,12 +179,12 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     const checkboxes = root.querySelectorAll<HTMLInputElement>(
       '[data-kumiki-tile="check"] input[type="checkbox"]',
     );
-    // Toggle one (whichever happens to be "drop"). For simplicity, toggle both
-    // and clear-completed should remove both.
-    checkboxes[0].dispatchEvent(new Event("change", { bubbles: true }));
-    await flush();
-    checkboxes[1].dispatchEvent(new Event("change", { bubbles: true }));
-    await flush();
+    // Toggle every row: clear-completed should then remove all of them.
+    expect(checkboxes).toHaveLength(2);
+    for (const box of checkboxes) {
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    }
     const clearBtn = Array.from(
       root.querySelectorAll<HTMLButtonElement>('[data-kumiki-tile="button"]'),
     ).find((b) => b.textContent === "Clear completed");
