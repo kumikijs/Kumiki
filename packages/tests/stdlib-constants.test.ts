@@ -13,6 +13,7 @@
 // reducer; what this file adds is the slot values, which say which branch ran
 // rather than only that something failed.
 
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
@@ -69,5 +70,17 @@ describe("a stdlib constant written without parentheses", () => {
     } finally {
       handle.dispose();
     }
+  });
+
+  // `kumiki smoke` only reports an effect error that no reducer consumes, so
+  // the example's silence on `.err` is what makes the smoke tier answer for
+  // this at all — reverting the lowering there names both failing effects.
+  // Adding the `.err` reducers a reader might supply "for completeness" would
+  // take that tier away with nothing turning red, so the absence is asserted
+  // rather than left to a comment.
+  it("leaves the example's effect errors unconsumed, which is what smoke reports", () => {
+    const source = readFileSync(EXAMPLE, "utf8");
+    const consumed = [...source.matchAll(/on=(\w+)\.err\(/g)].map((m) => m[1]);
+    expect(consumed).toEqual([]);
   });
 });
