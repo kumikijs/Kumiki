@@ -2,8 +2,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defined } from "./helpers/defined.ts";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
+import { defined } from "./helpers/defined.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TODOMVC = resolve(here, "../../examples/apps/02-todomvc/app.kumiki");
@@ -144,7 +144,9 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     await flush();
     // Toggle the first row done.
     const firstCheckbox = defined(
-      root.querySelectorAll<HTMLInputElement>('[data-kumiki-tile="check"] input[type="checkbox"]')[0],
+      root.querySelectorAll<HTMLInputElement>(
+        '[data-kumiki-tile="check"] input[type="checkbox"]',
+      )[0],
       "a checkbox on the first row",
     );
     firstCheckbox.dispatchEvent(new Event("change", { bubbles: true }));

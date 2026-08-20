@@ -329,7 +329,7 @@ describe("every tier applies the same rule", () => {
       ],
     });
 
-    const { snapshot } = await renderToString(app, { path: "/" });
+    const { snapshot } = await renderToString(app, { route: "/" });
 
     expect(snapshot.slots.count).toBe(0);
     expect(snapshot.slots.log).toBe("");

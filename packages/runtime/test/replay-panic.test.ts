@@ -1,6 +1,7 @@
 import type { AppShape, EpisodeLogEntry, ReplayEvent } from "@kumikijs/runtime";
 import { replayEpisodes } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 
 /**
  * Cover the seam that carries panic root-cause info from the replay executor
@@ -47,7 +48,11 @@ describe("replayEpisodes panic emit", () => {
     const events: ReplayEvent[] = [];
     const app = makePanicApp();
     const report = replayEpisodes({
-      app: { live: app.live, slots: app.slots, reducers: app.reducers },
+      app: {
+        live: defined(app.live, "the app's live map"),
+        slots: app.slots,
+        reducers: app.reducers,
+      },
       episodes: [panicEpisode],
       mocks: {},
       observer: (ev) => {

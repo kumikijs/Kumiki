@@ -41,7 +41,7 @@ function makeApp(args: {
       load: {
         name: "load",
         cap: "http.get",
-        retry: args.retry,
+        ...(args.retry ? { retry: args.retry } : {}),
         invoke: async () => {
           attempts++;
           return responses.shift() ?? { kind: "err", value: { status: 0, message: "exhausted" } };

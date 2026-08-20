@@ -114,7 +114,7 @@ describe("panicInfo", () => {
       override get stack(): string {
         throw new Error("hostile stack getter");
       }
-      get cause(): unknown {
+      override get cause(): unknown {
         throw new Error("hostile cause getter");
       }
     }

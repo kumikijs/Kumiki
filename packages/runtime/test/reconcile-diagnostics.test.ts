@@ -16,6 +16,7 @@
 
 import type {
   AppShape,
+  MountedApp,
   RuntimeDiagnostic,
   TileCtx,
   TileNode,
@@ -1129,7 +1130,14 @@ describe("runtime: reconcile diagnostics", () => {
     let members = ["a", "gone"];
     const app = appOf(() => ({
       kind: "column",
-      children: members.map((id) => ({ kind: id === "a" ? "text" : "badge", text: id, key: id })),
+      children: members.map((id) =>
+        id === "a"
+          ? ({ kind: "text", text: id, key: id } as TileNode)
+          : // `badge` comes from this mount's host registry, and `TileNode` is
+            // the closed set of built-ins — the same reason the registry below
+            // is handed over as `TileRenderers`.
+            ({ kind: "badge", text: id, key: id } as unknown as TileNode),
+      ),
     }));
     const { sink } = collector();
     const errors: unknown[][] = [];
@@ -1443,9 +1451,11 @@ describe("smoke: reconcile diagnostics", () => {
 
   // A button that toggles an unkeyed sibling in and out — the shape `smoke`
   // will trip the moment it clicks anything.
-  function togglingApp(): AppShape {
+  // `_dispatch` is attached by the mount, so the shape the test builds is an
+  // app that does not have it yet and a handler that runs only once it does.
+  function togglingApp(): AppShape & { _dispatch?: MountedApp["_dispatch"] } {
     let open = false;
-    const app: AppShape = {
+    const app: AppShape & { _dispatch?: MountedApp["_dispatch"] } = {
       slots: { open: { value: false } },
       caps: [],
       effects: {},

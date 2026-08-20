@@ -11,11 +11,12 @@ import type {
   TileNode,
 } from "@kumikijs/runtime";
 import { renderToString, routing } from "@kumikijs/runtime";
+import type { Mock } from "vitest";
 import { describe, expect, it, vi } from "vitest";
 
 type User = { id: string; name: string };
 
-function makeSsrApp(): { app: AppShape; httpProvider: ReturnType<typeof vi.fn> } {
+function makeSsrApp(): { app: AppShape; httpProvider: Mock<CapabilityProvider> } {
   const httpProvider = vi.fn<CapabilityProvider>(async () => ({
     kind: "ok",
     value: { id: "u_1", name: "Yui" },

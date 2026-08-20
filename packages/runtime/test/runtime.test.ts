@@ -6,6 +6,7 @@ import {
   KumikiPanic,
   mount,
 } from "@kumikijs/runtime";
+import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Hand-crafted AppShape mirroring the counter example, using the Phase 2 runtime contract.
@@ -359,7 +360,15 @@ function makeOverlayApp(): AppShape {
               },
             ],
           },
-          open ? { kind: "card", props: {}, children: [{ kind: "text", text: "Modal" }] } : null,
+          ...(open
+            ? [
+                {
+                  kind: "card" as const,
+                  props: {},
+                  children: [{ kind: "text" as const, text: "Modal" }],
+                },
+              ]
+            : []),
         ],
       };
     },
@@ -595,7 +604,9 @@ describe("in-language test runner helpers", () => {
     expect(
       _stdlib.runReducerTest({
         name: "t",
+        target: "t",
         givenSlots: {},
+        slotMetas: {},
         result: null,
         panic: "draft cannot be empty",
         expect: { kind: "panic", message: "cannot be empty" },
@@ -621,7 +632,9 @@ describe("in-language test runner helpers", () => {
     expect(
       _stdlib.runReducerTest({
         name: "t",
+        target: "t",
         givenSlots: {},
+        slotMetas: {},
         result: { slots: {}, emits: [{ effect: "persist", args: [{ x: 1 }] }] },
         panic: null,
         expect: {
@@ -855,53 +868,52 @@ describe("in-language test runner helpers", () => {
 describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   // A two-step flow: `fetchUser` emits `loadUser`; its result drives `userLoaded`
   // (`.ok`) or `userFailed` (`.err`). Built as a minimal AppShape-like object.
-  type FlowApp = Parameters<typeof _stdlib.runReducerTestFlow>[0]["app"];
-  const makeFlowApp = (): FlowApp =>
-    ({
-      slots: { users: { value: {} }, error: { value: "" } },
-      live: {},
-      effects: { loadUser: {}, track: {} },
-      reducers: [
-        {
-          name: "fetchUser",
-          event: { kind: "ui", ev: "click" },
-          apply: (_live, p) => ({
-            slots: {},
-            emits: [{ effect: "loadUser", args: [(p as { $el: unknown }).$el] }],
-          }),
+  type FlowInput = Parameters<typeof _stdlib.runReducerTestFlow>[0];
+  type FlowApp = FlowInput["app"];
+  const makeFlowApp = (): FlowApp => ({
+    slots: { users: { value: {} }, error: { value: "" } },
+    live: {},
+    reducers: [
+      {
+        name: "fetchUser",
+        event: { kind: "ui", ev: "click" },
+        apply: (_live, p) => ({
+          slots: {},
+          emits: [{ effect: "loadUser", args: [(p as { $el: unknown }).$el] }],
+        }),
+      },
+      {
+        name: "userLoaded",
+        event: { kind: "effect", effect: "loadUser", outcome: "ok" },
+        apply: (live, p) => {
+          const u = (p as { $1: { id: string } }).$1;
+          return {
+            slots: { users: { ...(live.users as object), [u.id]: u } },
+            emits: [],
+          };
         },
-        {
-          name: "userLoaded",
-          event: { kind: "effect", effect: "loadUser", outcome: "ok" },
-          apply: (live, p) => {
-            const u = (p as { $1: { id: string } }).$1;
-            return {
-              slots: { users: { ...(live.users as object), [u.id]: u } },
-              emits: [],
-            };
-          },
-        },
-        {
-          name: "userFailed",
-          event: { kind: "effect", effect: "loadUser", outcome: "err" },
-          apply: (_live, p) => ({ slots: { error: (p as { $1: unknown }).$1 }, emits: [] }),
-        },
-      ],
-    }) as unknown as FlowApp;
+      },
+      {
+        name: "userFailed",
+        event: { kind: "effect", effect: "loadUser", outcome: "err" },
+        apply: (_live, p) => ({ slots: { error: (p as { $1: unknown }).$1 }, emits: [] }),
+      },
+    ],
+  });
 
-  const run = (app: FlowApp, given: Record<string, unknown>, rest: Record<string, unknown>) => {
-    _stdlib.resetLive(
-      (app as unknown as { live: Record<string, unknown> }).live,
-      (app as unknown as { slots: Record<string, { value: unknown }> }).slots,
-      given,
-    );
+  const run = (
+    app: FlowApp,
+    given: Record<string, unknown>,
+    rest: Pick<FlowInput, "mocks" | "expect">,
+  ) => {
+    _stdlib.resetLive(app.live, app.slots, given);
     return _stdlib.runReducerTestFlow({
       name: "t",
       app,
       target: "fetchUser",
       el: { id: "u1" },
       ...rest,
-    } as Parameters<typeof _stdlib.runReducerTestFlow>[0]);
+    });
   };
 
   it("delivers a mocked `ok` result to the .ok reducer", () => {
@@ -967,9 +979,7 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   it("a mocked `err` with no matching .err reducer fails the test (M2 contract)", () => {
     const app = makeFlowApp();
     // Drop the `.err` handler so the error is unhandled.
-    (app as unknown as { reducers: { name: string }[] }).reducers = (
-      app as unknown as { reducers: { name: string }[] }
-    ).reducers.filter((r) => r.name !== "userFailed");
+    app.reducers = app.reducers.filter((r) => r.name !== "userFailed");
     const r = run(
       app,
       { users: {}, error: "" },
@@ -1241,7 +1251,7 @@ function makeRenderPanicApp(): AppShape {
 
 describe("live panic handling (#24)", () => {
   let root: HTMLElement;
-  let errSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: MockInstance<typeof console.error>;
   beforeEach(() => {
     root = document.createElement("div");
     document.body.appendChild(root);
@@ -1560,7 +1570,7 @@ function makeErringApp(withErrReducer: boolean): AppShape {
 
 describe("unhandled effect-error contract (#37)", () => {
   let root: HTMLElement;
-  let errSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: MockInstance<typeof console.error>;
   const fire = (app: AppShape): void =>
     (app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void })._dispatch(
       "fire",
@@ -1760,7 +1770,8 @@ function makeBuiltinApp(): AppShape {
 
 describe("standard capability override", () => {
   let root: HTMLElement;
-  const fireB = (app: AppShape, name: string): void => (app as AppLive)._dispatch?.(name, {});
+  const fireB = (app: AppShape, name: string): void =>
+    (app as AppShape & Partial<MountedApp>)._dispatch?.(name, {});
   beforeEach(() => {
     root = document.createElement("div");
     document.body.appendChild(root);
