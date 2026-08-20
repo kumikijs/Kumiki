@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "//exclude": "client.ts keeps the reason it carries in tsconfig.json: a placeholder import the dev plugin only substitutes at runtime, so tsc can't resolve it.",
+  "exclude": ["src/dev/client.ts"]
+}
