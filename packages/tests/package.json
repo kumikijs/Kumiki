@@ -13,6 +13,7 @@
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
+    "@types/node": "catalog:",
     "happy-dom": "catalog:",
     "typescript": "catalog:",
     "vitepress": "catalog:",

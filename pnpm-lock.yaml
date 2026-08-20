@@ -281,6 +281,9 @@ importers:
       '@kumikijs/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.9.1
       happy-dom:
         specifier: 'catalog:'
         version: 20.10.2
