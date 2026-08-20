@@ -1,5 +1,5 @@
 ---
-"@kumikijs/compiler": patch
+"@kumikijs/compiler": minor
 ---
 
 fix: read a stdlib constant written without its parentheses.
