@@ -18,10 +18,17 @@ blog example shipped that way.
 
 The parser now reads a member of a constant namespace as a zero-argument call,
 which is the channel typecheck and codegen already share with
-`Decoder.Json(User)` — one decision site instead of three. A misspelt member
-(`Decoder.Nope`, `EffectId.nope`) is an **E0116** now rather than silence
-followed by `undefined`.
+`Decoder.Json(User)` — one decision site instead of three. A member these
+namespaces do not have is an **E0116** now rather than silence followed by
+`undefined`, and that includes the ones `TYPE_MEMBER_CALLS` used to resolve on
+any capitalised qualifier: `EffectId.fresh` passed `check` and lowered to
+`_s.freshId()`, minting a real id where the author wrote the empty sentinel, so
+a later `http.cancel` on it cancelled nothing. `EffectId.show(h)` — the
+qualified spelling of `h.show` — is unaffected; only the zero-argument form is
+refused.
 
 `Duration.*` and `Bytes.*` are deliberately not read this way: they take an
-argument, and codegen defaults a missing one to `0` / `""`, so the bare form
-would turn a mistake into a silent zero.
+argument, and codegen defaults a missing one to `0` / `""` / `[]`. Both
+outcomes are silent, so the choice is between two silences — a duration
+defaulted to zero reads as a plausible value and survives, while `undefined`
+fails the first thing that touches it.

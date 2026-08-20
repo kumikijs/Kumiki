@@ -1242,6 +1242,12 @@ class Parser {
       // three. Left to postfix parsing it becomes a field read on a variant of
       // the qualifier's name, which emits `undefined` and which nothing objects
       // to; the member being wrong is then an E0116 rather than silence.
+      //
+      // `kw` is accepted alongside `ident` to mirror the parenthesised branch
+      // below, which needs it — none of the constants named above lex as a
+      // keyword. Matching the two shapes keeps `Decoder.if` a resolvable callee
+      // that `checkCallee` names, rather than a parse error in one form and a
+      // diagnostic in the other.
       if (
         CONSTANT_NAMESPACES.has(name) &&
         this.matchOp(".") &&
@@ -1249,8 +1255,9 @@ class Parser {
         !this.matchTAt(2, "op", "(")
       ) {
         this.next(); // .
-        const memberTok = this.next();
-        const member = "value" in memberTok ? String(memberTok.value) : "";
+        // The guard restricts this token to `ident` / `kw`, both of which carry
+        // a string `value`, so there is no other shape to fall back to.
+        const member = (this.next() as { value: string }).value;
         return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
       }
       if (

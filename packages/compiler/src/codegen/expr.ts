@@ -160,8 +160,14 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // string doubles as a valid slot-initial value AND a guaranteed-no-op
       // cancel target.
       if (cn === "EffectId.none") return `""`;
-      // Decoder.* — codegen treats decoders as a sentinel string; the builtin storage handler
-      // ignores everything except "json".
+      // Decoder.* — codegen treats a decoder as a sentinel string, which the
+      // HTTP handler reads as `decode ?? "json"` and branches on: `json` /
+      // `text` / `none`, everything else falling through to text. Emitting no
+      // sentinel therefore means json, not "no decoding" — which is what made
+      // the paren-less form parse a body that was meant to be discarded.
+      // The storage handler is a different matter: it never receives a decoder
+      // at all and always `JSON.parse`s, so `decode` on a `storage.*` effect is
+      // documented and dropped.
       if (cn === "Decoder.Json") return `"json"`;
       if (cn === "Decoder.Text") return `"text"`;
       if (cn === "Decoder.Bytes") return `"bytes"`;

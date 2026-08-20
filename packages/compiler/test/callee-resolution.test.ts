@@ -319,9 +319,12 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   // `EffectId.none` as a value. Only `EffectId.none` ever parsed that way — the
   // parser carried a one-off for exactly that spelling — so every other constant
   // fell through to a field read on a freshly built variant and emitted
-  // `undefined`. The runtime's storage handler ignores everything except
-  // `"json"`, so nothing at the smoke or scenario tier could tell; the emitted
-  // text is the only place this is visible.
+  // `undefined`.
+  //
+  // The HTTP handler reads `decode ?? "json"`, so that `undefined` meant json
+  // and a body meant to be discarded was parsed. This file pins the emitted
+  // sentinel, which is the narrowest place to see it; `packages/tests` pins what
+  // it did to a running app, and `kumiki smoke` on the example reports it too.
   const SENTINEL: Record<string, string> = {
     "Decoder.Json": '"json"',
     "Decoder.Text": '"text"',
@@ -342,13 +345,43 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
 
   it("reads only namespaces whose members take no arguments", () => {
     // `Duration.s` and `Bytes.from-text` are in the same table and need an
-    // argument, and codegen defaults a missing one to `0` / `""` — so parsing
-    // them without parentheses would turn a mistake into a silent zero, which
-    // is worse than the `undefined` this fixes.
+    // argument, and codegen defaults a missing one to `0` / `""` / `[]`. Both
+    // outcomes are silent, so the choice is between two silences: an argument
+    // defaulted to zero reads as a plausible duration and survives, while
+    // `undefined` fails the first thing that touches it.
     const withArguments = [...QUALIFIED_BUILTIN_CALLS].filter((n) => !Object.hasOwn(SENTINEL, n));
     for (const name of withArguments) {
       expect(CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf("."))), name).toBe(false);
     }
+  });
+
+  it("leaves an excluded namespace where it was, which is a gap and not a guard", () => {
+    // What excluding `Duration` actually buys: the bare form stays a field read
+    // on a variant tag no `type` declares, which nothing reports. Pinned so the
+    // cost of the exclusion is visible rather than implied, and so this turns
+    // red the day an undeclared tag is checked — when the rule can be revisited.
+    expect(codes(inReducer("a := (Duration.s).show"))).toEqual([]);
+    expect(loweringOf("Duration.s")).toContain('_tag: "Duration"');
+  });
+
+  it("a member of a constant namespace is only what the table lists", () => {
+    // `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
+    // qualifier, and that reached inside these two namespaces: `EffectId.fresh`
+    // passed and lowered to `_s.freshId()`, minting a real id where the author
+    // wrote the empty sentinel — and a later `http.cancel` on it cancels
+    // nothing.
+    for (const namespace of CONSTANT_NAMESPACES) {
+      for (const member of TYPE_MEMBER_CALLS) {
+        const where = `${namespace}.${member}`;
+        expect(codes(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
+      }
+    }
+  });
+
+  it("still accepts a type member that was given its argument", () => {
+    // `EffectId.show(h)` is the qualified spelling of `h.show`; only the
+    // zero-argument form is refused above.
+    expect(codes(inReducer("t := EffectId.show(a)"))).toEqual([]);
   });
 
   for (const [name, sentinel] of Object.entries(SENTINEL)) {
@@ -378,6 +411,9 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   });
 
   it("accepts the constants themselves", () => {
+    // Green before this change too — a field read draws no diagnostic either.
+    // It earns its place as the other side of the rule above: a check that
+    // refuses every other member of these namespaces must not refuse these.
     expect(codes(inReducer("t := (Decoder.None).show"))).toEqual([]);
     expect(codes(inReducer("t := (EffectId.none).show"))).toEqual([]);
   });

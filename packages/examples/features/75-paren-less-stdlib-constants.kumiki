@@ -1,14 +1,21 @@
 # Feature: stdlib constants written without parentheses.
-# `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` (http.md §6.1.4) and
-# `EffectId.none` (stdlib.md §2.1.1.1) are values, not calls, and the spec
-# writes them bare. Written that way they used to parse as a field read on a
-# variant named after the qualifier and emit `undefined` — invisible at run
-# time, because the built-in HTTP handler ignores every decoder except `json`.
+# `Decoder.Text` / `Decoder.None` (http.md §6.1.4) and `EffectId.none`
+# (stdlib.md §2.1.1.1) are values, not calls, and the spec writes them bare.
+# Written that way they used to parse as a field read on a variant named after
+# the qualifier and emit `undefined` — and the HTTP handler reads
+# `decode ?? "json"`, so a body meant to be discarded was parsed instead.
 # Every constant below is in the bare form on purpose.
+#
+# Neither effect declares an `.err` reducer, deliberately: an error the app does
+# not consume is what `kumiki smoke` reports, so the wrong lowering fails there
+# and not only in a unit test.
+#
+# `Decoder.Bytes` is not exercised here. The runtime has no branch for it — the
+# `"bytes"` sentinel falls through to `res.text()` — so an assertion about it
+# would be an assertion about text.
 
 slot handle : EffectId = EffectId.none
 slot note   : Text     = "idle"
-slot blob   : Int      = 0
 slot pinged : Bool     = false
 
 effect loadNote  cap=http.get
@@ -16,11 +23,6 @@ effect loadNote  cap=http.get
                  out=Result(Text, HttpError)
                  policy=latest
                  map-request={url: "/api/note", decode: Decoder.Text}
-
-effect loadBlob  cap=http.get
-                 in=Unit
-                 out=Result(Bytes, HttpError)
-                 map-request={url: "/api/blob", decode: Decoder.Bytes}
 
 effect ping      cap=http.post
                  in=Unit
@@ -31,13 +33,9 @@ effect drop      cap=http.cancel in=EffectId out=Unit
 
 reducer load    on=ui.click(LoadBtn)      do= let h = emit loadNote()
                                               handle := h
-                                              emit loadBlob()
                                               emit ping()
 reducer noteOk  on=loadNote.ok($body, _)  do= note   := $body
                                               handle := EffectId.none
-reducer noteErr on=loadNote.err(_, _)     do= note   := "failed"
-                                              handle := EffectId.none
-reducer blobOk  on=loadBlob.ok($body, _)  do= blob   := $body.length
 reducer pingOk  on=ping.ok(_, _)          do= pinged := true
 reducer cancel  on=ui.click(CancelBtn)    do= emit drop(handle)
                                               handle := EffectId.none
@@ -48,7 +46,6 @@ tile App = column(
              LoadBtn,
              CancelBtn,
              text("note: " + note),
-             text("blob: " + blob.show),
              text("pinged: " + pinged.show))
            {pad: "lg", gap: "md"}
 

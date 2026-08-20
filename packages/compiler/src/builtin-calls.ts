@@ -62,8 +62,14 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
  *
  * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`: `Duration.*`
  * and `Bytes.*` take an argument, and codegen defaults a missing one to `0` /
- * `""`, so reading `Duration.s` without parentheses would turn a mistake into a
- * silent zero — worse than the `undefined` this rule exists to remove.
+ * `""` / `[]`. Both outcomes are silent, so the choice is between two silences —
+ * a duration defaulted to zero reads as a plausible value and survives, while
+ * `undefined` fails the first thing that touches it.
+ *
+ * The membership rule is enforced by `checkCallee`, not by this table alone:
+ * `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
+ * qualifier, and without that check `EffectId.fresh` passed and minted an id
+ * where the author wrote the empty sentinel.
  */
 export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "EffectId"]);
 

@@ -1,19 +1,19 @@
 {
   "steps": [
     {
-      "label": "nothing has been asked for yet, and the handle is the empty sentinel",
+      "label": "the empty handle sentinel is what a bare EffectId.none put there",
       "expect": {
         "noErrors": true,
-        "state": { "handle": "", "note": "idle", "blob": 0, "pinged": false }
+        "state": { "handle": "", "note": "idle", "pinged": false }
       }
     },
     {
-      "label": "one click fires all three decoders",
+      "label": "the click reaches both reducers (this tier scripts the effects, so no decoding happens here)",
       "do": { "clickText": "Load" },
       "expect": {
         "noErrors": true,
-        "state": { "note": "kumiki", "blob": 10, "pinged": true },
-        "domIncludes": ["note: kumiki", "blob: 10", "pinged: true"]
+        "state": { "note": "kumiki", "pinged": true },
+        "domIncludes": ["note: kumiki", "pinged: true"]
       }
     },
     {
@@ -24,7 +24,6 @@
   ],
   "effects": {
     "loadNote": [{ "outcome": "ok", "value": "kumiki" }],
-    "loadBlob": [{ "outcome": "ok", "value": [107, 117, 109, 105, 107, 105, 46, 100, 101, 118] }],
     "ping": [{ "outcome": "ok", "value": null }]
   }
 }
