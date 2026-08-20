@@ -1,16 +1,12 @@
 import { LexError, lex } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
+// Every token but `eof` carries a value, and `eof` is filtered out — so one
+// shape covers them all.
 const tokenSummary = (s: string) =>
   lex(s)
     .filter((t) => t.kind !== "eof")
-    .map((t) => {
-      if (t.kind === "ident" || t.kind === "kw" || t.kind === "op" || t.kind === "str") {
-        return `${t.kind}(${t.value})`;
-      }
-      if (t.kind === "num") return `num(${t.value})`;
-      return t.kind;
-    });
+    .map((t) => `${t.kind}(${t.value})`);
 
 describe("lexer", () => {
   it("tokenizes a slot declaration", () => {

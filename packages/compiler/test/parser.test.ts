@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import type { AppDef, ReducerDef, SlotDef, Statement, TileDef, TypeDef } from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { tileCall, uiEvent } from "./helpers/ast.ts";
+import { defined } from "./helpers/defined.ts";
 
 const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
 
@@ -27,16 +29,18 @@ describe("parser", () => {
     expect(typeN.name).toBe("N");
     expect(typeN.body.kind).toBe("TypeNominal");
 
-    const incReducer = (byKind("ReducerDef") as ReducerDef[]).find((r) => r.name === "inc");
-    expect(incReducer).toBeDefined();
-    expect(incReducer?.on.kind).toBe("UiEvent");
-    expect(incReducer?.on.ev).toBe("click");
-    expect(incReducer?.on.selector.tile).toBe("IncBtn");
+    const incReducer = defined(
+      (byKind("ReducerDef") as ReducerDef[]).find((r) => r.name === "inc"),
+      "a reducer named inc",
+    );
+    const incOn = uiEvent(incReducer.on);
+    expect(incOn.ev).toBe("click");
+    expect(incOn.selector.tile).toBe("IncBtn");
     // `inc` guards its own ceiling, so the body is one `if` whose consequent is
     // the assignment (the count type is bounded, and a refused write discards
     // the whole batch — spec/runtime.md §10.3.3).
-    expect(incReducer?.do).toHaveLength(1);
-    const incGuard = incReducer?.do[0] as Extract<Statement, { kind: "IfStmt" }>;
+    expect(incReducer.do).toHaveLength(1);
+    const incGuard = incReducer.do[0] as Extract<Statement, { kind: "IfStmt" }>;
     expect(incGuard).toMatchObject({ kind: "IfStmt", cond: { kind: "BinOp", op: "<" } });
     expect(incGuard.alternate).toEqual([]);
     expect(incGuard.consequent).toHaveLength(1);
@@ -52,9 +56,11 @@ describe("parser", () => {
     expect(app.routes.map((r) => r.path)).toEqual(["/", "/404"]);
     expect(app.init).toEqual([]);
 
-    const appTile = (byKind("TileDef") as TileDef[]).find((t) => t.name === "App");
-    expect(appTile).toBeDefined();
-    expect(appTile?.body.name).toBe("column");
+    const appTile = defined(
+      (byKind("TileDef") as TileDef[]).find((t) => t.name === "App"),
+      "a tile named App",
+    );
+    expect(tileCall(appTile.body).name).toBe("column");
   });
 
   it("parses an effect definition", () => {
@@ -69,8 +75,9 @@ describe("parser", () => {
     expect(program.defs).toHaveLength(1);
     const tile = program.defs[0] as TileDef;
     expect(tile.name).toBe("DecBtn");
-    expect(tile.body.name).toBe("button");
-    expect(tile.body.args[0]).toMatchObject({ name: "text" });
+    const body = tileCall(tile.body);
+    expect(body.name).toBe("button");
+    expect(body.args[0]).toMatchObject({ name: "text" });
   });
 
   it("parses an expression with binary precedence", () => {
@@ -90,7 +97,11 @@ describe("parser", () => {
     // `tilePos` points at `LoginForm` itself, not at the `ui.submit(` before
     // it — `rename` rewrites that span verbatim, so an off-by-one here is a
     // corrupted file.
-    expect(r.on.selector).toEqual({ tile: "LoginForm", id: "new", tilePos: { line: 1, col: 24 } });
+    expect(uiEvent(r.on).selector).toEqual({
+      tile: "LoginForm",
+      id: "new",
+      tilePos: { line: 1, col: 24 },
+    });
   });
 
   it("parses a timer event", () => {
@@ -140,9 +151,8 @@ reducer tick on=timer(1s, name=t) do= x := x + 1
 reducer stop on=ui.click(B) do= stop-timer(t)`;
     const program = parse(lex(src));
     const r = program.defs[2] as ReducerDef;
-    const stmt = r.do[0];
-    expect(stmt.kind).toBe("StopTimer");
-    if (stmt.kind !== "StopTimer") throw new Error("expected StopTimer");
+    const stmt = defined(r.do[0], "a statement in the stop reducer");
+    if (stmt.kind !== "StopTimer") throw new Error(`expected StopTimer, found ${stmt.kind}`);
     expect(stmt.name).toBe("t");
   });
 
@@ -236,7 +246,7 @@ reducer onErr on=route.error("/p") do= s := true`;
     const src = `tile Card = box() {style: {background: @colors.surface}}`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
-    const styleProp = tile.body.props.find((p) => p.name === "style");
+    const styleProp = tileCall(tile.body).props.find((p) => p.name === "style");
     if (!styleProp) throw new Error("expected a style prop");
     if (styleProp.value.kind !== "RecordLit") throw new Error("expected a RecordLit");
     const field = styleProp.value.fields[0];
@@ -252,7 +262,7 @@ reducer onErr on=route.error("/p") do= s := true`;
     const src = `tile Card = box() {style: {font-size: @typography.size.lg}}`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
-    const styleProp = tile.body.props.find((p) => p.name === "style");
+    const styleProp = tileCall(tile.body).props.find((p) => p.name === "style");
     if (styleProp?.value.kind !== "RecordLit") throw new Error("expected style record");
     expect(styleProp.value.fields[0]?.value).toMatchObject({
       kind: "TokenRef",
