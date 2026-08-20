@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 // not published — so this reaches for them directly, as `ui-lifts.test.ts` does.
 import {
   BUILTIN_CALLS,
+  CONSTANT_NAMESPACES,
   QUALIFIED_BUILTIN_CALLS,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
@@ -28,6 +29,27 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 }
 
 const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
+
+/**
+ * The generated body of `fn probe`, which is where a call site lands. Reading
+ * that one line rather than the module keeps the assertions honest: the whole
+ * module drags in the runtime helper prelude, whose own source contains most of
+ * these names.
+ */
+function loweringOf(callSite: string): string {
+  const src = `slot a : Int = 0
+fn probe() -> Text = (${callSite}).show
+tile App = column(text(probe()))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+  const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+  if (result.kind !== "ok") {
+    throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
+  }
+  const body = result.js.split("\n").find((l) => l.includes("function probe"));
+  if (body === undefined) throw new Error("no `function probe` in the generated module");
+  return body;
+}
 
 describe("E0116 undef-call", () => {
   it("reports a misspelled call to a user fn", () => {
@@ -250,26 +272,6 @@ describe("the checker accepts exactly what codegen lowers", () => {
     "Bytes.from-bytes": "Bytes.from-bytes([1])",
   };
 
-  /**
-   * The generated body of `fn probe`, which is where the call site lands. The
-   * whole module would drag in the runtime helper prelude, whose own source
-   * contains most of these names.
-   */
-  function loweringOf(callSite: string): string {
-    const src = `slot a : Int = 0
-fn probe() -> Text = (${callSite}).show
-tile App = column(text(probe()))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    if (result.kind !== "ok") {
-      throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
-    }
-    const body = result.js.split("\n").find((l) => l.includes("function probe"));
-    if (body === undefined) throw new Error("no `function probe` in the generated module");
-    return body;
-  }
-
   const named = [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS];
 
   it("has a call site for every builtin in the tables", () => {
@@ -308,5 +310,111 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       expect(BUILTIN_CALLS.has(name)).toBe(false);
       expect(QUALIFIED_BUILTIN_CALLS.has(name)).toBe(false);
     }
+  });
+});
+
+describe("a stdlib constant means the same thing without its parentheses", () => {
+  // `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
+  // `Decoder.None` with no parentheses, and `stdlib.md` §2.1.1.1 writes
+  // `EffectId.none` as a value. Only `EffectId.none` ever parsed that way — the
+  // parser carried a one-off for exactly that spelling — so every other constant
+  // fell through to a field read on a freshly built variant and emitted
+  // `undefined`.
+  //
+  // The HTTP handler reads `decode ?? "json"`, so that `undefined` meant json
+  // and a body meant to be discarded was parsed. This file pins the emitted
+  // sentinel, which is the narrowest place to see it; `packages/tests` pins what
+  // it did to a running app, and `kumiki smoke` on the example reports it too.
+  const SENTINEL: Record<string, string> = {
+    "Decoder.Json": '"json"',
+    "Decoder.Text": '"text"',
+    "Decoder.Bytes": '"bytes"',
+    "Decoder.None": '"none"',
+    "EffectId.none": '""',
+  };
+
+  it("names every constant the parser reads without parentheses", () => {
+    const listed = new Set(Object.keys(SENTINEL));
+    const declared = new Set(
+      [...QUALIFIED_BUILTIN_CALLS].filter((n) =>
+        CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
+      ),
+    );
+    expect([...listed].sort()).toEqual([...declared].sort());
+  });
+
+  it("reads only namespaces whose members take no arguments", () => {
+    // `Duration.s` and `Bytes.from-text` are in the same table and need an
+    // argument, and codegen defaults a missing one to `0` / `""` / `[]`. Both
+    // outcomes are silent, so the choice is between two silences: an argument
+    // defaulted to zero reads as a plausible duration and survives, while
+    // `undefined` fails the first thing that touches it.
+    const withArguments = [...QUALIFIED_BUILTIN_CALLS].filter((n) => !Object.hasOwn(SENTINEL, n));
+    for (const name of withArguments) {
+      expect(CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf("."))), name).toBe(false);
+    }
+  });
+
+  it("leaves an excluded namespace where it was, which is a gap and not a guard", () => {
+    // What excluding `Duration` actually buys: the bare form stays a field read
+    // on a variant tag no `type` declares, which nothing reports. Pinned so the
+    // cost of the exclusion is visible rather than implied, and so this turns
+    // red the day an undeclared tag is checked — when the rule can be revisited.
+    expect(codes(inReducer("a := (Duration.s).show"))).toEqual([]);
+    expect(loweringOf("Duration.s")).toContain('_tag: "Duration"');
+  });
+
+  it("a member of a constant namespace is only what the table lists", () => {
+    // `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
+    // qualifier, and that reached inside these two namespaces: `EffectId.fresh`
+    // passed and lowered to `_s.freshId()`, minting a real id where the author
+    // wrote the empty sentinel — and a later `http.cancel` on it cancels
+    // nothing.
+    for (const namespace of CONSTANT_NAMESPACES) {
+      for (const member of TYPE_MEMBER_CALLS) {
+        const where = `${namespace}.${member}`;
+        expect(codes(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
+      }
+    }
+  });
+
+  it("still accepts a type member that was given its argument", () => {
+    // `EffectId.show(h)` is the qualified spelling of `h.show`; only the
+    // zero-argument form is refused above.
+    expect(codes(inReducer("t := EffectId.show(a)"))).toEqual([]);
+  });
+
+  for (const [name, sentinel] of Object.entries(SENTINEL)) {
+    it(`${name} lowers to ${sentinel} with no parentheses`, () => {
+      const body = loweringOf(name);
+      expect(body).toContain(`_s.show(${sentinel})`);
+      expect(body).not.toContain("_tag:");
+    });
+
+    it(`${name} lowers the same way with them`, () => {
+      // `Decoder.Json(User)` is the form the spec uses for the one constant
+      // that takes a type argument; the argument is not read by the lowering.
+      const body = loweringOf(name.startsWith("Decoder.") ? `${name}(Text)` : `${name}()`);
+      expect(body).toContain(`_s.show(${sentinel})`);
+    });
+  }
+
+  it("reports a misspelt member of a constant namespace", () => {
+    // Without the parser reading these, `Decoder.Nope` was a field read on a
+    // variant: accepted by `check`, emitted as `undefined`.
+    expect(codes(inReducer("t := (Decoder.Nope).show"))).toEqual(["E0116"]);
+    expect(codes(inReducer("t := (EffectId.nope).show"))).toEqual(["E0116"]);
+  });
+
+  it("still reports one written with parentheses", () => {
+    expect(codes(inReducer("t := (Decoder.Nope(Text)).show"))).toEqual(["E0116"]);
+  });
+
+  it("accepts the constants themselves", () => {
+    // Green before this change too — a field read draws no diagnostic either.
+    // It earns its place as the other side of the rule above: a check that
+    // refuses every other member of these namespaces must not refuse these.
+    expect(codes(inReducer("t := (Decoder.None).show"))).toEqual([]);
+    expect(codes(inReducer("t := (EffectId.none).show"))).toEqual([]);
   });
 });

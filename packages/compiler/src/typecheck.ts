@@ -30,7 +30,12 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { isBuiltinCallee, UNIMPLEMENTED_CALLS } from "./builtin-calls.ts";
+import {
+  CONSTANT_NAMESPACES,
+  isBuiltinCallee,
+  QUALIFIED_BUILTIN_CALLS,
+  UNIMPLEMENTED_CALLS,
+} from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { KNOWN_MEMBERS, KNOWN_METHODS, METHOD_MIN_ARGS } from "./codegen.ts";
@@ -1609,6 +1614,28 @@ function checkCallee(
       code: "E0802",
       kind: "unimplemented-function",
       message: `Function "${callee}" is documented but not implemented by the runtime`,
+      pos,
+    });
+    return;
+  }
+  // A constant namespace has exactly the members `QUALIFIED_BUILTIN_CALLS`
+  // lists. Without this, `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show`
+  // on *any* capitalised qualifier, so `EffectId.fresh` passed and lowered to
+  // `_s.freshId()` — a real id minted where the author wrote the empty
+  // sentinel, which a later `http.cancel` then aims at nothing. Only the
+  // zero-argument form is refused: `EffectId.show(h)` is the qualified spelling
+  // of `h.show` and means what it says.
+  const dot = callee.indexOf(".");
+  if (
+    dot > 0 &&
+    argCount === 0 &&
+    CONSTANT_NAMESPACES.has(callee.slice(0, dot)) &&
+    !QUALIFIED_BUILTIN_CALLS.has(callee)
+  ) {
+    errors.push({
+      code: "E0116",
+      kind: "undef-call",
+      message: `Call to undefined function "${callee}"`,
       pos,
     });
     return;

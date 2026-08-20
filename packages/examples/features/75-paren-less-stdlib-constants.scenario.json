@@ -1,0 +1,29 @@
+{
+  "steps": [
+    {
+      "label": "the empty handle sentinel is what a bare EffectId.none put there",
+      "expect": {
+        "noErrors": true,
+        "state": { "handle": "", "note": "idle", "pinged": false }
+      }
+    },
+    {
+      "label": "the click reaches both reducers (this tier scripts the effects, so no decoding happens here)",
+      "do": { "clickText": "Load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "kumiki", "pinged": true },
+        "domIncludes": ["note: kumiki", "pinged: true"]
+      }
+    },
+    {
+      "label": "cancelling a request that already landed puts the sentinel back",
+      "do": { "clickText": "Cancel" },
+      "expect": { "noErrors": true, "state": { "handle": "" } }
+    }
+  ],
+  "effects": {
+    "loadNote": [{ "outcome": "ok", "value": "kumiki" }],
+    "ping": [{ "outcome": "ok", "value": null }]
+  }
+}
