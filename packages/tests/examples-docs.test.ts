@@ -32,7 +32,7 @@
 // form the regex does not understand, or a scan that stops matching fails a test
 // instead of quietly shrinking the set every rule above is checked against.
 
-import { existsSync, globSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -316,26 +316,50 @@ function githubAnchors(md: string, file: string): Set<string> {
   return anchors;
 }
 
-// The files this task declares as its cache inputs, expanded. A rule that reads
-// a file absent from this set can be satisfied by a cached run that never looked
-// at it — and the CI workflow restores .turbo, so that stale green is reachable
-// there too, not only locally.
-function declaredInputFiles(): Set<string> {
+// A turbo input glob as a regular expression over repository-relative paths.
+// Matching a path against the patterns beats expanding the patterns into a file
+// set: `node:fs`'s globSync would do the latter, but it does not exist on the
+// Node the CI workflow pins, and this is the whole vocabulary turbo.json uses.
+function globToRegExp(pattern: string): RegExp {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "*") {
+      if (pattern[i + 1] === "*") {
+        // `**/` spans any number of directories, including none.
+        out += pattern[i + 2] === "/" ? "(?:[^/]+/)*" : ".*";
+        i += pattern[i + 2] === "/" ? 2 : 1;
+      } else {
+        out += "[^/]*";
+      }
+      continue;
+    }
+    if (c === "?") out += "[^/]";
+    else out += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`);
+}
+
+// The cache inputs this task declares, as matchers. A rule that reads a file no
+// pattern covers can be satisfied by a cached run that never looked at it — and
+// the CI workflow restores .turbo, so that stale green is reachable there too,
+// not only locally.
+function declaredInputMatchers(): RegExp[] {
   const config = JSON.parse(read(turboConfig)) as { tasks: { test: { inputs: string[] } } };
   const patterns = config.tasks.test.inputs;
   if (patterns.length < 5) throw new Error("read too few inputs out of packages/tests/turbo.json");
-  const out = new Set<string>();
-  for (const raw of patterns) {
-    // The package's own files, which no rule here resolves a link to.
-    if (raw === "$TURBO_DEFAULT$") continue;
-    const pattern = raw.startsWith("$TURBO_ROOT$/")
-      ? raw.slice("$TURBO_ROOT$/".length)
-      : `packages/tests/${raw}`;
-    for (const match of globSync(pattern, { cwd: repoRoot })) {
-      out.add(match.replace(/\\/g, "/"));
-    }
-  }
-  return out;
+  return (
+    patterns
+      // The package's own files, which no rule here resolves a link to.
+      .filter((raw) => raw !== "$TURBO_DEFAULT$")
+      .map((raw) =>
+        globToRegExp(
+          raw.startsWith("$TURBO_ROOT$/")
+            ? raw.slice("$TURBO_ROOT$/".length)
+            : `packages/tests/${raw}`,
+        ),
+      )
+  );
 }
 
 const allDocs = docFiles();
@@ -616,8 +640,9 @@ describe("READMEs — commands", () => {
 
 describe("READMEs — cache", () => {
   it("every file these rules resolve to is one of the task's turbo inputs", () => {
-    const declared = declaredInputFiles();
+    const declared = declaredInputMatchers();
     const missing = new Set<string>();
+    let covered = 0;
     for (const link of relativeLinks) {
       if (link.target.split("#")[0] === "") continue;
       const absolute = targetOf(link);
@@ -625,7 +650,8 @@ describe("READMEs — cache", () => {
       // file targets can be pinned here.
       if (!existsSync(absolute) || statSync(absolute).isDirectory()) continue;
       const rel = relative(repoRoot, absolute).replace(/\\/g, "/");
-      if (!declared.has(rel)) missing.add(rel);
+      if (declared.some((m) => m.test(rel))) covered++;
+      else missing.add(rel);
     }
     if (missing.size > 0) {
       expect.fail(
@@ -636,5 +662,9 @@ describe("READMEs — cache", () => {
           .join("\n")}`,
       );
     }
+    // A matcher that accepted everything would pass this test by accepting
+    // nothing to check; a matcher that accepted nothing would too, by finding
+    // no targets at all.
+    expect(covered).toBeGreaterThan(100);
   });
 });
