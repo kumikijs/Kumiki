@@ -17,7 +17,7 @@
 // it appears.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -37,7 +37,8 @@ const SKIP_DIRS = new Set([
   ".smoke-tmp",
 ]);
 
-const isTestFile = (name: string): boolean => name.endsWith(".test.ts") || name.endsWith(".spec.ts");
+const isTestFile = (name: string): boolean =>
+  name.endsWith(".test.ts") || name.endsWith(".spec.ts");
 
 /** Compare paths the way both Windows and tsc's own output can agree on. */
 const norm = (p: string): string => p.replace(/\\/g, "/").toLowerCase();
@@ -142,31 +143,31 @@ describe("test files are typechecked", () => {
     expect(withTests.length).toBeGreaterThanOrEqual(8);
   });
 
-  it.each(withTests.map((p) => [p.name, p] as const))("%s declares a typecheck script", (_, pkg) => {
+  it.each(
+    withTests.map((p) => [p.name, p] as const),
+  )("%s declares a typecheck script", (_, pkg) => {
     expect(pkg.typecheck, `${pkg.name} ships ${pkg.testFiles.length} test file(s)`).toBeDefined();
   });
 
-  it.each(withTests.map((p) => [p.name, p] as const))(
-    "%s typechecks every test file it ships",
-    (_, pkg) => {
-      const program = programOf(configOf(pkg));
-      const missing = pkg.testFiles.filter((f) => !program.has(norm(f)));
-      expect(missing.map((f) => norm(f).slice(norm(packagesDir).length + 1))).toEqual([]);
-    },
-  );
+  it.each(
+    withTests.map((p) => [p.name, p] as const),
+  )("%s typechecks every test file it ships", (_, pkg) => {
+    const program = programOf(configOf(pkg));
+    const missing = pkg.testFiles.filter((f) => !program.has(norm(f)));
+    expect(missing.map((f) => norm(f).slice(norm(packagesDir).length + 1))).toEqual([]);
+  });
 
-  it.each(withTests.map((p) => [p.name, p] as const))(
-    "%s keeps generated fixtures out of its program",
-    (_, pkg) => {
-      // Several suites write fixtures under `test-tmp/` and git ignores them.
-      // Inside a typecheck program they would make `pnpm typecheck` answer
-      // differently depending on whether the suite had run first, so the
-      // question asked here is git's: is any file of this package's own — its
-      // installed dependencies aside — one that the repository does not track?
-      const owned = [...programOf(configOf(pkg))].filter(
-        (f) => f.startsWith(`${norm(pkg.dir)}/`) && !f.includes("/node_modules/"),
-      );
-      expect(ignoredByGit(owned)).toEqual([]);
-    },
-  );
+  it.each(
+    withTests.map((p) => [p.name, p] as const),
+  )("%s keeps generated fixtures out of its program", (_, pkg) => {
+    // Several suites write fixtures under `test-tmp/` and git ignores them.
+    // Inside a typecheck program they would make `pnpm typecheck` answer
+    // differently depending on whether the suite had run first, so the
+    // question asked here is git's: is any file of this package's own — its
+    // installed dependencies aside — one that the repository does not track?
+    const owned = [...programOf(configOf(pkg))].filter(
+      (f) => f.startsWith(`${norm(pkg.dir)}/`) && !f.includes("/node_modules/"),
+    );
+    expect(ignoredByGit(owned)).toEqual([]);
+  });
 });

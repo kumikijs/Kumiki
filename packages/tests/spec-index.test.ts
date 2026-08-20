@@ -35,6 +35,11 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMarkdownRenderer, type MarkdownRenderer, resolveConfig } from "vitepress";
 import { beforeAll, describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
+
+/** Capture group `i` of a match. Every group read here is mandatory in its pattern. */
+const group = (m: RegExpMatchArray, i: number): string =>
+  defined(m[i], `capture group ${i} of ${JSON.stringify(m[0])}`);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
@@ -121,8 +126,9 @@ function* nonFenceLines(md: string): Generator<string> {
   for (const line of md.split(/\r?\n/)) {
     const m = line.match(/^\s{0,3}(`{3,}|~{3,})/);
     if (m) {
-      const char = m[1][0];
-      const len = m[1].length;
+      const marker = group(m, 1);
+      const char = marker.slice(0, 1);
+      const len = marker.length;
       if (fence === null) fence = { char, len };
       else if (char === fence.char && len >= fence.len) fence = null;
       continue;
@@ -186,7 +192,7 @@ function collectAnchors(label: TrackLabel, md: string): Set<string> {
   // fail loudly at the empty-set floor below (via the caller), not slip
   // through as an empty Set.
   const anchors = new Set(
-    [...html.matchAll(/<h[1-6][^>]*\bid=["']([^"']+)["']/g)].map((m) => m[1]),
+    [...html.matchAll(/<h[1-6][^>]*\bid=["']([^"']+)["']/g)].map((m) => group(m, 1)),
   );
   return anchors;
 }
@@ -202,7 +208,7 @@ interface DocLink {
 function collectDocLinks(md: string): DocLink[] {
   const links: DocLink[] = [];
   for (const m of md.matchAll(/\[([^\]]*)\]\(\.\/([\w.-]+\.md)(#([^)]+))?\)/g)) {
-    links.push({ label: m[1], doc: m[2], anchor: m[4] ?? null, raw: m[0] });
+    links.push({ label: group(m, 1), doc: group(m, 2), anchor: m[4] ?? null, raw: m[0] });
   }
   return links;
 }
@@ -213,9 +219,9 @@ function collectDocLinks(md: string): DocLink[] {
 // return null and are exempt from the prefix check.
 function expectedAnchorPrefix(label: string): string | null {
   const section = label.match(/^§([\d.]+)$/);
-  if (section) return `_${section[1].replace(/\./g, "-")}`;
+  if (section) return `_${group(section, 1).replace(/\./g, "-")}`;
   const code = label.match(/^([EW]\d{2}(?:\d{2}|xx))$/);
-  if (code) return code[1].toLowerCase();
+  if (code) return group(code, 1).toLowerCase();
   return null;
 }
 
@@ -238,7 +244,7 @@ function markedSection(md: string, name: string, label: string): string {
 function tableRows(block: string, name: string, label: string): string[][] {
   const lines = block.split(/\r?\n/).filter((l) => l.trim().startsWith("|"));
   if (lines.length < 3) throw new Error(`[${label}] ${name} table has no data rows`);
-  if (!/^\|[\s:|-]+\|$/.test(lines[1].trim())) {
+  if (!/^\|[\s:|-]+\|$/.test(defined(lines[1], "the header separator row").trim())) {
     throw new Error(`[${label}] ${name} table is missing its header separator row`);
   }
   return lines.slice(2).map((line) =>
@@ -253,9 +259,11 @@ function tableRows(block: string, name: string, label: string): string[][] {
 // (§…) or a diagnostic-code band (E02xx…) are kept verbatim; other labels
 // (localized row titles) reduce to the target document alone.
 function cellSignature(cell: string): string {
-  const links = [...cell.matchAll(/\[([^\]]+)\]\(\.\/([\w.-]+\.md)[^)]*\)/g)].map(
-    ([, label, doc]) => (label.startsWith("§") || /^[EW]\d/.test(label) ? `${doc}:${label}` : doc),
-  );
+  const links = [...cell.matchAll(/\[([^\]]+)\]\(\.\/([\w.-]+\.md)[^)]*\)/g)].map((m) => {
+    const label = group(m, 1);
+    const doc = group(m, 2);
+    return label.startsWith("§") || /^[EW]\d/.test(label) ? `${doc}:${label}` : doc;
+  });
   return links.length > 0 ? links.join(" ") : cell;
 }
 
@@ -320,8 +328,8 @@ function errorsMdCodeKinds(dir: string): string[] {
   for (const line of nonFenceLines(read(dir, "errors.md"))) {
     const m = line.match(/^### ([EW]\d{4})\b(.*)$/);
     if (!m) continue;
-    const kinds = backtickKinds(m[2].replace(/\([^)]*\)|（[^）]*）/g, ""));
-    out.push(`${m[1]} ${kinds}`.trimEnd());
+    const kinds = backtickKinds(group(m, 2).replace(/\([^)]*\)|（[^）]*）/g, ""));
+    out.push(`${group(m, 1)} ${kinds}`.trimEnd());
   }
   return out;
 }
@@ -391,7 +399,7 @@ describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)
 
   it("internal spec links use the ./doc.md#anchor form the anchor check understands", () => {
     const bad = [...index.matchAll(/\]\(([^)]+)\)/g)]
-      .map((m) => m[1])
+      .map((m) => group(m, 1))
       .filter((t) => /\.md(#|$)/.test(t) && !/^\.\/[\w.-]+\.md(#.+)?$/.test(t));
     if (bad.length > 0) {
       expect.fail(
@@ -569,13 +577,13 @@ describe("spec index — EN ⇆ JA sync", () => {
   });
 
   it("code tables agree on the layer of each code", () => {
-    const layers = (md: string, label: string) =>
+    const layers = (md: string, label: TrackLabel) =>
       codeRows(md, label).map((r) => `${r.code} ${r.kind} → ${r.layer}`);
     expect(layers(ja, "ja")).toEqual(layers(en, "en"));
   });
 
   it("code tables agree on the feature of each code", () => {
-    const features = (md: string, label: string) =>
+    const features = (md: string, label: TrackLabel) =>
       codeRows(md, label).map((r) => `${r.code} ${r.kind} → ${normalizeFeature(r.feature, label)}`);
     expect(features(ja, "ja")).toEqual(features(en, "en"));
   });
@@ -592,7 +600,7 @@ describe("spec index — EN ⇆ JA sync", () => {
   // The three checks below key by filename (already pinned by "example file
   // sets agree") so the diff message names the offending example directly.
   it("examples tables agree on the layers of each file", () => {
-    const layersByFile = (md: string, label: string) =>
+    const layersByFile = (md: string, label: TrackLabel) =>
       Object.fromEntries(
         exampleRows(md, label).map((r) => [r.file, [...r.layers].sort()] as const),
       );
@@ -600,7 +608,7 @@ describe("spec index — EN ⇆ JA sync", () => {
   });
 
   it("examples tables agree on the feature of each file (normalized to language-neutral keys)", () => {
-    const featureByFile = (md: string, label: string) =>
+    const featureByFile = (md: string, label: TrackLabel) =>
       Object.fromEntries(
         exampleRows(md, label).map((r) => [r.file, normalizeFeature(r.feature, label)] as const),
       );

@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -54,7 +55,8 @@ describe("a stdlib constant written without parentheses", () => {
     try {
       // The empty-handle sentinel is a value, not a call, and is the one bare
       // constant that always parsed — it is here as the regression pin.
-      expect(app.live.handle).toBe("");
+      const live = defined(app.live, "the app's live map");
+      expect(live.handle).toBe("");
 
       const load = [...root.querySelectorAll("button")].find((b) => b.textContent === "Load");
       expect(load, "the example renders a Load button").toBeDefined();
@@ -64,9 +66,9 @@ describe("a stdlib constant written without parentheses", () => {
       // `Decoder.Text`: the body arrives as the text it is. Read as json it
       // threw on `kumiki`, and the effect took its `.err` branch instead —
       // which this app does not declare, so the value simply never arrived.
-      expect(app.live.note).toBe("kumiki");
+      expect(live.note).toBe("kumiki");
       // `Decoder.None`: nothing to decode. Read as json, a 204 threw.
-      expect(app.live.pinged).toBe(true);
+      expect(live.pinged).toBe(true);
     } finally {
       handle.dispose();
     }

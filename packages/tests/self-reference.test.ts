@@ -15,7 +15,7 @@ const TAIL = `app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
 /** `compile` never throws for these: the failure is a diagnostic, not a crash. */
 function outcome(source: string): CompileResult {
-  return compile(source, { capabilities: [] });
+  return compile(source, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [] });
 }
 
 const REJECTED: readonly { what: string; code: string; source: string }[] = [

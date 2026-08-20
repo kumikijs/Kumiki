@@ -7,9 +7,20 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AppShape } from "@kumikijs/runtime";
 import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it, vi } from "vitest";
 import { loadApp } from "./helpers/load.js";
+
+/**
+ * Drops the map the SSR pass filled in, so the client starts from slot
+ * defaults the way a fresh boot would. Behind a function because deleting the
+ * property inline would narrow `app.live` to `undefined` for the rest of the
+ * test, and every assertion after hydration is about what hydration put back.
+ */
+function resetLive(app: AppShape): void {
+  delete app.live;
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ssrAppPath = join(here, "..", "examples", "apps", "10-ssr-hydration", "app.kumiki");
@@ -39,7 +50,7 @@ describe("SSR hydration integration (issue#119)", () => {
     // wholesale on the first CSR render so we don't end up with sibling
     // SSR + CSR trees. Without that fix, `target.children.length` would be
     // 2 after hydration.
-    app.live = undefined;
+    resetLive(app);
     const target = document.createElement("div");
     target.innerHTML = rendered.html;
     document.body.appendChild(target);

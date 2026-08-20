@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,8 +43,8 @@ describe("HTTP retry (#83) — end-to-end", () => {
       // exponential(3, 200ms, 2.0) waits 200ms, then 400ms between attempts.
       await tick(900);
       expect(calls).toBe(3);
-      const state = (app.live as Record<string, { _tag: string }>).state;
-      expect(state._tag).toBe("Loaded");
+      const live = defined(app.live, "the app's live map") as Record<string, { _tag: string }>;
+      expect(defined(live.state, "the state slot")._tag).toBe("Loaded");
       dispose();
     } finally {
       root.remove();
@@ -69,8 +70,8 @@ describe("HTTP retry (#83) — end-to-end", () => {
       btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await tick(300);
       expect(calls).toBe(1);
-      const state = (app.live as Record<string, { _tag: string }>).state;
-      expect(state._tag).toBe("Failed");
+      const live = defined(app.live, "the app's live map") as Record<string, { _tag: string }>;
+      expect(defined(live.state, "the state slot")._tag).toBe("Failed");
       dispose();
     } finally {
       root.remove();
