@@ -31,11 +31,11 @@
 |---|---|---|---|---|---|---|---|
 | [言語コア](./language.md) | [§1.3](./language.md#_1-3-型レイヤ-type) | [§1.4](./language.md#_1-4-ストアレイヤ-slot) | [§1.5](./language.md#_1-5-副作用レイヤ-effect) | [§1.6](./language.md#_1-6-リデューサレイヤ-reducer) | [§1.7](./language.md#_1-7-ビューレイヤ-tile) | [§1.8](./language.md#_1-8-関数レイヤ-fn) | [§1.12](./language.md#_1-12-アプリエントリ-app) |
 | [標準ライブラリ](./stdlib.md) | [§2.1](./stdlib.md#_2-1-ビルトイン型) | — | [§2.6](./stdlib.md#_2-6-標準-effect) | — | [§2.3](./stdlib.md#_2-3-tile-プリミティブ要素) | [§2.2](./stdlib.md#_2-2-コレクションメソッド) [§2.4](./stdlib.md#_2-4-ビルトイン関数) | [§2.5](./stdlib.md#_2-5-standard-capabilities) |
-| [ルーティング](./routing.md) | — | [§3.2](./routing.md#_3-2-現在のルート状態) | [§3.3.2](./routing.md#_3-3-2-effect-として書く) | [§3.4](./routing.md#_3-4-ルートライフサイクル) [§3.5](./routing.md#_3-5-ガード) | [§3.3.1](./routing.md#_3-3-1-link-要素-推奨) [§3.6](./routing.md#_3-6-ネステッドルート) | [§3.3.3](./routing.md#_3-3-3-動的パス構築) | [§3.1](./routing.md#_3-1-ルートの宣言) |
-| [スタイル](./style.md) | — | — | — | — | [§4.3](./style.md#_4-3-トークン参照) [§4.4](./style.md#_4-4-レイアウト) [§4.9](./style.md#_4-9-アニメーション) | — | [§4.2.2](./style.md#_4-2-2-app-への適用) [§4.6](./style.md#_4-6-ダークモード) |
+| [ルーティング](./routing.md) | — | [§3.2](./routing.md#_3-2-current-route-state) | [§3.3.2](./routing.md#_3-3-2-effect-として書く) | [§3.4](./routing.md#_3-4-ルートライフサイクル) [§3.5](./routing.md#_3-5-ガード) | [§3.3.1](./routing.md#_3-3-1-link-要素-推奨) [§3.6](./routing.md#_3-6-nested-routes) | [§3.3.3](./routing.md#_3-3-3-動的パス構築) | [§3.1](./routing.md#_3-1-ルートの宣言) |
+| [スタイル](./style.md) | — | — | — | — | [§4.3](./style.md#_4-3-トークン参照) [§4.4](./style.md#_4-4-レイアウト) [§4.9](./style.md#_4-9-アニメーション) | — | [§4.2.2](./style.md#_4-2-2-app-への適用) [§4.6](./style.md#_4-6-dark-mode) |
 | [フォーム](./forms.md) | [§5.1.2](./forms.md#_5-1-2-refinement-の扱い) | [§5.1](./forms.md#_5-1-個別入力の双方向束縛) | — | [§5.4](./forms.md#_5-4-個別入力イベントを-reducer-に届ける) | [§5.2](./forms.md#_5-2-フォーム要素) [§5.3](./forms.md#_5-3-入力要素の共通-props) | [§5.6](./forms.md#_5-6-バリデーション戦略) | — |
 | [HTTP / Storage](./http.md) | [§6.1.3](./http.md#_6-1-3-httpbody-型) [§6.1.4](./http.md#_6-1-4-decoder-型) | [§6.8](./http.md#_6-8-永続化のパターン) | [§6.1](./http.md#_6-1-http-共通) [§6.7](./http.md#_6-7-storage-effects) | [§6.2](./http.md#_6-2-http-利用例) | — | — | [§6.1.1](./http.md#_6-1-1-capability) |
-| [ライフサイクル](./lifecycle.md) | — | [§7.9](./lifecycle.md#_7-9-ホットリロード時の状態) | [§7.6](./lifecycle.md#_7-6-確認ダイアログ) [§7.7](./lifecycle.md#_7-7-トースト) | [§7.1](./lifecycle.md#_7-1-ライフサイクルイベント一覧) | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) [§7.4](./lifecycle.md#_7-4-サスペンス-loading-表示) | — | [§7.2](./lifecycle.md#_7-2-error-handling) [§7.5](./lifecycle.md#_7-5-404-と-error-ページ) |
+| [ライフサイクル](./lifecycle.md) | — | [§7.9](./lifecycle.md#_7-9-ホットリロード時の状態) | [§7.6](./lifecycle.md#_7-6-confirmation-dialogs) [§7.7](./lifecycle.md#_7-7-トースト) | [§7.1](./lifecycle.md#_7-1-list-of-lifecycle-events) | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) [§7.4](./lifecycle.md#_7-4-サスペンス-loading-表示) | — | [§7.2](./lifecycle.md#_7-2-error-handling) [§7.5](./lifecycle.md#_7-5-404-と-error-ページ) |
 | [テスト](./testing.md) | — | [§8.2.2](./testing.md#_8-2-2-wildcards) | [§8.5](./testing.md#_8-5-effect-mock) | [§8.2](./testing.md#_8-2-reducer-テスト) | [§8.4](./testing.md#_8-4-tile-snapshot-テスト) | [§8.3](./testing.md#_8-3-property-tests) | [§8.6](./testing.md#_8-6-episode-replay) |
 | [AI 編集](./ai-edit.md) | — | — | — | [§9.9](./ai-edit.md#_9-9-episode-と-op-の関係) | — | — | [§9.2](./ai-edit.md#_9-2-kumiki-cli) [§9.4](./ai-edit.md#_9-4-参照整合性の強制) |
 | [ランタイム](./runtime.md) | — | [§10.3](./runtime.md#_10-3-signal-graph) | [§10.4](./runtime.md#_10-4-effect-dispatcher) | [§10.5](./runtime.md#_10-5-episode-loop) | [§10.3.4](./runtime.md#_10-3-4-dom-レンダリングの不変条件) | — | [§10.6](./runtime.md#_10-6-ssr-edge-client-分割) [§10.9](./runtime.md#_10-9-ランタイム-api-埋め込み用) |
@@ -158,19 +158,19 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `34-builtin-tiles.kumiki` | tile | 標準ライブラリ | [§2.3](./stdlib.md#_2-3-tile-プリミティブ要素) |
 | `35-match-and-args.kumiki` | tile, type | コア | [§1.9](./language.md#_1-9-式言語) |
 | `36-effect-indexed-db.kumiki` | effect | HTTP/Storage | [§6.7.4](./http.md#_6-7-4-sessionstorage-indexeddb) |
-| `37-lifecycle-events.kumiki` | reducer | ライフサイクル | [§7.1](./lifecycle.md#_7-1-ライフサイクルイベント一覧) |
+| `37-lifecycle-events.kumiki` | reducer | ライフサイクル | [§7.1](./lifecycle.md#_7-1-list-of-lifecycle-events) |
 | `38-confirm-leave-guard.kumiki` | reducer | ルーティング | [§3.5.2](./routing.md#_3-5-2-leave-ガード) |
 | `39-effect-session.kumiki` | effect | HTTP/Storage | [§6.7.4](./http.md#_6-7-4-sessionstorage-indexeddb) |
-| `40-nested-routes.kumiki` | app, tile | ルーティング | [§3.6](./routing.md#_3-6-ネステッドルート) |
+| `40-nested-routes.kumiki` | app, tile | ルーティング | [§3.6](./routing.md#_3-6-nested-routes) |
 | `40-token-refs.kumiki` | tile | スタイル | [§4.3](./style.md#_4-3-トークン参照) |
-| `41-link-prefetch.kumiki` | tile | ルーティング | [§3.8](./routing.md#_3-8-プリフェッチ) |
+| `41-link-prefetch.kumiki` | tile | ルーティング | [§3.8](./routing.md#_3-8-prefetch) |
 | `42-scroll-restoration.kumiki` | app | ルーティング | [§3.9](./routing.md#_3-9-スクロール復元) |
-| `43-file-upload-preview.kumiki` | tile | フォーム | [§5.10](./forms.md#_5-10-ファイルアップロード) |
+| `43-file-upload-preview.kumiki` | tile | フォーム | [§5.10](./forms.md#_5-10-file-upload) |
 | `44-episode-test.kumiki` | effect | テスト | [§8.6](./testing.md#_8-6-episode-replay) |
 | `45-ui-key-hover-tuple.kumiki` | reducer, tile | コア | [§1.6](./language.md#_1-6-リデューサレイヤ-reducer) |
 | `46-stdlib-paren-methods.kumiki` | fn | 標準ライブラリ | [§2.2](./stdlib.md#_2-2-コレクションメソッド) |
 | `47-icon-set.kumiki` | tile | スタイル | [§4.8](./style.md#_4-8-アイコン) |
-| `48-effect-cancel.kumiki` | effect | HTTP/Storage | [§6.4](./http.md#_6-4-キャンセル) |
+| `48-effect-cancel.kumiki` | effect | HTTP/Storage | [§6.4](./http.md#_6-4-cancellation) |
 | `49-ui-focus-blur.kumiki` | reducer, tile | コア | [§1.6](./language.md#_1-6-リデューサレイヤ-reducer) |
 | `50-match-pattern-integrity.kumiki` | type | コア | [§1.9](./language.md#_1-9-式言語) |
 | `51-selector-id.kumiki` | reducer | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |

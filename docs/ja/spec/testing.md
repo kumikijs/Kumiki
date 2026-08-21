@@ -205,7 +205,7 @@ FAIL  counter-display
 
 リテラルでない乖離（数値 slot、誤った演算子、effect リスト不一致）は推測せず diff として報告する。
 
-## 8.8 統合テスト（ブラウザ駆動）
+## 8.8 統合テスト（ブラウザ駆動） {#_8-8-integration-tests-browser-driven}
 
 E2E はランタイム外で実装する。Playwright / Cypress などの既存ツールを使う。Kumiki 側からは：
 

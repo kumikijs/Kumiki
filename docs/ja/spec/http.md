@@ -177,7 +177,7 @@ reducer handleUnauthorized
 
 ---
 
-## 6.4 キャンセル
+## 6.4 キャンセル {#_6-4-cancellation}
 
 `policy=latest` または `policy=latest-per-key(...)` で自動キャンセルされる。手動キャンセルは：
 

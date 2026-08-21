@@ -40,7 +40,7 @@ app TodoApp
 
 ---
 
-## 3.2 現在のルート状態
+## 3.2 現在のルート状態 {#_3-2-current-route-state}
 
 ランタイムは標準 slot `route` を提供する：
 
@@ -48,7 +48,7 @@ app TodoApp
 slot route : Route = Route.empty       # ランタイムが管理
 ```
 
-`Route` 型は[標準ライブラリ](./stdlib.md#213-ドメイン型標準提供)：
+`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)：
 
 ```kumiki fragment
 type Route = {
@@ -131,7 +131,7 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 |---|---|
 | `route.leave(pattern)` | 旧ルートを離れる直前 |
 | `route.enter(pattern)` | 新ルートに入った直後 |
-| `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-ライフサイクルイベント一覧)） |
+| `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -186,7 +186,7 @@ reducer guardEdit
 
 ---
 
-## 3.6 ネステッドルート
+## 3.6 ネステッドルート {#_3-6-nested-routes}
 
 `/*` をパターンに使うと、サブルートを別 tile に委譲できる。
 
@@ -256,7 +256,7 @@ effect navigate cap=nav.push
 
 ---
 
-## 3.8 プリフェッチ
+## 3.8 プリフェッチ {#_3-8-prefetch}
 
 リンクがビューポートに入ったときに先にデータを取りたい：
 

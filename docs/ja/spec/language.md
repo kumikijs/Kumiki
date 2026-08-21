@@ -17,7 +17,7 @@ definition  ::= type-def | slot-def | effect-def | reducer-def | tile-def | fn-d
 
 定義は順不同で前方参照可能。コンパイラがトポロジカルソートを行う。
 
-### 1.1.1 レイヤ一覧
+### 1.1.1 レイヤ一覧 {#_1-1-1-list-of-layers}
 
 | レイヤ | 役割 | 純粋性 |
 |---|---|---|

@@ -1,6 +1,6 @@
 # ライフサイクル・エラー境界・サスペンス
 
-## 7.1 ライフサイクルイベント一覧
+## 7.1 ライフサイクルイベント一覧 {#_7-1-list-of-lifecycle-events}
 
 | イベント | タイミング |
 |---|---|
@@ -235,7 +235,7 @@ reducer onRouteErr
 
 ---
 
-## 7.6 確認ダイアログ
+## 7.6 確認ダイアログ {#_7-6-confirmation-dialogs}
 
 Kumiki は **`window.confirm` 相当を effect として提供**する：
 
