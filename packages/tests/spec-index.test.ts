@@ -8,14 +8,13 @@
 //
 // Guarded edges (spec-drift.test.ts in packages/compiler already pins
 // implementation ⇆ errors.md, so together the triangle closes):
-//   1. index ⇆ spec body — every `./doc.md#anchor` link resolves to a real
-//      heading anchor. Anchors are extracted by rendering each spec doc through
-//      VitePress' own `createMarkdownRenderer` and reading the emitted
-//      `<h1..6 id="…">` attributes, so there is no second slugify implementation
-//      to keep in step with VitePress. The label prefix check (§1.3 → `_1-3`)
-//      also runs, so a link that resolves but points at the wrong section is
-//      caught too. A separate check forbids bare `doc.md#…` links (no `./`),
-//      which would slip past the anchor scan entirely.
+//   1. index ⇆ spec body — that every `./doc.md#anchor` link lands on a real
+//      heading, and points at the section its label names, is docs-links.test.ts'
+//      job: it runs that check over every document under docs/, of which the
+//      index is one. What stays here is the link count as an extraction floor,
+//      because an index whose links stopped matching the shape this file expects
+//      would otherwise reduce the tables below to a handful of rows and still
+//      compare equal.
 //   2. index ⇆ examples — the examples table lists exactly the files under
 //      packages/examples/features/ (symmetric difference = 0). The disk walk is
 //      recursive, and two files sharing a basename across subfolders is a hard
@@ -33,8 +32,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createMarkdownRenderer, type MarkdownRenderer, resolveConfig } from "vitepress";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 
 /** Capture group `i` of a match. Every group read here is mandatory in its pattern. */
@@ -46,8 +44,9 @@ const repoRoot = join(here, "..", "..");
 const docsRoot = join(repoRoot, "docs");
 
 // Two-track fixed by design: EN under docs/spec/, JA under docs/ja/spec/. The
-// key type is load-bearing — collectAnchors, initRenderers, and the
-// describe.each callback all rely on it to keep drive-by additions honest.
+// key type is load-bearing — FEATURE_DISPLAY_TO_KEY, normalizeFeature and the
+// describe.each callback all key off it, so a third track cannot be added
+// without deciding what its feature vocabulary is.
 type TrackLabel = "en" | "ja";
 const tracks: Record<TrackLabel, string> = {
   en: join(docsRoot, "spec"),
@@ -137,92 +136,9 @@ function* nonFenceLines(md: string): Generator<string> {
   }
 }
 
-// Heading → anchor set, extracted from VitePress' own rendered HTML. Using
-// VitePress' `createMarkdownRenderer` (instead of a second slugify copy on our
-// side) means the fenced-block skip, `{#id}` overrides, Unicode NFKD, and
-// duplicate-suffix logic all come from the same code path that ships anchors
-// to production — so a VitePress bump can't drift the two out of step and
-// leave the test green while the built site has dead in-page links.
-//
-// The renderer is built from `resolveConfig(docsRoot)`, so any future
-// `markdown.anchor.slugify`, custom `permalink`, or other markdown-it plugin
-// added to `docs/.vitepress/config.ts` flows into this test automatically.
-// Passing `undefined` here (letting VitePress' defaults apply on our side but
-// not the site's) would reopen exactly the drift this guard exists to catch.
-const renderers: Record<TrackLabel, MarkdownRenderer | null> = { en: null, ja: null };
-
-async function initRenderers(): Promise<void> {
-  const config = await resolveConfig(docsRoot);
-  // The `kumiki` Shiki grammar is only registered when the docs are built via
-  // the full VitePress pipeline; the raw MarkdownRenderer we build here doesn't
-  // register it, so shiki emits a fallback-to-txt warning per code block. Drop
-  // ONLY those messages and let everything else (unresolved plugins, broken
-  // `{#id}` overrides, shiki theme errors, …) surface — otherwise a real
-  // regression would hide behind a black-hole logger and the downstream
-  // "anchor does not exist" would be the only, misleading, diagnostic.
-  const logger = {
-    warn: (msg: string) => {
-      if (!/language.*kumiki.*is not loaded/i.test(msg)) console.warn(msg);
-    },
-  };
-  // Build both renderers in parallel: each spins up its own markdown-it +
-  // Shiki instance, so serialising the two roughly doubles the wall-clock —
-  // enough to push the CI runner past Vitest's default 5s beforeAll budget.
-  const built = await Promise.all(
-    (Object.entries(tracks) as [TrackLabel, string][]).map(
-      async ([label, dir]) =>
-        [
-          label,
-          await createMarkdownRenderer(dir, config.markdown, config.site.base, logger),
-        ] as const,
-    ),
-  );
-  for (const [label, renderer] of built) {
-    if (!renderer) throw new Error(`[${label}] createMarkdownRenderer returned no renderer`);
-    renderers[label] = renderer;
-  }
-}
-
-function collectAnchors(label: TrackLabel, md: string): Set<string> {
-  const renderer = renderers[label];
-  if (!renderer) throw new Error(`[${label}] MarkdownRenderer was not initialized`);
-  const html = renderer.render(md);
-  // Match both quoting styles VitePress could plausibly emit — the current
-  // build uses `id="…"`, but a version bump swapping to single quotes must
-  // fail loudly at the empty-set floor below (via the caller), not slip
-  // through as an empty Set.
-  const anchors = new Set(
-    [...html.matchAll(/<h[1-6][^>]*\bid=["']([^"']+)["']/g)].map((m) => group(m, 1)),
-  );
-  return anchors;
-}
-
-interface DocLink {
-  label: string;
-  doc: string;
-  anchor: string | null;
-  raw: string;
-}
-
-// `./doc.md` and `./doc.md#anchor` links, with their display label captured.
-function collectDocLinks(md: string): DocLink[] {
-  const links: DocLink[] = [];
-  for (const m of md.matchAll(/\[([^\]]*)\]\(\.\/([\w.-]+\.md)(#([^)]+))?\)/g)) {
-    links.push({ label: group(m, 1), doc: group(m, 2), anchor: m[4] ?? null, raw: m[0] });
-  }
-  return links;
-}
-
-// The anchor a §-section or diagnostic-code label must point at, derived from
-// the label alone: `§1.3` → `_1-3`, `§2.2.3` → `_2-2-3`, `E0206` → `e0206`,
-// `E02xx` → `e02xx`. Labels of any other shape (e.g. localized doc titles)
-// return null and are exempt from the prefix check.
-function expectedAnchorPrefix(label: string): string | null {
-  const section = label.match(/^§([\d.]+)$/);
-  if (section) return `_${group(section, 1).replace(/\./g, "-")}`;
-  const code = label.match(/^([EW]\d{2}(?:\d{2}|xx))$/);
-  if (code) return group(code, 1).toLowerCase();
-  return null;
+/** `./doc.md` and `./doc.md#anchor` links — counted, not resolved. */
+function countDocLinks(md: string): number {
+  return [...md.matchAll(/\[[^\]]*\]\(\.\/[\w.-]+\.md(#[^)]+)?\)/g)].length;
 }
 
 function markedSection(md: string, name: string, label: string): string {
@@ -373,18 +289,11 @@ function symmetricDiff(a: Set<string>, b: Set<string>): { onlyA: string[]; onlyB
   };
 }
 
-// 30s: local wall-clock is ~500ms, but CI runners (cold cache, slower disk)
-// have been observed to take several seconds spinning up two markdown-it +
-// Shiki instances, exceeding Vitest's default 5s beforeAll budget.
-beforeAll(async () => {
-  await initRenderers();
-}, 30_000);
-
 describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)", (label, dir) => {
   const index = read(dir, "index.md");
 
   it("has enough extractable content for the guards to be meaningful", () => {
-    expect(collectDocLinks(index).length).toBeGreaterThan(MIN_LINKS);
+    expect(countDocLinks(index)).toBeGreaterThan(MIN_LINKS);
     expect(codeKindSignature(index, label).length).toBeGreaterThan(MIN_CODES);
     expect(exampleFileSet(index, label).size).toBeGreaterThan(MIN_EXAMPLES);
   });
@@ -396,71 +305,6 @@ describe.each(Object.entries(tracks) as [TrackLabel, string][])("spec index (%s)
       expect(row.length, `matrix row "${row[0]}" has the wrong column count`).toBe(MATRIX_COLUMNS);
     }
   });
-
-  it("internal spec links use the ./doc.md#anchor form the anchor check understands", () => {
-    const bad = [...index.matchAll(/\]\(([^)]+)\)/g)]
-      .map((m) => group(m, 1))
-      .filter((t) => /\.md(#|$)/.test(t) && !/^\.\/[\w.-]+\.md(#.+)?$/.test(t));
-    if (bad.length > 0) {
-      expect.fail(
-        `[${label}] ${bad.length} spec link(s) do not use the ./doc.md#anchor form (so the anchor check skips them): ${bad.join(", ")}`,
-      );
-    }
-  });
-
-  it("every link resolves to a real anchor and points at the section its label names", () => {
-    // Pre-render every referenced doc up front so the empty-set floor
-    // check below reports the offending doc name directly instead of via
-    // the downstream "anchor does not exist" cascade. Rendering itself is
-    // synchronous but not cheap — Shiki syntax-highlights every fenced
-    // block — hence the 30s test timeout (~10 docs × ~500ms Shiki cold
-    // start on CI puts this near Vitest's default 5s per-test budget).
-    const uniqueDocs = [...new Set(collectDocLinks(index).map((l) => l.doc))];
-    const anchorCache = new Map<string, Set<string>>(
-      uniqueDocs.map((doc) => [doc, collectAnchors(label, read(dir, doc))]),
-    );
-    // Extraction-integrity floor mirroring MIN_LINKS/MIN_CODES: if the
-    // <h…> id regex breaks (VitePress swapping to a shape the pattern
-    // doesn't match, id being dropped, …) the Set collapses to empty and
-    // every anchor lookup below would report "does not exist" — a swarm
-    // of misleading errors instead of the true root cause. Every real
-    // spec doc has at least one heading, so 0 anchors is always a bug.
-    for (const [doc, anchors] of anchorCache) {
-      if (anchors.size === 0) {
-        expect.fail(
-          `[${label}] extracted 0 anchors from ${doc} — the heading-id regex likely broke against a VitePress render change`,
-        );
-      }
-    }
-    const problems: string[] = [];
-    for (const link of collectDocLinks(index)) {
-      const anchors = anchorCache.get(link.doc);
-      if (!anchors) continue;
-      if (link.anchor === null) continue;
-      const anchor = link.anchor;
-      if (!anchors.has(anchor)) {
-        // VitePress ids come out of slugify NFKD-decomposed (e.g. ド = ト +
-        // U+3099), while editors usually type NFC. Anchors must match the id
-        // byte-for-byte, so point the author at the canonical form.
-        const canonical = [...anchors].find((a) => a.normalize("NFC") === anchor.normalize("NFC"));
-        problems.push(
-          canonical
-            ? `${link.raw} — Unicode normalization mismatch; use the NFKD form VitePress emits: #${canonical}`
-            : `${link.raw} — anchor does not exist`,
-        );
-        continue;
-      }
-      const prefix = expectedAnchorPrefix(link.label);
-      if (prefix && anchor !== prefix && !anchor.startsWith(`${prefix}-`)) {
-        problems.push(
-          `${link.raw} — label "${link.label}" should point at an anchor starting with "${prefix}", but got "#${anchor}"`,
-        );
-      }
-    }
-    if (problems.length > 0) {
-      expect.fail(`[${label}] ${problems.length} link problem(s):\n${problems.join("\n")}`);
-    }
-  }, 30_000);
 
   // Split off from the symmetric-difference test below so the CI failure name
   // ("basenames are unique …") names the actual violation instead of the
