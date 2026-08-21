@@ -26,6 +26,7 @@
         "$TURBO_ROOT$/packages/*/**/*.test.ts",
         "$TURBO_ROOT$/packages/*/**/*.spec.ts",
         "$TURBO_ROOT$/docs/package.json",
+        "$TURBO_ROOT$/docs/.vitepress/config.ts",
         "$TURBO_ROOT$/docs/tsconfig*.json",
         "$TURBO_ROOT$/docs/**/*.test.ts",
         "$TURBO_ROOT$/docs/**/*.spec.ts"
