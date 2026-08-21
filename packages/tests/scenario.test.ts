@@ -541,10 +541,12 @@ describe("scenario runner", () => {
   });
 
   // The dispatch-only scenario for ui.focus / ui.blur verifies the reducer body
-  // but not the DOM wiring — addEventListener("focus") → applyUiEventHandlers →
-  // reducer. The `focus` / `blur` primitives let a scenario exercise that path
-  // in one step, so "compiles + DOM wired + reducer fires" can be observed in
-  // the scenario tier alone.
+  // but not the DOM wiring — addEventListener("focus") →
+  // `installUiEventListeners` → reducer. The `focus` / `blur` primitives let a
+  // scenario exercise that path in one step, so "compiles + DOM wired + reducer
+  // fires" can be observed in the scenario tier alone. Feature example 76 walks
+  // the other way in, where the listener is registered by the patch that first
+  // puts a handler in the slot.
   describe("focus / blur DOM-event primitives", () => {
     async function compileInline(name: string, src: string): Promise<string> {
       const here = dirname(fileURLToPath(import.meta.url));

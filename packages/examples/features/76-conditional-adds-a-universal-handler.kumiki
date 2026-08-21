@@ -8,12 +8,15 @@
 # the slot is refreshed with the new handler, and no listener was ever
 # registered to read it.
 #
-# The neighbouring case (62) swaps one handler for another and works, which is
-# what made this one hard to see from the outside: both are "a conditional that
-# changes a handler", and only one of them fired.
+# The neighbouring case (62) swaps one handler for another. That was fixed
+# earlier and works now, which is what made this one hard to see from the
+# outside: both are "a conditional that changes a handler", and only one of
+# them fired.
 #
 # `onClick` is unaffected — its listener is registered unconditionally by the
-# button renderer. This app is deliberately the other four.
+# button renderer. This app wires two of the four; the runtime's own tests
+# cover all four, since `kumiki run` can fire focus and blur but not keydown
+# or mouseenter.
 #
 # The log below is the assertion. Focusing before the branch arms must do
 # nothing; focusing after it must reach the reducer.
@@ -27,8 +30,13 @@ reducer left  on=ui.blur(Field)   do= log := log + "B"
 
 tile ArmBtn = button(text="arm", onClick=arm)
 
-# `Field` is here to give `noted` / `left` a selector; the conditional below is
-# the shape under test, and it names those reducers directly.
+# `Field` is declared and never rendered. What actually fires the reducers is
+# the inline `input` below naming them through `onFocus=` / `onBlur=`; the
+# implicit subscription `ui.focus(Field)` sets up matches on the enclosing
+# rendered tile, which is `App`, so it never fires at all. `Field` exists so
+# those selectors have a name to resolve — and its *kind* matters too:
+# `ui.focus` / `ui.blur` only lift onto input-like tiles, so a `text` here
+# would be W0212 "the handler is silently dropped".
 tile Field = input(value="")
 
 tile App = column(
