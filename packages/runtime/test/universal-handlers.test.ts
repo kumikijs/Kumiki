@@ -53,7 +53,9 @@ function armableApp(handler: Universal, calls: Record<string, unknown>[]) {
     init: [],
     reducers: [],
     root: (): TileNode => {
-      const props: TileProps = armed ? { [handler]: (el) => calls.push(el) } : {};
+      const props: TileProps = armed
+        ? { [handler]: (el: Record<string, unknown>) => calls.push(el) }
+        : {};
       return { kind: "input", value: "", props };
     },
   };
@@ -110,6 +112,41 @@ describe("a universally-lifted handler that arrives on a later render", () => {
     dispose();
   });
 
+  it.each(NAMES)("%s fires once on an element the reconcile has patched", (handler) => {
+    // The runtime holds no listener refs, so registering on the render that
+    // fills the slot has to be idempotent by bookkeeping. A tile that carries
+    // the handler from the start and is then patched would otherwise gain a
+    // second set of listeners and run the reducer twice per event.
+    const calls: Record<string, unknown>[] = [];
+    let renders = 0;
+    const app: AppShape = {
+      slots: {},
+      caps: [],
+      effects: {},
+      init: [],
+      reducers: [],
+      root: (): TileNode => {
+        renders += 1;
+        // `value` changes so the two nodes cannot compare equal — this has to
+        // be the patch path, not a reuse that never refreshes the slot.
+        return {
+          kind: "input",
+          value: `v${renders}`,
+          props: { [handler]: (el: Record<string, unknown>) => calls.push(el) },
+        };
+      },
+    };
+    const { dispose } = mount(app, root);
+
+    const el = defined(root.querySelector("input"), "the input the app renders");
+    app._rerender?.();
+    expect(root.querySelector("input"), "the patch reused the element").toBe(el);
+
+    UNIVERSAL[handler].fire(el);
+    expect(calls).toHaveLength(1);
+    dispose();
+  });
+
   it("registers no listener at all for a tile that never carries one", () => {
     // Behaviour cannot answer this: a registered listener over an empty slot is
     // a no-op and looks exactly like no listener. Ask `addEventListener`.
@@ -135,4 +172,4 @@ describe("a universally-lifted handler that arrives on a later render", () => {
   });
 });
 
-const UNIVERSAL_EVENTS = new Set(NAMES.map((name) => UNIVERSAL[name].event));
+const UNIVERSAL_EVENTS: ReadonlySet<string> = new Set(NAMES.map((name) => UNIVERSAL[name].event));
