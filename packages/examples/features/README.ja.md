@@ -53,6 +53,7 @@
 | [46-stdlib-paren-methods](./46-stdlib-paren-methods.kumiki) | stdlib メソッドの括弧付き形（`is-ok()` / `values()` / `lower()` / `sort()` 等）と `Bytes.from-text/base64/bytes` 構築子 |
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | JS の予約語（`new` / `class` / `var`）やランタイム内部名（`_live` / `_s`）と衝突する識別子 |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | ハンドラだけが異なる 2 つのインラインタイルを条件分岐で入れ替える |
+| [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | 後から分岐が `onFocus` / `onBlur` を*足す*ケース（renderer ではなく runtime が持ち上げる 4 種） |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | refinement が reducer のバッチを丸ごと拒否する挙動と、代わりに書くべきガード |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |

@@ -246,8 +246,11 @@ describe("runtime: tile-level keyed diff (#187)", () => {
 
   it("does not multiply-register event listeners on reused DOM nodes", () => {
     // If reconcile re-attached handlers to a reused element, addEventListener-
-    // based handlers (`applyUiEventHandlers` in core.ts) would accumulate and a
-    // single click would fire N reducers. Prove the count stays at one.
+    // based handlers would accumulate and a single click would fire N reducers.
+    // Prove the count stays at one. The path here is the button's own
+    // `INPUT_STATE` slot (`tiles-input.ts`), not the universal four — those
+    // register through `installUiEventListeners`, which is idempotent per
+    // element, and `universal-handlers.test.ts` holds them to the same count.
     let clicks = 0;
     const app: AppShape & { _live: { n: number } } = Object.assign(
       {

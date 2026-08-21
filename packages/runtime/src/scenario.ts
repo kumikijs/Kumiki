@@ -477,8 +477,10 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("focus" in a) {
-    // Verify the DOM-wiring path: addEventListener("focus") → applyUiEventHandlers
-    // (core.ts) → reducer. focus/blur do not bubble per DOM spec, but the runtime
+    // Verify the DOM-wiring path: addEventListener("focus") →
+    // `installUiEventListeners` (core.ts, reached from the create path or from
+    // the first patch that fills the handler slot) → reducer. focus/blur do not
+    // bubble per DOM spec, but the runtime
     // attaches the listener directly on the tile element so a non-bubbling
     // dispatch reaches it. Scope the query to `root`: focus/blur targets render
     // inside the mount tree (unlike confirm/toast overlays that justify `click`'s

@@ -2965,11 +2965,14 @@ function renderPanicFallback(e: unknown): HTMLElement {
 // (position + `kind`) unless the tile carries a `TileNode.key`, in which
 // case the keyed child-list path pairs children across renders by key.
 //
-// Reused tiles are NEVER re-touched: `applyMotion` restarts animations, and
-// `applyUiEventHandlers` uses `addEventListener` and would multiply-register
-// on every reuse. Because our equality check compares DATA props (ignoring
-// function-valued fields), the OLD closure on a reused element is
-// behaviourally equivalent to what a fresh render would install.
+// Reused tiles are NEVER re-touched by this create path: `applyMotion` would
+// restart animations. The handlers do not need it — a changed closure reaches
+// a reused element through the shared slot the reconcile refreshes, and
+// `installUiEventListeners` is idempotent per element, so re-touching would
+// buy nothing rather than double-register. Function-valued props are compared
+// by identity like every other value (see `tileValueEqual`), so a tile whose
+// handler changed is a difference the walker acts on, not one this path has to
+// stand in for.
 
 type TileElementMap = WeakMap<TileNode, HTMLElement>;
 
@@ -3237,8 +3240,10 @@ function reconcileNode(
       // (`tiles-input.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
       // (`tiles-text.ts`) are refreshed by their per-kind patchers; the
       // universal onKeyDown / onFocus / onBlur / onMouseEnter handlers, which
-      // `applyUiEventHandlers` wires on every tile via the create ctx, live in
-      // this shared UI_HANDLER_STATE and are refreshed here.
+      // `applyUiEventHandlers` lifts onto every tile kind via the create ctx,
+      // live in this shared UI_HANDLER_STATE and are refreshed here. This is
+      // also where their listeners are first registered, when the create-time
+      // props carried none of the four and this render introduces one.
       refreshUiHandlerSlot(oldEl, (newNode as { props?: TileProps }).props);
       // The common props and the prop-derived style are applied outside the
       // per-kind renderers, so no patcher re-applies them; without this a
@@ -4048,14 +4053,21 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
 }
 
 // Per-element slot for the universally-lifted UI handlers (onKeyDown /
-// onMouseEnter / onFocus / onBlur). Same pattern as tiles-input.ts INPUT_STATE
-// and tiles-text.ts LINK_STATE: native listeners are registered once at
-// create-time and dispatch through the slot; `refreshUiHandlerSlot` overwrites
-// the slot when a patch runs so the new node's handler + `el` payload reach
-// subsequent events. Without it, `applyUiEventHandlers` would close over the
-// create-time `props`: the patch path exists precisely so a changed handler
-// lands on an element that keeps its identity, and a listener bound to the old
-// `props` would keep firing the previous render's closure instead.
+// onMouseEnter / onFocus / onBlur). Same slot-dispatch shape as
+// tiles-input.ts INPUT_STATE and tiles-text.ts LINK_STATE: the native listener
+// reads the slot instead of closing over the create-time `props`, and
+// `refreshUiHandlerSlot` overwrites the slot when a patch runs so the new
+// node's handler + `el` payload reach subsequent events. Without it the patch
+// path — which exists precisely so a changed handler lands on an element that
+// keeps its identity — would leave a listener firing the previous render's
+// closure.
+//
+// One thing differs from those two, and it is what this comment exists to say:
+// they register their listeners unconditionally at create time, while these
+// four register on whichever render first puts a handler in the slot
+// (`installUiEventListeners`). Most tiles carry none of the four, and a
+// conditional branch that introduces one later has to be given somewhere to
+// land.
 type UiHandlerSlot = {
   onKeyDown?: EventHandler;
   onMouseEnter?: EventHandler;
@@ -4064,6 +4076,15 @@ type UiHandlerSlot = {
   el?: Record<string, unknown>;
 };
 const UI_HANDLER_STATE = new WeakMap<HTMLElement, UiHandlerSlot>();
+/**
+ * Elements whose four native listeners are already registered. The runtime
+ * holds no listener refs, so registration has to be idempotent by bookkeeping
+ * rather than by removal.
+ */
+const UI_HANDLER_LISTENING = new WeakSet<HTMLElement>();
+
+const slotHasHandler = (slot: UiHandlerSlot): boolean =>
+  Boolean(slot.onKeyDown ?? slot.onMouseEnter ?? slot.onFocus ?? slot.onBlur);
 
 function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
   const slot: UiHandlerSlot = {};
@@ -4081,20 +4102,40 @@ function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
  * by `reconcileNode` whenever a patch runs, so re-used elements dispatch
  * `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` through the LATEST closure
  * instead of the create-time one.
+ *
+ * A conditional whose later branch *introduces* one of the four used to arrive
+ * here with nothing to dispatch through: the element is reused, so its
+ * create-time props had decided whether any listener existed, and they carried
+ * none. Registering on the render that first fills the slot is what gives that
+ * handler somewhere to land.
+ *
+ * The write is unconditional, unlike `applyUiEventHandlers` below, and that
+ * asymmetry is load-bearing: a listener registered on an earlier render stays
+ * registered, so overwriting with an empty slot is the only thing that stops a
+ * branch which *drops* its handler from going on dispatching the old one.
  */
 function refreshUiHandlerSlot(el: HTMLElement, props?: TileProps): void {
-  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  const slot = toUiHandlerSlot(props);
+  UI_HANDLER_STATE.set(el, slot);
+  if (slotHasHandler(slot)) installUiEventListeners(el);
 }
 
 function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  const hasAny =
-    Boolean(props.onKeyDown) ||
-    Boolean(props.onMouseEnter) ||
-    Boolean(props.onFocus) ||
-    Boolean(props.onBlur);
-  if (!hasAny) return;
-  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  const slot = toUiHandlerSlot(props);
+  // A tile that carries none of the four registers nothing, and writes no slot
+  // — most tiles never will, and the listeners would be four no-ops over an
+  // empty slot. Nothing is registered yet at this point, so unlike the refresh
+  // above there is no stale dispatch for an empty slot to shut off.
+  if (!slotHasHandler(slot)) return;
+  UI_HANDLER_STATE.set(el, slot);
+  installUiEventListeners(el);
+}
+
+/** Register the four native listeners, once per element. */
+function installUiEventListeners(el: HTMLElement): void {
+  if (UI_HANDLER_LISTENING.has(el)) return;
+  UI_HANDLER_LISTENING.add(el);
   el.addEventListener("keydown", (e) => {
     const state = UI_HANDLER_STATE.get(el);
     if (!state?.onKeyDown) return;

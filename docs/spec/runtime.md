@@ -435,7 +435,11 @@ Kumiki-level dynamic handler and browser-native `toggle` semantics do not
 need re-routing. The universal handlers `applyUiEventHandlers` lifts on every
 tile (`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur`) share a single
 `UI_HANDLER_STATE` slot that the reconcile refreshes on every patch, so a
-closure change reaches the next event regardless of tile kind.
+closure change reaches the next event regardless of tile kind. Their native
+listeners are registered on the render that first puts one of the four in the
+slot — at create time for a tile that carries one, on the patch for a
+conditional branch that introduces one later. A tile that never carries one
+registers nothing.
 
 **Value-write guards.** Text inputs (`input`, `textarea`, `editable`) skip
 the `.value` / `.textContent` assignment when it already matches

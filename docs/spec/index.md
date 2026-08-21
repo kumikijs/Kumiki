@@ -198,4 +198,5 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `73-effect-policy-queue.kumiki` | slot, effect, reducer | lifecycle | [§10.4.3](./runtime.md#_10-4-3-policy-handling) |
 | `74-common-tile-props.kumiki` | slot, reducer, tile | style | [§2.3.10](./stdlib.md#_2-3-10-common-specification-of-props) |
 | `75-paren-less-stdlib-constants.kumiki` | slot, effect, reducer | http | [§6.1.4](./http.md#_6-1-4-the-decoder-type) |
+| `76-conditional-adds-a-universal-handler.kumiki` | slot, reducer, tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
 <!-- examples:end -->
