@@ -100,6 +100,16 @@ function mountTarget(): HTMLDivElement {
   return el;
 }
 
+/**
+ * Drops the map the SSR pass filled in, so the client starts from slot
+ * defaults the way a fresh boot would. Behind a function because deleting the
+ * property inline would narrow `app.live` to `undefined` for the rest of the
+ * test, and every assertion after hydration is about what hydration put back.
+ */
+function resetLive(app: AppShape): void {
+  delete app.live;
+}
+
 describe("hydrate §10.6.2", () => {
   let target: HTMLDivElement;
 
@@ -119,8 +129,7 @@ describe("hydrate §10.6.2", () => {
     const app = makeApp(provider);
     const rendered = await renderToString(app, { providers: { "http.get": provider } });
 
-    // Reset app.live so the client starts from defaults the way a fresh boot would.
-    app.live = undefined;
+    resetLive(app);
     const logger = createEpisodeLogger();
     const handle = hydrate(app, target, rendered, { episodeLogger: logger });
 
@@ -142,7 +151,7 @@ describe("hydrate §10.6.2", () => {
     const rendered = await renderToString(app, { providers: { "http.get": provider } });
     expect(provider).toHaveBeenCalledTimes(1);
 
-    app.live = undefined;
+    resetLive(app);
     const handle = hydrate(app, target, rendered, { providers: { "http.get": provider } });
 
     // Provider stays at 1 — hydration is forbidden from re-running app.init.
@@ -163,7 +172,7 @@ describe("hydrate §10.6.2", () => {
     // …and the volatile `draft` is absent.
     expect(rendered.snapshot.slots).not.toHaveProperty("draft");
 
-    app.live = undefined;
+    resetLive(app);
     const handle = hydrate(app, target, rendered);
 
     expect(app.live?.user).toEqual({ id: "u_1", name: "Yui" });
@@ -180,7 +189,7 @@ describe("hydrate §10.6.2", () => {
     const app = makeApp(provider);
     const rendered = await renderToString(app, { providers: { "http.get": provider } });
 
-    app.live = undefined;
+    resetLive(app);
     const logger = createEpisodeLogger();
     const handle = hydrate(app, target, rendered, { episodeLogger: logger });
 
@@ -208,7 +217,7 @@ describe("hydrate §10.6.2", () => {
     }));
     const app = makeApp(provider);
     const rendered = await renderToString(app, { providers: { "http.get": provider } });
-    app.live = undefined;
+    resetLive(app);
 
     const backing = new Map<string, string>();
     const lsImpl: EpisodeLocalStorage = {
@@ -249,7 +258,7 @@ describe("hydrate §10.6.2", () => {
       snapshot: { ...rendered.snapshot, kumiki: 2 as unknown as 1 },
     };
 
-    app.live = undefined;
+    resetLive(app);
     const logger = createEpisodeLogger();
     const handle = hydrate(app, target, mismatched, {
       episodeLogger: logger,
@@ -294,7 +303,7 @@ describe("hydrate §10.6.2", () => {
     target.innerHTML = rendered.html;
     expect(target.children.length).toBeGreaterThanOrEqual(1);
 
-    app.live = undefined;
+    resetLive(app);
     const handle = hydrate(app, target, rendered);
     // Exactly one root after hydration — the SSR tree was replaced wholesale.
     expect(target.children.length).toBe(1);

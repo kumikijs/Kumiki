@@ -125,7 +125,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 /** What the whole pipeline does with a source — never a `RangeError`. */
 function pipeline(source: string): "ok" | "fail" | ParseError {
   try {
-    return compile(source, { capabilities: [] }).kind;
+    return compile(source, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [] }).kind;
   } catch (e) {
     if (e instanceof ParseError) return e;
     throw e;

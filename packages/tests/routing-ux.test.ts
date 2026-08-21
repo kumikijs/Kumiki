@@ -42,12 +42,16 @@ describe("issue #86 — link prefetch", () => {
   });
 
   // The other branch of `typeof IntersectionObserver === "function"`. A DOM
-  // without one has to prefetch on a microtask instead, and that fallback is
-  // only reachable when the global is genuinely absent.
+  // without one has to prefetch on a microtask instead.
   it("falls back to a microtask where there is no IntersectionObserver", async () => {
-    const g = globalThis as { IntersectionObserver?: typeof IntersectionObserver };
+    const g = globalThis as {
+      IntersectionObserver?: typeof IntersectionObserver | undefined;
+    };
     const original = g.IntersectionObserver;
-    g.IntersectionObserver = undefined;
+    // Deleted rather than set to `undefined`. Both reach the fallback — the
+    // renderer reads the global into a local and asks `typeof` — but an own
+    // property holding `undefined` is not the DOM this test is named after.
+    delete g.IntersectionObserver;
     try {
       const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
       const root = freshRoot();
@@ -56,7 +60,8 @@ describe("issue #86 — link prefetch", () => {
       expect(app.live?.prefetched).toBe(1);
       expect(app.live?.lastId).toBe("abc-123");
     } finally {
-      g.IntersectionObserver = original;
+      // Absent to begin with stays absent — the delete above already left it so.
+      if (original) g.IntersectionObserver = original;
     }
   });
 });

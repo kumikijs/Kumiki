@@ -36,6 +36,14 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
+
+/** Capture group `i` of a match. Every group read here is mandatory in its pattern. */
+const group = (m: RegExpMatchArray, i: number): string =>
+  defined(m[i], `capture group ${i} of ${JSON.stringify(m[0])}`);
+
+/** The part of a link target ahead of its `#anchor`. */
+const pathOf = (target: string): string => defined(target.split("#")[0], `a path in ${target}`);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
@@ -113,8 +121,9 @@ function* walk(file: string, md: string): Generator<{ line: string; inFence: boo
   for (const line of md.split(/\r?\n/)) {
     const m = line.match(/^\s{0,3}(`{3,}|~{3,})/);
     if (m) {
-      const char = m[1][0];
-      const len = m[1].length;
+      const marker = group(m, 1);
+      const char = marker.slice(0, 1);
+      const len = marker.length;
       if (fence === null) fence = { char, len };
       else if (char === fence.char && len >= fence.len) fence = null;
       continue;
@@ -140,7 +149,7 @@ function collectLinks(file: string, md: string): Link[] {
   for (const { line, inFence } of walk(file, md)) {
     if (inFence) continue;
     for (const m of line.matchAll(/\[([^\]]*)\]\(([^)\s]+)\)/g)) {
-      out.push({ file, target: m[2], label: m[1], raw: m[0] });
+      out.push({ file, target: group(m, 2), label: group(m, 1), raw: m[0] });
     }
   }
   return out;
@@ -229,7 +238,9 @@ function registeredVerbs(): Set<string> {
   const dir = join(repoRoot, "packages", "cli", "src", "commands");
   const verbs = readdirSync(dir)
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
-    .flatMap((f) => [...read(join(dir, f)).matchAll(/\.command\(\s*"([\w-]+)"/g)].map((m) => m[1]));
+    .flatMap((f) =>
+      [...read(join(dir, f)).matchAll(/\.command\(\s*"([\w-]+)"/g)].map((m) => group(m, 1)),
+    );
   if (verbs.length < 15) {
     throw new Error(
       `read ${verbs.length} verbs out of packages/cli/src/commands — the .command("…") scan broke, so every command below would be called unknown`,
@@ -304,7 +315,7 @@ function githubAnchors(md: string, file: string): Set<string> {
     if (inFence) continue;
     const m = line.match(/^#{1,6}\s+(.*)$/);
     if (!m) continue;
-    const slug = m[1]
+    const slug = group(m, 1)
       .trim()
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, "")
@@ -323,7 +334,7 @@ function githubAnchors(md: string, file: string): Set<string> {
 function globToRegExp(pattern: string): RegExp {
   let out = "";
   for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
+    const c = pattern.charAt(i);
     if (c === "*") {
       if (pattern[i + 1] === "*") {
         // `**/` spans any number of directories, including none.
@@ -372,8 +383,7 @@ const allCommands = exampleReadmes.flatMap((rel) =>
   collectCommands(rel, read(join(repoRoot, rel))),
 );
 
-const targetOf = (link: Link): string =>
-  resolve(repoRoot, dirname(link.file), link.target.split("#")[0]);
+const targetOf = (link: Link): string => resolve(repoRoot, dirname(link.file), pathOf(link.target));
 
 const bare = (label: string): string => label.replace(/`/g, "");
 
@@ -482,7 +492,8 @@ describe("READMEs — links", () => {
   it("every anchor on a relative link names a heading in the file it points at", () => {
     const problems: string[] = [];
     for (const link of relativeLinks) {
-      const [path, anchor] = link.target.split("#");
+      const [, anchor] = link.target.split("#");
+      const path = pathOf(link.target);
       if (!anchor || !path.endsWith(".md")) continue;
       const absolute = targetOf(link);
       if (!existsSync(absolute)) continue; // the dead-link rule above reports it
@@ -501,7 +512,7 @@ describe("READMEs — links", () => {
   it("a link whose label is a file name points at that file", () => {
     const problems = relativeLinks
       .filter((l) => /^[\w./-]+\.(md|kumiki|json|ts)$/.test(bare(l.label)))
-      .filter((l) => !l.target.split("#")[0].endsWith(bare(l.label)))
+      .filter((l) => !pathOf(l.target).endsWith(bare(l.label)))
       .map((l) => `${l.file}: ${l.raw}`);
     if (problems.length > 0) {
       expect.fail(

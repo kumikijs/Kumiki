@@ -21,20 +21,17 @@ function makeIconApp(opts: {
     effects: {},
     init: [],
     reducers: [],
-    icons: opts.appIcons,
-    themes: opts.themeIcons
+    ...(opts.appIcons ? { icons: opts.appIcons } : {}),
+    ...(opts.themeIcons
       ? {
-          T: {
-            colors: { success: "#16a34a" },
-            icons: opts.themeIcons,
-          },
+          themes: { T: { colors: { success: "#16a34a" }, icons: opts.themeIcons } },
+          themeName: "T",
         }
-      : undefined,
-    themeName: opts.themeIcons ? "T" : undefined,
+      : {}),
     root: () => ({
       kind: "icon",
       name: opts.iconName ?? "check",
-      props: opts.iconProps,
+      ...(opts.iconProps ? { props: opts.iconProps } : {}),
     }),
   };
 }

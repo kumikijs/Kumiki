@@ -4,6 +4,7 @@
 
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 
 const FIXTURE = `
 slot _ : Text = ""
@@ -106,13 +107,14 @@ describe("icon registry strict mode", () => {
     expect(result.kind).toBe("fail");
     if (result.kind !== "fail") return;
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].code).toBe("E0704");
-    expect(result.errors[0].kind).toBe("unknown-icon");
-    expect(result.errors[0].message).toContain("cheque");
+    const error = defined(result.errors[0], "the unknown-icon error");
+    expect(error.code).toBe("E0704");
+    expect(error.kind).toBe("unknown-icon");
+    expect(error.message).toContain("cheque");
     // The position must point at the string literal so IDE / overlay can
     // navigate directly to it. Source line 3, column where `"cheque"` opens.
-    expect(result.errors[0].pos.line).toBe(3);
-    expect(result.errors[0].pos.col).toBeGreaterThan(0);
+    expect(error.pos.line).toBe(3);
+    expect(error.pos.col).toBeGreaterThan(0);
   });
 
   it("strictIcons=true accepts a name in the supplied registry", () => {

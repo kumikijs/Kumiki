@@ -169,7 +169,8 @@ describe("reconcile diagnostics reach the smoke report", () => {
       expect(report.ok).toBe(true);
       const solo = report.diagnostics
         .map((d) => d.diagnostic)
-        .filter((d) => d.kind === "reconcile-fallback" && d.tile === "Solo");
+        .filter((d) => d.kind === "reconcile-fallback")
+        .filter((d) => d.tile === "Solo");
       expect(solo.map((d) => d.reason)).toEqual(["unplaceable-insert", "child-count-change"]);
     } finally {
       root.remove();

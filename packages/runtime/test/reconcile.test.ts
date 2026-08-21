@@ -11,7 +11,9 @@ import type {
   Episode,
   EpisodeLogger,
   ReducerSpec,
+  TileCtx,
   TileNode,
+  TileRenderer,
   TileRenderers,
 } from "@kumikijs/runtime";
 import {
@@ -29,6 +31,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WRAPPING_TILE_KINDS } from "../src/core.ts";
 import { firstChildMappedColumn } from "./fixtures/host-renderers.ts";
+import { defined } from "./helpers/defined.ts";
 
 function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpec {
   return {
@@ -86,6 +89,14 @@ function makeStripApp(opts: {
   return Object.assign(app, { _live: live });
 }
 
+/**
+ * The child a test says is at `i`. `children[i]` is optional to the
+ * typechecker, and a missing one should fail the test that named it rather
+ * than compare `undefined` against the element it was supposed to be.
+ */
+const childAt = (parent: Element, i: number): Element =>
+  defined(parent.children[i], `child ${i} of <${parent.tagName.toLowerCase()}>`);
+
 describe("runtime: tile-level keyed diff (#187)", () => {
   let root: HTMLElement;
 
@@ -117,8 +128,8 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     // changed, but the per-kind patcher mutates .textContent in place and
     // returns the same HTMLElement — no more subtree teardown for a leaf
     // data-prop change. Pre-#190 this asserted `not.toBe` (rebuild path).
-    expect(column.children[0]).toBe(savedHeading);
-    expect(column.children[0].textContent).toBe("Count: 1");
+    expect(childAt(column, 0)).toBe(savedHeading);
+    expect(childAt(column, 0).textContent).toBe("Count: 1");
     // Every sibling row survived — SAME element reference.
     for (let i = 0; i < savedRows.length; i++) {
       expect(column.children[i + 1]).toBe(savedRows[i]);
@@ -313,9 +324,9 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     };
     const { dispose } = mount(app, root);
     const column = root.firstElementChild as HTMLElement;
-    const savedTop = column.children[0];
-    const savedMiddle = column.children[1];
-    const savedBottom = column.children[2];
+    const savedTop = childAt(column, 0);
+    const savedMiddle = childAt(column, 1);
+    const savedBottom = childAt(column, 2);
     expect(savedMiddle.tagName.toLowerCase()).toBe("h1");
 
     showHeading = false;
@@ -324,11 +335,11 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     // Same column, same top / bottom, but middle became a fresh element of a
     // different tag (`text` renders a <div>-family element, not <h1>).
     expect(root.firstElementChild).toBe(column);
-    expect(column.children[0]).toBe(savedTop);
-    expect(column.children[2]).toBe(savedBottom);
-    expect(column.children[1]).not.toBe(savedMiddle);
-    expect(column.children[1].tagName.toLowerCase()).not.toBe("h1");
-    expect(column.children[1].textContent).toBe("swap me");
+    expect(childAt(column, 0)).toBe(savedTop);
+    expect(childAt(column, 2)).toBe(savedBottom);
+    expect(childAt(column, 1)).not.toBe(savedMiddle);
+    expect(childAt(column, 1).tagName.toLowerCase()).not.toBe("h1");
+    expect(childAt(column, 1).textContent).toBe("swap me");
     dispose();
   });
 
@@ -361,10 +372,10 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     };
     const { dispose } = mount(app, root);
     const column = root.firstElementChild as HTMLElement;
-    const savedSibling = column.children[0];
-    const savedBox = column.children[1];
-    const savedCard = savedBox.children[0];
-    const savedHeading = savedCard.children[0];
+    const savedSibling = childAt(column, 0);
+    const savedBox = childAt(column, 1);
+    const savedCard = childAt(savedBox, 0);
+    const savedHeading = childAt(savedCard, 0);
     expect(savedHeading.textContent).toBe("deep 0");
 
     live.n = 7;
@@ -372,13 +383,13 @@ describe("runtime: tile-level keyed diff (#187)", () => {
 
     // Root, sibling row, and every ancestor of the changed leaf keep identity.
     expect(root.firstElementChild).toBe(column);
-    expect(column.children[0]).toBe(savedSibling);
-    expect(column.children[1]).toBe(savedBox);
-    expect(savedBox.children[0]).toBe(savedCard);
+    expect(childAt(column, 0)).toBe(savedSibling);
+    expect(childAt(column, 1)).toBe(savedBox);
+    expect(childAt(savedBox, 0)).toBe(savedCard);
     // #190: leaf-tile data-prop change is patched in place, so element
     // identity is preserved. Pre-#190 this asserted `not.toBe` (rebuild).
-    expect(savedCard.children[0]).toBe(savedHeading);
-    expect(savedCard.children[0].textContent).toBe("deep 7");
+    expect(childAt(savedCard, 0)).toBe(savedHeading);
+    expect(childAt(savedCard, 0).textContent).toBe("deep 7");
     dispose();
   });
 });
@@ -422,7 +433,9 @@ describe("runtime: keyed reconcile (#188)", () => {
     const app = keyedListApp(() => order);
     const { dispose } = mount(app, root);
     const column = root.firstElementChild as HTMLElement;
-    const [ea, eb, ec] = Array.from(column.children) as HTMLElement[];
+    const ea = childAt(column, 0);
+    const eb = childAt(column, 1);
+    const ec = childAt(column, 2);
     expect([ea.textContent, eb.textContent, ec.textContent]).toEqual(["row a", "row b", "row c"]);
 
     order = ["c", "a", "b"];
@@ -449,7 +462,7 @@ describe("runtime: keyed reconcile (#188)", () => {
     expect(after[0]).toBe(ea);
     expect(after[2]).toBe(eb);
     expect(after[3]).toBe(ec);
-    expect(after[1].textContent).toBe("row x");
+    expect(defined(after[1], "the inserted row").textContent).toBe("row x");
     dispose();
   });
 
@@ -710,8 +723,8 @@ describe("runtime: keyed reconcile (#188)", () => {
       // rebuild — full rebuild renders them positionally.
       const column = root.firstElementChild as HTMLElement;
       expect(column.children.length).toBe(2);
-      expect(column.children[0].textContent).toBe("a1");
-      expect(column.children[1].textContent).toBe("a2");
+      expect(childAt(column, 0).textContent).toBe("a1");
+      expect(childAt(column, 1).textContent).toBe("a2");
       // And the reconcile threw — the outer panic path logged it.
       expect(suppressed.length).toBeGreaterThan(0);
       dispose();
@@ -1457,7 +1470,7 @@ describe("runtime: identity-preserving patch (#190)", () => {
       value,
     ) => {
       live[name] = value;
-      (app as unknown as Record<string, Record<string, unknown>>).live[name] = value;
+      defined(app.live, "the app's live map")[name] = value;
       setSlot(name, value);
     };
     const inp = root.querySelector("input") as HTMLInputElement;
@@ -2182,7 +2195,7 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
     let order = ["a"];
     const hostTiles: TileRenderers = {
       ...layoutTiles,
-      "host-shelf": (node, ctx) => {
+      "host-shelf": (node: TileNode, ctx: TileCtx) => {
         const el = document.createElement("section");
         el.dataset.kumikiTile = "host-shelf";
         for (const child of (node as { children: TileNode[] }).children) {

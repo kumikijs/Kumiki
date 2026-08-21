@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 
 const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
 
@@ -272,9 +273,11 @@ describe("codegen", () => {
     const mod = await importGenerated(result.js);
     const a = mod.createApp();
     const b = mod.createApp();
-    expect(a.live).not.toBe(b.live);
-    a.live.n = 5;
-    expect(b.live.n).toBe(0); // mutation of one instance must not leak to the other
+    const aLive = defined(a.live, "the first instance's live map");
+    const bLive = defined(b.live, "the second instance's live map");
+    expect(aLive).not.toBe(bLive);
+    aLive.n = 5;
+    expect(bLive.n).toBe(0); // mutation of one instance must not leak to the other
   });
 
   it("makes a standard storage effect provider-overridable (with map-request mapping first)", () => {

@@ -2,7 +2,7 @@
 // toolchain actually did. The compiler halves live in
 // `packages/compiler/test/spec-divergences.test.ts`.
 
-import type { AppShape, Episode, TileNode } from "@kumikijs/runtime";
+import type { AppShape, CapabilityRegistry, Episode, TileCtx, TileNode } from "@kumikijs/runtime";
 import {
   _stdlib,
   createEpisodeLogger,
@@ -14,12 +14,23 @@ import {
   statusTiles,
 } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defined } from "./helpers/defined.ts";
 
 const btn = (over: Partial<Extract<TileNode, { kind: "button" }>> = {}) =>
   ({ kind: "button", text: "go", ...over }) as Extract<TileNode, { kind: "button" }>;
 
+// The recursion seam every renderer and patcher is handed. None of the tiles
+// here has children, so reaching it means the tile started recursing.
+const ctx: TileCtx = {
+  render: () => {
+    throw new Error("this tile has no children to render");
+  },
+};
+
 function render(node: Extract<TileNode, { kind: "button" }>): HTMLButtonElement {
-  return inputTiles.button?.(node, () => null) as HTMLButtonElement;
+  const el = defined(inputTiles.button, "the button renderer")(node, ctx);
+  if (!(el instanceof HTMLButtonElement)) throw new Error(`expected a <button>, got ${el.tagName}`);
+  return el;
 }
 
 // forms.md §5.2.2: `button(type="submit")` submits the form it is in. The
@@ -40,18 +51,18 @@ describe("button(type=…) reaches the DOM", () => {
 
   it("reconciles the type when a conditional swaps one button for another", () => {
     const el = render(btn({ type: "button" }));
-    inputPatchers.button?.(el, btn({ type: "button" }), btn({ type: "submit" }));
+    inputPatchers.button?.(el, btn({ type: "button" }), btn({ type: "submit" }), ctx);
     expect(el.getAttribute("type")).toBe("submit");
     // …and back: a node that stops saying loses the attribute, which is what
     // `create` produces for the same node. Asserted on the attribute because
     // `el.type` reads "submit" whether it is absent or explicit — the property
     // cannot tell the two apart, and the two render differently on the server.
-    inputPatchers.button?.(el, btn({ type: "submit" }), btn());
+    inputPatchers.button?.(el, btn({ type: "submit" }), btn(), ctx);
     expect(el.hasAttribute("type")).toBe(false);
-    inputPatchers.button?.(el, btn(), btn({ type: "reset" }));
+    inputPatchers.button?.(el, btn(), btn({ type: "reset" }), ctx);
     expect(el.getAttribute("type")).toBe("reset");
     // An empty string is "did not say", like the create path treats it.
-    inputPatchers.button?.(el, btn({ type: "reset" }), btn({ type: "" }));
+    inputPatchers.button?.(el, btn({ type: "reset" }), btn({ type: "" }), ctx);
     expect(el.hasAttribute("type")).toBe(false);
   });
 
@@ -318,11 +329,12 @@ describe("policy=queue runs one at a time", () => {
 // example corpus writes, meant nothing.
 describe("toast honours the record the spec documents", () => {
   const fire = async (input: unknown): Promise<void> => {
-    // `overridableInvoke` asks the app for a provider first; a host that
+    // `overridableInvoke` asks the registry for a provider first; a host that
     // registered none still has to answer.
-    const app = { effects: {}, provider: () => undefined } as unknown as AppShape;
-    installToast(app);
-    await app.effects.toast?.invoke(input, app);
+    const caps: CapabilityRegistry = { has: () => false, provider: () => undefined };
+    const app: AppShape = { slots: {}, caps: [], reducers: [], effects: {}, init: [] };
+    installToast(app, { navigate: () => {}, back: () => {} });
+    await defined(app.effects.toast, "the installed toast effect").invoke(input, caps);
   };
   const banner = (): HTMLElement | null =>
     document.querySelector<HTMLElement>("[data-kumiki-toast]");
@@ -431,17 +443,20 @@ describe("route.hash is the Option the type says it is", () => {
 // toast tile and the error tile wrote no ARIA at all, on the client or the
 // server.
 describe("the announced regions §7.8 promises", () => {
-  const node = (kind: "toast" | "error", over: Record<string, unknown> = {}): TileNode =>
-    ({ kind, ...(kind === "toast" ? { text: "hi" } : { field: "email" }), ...over }) as TileNode;
+  const toastNode = (): Extract<TileNode, { kind: "toast" }> => ({ kind: "toast", text: "hi" });
+  const errorNode = (): Extract<TileNode, { kind: "error" }> => ({
+    kind: "error",
+    field: "email",
+  });
 
   it("announces the toast tile politely", () => {
-    const el = statusTiles.toast?.(node("toast"), () => null) as HTMLElement;
+    const el = defined(statusTiles.toast, "the toast renderer")(toastNode(), ctx);
     expect(el.getAttribute("role")).toBe("status");
     expect(el.getAttribute("aria-live")).toBe("polite");
   });
 
   it("announces the error tile assertively — it is why the user stopped", () => {
-    const el = statusTiles.error?.(node("error"), () => null) as HTMLElement;
+    const el = defined(statusTiles.error, "the error renderer")(errorNode(), ctx);
     expect(el.getAttribute("role")).toBe("alert");
     expect(el.getAttribute("aria-live")).toBe("assertive");
   });
@@ -454,9 +469,9 @@ describe("the announced regions §7.8 promises", () => {
         reducers: [],
         effects: {},
         init: [],
-        routes: [{ pattern: "/", tile: () => ({ kind: "page", children: [node("toast")] }) }],
+        routes: [{ pattern: "/", tile: () => ({ kind: "page", children: [toastNode()] }) }],
       } as unknown as AppShape,
-      { path: "/" },
+      { route: "/" },
     );
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-live="polite"');

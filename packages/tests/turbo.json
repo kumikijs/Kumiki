@@ -17,7 +17,18 @@
         "$TURBO_ROOT$/packages/examples/features/**",
         "$TURBO_ROOT$/packages/examples/apps/**",
         "$TURBO_ROOT$/packages/cli/src/kumiki.ts",
-        "$TURBO_ROOT$/packages/cli/src/commands/*.ts"
+        "$TURBO_ROOT$/packages/cli/src/commands/*.ts",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/.gitignore",
+        "$TURBO_ROOT$/pnpm-workspace.yaml",
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/packages/*/tsconfig*.json",
+        "$TURBO_ROOT$/packages/*/**/*.test.ts",
+        "$TURBO_ROOT$/packages/*/**/*.spec.ts",
+        "$TURBO_ROOT$/docs/package.json",
+        "$TURBO_ROOT$/docs/tsconfig*.json",
+        "$TURBO_ROOT$/docs/**/*.test.ts",
+        "$TURBO_ROOT$/docs/**/*.spec.ts"
       ]
     }
   }
