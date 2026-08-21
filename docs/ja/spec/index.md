@@ -198,4 +198,5 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `73-effect-policy-queue.kumiki` | slot, effect, reducer | ライフサイクル | [§10.4.3](./runtime.md#_10-4-3-policy-処理) |
 | `74-common-tile-props.kumiki` | slot, reducer, tile | スタイル | [§2.3.10](./stdlib.md#_2-3-10-props-の共通仕様) |
 | `75-paren-less-stdlib-constants.kumiki` | slot, effect, reducer | HTTP/Storage | [§6.1.4](./http.md#_6-1-4-decoder-型) |
+| `76-conditional-adds-a-universal-handler.kumiki` | slot, reducer, tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
 <!-- examples:end -->

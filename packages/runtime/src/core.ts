@@ -4064,6 +4064,15 @@ type UiHandlerSlot = {
   el?: Record<string, unknown>;
 };
 const UI_HANDLER_STATE = new WeakMap<HTMLElement, UiHandlerSlot>();
+/**
+ * Elements whose four native listeners are already registered. The runtime
+ * holds no listener refs, so registration has to be idempotent by bookkeeping
+ * rather than by removal.
+ */
+const UI_HANDLER_LISTENING = new WeakSet<HTMLElement>();
+
+const slotHasHandler = (slot: UiHandlerSlot): boolean =>
+  Boolean(slot.onKeyDown ?? slot.onMouseEnter ?? slot.onFocus ?? slot.onBlur);
 
 function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
   const slot: UiHandlerSlot = {};
@@ -4081,20 +4090,33 @@ function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
  * by `reconcileNode` whenever a patch runs, so re-used elements dispatch
  * `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` through the LATEST closure
  * instead of the create-time one.
+ *
+ * A conditional whose later branch *introduces* one of the four arrives here
+ * with nothing to dispatch through: the element is reused, so its create-time
+ * props decided whether any listener exists, and they carried none. Registering
+ * on the render that first fills the slot is what gives that handler somewhere
+ * to land.
  */
 function refreshUiHandlerSlot(el: HTMLElement, props?: TileProps): void {
-  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  const slot = toUiHandlerSlot(props);
+  UI_HANDLER_STATE.set(el, slot);
+  if (slotHasHandler(slot)) installUiEventListeners(el);
 }
 
 function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  const hasAny =
-    Boolean(props.onKeyDown) ||
-    Boolean(props.onMouseEnter) ||
-    Boolean(props.onFocus) ||
-    Boolean(props.onBlur);
-  if (!hasAny) return;
-  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  const slot = toUiHandlerSlot(props);
+  // A tile that carries none of the four registers nothing — most tiles never
+  // will, and the listeners would be four no-ops over an empty slot.
+  if (!slotHasHandler(slot)) return;
+  UI_HANDLER_STATE.set(el, slot);
+  installUiEventListeners(el);
+}
+
+/** Register the four native listeners, once per element. */
+function installUiEventListeners(el: HTMLElement): void {
+  if (UI_HANDLER_LISTENING.has(el)) return;
+  UI_HANDLER_LISTENING.add(el);
   el.addEventListener("keydown", (e) => {
     const state = UI_HANDLER_STATE.get(el);
     if (!state?.onKeyDown) return;

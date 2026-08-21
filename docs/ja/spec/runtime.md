@@ -415,7 +415,9 @@ renderer が `WeakMap<HTMLElement, Handlers>` に現在の handler を格納し�
 `applyUiEventHandlers` が張る `onKeyDown` / `onMouseEnter` / `onFocus` /
 `onBlur` の 4 種は共通の `UI_HANDLER_STATE` slot を経由し、reconcile が patch
 のたびに refresh するので、tile kind に関係なくクロージャ変更が次のイベントに
-届く。
+届く。native listener を張るのは 4 種のいずれかが slot に最初に入ったレンダ
+である — 最初から持つ tile なら create 時、後の分岐が足す場合はその patch 時。
+一度も持たない tile には何も張らない。
 
 **value 書き込みのガード**  テキスト入力（`input`, `textarea`, `editable`）は
 `.value === newNode.value`（`editable` は `textContent`）のときは代入を skip

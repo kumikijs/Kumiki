@@ -1,0 +1,44 @@
+# Feature: a conditional whose later branch *adds* a universally-lifted handler.
+#
+# `onFocus` / `onBlur` / `onKeyDown` / `onMouseEnter` are lifted onto every tile
+# kind by the runtime rather than by a per-kind renderer, and they dispatch
+# through one shared per-element slot. The native listeners that read that slot
+# were registered only when the tile carried a handler at create time — so a
+# branch that introduces one later had nowhere to land: the element is reused,
+# the slot is refreshed with the new handler, and no listener was ever
+# registered to read it.
+#
+# The neighbouring case (62) swaps one handler for another and works, which is
+# what made this one hard to see from the outside: both are "a conditional that
+# changes a handler", and only one of them fired.
+#
+# `onClick` is unaffected — its listener is registered unconditionally by the
+# button renderer. This app is deliberately the other four.
+#
+# The log below is the assertion. Focusing before the branch arms must do
+# nothing; focusing after it must reach the reducer.
+
+slot armed : Bool = false
+slot log   : Text = ""
+
+reducer arm   on=ui.click(ArmBtn) do= armed := true
+reducer noted on=ui.focus(Field)  do= log := log + "F"
+reducer left  on=ui.blur(Field)   do= log := log + "B"
+
+tile ArmBtn = button(text="arm", onClick=arm)
+
+# `Field` is here to give `noted` / `left` a selector; the conditional below is
+# the shape under test, and it names those reducers directly.
+tile Field = input(value="")
+
+tile App = column(
+             ArmBtn,
+             if armed then input(value="", onFocus=noted, onBlur=left)
+                      else input(value=""),
+             text("log=[" + log + "] armed=" + armed.show))
+           {pad: "lg", gap: "sm"}
+
+app ConditionalAddsUniversalHandler
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

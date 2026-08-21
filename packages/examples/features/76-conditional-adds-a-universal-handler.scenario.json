@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "label": "the live branch carries no handler yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "armed": false, "log": "" },
+        "domIncludes": ["log=[] armed=false"]
+      }
+    },
+    {
+      "label": "focusing it does nothing, which is the whole point of registering lazily",
+      "do": { "focus": "input" },
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "arm the branch that adds onFocus / onBlur to the very same element",
+      "do": { "clickText": "arm" },
+      "expect": {
+        "noErrors": true,
+        "state": { "armed": true },
+        "domIncludes": ["log=[] armed=true"]
+      }
+    },
+    {
+      "label": "the reused element must now reach the reducer it did not carry at create time",
+      "do": { "focus": "input" },
+      "expect": { "noErrors": true, "state": { "log": "F" }, "domIncludes": ["log=[F]"] }
+    },
+    {
+      "label": "and the second of the four, on the same element and the same slot",
+      "do": { "blur": "input" },
+      "expect": { "noErrors": true, "state": { "log": "FB" }, "domIncludes": ["log=[FB]"] }
+    }
+  ]
+}
