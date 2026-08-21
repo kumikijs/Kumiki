@@ -4,5 +4,7 @@
     "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*"],
+  "//exclude": "A test run writes fixtures under test-tmp/ and git ignores them; typechecking them would make the result depend on whether the suite had run first. Every typecheck config carries this, so a suite that starts generating cannot poison one.",
+  "exclude": ["**/test-tmp/**"]
 }

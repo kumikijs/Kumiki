@@ -21,7 +21,7 @@
 // by definition — cannot swell it).
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -154,16 +154,11 @@ function programOf(configPath: string): { files: string[]; normed: Set<string> }
   return { files, normed: new Set(files.map(norm)) };
 }
 
-/**
- * Directories a config excludes from its own tree, as `exclude: ["x/**"]`
- * entries. File-shaped exclusions (`src/dev/client.ts`) are not these.
- */
-function excludedDirs(configPath: string): string[] {
+/** The `exclude` list a config declares, verbatim. */
+function declaredExcludes(configPath: string): string[] {
   const raw: { exclude?: unknown } = parseConfig(configPath).raw ?? {};
   const entries = Array.isArray(raw.exclude) ? raw.exclude : [];
-  return entries
-    .filter((entry): entry is string => typeof entry === "string" && entry.endsWith("/**"))
-    .map((entry) => join(dirname(configPath), entry.slice(0, -"/**".length)));
+  return entries.filter((entry): entry is string => typeof entry === "string");
 }
 
 /**
@@ -208,6 +203,9 @@ for (const file of allTestFiles) {
   else orphans.push(relative(repoRoot, file));
 }
 
+/** What every typecheck config has to keep out of its program. */
+const GENERATED_GLOB = "**/test-tmp/**";
+
 const withTests = allPackages.filter((p) => p.testFiles.length > 0);
 const cases = withTests.map((p) => [p.name, p] as const);
 
@@ -240,31 +238,25 @@ describe("test files are typechecked", () => {
     expect(missing.map((f) => relative(repoRoot, f))).toEqual([]);
   });
 
-  it.each(cases)("%s keeps generated fixtures out of its program", (_, pkg) => {
-    // Several suites write fixtures under `test-tmp/` and git ignores them.
-    // Inside a typecheck program they would make `pnpm typecheck` answer
-    // differently depending on whether the suite had run first.
-    //
-    // A config's exclusions are only observable when there is something to
-    // exclude, so each excluded directory gets a file for the duration of this
-    // test. Without that, a fresh clone — where no suite has run yet — would
-    // see an empty `test-tmp` and pass whether the exclusion was there or not.
-    const config = configOf(pkg);
-    const sentinels = excludedDirs(config).map((dir) => join(dir, "typecheck-coverage-probe.ts"));
-    for (const sentinel of sentinels) {
-      mkdirSync(dirname(sentinel), { recursive: true });
-      writeFileSync(sentinel, "export const probe = true;\n");
-    }
-    try {
-      const owned = programOf(config).files.filter(
-        (f) => norm(f).startsWith(`${norm(pkg.dir)}/`) && !norm(f).includes("/node_modules/"),
-      );
-      // If the prefix match ever stops matching, `owned` empties and the
-      // assertion below goes permanently, silently green.
-      expect(owned.length).toBeGreaterThan(0);
-      expect(ignoredByGit(owned).map((f) => f.replace(/\\/g, "/"))).toEqual([]);
-    } finally {
-      for (const sentinel of sentinels) rmSync(sentinel, { force: true });
-    }
+  // `test-tmp/` is where every suite here writes its fixtures, and git ignores
+  // it by name. Asserted on the declaration rather than on what is on disk: a
+  // fresh clone has no `test-tmp` to find, so a scan would pass on one whether
+  // the exclusion was there or not, and whether a scan is armed under CI is a
+  // race between this package's tests and the suites that generate.
+  it.each(cases)("%s excludes the fixtures a test run generates", (_, pkg) => {
+    expect(declaredExcludes(configOf(pkg))).toContain(GENERATED_GLOB);
+  });
+
+  // The declaration above names one directory. This catches an ignored file
+  // under any other name — but only where one exists, which is why it stands
+  // beside that assertion rather than in place of it.
+  it.each(cases)("%s admits no ignored file that happens to be present", (_, pkg) => {
+    const owned = programOf(configOf(pkg)).files.filter(
+      (f) => norm(f).startsWith(`${norm(pkg.dir)}/`) && !norm(f).includes("/node_modules/"),
+    );
+    // If the prefix match ever stops matching, `owned` empties and this goes
+    // permanently, silently green.
+    expect(owned.length).toBeGreaterThan(0);
+    expect(ignoredByGit(owned).map((f) => f.replace(/\\/g, "/"))).toEqual([]);
   });
 });
