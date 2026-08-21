@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    "types": ["node", "vite/client"]
+  },
+  "include": [".vitepress/**/*.ts", ".vitepress/**/*.d.ts"]
+}

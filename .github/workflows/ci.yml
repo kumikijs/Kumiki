@@ -34,6 +34,12 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Ahead of the tests: a type error is the cheaper failure to read, and
+      # until now nothing here ran `tsc` at all — the pre-submission gate in
+      # CONTRIBUTING.md includes typecheck, and CI did not.
+      - name: Typecheck
+        run: pnpm exec turbo run typecheck
+
       - name: Test
         run: pnpm test
 

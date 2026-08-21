@@ -1470,7 +1470,7 @@ describe("runtime: identity-preserving patch (#190)", () => {
       value,
     ) => {
       live[name] = value;
-      (app as unknown as { live: Record<string, unknown> }).live[name] = value;
+      defined(app.live, "the app's live map")[name] = value;
       setSlot(name, value);
     };
     const inp = root.querySelector("input") as HTMLInputElement;
