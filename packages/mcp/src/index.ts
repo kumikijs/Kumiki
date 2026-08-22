@@ -17,6 +17,7 @@ import {
   listDefs,
   load,
   planFix,
+  plural,
   removeDef,
   renameDef,
   replaceDef,
@@ -799,6 +800,11 @@ export function createServer(): McpServer {
             before: r.before,
             after: r.after,
             remaining: toDiagnostics(r.remaining),
+            // The advisory half, always — an empty `remaining` means the file
+            // is clean of errors, not that it is clean, and an agent deciding
+            // whether it is done reads this envelope rather than the CLI's
+            // stdout.
+            warnings: toDiagnostics(r.warnings),
             // Surface every non-success modifier on the wire so callers
             // can distinguish "no patch was needed" (`applied === 0`,
             // no modifier) from a rollback / parser-break / I/O failure.
@@ -814,26 +820,25 @@ export function createServer(): McpServer {
         return r.remaining.length > 0 ? failed(body) : text(body);
       }
       const plan = planFix(abs, input.only, caps);
+      const advisory = plan.warnings.map((w) => `${w.code} ${w.message}`);
       if (plan.errors.length === 0) {
-        // The warnings come out with the verdict. An agent told a bare "no
-        // errors" here and then running `kumiki_check` — which reports the same
-        // file as "ok (1 warning)" — has two answers and no way to reconcile
-        // them; the clean-file verdict is still `text`, not `failed`.
+        // The warnings come out with the verdict. `kumiki_check` on the same
+        // file returns a JSON diagnostics array — non-`isError`, since nothing
+        // in it is fatal — so an agent told a bare "no errors" here has two
+        // answers about one file and nothing that reconciles them. The
+        // clean-file verdict is still `text`, not `failed`.
         if (plan.warnings.length === 0) return text("no errors");
-        return text(
-          [
-            `no errors (${plan.warnings.length} warning${plan.warnings.length === 1 ? "" : "s"})`,
-            ...plan.warnings.map((w) => `${w.code} ${w.message}`),
-          ].join("\n"),
-        );
+        return text([`no errors (${plural(plan.warnings.length)})`, ...advisory].join("\n"));
       }
       // A dry run proposes and repairs nothing, so the file still has every
       // error it started with — which is what `isError` reports here.
       if (plan.patches.length === 0) {
         return failed(
-          `(no auto-patches available)\n${plan.errors
-            .map((e) => `${e.code} ${e.message}`)
-            .join("\n")}`,
+          [
+            "(no auto-patches available)",
+            ...plan.errors.map((e) => `${e.code} ${e.message}`),
+            ...advisory,
+          ].join("\n"),
         );
       }
       // The unrepairable half goes out with the repairable half. An agent
@@ -841,7 +846,7 @@ export function createServer(): McpServer {
       // clean when it is not.
       const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
       const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);
-      return failed([...proposals, ...unrepaired].join("\n"));
+      return failed([...proposals, ...unrepaired, ...advisory].join("\n"));
     },
   );
 

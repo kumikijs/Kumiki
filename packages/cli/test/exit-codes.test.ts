@@ -178,12 +178,14 @@ app Demo
     init   = []
 `;
     const file = write("fix-reveals-warning.kumiki", src);
-    const { stdout, code } = runCli(["fix", file, "--apply"]);
-    expect(stdout).toContain("file now clean");
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    // The count comes from the gate's own re-check, so it is the warning the
+    // repair revealed rather than whatever the file had before it.
+    expect(stdout).toContain("file now clean (1 warning)");
+    expect(stderr).toContain("W0212");
     expect(readFileSync(file, "utf8")).toContain("ui.focus(Card)");
     expect(code).toBe(0);
-    // …and the warning it revealed is reported by the verb that reports
-    // warnings, which still exits 0 for it.
+    // …and `check` says the same thing about the same file.
     const after = runCli(["check", file]);
     expect(after.stderr).toContain("W0212");
     expect(after.code).toBe(0);

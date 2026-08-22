@@ -143,6 +143,37 @@ describe("kumiki_fix", () => {
     });
   });
 
+  it("puts the warnings on the wire when applying, where `remaining` is empty", async () => {
+    // `remaining: []` means clean of errors, not clean. An agent deciding
+    // whether it is done reads this envelope and nothing else.
+    const file = join(workdir, "reveals-warning.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "reducer bump on=ui.focus(Crd) do= count := count + 1",
+        'tile Card = box(heading("Count: " + count.show))',
+        "tile App = column(Card)",
+        "app Demo",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_fix", { path: file, apply: true });
+      const parsed = JSON.parse(out) as {
+        applied: number;
+        remaining: unknown[];
+        warnings: { code: string }[];
+      };
+      expect(parsed.applied).toBe(1);
+      expect(parsed.remaining).toEqual([]);
+      expect(parsed.warnings.map((w) => w.code)).toEqual(["W0212"]);
+    });
+  });
+
   it("reports a warning-only file as clean and still names the warning", async () => {
     // `kumiki_check` calls this file "ok (1 warning)". A bare "no errors" here
     // gives an agent two answers about one file with nothing to reconcile them.

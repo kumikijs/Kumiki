@@ -1,24 +1,25 @@
 // A warning is advisory: `check` reports one and exits 0, and no repair branch
-// emits a patch for a warning code. `fix` read the diagnostic list without
-// asking about severity, so a file whose only diagnostic was `W0212` looked to
-// it exactly like a file full of errors.
+// emits a patch for a warning code. `fix` decided what to do about a file
+// without asking about severity, so a file whose only diagnostic was `W0212`
+// looked to it exactly like a file full of errors.
 //
-// Two of the four `check()` calls in `fix.ts` were fixed when the exit codes
-// were made to say whether a verb failed. The two in the fix-from-test path
-// were not, and that is the damaging half: the behavioural tier is gated on
-// "does this file compile", so an unrelated warning anywhere in the file made
-// `kumiki fix --auto-patch` stop being able to repair a failing test at all.
+// The fix-from-test path gates its behavioural tier on "does this file
+// compile", so an unrelated warning anywhere in the file stopped
+// `kumiki fix --auto-patch` repairing a failing test at all — and its second
+// gate did the same one step later, reporting a warning a successful repair
+// had revealed as what remained.
 //
 // The counterpart is that a warning must stay visible. `fix` reporting a bare
 // "no errors" for a file `check` calls "ok (1 warning)" trades one wrong answer
-// for another, so the plan carries the warnings it filtered out.
+// for another, so every verdict this file's subject reaches carries the
+// advisory diagnostics it decided not to act on.
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KumikiError } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fixCmd, planFix, runFixFromTest } from "../src/fix.ts";
+import { applyFixPlan, fixCmd, planFix, runFixFromTest } from "../src/fix.ts";
 
 /** A `box` cannot fire `focus`, so subscribing to one is W0212 and nothing else. */
 const WARNING = [
@@ -108,43 +109,125 @@ describe("the fix-from-test tiers on a file that only has warnings", () => {
     const outcome = await runFixFromTest(file, "t", false);
     expect(outcome.status).toBe("no-patch");
     if (outcome.status !== "no-patch") return;
-    expect((outcome.compileErrors ?? []).map((e: KumikiError) => e.code)).toContain("E0105");
+    // Exactly the errors: `toContain("E0105")` would pass just as well on the
+    // unfiltered list, so it would not notice the filter going away.
+    expect((outcome.compileErrors ?? []).map((e: KumikiError) => e.code)).toEqual(["E0105"]);
+  });
+
+  it("reports what is left after a repair, without the warning among it", async () => {
+    // The second gate's own test. One repairable error, one that is not, and a
+    // warning: tier 1 lands the repair it has, and what remains has to be the
+    // error it could not fix — not the advisory diagnostic beside it.
+    write([
+      'slot f : Text = ""',
+      'reducer recordFocus on=ui.focus(Crd) do= f := "focused"',
+      'tile Card = box(text("hi"))',
+      'tile Title = heading("Helo")',
+      "tile App = column(Card, Title, Missing)",
+      ...APP,
+      ...FAILING_TEST,
+    ]);
+    const outcome = await runFixFromTest(file, "t", true);
+    expect(outcome.status).toBe("compile-remaining");
+    if (outcome.status !== "compile-remaining") return;
+    expect(outcome.compileFixes).toBeGreaterThanOrEqual(1);
+    expect((outcome.compileErrors ?? []).map((e: KumikiError) => e.code)).toEqual(["E0105"]);
+    expect(outcome.warnings.map((w) => w.code)).toEqual(["W0212"]);
   });
 });
 
-describe("what a plan says about the warnings it filtered out", () => {
+describe("what the results say about the warnings they filtered out", () => {
   it("carries them beside the errors", () => {
-    write([...WARNING, "tile App = column(Card)", ...APP]);
+    // Beside the errors, literally: a file that has both. The clean-file case
+    // below only reaches the early return, so on its own it would leave the
+    // error branch free to drop them.
+    write([...WARNING, "tile App = column(Card, Missing)", ...APP]);
     const plan = planFix(file, undefined, []);
-    expect(plan.errors).toEqual([]);
+    expect(plan.errors.map((e) => e.code)).toEqual(["E0105"]);
     expect(plan.warnings.map((w) => w.code)).toEqual(["W0212"]);
   });
 
-  it("reports the file as clean and still says what is in it", () => {
-    // `check` calls this file "ok (1 warning)". `fix` saying "no errors" and
-    // nothing else is the same lie as the one this suite removes, told the
-    // other way round.
-    write([...WARNING, "tile App = column(Card)", ...APP]);
+  it("carries them out of the apply path, from the state it left the file in", () => {
+    // The repair resolves `Crd` to `Card`, and a `box` cannot fire `focus`, so
+    // the warning is one the repair *revealed*. Reporting the pre-patch set
+    // here would name the wrong diagnostics for the file now on disk.
+    write([
+      'slot f : Text = ""',
+      'reducer recordFocus on=ui.focus(Crd) do= f := "focused"',
+      'tile Card = box(text("hi"))',
+      "tile App = column(Card)",
+      ...APP,
+    ]);
+    const result = applyFixPlan(file, undefined, []);
+    expect(result.applied).toBe(1);
+    expect(result.remaining).toEqual([]);
+    expect(result.warnings.map((w) => w.code)).toEqual(["W0212"]);
+  });
+});
+
+/** Everything `fix` prints when it decides a file needs nothing from it. */
+describe("the verdicts fix prints", () => {
+  const printed = (run: () => number): { code: number; out: string; err: string } => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      expect(fixCmd(file, false)).toBe(0);
-      expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toContain("1 warning");
-      expect(err.mock.calls.map((c) => String(c[0])).join("\n")).toContain("W0212");
+      const code = run();
+      const join = (spy: typeof log) => spy.mock.calls.map((c) => String(c[0])).join("\n");
+      return { code, out: join(log), err: join(err) };
     } finally {
       log.mockRestore();
       err.mockRestore();
     }
+  };
+
+  it("says the file is clean and still says what is in it", () => {
+    // `check` calls this file "ok (1 warning)". `fix` saying "no errors" and
+    // nothing else is the same lie as the one this suite removes, told the
+    // other way round.
+    write([...WARNING, "tile App = column(Card)", ...APP]);
+    const dry = printed(() => fixCmd(file, false));
+    expect(dry.code).toBe(0);
+    expect(dry.out).toContain("no errors (1 warning)");
+    expect(dry.err).toContain("W0212");
+  });
+
+  it("says it the same way with --apply, which changes the file just as little", () => {
+    write([...WARNING, "tile App = column(Card)", ...APP]);
+    const applied = printed(() => fixCmd(file, true));
+    expect(applied.code).toBe(0);
+    expect(applied.out).toContain("no errors (1 warning)");
+    expect(applied.err).toContain("W0212");
+  });
+
+  it("counts more than one", () => {
+    write([
+      'slot f : Text = ""',
+      'slot g : Text = ""',
+      'reducer recordFocus on=ui.focus(Card) do= f := "focused"',
+      'reducer recordBlur on=ui.blur(Other) do= g := "blurred"',
+      'tile Card = box(text("hi"))',
+      'tile Other = box(text("there"))',
+      "tile App = column(Card, Other)",
+      ...APP,
+    ]);
+    expect(printed(() => fixCmd(file, false)).out).toContain("no errors (2 warnings)");
+  });
+
+  it("lists them under the errors when the file has both", () => {
+    // `check` reports both. `fix` reporting only the error is the same two
+    // answers about one file, in the branch nobody was looking at.
+    write([...WARNING, "tile App = column(Card, Missing)", ...APP]);
+    const dry = printed(() => fixCmd(file, false));
+    expect(dry.code).toBe(1);
+    expect(dry.err).toContain("E0105");
+    expect(dry.err).toContain("W0212");
   });
 
   it("says plain `no errors` when there is nothing at all", () => {
     write(['tile App = column(text("hi"))', ...APP]);
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      expect(fixCmd(file, false)).toBe(0);
-      expect(log.mock.calls.map((c) => String(c[0]))).toEqual(["no errors"]);
-    } finally {
-      log.mockRestore();
-    }
+    const dry = printed(() => fixCmd(file, false));
+    expect(dry.code).toBe(0);
+    expect(dry.out).toBe("no errors");
+    expect(dry.err).toBe("");
   });
 });

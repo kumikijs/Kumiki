@@ -14,6 +14,7 @@ export {
   planFix,
   planFixes,
   planFixesExplained,
+  plural,
   planTestPatch,
   planTestPatchExplained,
   runFixFromTest,
