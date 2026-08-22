@@ -303,7 +303,7 @@ A tile declares `sub-routes` but its parent route in `app.routes` is not a wildc
 
 ### E0115 `reserved-slot-name`
 
-A `slot` is declared with a name the compiler resolves before it consults the slot table, so nothing can ever read it. The name is `route`, the router-maintained route slot ([Routing](./routing.md#_3-2-the-route-slot)) — every other such name (`now`, `self`, …) is a reserved word the lexer rejects first. Without this diagnostic the declaration compiles and the slot silently renders the route object instead of its own value.
+A `slot` is declared with a name the compiler resolves before it consults the slot table, so nothing can ever read it. The name is `route`, the router-maintained route slot ([Routing](./routing.md#_3-2-current-route-state)) — every other such name (`now`, `self`, …) is a reserved word the lexer rejects first. Without this diagnostic the declaration compiles and the slot silently renders the route object instead of its own value.
 
 > `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
 
@@ -614,7 +614,7 @@ A handler prop is written on a tile whose renderer never reads it — `row(text(
 
 `onKeyDown`, `onMouseEnter`, `onFocus` and `onBlur` are never reported: the runtime attaches those listeners to whatever element the tile produced. That is about the listener, not about the event reaching it — `focus` and `blur` do not bubble, so a container that is not focusable never fires them, and `keydown` reaches a container only from a focusable descendant. Reporting those would take a focusability analysis this check does not do.
 
-[W0212](#w0212-ui-event-tile-mismatch) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target cannot fire `<ev>`. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
+[W0212](#w0212-ui-event-tile-mismatch-warning) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target cannot fire `<ev>`. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
 
 **Fix**: Move the handler onto the tile that fires the event, or wrap the content in a `button`. To react to a click anywhere in a region, subscribe a reducer with `on=ui.click(<the clickable child>)`.
 

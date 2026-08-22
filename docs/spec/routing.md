@@ -48,7 +48,7 @@ The runtime provides the standard slot `route`:
 slot route : Route = Route.empty       # managed by the runtime
 ```
 
-The `Route` type is [provided by the standard library](./stdlib.md#213-domain-types-provided-by-the-standard-library):
+The `Route` type is [provided by the standard library](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library):
 
 ```kumiki fragment
 type Route = {

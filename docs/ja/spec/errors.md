@@ -290,7 +290,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0115 `reserved-slot-name`
 
-コンパイラが slot テーブルを参照する前に解決してしまう名前で `slot` を宣言している。そのため、その slot は誰からも読めない。該当するのは router が管理する route slot（[Routing](./routing.md#_3-2-the-route-slot)）の `route` のみ — `now` や `self` など他の予約名は lexer が先に弾く。この診断がないと宣言はコンパイルを通り、slot は自分の値ではなく route オブジェクトを黙って描画する。
+コンパイラが slot テーブルを参照する前に解決してしまう名前で `slot` を宣言している。そのため、その slot は誰からも読めない。該当するのは router が管理する route slot（[Routing](./routing.md#_3-2-current-route-state)）の `route` のみ — `now` や `self` など他の予約名は lexer が先に弾く。この診断がないと宣言はコンパイルを通り、slot は自分の値ではなく route オブジェクトを黙って描画する。
 
 > `Slot "<name>" collides with <what it collides with>; reads of it never see this slot`
 
@@ -332,7 +332,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0118 `undef-theme`
 
-`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-ダークモード)）。
+`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
 
 > `Reference to undefined theme "<name>"`
 
@@ -342,13 +342,13 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0119 `route-bind-out-of-scope`
 
-reducer が `$route` を読んでいるが、その reducer のペイロードにランタイムはルートを入れない。`$route` が束縛されるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が `prefetch` に指名した reducer — プリフェッチと実際の遷移で 1 つの body を共有できるよう、後者は前者と同じ束縛で発火する（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)、[§3.8](./routing.md#_3-8-プリフェッチ)）。それ以外のトリガは、ルートを含まないペイロードで reducer を適用する。
+reducer が `$route` を読んでいるが、その reducer のペイロードにランタイムはルートを入れない。`$route` が束縛されるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が `prefetch` に指名した reducer — プリフェッチと実際の遷移で 1 つの body を共有できるよう、後者は前者と同じ束縛で発火する（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)、[§3.8](./routing.md#_3-8-prefetch)）。それ以外のトリガは、ルートを含まないペイロードで reducer を適用する。
 
 > `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
 この検査がないと、読みは空オブジェクトに落ちる：`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す。それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。
 
-**修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-現在のルート状態)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
+**修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
 
 ## E02xx — 型
 
@@ -601,7 +601,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付ける。ただしそれは「リスナが付く」ことであって「イベントが届く」ことではない — `focus` と `blur` はバブリングしないので、フォーカス可能でないコンテナでは発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
-[W0212](#w0212-ui-event-tile-mismatch) は同じ黙殺を反対側から見たもの — `<ev>` を発火できないタイルを対象にした `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
+[W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — `<ev>` を発火できないタイルを対象にした `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
 **修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
 

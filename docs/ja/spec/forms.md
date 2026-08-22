@@ -21,7 +21,7 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
-### 5.1.1 `bind` の対応要素
+### 5.1.1 `bind` の対応要素 {#_5-1-1-elements-that-support-bind}
 
 | 要素 | 受け取れる型 |
 |---|---|
@@ -308,7 +308,7 @@ theme MyTheme = {
 
 ---
 
-## 5.8 サブミット中の UI
+## 5.8 サブミット中の UI {#_5-8-ui-during-submission}
 
 ```kumiki fragment
 slot loginPending : Bool = false
@@ -365,7 +365,7 @@ tile Wizard = column(
 
 ---
 
-## 5.10 ファイルアップロード
+## 5.10 ファイルアップロード {#_5-10-file-upload}
 
 ```kumiki fragment
 slot avatar : Option(File) = None

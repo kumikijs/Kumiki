@@ -24,7 +24,7 @@ Kumiki には Hooks の呼び出し順序ルールも、依存配列も、Contex
 
 ## 1 reducer 1 書き込み（パス形状粒度）
 
-1 つの reducer 内で同じ **パス形状**へ複数回書くと [E0601](../spec/errors.md#e06xx---reducer-の書き込み規則)。これは「更新が 1 箇所に集約される」ことを保証し、部分編集を安全にする。
+1 つの reducer 内で同じ **パス形状**へ複数回書くと [E0601](../spec/errors.md#e0601-duplicate-write)。これは「更新が 1 箇所に集約される」ことを保証し、部分編集を安全にする。
 
 ```kumiki snippet
 # NG: tasks への二重書き込み

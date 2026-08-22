@@ -40,7 +40,7 @@ app TodoApp
 
 ---
 
-## 3.2 現在のルート状態
+## 3.2 現在のルート状態 {#_3-2-current-route-state}
 
 ランタイムは標準 slot `route` を提供する：
 
@@ -48,7 +48,7 @@ app TodoApp
 slot route : Route = Route.empty       # ランタイムが管理
 ```
 
-`Route` 型は[標準ライブラリ](./stdlib.md#213-ドメイン型標準提供)：
+`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)：
 
 ```kumiki fragment
 type Route = {
@@ -131,7 +131,7 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 |---|---|
 | `route.leave(pattern)` | 旧ルートを離れる直前 |
 | `route.enter(pattern)` | 新ルートに入った直後 |
-| `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-ライフサイクルイベント一覧)） |
+| `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -146,7 +146,7 @@ reducer cleanupOnLeave
 
 `$route` は新（または旧）ルートを表す bind。
 
-**`$route` が束縛されるのは、ルートライフサイクルの経路とプリフェッチの経路だけである。** ランタイムがこれをペイロードに入れるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が[プリフェッチ](#_3-8-プリフェッチ)の対象に指名した reducer を発火させるときである。それ以外の reducer から読むと [E0119](./errors.md#e0119-route-bind-out-of-scope) になる：ペイロードにルートが無いので、失敗するのではなくフィールドがすべて `undefined` を返す。それらの外側の reducer が欲しいのは [`route` slot](#_3-2-現在のルート状態) — ランタイムが保守しており、現在のルートを保持し、どの層からも読める。
+**`$route` が束縛されるのは、ルートライフサイクルの経路とプリフェッチの経路だけである。** ランタイムがこれをペイロードに入れるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が[プリフェッチ](#_3-8-prefetch)の対象に指名した reducer を発火させるときである。それ以外の reducer から読むと [E0119](./errors.md#e0119-route-bind-out-of-scope) になる：ペイロードにルートが無いので、失敗するのではなくフィールドがすべて `undefined` を返す。それらの外側の reducer が欲しいのは [`route` slot](#_3-2-current-route-state) — ランタイムが保守しており、現在のルートを保持し、どの層からも読める。
 
 検査はこれを *reducer* の性質として読む（reducer のトリガは 1 つだから）：プリフェッチ対象は名前で免除される。したがって、プリフェッチ対象であり別のトリガでも発火する reducer は、どちらの経路でも `$route` を読めてしまい、プリフェッチが発火させなかった側では空のものを受け取る。`prefetch` に reducer を指名することが、その reducer に対する検査を切ることになる。
 
@@ -186,7 +186,7 @@ reducer guardEdit
 
 ---
 
-## 3.6 ネステッドルート
+## 3.6 ネステッドルート {#_3-6-nested-routes}
 
 `/*` をパターンに使うと、サブルートを別 tile に委譲できる。
 
@@ -256,7 +256,7 @@ effect navigate cap=nav.push
 
 ---
 
-## 3.8 プリフェッチ
+## 3.8 プリフェッチ {#_3-8-prefetch}
 
 リンクがビューポートに入ったときに先にデータを取りたい：
 

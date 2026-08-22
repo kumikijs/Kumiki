@@ -105,7 +105,7 @@ tile Card = box(
 
 `@colors.surface` は theme から解決される。テーマ切り替え時に自動で再描画される。
 
-### 4.3.1 短縮プロパティ
+### 4.3.1 短縮プロパティ {#_4-3-1-shorthand-properties}
 
 頻出のスタイル props は **共通 props** として提供され、`@` を書かなくても解決される：
 
@@ -225,7 +225,7 @@ box(content) {
 }
 ```
 
-### 4.4.7 サイズ
+### 4.4.7 サイズ {#_4-4-7-sizing}
 
 | prop | 意味 |
 |---|---|
@@ -261,7 +261,7 @@ grid(A, B, C, D) {
 
 ---
 
-## 4.6 ダークモード
+## 4.6 ダークモード {#_4-6-dark-mode}
 
 複数 theme を定義し、`slot theme-name` を切り替える：
 
@@ -324,16 +324,49 @@ button(text="Save") {
 icon(name="check") {size: "md", color: "success"}
 ```
 
-組み込みアイコンセットを提供予定（リストは後日）。カスタムアイコンは `theme.icons` でパス登録：
+### 4.8.1 組み込みセット
+
+閉じた名前集合を `@kumikijs/icons` が提供する（Heroicons v2 Solid、24×24、単一パス、fill ベース）。ツールチェイン（`@kumikijs/vite` と `kumiki` CLI）はコンパイル済みタイルから `icon(name=<リテラル>)` 呼び出しを走査し、参照された分のパスデータだけを生成後の `App.icons` に焼き込む。アイコンを使わないアプリのバンドルコストはゼロ。
+
+初期セットの名前を用途別に示す：
+
+- **状態**: `check`, `check-circle`, `x`, `x-circle`, `info`, `alert-triangle`, `alert-circle`, `help-circle`, `shield-check`, `shield-exclamation`
+- **ナビゲーション**: `chevron-up`, `chevron-down`, `chevron-left`, `chevron-right`, `chevrons-left`, `chevrons-right`, `arrow-up`, `arrow-down`, `arrow-left`, `arrow-right`, `arrow-up-right`, `arrow-down-left`, `caret-up`, `caret-down`
+- **アクション**: `plus`, `minus`, `edit`, `pencil`, `trash`, `save`, `copy`, `clipboard`, `search`, `filter`, `refresh`, `settings`, `more-horizontal`, `more-vertical`, `share`, `print`
+- **一般**: `home`, `user`, `users`, `bell`, `calendar`, `clock`, `star`, `heart`, `bookmark`, `eye`, `eye-off`, `menu`, `sun`, `moon`
+- **ファイル / リンク**: `file`, `file-text`, `folder`, `folder-open`, `download`, `upload`, `external-link`, `link`, `paperclip`, `image`
+- **認証 / デバイス**: `lock`, `unlock`, `key`, `mail`, `phone`, `camera`, `microphone`, `wifi`
+
+自動バンドルは `name` が文字列リテラルのとき（例：`icon(name="check")`）にだけ働く。動的な形（slot 参照、`if` 式、計算値）はそのまま残り、レンダリング時に `theme.icons` だけで解決される——組み込みレジストリは参照されない。未使用パスをツールチェインが刈り取れるよう、またタイポをコンパイル時のシグナルとして受け取れるよう、リテラル名を優先すること。
+
+### 4.8.2 props
+
+| prop | 効果 |
+|---|---|
+| `size: "sm" \| "md" \| "lg" \| "xl"` | 16 / 24 / 32 / 48 px のボックス。数値は px として扱う。それ以外の文字列はそのまま通す（`"1.5em"`）。既定は `1em` なので、アイコンは周囲のフォントサイズを継承する。 |
+| `color: <theme-color> \| <css color>` | `theme.colors` に対して解決される。SVG は `currentColor` で塗られる。 |
+
+### 4.8.3 カスタムアイコンと上書き — `theme.icons`
+
+カスタム名の登録も、組み込みの上書きも `theme.icons` で行う。値は 24×24 の viewBox に置く単一の `<path>` の `d` 属性——組み込みセットと同じ規約：
 
 ```kumiki snippet
 theme MyTheme = {
     ...,
     icons: {
-        logo: "M3 3h18v18H3z..."     # SVG path
+        logo:  "M3 3h18v18H3z..."     # カスタム名
+        check: "M4 12l5 5L20 6"        # 組み込みを上書き
     }
 }
 ```
+
+レンダリング時の解決順は `theme.icons[name]` → コンパイル時に焼き込んだ組み込み（`App.icons[name]`）→ `[name]` プレースホルダへのフォールバック。プレースホルダは未知の名前をレンダリングを壊さずに可視化するので、smoke 実行でタイポが表に出る。
+
+`@kumikijs/icons` を入れないスタンドアロンのアプリでも `icon(name=…)` は使える——必要な名前をすべて `theme.icons` に登録すればよい。
+
+### 4.8.4 strict モード {#_4-8-4-strict-mode}
+
+フェイルソフトな `[name]` プレースホルダは AI ファーストの記述にとって正しい既定だが、厳格なパイプラインはフェイルファストな検査をオプトインできる。`kumiki check --strict-icons`（および Vite プラグインの `{ strictIcons: true }`）は、`@kumikijs/icons` にもソース中のどの `theme.icons` ブロックにも無い名前を持つリテラルの `icon(name="<x>")` を、すべて check 時の `E0704 unknown-icon` 診断に変える。動的な `icon(name=<expr>)` は検査対象外のまま——名前は check 時に解決できず、ランタイムのプレースホルダに落ちる。
 
 ---
 
@@ -386,7 +419,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
 
 ---
 
-## 4.10 グローバル CSS / リセット
+## 4.10 グローバル CSS / リセット {#_4-10-global-css-reset}
 
 ランタイムは最小リセット CSS を埋め込む。アプリ側からの追加は **意図的に不可能**。
 
