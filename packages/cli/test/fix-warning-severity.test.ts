@@ -16,6 +16,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { KumikiError } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixCmd, planFix, runFixFromTest } from "../src/fix.ts";
 
@@ -105,8 +106,9 @@ describe("the fix-from-test tiers on a file that only has warnings", () => {
       ...FAILING_TEST,
     ]);
     const outcome = await runFixFromTest(file, "t", false);
-    expect(outcome.status).not.toBe("applied");
-    expect((outcome.compileErrors ?? []).map((e) => e.code)).toContain("E0105");
+    expect(outcome.status).toBe("no-patch");
+    if (outcome.status !== "no-patch") return;
+    expect((outcome.compileErrors ?? []).map((e: KumikiError) => e.code)).toContain("E0105");
   });
 });
 
