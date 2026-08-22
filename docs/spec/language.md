@@ -765,7 +765,11 @@ app TodoApp
 
 An `init` entry is an effect call, and its arguments are ordinary expressions — a slot reference included. They are evaluated **once**, when the app object is constructed, and the resulting values are never re-read: a later change to a slot is not reflected in an argument already captured.
 
-What a slot reference sees at that moment is its **declared default**. `route` is the exception — it is maintained by the runtime and does not exist yet, so `init = [load(route.path)]` reads `undefined`. Take the route from a `route.enter` reducer instead.
+What a slot reference sees at that moment is its **declared default**. `route` is the exception — it is maintained by the runtime and does not exist yet, so `init = [load(route.path)]` is a compile error ([E0120](./errors.md#e0120-route-in-app-init)), as is `$route`, which the runtime does not bind here either. Take the route from a `route.enter` reducer instead.
+
+`now` is available and is captured the same way: it evaluates to the moment the app object was built, not to the moment the effect runs. An entry that needs the time of its own dispatch should take it in the reducer that handles the result.
+
+There is no reducer around these arguments either, so an `emit` expression is not available in one ([E0305](./errors.md#e0305-fn-impurity)): the entry itself is the dispatch.
 
 ---
 

@@ -743,11 +743,15 @@ app TodoApp
     theme  = DefaultTheme
 ```
 
-### 1.12.1 `init` の引数が評価されるタイミング
+### 1.12.1 `init` の引数が評価されるタイミング {#_1-12-1-when-init-arguments-are-evaluated}
 
 `init` の各エントリは effect 呼び出しであり、その引数は通常の式である。slot 参照も書ける。引数は app オブジェクトの構築時に**一度だけ**評価され、得られた値が読み直されることはない。後から slot が変わっても、すでに捕捉された引数には反映されない。
 
-その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` は `undefined` を読む。route が必要なら `route.enter` reducer 側で受け取ること。
+その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` はコンパイルエラーになる（[E0120](./errors.md#e0120-route-in-app-init)）。`$route` も同様に、ここでは runtime が束縛しない。route が必要なら `route.enter` reducer 側で受け取ること。
+
+`now` は使えるが、捕捉のされ方は同じ — app オブジェクトが構築された瞬間に評価され、effect が走る瞬間ではない。dispatch 時点の時刻が要るなら、結果を受ける reducer 側で取ること。
+
+引数の周りに reducer も無いので、`emit` 式もここでは使えない（[E0305](./errors.md#e0305-fn-impurity)）。エントリそのものが dispatch である。
 
 ---
 

@@ -359,9 +359,19 @@ A reducer reads `$route`, but the runtime does not put one in that reducer's pay
 
 > `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
-Without this check the read lowers to an empty object: `$route.params.get-or("id", "")` returns the fallback and `$route.pattern` returns `undefined`, so every comparison against them is false and the reducer's whole body quietly does nothing. A `fn` or a tile body is not applied with a payload at all, so `$route` there is an undefined name ([E0103](#e0103-undef-ref-undef-slot)) rather than this.
+Without this check the read lowers to an empty object: `$route.params.get-or("id", "")` returns the fallback and `$route.pattern` returns `undefined`, so every comparison against them is false and the reducer's whole body quietly does nothing. A `fn` or a tile body is not applied with a payload at all, so `$route` there is an undefined name ([E0103](#e0103-undef-ref-undef-slot)) rather than this, and an `app.init` argument reports [E0120](#e0120-route-in-app-init) — which is what lets the message above promise the `route` slot without qualification: the one position where that advice would not hold never reaches this check. A name an enclosing `let` or pattern binds is that binding, not the payload, and is not reported at all.
 
 **Fix**: Read the `route` slot ([Routing §3.2](./routing.md#_3-2-current-route-state)), which the runtime maintains and every layer can read. `kumiki fix` proposes the rewrite.
+
+### E0120 `route-in-app-init`
+
+An `app.init` argument reads `route` or `$route`. Init arguments are evaluated **once**, while the app object is being constructed ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)); the runtime installs `app.live.route` during the mount that follows, so at the moment these arguments are captured there is no route to read.
+
+> `"<name>" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+
+Without this check the argument lowers to `_live["route"]` and captures `undefined`, so `init = [load(route.path)]` compiles clean and throws `Cannot read properties of undefined (reading 'path')` at mount — the app never renders. `$route` is the same hole from the other side: nothing binds one here, and [E0119](#e0119-route-bind-out-of-scope)'s advice would send the author to the `route` spelling this check rejects.
+
+**Fix**: Take the route from a `route.enter` reducer ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is.
 
 ## E02xx — Types
 
@@ -664,6 +674,12 @@ A `fn` (pure function) is reading a slot. A `fn` must depend only on its argumen
 > `fn "<name>" must not read slot "<name>"`
 
 **Fix**: Pass the required slot value as an argument.
+
+The same code covers the other side of purity: an `emit` written as an *expression* anywhere but a reducer body — a `fn`, a tile, a slot initializer, an `effect`'s `map-request`, an `app.init` argument ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)). None of them is evaluated with an effect queue around it, so the dispatch would have nowhere to go.
+
+> `emit "<name>" used as an expression is only allowed inside a reducer body`
+
+**Fix**: Move the `emit` into a reducer. An `app.init` entry is already a dispatch — write the effect as the entry itself rather than as an argument to one.
 
 ## E04xx — Motion
 

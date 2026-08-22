@@ -64,7 +64,11 @@ describe("$route outside a route lifecycle reducer", () => {
     expect(codes(program("timer(1s)", "seen := $route.path"))).toEqual(["E0119"]);
   });
 
-  it("is reported in app.init, which runs before any route with no payload at all", () => {
+  it("gives the app.init answer there, not this one", () => {
+    // `app.init` has no payload, so this used to be the report — but its text
+    // sends the author to the `route` slot, which is not installed until the
+    // mount either. E0120 covers both spellings in that position with the one
+    // answer that works: read the route in a `route.enter` reducer.
     const src = `slot seen : Text = ""
 
 effect ping cap=log.write
@@ -79,7 +83,15 @@ app A
     routes = {"/" -> Page, "/404" -> Page}
     init   = [ping($route.path)]
 `;
-    expect(codes(src)).toEqual(["E0119"]);
+    expect(codes(src)).toEqual(["E0120"]);
+  });
+
+  it("is not reported when an enclosing bind owns the name", () => {
+    // The report used to be reached before the local-binding guard, so a
+    // `let $route = …` — legal, and lowered by codegen to that binding, which
+    // consults `localBinds` first — was rejected for a payload it never reads.
+    expect(codes(program("app.start", 'seen := let $route = "x" in $route'))).toEqual([]);
+    expect(codes(program("app.start", "seen := match seen with | $route -> $route"))).toEqual([]);
   });
 
   it("names the slot that reads the same route, because it is in scope here", () => {
