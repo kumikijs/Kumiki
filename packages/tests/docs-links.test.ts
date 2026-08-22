@@ -1,14 +1,16 @@
-// Every relative Markdown link under docs/ has to land somewhere real: the file
-// it names must exist, and a `#fragment` must name a heading id VitePress
+// Every link under docs/ that names somewhere in this tree has to land: the
+// page it names must exist, and a `#fragment` must name a heading id VitePress
 // actually emits. `ignoreDeadLinks: false` in the VitePress config only covers
 // the page half — a fragment that matches no heading builds and deploys clean,
 // and the reader is dropped at the top of the page instead of at the section
-// the sentence promised them.
+// the sentence promised them. Same-page `[x](#anchor)` links are not checked by
+// VitePress at all: its link plugin skips `#`-prefixed hrefs before they reach
+// the dead-link pass.
 //
 // spec-index.test.ts used to run the anchor check, for the links inside
-// `index.md` alone. Every other cross-file link in the tree was unchecked, and
-// 24 of them did not resolve — two of those in the guide, which is why this
-// walk starts at the VitePress source root instead of at the two spec folders.
+// `index.md` alone. Every other link in the tree was unchecked, including the
+// ones in the guide — which is why this walk starts at the VitePress source
+// root instead of at the two spec folders.
 //
 // Anchors come from VitePress' own `createMarkdownRenderer`, built out of
 // `resolveConfig()`, so `{#id}` overrides, the duplicate-id suffix, and any
@@ -16,13 +18,14 @@
 // ships anchors to production. There is no second slugify implementation here
 // to drift out of step with the site.
 //
-// The trap behind most of those 24: VitePress slugifies with
-// `.normalize("NFKD")` and then strips only U+0300–U+036F. A dakuten kana
-// decomposes to base + U+3099, which is outside that range, so it survives into
-// the id in decomposed form while a hand-typed fragment is composed. The two
-// never compare equal, so a Japanese heading carrying a voiced kana is
-// unlinkable from another file unless the heading declares an explicit
-// `{#ascii-anchor}`. The last two tests pin both halves of that.
+// One trap is worth naming, because nothing on screen reveals it. VitePress
+// slugifies with `.normalize("NFKD")` and then strips only U+0300–U+036F. A
+// dakuten kana decomposes to base + U+3099, outside that range, so it survives
+// into the id decomposed. A fragment typed in an editor comes out composed and
+// does not match; a fragment stored decomposed does — links in this tree rely
+// on that. Since the two spellings are indistinguishable on screen, a new link
+// should name an explicit `{#ascii-anchor}` on the heading instead. The last
+// two tests pin both halves of that.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -33,28 +36,36 @@ import { defined } from "./helpers/defined.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const docsRoot = join(here, "..", "..", "docs");
-const jaSpec = join(docsRoot, "ja", "spec");
 
 /** Docs-relative and forward-slashed, so a message reads the same on every OS. */
 const show = (absolute: string): string => relative(docsRoot, absolute).split(sep).join("/");
 
 // Extraction-integrity floors, in the spirit of MIN_LINKS in spec-index.test.ts:
 // if the walk or one of the regexes breaks, the collected set collapses toward
-// empty and every check below passes over nothing. Real content sits far above
-// these — 46 documents and ~800 links at the time of writing.
-const MIN_DOCS = 30;
+// empty and every check below passes over nothing.
+//
+// The floor is per content area rather than a single total, because a whole
+// directory is the unit that goes missing — a name added to NEVER_WALKED, a bug
+// in the recursion. Of the 46 documents in the tree today, 16 are the two guide
+// folders and 4 more (the two READMEs, the changelog, a design note) contain no
+// links at all, so a single total set below the survivors would sail through
+// exactly the regression that widening this walk to the guide was meant to
+// prevent.
+const AREAS = ["spec", "ja/spec", "guide", "ja/guide"];
+const MIN_DOCS_PER_AREA = 5;
 const MIN_LINKS = 500;
 const MIN_ANCHORED_LINKS = 300;
 
-// Directories under the source root that are not content: VitePress' own config
-// and theme, installed packages, build output.
-const SKIPPED_DIRS = new Set([".vitepress", "node_modules", "dist", "cache", "public"]);
+// Directory names the walk never enters: VitePress' own config, theme and
+// caches; installed packages; static assets; turbo's scratch output. None holds
+// Markdown a reader can navigate to.
+const NEVER_WALKED = new Set([".vitepress", ".turbo", "node_modules", "public"]);
 
 function markdownFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) {
-      if (!SKIPPED_DIRS.has(entry)) markdownFiles(path, acc);
+      if (!NEVER_WALKED.has(entry)) markdownFiles(path, acc);
     } else if (entry.endsWith(".md")) {
       acc.push(path);
     }
@@ -89,35 +100,53 @@ interface DocLink {
   file: string;
   line: number;
   label: string;
-  /** The target exactly as written, e.g. `./errors.md` or `../spec/errors.md`. */
+  /** The destination exactly as written: `./errors.md`, `../guide/`, `#anchor`. */
   target: string;
-  /** Absolute path the target resolves to. */
+  /** Absolute path of the document the link lands in — the file itself, for `#anchor`. */
   path: string;
   anchor: string | null;
   raw: string;
 }
 
-// `[label](target.md)` and `[label](target.md#anchor)`. A target carrying a
-// scheme (https:, mailto:) names something outside this tree and is left alone;
-// a target starting with `/` is site-absolute and resolves from the source root.
-const MD_LINK = /\[([^\]]*)\]\(([^)\s]*?\.md)(#([^)\s]*))?\)/g;
+const MD_LINK = /\[([^\]]*)\]\(([^)\s]+)\)/g;
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+// Destinations that are files to download or display rather than pages to read.
+const ASSET = /\.(svg|png|jpe?g|gif|webp|ico|json|ts|js|mjs|cjs|css|kumiki|zip)$/i;
+
+/**
+ * The document a destination lands in, or null if it is not a page in this tree.
+ *
+ * Three shapes reach here, and all three are checked: `./doc.md` inside the
+ * spec, `../guide/` and `/guide/playground` in prose (VitePress serves those
+ * with `cleanUrls`), and `#anchor` for a link into the same page. Excluding the
+ * extensionless pair would leave the cross-track and sibling-form tests below
+ * with nothing to say about the only two links that could violate them.
+ */
+function landingPage(file: string, destination: string): string | null {
+  if (destination.startsWith("#")) return file;
+  if (ASSET.test(destination)) return null;
+  const from = destination.startsWith("/") ? docsRoot : dirname(file);
+  const path = resolve(from, destination.startsWith("/") ? destination.slice(1) : destination);
+  if (destination.endsWith(".md")) return path;
+  return destination.endsWith("/") ? join(path, "index.md") : `${path}.md`;
+}
 
 function collectLinks(file: string): DocLink[] {
   const links: DocLink[] = [];
   for (const [line, text] of proseLines(readFileSync(file, "utf8"))) {
     for (const m of text.matchAll(MD_LINK)) {
-      const target = defined(m[2], "the link target just matched");
+      const target = defined(m[2], "the link destination just matched");
       if (HAS_SCHEME.test(target)) continue;
+      const hash = target.indexOf("#");
+      const page = landingPage(file, hash <= 0 ? target : target.slice(0, hash));
+      if (page === null) continue;
       links.push({
         file,
         line,
         label: defined(m[1], "the link label just matched"),
         target,
-        path: target.startsWith("/")
-          ? join(docsRoot, target.slice(1))
-          : resolve(dirname(file), target),
-        anchor: m[4] ?? null,
+        path: page,
+        anchor: hash === -1 ? null : target.slice(hash + 1),
         raw: m[0],
       });
     }
@@ -142,6 +171,9 @@ function expectedAnchorPrefix(label: string): string | null {
 const trackOf = (path: string): "en" | "ja" =>
   show(path).startsWith("ja/") || show(path) === "README.ja.md" ? "ja" : "en";
 
+/** Whether a path is one of the two flat spec folders. */
+const inSpecFolder = (path: string): boolean => /^(ja\/)?spec\/[^/]+$/.test(show(path));
+
 let renderer: MarkdownRenderer;
 let files: string[] = [];
 let links: DocLink[] = [];
@@ -149,9 +181,6 @@ let links: DocLink[] = [];
 const anchors = new Map<string, Set<string>>();
 
 function headingIds(md: string): Set<string> {
-  // Match both quoting styles VitePress could plausibly emit. The current build
-  // uses `id="…"`; a version bump swapping to single quotes must fail at the
-  // empty-set floor below rather than silently yield nothing.
   return new Set(
     [...renderer.render(md).matchAll(/<h[1-6][^>]*\bid=["']([^"']+)["']/g)].map((m) =>
       defined(m[1], "the heading id just matched"),
@@ -165,7 +194,7 @@ beforeAll(async () => {
   // only happens through the full VitePress pipeline — so it warns once per
   // fenced block. Drop those and let everything else through: an unresolved
   // plugin or a broken `{#id}` override has to be visible, or the only symptom
-  // would be a flood of misleading "anchor does not exist".
+  // would be a flood of misleading "no heading with that id".
   const logger = {
     warn: (msg: string) => {
       if (!/language.*kumiki.*is not loaded/i.test(msg)) console.warn(msg);
@@ -188,16 +217,21 @@ beforeAll(async () => {
   }
 }, 60_000);
 
-describe("links between documents under docs/", () => {
+describe("links under docs/", () => {
   it("finds enough documents and links for the checks below to mean anything", () => {
-    expect(files.length).toBeGreaterThanOrEqual(MIN_DOCS);
+    for (const area of AREAS) {
+      const inArea = files.filter((f) => show(f).startsWith(`${area}/`));
+      expect(inArea.length, `documents found under ${area}/`).toBeGreaterThanOrEqual(
+        MIN_DOCS_PER_AREA,
+      );
+    }
     expect(links.length).toBeGreaterThanOrEqual(MIN_LINKS);
     expect(links.filter((l) => l.anchor !== null).length).toBeGreaterThanOrEqual(
       MIN_ANCHORED_LINKS,
     );
   });
 
-  it("every relative Markdown link names a file that exists", () => {
+  it("every link names a page that exists", () => {
     // Compared against the walked set rather than asked of the filesystem: a
     // link that differs only in case resolves on Windows and 404s on the Linux
     // box that builds the site, and only an exact comparison catches that here.
@@ -211,10 +245,11 @@ describe("links between documents under docs/", () => {
   });
 
   it("every document a fragment aims at yields at least one heading id", () => {
-    // If the heading-id regex breaks against a VitePress render change, every
-    // set collapses to empty and the next test reports "no such heading" for
-    // every link in the tree. Naming the document here keeps the real cause in
-    // front of whoever reads the failure.
+    // The regex above accepts either quoting style, so what this floor catches
+    // is a change in the shape of the emitted heading — the id moving onto a
+    // child anchor, or off the element entirely. Without it every set collapses
+    // to empty and the next test reports "no such heading" for every link in
+    // the tree instead of naming the one thing that broke.
     const empty = [...anchors].filter(([, ids]) => ids.size === 0).map(([path]) => show(path));
     if (empty.length > 0) {
       expect.fail(
@@ -252,8 +287,17 @@ describe("links between documents under docs/", () => {
   it("a link labelled with a § or a diagnostic code points at that section", () => {
     const problems: string[] = [];
     for (const link of links) {
-      const prefix = link.anchor === null ? null : expectedAnchorPrefix(link.label);
-      if (prefix === null || link.anchor === null) continue;
+      const prefix = expectedAnchorPrefix(link.label);
+      if (prefix === null) continue;
+      // No fragment at all is the purest form of what this test is named for:
+      // a label naming one section, dropping the reader at the top of a file
+      // that documents a hundred of them.
+      if (link.anchor === null) {
+        problems.push(
+          `${show(link.file)}:${link.line}: ${link.raw} — label "${link.label}" names a section but the link has no fragment`,
+        );
+        continue;
+      }
       if (link.anchor === prefix || link.anchor.startsWith(`${prefix}-`)) continue;
       problems.push(
         `${show(link.file)}:${link.line}: ${link.raw} — label "${link.label}" promises an anchor starting with "${prefix}"`,
@@ -265,12 +309,15 @@ describe("links between documents under docs/", () => {
   });
 
   it("a spec document reaches its siblings with the ./doc.md form", () => {
-    // The spec is a flat folder per track. `./doc.md` is the only shape that
-    // stays inside one track by construction, so a spec page can never quietly
-    // send a reader into the other language.
+    // Each spec track is a flat folder. `./doc.md` is the only shape that
+    // cannot leave it, so holding sibling links to it is what makes "a spec
+    // page never sends a reader into the other language" structural rather
+    // than a thing someone has to remember. Links that leave the folder —
+    // the index pointing at `../guide/` — are a different destination and
+    // are covered by the cross-track test instead.
     const problems = links
-      .filter((l) => /^(ja\/)?spec\//.test(show(l.file)))
-      .filter((l) => !/^\.\/[\w.-]+\.md$/.test(l.target))
+      .filter((l) => inSpecFolder(l.file) && inSpecFolder(l.path) && l.path !== l.file)
+      .filter((l) => !/^\.\/[\w.-]+\.md$/.test(l.target.split("#")[0] ?? l.target))
       .map((l) => `${show(l.file)}:${l.line}: ${l.raw}`);
     if (problems.length > 0) {
       expect.fail(`${problems.length} spec link(s) not in ./doc.md form:\n${problems.join("\n")}`);
@@ -310,41 +357,47 @@ describe("links between documents under docs/", () => {
 });
 
 // U+3099 COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK — what NFKD splits ダ into.
-const VOICED_MARK = String.fromCodePoint(0x3099);
+// U+309A is its handakuten counterpart, which パ decomposes to.
+const VOICED_MARKS = [String.fromCodePoint(0x3099), String.fromCodePoint(0x309a)];
+const carriesVoicedMark = (text: string): boolean =>
+  VOICED_MARKS.some((mark) => text.normalize("NFD").includes(mark));
+const isAscii = (text: string): boolean => [...text].every((ch) => (ch.codePointAt(0) ?? 0) < 0x80);
 
 describe("the voiced-kana anchor trap", () => {
   it("VitePress still emits a decomposed id, so a composed fragment cannot match it", () => {
-    // The reason every Japanese heading another document links to carries an
-    // explicit ASCII anchor. If VitePress ever composes its ids, this goes red
-    // and says the workaround has become optional.
     const ids = [...headingIds("## ダークモード\n")];
     const id = defined(ids[0], "the id VitePress emitted for a voiced-kana heading");
     expect(id.normalize("NFC")).toBe("ダークモード");
     expect(id, "still decomposed").not.toBe(id.normalize("NFC"));
-    expect(id).toContain(VOICED_MARK);
+    expect(id).toContain(VOICED_MARKS[0]);
+    // Going red here is not "the workaround is now optional": every link in the
+    // tree that stores its fragment decomposed stops matching on the same day.
+    // This is the check that would tell us, instead of the site quietly losing
+    // a few dozen anchors.
   });
 
-  it("the dark-mode link resolves because the heading it names declares an ASCII anchor", () => {
-    // One named pair, so the class stays covered by something a reader can
-    // follow. The general fragment check above is what enforces it; this test
-    // exists to keep a heading with a voiced kana among the linked-to set, which
-    // an explicit anchor otherwise hides — once the id is ASCII, nothing in the
-    // resolved data says a dakuten was ever involved.
-    const link = links.find(
-      (l) =>
-        show(l.file) === "ja/spec/errors.md" &&
-        show(l.path) === "ja/spec/style.md" &&
-        l.anchor === "_4-6-dark-mode",
+  it("a voiced-kana heading is reachable from another document through an ASCII anchor", () => {
+    // Stated as an invariant rather than as one named pair, so a legitimate
+    // rename of any section does not have to touch this file. What it holds
+    // onto is that the convention stays exercised: writing the fragment
+    // decomposed also works, so nothing else in the suite would notice if the
+    // tree drifted back to spellings no one can proofread.
+    const declared = new Set<string>();
+    for (const file of files) {
+      for (const [, text] of proseLines(readFileSync(file, "utf8"))) {
+        const m = text.match(/^#{1,6}\s+(.*?)\s*\{#([^}]+)\}\s*$/);
+        if (!m) continue;
+        const [, heading, anchor] = [m[0], defined(m[1], "heading text"), defined(m[2], "anchor")];
+        if (carriesVoicedMark(heading) && isAscii(anchor)) declared.add(`${show(file)}#${anchor}`);
+      }
+    }
+    expect(declared.size, "headings with a voiced kana and an ASCII anchor").toBeGreaterThan(0);
+    const reached = links.filter(
+      (l) => l.path !== l.file && l.anchor !== null && declared.has(`${show(l.path)}#${l.anchor}`),
     );
-    expect(link, "ja/spec/errors.md should link to ja/spec/style.md#_4-6-dark-mode").toBeDefined();
-    const heading = defined(
-      readFileSync(join(jaSpec, "style.md"), "utf8")
-        .split(/\r?\n/)
-        .find((l) => l.startsWith("#") && l.includes("{#_4-6-dark-mode}")),
-      "the Japanese heading that declares the dark-mode anchor",
-    );
-    expect(heading.normalize("NFD"), "the heading text carries a voiced kana").toContain(
-      VOICED_MARK,
-    );
+    expect(
+      reached.length,
+      `no cross-document link names one of: ${[...declared].join(", ")}`,
+    ).toBeGreaterThan(0);
   });
 });

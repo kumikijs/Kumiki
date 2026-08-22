@@ -12,9 +12,10 @@
 //      heading, and points at the section its label names, is docs-links.test.ts'
 //      job: it runs that check over every document under docs/, of which the
 //      index is one. What stays here is the link count as an extraction floor,
-//      because an index whose links stopped matching the shape this file expects
-//      would otherwise reduce the tables below to a handful of rows and still
-//      compare equal.
+//      because `cellSignature` is what makes edge 4 language-neutral: it reduces
+//      `[§X.Y](./doc.md#…)` to `doc.md:§X.Y` and falls back to the raw cell when
+//      no link matches. Lose the link shape and the EN ⇆ JA comparisons start
+//      reporting translation differences instead of structural ones.
 //   2. index ⇆ examples — the examples table lists exactly the files under
 //      packages/examples/features/ (symmetric difference = 0). The disk walk is
 //      recursive, and two files sharing a basename across subfolders is a hard
