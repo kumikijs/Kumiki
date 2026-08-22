@@ -85,8 +85,8 @@ reducer tick on=timer(1s, name=countdown) do= remaining := remaining - 1
 reducer stop on=ui.click(StopBtn)         do= stop-timer(countdown)
 ```
 
-- `timer(d, name=N)` registers the interval under the identifier `N`. Timer names share a single namespace and must be unique across the app (a duplicate is [E0002](./errors.md)).
-- `stop-timer(N)` is a reducer statement that clears the interval named `N`; after it runs, that timer fires no more. Referencing an undeclared timer name is a compile error ([E0106](./errors.md)).
+- `timer(d, name=N)` registers the interval under the identifier `N`. Timer names share a single namespace and must be unique across the app (a duplicate is [E0002](./errors.md#e0002-duplicate-timer-name)).
+- `stop-timer(N)` is a reducer statement that clears the interval named `N`; after it runs, that timer fires no more. Referencing an undeclared timer name is a compile error ([E0106](./errors.md#e0106-undef-timer)).
 - `stop-timer` is purely a control statement — it neither reads nor writes a slot nor emits an effect, so the reducer stays pure. The runtime clears the interval when it applies the reducer's result.
 - A stopped timer is **not** restarted automatically; it starts again only on remount. On `app` dispose, all timers (running or stopped) are cleared.
 

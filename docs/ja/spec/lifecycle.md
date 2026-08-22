@@ -85,8 +85,8 @@ reducer tick on=timer(1s, name=countdown) do= remaining := remaining - 1
 reducer stop on=ui.click(StopBtn)         do= stop-timer(countdown)
 ```
 
-- `timer(d, name=N)` は interval を識別子 `N` の下に登録する。タイマー名は単一のネームスペースを共有し、アプリ内で一意でなければならない（重複は [E0002](./errors.md)）。
-- `stop-timer(N)` は reducer の文で、`N` という名前の interval を clear する。実行後、そのタイマーは発火しなくなる。未宣言のタイマー名を参照するとコンパイルエラー（[E0106](./errors.md)）。
+- `timer(d, name=N)` は interval を識別子 `N` の下に登録する。タイマー名は単一のネームスペースを共有し、アプリ内で一意でなければならない（重複は [E0002](./errors.md#e0002-duplicate-timer-name)）。
+- `stop-timer(N)` は reducer の文で、`N` という名前の interval を clear する。実行後、そのタイマーは発火しなくなる。未宣言のタイマー名を参照するとコンパイルエラー（[E0106](./errors.md#e0106-undef-timer)）。
 - `stop-timer` は純粋な制御文である — slot の読み書きも effect の emit もしないので、reducer は純粋なまま。runtime は reducer の結果を適用するときに interval を clear する。
 - 停止したタイマーは**自動では再開しない**。再開は再マウント時のみ。`app` の dispose 時に、全タイマー（稼働中・停止中問わず）が clear される。
 

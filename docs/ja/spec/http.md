@@ -111,7 +111,7 @@ emit http-get({
 })
 ```
 
-→ 高レベル effect 名（`loadUser`）が URL テンプレートを内蔵することは**できない**。テンプレート機構は別途 [6.6 高レベルラッパ](#66-高レベルラッパ) を参照。
+→ 高レベル effect 名（`loadUser`）が URL テンプレートを内蔵することは**できない**。テンプレート機構は別途 [6.6 高レベルラッパ](#_6-6-high-level-wrappers) を参照。
 
 ### 6.2.2 POST
 
@@ -229,7 +229,7 @@ effect loadCritical cap=http.get
 
 ---
 
-## 6.6 高レベルラッパ
+## 6.6 高レベルラッパ {#_6-6-high-level-wrappers}
 
 URL テンプレートや path パラメータを書きたい場合は、ユーザーがラッパ effect を宣言する：
 

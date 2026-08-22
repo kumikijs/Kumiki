@@ -111,7 +111,7 @@ emit http-get({
 })
 ```
 
-→ A high-level effect name (`loadUser`) **cannot** embed a URL template. For the templating mechanism, see [6.6 High-Level Wrappers](#66-high-level-wrappers) separately.
+→ A high-level effect name (`loadUser`) **cannot** embed a URL template. For the templating mechanism, see [6.6 High-Level Wrappers](#_6-6-high-level-wrappers) separately.
 
 ### 6.2.2 POST
 

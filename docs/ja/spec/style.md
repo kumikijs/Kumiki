@@ -419,7 +419,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
 
 ---
 
-## 4.10 グローバル CSS / リセット
+## 4.10 グローバル CSS / リセット {#_4-10-global-css-reset}
 
 ランタイムは最小リセット CSS を埋め込む。アプリ側からの追加は **意図的に不可能**。
 
