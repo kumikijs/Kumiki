@@ -154,9 +154,11 @@ describe("kumiki fix", () => {
   it("reports a warning-only file as clean rather than unrepairable", SPAWN, () => {
     // `check` calls this file `ok (1 warning)`. `fix` used to call the same
     // file `(no auto-patches available)` and list the warning as though it
-    // were an error it had given up on.
+    // were an error it had given up on. The count travels with the verdict for
+    // the same reason: a bare `no errors` from one verb and `ok (1 warning)`
+    // from the other are two answers about a file neither of them will change.
     const { stdout, code } = runCli(["fix", write("fix-warn.kumiki", WARN_ONLY)]);
-    expect(stdout).toBe("no errors\n");
+    expect(stdout).toBe("no errors (1 warning)\n");
     expect(code).toBe(0);
   });
 
@@ -176,12 +178,14 @@ app Demo
     init   = []
 `;
     const file = write("fix-reveals-warning.kumiki", src);
-    const { stdout, code } = runCli(["fix", file, "--apply"]);
-    expect(stdout).toContain("file now clean");
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    // The count comes from the gate's own re-check, so it is the warning the
+    // repair revealed rather than whatever the file had before it.
+    expect(stdout).toContain("file now clean (1 warning)");
+    expect(stderr).toContain("W0212");
     expect(readFileSync(file, "utf8")).toContain("ui.focus(Card)");
     expect(code).toBe(0);
-    // …and the warning it revealed is reported by the verb that reports
-    // warnings, which still exits 0 for it.
+    // …and `check` says the same thing about the same file.
     const after = runCli(["check", file]);
     expect(after.stderr).toContain("W0212");
     expect(after.code).toBe(0);

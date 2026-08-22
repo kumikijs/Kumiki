@@ -746,12 +746,64 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
  * treated the two tiers alike, which is why a file `check` calls
  * `ok (1 warning)` came back from `fix` as "(no auto-patches available)".
  *
- * The same filter runs on both sides of the regression gate. Applied after the
- * patch only, a warning the file already had counts as one the patch
- * introduced, and a repair that fixed a real error is rolled back for it.
+ * A `check()` here is read for one of three decisions, and each wants the
+ * errors alone:
+ *
+ *  - what to repair, so a warning is not reported as an error nobody can fix;
+ *  - whether to keep a repair. Filtering after the patch only would count a
+ *    warning the file already had as one the patch introduced, and roll back a
+ *    repair that fixed a real error;
+ *  - whether the fix-from-test path may run its behavioural tier. That gate
+ *    asks "does this file compile", so a warning anywhere in the file stopped
+ *    `--auto-patch` repairing a failing test — and its second gate did the
+ *    same after a compile repair had already landed.
+ *
+ * What the filter must not do is hide them. `advisory` is the other half, and
+ * every result that leaves this file carries it: `FixPlan.warnings`,
+ * `FixApplyResult.warnings`, `FixFromTestOutcome.warnings`. Every verdict
+ * printed from those says how many, and lists them under whatever it said.
  */
 function repairable(diagnostics: KumikiError[]): KumikiError[] {
   return diagnostics.filter((d) => d.severity !== "warning");
+}
+
+/**
+ * The wording every verb uses for a count of advisory diagnostics.
+ *
+ * Exported and called by `check` and by the MCP tools rather than copied:
+ * "the two verbs cannot disagree about a file neither of them will change" is
+ * only true if one of them cannot be reworded without the other.
+ */
+export function plural(n: number): string {
+  return `${n} warning${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * A headline plus the advisory count, when there is one. Every verdict `fix`
+ * prints goes through here: the whole point is that two verbs cannot describe
+ * one file differently, which a second spelling of this would reintroduce.
+ */
+function verdict(headline: string, warnings: KumikiError[]): string {
+  return warnings.length > 0 ? `${headline} (${plural(warnings.length)})` : headline;
+}
+
+/** The warnings themselves, under whatever verdict or diagnostic list precedes them. */
+function reportWarnings(warnings: KumikiError[]): void {
+  for (const w of warnings) console.error(`${w.code} ${w.message}`);
+}
+
+/**
+ * The warnings to report for a path that wrote nothing: the ones the plan
+ * already typechecked. Spelled as a helper so a return that leaves the file
+ * alone cannot quietly claim the post-patch set instead.
+ */
+function unchanged(plan: FixPlan): { warnings: KumikiError[] } {
+  return { warnings: plan.warnings };
+}
+
+/** The other half of the same split, kept beside it so neither drifts. */
+function advisory(diagnostics: KumikiError[]): KumikiError[] {
+  return diagnostics.filter((d) => d.severity === "warning");
 }
 
 /**
@@ -767,16 +819,25 @@ export function planFix(
   capabilities: string[] = [],
 ): FixPlan {
   const store = load(path);
-  const errors = repairable(check(store.program, { capabilities }));
-  if (errors.length === 0) return { errors, patches: [], skipped: [] };
+  const diagnostics = check(store.program, { capabilities });
+  const errors = repairable(diagnostics);
+  const warnings = advisory(diagnostics);
+  if (errors.length === 0) return { errors, warnings, patches: [], skipped: [] };
   const { patches: all, skipped } = planFixesExplained(store, errors);
   const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
-  return { errors, patches, skipped };
+  return { errors, warnings, patches, skipped };
 }
 
 export type FixPlan = {
   /** Typecheck errors on `path`, warnings excluded. Empty when the file is clean. */
   errors: KumikiError[];
+  /**
+   * The advisory half of the same `check()`. Carried rather than dropped so a
+   * caller reporting a clean file can still say what is in it — `fix` answering
+   * "no errors" for a file `check` calls "ok (1 warning)" is the same wrong
+   * answer as the one this split removes, told the other way round.
+   */
+  warnings: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
   patches: AutoPatch[];
   /**
@@ -816,7 +877,7 @@ export function applyFixPlan(
   const plan = planFix(path, onlyCode, capabilities);
   const before = readFileSync(path, "utf8");
   if (plan.patches.length === 0) {
-    return { applied: 0, before, after: before, remaining: plan.errors };
+    return { applied: 0, before, after: before, remaining: plan.errors, ...unchanged(plan) };
   }
   // Counted one patch at a time, because a patch can decline to change
   // anything: `replaceAt` returns the source untouched when the reported
@@ -834,7 +895,7 @@ export function applyFixPlan(
     // Nothing changed, so there is nothing to gate and nothing to write. This
     // is "no auto-patch took effect", not a rollback — `regressionBlocked`
     // stays unset so the caller reports it as such.
-    return { applied: 0, before, after: before, remaining: plan.errors };
+    return { applied: 0, before, after: before, remaining: plan.errors, ...unchanged(plan) };
   }
   // Regression gate. Every path that would touch disk first re-parses and
   // re-typechecks the composed source, then compares diagnostic *sets* (code
@@ -880,11 +941,18 @@ export function applyFixPlan(
       before,
       after: before,
       remaining: [...plan.errors, synthetic],
+      ...unchanged(plan),
       regressionBlocked: true,
       parseError: message,
     };
   }
-  const dryRemaining = repairable(check(parsed, { capabilities }));
+  // One typecheck, both halves. The errors decide the gate; the warnings are
+  // what the file will be carrying once this write lands, which is not the set
+  // it started with — a repair that resolves an undefined tile onto one that
+  // cannot fire the event a reducer subscribes to reveals a warning that was
+  // not there before.
+  const afterDiagnostics = check(parsed, { capabilities });
+  const dryRemaining = repairable(afterDiagnostics);
   const afterSet = new Set(dryRemaining.map(key));
   const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
   const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
@@ -894,6 +962,7 @@ export function applyFixPlan(
       before,
       after: before,
       remaining: plan.errors,
+      ...unchanged(plan),
       regressionBlocked: true,
       blocked:
         introduced.length > 0 ? { reason: "introduced", introduced } : { reason: "resolved-none" },
@@ -911,10 +980,11 @@ export function applyFixPlan(
       before,
       after: before,
       remaining: plan.errors,
+      ...unchanged(plan),
       writeError: e instanceof Error ? e.message : String(e),
     };
   }
-  return { applied, before, after, remaining: dryRemaining };
+  return { applied, before, after, remaining: dryRemaining, warnings: advisory(afterDiagnostics) };
 }
 
 export type FixApplyResult = {
@@ -931,6 +1001,13 @@ export type FixApplyResult = {
    * needing to inspect `parseError` first.
    */
   remaining: KumikiError[];
+  /**
+   * The advisory half of the same typecheck — the diagnostics `fix` read and
+   * decided not to act on. Required, so every path has to answer it: a path
+   * that wrote nothing reports what the plan found, and the one that wrote
+   * reports what the file carries now, which is not always the same set.
+   */
+  warnings: KumikiError[];
   /**
    * Raw parser message when the composed patches broke syntax. Duplicated by
    * the `E0000` entry in `remaining`; kept as a convenience field for
@@ -980,14 +1057,22 @@ export function fixCmd(
   capabilities: string[] = [],
 ): number {
   if (!apply) {
-    const { errors, patches, skipped } = planFix(path, onlyCode, capabilities);
+    const { errors, warnings, patches, skipped } = planFix(path, onlyCode, capabilities);
     if (errors.length === 0) {
-      console.log("no errors");
+      // Same shape `check` reports a clean-but-advisory file with, so the two
+      // verbs cannot disagree about a file neither of them will change — and
+      // the same shape `--apply` prints below, which changes it just as little.
+      console.log(verdict("no errors", warnings));
+      reportWarnings(warnings);
       return 0;
     }
     if (patches.length === 0) {
       console.log("(no auto-patches available)");
       for (const e of errors) console.error(`${e.code} ${e.message}`);
+      // Under the errors, not instead of them: a file with both is one `check`
+      // reports both for, and the branch that has an error to report is no
+      // more entitled to drop the rest than the clean one above.
+      reportWarnings(warnings);
       return 1;
     }
     for (const p of patches) {
@@ -1004,6 +1089,7 @@ export function fixCmd(
       // reads it rather than the prose.
       for (const s of skipped) console.error(`${s.code} ${s.message} [${s.reason}]`);
     }
+    reportWarnings(warnings);
     // A dry run leaves every error where it found it, so the file is still
     // broken and `kumiki fix <f> && next-step` must not run `next-step`.
     return 1;
@@ -1019,7 +1105,8 @@ export function fixCmd(
       return 1;
     }
     if (result.remaining.length === 0) {
-      console.log("no errors");
+      console.log(verdict("no errors", result.warnings));
+      reportWarnings(result.warnings);
       return 0;
     }
     // Order matters: a parse-error sets `regressionBlocked` as well, so asking
@@ -1045,14 +1132,17 @@ export function fixCmd(
       console.log("(no auto-patches available)");
     }
     for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+    reportWarnings(result.warnings);
     return 1;
   }
   if (result.remaining.length === 0) {
-    console.log(`applied ${result.applied} fix(es) — file now clean`);
+    console.log(verdict(`applied ${result.applied} fix(es) — file now clean`, result.warnings));
+    reportWarnings(result.warnings);
     return 0;
   }
   console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
   for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+  reportWarnings(result.warnings);
   return 1;
 }
 
@@ -1085,7 +1175,7 @@ export function fixCmd(
  * `patch` is preserved on `phase: "test"` for retry / display, and the
  * on-disk file is byte-identical to before the call.
  */
-export type FixFromTestOutcome =
+type FixFromTestStatus =
   | {
       ok: false;
       status: "no-patch";
@@ -1164,6 +1254,20 @@ export type FixFromTestOutcome =
       compileFixes?: number;
       patch?: AutoPatch;
     };
+
+/**
+ * One of the statuses above, plus the advisory diagnostics from the last
+ * typecheck this call ran.
+ *
+ * An intersection rather than a field repeated on nine members, so a status
+ * added later cannot be the one that forgets it — and required rather than
+ * optional, because an optional field is one nothing has to fill. The
+ * behavioural tier replaces a string literal in a tile, so "the last
+ * typecheck" is still the right description of what these describe after it.
+ */
+export type FixFromTestOutcome = FixFromTestStatus & {
+  warnings: KumikiError[];
+};
 
 /**
  * Inverse of the lexer's string-body decoding
@@ -1760,7 +1864,20 @@ export async function runFixFromTest(
 ): Promise<FixFromTestOutcome> {
   // Tier 1: a file that doesn't compile can't run its tests — repair first.
   const store = load(path);
-  const compileErrors = check(store.program, { capabilities });
+  const firstPass = check(store.program, { capabilities });
+  const compileErrors = repairable(firstPass);
+  // Updated by the only other typecheck this function runs, so whichever
+  // outcome it reaches describes the file as that typecheck last saw it.
+  let warnings = advisory(firstPass);
+  /**
+   * Attach them. Every return goes through here rather than repeating the
+   * field twelve times — and the field is required on the outcome, so a
+   * thirteenth that skipped this would not compile.
+   */
+  const stamp = <T extends FixFromTestStatus>(o: T): T & { warnings: KumikiError[] } => ({
+    ...o,
+    warnings,
+  });
   let compileFixes = 0;
   if (compileErrors.length > 0) {
     const { patches, skipped } = planFixesExplained(store, compileErrors);
@@ -1770,15 +1887,15 @@ export async function runFixFromTest(
       // and every quoted-name branch fell through". Absent when the compile
       // errors didn't match any repair branch at all (no skip recorded).
       const reason = skipped[0]?.reason;
-      return { ok: false, status: "no-patch", compileErrors, ...(reason ? { reason } : {}) };
+      return stamp({ ok: false, status: "no-patch", compileErrors, ...(reason ? { reason } : {}) });
     }
     if (!apply) {
-      return {
+      return stamp({
         ok: true,
         status: "compile-proposed",
         compileFixes: patches.length,
         compilePatches: patches,
-      };
+      });
     }
     let text = readFileSync(path, "utf8");
     for (const p of applicationOrder(patches)) text = p.apply(text);
@@ -1789,13 +1906,13 @@ export async function runFixFromTest(
       // nothing landed. The `write-failed` variant + `phase: "compile"` tells
       // the printer / MCP serializer to avoid the misleading "applied N
       // compile fix(es)" header.
-      return {
+      return stamp({
         ok: false,
         status: "write-failed",
         phase: "compile",
         writeError: e instanceof Error ? e.message : String(e),
         compileFixes: patches.length,
-      };
+      });
     }
     compileFixes = patches.length;
     // Split the catches: only `parse(lex(text))` may legitimately throw with
@@ -1805,16 +1922,23 @@ export async function runFixFromTest(
     try {
       parsed = parse(lex(text));
     } catch (e) {
-      return {
+      return stamp({
         ok: false,
         status: "compile-remaining",
         compileFixes,
         parseError: e instanceof Error ? e.message : String(e),
-      };
+      });
     }
-    const remaining = check(parsed, { capabilities });
+    const afterRepair = check(parsed, { capabilities });
+    warnings = advisory(afterRepair);
+    const remaining = repairable(afterRepair);
     if (remaining.length > 0) {
-      return { ok: false, status: "compile-remaining", compileFixes, compileErrors: remaining };
+      return stamp({
+        ok: false,
+        status: "compile-remaining",
+        compileFixes,
+        compileErrors: remaining,
+      });
     }
   }
 
@@ -1823,7 +1947,7 @@ export async function runFixFromTest(
   try {
     before = await testFile(path, capabilities);
   } catch (e) {
-    return {
+    return stamp({
       ok: false,
       status: "no-patch",
       testRunError: e instanceof Error ? e.message : String(e),
@@ -1832,24 +1956,24 @@ export async function runFixFromTest(
       // itself blew up" from "the file compiles but no patch applies".
       reason: "test-runner-threw",
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   const target = before.find((r) => r.name === testName);
   if (!target) {
-    return {
+    return stamp({
       ok: false,
       status: "not-found",
       availableTests: before.map((r) => r.name),
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   if (target.pass) {
-    return {
+    return stamp({
       ok: true,
       status: "already-pass",
       pass: true,
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
 
   // Tier 2: behavioral, deterministic literal repair. Re-load from the current
@@ -1860,17 +1984,22 @@ export async function runFixFromTest(
   const curStore = load(path);
   const attempt = planTestPatchExplained(curSource, target, testBodyLineRanges(curStore), curStore);
   if (!attempt.patch) {
-    return {
+    return stamp({
       ok: false,
       status: "no-patch",
       failingTest: target,
       reason: attempt.reason,
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   const patch = attempt.patch;
   if (!apply) {
-    return { ok: true, status: "proposed", patch, ...(compileFixes ? { compileFixes } : {}) };
+    return stamp({
+      ok: true,
+      status: "proposed",
+      patch,
+      ...(compileFixes ? { compileFixes } : {}),
+    });
   }
   // Apply the patch OUTSIDE the try — a throw from `patch.apply` (codegen /
   // slice-index bug in the tier planner, or a downstream regression in
@@ -1881,21 +2010,21 @@ export async function runFixFromTest(
   try {
     atomicWriteFileSync(path, patched);
   } catch (e) {
-    return {
+    return stamp({
       ok: false,
       status: "write-failed",
       phase: "test",
       writeError: e instanceof Error ? e.message : String(e),
       patch,
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   const after = await testFile(path, capabilities);
   const nowPass = after.find((r) => r.name === testName)?.pass === true;
   const regressed = after
     .filter((r) => !r.pass && before.find((b) => b.name === r.name)?.pass === true)
     .map((r) => r.name);
-  return {
+  return stamp({
     ok: nowPass && regressed.length === 0,
     status: "applied",
     pass: nowPass,
@@ -1904,7 +2033,7 @@ export async function runFixFromTest(
     // on the `applied` branch. Baked into the type by the discriminated union.
     regressed,
     ...(compileFixes ? { compileFixes } : {}),
-  };
+  });
 }
 
 export async function fixFromTest(
@@ -1915,6 +2044,11 @@ export async function fixFromTest(
 ): Promise<FixFromTestOutcome> {
   const outcome = await runFixFromTest(path, testName, apply, capabilities);
   printFixFromTest(outcome, testName, path);
+  // Under whatever the printer said, on every branch. The switch returns from
+  // inside each case, so this is the one place that reaches all of them — and
+  // an outcome's warnings are worth the same on the branch that repaired the
+  // file as on the branch that gave up.
+  reportWarnings(outcome.warnings);
   return outcome;
 }
 
@@ -1938,7 +2072,12 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
     // `phase: "test"` the Tier-1 write did land; header is honest.
     !(outcome.status === "write-failed" && outcome.phase === "compile")
   ) {
-    console.log(`applied ${outcome.compileFixes} compile fix(es) — file now compiles`);
+    console.log(
+      verdict(
+        `applied ${outcome.compileFixes} compile fix(es) — file now compiles`,
+        outcome.warnings,
+      ),
+    );
   }
   switch (outcome.status) {
     case "no-patch": {
@@ -1999,7 +2138,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       return;
     }
     case "already-pass": {
-      console.log(`test "${testName}" passes — nothing to fix`);
+      console.log(verdict(`test "${testName}" passes — nothing to fix`, outcome.warnings));
       return;
     }
     case "proposed": {
@@ -2011,7 +2150,12 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
     }
     case "applied": {
       const nowPass = outcome.pass === true;
-      console.log(`applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`);
+      console.log(
+        verdict(
+          `applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`,
+          outcome.warnings,
+        ),
+      );
       if (outcome.regressed && outcome.regressed.length > 0) {
         console.log(
           `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,

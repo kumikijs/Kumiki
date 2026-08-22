@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { check, type KumikiError } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
+import { plural } from "../fix.ts";
 import { load } from "../store.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
@@ -94,11 +95,7 @@ export async function checkCmd(
   }
   reportCapabilitySearch(errors, caps);
   if (errors.length > 0) process.exit(1);
-  console.log(
-    warnings.length > 0
-      ? `ok (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`
-      : "ok",
-  );
+  console.log(warnings.length > 0 ? `ok (${plural(warnings.length)})` : "ok");
 }
 
 type CheckOptions = {

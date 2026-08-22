@@ -16,6 +16,7 @@ export {
   planFixesExplained,
   planTestPatch,
   planTestPatchExplained,
+  plural,
   runFixFromTest,
   type SkipReason,
 } from "./fix.ts";
