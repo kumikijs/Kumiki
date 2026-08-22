@@ -63,7 +63,8 @@ export function appAnalyticsJson(
  * Arguments are evaluated **once**, when `createApp()` builds the app object,
  * and the resulting array is never re-read: a later `app.live` change is not
  * reflected. What is in `_live` at that moment is each slot's declared default
- * — and NOT `route`, which `mountCore` installs afterwards. That is why the
+ * — and NOT `route`, which every entry point installs after construction (the
+ * DOM mount and the SSR pass alike). That is why the
  * checker rejects `route` here (E0120) instead of letting it lower to a read
  * of `undefined`, and why it walks these arguments in the same non-reducer
  * scope this function lowers them in: `_emits`, which an `emit` expression

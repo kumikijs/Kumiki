@@ -664,6 +664,12 @@ type Ctx = {
    * (`tile`), whether an `emit` expression has anywhere to send its dispatch
    * (`reducer`), and whether the runtime has installed `route` yet
    * (`app-init` — it has not).
+   *
+   * These name a position, not a definition: an `effect`'s `map-request` is
+   * checked as `slot-init`, because what it needs is the same pure, payloadless
+   * treatment. A new check conditioned on one of these values inherits every
+   * position that borrows it, so widen the value's meaning here before adding
+   * one rather than assuming the name is the whole story.
    */
   kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init";
   localBinds: Set<string>;
@@ -683,8 +689,7 @@ type Ctx = {
   /**
    * Whether the runtime fills `$route` into the payload this expression is
    * evaluated with. Required, so every scope has to answer it — the field was
-   * optional for one commit and `app.init`, which builds a reducer `Ctx`,
-   * silently went without.
+   * optional for one commit and `app.init` silently went without.
    *
    * `no-payload` is a `fn`, a tile or a slot initializer: they are not applied
    * with a payload at all, so `$route` there is a name that does not exist
@@ -1741,12 +1746,22 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "Ref":
       // An `app.init` argument is evaluated while `createApp()` builds the app
-      // object; `app.live.route` is installed later, by the mount. Both
+      // object; the route is installed later, by whichever mount follows. Both
       // spellings therefore read nothing here, and both get the same answer —
       // E0119's would send the author from `$route` to `route`, which is the
       // other half of the same hole. Checked before the two branches below so
       // the position wins over the spelling.
-      if ((e.name === "route" || e.name === "$route") && ctx.kind === "app-init") {
+      //
+      // A local bind wins over both. `let route = "x" in route` is a name that
+      // shadows the built-in, codegen honours the shadow (`localBinds` is the
+      // first thing its `Ref` case consults), and a report here would reject a
+      // program that works — the same checker/codegen disagreement this gate
+      // exists to close, pointed the other way.
+      if (
+        (e.name === "route" || e.name === "$route") &&
+        ctx.kind === "app-init" &&
+        !ctx.localBinds.has(e.name)
+      ) {
         errors.push({
           code: "E0120",
           kind: "route-in-app-init",
@@ -1765,7 +1780,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // localBinds, so there is one place that decides. Where there is no
       // payload at all the name means nothing, and the undefined-name report
       // below is the right one.
-      if (e.name === "$route" && ctx.routeBind !== "no-payload") {
+      //
+      // An enclosing bind of the same name wins, for the reason the E0120 gate
+      // above gives: `let $route = … in $route` lowers to that binding, so the
+      // payload it does or does not carry decides nothing.
+      if (e.name === "$route" && ctx.routeBind !== "no-payload" && !ctx.localBinds.has(e.name)) {
         if (ctx.routeBind === "unbound") {
           errors.push({
             code: "E0119",
@@ -3334,10 +3353,11 @@ function checkApp(
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(app.caps),
-    // The runtime evaluates these entries with no payload at all, so a
-    // `$route` here is out of scope rather than an undefined name — and in
-    // this position neither spelling of the route is available, which is what
-    // the `app-init` kind above is read for.
+    // The runtime evaluates these entries with no payload at all. E0120 answers
+    // an unshadowed `$route` here first, and a shadowed one belongs to its
+    // binding, so nothing in this position reads the field today — it is set to
+    // what is true rather than to what is load-bearing, because the field is
+    // required and every other value would be a lie about the payload.
     routeBind: "unbound",
   };
   for (const e of app.init) {

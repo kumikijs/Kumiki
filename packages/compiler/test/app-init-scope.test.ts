@@ -77,6 +77,25 @@ describe("route in an app.init argument", () => {
     expect(codes("load(key)")).toEqual([]);
   });
 
+  it("leaves a local bind of the same name alone", () => {
+    // Shadowing is legal, and codegen honours it — `localBinds` is the first
+    // thing its `Ref` case consults, before the built-in. A gate that looked at
+    // the spelling alone would reject a program that compiles and runs.
+    expect(codes('load(let route = "x" in route)')).toEqual([]);
+    expect(codes("load(match key with | route -> route)")).toEqual([]);
+  });
+
+  it("lowers a shadowed read to the binding, not to the runtime's route", () => {
+    const result = compile(app('load(let route = "x" in route)'), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const init = result.js.split(/\r?\n/).find((l) => l.includes("init: ["));
+    expect(init).toBeDefined();
+    expect(init).not.toContain('_live["route"]');
+  });
+
   it("leaves `route` alone everywhere it does exist", () => {
     const src = `slot n : Int = 0
 fn pathOf(r: Route) -> Text = r.path
@@ -121,8 +140,21 @@ describe("what a valid app.init lowers to", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.js).toContain('init: [{ effect: "load", args: [_live["key"]] }]');
-    // Not `_next[…] ?? _live[…]`: there is no reducer frame around this, and
-    // the checker now agrees with that.
+    // Not the reducer-scope lowering, which reads a pending write first: there
+    // is no reducer frame around this, and the checker now agrees with that.
     expect(result.js).not.toContain('init: [{ effect: "load", args: [((_next');
+  });
+
+  it("captures `now` at construction too, which is the whole point of the rule", () => {
+    // `now` is the other name the runtime answers, and it is fine here only
+    // because `_s` is a module import rather than something a mount installs.
+    // Pinned because "fine" is a property of where it comes from, not of the
+    // name: if it ever moved onto the app the way `route` did, this position
+    // would go back to capturing `undefined` with `check` clean.
+    const result = compile(app("load(now.show)"), { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const init = result.js.split(/\r?\n/).find((l) => l.includes("init: ["));
+    expect(init).toContain("_s.now()");
   });
 });

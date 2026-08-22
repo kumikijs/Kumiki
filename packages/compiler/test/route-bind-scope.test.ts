@@ -86,6 +86,14 @@ app A
     expect(codes(src)).toEqual(["E0120"]);
   });
 
+  it("is not reported when an enclosing bind owns the name", () => {
+    // The report used to be reached before the local-binding guard, so a
+    // `let $route = …` — legal, and lowered by codegen to that binding, which
+    // consults `localBinds` first — was rejected for a payload it never reads.
+    expect(codes(program("app.start", 'seen := let $route = "x" in $route'))).toEqual([]);
+    expect(codes(program("app.start", "seen := match seen with | $route -> $route"))).toEqual([]);
+  });
+
   it("names the slot that reads the same route, because it is in scope here", () => {
     const [d] = diagnose(program("ui.click(Btn)", "seen := $route.path"));
     expect(d?.message).toContain('"route"');

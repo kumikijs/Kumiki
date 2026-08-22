@@ -346,7 +346,7 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 > `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
-この検査がないと、読みは空オブジェクトに落ちる：`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す。それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。
+この検査がないと、読みは空オブジェクトに落ちる：`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す。それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。`app.init` の引数は [E0120](#e0120-route-in-app-init) を報告する — 上のメッセージが `route` slot を無条件に薦められるのはそのためで、その助言が成り立たない唯一の位置はこの検査に到達しない。`let` やパターンが束縛した名前はその束縛であってペイロードではないので、そもそも報告されない。
 
 **修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
 
@@ -354,7 +354,7 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 `app.init` の引数が `route` あるいは `$route` を読んでいる。init の引数が評価されるのは app オブジェクトの構築時に**一度だけ**であり（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）、ランタイムが `app.live.route` を用意するのはその後に続くマウントの中である。つまり引数が捕捉される時点に読めるルートは存在しない。
 
-> `"route" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+> `"<name>" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
 
 この検査がないと、引数は `_live["route"]` に落ちて `undefined` を捕捉する。`init = [load(route.path)]` は綺麗にコンパイルが通り、マウント時に `Cannot read properties of undefined (reading 'path')` を投げる — アプリは一度も描画されない。`$route` は同じ穴の裏側で、ここでは何もそれを束縛せず、[E0119](#e0119-route-bind-out-of-scope) の助言はこの検査が弾く `route` の綴りへ作者を送り込んでしまう。
 
@@ -662,7 +662,7 @@ slot の初期値がほかの slot——あるいは自分自身——を読み�
 
 **修正**：必要な slot 値を引数として渡す。
 
-同じコードは純粋性のもう一方も扱う：reducer の body ではない場所に**式**として書かれた `emit` である。`fn`、tile、slot の初期値、そして `app.init` の引数（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）はいずれも effect キューを持たない文脈で評価されるので、dispatch の行き先が無い。
+同じコードは純粋性のもう一方も扱う：reducer の body **以外のどこか**に式として書かれた `emit` である — `fn`、tile、slot の初期値、`effect` の `map-request`、`app.init` の引数（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）。いずれも effect キューを持たない文脈で評価されるので、dispatch の行き先が無い。
 
 > `emit "<name>" used as an expression is only allowed inside a reducer body`
 

@@ -749,6 +749,8 @@ app TodoApp
 
 その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` はコンパイルエラーになる（[E0120](./errors.md#e0120-route-in-app-init)）。`$route` も同様に、ここでは runtime が束縛しない。route が必要なら `route.enter` reducer 側で受け取ること。
 
+`now` は使えるが、捕捉のされ方は同じ — app オブジェクトが構築された瞬間に評価され、effect が走る瞬間ではない。dispatch 時点の時刻が要るなら、結果を受ける reducer 側で取ること。
+
 引数の周りに reducer も無いので、`emit` 式もここでは使えない（[E0305](./errors.md#e0305-fn-impurity)）。エントリそのものが dispatch である。
 
 ---
