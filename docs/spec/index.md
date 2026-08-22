@@ -78,6 +78,7 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | core |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | style |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | routing |
+| [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | routing |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |

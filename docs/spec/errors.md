@@ -363,6 +363,16 @@ Without this check the read lowers to an empty object: `$route.params.get-or("id
 
 **Fix**: Read the `route` slot ([Routing §3.2](./routing.md#_3-2-current-route-state)), which the runtime maintains and every layer can read. `kumiki fix` proposes the rewrite.
 
+### E0120 `route-in-app-init`
+
+An `app.init` argument reads `route` or `$route`. Init arguments are evaluated **once**, while the app object is being constructed ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)); the runtime installs `app.live.route` during the mount that follows, so at the moment these arguments are captured there is no route to read.
+
+> `"route" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+
+Without this check the argument lowers to `_live["route"]` and captures `undefined`, so `init = [load(route.path)]` compiles clean and throws `Cannot read properties of undefined (reading 'path')` at mount — the app never renders. `$route` is the same hole from the other side: nothing binds one here, and [E0119](#e0119-route-bind-out-of-scope)'s advice would send the author to the `route` spelling this check rejects.
+
+**Fix**: Take the route from a `route.enter` reducer ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -664,6 +674,12 @@ A `fn` (pure function) is reading a slot. A `fn` must depend only on its argumen
 > `fn "<name>" must not read slot "<name>"`
 
 **Fix**: Pass the required slot value as an argument.
+
+The same code covers the other side of purity: an `emit` written as an *expression* somewhere that is not a reducer body. A `fn`, a tile, a slot initializer and an `app.init` argument ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)) are all evaluated with no effect queue around them, so the dispatch would have nowhere to go.
+
+> `emit "<name>" used as an expression is only allowed inside a reducer body`
+
+**Fix**: Move the `emit` into a reducer. An `app.init` entry is already a dispatch — write the effect as the entry itself rather than as an argument to one.
 
 ## E04xx — Motion
 

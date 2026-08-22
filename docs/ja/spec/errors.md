@@ -350,6 +350,16 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 **修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
 
+### E0120 `route-in-app-init`
+
+`app.init` の引数が `route` あるいは `$route` を読んでいる。init の引数が評価されるのは app オブジェクトの構築時に**一度だけ**であり（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）、ランタイムが `app.live.route` を用意するのはその後に続くマウントの中である。つまり引数が捕捉される時点に読めるルートは存在しない。
+
+> `"route" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+
+この検査がないと、引数は `_live["route"]` に落ちて `undefined` を捕捉する。`init = [load(route.path)]` は綺麗にコンパイルが通り、マウント時に `Cannot read properties of undefined (reading 'path')` を投げる — アプリは一度も描画されない。`$route` は同じ穴の裏側で、ここでは何もそれを束縛せず、[E0119](#e0119-route-bind-out-of-scope) の助言はこの検査が弾く `route` の綴りへ作者を送り込んでしまう。
+
+**修正**：`route.enter` reducer 側でルートを受け取る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。ランタイムはアプリが着地したルートで reducer を適用する。ルートを必要としない `init` エントリはそのままでよい。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -651,6 +661,12 @@ slot の初期値がほかの slot——あるいは自分自身——を読み�
 > `fn "<name>" must not read slot "<name>"`
 
 **修正**：必要な slot 値を引数として渡す。
+
+同じコードは純粋性のもう一方も扱う：reducer の body ではない場所に**式**として書かれた `emit` である。`fn`、tile、slot の初期値、そして `app.init` の引数（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）はいずれも effect キューを持たない文脈で評価されるので、dispatch の行き先が無い。
+
+> `emit "<name>" used as an expression is only allowed inside a reducer body`
+
+**修正**：`emit` を reducer の中へ移す。`app.init` のエントリはそれ自体が dispatch なので、effect を引数ではなくエントリそのものとして書く。
 
 ## E04xx — モーション
 

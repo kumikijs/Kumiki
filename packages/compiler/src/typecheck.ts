@@ -658,7 +658,14 @@ function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
 }
 
 type Ctx = {
-  kind: "slot-init" | "tile" | "reducer" | "fn";
+  /**
+   * Which position the expression is written in. Not decoration: it decides
+   * whether reading a slot is impurity (`fn`), whether `$1` has an explanation
+   * (`tile`), whether an `emit` expression has anywhere to send its dispatch
+   * (`reducer`), and whether the runtime has installed `route` yet
+   * (`app-init` — it has not).
+   */
+  kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init";
   localBinds: Set<string>;
   capsAvailable?: Set<string>; // for reducer context
   /**
@@ -1733,6 +1740,25 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Unit":
       return;
     case "Ref":
+      // An `app.init` argument is evaluated while `createApp()` builds the app
+      // object; `app.live.route` is installed later, by the mount. Both
+      // spellings therefore read nothing here, and both get the same answer —
+      // E0119's would send the author from `$route` to `route`, which is the
+      // other half of the same hole. Checked before the two branches below so
+      // the position wins over the spelling.
+      if ((e.name === "route" || e.name === "$route") && ctx.kind === "app-init") {
+        errors.push({
+          code: "E0120",
+          kind: "route-in-app-init",
+          message:
+            `"${e.name}" is not available in an app.init argument: these arguments are ` +
+            `evaluated once, while the app object is being built, and the runtime installs ` +
+            `the route during the mount that follows. Take the route from a route.enter ` +
+            `reducer, which runs with the route the app landed on`,
+          pos: e.pos,
+        });
+        return;
+      }
       // `$route` is not a name in a table — it is a payload field the runtime
       // fills in for some reducers and not others, so the reducer's own trigger
       // is what puts it in scope. Answered here rather than by seeding
@@ -3300,14 +3326,18 @@ function checkApp(
     });
   }
   const initCtx: Ctx = {
-    kind: "reducer",
+    // The scope codegen lowers these arguments in. It used to say `reducer`,
+    // which let an `emit` expression through the check and into the app object
+    // literal, where the `_emits` it lowers to is a binding local to a reducer
+    // body — a ReferenceError at import, so nothing mounted.
+    kind: "app-init",
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(app.caps),
-    // `app.init` runs once at mount, before any route reducer, and the runtime
-    // evaluates these entries with no payload at all — so a `$route` here is
-    // out of scope for the same reason it is in a click reducer, and deserves
-    // the same report rather than "undefined name".
+    // The runtime evaluates these entries with no payload at all, so a
+    // `$route` here is out of scope rather than an undefined name — and in
+    // this position neither spelling of the route is available, which is what
+    // the `app-init` kind above is read for.
     routeBind: "unbound",
   };
   for (const e of app.init) {
