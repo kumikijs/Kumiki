@@ -746,12 +746,32 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
  * treated the two tiers alike, which is why a file `check` calls
  * `ok (1 warning)` came back from `fix` as "(no auto-patches available)".
  *
- * The same filter runs on both sides of the regression gate. Applied after the
- * patch only, a warning the file already had counts as one the patch
- * introduced, and a repair that fixed a real error is rolled back for it.
+ * Every `check()` in this file goes through here, and each for its own reason:
+ *
+ *  - the plan, so a warning is not reported as an error nobody can repair;
+ *  - both sides of the regression gate. Applied after the patch only, a warning
+ *    the file already had counts as one the patch introduced, and a repair that
+ *    fixed a real error is rolled back for it;
+ *  - both gates of the fix-from-test path, which is the damaging one. Those ask
+ *    "does this file compile" before the behavioural tier may run, so a warning
+ *    anywhere in the file made `--auto-patch` unable to repair a failing test —
+ *    the second gate even after a compile repair had already landed.
+ *
+ * What the filter must not do is hide them: `planFix` returns the warnings it
+ * set aside, and every caller that reports a clean file says how many.
  */
 function repairable(diagnostics: KumikiError[]): KumikiError[] {
   return diagnostics.filter((d) => d.severity !== "warning");
+}
+
+/** `check`'s wording for a count of advisory diagnostics. */
+function plural(n: number): string {
+  return `${n} warning${n === 1 ? "" : "s"}`;
+}
+
+/** The other half of the same split, kept beside it so neither drifts. */
+function advisory(diagnostics: KumikiError[]): KumikiError[] {
+  return diagnostics.filter((d) => d.severity === "warning");
 }
 
 /**
@@ -767,16 +787,25 @@ export function planFix(
   capabilities: string[] = [],
 ): FixPlan {
   const store = load(path);
-  const errors = repairable(check(store.program, { capabilities }));
-  if (errors.length === 0) return { errors, patches: [], skipped: [] };
+  const diagnostics = check(store.program, { capabilities });
+  const errors = repairable(diagnostics);
+  const warnings = advisory(diagnostics);
+  if (errors.length === 0) return { errors, warnings, patches: [], skipped: [] };
   const { patches: all, skipped } = planFixesExplained(store, errors);
   const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
-  return { errors, patches, skipped };
+  return { errors, warnings, patches, skipped };
 }
 
 export type FixPlan = {
   /** Typecheck errors on `path`, warnings excluded. Empty when the file is clean. */
   errors: KumikiError[];
+  /**
+   * The advisory half of the same `check()`. Carried rather than dropped so a
+   * caller reporting a clean file can still say what is in it — `fix` answering
+   * "no errors" for a file `check` calls "ok (1 warning)" is the same wrong
+   * answer as the one this split removes, told the other way round.
+   */
+  warnings: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
   patches: AutoPatch[];
   /**
@@ -980,9 +1009,12 @@ export function fixCmd(
   capabilities: string[] = [],
 ): number {
   if (!apply) {
-    const { errors, patches, skipped } = planFix(path, onlyCode, capabilities);
+    const { errors, warnings, patches, skipped } = planFix(path, onlyCode, capabilities);
     if (errors.length === 0) {
-      console.log("no errors");
+      // Same shape `check` reports a clean-but-advisory file with, so the two
+      // verbs cannot disagree about a file neither of them will change.
+      console.log(warnings.length > 0 ? `no errors (${plural(warnings.length)})` : "no errors");
+      for (const w of warnings) console.error(`${w.code} ${w.message}`);
       return 0;
     }
     if (patches.length === 0) {
@@ -1760,7 +1792,7 @@ export async function runFixFromTest(
 ): Promise<FixFromTestOutcome> {
   // Tier 1: a file that doesn't compile can't run its tests — repair first.
   const store = load(path);
-  const compileErrors = check(store.program, { capabilities });
+  const compileErrors = repairable(check(store.program, { capabilities }));
   let compileFixes = 0;
   if (compileErrors.length > 0) {
     const { patches, skipped } = planFixesExplained(store, compileErrors);
@@ -1812,7 +1844,7 @@ export async function runFixFromTest(
         parseError: e instanceof Error ? e.message : String(e),
       };
     }
-    const remaining = check(parsed, { capabilities });
+    const remaining = repairable(check(parsed, { capabilities }));
     if (remaining.length > 0) {
       return { ok: false, status: "compile-remaining", compileFixes, compileErrors: remaining };
     }

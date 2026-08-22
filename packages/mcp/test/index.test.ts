@@ -143,6 +143,31 @@ describe("kumiki_fix", () => {
     });
   });
 
+  it("reports a warning-only file as clean and still names the warning", async () => {
+    // `kumiki_check` calls this file "ok (1 warning)". A bare "no errors" here
+    // gives an agent two answers about one file with nothing to reconcile them.
+    const file = join(workdir, "warning-only.kumiki");
+    writeFileSync(
+      file,
+      [
+        'slot f : Text = ""',
+        'reducer recordFocus on=ui.focus(Card) do= f := "focused"',
+        'tile Card = box(text("hi"))',
+        "tile App = column(Card)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_fix", { path: file });
+      expect(out).toContain("no errors");
+      expect(out).toContain("W0212");
+    });
+  });
+
   it("returns a JSON error envelope for a bad path", async () => {
     await withClient(async (client) => {
       const out = await callTool(client, "kumiki_fix", {

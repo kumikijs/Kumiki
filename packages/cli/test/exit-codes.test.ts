@@ -154,9 +154,11 @@ describe("kumiki fix", () => {
   it("reports a warning-only file as clean rather than unrepairable", SPAWN, () => {
     // `check` calls this file `ok (1 warning)`. `fix` used to call the same
     // file `(no auto-patches available)` and list the warning as though it
-    // were an error it had given up on.
+    // were an error it had given up on. The count travels with the verdict for
+    // the same reason: a bare `no errors` from one verb and `ok (1 warning)`
+    // from the other are two answers about a file neither of them will change.
     const { stdout, code } = runCli(["fix", write("fix-warn.kumiki", WARN_ONLY)]);
-    expect(stdout).toBe("no errors\n");
+    expect(stdout).toBe("no errors (1 warning)\n");
     expect(code).toBe(0);
   });
 

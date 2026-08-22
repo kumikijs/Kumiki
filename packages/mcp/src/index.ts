@@ -814,7 +814,19 @@ export function createServer(): McpServer {
         return r.remaining.length > 0 ? failed(body) : text(body);
       }
       const plan = planFix(abs, input.only, caps);
-      if (plan.errors.length === 0) return text("no errors");
+      if (plan.errors.length === 0) {
+        // The warnings come out with the verdict. An agent told a bare "no
+        // errors" here and then running `kumiki_check` — which reports the same
+        // file as "ok (1 warning)" — has two answers and no way to reconcile
+        // them; the clean-file verdict is still `text`, not `failed`.
+        if (plan.warnings.length === 0) return text("no errors");
+        return text(
+          [
+            `no errors (${plan.warnings.length} warning${plan.warnings.length === 1 ? "" : "s"})`,
+            ...plan.warnings.map((w) => `${w.code} ${w.message}`),
+          ].join("\n"),
+        );
+      }
       // A dry run proposes and repairs nothing, so the file still has every
       // error it started with — which is what `isError` reports here.
       if (plan.patches.length === 0) {
