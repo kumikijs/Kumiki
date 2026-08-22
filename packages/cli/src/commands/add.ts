@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { addDef } from "../mutate.ts";
+import { addDef, describeEdit } from "../mutate.ts";
 import { resolveBody } from "./_shared/body-input.ts";
 import { requireValue } from "./_shared/value.ts";
 
@@ -35,7 +35,7 @@ export function registerAdd(program: Command): void {
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         try {
           const opId = addDef(resolve(process.cwd(), file), layer, name, body);
-          console.log(`added ${layer}.${name}  (${opId})`);
+          console.log(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
         } catch (e) {
           console.error(String(e));
           process.exit(1);

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { editDef } from "../mutate.ts";
+import { describeEdit, editDef } from "../mutate.ts";
 import { requireValue } from "./_shared/value.ts";
 
 const USAGE = "Usage: kumiki edit <file> <qname> <patch-json>";
@@ -83,7 +83,7 @@ export function registerEdit(program: Command): void {
         const patch = loadPatch(patchJson, options.patchFile);
         try {
           const opId = editDef(resolve(process.cwd(), file), qname, patch);
-          console.log(`edited ${qname}  (${opId})`);
+          console.log(describeEdit({ op: "edit", qname, opId }));
         } catch (e) {
           console.error(String(e));
           process.exit(1);

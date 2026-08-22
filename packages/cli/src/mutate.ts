@@ -236,6 +236,47 @@ function enforceLock(path: string, qname: string): void {
   }
 }
 
+/**
+ * What one mutation did, as the surfaces report it.
+ *
+ * `remove` carries the whole cascade because a cascade that deletes eight
+ * definitions and reports one is how a file loses its `app` without anyone
+ * noticing. The op-id is the handle `kumiki patch revert` takes, so an edit
+ * that does not hand it back cannot be undone by the caller that made it.
+ */
+export type EditReport =
+  | { op: "add" | "replace" | "edit"; qname: string; opId: string }
+  | { op: "rename"; qname: string; newName: string; opId: string }
+  | { op: "remove"; qname: string; opId: string; removed: string[] };
+
+/**
+ * Render an `EditReport` for a human or an agent to read.
+ *
+ * The `kumiki` verbs print this and the MCP tools return it, so the two
+ * surfaces cannot answer the same edit differently — they did, and the one
+ * agents drive was the one saying less.
+ */
+export function describeEdit(report: EditReport): string {
+  const opId = `  (${report.opId})`;
+  switch (report.op) {
+    case "add":
+      return `added ${report.qname}${opId}`;
+    case "replace":
+      return `replaced ${report.qname}${opId}`;
+    case "edit":
+      return `edited ${report.qname}${opId}`;
+    case "rename":
+      return `renamed ${report.qname} -> ${report.newName}${opId}`;
+    case "remove": {
+      // `removed` leads with the requested name (§9.4.1), which is the
+      // headline rather than one of its own casualties.
+      const lines = [`removed ${report.qname}${opId}`];
+      for (const q of report.removed) if (q !== report.qname) lines.push(`  cascaded ${q}`);
+      return lines.join("\n");
+    }
+  }
+}
+
 export function addDef(path: string, layer: string, name: string, body: string): string {
   enforceLock(path, `${layer}.${name}`);
   const src = readFileSync(path, "utf8");

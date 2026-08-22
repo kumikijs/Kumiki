@@ -306,7 +306,7 @@ kumiki mcp serve --store ./project.kumiki-store
 | `kumiki_replace` | `qname, body` | op-id |
 | `kumiki_edit` | `qname, patch` | op-id |
 | `kumiki_rename` | `qname, new_name` | op-id |
-| `kumiki_remove` | `qname, cascade?: bool` | op-id |
+| `kumiki_remove` | `qname, cascade?: bool` | op-id + 削除された定義名（§9.4.1） |
 | `kumiki_check` | `scope?: string` | error list (JSON) |
 | `kumiki_fix` | `error_code, apply?: bool` | patch (JSON) |
 | `kumiki_refs` | `qname` | 参照元リスト |

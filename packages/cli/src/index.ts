@@ -30,6 +30,8 @@ export {
 } from "./harness.ts";
 export {
   addDef,
+  describeEdit,
+  type EditReport,
   editDef,
   episodeLogPathFor,
   lockDef,

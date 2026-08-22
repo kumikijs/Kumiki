@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   addDef,
   applyFixPlan,
+  describeEdit,
   directDeps,
   editDef,
   findReferences,
@@ -174,6 +175,73 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
     const body = viewDef(store, "slot.draft");
     expect(body).toContain('Text = ""');
     expect(body).not.toContain("where len-lt");
+  });
+});
+
+// Every mutator hands back an op-id, and a cascading remove hands back the
+// definitions it took with it. The CLI printed both; the MCP tools dropped
+// them, so one edit had two different answers depending on which surface
+// asked. One function owns the wording now and both surfaces call it, which is
+// what makes them agree — this pins the wording, and the MCP suite pins that
+// the tools go through it.
+describe("describeEdit: the report an edit gives of itself", () => {
+  it("names the requested definition first and never as its own casualty", () => {
+    const out = describeEdit({
+      op: "remove",
+      qname: "slot.count",
+      opId: "op_0001",
+      removed: ["slot.count", "app.Counter", "tile.App"],
+    });
+    expect(out.split("\n")).toEqual([
+      "removed slot.count  (op_0001)",
+      "  cascaded app.Counter",
+      "  cascaded tile.App",
+    ]);
+  });
+
+  it("stops at the headline when the removal took nothing else", () => {
+    const out = describeEdit({
+      op: "remove",
+      qname: "app.Counter",
+      opId: "op_0002",
+      removed: ["app.Counter"],
+    });
+    expect(out).toBe("removed app.Counter  (op_0002)");
+  });
+
+  it("carries the op-id out of every other kind of edit", () => {
+    expect(describeEdit({ op: "add", qname: "slot.step", opId: "op_1" })).toBe(
+      "added slot.step  (op_1)",
+    );
+    expect(describeEdit({ op: "replace", qname: "slot.step", opId: "op_2" })).toBe(
+      "replaced slot.step  (op_2)",
+    );
+    expect(describeEdit({ op: "edit", qname: "reducer.inc", opId: "op_3" })).toBe(
+      "edited reducer.inc  (op_3)",
+    );
+    expect(
+      describeEdit({ op: "rename", qname: "slot.step", newName: "stride", opId: "op_4" }),
+    ).toBe("renamed slot.step -> stride  (op_4)");
+  });
+
+  it("reports a real cascade off what removeDef returned", () => {
+    // The formatter is only as good as the argument it is given: this is the
+    // pair as the callers use it, on the file the CLI transcript in the
+    // toolchain docs removes from.
+    const counter = copy(COUNTER);
+    const out = describeEdit({
+      op: "remove",
+      qname: "slot.count",
+      ...removeDef(counter, "slot.count", true),
+    });
+    expect(out.split("\n").slice(1)).toEqual([
+      "  cascaded app.Counter",
+      "  cascaded reducer.dec",
+      "  cascaded reducer.inc",
+      "  cascaded reducer.reset",
+      "  cascaded tile.App",
+    ]);
+    rmSync(dirname(counter), { recursive: true, force: true });
   });
 });
 
