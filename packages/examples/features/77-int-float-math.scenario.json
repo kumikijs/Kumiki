@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "the methods answer before anything has run",
+      "expect": { "noErrors": true, "state": { "down": 0, "root": 0.0 } }
+    },
+    {
+      "label": "floor / ceil / round narrow 2.25 to Int, and sqrt / pow / log / exp answer Float",
+      "do": { "clickText": "measure" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "down": 2,
+          "up": 3,
+          "nearest": 2,
+          "root": 1.5,
+          "squared": 2.25,
+          "lnOne": 0.0,
+          "expZero": 1.0
+        },
+        "domIncludes": ["floor=2 ceil=3 round=2", "sqrt=1.5 pow=2.25"]
+      }
+    },
+    {
+      "label": "random() lands inside the range the reducer derived it from",
+      "do": { "clickText": "roll" },
+      "expect": { "noErrors": true, "state": { "inRange": true } }
+    },
+    {
+      "label": "and again, which a generator stuck at one value would also pass — the range is what a scenario can pin",
+      "do": { "clickText": "roll" },
+      "expect": { "noErrors": true, "state": { "inRange": true } }
+    }
+  ]
+}

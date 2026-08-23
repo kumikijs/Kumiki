@@ -27,6 +27,7 @@
 // is the exact failure this file exists to stop.
 export const BUILTIN_CALLS: ReadonlySet<string> = new Set([
   "now",
+  "random",
   "fmt",
   "panic",
   "file-url",

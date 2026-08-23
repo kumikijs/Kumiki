@@ -258,6 +258,7 @@ describe("the checker accepts exactly what codegen lowers", () => {
   // defect this whole file exists to close, one level up.
   const CALL_SITE: Record<string, string> = {
     now: "now",
+    random: "random()",
     fmt: 'fmt("{0}", 1)',
     panic: 'panic("x")',
     "file-url": "file-url(1)",

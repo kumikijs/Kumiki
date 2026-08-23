@@ -208,8 +208,16 @@ parse-float                 : Option(Float)
 
 ```
 abs, neg, min(b), max(b), clamp(lo, hi)
+floor, ceil, round                            ; -> Int
+sqrt, log, exp, pow(n)                        ; log is the natural logarithm
 show, to-float (Int), to-int (Float, truncated)
 ```
+
+`floor` / `ceil` / `round` answer `Int` whatever they are given; `sqrt` / `log` / `exp` answer `Float`. `pow`'s result follows its receiver, so the checker leaves it open rather than guessing — `2.pow(3)` is an `Int` expression and `2.5.pow(2)` is not.
+
+These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier is a capitalised name, so `math.abs(x)` is a reference to a name called `math` and reports [E0103](./errors.md#e0103-undef-ref-undef-slot).
+
+An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type; a refinement (`where between(…)`) is how a slot refuses one.
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
 
@@ -426,14 +434,15 @@ TypeName.parse(text)       : Option(T)    ; string parsing of a nominal type
 TypeName.show(value)       : Text         ; the string representation of a value
 ```
 
-### 2.4.4 Math
+### 2.4.4 Randomness
 
 ```
-math.abs, math.min, math.max, math.clamp
-math.floor, math.ceil, math.round
-math.sqrt, math.pow, math.log, math.exp
-math.random                : Float        ; callable only inside a reducer (treated as an effect)
+random()                   : Float        ; 0 <= x < 1
 ```
+
+The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the number.
+
+`random()` reads the environment the way `now` does, and like `now` it is callable wherever an expression is. Its answer is different every time it is read, so it takes its parentheses.
 
 ### 2.4.5 String Formatting
 

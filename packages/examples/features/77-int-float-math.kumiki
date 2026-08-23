@@ -1,0 +1,55 @@
+# Feature: §2.2.7 Int / Float arithmetic, and §2.4.4 `random()`.
+#
+# The spec used to document these as a `math.*` namespace. It could not exist:
+# a call qualifier is a capitalised name, so `math.abs(x)` is a reference to a
+# name called `math` and every one of the eleven functions was E0103. They are
+# methods on the number instead — which is where `abs` / `min` / `clamp`
+# already were.
+#
+# `random()` is the one that is not a method, because it has no receiver. It
+# reads the environment like `now` and, like `now`, is callable anywhere. The
+# roll below is asserted through `inRange` rather than by value: what a scenario
+# can pin about a random number is the range it came from.
+
+slot base    : Float = 2.25
+slot down    : Int   = 0
+slot up      : Int   = 0
+slot nearest : Int   = 0
+slot root    : Float = 0.0
+slot squared : Float = 0.0
+slot lnOne   : Float = -1.0
+slot expZero : Float = 0.0
+slot roll    : Int   = 0
+slot inRange : Bool  = false
+
+reducer measure on=ui.click(MeasureBtn)
+    do= down    := base.floor
+        up      := base.ceil
+        nearest := base.round
+        root    := base.sqrt
+        squared := base.sqrt.pow(2)
+        lnOne   := 1.0.log
+        expZero := 0.0.exp
+
+reducer roll6 on=ui.click(RollBtn)
+    do= roll    := (random() * 6.0).floor + 1
+        inRange := roll >= 1 && roll <= 6
+
+tile MeasureBtn = button(text="measure", onClick=measure)
+tile RollBtn    = button(text="roll", onClick=roll6)
+
+tile App
+    = column(
+        heading("Int / Float methods"),
+        MeasureBtn,
+        text("floor=" + down.show + " ceil=" + up.show + " round=" + nearest.show),
+        text("sqrt=" + root.show + " pow=" + squared.show),
+        text("log=" + lnOne.show + " exp=" + expZero.show),
+        RollBtn,
+        text("roll=" + roll.show + " inRange=" + inRange.show)
+      )
+
+app IntFloatMath
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

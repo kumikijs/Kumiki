@@ -95,6 +95,12 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "parse-float") return `_s.parseFloatOpt(${baseJs})`;
       if (e.field === "abs") return `Math.abs(${baseJs})`;
       if (e.field === "neg") return `(-(${baseJs}))`;
+      if (e.field === "floor") return `Math.floor(${baseJs})`;
+      if (e.field === "ceil") return `Math.ceil(${baseJs})`;
+      if (e.field === "round") return `Math.round(${baseJs})`;
+      if (e.field === "sqrt") return `Math.sqrt(${baseJs})`;
+      if (e.field === "log") return `Math.log(${baseJs})`;
+      if (e.field === "exp") return `Math.exp(${baseJs})`;
       if (e.field === "to-float") return `(${baseJs})`;
       if (e.field === "to-int") return `Math.trunc(${baseJs})`;
       return `(${baseJs})[${JSON.stringify(e.field)}]`;
@@ -188,6 +194,10 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // Environment-reading like `now`, and used the same way: an `app.start`
       // reducer picks the initial theme from it.
       if (cn === "prefers-dark") return `_s.prefersDark()`;
+      // `random()` — a Float in [0, 1). Non-deterministic like `now`, and
+      // unrestricted for the same reason: a rule confining it to reducers would
+      // be the only purity rule in the language that no other builtin has.
+      if (cn === "random") return "Math.random()";
       // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.
@@ -294,6 +304,7 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["map", 1],
   ["map-err", 1],
   ["max", 1],
+  ["pow", 1],
   ["merge", 1],
   ["min", 1],
   ["minus", 1],
@@ -379,6 +390,15 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "parse-float", // Text.parse-float → Option(Float)
   "abs", // Int/Float.abs
   "neg", // Int/Float.neg
+  // stdlib.md §2.2.7. Documented as a `math.*` namespace the parser could never
+  // read — a lowercase qualifier is not one — so every call reported E0103.
+  "floor", // Float.floor → Int
+  "ceil", // Float.ceil → Int
+  "round", // Float.round → Int (half away from zero, as JS rounds)
+  "sqrt", // Int/Float.sqrt → Float
+  "log", // Int/Float.log → Float (natural logarithm)
+  "exp", // Int/Float.exp → Float
+  "pow", // Int/Float.pow(n)
   "to-float", // Int.to-float → Float
   "to-int", // Float.to-int → Int (truncated)
   // Issue #92: stdlib methods that also have FieldAccess shortcuts (see
@@ -434,6 +454,12 @@ export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
   "neg",
   "to-float",
   "to-int",
+  "floor",
+  "ceil",
+  "round",
+  "sqrt",
+  "log",
+  "exp",
 ]);
 
 /**
@@ -648,6 +674,20 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `_s.parseFloatOpt(${recvJs})`;
     case "abs":
       return `Math.abs(${recvJs})`;
+    case "floor":
+      return `Math.floor(${recvJs})`;
+    case "ceil":
+      return `Math.ceil(${recvJs})`;
+    case "round":
+      return `Math.round(${recvJs})`;
+    case "sqrt":
+      return `Math.sqrt(${recvJs})`;
+    case "log":
+      return `Math.log(${recvJs})`;
+    case "exp":
+      return `Math.exp(${recvJs})`;
+    case "pow":
+      return `((${recvJs}) ** (${argRaw(args[0]!)}))`;
     case "neg":
       return `(-(${recvJs}))`;
     case "to-float":

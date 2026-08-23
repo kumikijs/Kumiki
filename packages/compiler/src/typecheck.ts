@@ -2563,6 +2563,14 @@ const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["show", "Text"],
   ["to-int", "Int"],
   ["to-float", "Float"],
+  ["floor", "Int"],
+  ["ceil", "Int"],
+  ["round", "Int"],
+  ["sqrt", "Float"],
+  ["log", "Float"],
+  ["exp", "Float"],
+  // `pow` is absent on purpose: its result follows its receiver, and this table
+  // is for the methods whose answer is fixed whatever the receiver is.
 ]);
 
 /**
@@ -2571,6 +2579,7 @@ const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
  */
 const CALL_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["now", "Time"],
+  ["random", "Float"],
   ["fmt", "Text"],
   ["file-url", "Text"],
   ["prefers-dark", "Bool"],
