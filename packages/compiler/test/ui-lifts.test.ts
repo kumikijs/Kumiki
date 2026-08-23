@@ -120,6 +120,18 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   const codesFor = (tile: string) => check(parse(lex(source(tile)))).map((e) => e.code);
 
+  /** The same fixture with a second tile beside `T`, for the cases that name one. */
+  const neighbour = (tile: string) => `slot n : Int = 0
+reducer bump on=app.start do= n := 1
+tile Other = box(text("y"))
+tile T = ${tile}
+tile App = column(T, Other, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  const errorsForNeighbour = (tile: string) => check(parse(lex(neighbour(tile))));
+  const codesForNeighbour = (tile: string) => errorsForNeighbour(tile).map((e) => e.code);
+
   function jsFor(tile: string): string {
     const result = compile(source(tile), { runtimeSpecifier: "./runtime.js" });
     if (result.kind !== "ok") {
@@ -158,8 +170,55 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         // Quieter than the undefined case under drift: nothing at all.
         expect(codesFor(bind(handler, "1"))).toEqual([...inert, "E0201"]);
       });
+
+      // The two forms reach this from different shapes. As a named argument of
+      // a tile-taking builtin the capitalised name parses as a tile call, which
+      // is the regression: taken as a nested tile it drew no diagnostic and
+      // codegen wired no listener, so the tile rendered and the click did
+      // nothing. In the props block it parses as a variant tag — the same path
+      // as the `1` above, and already reported — so that half pins that the
+      // two forms keep answering alike.
+      it(`${handler} (${form}) = <tile> reports exactly E0201`, () => {
+        const errors = errorsForNeighbour(bind(handler, "Other"));
+        expect(errors.map((e) => e.code)).toEqual([...inert, "E0201"]);
+        // The form is the only caller-supplied value that differs between the
+        // two call sites, so the word is where a crossed wiring would show.
+        // Looked up by code rather than by position: a diagnostic added later
+        // in `checkTileCall` should not fail this.
+        expect(errors.find((e) => e.code === "E0201")?.message).toBe(
+          `Event handler ${form} "${handler}" must be a reducer name`,
+        );
+      });
     }
   }
+
+  // A handler on a user tile takes the same branch and reports the same code,
+  // with no W0213 — `checkHandlerTarget` has nothing to say about a tile whose
+  // renderer it does not own. Nothing pinned that, so the tempting tidy-up
+  // ("checkHandlerTarget ignores user tiles anyway, so only run the handler
+  // branch for builtins") would put this case back to silence unnoticed.
+  it("reports a handler bound to a tile on a user tile too, without W0213", () => {
+    expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["E0201"]);
+  });
+
+  it("leaves a handler bound to a reducer on a user tile alone", () => {
+    expect(codesForNeighbour("Other(onClick=bump)")).toEqual([]);
+  });
+
+  // Every consumer that walks a tile body has to agree that a handler is not
+  // a child, not just the one that reports the binding: the cycle search
+  // followed the same mis-parse and answered that the tile expanded into
+  // itself, which is a sentence about a tile that is never rendered.
+  it("reports only the binding when the handler names an enclosing tile", () => {
+    expect(codesFor('box(text("x"), onClick=App)')).toEqual(["W0213", "E0201"]);
+  });
+
+  // The reason the handler branch has to be consulted first rather than the
+  // tile branch narrowed: an argument that is a tile is still ordinary.
+  it("leaves a tile written as an ordinary argument alone", () => {
+    expect(codesForNeighbour('box(text("x"), Other)')).toEqual([]);
+    expect(codesForNeighbour('box(Other, text("x"))')).toEqual([]);
+  });
 });
 
 // `HANDLER_PROP_TILES` answers "which tiles honour this handler when it is

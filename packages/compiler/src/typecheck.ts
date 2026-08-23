@@ -999,58 +999,26 @@ function checkTileCall(
 
   for (const arg of t.args) {
     const v = arg.value;
-    if (
-      (v as TileExpr).kind === "TileCall" ||
-      (v as TileExpr).kind === "TileFor" ||
-      (v as TileExpr).kind === "TileWhen" ||
-      (v as TileExpr).kind === "TileIf" ||
-      (v as TileExpr).kind === "TileMatch"
-    ) {
-      checkTileExpr(v as TileExpr, sym, errors, ctx);
+    // A named arg whose name is an event handler binds a reducer — asked before
+    // the nested-tile branch below, because a capitalised name written as a
+    // named argument of a builtin that takes tiles parses as a tile call.
+    // Checked as one, `box(text("x"), onClick=Card)` drew no diagnostic and
+    // codegen captured no handler: the tile rendered and the click did nothing.
+    // The other positions parse it as a variant tag, which the shape check
+    // below rejects either way — this branch is what makes them agree.
+    if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
+      checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
-    // Named arg whose name is an event-handler binds a reducer rather than a slot ref.
-    if (arg.name && HANDLER_NAMES.has(arg.name)) {
-      const expr = v as Expr;
-      checkHandlerTarget(t.name, arg.name, expr.pos, errors);
-      if (expr.kind !== "Ref") {
-        errors.push({
-          code: "E0201",
-          kind: "type-mismatch",
-          message: `Event handler arg "${arg.name}" must be a reducer name`,
-          pos: expr.pos,
-        });
-      } else if (!sym.reducers.has(expr.name)) {
-        errors.push({
-          code: "E0102",
-          kind: "undef-reducer",
-          message: `Reference to undefined reducer "${expr.name}"`,
-          pos: expr.pos,
-        });
-      }
+    if (isTileExpr(v)) {
+      checkTileExpr(v, sym, errors, ctx);
       continue;
     }
-    checkExpr(v as Expr, sym, errors, ctx);
+    checkExpr(v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
-      const ref = prop.value;
-      checkHandlerTarget(t.name, prop.name, ref.pos, errors);
-      if (ref.kind !== "Ref") {
-        errors.push({
-          code: "E0201",
-          kind: "type-mismatch",
-          message: `Event handler prop "${prop.name}" must be a reducer name`,
-          pos: prop.value.pos,
-        });
-      } else if (!sym.reducers.has(ref.name)) {
-        errors.push({
-          code: "E0102",
-          kind: "undef-reducer",
-          message: `Reference to undefined reducer "${ref.name}"`,
-          pos: ref.pos,
-        });
-      }
+      checkHandlerBinding(t.name, prop.name, "prop", prop.value, sym, errors);
     } else if (prop.name === "motion" && prop.value.kind === "Str") {
       // A `motion: "Name"` prop must name a defined `motion` (M5 AC2).
       if (!sym.motions.has(prop.value.value)) {
@@ -1085,6 +1053,49 @@ function checkTileCall(
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
+  }
+}
+
+/**
+ * Check one handler binding, in either form: `f(onX=r)` and `f() {onX: r}`.
+ *
+ * A handler names a reducer: this is the one argument position resolved in the
+ * reducer namespace. What arrives is not always shaped like a reference —
+ * a capitalised name is a tile call as a named argument of a tile-taking
+ * builtin and a variant tag everywhere else — and neither form has anything
+ * more to say about that than the other, so both ask here rather than each
+ * deciding for itself.
+ *
+ * Every non-reference is rejected, including a name that resolves to a
+ * reducer: a capitalised reducer name cannot be bound to a handler at all,
+ * because it never reaches here as a reference. The message says what the
+ * position requires rather than what this value is.
+ */
+function checkHandlerBinding(
+  tileName: string,
+  handler: string,
+  form: "arg" | "prop",
+  value: Expr | TileExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  checkHandlerTarget(tileName, handler, value.pos, errors);
+  if (value.kind !== "Ref") {
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message: `Event handler ${form} "${handler}" must be a reducer name`,
+      pos: value.pos,
+    });
+    return;
+  }
+  if (!sym.reducers.has(value.name)) {
+    errors.push({
+      code: "E0102",
+      kind: "undef-reducer",
+      message: `Reference to undefined reducer "${value.name}"`,
+      pos: value.pos,
+    });
   }
 }
 
