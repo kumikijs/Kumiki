@@ -19,6 +19,10 @@ export type Action =
   | { click: string }
   | { focus: string }
   | { blur: string }
+  /** Press a key on the element the selector matches — what a `ui.key` reducer listens for. */
+  | { key: string; value: string }
+  /** Enter the element the selector matches — what a `ui.hover` reducer listens for. */
+  | { hover: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
   | { navigate: string }
@@ -68,12 +72,14 @@ const HEADLESS_EXPECT_KEYS = [
 ] as const satisfies readonly (keyof Expect)[];
 const BROWSER_EXPECT_KEYS = ["focused", "visible", "hidden", "animating", "elementState"] as const;
 
-const HEADLESS_ACTION_KEYS = [
+export const HEADLESS_ACTION_KEYS = [
   "dispatch",
   "clickText",
   "click",
   "focus",
   "blur",
+  "key",
+  "hover",
   "fill",
   "choose",
   "navigate",
@@ -172,6 +178,14 @@ function validateAction(action: Action, where: string): string[] {
   const a = action as Record<string, unknown>;
   if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
     return [`${where}: "${kind}" needs a string "value"`];
+  }
+  // `key` needs its own branch rather than joining the two above: `""` is
+  // meaningful for `fill` (clear the field) and `choose` (an option with an
+  // empty value), and is the one thing `key` cannot be. `KeyboardEventInit.key`
+  // defaults to `""`, and the listener never reads it, so a step pressing
+  // nothing would fire the reducer and pass.
+  if (kind === "key" && (typeof a.value !== "string" || a.value.length === 0)) {
+    return [`${where}: "key" needs a non-empty string "value" (the key to press)`];
   }
   if (kind === "wait" && !isWaitable(a.wait)) {
     return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
@@ -418,17 +432,31 @@ function mkStep(
   return step;
 }
 
+/**
+ * The two walks below are exhaustive by construction, which the type system
+ * only half enforces on its own: `Covers<>` catches an `Action` member missing
+ * from `HEADLESS_ACTION_KEYS`, so a new action cannot be silently unvalidated —
+ * but a member with no branch here used to fall through to the `choose` tail
+ * and fail as `no select matching selector undefined`, with everything green.
+ */
+function unhandledAction(a: never): never {
+  throw new Error(`unhandled action: ${JSON.stringify(a)}`);
+}
+
 function describeAction(a: Action): string {
   if ("dispatch" in a) return `dispatch ${a.dispatch}`;
   if ("clickText" in a) return `clickText "${a.clickText}"`;
   if ("click" in a) return `click ${a.click}`;
   if ("focus" in a) return `focus ${a.focus}`;
   if ("blur" in a) return `blur ${a.blur}`;
+  if ("key" in a) return `key ${a.key} "${a.value}"`;
+  if ("hover" in a) return `hover ${a.hover}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
   if ("submit" in a) return `submit ${a.submit}`;
   if ("wait" in a) return `wait ${a.wait}ms`;
-  return `navigate ${a.navigate}`;
+  if ("navigate" in a) return `navigate ${a.navigate}`;
+  return unhandledAction(a);
 }
 
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
@@ -497,6 +525,37 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     el.dispatchEvent(new FocusEvent("blur"));
     return;
   }
+  if ("key" in a) {
+    // `keydown` bubbles, and the language relies on it: `ui.key(Container)`
+    // reaches a container from a focusable descendant, which is what makes the
+    // selector useful on anything but the input itself. Dispatching without it
+    // would make this tier answer "the handler did not fire" for a program a
+    // browser runs correctly.
+    //
+    // The reducer's payload carries `key` and `code`. Only `key` is set here —
+    // a `code` is a physical key on a keyboard layout, which a scenario naming
+    // "Enter" has not told us. A reducer reading `$el.code` sees the empty
+    // string from this tier; the browser tier is where a real one comes from.
+    //
+    // Scoped to `root` like focus/blur: these targets render inside the mount
+    // tree, and a document-wide lookup could hit a leaked element from a prior
+    // test.
+    const el = root.querySelector<HTMLElement>(a.key);
+    if (!el) throw new Error(`no element matching selector ${a.key}`);
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: a.value, bubbles: true }));
+    return;
+  }
+  if ("hover" in a) {
+    // `mouseenter` does not bubble, by DOM spec — it is the non-bubbling
+    // counterpart of `mouseover`, and a browser fires a separate one on each
+    // ancestor rather than propagating a single event. So it is dispatched on
+    // the element, where the runtime puts its listener; making it bubble would
+    // not reproduce the browser's behaviour, it would invent a different one.
+    const el = root.querySelector<HTMLElement>(a.hover);
+    if (!el) throw new Error(`no element matching selector ${a.hover}`);
+    el.dispatchEvent(new MouseEvent("mouseenter"));
+    return;
+  }
   if ("fill" in a) {
     const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(a.fill);
     if (!el) throw new Error(`no input matching selector ${a.fill}`);
@@ -505,15 +564,18 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return;
   }
-  // choose
-  const sel = root.querySelector<HTMLSelectElement>(a.choose);
-  if (!sel) throw new Error(`no select matching selector ${a.choose}`);
-  const opt = Array.from(sel.options).find(
-    (o) => o.value === a.value || (o.textContent ?? "").trim() === a.value,
-  );
-  if (!opt) throw new Error(`no option "${a.value}" in select ${a.choose}`);
-  sel.value = opt.value;
-  sel.dispatchEvent(new Event("change", { bubbles: true }));
+  if ("choose" in a) {
+    const sel = root.querySelector<HTMLSelectElement>(a.choose);
+    if (!sel) throw new Error(`no select matching selector ${a.choose}`);
+    const opt = Array.from(sel.options).find(
+      (o) => o.value === a.value || (o.textContent ?? "").trim() === a.value,
+    );
+    if (!opt) throw new Error(`no option "${a.value}" in select ${a.choose}`);
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  unhandledAction(a);
 }
 
 function evaluateExpect(

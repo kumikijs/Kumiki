@@ -46,7 +46,11 @@ are deterministic and hermetic.
 ## Actions (`do`) and assertions (`expect`)
 
 - Actions: `{dispatch, payload?}` (fire a reducer by name), `{clickText}`, `{click}` (CSS),
-  `{fill, value}`, `{choose, value}`, `{navigate}`.
+  `{focus}`, `{blur}`, `{key, value}`, `{hover}`, `{fill, value}`, `{choose, value}`,
+  `{navigate}`, `{submit}`, `{wait}`.
+- The four DOM-event actions — focus, blur, key and hover — dispatch the real event on the
+  selector, driving a `ui.<event>` reducer through the listener the runtime wired. Prefer them
+  to `dispatch`, which calls the reducer directly and proves nothing about the wiring.
 - `expect`: `{ noErrors?, errorIncludes?: [], state?: {slot: value}, domIncludes?: [], domExcludes?: [] }`.
   `errorIncludes` asserts an error **was** reported (each substring must appear in one) — for
   contracts whose point is that the runtime surfaces something, e.g. a reducer batch a

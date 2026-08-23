@@ -1,19 +1,29 @@
 {
   "steps": [
     {
-      "label": "ui.key: dispatch onSearchKey with key=Enter",
-      "do": { "dispatch": "onSearchKey", "payload": { "key": "Enter" } },
-      "expect": { "noErrors": true, "state": { "lastKey": "Enter" } }
+      "label": "ui.key: a real keydown on the input reaches onSearchKey with the key it carried",
+      "do": { "key": "#search-input", "value": "Enter" },
+      "expect": { "noErrors": true, "state": { "lastKey": "Enter" }, "domIncludes": ["Enter"] }
     },
     {
-      "label": "ui.hover: first hover increments to 1",
-      "do": { "dispatch": "onCardHover" },
+      "label": "ui.key: the next keydown replaces it, so the listener is live and not a one-shot",
+      "do": { "key": "#search-input", "value": "a" },
+      "expect": { "noErrors": true, "state": { "lastKey": "a" } }
+    },
+    {
+      "label": "ui.hover: a real mouseenter on the card increments to 1",
+      "do": { "hover": "#hover-card" },
       "expect": { "noErrors": true, "state": { "hoverHits": 1 } }
     },
     {
-      "label": "ui.hover: second hover increments to 2",
-      "do": { "dispatch": "onCardHover" },
+      "label": "ui.hover: second mouseenter increments to 2",
+      "do": { "hover": "#hover-card" },
       "expect": { "noErrors": true, "state": { "hoverHits": 2 } }
+    },
+    {
+      "label": "the same reducer called directly, which is the one place the corpus shows a payload",
+      "do": { "dispatch": "onSearchKey", "payload": { "key": "Escape" } },
+      "expect": { "noErrors": true, "state": { "lastKey": "Escape" } }
     },
     {
       "label": "tuple pattern: zipped rows render the name half of each Tuple(Text, Int)",

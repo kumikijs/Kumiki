@@ -71,6 +71,19 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toMatch(/browser/i);
   });
 
+  // `key` carries the key to press in `value`, the way `fill` and `choose` carry
+  // theirs — and unlike those two it cannot be empty. `KeyboardEventInit.key`
+  // defaults to `""`, so a missing value and an empty one build the same event,
+  // and the listener never reads it: the reducer fires either way and the step
+  // reports success having pressed nothing anyone can name.
+  it("refuses a key press that names no key", async () => {
+    for (const action of [{ key: "input" }, { key: "input", value: "" }]) {
+      const r = await run({ steps: [{ do: action as never }] });
+      expect(r.ok, JSON.stringify(action)).toBe(false);
+      expect(r.failures.join("\n")).toMatch(/"key" needs a non-empty string "value"/);
+    }
+  });
+
   it("rejects an action that names two things to do", async () => {
     const r = await run({ steps: [{ do: { click: "#a", navigate: "/b" } as never }] });
     expect(r.ok).toBe(false);

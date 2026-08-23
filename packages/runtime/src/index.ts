@@ -119,6 +119,7 @@ export {
   type Action,
   type EffectScript,
   type Expect,
+  HEADLESS_ACTION_KEYS,
   runScenario,
   type Scenario,
   type ScenarioReport,

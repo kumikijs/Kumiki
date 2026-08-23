@@ -14,6 +14,7 @@ import {
   editDef,
   episodeLogPathFor,
   findReferences,
+  HEADLESS_ACTION_KEYS,
   LAYERS,
   listDefs,
   load,
@@ -49,6 +50,29 @@ import { z } from "zod";
 import { getSpecDoc, listSpecDocs, searchSpec } from "./spec.ts";
 
 type Diagnostic = { code: string; kind: string; message: string; line: number; col: number };
+
+/**
+ * The shape of each scenario action, for the one surface an agent reads before
+ * writing a scenario. Keyed by the runner's own action set, so an action added
+ * there and forgotten here is a compile error rather than an action no caller
+ * of this tool knows exists — this description had drifted by six of them, and
+ * the set is closed, so an action missing from it is unreachable in practice.
+ */
+const ACTION_SHAPES: Record<(typeof HEADLESS_ACTION_KEYS)[number], string> = {
+  dispatch: "{dispatch, payload?}",
+  clickText: "{clickText}",
+  click: "{click}",
+  focus: "{focus}",
+  blur: "{blur}",
+  key: "{key, value}",
+  hover: "{hover}",
+  fill: "{fill, value}",
+  choose: "{choose, value}",
+  navigate: "{navigate}",
+  submit: "{submit}",
+  wait: "{wait}",
+};
+const SCENARIO_ACTIONS = HEADLESS_ACTION_KEYS.map((k) => ACTION_SHAPES[k]).join(", ");
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -463,8 +487,7 @@ export function createServer(): McpServer {
     "kumiki_run_scenario",
     {
       title: "Run a scenario",
-      description:
-        "Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with `expect` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call `kumiki_auto_patch { apply: true, testName }` (test-driven, deterministic literal repair); on a compile diagnostic, call `kumiki_fix { apply: true }` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action `do` is one of: {dispatch, payload?}, {clickText}, {click}, {fill, value}, {choose, value}, {navigate}. An `expect` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; `errorIncludes` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).",
+      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
