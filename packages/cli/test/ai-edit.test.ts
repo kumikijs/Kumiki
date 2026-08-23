@@ -185,7 +185,13 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
 // what makes them agree — this pins the wording, and the MCP suite pins that
 // the tools go through it.
 describe("describeEdit: the report an edit gives of itself", () => {
-  it("names the requested definition first and never as its own casualty", () => {
+  let removedFrom: string | undefined;
+  afterEach(() => {
+    if (removedFrom) rmSync(dirname(removedFrom), { recursive: true, force: true });
+    removedFrom = undefined;
+  });
+
+  it("puts the requested definition on the headline and the rest under it", () => {
     const out = describeEdit({
       op: "remove",
       qname: "slot.count",
@@ -228,12 +234,10 @@ describe("describeEdit: the report an edit gives of itself", () => {
     // The formatter is only as good as the argument it is given: this is the
     // pair as the callers use it, on the file the CLI transcript in the
     // toolchain docs removes from.
-    const counter = copy(COUNTER);
-    const out = describeEdit({
-      op: "remove",
-      qname: "slot.count",
-      ...removeDef(counter, "slot.count", true),
-    });
+    removedFrom = copy(COUNTER);
+    const result = removeDef(removedFrom, "slot.count", true);
+    expect(result.removed[0]).toBe("slot.count");
+    const out = describeEdit({ op: "remove", qname: "slot.count", ...result });
     expect(out.split("\n").slice(1)).toEqual([
       "  cascaded app.Counter",
       "  cascaded reducer.dec",
@@ -241,7 +245,6 @@ describe("describeEdit: the report an edit gives of itself", () => {
       "  cascaded reducer.reset",
       "  cascaded tile.App",
     ]);
-    rmSync(dirname(counter), { recursive: true, force: true });
   });
 });
 

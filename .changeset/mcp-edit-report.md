@@ -17,8 +17,8 @@ point with nothing in the transcript to say so.
 The op-id went the same way, in `kumiki_add`, `kumiki_replace`,
 `kumiki_remove` and `kumiki_rename` alike, though the §9.7 tool table lists it
 as the return value of all five edit tools. It is the handle `kumiki patch
-revert` takes and the key `kumiki_history` is read by, so an agent that made an
-edit could not name it afterwards.
+revert` takes, and what identifies the op among the entries `kumiki_history`
+returns, so an agent that made an edit could not name it afterwards.
 
 Both surfaces now format their report with one shared function, `describeEdit`,
 newly exported from `@kumikijs/cli` — the CLI verbs print it and the MCP tools

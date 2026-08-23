@@ -798,12 +798,11 @@ tile Orphan = column(zzz.show)
   });
 });
 
-// A remove that deleted six definitions and answered "removed slot.count" left
-// the agent believing the file still had an entry point — `app.Counter` goes
-// with the slot its tile reads. The CLI has printed the cascade since the op
-// log learned to record it; MCP is the surface agents actually drive, and it
-// threw the whole report away. The op-id went with it, which is the handle
-// `kumiki patch revert` takes.
+// What these pin is that the tools go through the shared formatter at all: the
+// wording itself is pinned once, in the CLI suite. A handler that answers with
+// a sentence of its own instead is the regression — that is how `kumiki_remove`
+// came to say "removed slot.count" for an edit that had also taken the three
+// reducers, the tile and the `app`, over the protocol path an agent drives.
 describe("what an edit tool reports about the edit it made", () => {
   let workdir: string;
   let file: string;
@@ -883,12 +882,24 @@ describe("what an edit tool reports about the edit it made", () => {
       });
       expect(renamed).toContain("renamed slot.step -> stride");
       expect(renamed).toMatch(OP_ID);
+
+      // `kumiki_edit` is the one tool that already reported its op-id, which
+      // makes it the one where dropping it again would go unnoticed.
+      const edited = await callTool(client, "kumiki_edit", {
+        path: file,
+        name: "slot.stride",
+        patch: { find: "2", replace: "3" },
+      });
+      expect(edited).toContain("edited slot.stride");
+      expect(edited).toMatch(OP_ID);
     });
   });
 
-  it("gives the op-ids the history the agent can look them up in", async () => {
-    // The point of returning the id: an agent that keeps it can ask what that
-    // op was, and hand it to `kumiki patch revert`.
+  it("returns an id that identifies the edit in the file's history", async () => {
+    // The point of returning the id: it is the handle `kumiki patch revert`
+    // takes, and what tells this edit apart from every other edit to the same
+    // definition. `kumiki_history` is asked by name and answers with the
+    // entries; the id is what picks one of them out.
     await withClient(async (client) => {
       const added = await callTool(client, "kumiki_add", {
         path: file,

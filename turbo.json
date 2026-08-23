@@ -13,7 +13,9 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/docs/spec/errors.md",
-        "$TURBO_ROOT$/docs/ja/spec/errors.md"
+        "$TURBO_ROOT$/docs/ja/spec/errors.md",
+        "$TURBO_ROOT$/packages/examples/**/*.kumiki",
+        "$TURBO_ROOT$/packages/examples/**/*.json"
       ]
     },
     "test:e2e": {

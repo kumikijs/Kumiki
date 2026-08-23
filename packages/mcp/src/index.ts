@@ -609,7 +609,8 @@ export function createServer(): McpServer {
       title: "Remove a definition",
       description:
         "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
-        "Returns the new op-id and every definition the removal took, one `cascaded <name>` line each.",
+        "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
+        "line for each further definition the cascade took.",
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },
     },
     async ({ path, name, cascade }) => {

@@ -38,6 +38,7 @@ export {
   type OpLogEntry,
   patchApplyFile,
   patchRevert,
+  type RemovedNames,
   readOpLog,
   removeDef,
   renameDef,
