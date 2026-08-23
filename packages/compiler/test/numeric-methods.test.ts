@@ -34,9 +34,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
 /** `expr` assigned to a slot of type `slotType`, checked. */
 function codesFor(slotType: string, expr: string): string[] {
+  const init: Record<string, string> = { Int: "0", Float: "0.0", Text: '""' };
   const src = `slot i : Int   = 7
 slot f : Float = 2.25
-slot dst : ${slotType} = ${slotType === "Int" ? "0" : "0.0"}
+slot dst : ${slotType} = ${init[slotType]}
 reducer r on=ui.click(B) do= dst := ${expr}
 tile B = button(text="b")
 tile App = column(B, text(dst.show))
@@ -95,6 +96,10 @@ describe("what the checker knows about the result", () => {
   it("takes floor / ceil / round as Int", () => {
     for (const m of ["floor", "ceil", "round"]) {
       expect(codesFor("Int", `f.${m}`), m).toEqual([]);
+      // Against a target the answer is wrong for. Without this the assertion
+      // above passes either way — an undecidable result reports nothing too,
+      // so "no diagnostic" cannot tell "Int" from "no idea".
+      expect(codesFor("Text", `f.${m}`), m).toEqual(["E0201"]);
     }
   });
 

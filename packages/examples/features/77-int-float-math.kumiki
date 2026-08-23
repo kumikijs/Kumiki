@@ -6,6 +6,9 @@
 # methods on the number instead — which is where `abs` / `min` / `clamp`
 # already were.
 #
+# `round()` is written with its parentheses and the others without, because both
+# spellings are the language: an argument-less method reads either way.
+#
 # `random()` is the one that is not a method, because it has no receiver. It
 # reads the environment like `now` and, like `now`, is callable anywhere. The
 # roll below is asserted through `inRange` rather than by value: what a scenario
@@ -25,7 +28,7 @@ slot inRange : Bool  = false
 reducer measure on=ui.click(MeasureBtn)
     do= down    := base.floor
         up      := base.ceil
-        nearest := base.round
+        nearest := base.round()
         root    := base.sqrt
         squared := base.sqrt.pow(2)
         lnOne   := 1.0.log
