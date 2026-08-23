@@ -1,5 +1,9 @@
 // Public API of @kumikijs/cli — the programmatic surface behind the `kumiki` command.
 
+// The action set `kumiki run` accepts, re-exported so a caller describing that
+// surface — the MCP tool's description of `kumiki_run_scenario` — is derived
+// from it rather than restating it. It had drifted by six actions.
+export { HEADLESS_ACTION_KEYS } from "@kumikijs/runtime";
 export { type CheckScope, filterByScope } from "./commands/check.ts";
 export { type DevCmdOptions, devCmd, startDevServer } from "./dev.ts";
 export {

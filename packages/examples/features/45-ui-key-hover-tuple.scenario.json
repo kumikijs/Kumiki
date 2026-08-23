@@ -21,6 +21,11 @@
       "expect": { "noErrors": true, "state": { "hoverHits": 2 } }
     },
     {
+      "label": "the same reducer called directly, which is the one place the corpus shows a payload",
+      "do": { "dispatch": "onSearchKey", "payload": { "key": "Escape" } },
+      "expect": { "noErrors": true, "state": { "lastKey": "Escape" } }
+    },
+    {
       "label": "tuple pattern: zipped rows render the name half of each Tuple(Text, Int)",
       "expect": {
         "noErrors": true,

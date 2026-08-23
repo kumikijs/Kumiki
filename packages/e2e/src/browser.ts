@@ -5,6 +5,7 @@
 
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
+import type { Action as ScenarioAction } from "@kumikijs/runtime";
 import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
 
 export type Action =
@@ -17,9 +18,9 @@ export type Action =
   | { choose: string; value: string }
   | { navigate: string }
   /**
-   * Set a live DOM property on the element matched by `selector`. Used by
-   * #190 fixtures to seed browser-owned state a Kumiki reducer has no way
-   * to produce (e.g. `<video>.currentTime = 3` before triggering a re-render).
+   * Set a live DOM property on the element matched by `selector`. Seeds
+   * browser-owned state a Kumiki reducer has no way to produce (e.g.
+   * `<video>.currentTime = 3` before triggering a re-render).
    */
   | { setProperty: string; property: string; value: unknown }
   /** Submit the form at, or above, the element the selector matches. */
@@ -47,10 +48,10 @@ export type Expect = {
   /**
    * Browser-only: assert on live element properties, keyed by CSS selector.
    * Each value is a `{ property: expectedValue }` map read via
-   * `document.querySelector(sel)[property]`. Used by #190 to prove that
-   * `<select>` open state / `<video>` currentTime / `<details>` open /
-   * `contenteditable` textContent survive a re-render mid-interaction —
-   * behaviour a state-only oracle cannot see.
+   * `document.querySelector(sel)[property]`. Proves that `<select>` open
+   * state / `<video>` currentTime / `<details>` open / `contenteditable`
+   * textContent survive a re-render mid-interaction — behaviour a state-only
+   * oracle cannot see.
    */
   elementState?: Record<string, Record<string, unknown>>;
 };
@@ -92,7 +93,23 @@ const SCENARIO_EXPECT_KEYS = ["errorIncludes"] as const;
  * Named rather than left to fall through as "unknown", so a fixture that used
  * them is told which tier runs it instead of being told they do not exist.
  */
-const SCENARIO_ACTION_KEYS = ["key", "hover"] as const;
+const SCENARIO_ACTION_KEYS = ["key", "hover"] as const satisfies readonly ScenarioOnly[];
+
+/**
+ * Pinned to the scenario tier's own `Action`, in both directions. `satisfies`
+ * above rejects a name that tier does not have; `Covers` below rejects one it
+ * has and this list forgot, which would degrade the message back to "unknown
+ * action". And the day this tier implements one of them, `Exclude` drops it
+ * from `ScenarioOnly` and the `satisfies` fails — without that, the gate keeps
+ * short-circuiting and the new implementation is unreachable.
+ */
+type ScenarioActionKind = ScenarioAction extends infer A
+  ? A extends unknown
+    ? keyof A
+    : never
+  : never;
+type ScenarioOnly = Exclude<ScenarioActionKind, ActionKind | (typeof ACTION_MODIFIERS)[number]>;
+type _ScenarioOnlyCovered = Covers<ScenarioOnly, (typeof SCENARIO_ACTION_KEYS)[number]>;
 
 const ACTION_KEYS = [
   "dispatch",

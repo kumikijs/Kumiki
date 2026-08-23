@@ -540,14 +540,17 @@ describe("scenario runner", () => {
     expect(step0?.state.last).toBe(1);
   });
 
-  // The dispatch-only scenario for ui.focus / ui.blur verifies the reducer body
-  // but not the DOM wiring — addEventListener("focus") →
-  // `installUiEventListeners` → reducer. The `focus` / `blur` primitives let a
-  // scenario exercise that path in one step, so "compiles + DOM wired + reducer
-  // fires" can be observed in the scenario tier alone. Feature example 76 walks
-  // the other way in, where the listener is registered by the patch that first
-  // puts a handler in the slot.
-  describe("focus / blur DOM-event primitives", () => {
+  // A dispatch-only scenario for a ui.<event> reducer verifies the reducer body
+  // but not the DOM wiring — addEventListener(...) → `installUiEventListeners`
+  // → reducer. These four primitives let a scenario exercise that path in one
+  // step, so "compiles + DOM wired + reducer fires" can be observed in the
+  // scenario tier alone. Feature example 76 walks the other way in, where the
+  // listener is registered by the patch that first puts a handler in the slot.
+  //
+  // What each dispatch carries is part of the contract, not an implementation
+  // detail: `keydown` bubbles and the other three do not, and the payload a
+  // `ui.key` reducer reads is filled from the event.
+  describe("focus / blur / key / hover DOM-event primitives", () => {
     async function compileInline(name: string, src: string): Promise<string> {
       const here = dirname(fileURLToPath(import.meta.url));
       const tmp = join(here, ".smoke-tmp", `${name}.kumiki`);
@@ -594,16 +597,106 @@ describe("scenario runner", () => {
       expect(report.ok).toBe(true);
     });
 
-    it("reports a clear error when the focus/blur selector matches nothing", async () => {
+    it("reports a clear error when a selector matches nothing", async () => {
       const path = await compileInline("focus-missing", focusApp);
       const app = await loadApp(path);
+      for (const action of [
+        { focus: "#does-not-exist" },
+        { key: "#does-not-exist", value: "Enter" },
+        { hover: "#does-not-exist" },
+      ]) {
+        const report = await runScenario(app, freshRoot(), {
+          steps: [{ do: action, expect: { noErrors: true } }],
+        });
+        expect(report.ok, JSON.stringify(action)).toBe(false);
+        expect(
+          report.steps[0]?.errors.some((e) => e.includes("no element matching selector")),
+          JSON.stringify(action),
+        ).toBe(true);
+      }
+    });
+
+    const keyApp = `
+      slot lastKey  : Text = ""
+      slot lastCode : Text = "unset"
+      slot hovers   : Int  = 0
+      reducer onKey
+          on=ui.key(Field)
+          do= lastKey  := $el.key
+              lastCode := $el.code
+      reducer onHover on=ui.hover(Card)    do= hovers := hovers + 1
+      tile Field = input(placeholder="x") {id: "field"}
+      tile Card  = box(text("hover me")) {id: "card"}
+      tile App   = column(Field, Card, text(lastKey), text(hovers.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("hands the pressed key to the reducer, and an empty code", async () => {
+      // The spec says both halves of this. `code` names a physical key on a
+      // layout, which a scenario asking for "Enter" has not chosen — so filling
+      // it here would be inventing one, and a reducer that reads it must see
+      // what it will see.
+      const path = await compileInline("key-payload", keyApp);
+      const app = await loadApp(path);
       const report = await runScenario(app, freshRoot(), {
-        steps: [{ do: { focus: "#does-not-exist" }, expect: { noErrors: true } }],
+        steps: [
+          {
+            do: { key: "#field", value: "Enter" },
+            expect: { noErrors: true, state: { lastKey: "Enter", lastCode: "" } },
+          },
+        ],
       });
-      expect(report.ok).toBe(false);
-      expect(report.steps[0]?.errors.some((e) => e.includes("no element matching selector"))).toBe(
-        true,
-      );
+      expect(report.ok).toBe(true);
+    });
+
+    it("counts a mouseenter per hover", async () => {
+      const path = await compileInline("hover-primitive", keyApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          { do: { hover: "#card" }, expect: { noErrors: true, state: { hovers: 1 } } },
+          { do: { hover: "#card" }, expect: { state: { hovers: 2 } } },
+        ],
+      });
+      expect(report.ok).toBe(true);
+    });
+
+    // The two events differ here, and the difference is the DOM's, not a
+    // choice: `keydown` bubbles — which is what lets `ui.key(Container)` be
+    // driven from a focusable descendant — and `mouseenter` does not, since a
+    // browser fires a separate one on each ancestor rather than propagating.
+    const nestedApp = `
+      slot keyHits   : Int = 0
+      slot hoverHits : Int = 0
+      reducer onKey   on=ui.key(Decoy)   do= keyHits := keyHits + 1
+      reducer onHover on=ui.hover(Decoy) do= hoverHits := hoverHits + 1
+      tile Decoy = input(placeholder="decoy")
+      tile Inner = input(placeholder="x") {id: "inner"}
+      tile Outer = box(Inner) {id: "outer", onKeyDown: onKey, onMouseEnter: onHover}
+      tile App   = column(Outer, text(keyHits.show), text(hoverHits.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("reaches a container's handler from a descendant for keydown, and not for mouseenter", async () => {
+      const path = await compileInline("nested-handlers", nestedApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          {
+            label: "the container's own element answers both",
+            do: { key: "#outer", value: "a" },
+            expect: { noErrors: true, state: { keyHits: 1 } },
+          },
+          { do: { hover: "#outer" }, expect: { state: { hoverHits: 1 } } },
+          {
+            label: "from the child, the key press arrives and the hover does not",
+            do: { key: "#inner", value: "b" },
+            expect: { state: { keyHits: 2 } },
+          },
+          { do: { hover: "#inner" }, expect: { state: { hoverHits: 1 } } },
+        ],
+      });
+      expect(report.ok).toBe(true);
     });
   });
 });

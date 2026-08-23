@@ -30,6 +30,7 @@
     "playwright": "catalog:"
   },
   "devDependencies": {
+    "@kumikijs/runtime": "workspace:*",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "tsx": "catalog:",

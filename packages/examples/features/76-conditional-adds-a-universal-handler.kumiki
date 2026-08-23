@@ -32,12 +32,14 @@ reducer hovered on=ui.hover(Field)  do= log := log + "M"
 tile ArmBtn = button(text="arm", onClick=arm)
 
 # `Field` is declared and never rendered. What actually fires the reducers is
-# the inline `input` below naming them through `onFocus=` / `onBlur=`; the
-# implicit subscription `ui.focus(Field)` sets up matches on the enclosing
-# rendered tile, which is `App`, so it never fires at all. `Field` exists so
-# those selectors have a name to resolve — and its *kind* matters too:
-# `ui.focus` / `ui.blur` only lift onto input-like tiles, so a `text` here
-# would be W0212 "the handler is silently dropped".
+# the inline `input` below naming all four through `onFocus=` / `onBlur=` /
+# `onKeyDown=` / `onMouseEnter=`; the implicit subscription `ui.focus(Field)`
+# sets up matches on the enclosing rendered tile, which is `App`, so it never
+# fires at all. `Field` exists so those selectors have a name to resolve — and
+# its *kind* matters too: `ui.focus` / `ui.blur` / `ui.key` only lift onto
+# input-like tiles, so a `text` here would be W0212 "the handler is silently
+# dropped". `ui.hover` is not restricted that way and would be content with
+# any kind.
 tile Field = input(value="")
 
 tile App = column(
