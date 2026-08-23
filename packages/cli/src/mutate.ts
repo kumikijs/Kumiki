@@ -236,6 +236,58 @@ function enforceLock(path: string, qname: string): void {
   }
 }
 
+/**
+ * What one mutation did, as the surfaces report it.
+ *
+ * Every op carries its op-id: it is the handle `kumiki patch revert` takes, so
+ * an edit that does not hand it back cannot be undone by the caller that made
+ * it. `remove` carries the definitions it deleted, because a cascade removes
+ * the dependents of the name it was given — up to and including the `app` — and
+ * a report naming only that one name is how a file loses its entry point
+ * quietly.
+ */
+export type EditReport =
+  | { op: "add" | "replace" | "edit"; qname: string; opId: string }
+  | { op: "rename"; qname: string; newName: string; opId: string }
+  | { op: "remove"; qname: string; opId: string; removed: RemovedNames };
+
+/**
+ * The definitions one `remove` deleted: the requested name, then the cascade.
+ *
+ * A remove always deletes at least the name it was given, and the report puts
+ * that one on the headline line rather than among its own casualties — so the
+ * split is the tuple, not a filter that has to recognise the name again.
+ */
+export type RemovedNames = [requested: string, ...cascaded: string[]];
+
+/**
+ * Render an `EditReport` for a human or an agent to read.
+ *
+ * The `kumiki` verbs print this and the MCP tools return it, so the two
+ * surfaces cannot answer the same edit differently — they did, and the one
+ * agents drive was the one saying less.
+ */
+export function describeEdit(report: EditReport): string {
+  const opIdSuffix = `  (${report.opId})`;
+  switch (report.op) {
+    case "add":
+      return `added ${report.qname}${opIdSuffix}`;
+    case "replace":
+      return `replaced ${report.qname}${opIdSuffix}`;
+    case "edit":
+      return `edited ${report.qname}${opIdSuffix}`;
+    case "rename":
+      return `renamed ${report.qname} -> ${report.newName}${opIdSuffix}`;
+    case "remove": {
+      const [, ...cascaded] = report.removed;
+      return [
+        `removed ${report.qname}${opIdSuffix}`,
+        ...cascaded.map((q) => `  cascaded ${q}`),
+      ].join("\n");
+    }
+  }
+}
+
 export function addDef(path: string, layer: string, name: string, body: string): string {
   enforceLock(path, `${layer}.${name}`);
   const src = readFileSync(path, "utf8");
@@ -278,7 +330,7 @@ export function removeDef(
   path: string,
   qname: string,
   cascade: boolean,
-): { opId: string; removed: string[] } {
+): { opId: string; removed: RemovedNames } {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -334,9 +386,13 @@ export function removeDef(
   // said that removing one definition had removed eight. `removed` is written
   // whenever `cascade` was requested, including when it took nothing, so its
   // absence means "not a cascade" rather than "a cascade with no dependents".
-  const removed = removalEntries
-    .map((e) => `${e.layer}.${e.name}`)
-    .sort((a, b) => (a === qname ? -1 : b === qname ? 1 : a.localeCompare(b)));
+  const removed: RemovedNames = [
+    qname,
+    ...removalEntries
+      .map((e) => `${e.layer}.${e.name}`)
+      .filter((q) => q !== qname)
+      .sort((a, b) => a.localeCompare(b)),
+  ];
   const opId = logOp(path, {
     op: "remove",
     layer: entry.layer,

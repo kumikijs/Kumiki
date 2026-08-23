@@ -1162,6 +1162,7 @@ describe("kumiki check (E0003 missing-app)", () => {
     const removed = runCli(["remove", file, "slot.count", "--cascade"]);
     expect(removed.code).toBe(0);
     expect(removed.stdout).toContain("cascaded app.Counter");
+    expect(removed.stdout).toMatch(/\(op_/);
     const { stderr, code } = runCli(["check", file]);
     expect(code).toBe(1);
     expect(stderr).toContain("E0003 missing-app");

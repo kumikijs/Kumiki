@@ -304,7 +304,7 @@ The tools provided:
 | `kumiki_replace` | `qname, body` | op-id |
 | `kumiki_edit` | `qname, patch` | op-id |
 | `kumiki_rename` | `qname, new_name` | op-id |
-| `kumiki_remove` | `qname, cascade?: bool` | op-id |
+| `kumiki_remove` | `qname, cascade?: bool` | op-id + the names removed ([§9.4.1](#_9-4-1-pre-check-at-op-issuance)) |
 | `kumiki_check` | `scope?: string` | error list (JSON) |
 | `kumiki_fix` | `error_code, apply?: bool` | patch (JSON) |
 | `kumiki_refs` | `qname` | list of referrers |

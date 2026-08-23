@@ -24,6 +24,7 @@ const FIX_REGRESSION = resolve(here, "fixtures/regression.kumiki");
 const FIX_FAILING_SINGLE = resolve(here, "fixtures/failing-single.kumiki");
 const FIX_WARNING_ONLY = resolve(here, "fixtures/warning-only.kumiki");
 const FIX_SMOKE_PANICS = resolve(here, "fixtures/smoke-panics.kumiki");
+const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 
 type TextContent = { type: "text"; text: string };
 
@@ -793,6 +794,123 @@ tile Orphan = column(zzz.show)
       expect(layer?.enum).toContain("test");
       expect(layer?.enum).toContain("motion");
       expect(layer?.enum).toContain("slot");
+    });
+  });
+});
+
+// What these pin is that the tools go through the shared formatter at all: the
+// wording itself is pinned once, in the CLI suite. A handler that answers with
+// a sentence of its own instead is the regression — that is how `kumiki_remove`
+// came to say "removed slot.count" for an edit that had also taken the three
+// reducers, the tile and the `app`, over the protocol path an agent drives.
+describe("what an edit tool reports about the edit it made", () => {
+  let workdir: string;
+  let file: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-edit-"));
+    file = join(workdir, "counter.kumiki");
+    copyFileSync(COUNTER, file);
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  const CASCADED = "  cascaded ";
+  const cascaded = (out: string): string[] =>
+    out
+      .split("\n")
+      .filter((l) => l.startsWith(CASCADED))
+      .map((l) => l.slice(CASCADED.length));
+
+  /** Both surfaces format their report with one shared function, so this is the CLI's wording too. */
+  const OP_ID = /\(op_[0-9A-HJKMNP-TV-Z]+\)/;
+
+  it("names every definition a cascading remove deleted", async () => {
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_remove", {
+        path: file,
+        name: "slot.count",
+        cascade: true,
+      });
+      expect(out).toContain("removed slot.count");
+      expect(cascaded(out)).toEqual([
+        "app.Counter",
+        "reducer.dec",
+        "reducer.inc",
+        "reducer.reset",
+        "tile.App",
+      ]);
+      // The requested definition is the headline, not one of its own casualties.
+      expect(cascaded(out)).not.toContain("slot.count");
+      expect(out).toMatch(OP_ID);
+    });
+  });
+
+  it("says nothing about a cascade when there was none", async () => {
+    // `app.Counter` is the one definition in this file nothing references, so
+    // it removes without `cascade` — and a report that listed the requested
+    // name as its own casualty would show up here.
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_remove", { path: file, name: "app.Counter" });
+      expect(out).toContain("removed app.Counter");
+      expect(cascaded(out)).toEqual([]);
+      expect(out).toMatch(OP_ID);
+    });
+  });
+
+  it("carries the op-id out of every edit, which is what reverting one takes", async () => {
+    await withClient(async (client) => {
+      const added = await callTool(client, "kumiki_add", {
+        path: file,
+        layer: "slot",
+        name: "step",
+        body: "Int = 1",
+      });
+      expect(added).toContain("added slot.step");
+      expect(added).toMatch(OP_ID);
+
+      const replaced = await callTool(client, "kumiki_replace", {
+        path: file,
+        name: "slot.step",
+        body: "Int = 2",
+      });
+      expect(replaced).toContain("replaced slot.step");
+      expect(replaced).toMatch(OP_ID);
+
+      const renamed = await callTool(client, "kumiki_rename", {
+        path: file,
+        name: "slot.step",
+        newName: "stride",
+      });
+      expect(renamed).toContain("renamed slot.step -> stride");
+      expect(renamed).toMatch(OP_ID);
+
+      // `kumiki_edit` is the one tool that already reported its op-id, which
+      // makes it the one where dropping it again would go unnoticed.
+      const edited = await callTool(client, "kumiki_edit", {
+        path: file,
+        name: "slot.stride",
+        patch: { find: "2", replace: "3" },
+      });
+      expect(edited).toContain("edited slot.stride");
+      expect(edited).toMatch(OP_ID);
+    });
+  });
+
+  it("returns an id that identifies the edit in the file's history", async () => {
+    // The point of returning the id: it is the handle `kumiki patch revert`
+    // takes, and what tells this edit apart from every other edit to the same
+    // definition. `kumiki_history` is asked by name and answers with the
+    // entries; the id is what picks one of them out.
+    await withClient(async (client) => {
+      const added = await callTool(client, "kumiki_add", {
+        path: file,
+        layer: "slot",
+        name: "step",
+        body: "Int = 1",
+      });
+      const opId = OP_ID.exec(added)?.[0].slice(1, -1);
+      expect(opId).toBeDefined();
+      const history = await callTool(client, "kumiki_history", { path: file, name: "slot.step" });
+      expect(history).toContain(opId);
     });
   });
 });

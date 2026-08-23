@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import {
   addDef,
   applyFixPlan,
+  describeEdit,
   editDef,
   episodeLogPathFor,
   findReferences,
@@ -575,7 +576,7 @@ export function createServer(): McpServer {
     "kumiki_add",
     {
       title: "Add a definition",
-      description: "Append a new definition to a .kumiki file.",
+      description: "Append a new definition to a .kumiki file. Returns the new op-id.",
       inputSchema: {
         path: z.string(),
         layer: z.enum(["type", "slot", "effect", "reducer", "tile", "fn", "app", "theme"]),
@@ -584,8 +585,8 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, layer, name, body }) => {
-      addDef(resolve(process.cwd(), path), layer, name, body);
-      return text(`added ${layer}.${name}`);
+      const opId = addDef(resolve(process.cwd(), path), layer, name, body);
+      return text(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
     },
   );
 
@@ -593,12 +594,12 @@ export function createServer(): McpServer {
     "kumiki_replace",
     {
       title: "Replace a definition",
-      description: "Replace the body of an existing definition.",
+      description: "Replace the body of an existing definition. Returns the new op-id.",
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
     async ({ path, name, body }) => {
-      replaceDef(resolve(process.cwd(), path), name, body);
-      return text(`replaced ${name}`);
+      const opId = replaceDef(resolve(process.cwd(), path), name, body);
+      return text(describeEdit({ op: "replace", qname: name, opId }));
     },
   );
 
@@ -607,12 +608,14 @@ export function createServer(): McpServer {
     {
       title: "Remove a definition",
       description:
-        "Remove a definition. Set cascade=true to also remove definitions that only it referenced.",
+        "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
+        "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
+        "line for each further definition the cascade took.",
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },
     },
     async ({ path, name, cascade }) => {
-      removeDef(resolve(process.cwd(), path), name, cascade ?? false);
-      return text(`removed ${name}`);
+      const result = removeDef(resolve(process.cwd(), path), name, cascade ?? false);
+      return text(describeEdit({ op: "remove", qname: name, ...result }));
     },
   );
 
@@ -620,12 +623,12 @@ export function createServer(): McpServer {
     "kumiki_rename",
     {
       title: "Rename a definition",
-      description: "Rename a definition and update all references.",
+      description: "Rename a definition and update all references. Returns the new op-id.",
       inputSchema: { path: z.string(), name: z.string(), newName: z.string() },
     },
     async ({ path, name, newName }) => {
-      renameDef(resolve(process.cwd(), path), name, newName);
-      return text(`renamed ${name} -> ${newName}`);
+      const opId = renameDef(resolve(process.cwd(), path), name, newName);
+      return text(describeEdit({ op: "rename", qname: name, newName, opId }));
     },
   );
 
@@ -648,7 +651,7 @@ export function createServer(): McpServer {
     },
     async ({ path, name, patch }) => {
       const opId = editDef(resolve(process.cwd(), path), name, patch);
-      return text(`edited ${name}  (${opId})`);
+      return text(describeEdit({ op: "edit", qname: name, opId }));
     },
   );
 
