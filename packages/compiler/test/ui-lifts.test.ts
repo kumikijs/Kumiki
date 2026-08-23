@@ -129,7 +129,8 @@ tile App = column(T, Other, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-  const codesForNeighbour = (tile: string) => check(parse(lex(neighbour(tile)))).map((e) => e.code);
+  const errorsForNeighbour = (tile: string) => check(parse(lex(neighbour(tile))));
+  const codesForNeighbour = (tile: string) => errorsForNeighbour(tile).map((e) => e.code);
 
   function jsFor(tile: string): string {
     const result = compile(source(tile), { runtimeSpecifier: "./runtime.js" });
@@ -176,7 +177,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       // diagnostic and codegen wired no listener: the tile rendered, the click
       // did nothing, and nothing anywhere said why.
       it(`${handler} (${form}) = <tile> reports exactly E0201`, () => {
-        expect(codesForNeighbour(bind(handler, "Other"))).toEqual([...inert, "E0201"]);
+        const errors = errorsForNeighbour(bind(handler, "Other"));
+        expect(errors.map((e) => e.code)).toEqual([...inert, "E0201"]);
+        // Both forms report through one function, and the word naming the form
+        // is the only thing that function takes from its caller — so that is
+        // now the only place the two branches can be told apart.
+        expect(errors.at(-1)?.message).toBe(
+          `Event handler ${form} "${handler}" must be a reducer name`,
+        );
       });
     }
   }
