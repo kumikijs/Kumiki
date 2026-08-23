@@ -390,6 +390,8 @@ A value does not have the type its position requires.
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 
+An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position where a bare identifier is not a value, and a capitalised identifier inside a builtin tile parses as a tile call wherever it is written, so `button(text="go", onClick=Card)` is this error rather than a nested tile. The handler is asked about before the argument's shape is: a tile name in that position is not a tile, it is the wrong kind of name.
+
 The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed. `nominal` and `where` wrappers are transparent to it: the refinement is a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)), and two nominals over the same base accept each other. That reads against [§1.3.5](./language.md#_1-3-5-type-canonicalization) and is tracked separately.

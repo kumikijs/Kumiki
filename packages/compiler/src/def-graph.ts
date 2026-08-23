@@ -15,6 +15,7 @@
 
 import type { Expr, Pos, TileDef, TileExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
@@ -80,6 +81,11 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
       out.push({ to: t.name, pos: t.pos });
       for (const a of t.args) {
         const v = a.value;
+        // An event handler names a reducer, so it expands into nothing — and a
+        // capitalised name parses as a tile call in any argument position, so
+        // without this the handler looks like a child here. `onClick=App`
+        // inside `App` then reported the tile as expanding into itself.
+        if (a.name !== undefined && HANDLER_NAMES.has(a.name)) continue;
         // A named argument is a prop rather than a child in a builtin
         // container — but a user tile takes its first argument by position or
         // by name alike, and inlines a tile-valued one. Following every

@@ -377,6 +377,8 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 
+イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。裸の識別子が値ではない唯一の引数位置であり、builtin tile の中では大文字始まりの識別子はどこに書かれていても tile call として解析される。したがって `button(text="go", onClick=Card)` は入れ子の tile ではなくこのエラーになる。値の形より先にハンドラであるかを問うため、その位置に書かれた tile 名は tile ではなく「種類の違う名前」として報告される。
+
 照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿る。`nominal` / `where` のラッパーは透過する：refinement は runtime の検査であり（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）、同じ基底型を持つ 2 つの nominal は互いを受理する。これは [§1.3.5](./language.md#_1-3-5-型の一意化) の記述とは逆向きであり、別途追跡している。

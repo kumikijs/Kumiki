@@ -120,6 +120,17 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   const codesFor = (tile: string) => check(parse(lex(source(tile)))).map((e) => e.code);
 
+  /** The same fixture with a second tile beside `T`, for the cases that name one. */
+  const neighbour = (tile: string) => `slot n : Int = 0
+reducer bump on=app.start do= n := 1
+tile Other = box(text("y"))
+tile T = ${tile}
+tile App = column(T, Other, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  const codesForNeighbour = (tile: string) => check(parse(lex(neighbour(tile)))).map((e) => e.code);
+
   function jsFor(tile: string): string {
     const result = compile(source(tile), { runtimeSpecifier: "./runtime.js" });
     if (result.kind !== "ok") {
@@ -158,8 +169,32 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         // Quieter than the undefined case under drift: nothing at all.
         expect(codesFor(bind(handler, "1"))).toEqual([...inert, "E0201"]);
       });
+
+      // A capitalised name inside a builtin tile parses as a tile call, whatever
+      // position it is written in — so this arrives at the checker looking like
+      // a nested tile rather than like the `1` above. Taken as one, it drew no
+      // diagnostic and codegen wired no listener: the tile rendered, the click
+      // did nothing, and nothing anywhere said why.
+      it(`${handler} (${form}) = <tile> reports exactly E0201`, () => {
+        expect(codesForNeighbour(bind(handler, "Other"))).toEqual([...inert, "E0201"]);
+      });
     }
   }
+
+  // Every consumer that walks a tile body has to agree that a handler is not
+  // a child, not just the one that reports the binding: the cycle search
+  // followed the same mis-parse and answered that the tile expanded into
+  // itself, which is a sentence about a tile that is never rendered.
+  it("reports only the binding when the handler names an enclosing tile", () => {
+    expect(codesFor('box(text("x"), onClick=App)')).toEqual(["W0213", "E0201"]);
+  });
+
+  // The reason the handler branch has to be consulted first rather than the
+  // tile branch narrowed: an argument that is a tile is still ordinary.
+  it("leaves a tile written as an ordinary argument alone", () => {
+    expect(codesForNeighbour('box(text("x"), Other)')).toEqual([]);
+    expect(codesForNeighbour('box(Other, text("x"))')).toEqual([]);
+  });
 });
 
 // `HANDLER_PROP_TILES` answers "which tiles honour this handler when it is

@@ -999,58 +999,24 @@ function checkTileCall(
 
   for (const arg of t.args) {
     const v = arg.value;
-    if (
-      (v as TileExpr).kind === "TileCall" ||
-      (v as TileExpr).kind === "TileFor" ||
-      (v as TileExpr).kind === "TileWhen" ||
-      (v as TileExpr).kind === "TileIf" ||
-      (v as TileExpr).kind === "TileMatch"
-    ) {
-      checkTileExpr(v as TileExpr, sym, errors, ctx);
+    // A named arg whose name is an event handler binds a reducer — asked before
+    // the nested-tile branch below, because a capitalised identifier inside a
+    // builtin tile parses as a tile call in *any* argument position. Checked as
+    // a nested tile, `box(text("x"), onClick=Card)` drew no diagnostic and
+    // codegen captured no handler: the tile rendered and the click did nothing.
+    if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
+      checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
-    // Named arg whose name is an event-handler binds a reducer rather than a slot ref.
-    if (arg.name && HANDLER_NAMES.has(arg.name)) {
-      const expr = v as Expr;
-      checkHandlerTarget(t.name, arg.name, expr.pos, errors);
-      if (expr.kind !== "Ref") {
-        errors.push({
-          code: "E0201",
-          kind: "type-mismatch",
-          message: `Event handler arg "${arg.name}" must be a reducer name`,
-          pos: expr.pos,
-        });
-      } else if (!sym.reducers.has(expr.name)) {
-        errors.push({
-          code: "E0102",
-          kind: "undef-reducer",
-          message: `Reference to undefined reducer "${expr.name}"`,
-          pos: expr.pos,
-        });
-      }
+    if (isTileExpr(v)) {
+      checkTileExpr(v, sym, errors, ctx);
       continue;
     }
-    checkExpr(v as Expr, sym, errors, ctx);
+    checkExpr(v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
-      const ref = prop.value;
-      checkHandlerTarget(t.name, prop.name, ref.pos, errors);
-      if (ref.kind !== "Ref") {
-        errors.push({
-          code: "E0201",
-          kind: "type-mismatch",
-          message: `Event handler prop "${prop.name}" must be a reducer name`,
-          pos: prop.value.pos,
-        });
-      } else if (!sym.reducers.has(ref.name)) {
-        errors.push({
-          code: "E0102",
-          kind: "undef-reducer",
-          message: `Reference to undefined reducer "${ref.name}"`,
-          pos: ref.pos,
-        });
-      }
+      checkHandlerBinding(t.name, prop.name, "prop", prop.value, sym, errors);
     } else if (prop.name === "motion" && prop.value.kind === "Str") {
       // A `motion: "Name"` prop must name a defined `motion` (M5 AC2).
       if (!sym.motions.has(prop.value.value)) {
@@ -1085,6 +1051,43 @@ function checkTileCall(
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
+  }
+}
+
+/**
+ * Check one handler binding, in either form: `f(onX=r)` and `f() {onX: r}`.
+ *
+ * A handler names a reducer. It is the one position where a bare identifier is
+ * not a value, and — because a capitalised name parses as a tile call wherever
+ * it is written — it is also a position where the value can arrive shaped like
+ * a nested tile. Neither form has any more to say about that than the other,
+ * so both ask here rather than each deciding for itself.
+ */
+function checkHandlerBinding(
+  tileName: string,
+  handler: string,
+  form: "arg" | "prop",
+  value: Expr | TileExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  checkHandlerTarget(tileName, handler, value.pos, errors);
+  if (value.kind !== "Ref") {
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message: `Event handler ${form} "${handler}" must be a reducer name`,
+      pos: value.pos,
+    });
+    return;
+  }
+  if (!sym.reducers.has(value.name)) {
+    errors.push({
+      code: "E0102",
+      kind: "undef-reducer",
+      message: `Reference to undefined reducer "${value.name}"`,
+      pos: value.pos,
+    });
   }
 }
 
