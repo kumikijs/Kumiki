@@ -19,6 +19,10 @@ export type Action =
   | { click: string }
   | { focus: string }
   | { blur: string }
+  /** Press a key on the element the selector matches — what a `ui.key` reducer listens for. */
+  | { key: string; value: string }
+  /** Enter the element the selector matches — what a `ui.hover` reducer listens for. */
+  | { hover: string }
   | { fill: string; value: string }
   | { choose: string; value: string }
   | { navigate: string }
@@ -74,6 +78,8 @@ const HEADLESS_ACTION_KEYS = [
   "click",
   "focus",
   "blur",
+  "key",
+  "hover",
   "fill",
   "choose",
   "navigate",
@@ -170,7 +176,7 @@ function validateAction(action: Action, where: string): string[] {
   }
   const kind = known[0];
   const a = action as Record<string, unknown>;
-  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
+  if ((kind === "fill" || kind === "choose" || kind === "key") && typeof a.value !== "string") {
     return [`${where}: "${kind}" needs a string "value"`];
   }
   if (kind === "wait" && !isWaitable(a.wait)) {
@@ -424,6 +430,8 @@ function describeAction(a: Action): string {
   if ("click" in a) return `click ${a.click}`;
   if ("focus" in a) return `focus ${a.focus}`;
   if ("blur" in a) return `blur ${a.blur}`;
+  if ("key" in a) return `key ${a.key} "${a.value}"`;
+  if ("hover" in a) return `hover ${a.hover}`;
   if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
   if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
   if ("submit" in a) return `submit ${a.submit}`;
@@ -495,6 +503,30 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const el = root.querySelector<HTMLElement>(a.blur);
     if (!el) throw new Error(`no element matching selector ${a.blur}`);
     el.dispatchEvent(new FocusEvent("blur"));
+    return;
+  }
+  if ("key" in a) {
+    // Same wiring path as focus/blur, and the same reason to scope the query to
+    // `root`: the runtime attaches these listeners on the tile element itself
+    // (`installUiEventListeners`), so nothing depends on the event bubbling and
+    // a document-wide lookup could hit a leaked element from a prior test.
+    //
+    // The reducer's payload carries `key` and `code`. Only `key` is set here —
+    // a `code` is a physical key on a keyboard layout, which a scenario naming
+    // "Enter" has not told us. A reducer reading `$el.code` sees the empty
+    // string from this tier; the browser tier is where a real one comes from.
+    const el = root.querySelector<HTMLElement>(a.key);
+    if (!el) throw new Error(`no element matching selector ${a.key}`);
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: a.value }));
+    return;
+  }
+  if ("hover" in a) {
+    // `mouseenter` does not bubble, by DOM spec — it is the non-bubbling
+    // counterpart of `mouseover` — so dispatching it on the element is the only
+    // thing that reaches the listener, which is where the runtime puts it.
+    const el = root.querySelector<HTMLElement>(a.hover);
+    if (!el) throw new Error(`no element matching selector ${a.hover}`);
+    el.dispatchEvent(new MouseEvent("mouseenter"));
     return;
   }
   if ("fill" in a) {

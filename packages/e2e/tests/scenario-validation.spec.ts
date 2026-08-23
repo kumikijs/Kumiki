@@ -35,6 +35,20 @@ test("names an unknown action", () => {
   expect(problems[0]).toContain("press");
 });
 
+// The counterpart of the headless runner naming `setProperty` as browser-tier:
+// these two exist there and not here, and "unknown action" would read as a typo.
+test("names the tier that owns key and hover", () => {
+  for (const [action, kind] of [
+    [{ key: "input", value: "Enter" }, "key"],
+    [{ hover: "#card" }, "hover"],
+  ] as const) {
+    const problems = validateScenario({ steps: [{ do: action as never }] });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(kind);
+    expect(problems[0]).toContain("scenario-tier action");
+  }
+});
+
 test("refuses a step that names two things to do", () => {
   const problems = validateScenario({
     steps: [{ do: { click: "#a", navigate: "/b" } as never }],

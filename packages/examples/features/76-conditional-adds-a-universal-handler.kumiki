@@ -14,19 +14,20 @@
 # them fired.
 #
 # `onClick` is unaffected — its listener is registered unconditionally by the
-# button renderer. This app wires two of the four; the runtime's own tests
-# cover all four, since `kumiki run` can fire focus and blur but not keydown
-# or mouseenter.
+# button renderer. All four are wired here, and the scenario fires all four
+# through the DOM.
 #
-# The log below is the assertion. Focusing before the branch arms must do
-# nothing; focusing after it must reach the reducer.
+# The log below is the assertion. Firing any of the four before the branch
+# arms must do nothing; firing them after it must reach the reducers.
 
 slot armed : Bool = false
 slot log   : Text = ""
 
-reducer arm   on=ui.click(ArmBtn) do= armed := true
-reducer noted on=ui.focus(Field)  do= log := log + "F"
-reducer left  on=ui.blur(Field)   do= log := log + "B"
+reducer arm     on=ui.click(ArmBtn) do= armed := true
+reducer noted   on=ui.focus(Field)  do= log := log + "F"
+reducer left    on=ui.blur(Field)   do= log := log + "B"
+reducer typed   on=ui.key(Field)    do= log := log + "K"
+reducer hovered on=ui.hover(Field)  do= log := log + "M"
 
 tile ArmBtn = button(text="arm", onClick=arm)
 
@@ -41,7 +42,8 @@ tile Field = input(value="")
 
 tile App = column(
              ArmBtn,
-             if armed then input(value="", onFocus=noted, onBlur=left)
+             if armed then input(value="", onFocus=noted, onBlur=left,
+                                          onKeyDown=typed, onMouseEnter=hovered)
                       else input(value=""),
              text("log=[" + log + "] armed=" + armed.show))
            {pad: "lg", gap: "sm"}

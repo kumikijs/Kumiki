@@ -85,6 +85,15 @@ const EXPECT_KEYS = [
  */
 const SCENARIO_EXPECT_KEYS = ["errorIncludes"] as const;
 
+/**
+ * Actions the scenario tier owns. Both are dispatched there as synthetic DOM
+ * events on the tile element; here they would have to be a real key press and a
+ * real pointer move, which is a different thing to verify and not yet wired.
+ * Named rather than left to fall through as "unknown", so a fixture that used
+ * them is told which tier runs it instead of being told they do not exist.
+ */
+const SCENARIO_ACTION_KEYS = ["key", "hover"] as const;
+
 const ACTION_KEYS = [
   "dispatch",
   "clickText",
@@ -489,6 +498,12 @@ const snapshotMultiStateFn = `(() => {
 function validateAction(action: Action, where: string): string[] {
   const keys = Object.keys(action as Record<string, unknown>);
   const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
+  const scenarioOnly = kinds.filter((k) => (SCENARIO_ACTION_KEYS as readonly string[]).includes(k));
+  if (scenarioOnly.length > 0) {
+    return [
+      `${where}: "${scenarioOnly[0]}" is a scenario-tier action; run this fixture with kumiki run`,
+    ];
+  }
   const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
   if (unknown.length > 0) {
     return [`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`];

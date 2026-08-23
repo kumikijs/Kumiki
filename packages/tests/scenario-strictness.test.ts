@@ -71,6 +71,15 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toMatch(/browser/i);
   });
 
+  // `key` carries the key to press in `value`, the way `fill` and `choose` carry
+  // theirs. Without it the runner would dispatch a KeyboardEvent whose `key` is
+  // `undefined` — a step that presses nothing and asserts that it did.
+  it("refuses a key press that names no key", async () => {
+    const r = await run({ steps: [{ do: { key: "input" } as never }] });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join("\n")).toMatch(/"key" needs a string "value"/);
+  });
+
   it("rejects an action that names two things to do", async () => {
     const r = await run({ steps: [{ do: { click: "#a", navigate: "/b" } as never }] });
     expect(r.ok).toBe(false);

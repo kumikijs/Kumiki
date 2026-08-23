@@ -9,12 +9,22 @@
       }
     },
     {
-      "label": "focusing it does nothing, which is the whole point of registering lazily",
+      "label": "none of the four reaches a reducer, which is the whole point of registering lazily",
       "do": { "focus": "input" },
       "expect": { "noErrors": true, "state": { "log": "" } }
     },
     {
-      "label": "arm the branch that adds onFocus / onBlur to the very same element",
+      "label": "including the two the scenario tier could not fire until it had a key action",
+      "do": { "key": "input", "value": "x" },
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "and the hover half of the same pair",
+      "do": { "hover": "input" },
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "arm the branch that adds all four to the very same element",
       "do": { "clickText": "arm" },
       "expect": {
         "noErrors": true,
@@ -31,6 +41,16 @@
       "label": "and the second of the four, on the same element and the same slot",
       "do": { "blur": "input" },
       "expect": { "noErrors": true, "state": { "log": "FB" }, "domIncludes": ["log=[FB]"] }
+    },
+    {
+      "label": "keydown lands on the same slot, on the element that was there before the branch armed",
+      "do": { "key": "input", "value": "x" },
+      "expect": { "noErrors": true, "state": { "log": "FBK" }, "domIncludes": ["log=[FBK]"] }
+    },
+    {
+      "label": "and mouseenter, which completes the four the runtime lifts onto every tile",
+      "do": { "hover": "input" },
+      "expect": { "noErrors": true, "state": { "log": "FBKM" }, "domIncludes": ["log=[FBKM]"] }
     }
   ]
 }
