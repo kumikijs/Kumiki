@@ -171,23 +171,39 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         expect(codesFor(bind(handler, "1"))).toEqual([...inert, "E0201"]);
       });
 
-      // A capitalised name inside a builtin tile parses as a tile call, whatever
-      // position it is written in — so this arrives at the checker looking like
-      // a nested tile rather than like the `1` above. Taken as one, it drew no
-      // diagnostic and codegen wired no listener: the tile rendered, the click
-      // did nothing, and nothing anywhere said why.
+      // The two forms reach this from different shapes. As a named argument of
+      // a tile-taking builtin the capitalised name parses as a tile call, which
+      // is the regression: taken as a nested tile it drew no diagnostic and
+      // codegen wired no listener, so the tile rendered and the click did
+      // nothing. In the props block it parses as a variant tag — the same path
+      // as the `1` above, and already reported — so that half pins that the
+      // two forms keep answering alike.
       it(`${handler} (${form}) = <tile> reports exactly E0201`, () => {
         const errors = errorsForNeighbour(bind(handler, "Other"));
         expect(errors.map((e) => e.code)).toEqual([...inert, "E0201"]);
-        // Both forms report through one function, and the word naming the form
-        // is the only thing that function takes from its caller — so that is
-        // now the only place the two branches can be told apart.
-        expect(errors.at(-1)?.message).toBe(
+        // The form is the only caller-supplied value that differs between the
+        // two call sites, so the word is where a crossed wiring would show.
+        // Looked up by code rather than by position: a diagnostic added later
+        // in `checkTileCall` should not fail this.
+        expect(errors.find((e) => e.code === "E0201")?.message).toBe(
           `Event handler ${form} "${handler}" must be a reducer name`,
         );
       });
     }
   }
+
+  // A handler on a user tile takes the same branch and reports the same code,
+  // with no W0213 — `checkHandlerTarget` has nothing to say about a tile whose
+  // renderer it does not own. Nothing pinned that, so the tempting tidy-up
+  // ("checkHandlerTarget ignores user tiles anyway, so only run the handler
+  // branch for builtins") would put this case back to silence unnoticed.
+  it("reports a handler bound to a tile on a user tile too, without W0213", () => {
+    expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["E0201"]);
+  });
+
+  it("leaves a handler bound to a reducer on a user tile alone", () => {
+    expect(codesForNeighbour("Other(onClick=bump)")).toEqual([]);
+  });
 
   // Every consumer that walks a tile body has to agree that a handler is not
   // a child, not just the one that reports the binding: the cycle search

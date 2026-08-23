@@ -5,8 +5,8 @@
 fix(compiler): a handler bound to a tile name is reported instead of dropped.
 
 `box(text("x"), onClick=Card)` passed `check` and compiled into an element
-with no listener. A capitalised identifier inside a builtin tile parses as a
-tile call in *any* argument position, and the checker asked what shape the
+with no listener. A capitalised name written as a named argument of a builtin
+that takes tiles parses as a tile call, and the checker asked what shape the
 argument had before it asked whether the argument was a handler — so the
 binding was checked as a nested tile and never reached the handler branch.
 Codegen made the same reading and captured nothing, and the handler-name skip
@@ -17,7 +17,8 @@ nothing, and no diagnostic anywhere said why.
 The handler is now asked about first, in both forms and for every handler name,
 and answers `E0201` — the same code `onClick=1` already gave. `W0213` comes
 with it when the tile does not fire that event, as it already did for the
-props-block form.
+props-block form, which parses the same name as a variant tag and reported it
+all along.
 
 The cycle search made the same mis-reading one layer down: a handler naming an
 enclosing tile reported `E0005`, that the tile "expands into itself", about a

@@ -449,6 +449,15 @@ class Walker {
   /**
    * A tile argument is either a nested tile or a value expression, discriminated
    * only by its `kind` — the field is the same either way.
+   *
+   * The shape is asked about before the handler name, which is the opposite of
+   * the order `typecheck` uses, and deliberately so. A handler bound to a tile
+   * name is a compile error, so the two only ever disagree about a program that
+   * does not compile — and on one of those this walk is still asked where a
+   * name is *written*, which is what `refs` reports. `rename` and
+   * `remove --cascade` validate before they write, so they never act on the
+   * answer; `refs` has no such gate, and a site it did not list would be a site
+   * a reader thinks is free.
    */
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;

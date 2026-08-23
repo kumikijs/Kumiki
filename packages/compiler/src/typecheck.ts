@@ -1000,10 +1000,12 @@ function checkTileCall(
   for (const arg of t.args) {
     const v = arg.value;
     // A named arg whose name is an event handler binds a reducer — asked before
-    // the nested-tile branch below, because a capitalised identifier inside a
-    // builtin tile parses as a tile call in *any* argument position. Checked as
-    // a nested tile, `box(text("x"), onClick=Card)` drew no diagnostic and
+    // the nested-tile branch below, because a capitalised name written as a
+    // named argument of a builtin that takes tiles parses as a tile call.
+    // Checked as one, `box(text("x"), onClick=Card)` drew no diagnostic and
     // codegen captured no handler: the tile rendered and the click did nothing.
+    // The other positions parse it as a variant tag, which the shape check
+    // below rejects either way — this branch is what makes them agree.
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
@@ -1057,11 +1059,17 @@ function checkTileCall(
 /**
  * Check one handler binding, in either form: `f(onX=r)` and `f() {onX: r}`.
  *
- * A handler names a reducer. It is the one position where a bare identifier is
- * not a value, and — because a capitalised name parses as a tile call wherever
- * it is written — it is also a position where the value can arrive shaped like
- * a nested tile. Neither form has any more to say about that than the other,
- * so both ask here rather than each deciding for itself.
+ * A handler names a reducer: this is the one argument position resolved in the
+ * reducer namespace. What arrives is not always shaped like a reference —
+ * a capitalised name is a tile call as a named argument of a tile-taking
+ * builtin and a variant tag everywhere else — and neither form has anything
+ * more to say about that than the other, so both ask here rather than each
+ * deciding for itself.
+ *
+ * Every non-reference is rejected, including a name that resolves to a
+ * reducer: a capitalised reducer name cannot be bound to a handler at all,
+ * because it never reaches here as a reference. The message says what the
+ * position requires rather than what this value is.
  */
 function checkHandlerBinding(
   tileName: string,
