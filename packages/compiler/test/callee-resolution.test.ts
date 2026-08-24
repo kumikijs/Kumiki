@@ -335,6 +335,28 @@ describe("the checker accepts exactly what codegen lowers", () => {
     });
   }
 
+  it("multiplies by the unit it names", () => {
+    // Nothing pinned these numbers: a wrong factor compiles, builds, renders
+    // and only shows up as a timer that fires at the wrong moment. They are
+    // here because every one of these lines was rewritten to require its
+    // argument, and an argument is not the only thing they can get wrong.
+    const MILLISECONDS: Record<string, string> = {
+      "Duration.ms": "(2)",
+      "Duration.s": "((2) * 1000)",
+      "Duration.m": "((2) * 60000)",
+      "Duration.min": "((2) * 60000)",
+      "Duration.h": "((2) * 3600000)",
+      "Duration.d": "((2) * 86400000)",
+      "Duration.days": "((2) * 86400000)",
+    };
+    for (const [name, js] of Object.entries(MILLISECONDS)) {
+      expect(loweringOf(`${name}(2)`), name).toContain(js);
+    }
+    expect(Object.keys(MILLISECONDS).sort()).toEqual(
+      [...QUALIFIED_BUILTIN_CALLS.keys()].filter((n) => n.startsWith("Duration.")).sort(),
+    );
+  });
+
   it("a name codegen has no lowering for is not in the tables", () => {
     for (const name of UNIMPLEMENTED_CALLS) {
       expect(BUILTIN_CALLS.has(name)).toBe(false);
@@ -504,6 +526,49 @@ describe("every built-in is held to the count its lowering reads", () => {
       BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size + TYPE_MEMBER_CALLS.size,
     );
     expect([...PARSER_FIXED].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
+  });
+
+  /**
+   * What each builtin takes, written out rather than read from the table the
+   * cases above are generated from. Generated cases prove the checker enforces
+   * whatever the table says; this proves the table says what the spec does —
+   * without it, widening an entry deletes its own cases instead of failing
+   * them, because a builtin that takes any number of arguments has neither a
+   * count that is too few nor one that is too many.
+   */
+  const EXPECTED: Record<string, string> = {
+    now: "0",
+    random: "0",
+    "prefers-dark": "0",
+    fmt: "1+",
+    panic: "1",
+    "file-url": "1",
+    "EffectId.none": "0",
+    "Duration.ms": "1",
+    "Duration.s": "1",
+    "Duration.m": "1",
+    "Duration.min": "1",
+    "Duration.h": "1",
+    "Duration.d": "1",
+    "Duration.days": "1",
+    "Bytes.from-text": "1",
+    "Bytes.from-base64": "1",
+    "Bytes.from-bytes": "1",
+    "Decoder.Json": "1",
+    "Decoder.Text": "0",
+    "Decoder.Bytes": "0",
+    "Decoder.None": "0",
+    fresh: "0",
+    parse: "1",
+    show: "1",
+  };
+
+  it("takes what the standard library says it takes", () => {
+    const spelled = ([name, a]: [string, BuiltinArity]): [string, string] => [
+      name,
+      a.min === a.max ? `${a.min}` : `${a.min}+`,
+    ];
+    expect(Object.fromEntries(ALL.map(spelled))).toEqual(EXPECTED);
   });
 
   it("does not reach the one the parser spells for you", () => {
