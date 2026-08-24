@@ -208,8 +208,16 @@ parse-float                 : Option(Float)
 
 ```
 abs, neg, min(b), max(b), clamp(lo, hi)
+floor, ceil, round                            ; -> Int
+sqrt, log, exp, pow(n)                        ; log は自然対数
 show, to-float (Int), to-int (Float, 切り捨て)
 ```
+
+`floor` / `ceil` / `round` は受け手が何であれ `Int` に**型付けされる**。`round` の中間値は上（+∞ 方向）へ丸める——`(-2.5).round` は `-2` である。`sqrt` / `log` / `exp` は `Float` に型付けされる。`pow` には結果型がない：`2.pow(3)` は `Int` だが `2.pow(-1)` は `0.5` であり、受け手が結果を決めるわけでもない。したがって `pow` の式は代入先に対して検査されない。
+
+Kumiki の算術はこれで全部である。`math` 名前空間は存在しない：修飾子は大文字始まりの名前なので、`math.abs(x)` は `math` という名前への参照になり [E0103](./errors.md#e0103-undef-ref-undef-slot) を報告する。
+
+定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
 `x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。
 
@@ -423,14 +431,15 @@ TypeName.parse(text)       : Option(T)    ; nominal 型の文字列パース
 TypeName.show(value)       : Text         ; 値の文字列表現
 ```
 
-### 2.4.4 数学
+### 2.4.4 乱数
 
 ```
-math.abs, math.min, math.max, math.clamp
-math.floor, math.ceil, math.round
-math.sqrt, math.pow, math.log, math.exp
-math.random                : Float        ; reducer 内のみ呼び出し可（effect 扱い）
+random()                   : Float        ; 0 <= x < 1
 ```
+
+残りの算術は [§2.2.7](#_2-2-7-int-float)、数値のメソッドとして提供する。
+
+`random()` は `now` と同じく環境を読む。`now` と同じく、式が書ける場所ならどこでも呼べる。読むたびに答えが変わるので、括弧は省略できない。
 
 ### 2.4.5 文字列フォーマット
 

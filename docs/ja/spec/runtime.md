@@ -865,7 +865,7 @@ app.unmount()
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
 | `Option`, `Result` | パターンマッチ網羅検査 |
-| `Time.now`, `math.random` | reducer 内のみ呼び出し可、episode log に記録 |
+| `now`, `random()` | 式が書ける場所ならどこでも呼べる。読んだ値は記録**されない**ため、それを読んだ episode の replay は新しい値を引く |
 | `*.fresh()` | UUIDv7 を生成 |
 | `panic()` | episode を `panic` 状態にして slot をロールバック |
 

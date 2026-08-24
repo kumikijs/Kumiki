@@ -302,7 +302,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 | callee | 規定箇所 |
 |---|---|
-| `now` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-ビルトイン関数) |
+| `now` / `random` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-ビルトイン関数) |
 | `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ §2.2](./stdlib.md#_2-2-コレクションメソッド)・§2.4 |
 | `Decoder.*` / `EffectId.none` | [HTTP / Storage §6.1.4](./http.md)・[標準ライブラリ §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
 | `file-url` | [フォーム §5.10](./forms.md) |

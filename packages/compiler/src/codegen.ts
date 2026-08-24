@@ -393,5 +393,6 @@ export {
   KNOWN_MEMBERS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
+  NUMERIC_MEMBERS,
 } from "./codegen/expr.ts";
 export { RUNTIME_HELPERS } from "./codegen/runtime-helpers.ts";

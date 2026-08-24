@@ -408,7 +408,7 @@ export type Expr =
       accessKind?: "field" | "shortcut";
     }
   | { kind: "Index"; base: Expr; index: Expr; pos: Pos }
-  | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, math.abs, ...)
+  | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, Duration.ms, ...)
   | { kind: "MethodCall"; receiver: Expr; method: string; args: Expr[]; pos: Pos }
   | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
   | { kind: "ListLit"; items: Expr[]; pos: Pos }
