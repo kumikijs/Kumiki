@@ -12,6 +12,22 @@
 // `packages/compiler/test/callee-resolution.test.ts`, which compiles a call to
 // every name below and asserts the result is not the fallback. A name the
 // checker accepts and codegen forgot fails there rather than in an app.
+//
+// Each name carries the number of arguments its lowering reads, so the same
+// test walks the tables and holds every builtin to it. Without that the count
+// was whatever the lowering happened to find: `Duration.s()` lowered to
+// `((0) * 1000)`, a timer written with an empty duration fired immediately and
+// forever, and nothing anywhere said the argument was missing.
+
+/**
+ * How many arguments a builtin's lowering reads. `max` is infinite for the one
+ * variadic builtin, `fmt`, which requires its template and substitutes any
+ * number of values after it.
+ */
+export type BuiltinArity = { readonly min: number; readonly max: number };
+
+const exactly = (n: number): BuiltinArity => ({ min: n, max: n });
+const atLeast = (n: number): BuiltinArity => ({ min: n, max: Number.POSITIVE_INFINITY });
 
 /**
  * Callees codegen lowers itself, with no qualifier. Every entry is lowercase
@@ -25,32 +41,37 @@
 // the one context where it is wrong: `t := run-reducer("inc")` in an ordinary
 // reducer passes check and build and then throws `_init is not defined`, which
 // is the exact failure this file exists to stop.
-export const BUILTIN_CALLS: ReadonlySet<string> = new Set([
-  "now",
-  "random",
-  "fmt",
-  "panic",
-  "file-url",
-  "prefers-dark",
+export const BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
+  ["now", exactly(0)],
+  ["random", exactly(0)],
+  ["fmt", atLeast(1)],
+  ["panic", exactly(1)],
+  ["file-url", exactly(1)],
+  ["prefers-dark", exactly(0)],
 ]);
 
 /** Callees codegen lowers by their full `Qualifier.member` name. */
-export const QUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
-  "EffectId.none",
-  "Duration.ms",
-  "Duration.s",
-  "Duration.m",
-  "Duration.min",
-  "Duration.h",
-  "Duration.d",
-  "Duration.days",
-  "Bytes.from-text",
-  "Bytes.from-base64",
-  "Bytes.from-bytes",
-  "Decoder.Json",
-  "Decoder.Text",
-  "Decoder.Bytes",
-  "Decoder.None",
+export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
+  ["EffectId.none", exactly(0)],
+  ["Duration.ms", exactly(1)],
+  ["Duration.s", exactly(1)],
+  ["Duration.m", exactly(1)],
+  ["Duration.min", exactly(1)],
+  ["Duration.h", exactly(1)],
+  ["Duration.d", exactly(1)],
+  ["Duration.days", exactly(1)],
+  ["Bytes.from-text", exactly(1)],
+  ["Bytes.from-base64", exactly(1)],
+  ["Bytes.from-bytes", exactly(1)],
+  // The decoder's payload type. It is not read by the lowering — every
+  // `Decoder.*` becomes a sentinel string — but it is what makes the decode
+  // type-safe in `docs/spec/http.md` §6.1.4, and a decoder written without it
+  // was indistinguishable from one that had it, in the source and in the
+  // output alike.
+  ["Decoder.Json", exactly(1)],
+  ["Decoder.Text", exactly(0)],
+  ["Decoder.Bytes", exactly(0)],
+  ["Decoder.None", exactly(0)],
 ]);
 
 /**
@@ -61,11 +82,11 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
  * that, the paren-less form was a field read on a freshly built variant and
  * emitted `undefined`, which `check` had no reason to object to.
  *
- * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`: `Duration.*`
- * and `Bytes.*` take an argument, and codegen defaults a missing one to `0` /
- * `""` / `[]`. Both outcomes are silent, so the choice is between two silences —
- * a duration defaulted to zero reads as a plausible value and survives, while
- * `undefined` fails the first thing that touches it.
+ * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`: reading a
+ * member paren-less is reading it as a zero-argument call, and `Duration.*` and
+ * `Bytes.*` take an argument, so the bare spelling would be a call that is one
+ * short. `Decoder.Json` is the one member of a namespace listed here that takes
+ * one, so it is the one with no paren-less spelling.
  *
  * The membership rule is enforced by `checkCallee`, not by this table alone:
  * `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
@@ -80,7 +101,11 @@ export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "Eff
  * type table: codegen does not resolve it either, and a checker stricter than
  * the lowering it guards would reject programs that build and run.
  */
-export const TYPE_MEMBER_CALLS: ReadonlySet<string> = new Set(["fresh", "parse", "show"]);
+export const TYPE_MEMBER_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
+  ["fresh", exactly(0)],
+  ["parse", exactly(1)],
+  ["show", exactly(1)],
+]);
 
 /**
  * Documented by `docs/spec/stdlib.md` but not lowered by codegen. Listed so the
@@ -90,28 +115,25 @@ export const TYPE_MEMBER_CALLS: ReadonlySet<string> = new Set(["fresh", "parse",
  */
 export const UNIMPLEMENTED_CALLS: ReadonlySet<string> = new Set(["trace"]);
 
-/**
- * Builtins whose argument count is exact, so an extra one is a mistake rather
- * than something the lowering ignores.
- *
- * A builtin call is resolved by name and its arguments are then whatever the
- * lowering reads — `prefers-dark(1, 2, 3)` drops all three. That is harmless
- * where nobody would write them; `random` is the one where they will be
- * written, because every other language's takes a range and this one's answer
- * is always `[0, 1)`. Silently dropping `random(1, 6)` gives a die that always
- * rolls 1, with a green check, build, smoke and scenario.
- */
-export const BUILTIN_ARITY: ReadonlyMap<string, number> = new Map([["random", 0]]);
-
 /** The parser's rule for a qualifier, mirrored: a capitalised identifier. */
 const QUALIFIER_RE = /^[A-Z][A-Za-z0-9_]*$/;
 
+/**
+ * The argument count codegen's lowering for `callee` reads, or `undefined` when
+ * there is no lowering — which makes this the one answer to both questions, so
+ * a callee cannot resolve without an arity to hold it to.
+ */
+export function builtinArity(callee: string): BuiltinArity | undefined {
+  const named = BUILTIN_CALLS.get(callee) ?? QUALIFIED_BUILTIN_CALLS.get(callee);
+  if (named) return named;
+  const dot = callee.indexOf(".");
+  if (dot <= 0 || !QUALIFIER_RE.test(callee.slice(0, dot))) return undefined;
+  return TYPE_MEMBER_CALLS.get(callee.slice(dot + 1));
+}
+
 /** Whether codegen has a lowering for `callee`. */
 export function isBuiltinCallee(callee: string): boolean {
-  if (BUILTIN_CALLS.has(callee) || QUALIFIED_BUILTIN_CALLS.has(callee)) return true;
-  const dot = callee.indexOf(".");
-  if (dot <= 0) return false;
-  return QUALIFIER_RE.test(callee.slice(0, dot)) && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1));
+  return builtinArity(callee) !== undefined;
 }
 
 /**
@@ -121,5 +143,5 @@ export function isBuiltinCallee(callee: string): boolean {
  * would rewrite the source into a different kind of mistake.
  */
 export function calleeCandidates(fnNames: Iterable<string>): string[] {
-  return [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS, ...fnNames];
+  return [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
 }

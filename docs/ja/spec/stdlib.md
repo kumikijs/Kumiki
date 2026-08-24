@@ -13,7 +13,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Float` | 64bit 浮動小数 | `3.14`, `-0.5` |
 | `Bool` | 真偽値 | `true`, `false` |
 | `Unit` | 単一値 | `()` |
-| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` で生成（§2.2.10 参照） |
+| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` で生成（§2.2.10 参照） |
 | `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse()` |
 | `EffectId` | `emit` が返す不透明ハンドル（§2.1.1.1 参照） | リテラルなし、`EffectId.none` |
 

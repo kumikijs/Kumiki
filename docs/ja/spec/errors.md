@@ -546,6 +546,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | 適用の形 | 宣言する側 | メッセージ |
 |---|---|---|
 | `fn` への `f(...)` | 仮引数列 | `Function "<name>" expects <n> argument(s) but got <m>` |
+| 組み込み呼び出しへの `b(...)` | lowering が読む引数の数 | `Function "<name>" expects <n> argument(s) but got <m>` |
 | `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
@@ -553,7 +554,11 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 tile と effect の形は、これまで報告されていなかったものである：`in=` の宣言する引数無しで呼ばれた tile は `$1` が束縛されないまま mount し `_d_1 is not defined` で死ぬ。入力無しで emit された effect は最初の dispatch で `Cannot destructure property … of 'input'` を投げる。そして `in=` を宣言していない tile に引数を*渡した*場合は、mount も描画も正常に通り、呼び出し側が渡したつもりの値だけが静かに捨てられる。
 
-組み込み**呼び出し**は arity を検査しない。いくつかは lowering の時点で引数を完全に無視する（`Decoder.Json(Text)` は引数に関わらずセンチネルへ落ちる）ため、個数が契約として意味を持たない。**メソッド**は、lowering が決まった数の引数を読む場合に検査する — `t.format()` は以前 `check` を通り、位置情報を持たない素の `TypeError` で `build` を殺していた。強制するのは最小個数だけである：`get-or` と `slice` は渡された個数で分岐する。
+組み込み呼び出しも同じように数える。検査するのは個数であって引数の*型*ではない：`Decoder.Json(User)` は今も、渡された型を無視してセンチネルへ落ちる。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。
+
+厳密な個数で縛らない組み込みが 2 つある。`fmt` はテンプレートだけを要求し、後続の値は渡されただけ埋め込むため、メッセージは最小個数を名指す — `expects at least 1 argument(s) but got 0`。`now` は名前ではなくキーワードで、0 引数の呼び出しを parser 自身が組み立てるため、他の個数は書きようがない。
+
+**メソッド**は、lowering が決まった数の引数を読む場合に検査する — `t.format()` は以前 `check` を通り、位置情報を持たない素の `TypeError` で `build` を殺していた。強制するのは最小個数だけである：`get-or` と `slice` は渡された個数で分岐する。
 
 **修正**：宣言どおりの個数を渡すか、宣言の側を変える。
 

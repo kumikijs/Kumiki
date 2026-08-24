@@ -8,6 +8,23 @@ export function reducerNameArg(e: Expr | undefined): string {
   return "";
 }
 
+/**
+ * The argument a builtin's lowering reads, which every one of them requires.
+ *
+ * These used to substitute a default for a missing one — `0` for a duration,
+ * `""` for a byte string, `undefined` for a file — so an omission became a
+ * plausible value instead of a diagnostic: `Duration.s()` was zero
+ * milliseconds, which is a timer that fires immediately and forever.
+ * `checkCallee` reports E0213 for every such call, so reaching here without the
+ * argument means the caller ran codegen on unchecked source, and a named throw
+ * is the one answer that cannot be mistaken for a result.
+ */
+function requiredArg(callee: string, args: Expr[], ctx: EvalCtx): string {
+  const arg = args[0];
+  if (!arg) throw new Error(`${callee}() is missing its argument`);
+  return jsOfExpr(arg, ctx);
+}
+
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
   switch (e.kind) {
     case "Num":
@@ -122,7 +139,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) {
         // `T.parse(text)` → Option<T>. Numeric types coerce to a number so
         // arithmetic (e.g. fold/sum) works; other types keep the string.
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
+        const a = requiredArg(cn, e.args, ctx);
         const qualifier = cn.split(".")[0];
         if (qualifier === "Int") {
           return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
@@ -142,25 +159,21 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
       }
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
-        return `_s.show(${a})`;
+        return `_s.show(${requiredArg(cn, e.args, ctx)})`;
       }
       // Duration constructors → milliseconds (Time is stored as a raw ms number).
-      if (cn === "Duration.ms") return `(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"})`;
-      if (cn === "Duration.s") return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 1000)`;
+      if (cn === "Duration.ms") return `(${requiredArg(cn, e.args, ctx)})`;
+      if (cn === "Duration.s") return `((${requiredArg(cn, e.args, ctx)}) * 1000)`;
       if (cn === "Duration.m" || cn === "Duration.min")
-        return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 60000)`;
-      if (cn === "Duration.h") return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 3600000)`;
+        return `((${requiredArg(cn, e.args, ctx)}) * 60000)`;
+      if (cn === "Duration.h") return `((${requiredArg(cn, e.args, ctx)}) * 3600000)`;
       if (cn === "Duration.d" || cn === "Duration.days")
-        return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 86400000)`;
+        return `((${requiredArg(cn, e.args, ctx)}) * 86400000)`;
       // Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
       // Bytes is represented as Uint8Array at runtime.
-      if (cn === "Bytes.from-text")
-        return `_s.bytesFromText(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
-      if (cn === "Bytes.from-base64")
-        return `_s.bytesFromBase64(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
-      if (cn === "Bytes.from-bytes")
-        return `_s.bytesFromBytes(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "[]"})`;
+      if (cn === "Bytes.from-text") return `_s.bytesFromText(${requiredArg(cn, e.args, ctx)})`;
+      if (cn === "Bytes.from-base64") return `_s.bytesFromBase64(${requiredArg(cn, e.args, ctx)})`;
+      if (cn === "Bytes.from-bytes") return `_s.bytesFromBytes(${requiredArg(cn, e.args, ctx)})`;
       // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). The
       // runtime treats falsy / unknown ids as silent no-ops, so the empty
       // string doubles as a valid slot-initial value AND a guaranteed-no-op
@@ -180,16 +193,14 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Decoder.None") return `"none"`;
       if (cn === "fmt") {
         // fmt(template, ...args) — very simple {0} {1} substitution
-        const args = e.args.map((a) => jsOfExpr(a, ctx));
-        return `_s.fmt ? _s.fmt(${args.join(", ")}) : ${args[0] ?? '""'}`;
+        const template = requiredArg(cn, e.args, ctx);
+        const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
+        return `_s.fmt ? _s.fmt(${[template, ...rest].join(", ")}) : ${template}`;
       }
       // `panic(message)` — Kumiki's controlled stop-the-program signal
       // (docs/spec/stdlib.md §2.2). Lowers to the runtime helper that throws a
       // KumikiPanic, which the live dispatch / render boundary catches.
-      if (cn === "panic") {
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
-        return `_s.panic(${a})`;
-      }
+      if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, ctx)})`;
       // `prefers-dark()` — reads `prefers-color-scheme: dark` (style.md §4.6.1).
       // Environment-reading like `now`, and used the same way: an `app.start`
       // reducer picks the initial theme from it.
@@ -201,10 +212,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.
-      if (cn === "file-url") {
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : "undefined";
-        return `_s.fileUrl(${a})`;
-      }
+      if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, ctx)})`;
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
       return `${jsBinding(cn)}(${args})`;

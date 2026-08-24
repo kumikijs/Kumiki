@@ -867,7 +867,7 @@ app.unmount()
 | `Option`, `Result` | パターンマッチ網羅検査 |
 | `now`, `random()` | 式が書ける場所ならどこでも呼べる。読んだ値は記録**されない**ため、それを読んだ episode の replay は新しい値を引く |
 | `*.fresh()` | UUIDv7 を生成 |
-| `panic()` | episode を `panic` 状態にして slot をロールバック |
+| `panic(message)` | episode を `panic` 状態にして slot をロールバック |
 
 ---
 

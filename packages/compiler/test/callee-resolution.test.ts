@@ -4,12 +4,13 @@
 // and then threw `doubel is not defined` on the first interaction — the whole
 // point of a name-resolution band bypassed for one expression form.
 
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 // The tables are internal to the compiler — see `src/index.ts` for why they are
 // not published — so this reaches for them directly, as `ui-lifts.test.ts` does.
 import {
   BUILTIN_CALLS,
+  type BuiltinArity,
   CONSTANT_NAMESPACES,
   QUALIFIED_BUILTIN_CALLS,
   TYPE_MEMBER_CALLS,
@@ -72,7 +73,7 @@ describe("E0116 undef-call", () => {
   });
 
   it("accepts a type member on any capitalised qualifier", () => {
-    for (const member of TYPE_MEMBER_CALLS) {
+    for (const member of TYPE_MEMBER_CALLS.keys()) {
       const arg = member === "fresh" ? "" : "t";
       expect(codes(inReducer(`t := Whatever.${member}(${arg}).show`)), member).toEqual([]);
     }
@@ -110,13 +111,41 @@ describe("E0213 call-arity-mismatch", () => {
     expect(codes(inReducer("a := double(a)"))).toEqual([]);
   });
 
-  it("does not apply to built-in calls", () => {
-    // A documented decision (errors.md E0213), pinned because it is the kind
-    // of asymmetry a later reader would "fix" without noticing that several
-    // builtins ignore their arguments outright at lowering. `Duration.s()`
-    // lowering to `((0) * 1000)` is the cost, and #275 tracks it.
-    expect(codes(inReducer("a := Duration.s()"))).toEqual([]);
-    expect(codes(inReducer('a := Duration.s(1, 2, "x")'))).toEqual([]);
+  it("applies to built-in calls too", () => {
+    // This used to assert the opposite, on the grounds that a builtin's
+    // arguments are whatever its lowering reads. What that cost is visible in
+    // the first line: `Duration.s()` lowered to `((0) * 1000)`, so a timer
+    // written with an empty duration fired immediately and forever, with
+    // check, build and smoke all green. The second dropped its tail silently.
+    expect(codes(inReducer("a := Duration.s()"))).toEqual(["E0213"]);
+    expect(codes(inReducer('a := Duration.s(1, 2, "x")'))).toEqual(["E0213"]);
+  });
+
+  it("says how many, and where", () => {
+    expect(check(parse(lex(inReducer("a := Duration.s()"))))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "Duration.s" expects 1 argument(s) but got 0',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
+  it("counts a template and calls the rest of `fmt` optional", () => {
+    // The one variadic builtin: `fmt(template, ...args)`. A minimum is all
+    // that can be asked of it, and the message has to say so rather than name
+    // a number the call could never satisfy.
+    expect(codes(inReducer('t := fmt("{0}")'))).toEqual([]);
+    expect(codes(inReducer('t := fmt("{0} {1}", a, a)'))).toEqual([]);
+    expect(check(parse(lex(inReducer("t := fmt()"))))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "fmt" expects at least 1 argument(s) but got 0',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
   });
 });
 
@@ -265,15 +294,15 @@ describe("the checker accepts exactly what codegen lowers", () => {
     "prefers-dark": "prefers-dark()",
     "EffectId.none": "EffectId.none",
     "Decoder.Json": "Decoder.Json(Text)",
-    "Decoder.Text": "Decoder.Text(Text)",
-    "Decoder.Bytes": "Decoder.Bytes(Text)",
-    "Decoder.None": "Decoder.None(Text)",
+    "Decoder.Text": "Decoder.Text()",
+    "Decoder.Bytes": "Decoder.Bytes()",
+    "Decoder.None": "Decoder.None()",
     "Bytes.from-text": 'Bytes.from-text("x")',
     "Bytes.from-base64": 'Bytes.from-base64("x")',
     "Bytes.from-bytes": "Bytes.from-bytes([1])",
   };
 
-  const named = [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS];
+  const named = [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys()];
 
   it("has a call site for every builtin in the tables", () => {
     // Duration is uniform enough to generate; the rest are listed explicitly so
@@ -288,7 +317,7 @@ describe("the checker accepts exactly what codegen lowers", () => {
     // regex — so it is deliberately outside this loop. Stating that here keeps
     // the guard's reach explicit rather than implied by the filter above.
     expect(named.length).toBe(BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size);
-    expect([...TYPE_MEMBER_CALLS].some((m) => named.includes(m))).toBe(false);
+    expect([...TYPE_MEMBER_CALLS.keys()].some((m) => named.includes(m))).toBe(false);
   });
 
   for (const name of named) {
@@ -337,7 +366,7 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   it("names every constant the parser reads without parentheses", () => {
     const listed = new Set(Object.keys(SENTINEL));
     const declared = new Set(
-      [...QUALIFIED_BUILTIN_CALLS].filter((n) =>
+      [...QUALIFIED_BUILTIN_CALLS.keys()].filter((n) =>
         CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
       ),
     );
@@ -345,12 +374,14 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   });
 
   it("reads only namespaces whose members take no arguments", () => {
-    // `Duration.s` and `Bytes.from-text` are in the same table and need an
-    // argument, and codegen defaults a missing one to `0` / `""` / `[]`. Both
-    // outcomes are silent, so the choice is between two silences: an argument
-    // defaulted to zero reads as a plausible duration and survives, while
-    // `undefined` fails the first thing that touches it.
-    const withArguments = [...QUALIFIED_BUILTIN_CALLS].filter((n) => !Object.hasOwn(SENTINEL, n));
+    // Reading `Q.m` without parentheses is reading it as a zero-argument call,
+    // so a namespace listed here is a namespace whose members are complete
+    // without arguments. `Duration.s` and `Bytes.from-text` are not: written
+    // bare they would be one argument short, which is E0213 at check and a
+    // throw at codegen.
+    const withArguments = [...QUALIFIED_BUILTIN_CALLS.keys()].filter(
+      (n) => !Object.hasOwn(SENTINEL, n),
+    );
     for (const name of withArguments) {
       expect(CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf("."))), name).toBe(false);
     }
@@ -372,7 +403,7 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
     // wrote the empty sentinel — and a later `http.cancel` on it cancels
     // nothing.
     for (const namespace of CONSTANT_NAMESPACES) {
-      for (const member of TYPE_MEMBER_CALLS) {
+      for (const member of TYPE_MEMBER_CALLS.keys()) {
         const where = `${namespace}.${member}`;
         expect(codes(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
       }
@@ -386,19 +417,31 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   });
 
   for (const [name, sentinel] of Object.entries(SENTINEL)) {
-    it(`${name} lowers to ${sentinel} with no parentheses`, () => {
-      const body = loweringOf(name);
-      expect(body).toContain(`_s.show(${sentinel})`);
-      expect(body).not.toContain("_tag:");
-    });
+    // `Decoder.Json` is the one member of these namespaces that carries
+    // something — the payload type — so it is the one with no paren-less
+    // spelling. The two directions of that are pinned below.
+    if (name !== "Decoder.Json") {
+      it(`${name} lowers to ${sentinel} with no parentheses`, () => {
+        const body = loweringOf(name);
+        expect(body).toContain(`_s.show(${sentinel})`);
+        expect(body).not.toContain("_tag:");
+      });
+    }
 
-    it(`${name} lowers the same way with them`, () => {
-      // `Decoder.Json(User)` is the form the spec uses for the one constant
-      // that takes a type argument; the argument is not read by the lowering.
-      const body = loweringOf(name.startsWith("Decoder.") ? `${name}(Text)` : `${name}()`);
+    it(`${name} lowers the same way written as a call`, () => {
+      const body = loweringOf(name === "Decoder.Json" ? `${name}(Text)` : `${name}()`);
       expect(body).toContain(`_s.show(${sentinel})`);
     });
   }
+
+  it("the constant that carries a payload type is an argument short without it", () => {
+    // `docs/spec/http.md` §6.1.4 writes `Decoder.Json(User)` every time, and
+    // the type is what makes the decode type-safe. Written bare it read as a
+    // decoder that had one and lowered identically, so the omission was
+    // invisible in the source and in the output.
+    expect(codes(inReducer("t := (Decoder.Json).show"))).toEqual(["E0213"]);
+    expect(codes(inReducer("t := (Decoder.Json(Text)).show"))).toEqual([]);
+  });
 
   it("reports a misspelt member of a constant namespace", () => {
     // Without the parser reading these, `Decoder.Nope` was a field read on a
@@ -417,5 +460,112 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
     // refuses every other member of these namespaces must not refuse these.
     expect(codes(inReducer("t := (Decoder.None).show"))).toEqual([]);
     expect(codes(inReducer("t := (EffectId.none).show"))).toEqual([]);
+  });
+});
+
+describe("every built-in is held to the count its lowering reads", () => {
+  // Generated from the tables rather than written out, so a builtin cannot be
+  // added without a case: the arity lives beside the name, and this walks both.
+  //
+  // The call is wrapped in `.show` so the result type never decides the
+  // outcome — what is under test is the count, and a `Duration` assigned to an
+  // `Int` slot would otherwise add a second diagnostic to half the cases.
+
+  /** An argument no builtin's lowering objects to. */
+  const FILLER = "1";
+
+  /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
+  const QUALIFIER = "Probe";
+
+  const args = (n: number) => Array.from({ length: n }, () => FILLER).join(", ");
+
+  function callOf(name: string): (n: number) => string {
+    const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
+    return (n) => `${spelling}(${args(n)})`;
+  }
+
+  const ALL: [string, BuiltinArity][] = [
+    ...BUILTIN_CALLS,
+    ...QUALIFIED_BUILTIN_CALLS,
+    ...TYPE_MEMBER_CALLS,
+  ];
+
+  /**
+   * `now` is a keyword, so the parser builds its zero-argument call itself and
+   * there is no way to write another count. The arity in the table is what
+   * `checkCallee` would hold it to if the spelling ever loosened.
+   */
+  const PARSER_FIXED = new Set(["now"]);
+
+  const NAMED = ALL.filter(([name]) => !PARSER_FIXED.has(name));
+
+  it("covers all three tables", () => {
+    expect(ALL.length).toBe(
+      BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size + TYPE_MEMBER_CALLS.size,
+    );
+    expect([...PARSER_FIXED].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
+  });
+
+  it("does not reach the one the parser spells for you", () => {
+    expect(codes(inReducer("t := now.show"))).toEqual([]);
+    expect(() => parse(lex(inReducer("t := now(1).show")))).toThrow(/Expected/);
+  });
+
+  for (const [name, arity] of NAMED) {
+    const call = callOf(name);
+
+    it(`${name} accepts ${arity.min}`, () => {
+      expect(codes(inReducer(`t := (${call(arity.min)}).show`))).toEqual([]);
+    });
+
+    if (arity.min > 0) {
+      it(`${name} reports one argument too few`, () => {
+        expect(codes(inReducer(`t := (${call(arity.min - 1)}).show`))).toEqual(["E0213"]);
+      });
+    }
+
+    if (Number.isFinite(arity.max)) {
+      it(`${name} reports one argument too many`, () => {
+        expect(codes(inReducer(`t := (${call(arity.max + 1)}).show`))).toEqual(["E0213"]);
+      });
+    }
+  }
+});
+
+describe("codegen no longer supplies what the call omitted", () => {
+  // The lowerings read `args[0]` and substituted `0` / `""` / `[]` / `undefined`
+  // when it was absent, which is how a missing argument became a plausible
+  // value. `checkCallee` reports E0213 for every one of those calls now, so
+  // reaching codegen with one means the caller skipped `check` — and a named
+  // throw is the only answer that cannot be mistaken for a result.
+  const src = (expr: string) => `slot a : Int = 0
+slot t : Text = ""
+reducer r on=ui.click(B) do= t := (${expr}).show
+tile B = button(text="b")
+tile App = column(B, text(a.show), text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  for (const expr of [
+    "Duration.s()",
+    "Duration.ms()",
+    "Bytes.from-text()",
+    "Bytes.from-base64()",
+    "Bytes.from-bytes()",
+    "file-url()",
+    "panic()",
+    "fmt()",
+    "Probe.parse()",
+    "Probe.show()",
+  ]) {
+    it(`${expr} throws out of codegen instead of lowering`, () => {
+      expect(() => codegen(parse(lex(src(expr))))).toThrow(/missing its argument/);
+    });
+  }
+
+  it("compile() reports the diagnostic rather than throwing", () => {
+    const result = compile(src("Duration.s()"), { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("fail");
+    expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
   });
 });

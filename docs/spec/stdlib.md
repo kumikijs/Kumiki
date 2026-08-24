@@ -13,8 +13,8 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Float` | 64-bit floating point | `3.14`, `-0.5` |
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
-| `Bytes` | byte sequence | no literal; `Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` (see §2.2.10) |
-| `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse()` |
+| `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see §2.2.10) |
+| `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse(text)` |
 | `EffectId` | opaque handle returned by `emit` (see §2.1.1.1) | no literal; `EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
