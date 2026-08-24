@@ -232,4 +232,11 @@ describe("random", () => {
   it("is not a bare name", () => {
     expect(codesFor("Float", "random")).toEqual(["E0103"]);
   });
+
+  // Every other language's random takes a range, and a builtin call's arguments
+  // are whatever its lowering reads — so `random(1, 6)` dropped both and gave a
+  // die that always rolls 1, with everything green.
+  it("takes no arguments, and says so", () => {
+    expect(codesFor("Float", "random(1, 6)")).toEqual(["E0213"]);
+  });
 });
