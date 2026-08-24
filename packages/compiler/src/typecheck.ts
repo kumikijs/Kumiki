@@ -1708,7 +1708,7 @@ function checkCallee(
 
 /**
  * How many arguments a builtin wants, as the message says it. Only `fmt` has a
- * range: it substitutes as many values as it is given, so the template is all
+ * range — its signature is `fmt(template, ...args)`, so the template is all
  * that can be required and naming an exact number would describe a call that
  * cannot exist.
  */

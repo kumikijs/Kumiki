@@ -450,6 +450,8 @@ The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the nu
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
+Substitution is **not implemented yet**: the runtime carries no `fmt` helper, so a `fmt` call evaluates to its template with the placeholders intact — `fmt("{0}-{1}", "a", "b")` is `"{0}-{1}"`. The call is still counted ([E0213](./errors.md#e0213-call-arity-mismatch)) against the signature above, not against that gap.
+
 When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically.
 
 ### 2.4.6 Debugging Aids

@@ -27,17 +27,22 @@ deciding it. A mismatch is `E0213` at the call site. What is checked is the
 count and not the argument's type: `Decoder.Json(User)` still lowers to a
 sentinel that ignores the type it was given.
 
-Two names are not held to an exact number. `fmt` requires its template and
-substitutes as many values as it is given, so its message names a minimum.
-`now` is a keyword, so the parser builds its zero-argument call itself.
+`fmt` is the only name with a range: its signature is `fmt(template, ...args)`,
+so the template is all that can be required and its message names a minimum.
+`now` is held to none, but no call can break that — it is a keyword, and the
+parser builds its zero-argument call itself.
 
 Codegen's defaults are gone rather than unreachable: a lowering that needs an
-argument and does not have one throws, so a caller that runs `codegen()` on
-source it never checked gets a named failure instead of a zero.
+argument and does not have one throws, with its position. That is not only a
+guard for callers who skip `check` — `checkCallee` runs where `checkExpr`
+walks, and an `app.http` field, a `test` body and an effect's
+`policy=latest-per-key(...)` key are not walked, so a call that omits its
+argument in one of those checks clean and fails the build.
 
 **Breaking**: a call that was accepted because nothing counted it is now
 rejected. `Duration.s()` and the rest of the table above are the ones that
-mattered; two more are worth naming because they read as correct today —
+mattered, and `Int.parse()` / `Time.show()` join them — both defaulted to `""`
+and compiled. Two more are worth naming because they read as correct today —
 `Decoder.Json` written without its payload type (the type is what makes the
 decode type-safe, and a decoder that forgot it was indistinguishable from one
 that had it), and `Decoder.Text(Text)` / `Decoder.Bytes(…)` / `Decoder.None(…)`

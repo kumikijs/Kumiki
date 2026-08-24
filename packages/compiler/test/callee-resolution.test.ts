@@ -395,17 +395,29 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
     expect([...listed].sort()).toEqual([...declared].sort());
   });
 
-  it("reads only namespaces whose members take no arguments", () => {
+  it("gives a member a paren-less spelling exactly when it takes no arguments", () => {
     // Reading `Q.m` without parentheses is reading it as a zero-argument call,
-    // so a namespace listed here is a namespace whose members are complete
-    // without arguments. `Duration.s` and `Bytes.from-text` are not: written
-    // bare they would be one argument short, which is E0213 at check and a
-    // throw at codegen.
-    const withArguments = [...QUALIFIED_BUILTIN_CALLS.keys()].filter(
-      (n) => !Object.hasOwn(SENTINEL, n),
+    // so the two tables have to agree: a member of a listed namespace is
+    // writable bare exactly when its arity is 0. `Decoder.Json` is the one that
+    // is not, and it is spelled out here rather than skipped, so that adding a
+    // member with an argument to `Decoder` or `EffectId` is a decision and not
+    // an accident.
+    for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
+      if (!CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf(".")))) continue;
+      expect(arity.min, name).toBe(name === "Decoder.Json" ? 1 : 0);
+    }
+  });
+
+  it("keeps the namespaces whose members all take one out of the table", () => {
+    // The other direction: `Duration` and `Bytes` are excluded, and every one
+    // of their members takes an argument. What the exclusion costs is the test
+    // two below — the bare spelling is a field read, not a short call.
+    const excluded = [...QUALIFIED_BUILTIN_CALLS].filter(
+      ([n]) => !CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
     );
-    for (const name of withArguments) {
-      expect(CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf("."))), name).toBe(false);
+    expect(excluded.length).toBeGreaterThan(0);
+    for (const [name, arity] of excluded) {
+      expect(arity.min, name).toBe(1);
     }
   });
 
@@ -600,9 +612,13 @@ describe("every built-in is held to the count its lowering reads", () => {
 describe("codegen no longer supplies what the call omitted", () => {
   // The lowerings read `args[0]` and substituted `0` / `""` / `[]` / `undefined`
   // when it was absent, which is how a missing argument became a plausible
-  // value. `checkCallee` reports E0213 for every one of those calls now, so
-  // reaching codegen with one means the caller skipped `check` — and a named
-  // throw is the only answer that cannot be mistaken for a result.
+  // value. `checkCallee` reports E0213 for those calls wherever `checkExpr`
+  // walks — which is not everywhere, so the throw is what an author actually
+  // meets in the positions the checker skips, and the last case here is one.
+  //
+  // The list is derived rather than written: a builtin that requires an
+  // argument gets its check case from the tables above, and would otherwise
+  // get no throw case at all.
   const src = (expr: string) => `slot a : Int = 0
 slot t : Text = ""
 reducer r on=ui.click(B) do= t := (${expr}).show
@@ -611,28 +627,57 @@ tile App = column(B, text(a.show), text(t))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-  for (const expr of [
-    "Duration.s()",
-    "Duration.ms()",
-    "Bytes.from-text()",
-    "Bytes.from-base64()",
-    "Bytes.from-bytes()",
-    "file-url()",
-    "panic()",
-    "fmt()",
-    "Probe.parse()",
-    "Probe.show()",
-  ]) {
+  const emit = (source: string) =>
+    codegen(parse(lex(source)), { runtimeSpecifier: "./runtime.js" });
+
+  /** `Q.m()` for a qualified name, `Probe.m()` for a bare type member. */
+  const spellingOf = (name: string) => (TYPE_MEMBER_CALLS.has(name) ? `Probe.${name}` : name);
+
+  const REQUIRES_ONE = [...BUILTIN_CALLS, ...QUALIFIED_BUILTIN_CALLS, ...TYPE_MEMBER_CALLS]
+    .filter(([, arity]) => arity.min > 0)
+    .map(([name]) => name);
+
+  for (const name of REQUIRES_ONE) {
+    const expr = `${spellingOf(name)}()`;
+    if (name === "Decoder.Json") {
+      it(`${expr} lowers to its sentinel, which reads no argument to be missing`, () => {
+        // The one name whose call must supply something its lowering never
+        // reads. Nothing throws, so the count is the only thing standing
+        // between a decoder with a payload type and one without.
+        expect(emit(src(expr))).toBeTruthy();
+      });
+      continue;
+    }
     it(`${expr} throws out of codegen instead of lowering`, () => {
-      expect(() => codegen(parse(lex(src(expr))), { runtimeSpecifier: "./runtime.js" })).toThrow(
-        /missing its argument/,
-      );
+      expect(() => emit(src(expr))).toThrow(/missing its argument/);
     });
   }
+
+  it("says where, since that is all the author is given", () => {
+    expect(() => emit(src("Duration.s()"))).toThrow(/Duration\.s\(\) at 3:36 is missing/);
+  });
 
   it("compile() reports the diagnostic rather than throwing", () => {
     const result = compile(src("Duration.s()"), { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("fail");
     expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
+  });
+
+  it("is what `build` does where `check` never walked the expression", () => {
+    // `app.http`'s fields are not walked by `checkExpr`, so `checkCallee` never
+    // sees this call: `check` reports ok and the throw is the whole of what the
+    // author gets. On the defaulting side it was worse — the app built, with a
+    // request timeout of zero.
+    const unwalked = `slot t : Text = ""
+tile App = column(text(t))
+app A caps=[http.get]
+    routes={"/" -> App, "/404" -> App}
+    http={base-url: "https://x", timeout: Duration.s()}
+    init=[]
+`;
+    expect(check(parse(lex(unwalked)))).toEqual([]);
+    expect(() => compile(unwalked, { runtimeSpecifier: "./runtime.js" })).toThrow(
+      /Duration\.s\(\) at 5:43 is missing/,
+    );
   });
 });

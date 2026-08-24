@@ -1,4 +1,4 @@
-import type { Expr, Pattern } from "../ast.ts";
+import type { Expr, Pattern, Pos } from "../ast.ts";
 import { addBind, type EvalCtx, jsBinding, jsProperty, makeEvalCtx } from "./context.ts";
 
 /** Extract the reducer name from a `run-reducer(name)` argument (a bare ref). */
@@ -15,13 +15,22 @@ export function reducerNameArg(e: Expr | undefined): string {
  * `""` for a byte string, `undefined` for a file — so an omission became a
  * plausible value instead of a diagnostic: `Duration.s()` was zero
  * milliseconds, which is a timer that fires immediately and forever.
- * `checkCallee` reports E0213 for every such call, so reaching here without the
- * argument means the caller ran codegen on unchecked source, and a named throw
- * is the one answer that cannot be mistaken for a result.
+ *
+ * `checkCallee` reports E0213 wherever `checkExpr` walks, which is not
+ * everywhere: an `app.http` field, a `test` body and an effect's
+ * `policy=latest-per-key(...)` key are never walked, so a call in one of those
+ * checks clean and lands here. That is why the throw carries its position —
+ * it is the only thing the author is given, and an error without one is the
+ * failure this file is otherwise closing.
  */
-function requiredArg(callee: string, args: Expr[], ctx: EvalCtx): string {
+function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const arg = args[0];
-  if (!arg) throw new Error(`${callee}() is missing its argument`);
+  if (!arg) {
+    throw new Error(
+      `${callee}() at ${pos.line}:${pos.col} is missing its argument ` +
+        "(in a position `check` does not walk: an app.http field, a test body, or an effect policy key)",
+    );
+  }
   return jsOfExpr(arg, ctx);
 }
 
@@ -139,7 +148,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) {
         // `T.parse(text)` → Option<T>. Numeric types coerce to a number so
         // arithmetic (e.g. fold/sum) works; other types keep the string.
-        const a = requiredArg(cn, e.args, ctx);
+        const a = requiredArg(cn, e.args, e.pos, ctx);
         const qualifier = cn.split(".")[0];
         if (qualifier === "Int") {
           return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
@@ -159,21 +168,24 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
       }
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
-        return `_s.show(${requiredArg(cn, e.args, ctx)})`;
+        return `_s.show(${requiredArg(cn, e.args, e.pos, ctx)})`;
       }
       // Duration constructors → milliseconds (Time is stored as a raw ms number).
-      if (cn === "Duration.ms") return `(${requiredArg(cn, e.args, ctx)})`;
-      if (cn === "Duration.s") return `((${requiredArg(cn, e.args, ctx)}) * 1000)`;
+      if (cn === "Duration.ms") return `(${requiredArg(cn, e.args, e.pos, ctx)})`;
+      if (cn === "Duration.s") return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 1000)`;
       if (cn === "Duration.m" || cn === "Duration.min")
-        return `((${requiredArg(cn, e.args, ctx)}) * 60000)`;
-      if (cn === "Duration.h") return `((${requiredArg(cn, e.args, ctx)}) * 3600000)`;
+        return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 60000)`;
+      if (cn === "Duration.h") return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 3600000)`;
       if (cn === "Duration.d" || cn === "Duration.days")
-        return `((${requiredArg(cn, e.args, ctx)}) * 86400000)`;
+        return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 86400000)`;
       // Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
       // Bytes is represented as Uint8Array at runtime.
-      if (cn === "Bytes.from-text") return `_s.bytesFromText(${requiredArg(cn, e.args, ctx)})`;
-      if (cn === "Bytes.from-base64") return `_s.bytesFromBase64(${requiredArg(cn, e.args, ctx)})`;
-      if (cn === "Bytes.from-bytes") return `_s.bytesFromBytes(${requiredArg(cn, e.args, ctx)})`;
+      if (cn === "Bytes.from-text")
+        return `_s.bytesFromText(${requiredArg(cn, e.args, e.pos, ctx)})`;
+      if (cn === "Bytes.from-base64")
+        return `_s.bytesFromBase64(${requiredArg(cn, e.args, e.pos, ctx)})`;
+      if (cn === "Bytes.from-bytes")
+        return `_s.bytesFromBytes(${requiredArg(cn, e.args, e.pos, ctx)})`;
       // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). The
       // runtime treats falsy / unknown ids as silent no-ops, so the empty
       // string doubles as a valid slot-initial value AND a guaranteed-no-op
@@ -192,15 +204,19 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Decoder.Bytes") return `"bytes"`;
       if (cn === "Decoder.None") return `"none"`;
       if (cn === "fmt") {
-        // fmt(template, ...args) — very simple {0} {1} substitution
-        const template = requiredArg(cn, e.args, ctx);
+        // `fmt(template, ...args)` — the runtime has no `fmt` helper, so this
+        // guard always takes the else branch and the template is returned with
+        // its `{0}` placeholders intact. The lowering is written as though the
+        // helper existed, and the arity follows the spec's signature rather
+        // than what the else branch reads.
+        const template = requiredArg(cn, e.args, e.pos, ctx);
         const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
         return `_s.fmt ? _s.fmt(${[template, ...rest].join(", ")}) : ${template}`;
       }
       // `panic(message)` — Kumiki's controlled stop-the-program signal
       // (docs/spec/stdlib.md §2.2). Lowers to the runtime helper that throws a
       // KumikiPanic, which the live dispatch / render boundary catches.
-      if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, ctx)})`;
+      if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, e.pos, ctx)})`;
       // `prefers-dark()` — reads `prefers-color-scheme: dark` (style.md §4.6.1).
       // Environment-reading like `now`, and used the same way: an `app.start`
       // reducer picks the initial theme from it.
@@ -212,7 +228,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.
-      if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, ctx)})`;
+      if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
       return `${jsBinding(cn)}(${args})`;

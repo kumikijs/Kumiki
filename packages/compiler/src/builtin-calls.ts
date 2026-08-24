@@ -13,16 +13,20 @@
 // every name below and asserts the result is not the fallback. A name the
 // checker accepts and codegen forgot fails there rather than in an app.
 //
-// Each name carries the number of arguments its lowering reads, so the same
-// test walks the tables and holds every builtin to it. Without that the count
-// was whatever the lowering happened to find: `Duration.s()` lowered to
-// `((0) * 1000)`, a timer written with an empty duration fired immediately and
-// forever, and nothing anywhere said the argument was missing.
+// Each name also carries the number of arguments a call to it must supply —
+// which is not the same as the number its lowering reads, and `Decoder.Json` is
+// the case that separates them: the lowering reads nothing and returns a
+// sentinel, while a call has to name the payload type. Without a count at all,
+// a builtin's argument list was whatever its lowering happened to find:
+// `Duration.s()` lowered to `((0) * 1000)`, a timer written with an empty
+// duration fired immediately and forever, and nothing said the argument was
+// missing.
 
 /**
- * How many arguments a builtin's lowering reads. `max` is infinite for the one
- * variadic builtin, `fmt`, which requires its template and substitutes any
- * number of values after it.
+ * How many arguments a call to a builtin must supply. `max` is infinite for the
+ * one variadic builtin, `fmt`, whose signature is `fmt(template, ...args)`: the
+ * template is all that can be required, and the lowering passes on whatever
+ * follows it.
  */
 export type BuiltinArity = { readonly min: number; readonly max: number };
 
@@ -82,11 +86,15 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Ma
  * that, the paren-less form was a field read on a freshly built variant and
  * emitted `undefined`, which `check` had no reason to object to.
  *
- * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`: reading a
- * member paren-less is reading it as a zero-argument call, and `Duration.*` and
- * `Bytes.*` take an argument, so the bare spelling would be a call that is one
- * short. `Decoder.Json` is the one member of a namespace listed here that takes
- * one, so it is the one with no paren-less spelling.
+ * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`. What excluding
+ * one costs is that its bare spelling is not read as a call at all: `Duration.s`
+ * is a field read on a freshly built variant, which emits `undefined` and draws
+ * no diagnostic. The reason it was excluded — that a zero-argument
+ * `Duration.s()` would be defaulted to `0`, so the choice was between two
+ * silences — no longer holds, because the count is checked and the default is
+ * gone. `Decoder.Json` is the other way round: it is a member of a namespace
+ * listed here that takes an argument, so it is the one with no paren-less
+ * spelling.
  *
  * The membership rule is enforced by `checkCallee`, not by this table alone:
  * `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
@@ -119,9 +127,9 @@ export const UNIMPLEMENTED_CALLS: ReadonlySet<string> = new Set(["trace"]);
 const QUALIFIER_RE = /^[A-Z][A-Za-z0-9_]*$/;
 
 /**
- * The argument count codegen's lowering for `callee` reads, or `undefined` when
- * there is no lowering — which makes this the one answer to both questions, so
- * a callee cannot resolve without an arity to hold it to.
+ * The argument count a call to `callee` must supply, or `undefined` when codegen
+ * has no lowering for the name — which makes this the one answer to both
+ * questions, so a callee cannot resolve without an arity to hold it to.
  */
 export function builtinArity(callee: string): BuiltinArity | undefined {
   const named = BUILTIN_CALLS.get(callee) ?? QUALIFIED_BUILTIN_CALLS.get(callee);
