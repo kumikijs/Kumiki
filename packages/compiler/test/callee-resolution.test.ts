@@ -624,7 +624,9 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     "Probe.show()",
   ]) {
     it(`${expr} throws out of codegen instead of lowering`, () => {
-      expect(() => codegen(parse(lex(src(expr))))).toThrow(/missing its argument/);
+      expect(() => codegen(parse(lex(src(expr))), { runtimeSpecifier: "./runtime.js" })).toThrow(
+        /missing its argument/,
+      );
     });
   }
 
