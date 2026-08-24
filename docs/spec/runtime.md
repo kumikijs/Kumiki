@@ -1006,7 +1006,7 @@ For the built-ins enumerated in [Standard Library](./stdlib.md), the runtime imp
 |---|---|
 | `Map`, `Set`, `List` | pure (no in-place mutation) |
 | `Option`, `Result` | exhaustiveness check for pattern matching |
-| `now`, `random()` | recorded in the episode log, so a replay reproduces the run |
+| `now`, `random()` | callable wherever an expression is; the values they read are **not** recorded, so a replay of an episode that read one draws a new value |
 | `*.fresh()` | generates UUIDv7 |
 | `panic()` | puts the episode into the `panic` state and rolls back slots |
 

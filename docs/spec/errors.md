@@ -315,7 +315,7 @@ A call `f(...)` names no function. The candidate set is the program's `fn` defin
 
 | Callee | Where it is specified |
 |---|---|
-| `now`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
+| `now`, `random`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
 | `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), §2.4 |
 | `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
 | `file-url` | [Forms §5.10](./forms.md) |

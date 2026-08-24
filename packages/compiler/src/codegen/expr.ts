@@ -394,7 +394,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   // read — a lowercase qualifier is not one — so every call reported E0103.
   "floor", // Float.floor → Int
   "ceil", // Float.ceil → Int
-  "round", // Float.round → Int (half away from zero, as JS rounds)
+  "round", // Float.round → Int (ties go up, toward +∞: (-2.5).round is -2)
   "sqrt", // Int/Float.sqrt → Float
   "log", // Int/Float.log → Float (natural logarithm)
   "exp", // Int/Float.exp → Float
@@ -460,6 +460,32 @@ export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
   "sqrt",
   "log",
   "exp",
+]);
+
+/**
+ * The members that only a number has (docs/spec/stdlib.md §2.2.7).
+ *
+ * `KNOWN_MEMBERS` is flat — it answers "does the runtime understand this name
+ * on some receiver", not "on this one" — so without this set every arithmetic
+ * name was a member of `Text`, of a `List`, of anything the checker recognised.
+ * `someText.round` passed and lowered to `Math.round("hello")`: `NaN` into
+ * whatever it was assigned to, with nothing reported anywhere.
+ */
+export const NUMERIC_MEMBERS: ReadonlySet<string> = new Set([
+  "abs",
+  "neg",
+  "min",
+  "max",
+  "clamp",
+  "floor",
+  "ceil",
+  "round",
+  "sqrt",
+  "log",
+  "exp",
+  "pow",
+  "to-float",
+  "to-int",
 ]);
 
 /**

@@ -31,6 +31,7 @@ import type {
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
 import {
+  BUILTIN_ARITY,
   CONSTANT_NAMESPACES,
   isBuiltinCallee,
   QUALIFIED_BUILTIN_CALLS,
@@ -38,7 +39,13 @@ import {
 } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
-import { KNOWN_MEMBERS, KNOWN_METHODS, METHOD_MIN_ARGS } from "./codegen.ts";
+import {
+  FIELD_ACCESS_SHORTCUTS,
+  KNOWN_MEMBERS,
+  KNOWN_METHODS,
+  METHOD_MIN_ARGS,
+  NUMERIC_MEMBERS,
+} from "./codegen.ts";
 import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
@@ -1663,7 +1670,18 @@ function checkCallee(
     });
     return;
   }
-  if (isBuiltinCallee(callee)) return;
+  if (isBuiltinCallee(callee)) {
+    const arity = BUILTIN_ARITY.get(callee);
+    if (arity !== undefined && argCount !== arity) {
+      errors.push({
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: `Function "${callee}" expects ${arity} argument(s) but got ${argCount}`,
+        pos,
+      });
+    }
+    return;
+  }
   if (!fn) {
     errors.push({
       code: "E0116",
@@ -1909,6 +1927,21 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           message: `Method ".${e.method}" is not implemented by the runtime`,
           pos: e.pos,
         });
+      }
+      // `Math.round("hello")` is `NaN`, and the method-call branch asked only
+      // whether the runtime knows the *name*. Same rule as the field-access
+      // branch below, and it has to be in both: the two spellings of one
+      // member cannot disagree about whose member it is.
+      if (NUMERIC_MEMBERS.has(e.method)) {
+        const rt = inferType(e.receiver, sym, ctx);
+        if (isKnown(rt, sym) && !isNumeric(rt, sym)) {
+          errors.push({
+            code: "E0108",
+            kind: "undef-member",
+            message: `Type "${typeName(rt, sym)}" has no member ".${e.method}" — it is a method of Int / Float`,
+            pos: e.pos,
+          });
+        }
       }
       {
         // A method whose lowering reads arguments it was not given crashes
@@ -2547,6 +2580,16 @@ function isKnown(t: TypeExpr | null, sym: SymbolTable): boolean {
   return t !== null && !isOpaque(t, sym);
 }
 
+/** How a resolved type is named in a diagnostic. */
+function typeName(t: TypeExpr | null, sym: SymbolTable): string {
+  const u = unaliasType(t, sym);
+  if (!u) return "unknown";
+  if (u.kind === "TypePrim") return u.name;
+  if (u.kind === "TypeApp") return u.name;
+  if (u.kind === "TypeRecord") return "record";
+  return "unknown";
+}
+
 function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName): boolean {
   const u = unaliasType(t, sym);
   return u?.kind === "TypePrim" && u.name === name;
@@ -2569,8 +2612,10 @@ const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["sqrt", "Float"],
   ["log", "Float"],
   ["exp", "Float"],
-  // `pow` is absent on purpose: its result follows its receiver, and this table
-  // is for the methods whose answer is fixed whatever the receiver is.
+  // `pow` is absent because it has no fixed result: `2.pow(3)` is an Int and
+  // `2.pow(-1)` is 0.5, so the receiver does not decide it either. Nothing else
+  // assigns it one, so a `pow` expression is accepted against any target — the
+  // permissiveness `min` / `max` / `clamp` have always had.
 ]);
 
 /**
@@ -2813,6 +2858,31 @@ function classifyFieldAccess(
       return;
     }
     if (KNOWN_MEMBERS.has(e.field)) {
+      if (NUMERIC_MEMBERS.has(e.field) && !isNumeric(t, sym)) {
+        errors.push({
+          code: "E0108",
+          kind: "undef-member",
+          message: `Type "${typeName(t, sym)}" has no member ".${e.field}" — it is a method of Int / Float`,
+          pos: e.pos,
+        });
+        return;
+      }
+      // Written without the arguments it needs. The parser produces a field
+      // access when there is no argument list, so the arity check on the
+      // method-call branch never saw this shape: `f.pow` reached codegen's
+      // bracket fallback and wrote `undefined` into the slot. A member that is
+      // legitimately argument-less is exempt by being a shortcut — `o.get` and
+      // `m.get(k)` are one name with two arities.
+      const min = METHOD_MIN_ARGS.get(e.field);
+      if (min !== undefined && !FIELD_ACCESS_SHORTCUTS.has(e.field)) {
+        errors.push({
+          code: "E0213",
+          kind: "call-arity-mismatch",
+          message: `Method ".${e.field}" expects ${min} argument(s) but got 0`,
+          pos: e.pos,
+        });
+        return;
+      }
       e.accessKind = "shortcut";
       return;
     }

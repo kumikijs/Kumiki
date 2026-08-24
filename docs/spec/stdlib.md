@@ -213,11 +213,11 @@ sqrt, log, exp, pow(n)                        ; log is the natural logarithm
 show, to-float (Int), to-int (Float, truncated)
 ```
 
-`floor` / `ceil` / `round` answer `Int` whatever they are given; `sqrt` / `log` / `exp` answer `Float`. `pow`'s result follows its receiver, so the checker leaves it open rather than guessing — `2.pow(3)` is an `Int` expression and `2.5.pow(2)` is not.
+`floor` / `ceil` / `round` are *typed* `Int` whatever they are given, and `round`'s ties go up, toward +∞ — `(-2.5).round` is `-2`. `sqrt` / `log` / `exp` are typed `Float`. `pow` has no result type at all: `2.pow(3)` is an `Int` and `2.pow(-1)` is `0.5`, so the receiver does not decide it, and a `pow` expression is not checked against its target.
 
 These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier is a capitalised name, so `math.abs(x)` is a reference to a name called `math` and reports [E0103](./errors.md#e0103-undef-ref-undef-slot).
 
-An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type; a refinement (`where between(…)`) is how a slot refuses one.
+An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
 

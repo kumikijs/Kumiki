@@ -16,9 +16,18 @@
           "root": 1.5,
           "squared": 2.25,
           "lnOne": 0.0,
-          "expZero": 1.0
+          "expZero": 1.0,
+          "negRound": -2,
+          "negFloor": -3,
+          "notNumber": "NaN",
+          "noBound": "-Infinity"
         },
-        "domIncludes": ["floor=2 ceil=3 round=2", "sqrt=1.5 pow=2.25"]
+        "domIncludes": [
+          "floor=2 ceil=3 round=2",
+          "sqrt=1.5 pow=2.25",
+          "round(-2.5)=-2 floor(-2.5)=-3",
+          "sqrt(-1)=NaN log(0)=-Infinity"
+        ]
       }
     },
     {

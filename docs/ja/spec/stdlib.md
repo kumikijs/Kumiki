@@ -213,11 +213,11 @@ sqrt, log, exp, pow(n)                        ; log は自然対数
 show, to-float (Int), to-int (Float, 切り捨て)
 ```
 
-`floor` / `ceil` / `round` は受け手が何であれ `Int` を返し、`sqrt` / `log` / `exp` は `Float` を返す。`pow` の結果は受け手に従うため、型検査は推測せず未決定のままにする——`2.pow(3)` は `Int` の式であり、`2.5.pow(2)` はそうではない。
+`floor` / `ceil` / `round` は受け手が何であれ `Int` に**型付けされる**。`round` の中間値は上（+∞ 方向）へ丸める——`(-2.5).round` は `-2` である。`sqrt` / `log` / `exp` は `Float` に型付けされる。`pow` には結果型がない：`2.pow(3)` は `Int` だが `2.pow(-1)` は `0.5` であり、受け手が結果を決めるわけでもない。したがって `pow` の式は代入先に対して検査されない。
 
 Kumiki の算術はこれで全部である。`math` 名前空間は存在しない：修飾子は大文字始まりの名前なので、`math.abs(x)` は `math` という名前への参照になり [E0103](./errors.md#e0103-undef-ref-undef-slot) を報告する。
 
-定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。Kumiki に非数を表す別の型はない。slot がそれを拒むための道具は refinement（`where between(…)`）である。
+定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
 `x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。
 

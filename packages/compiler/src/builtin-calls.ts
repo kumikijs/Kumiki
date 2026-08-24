@@ -90,6 +90,19 @@ export const TYPE_MEMBER_CALLS: ReadonlySet<string> = new Set(["fresh", "parse",
  */
 export const UNIMPLEMENTED_CALLS: ReadonlySet<string> = new Set(["trace"]);
 
+/**
+ * Builtins whose argument count is exact, so an extra one is a mistake rather
+ * than something the lowering ignores.
+ *
+ * A builtin call is resolved by name and its arguments are then whatever the
+ * lowering reads — `prefers-dark(1, 2, 3)` drops all three. That is harmless
+ * where nobody would write them; `random` is the one where they will be
+ * written, because every other language's takes a range and this one's answer
+ * is always `[0, 1)`. Silently dropping `random(1, 6)` gives a die that always
+ * rolls 1, with a green check, build, smoke and scenario.
+ */
+export const BUILTIN_ARITY: ReadonlyMap<string, number> = new Map([["random", 0]]);
+
 /** The parser's rule for a qualifier, mirrored: a capitalised identifier. */
 const QUALIFIER_RE = /^[A-Z][A-Za-z0-9_]*$/;
 
