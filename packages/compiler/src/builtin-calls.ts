@@ -105,9 +105,11 @@ export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "Eff
 
 /**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,
- * `Int.parse(t)`, `Time.show(v)`. The qualifier is not resolved against the
- * type table: codegen does not resolve it either, and a checker stricter than
- * the lowering it guards would reject programs that build and run.
+ * `Int.parse(t)`, `Time.show(v)`. Codegen matches the qualifier by regex, which
+ * used to be the argument for the checker not resolving it either. It is not
+ * one: the qualifier decides which branch of the lowering runs, so a misspelt
+ * one produces a different value rather than a failure. `checkCallee` resolves
+ * it against the type table plus the primitives.
  */
 export const TYPE_MEMBER_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["fresh", exactly(0)],

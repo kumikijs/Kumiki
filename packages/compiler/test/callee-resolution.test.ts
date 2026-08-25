@@ -17,7 +17,14 @@ import {
   UNIMPLEMENTED_CALLS,
 } from "../src/builtin-calls.ts";
 
-/** A program whose reducer body is `expr`, with a fn and a slot to call into. */
+/**
+ * A program whose reducer body is `expr`, with a fn and a slot to call into.
+ *
+ * `type Probe` is last so that adding it left every position this file asserts
+ * where it was — the definitions of a `.kumiki` source are a set, not a
+ * sequence, and a test whose expected line moves says nothing about the change
+ * that moved it.
+ */
 function inReducer(expr: string): string {
   return `slot a : Int = 0
 slot t : Text = ""
@@ -26,6 +33,7 @@ reducer r on=ui.click(B) do= ${expr}
 tile B = button(text="b")
 tile App = column(B, text(a.show), text(t))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Probe = Text
 `;
 }
 
@@ -42,6 +50,7 @@ function loweringOf(callSite: string): string {
 fn probe() -> Text = (${callSite}).show
 tile App = column(text(probe()))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Probe = Text
 `;
   const result = compile(src, { runtimeSpecifier: "./runtime.js" });
   if (result.kind !== "ok") {
@@ -72,10 +81,10 @@ describe("E0116 undef-call", () => {
     expect(codes(inReducer("a := double(a)"))).toEqual([]);
   });
 
-  it("accepts a type member on any capitalised qualifier", () => {
+  it("accepts a type member on a qualifier that names a type", () => {
     for (const member of TYPE_MEMBER_CALLS.keys()) {
       const arg = member === "fresh" ? "" : "t";
-      expect(codes(inReducer(`t := Whatever.${member}(${arg}).show`)), member).toEqual([]);
+      expect(codes(inReducer(`t := Probe.${member}(${arg}).show`)), member).toEqual([]);
     }
   });
 
@@ -679,5 +688,60 @@ app A caps=[http.get]
     expect(() => compile(unwalked, { runtimeSpecifier: "./runtime.js" })).toThrow(
       /Duration\.s\(\) at 5:43 is missing/,
     );
+  });
+});
+
+describe("the qualifier of a type-member call", () => {
+  // Codegen matches `<Q>.fresh|parse|show` by regex, so any capitalised name
+  // resolved — and a misspelling did not fail, it *changed the lowering*.
+  // `Int.parse` has a numeric branch; `Itn.parse` misses it and takes the
+  // generic string one, so a slot declared `Int` ends up holding `"12"` and
+  // every later arithmetic operation on it concatenates.
+
+  it("reports a qualifier that names no type", () => {
+    expect(check(parse(lex(inReducer('t := Itn.parse(t).get-or("")'))))).toEqual([
+      {
+        code: "E0117",
+        kind: "undef-type",
+        message: 'Reference to undefined type "Itn"',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
+  it("accepts the primitives, which are not in the type table", () => {
+    // `Int` / `Float` / `Time` / `EffectId` are `TypePrim` in the grammar, so
+    // they never reach `sym.types` — resolving the qualifier against that table
+    // alone would reject the calls the standard library is written in terms of.
+    expect(codes(inReducer("a := Int.parse(t).get-or(0)"))).toEqual([]);
+    expect(codes(inReducer("t := Float.parse(t).get-or(0.0).show"))).toEqual([]);
+    expect(codes(inReducer("t := Time.show(a)"))).toEqual([]);
+    expect(codes(inReducer("t := EffectId.show(a)"))).toEqual([]);
+  });
+
+  it("accepts a type the program declares, and a standard-library one", () => {
+    expect(codes(inReducer("t := Probe.fresh()"))).toEqual([]);
+    expect(codes(inReducer("t := Url.show(a)"))).toEqual([]);
+  });
+
+  it("leaves an unknown member to E0116, which is a different mistake", () => {
+    // A member outside the table is not a lowering at all, so the qualifier is
+    // beside the point: `Whatever.frish()` is one diagnostic, not two.
+    expect(codes(inReducer("t := Whatever.frish()"))).toEqual(["E0116"]);
+    expect(codes(inReducer("t := Probe.frish()"))).toEqual(["E0116"]);
+  });
+
+  it("reports a namespace that is not a type either", () => {
+    // `Decoder` names a set of constants, not a type, and `Decoder.parse(x)`
+    // lowered to a parse of `x` — the qualifier read as decoration.
+    expect(codes(inReducer('t := Decoder.parse(t).get-or("")'))).toEqual(["E0117"]);
+  });
+
+  it("keeps the message shape a repair can read", () => {
+    // `kumiki fix` parses the first quoted name out of an E0117 and suggests
+    // from the type namespace — the same sentence `resolveType` produces, so
+    // the repair path is inherited rather than rebuilt.
+    const [err] = check(parse(lex(inReducer('t := Itn.parse(t).get-or("")'))));
+    expect(err?.message).toMatch(/^Reference to undefined type "[^"]+"$/);
   });
 });

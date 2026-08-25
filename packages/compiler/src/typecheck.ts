@@ -35,6 +35,7 @@ import {
   builtinArity,
   CONSTANT_NAMESPACES,
   QUALIFIED_BUILTIN_CALLS,
+  TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
@@ -48,7 +49,7 @@ import {
 } from "./codegen.ts";
 import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { STDLIB_TYPES } from "./stdlib-types.ts";
+import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
@@ -1669,6 +1670,24 @@ function checkCallee(
       pos,
     });
     return;
+  }
+  // `<Type>.fresh|parse|show` is lowered on any capitalised qualifier — codegen
+  // matches it by regex — so a misspelt qualifier did not fail, it changed what
+  // the call does: `Int.parse` has a numeric branch and `Itn.parse` misses it,
+  // so an `Int` slot ends up holding `"12"` and every later sum concatenates.
+  // Reported as E0117 with the sentence `resolveType` uses, so the repair path
+  // for an unknown type name covers this one without knowing about it.
+  if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
+    const qualifier = callee.slice(0, dot);
+    if (!isKnownTypeName(qualifier, sym) && !isPrimTypeName(qualifier)) {
+      errors.push({
+        code: "E0117",
+        kind: "undef-type",
+        message: `Reference to undefined type "${qualifier}"`,
+        pos,
+      });
+      return;
+    }
   }
   const arity = builtinArity(callee);
   if (arity !== undefined) {
