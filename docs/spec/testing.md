@@ -19,6 +19,34 @@ A `test` definition is **the sixth layer**. It is stored in the CRDT graph and r
 
 > **Implementation status.** Implemented: `reducer-test`, `tile-test`, `property-test` ([Property Tests](#_8-3-property-tests)), and `episode-test` ([Episode replay](#_8-6-episode-replay)) backed by the runtime [Episode Loop](./runtime.md#_10-5-episode-loop); the `kumiki test` runner with name / `prefix*` filtering, per-test **timings** (`(1ms)` / `(100 cases, 23ms)`), `--coverage`, and `--watch`; `kumiki fix --auto-patch <test-name>` ([Fixing from a failing test](#_8-7-2-fixing-from-a-failing-test)); `expect` **wildcards** (`<any-id>` / `<slots.X>`, [Wildcards](#_8-2-2-wildcards)); and **effect-result mocks** inside `reducer-test` (`given.mocks`, [Effect mock](#_8-5-effect-mock)). The runner prints `PASS` / `FAIL` lines plus `expected` / `actual` / `diff at <path>` and — when it can isolate a scalar leaf — the value arrow (`"a" -> "b"`) on failure.
 
+### 8.1.1 The names a test body writes
+
+A test body is a schema, not an expression, so each position is resolved as
+what it is:
+
+| Position | The name is | Reported as |
+|---|---|---|
+| a `given.slots` / `expect.slots` key | a slot | [E0103](./errors.md#e0103-undef-ref-undef-slot) |
+| `given.event.target` | a tile | [E0105](./errors.md#e0105-undef-tile) |
+| an `expect.effects` entry | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
+| a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
+| every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
+
+`given.event.type` names an event, whose vocabulary belongs to the trigger
+grammar rather than to the expression layer. A slot is *readable* in a test
+body — the value is the one the slot holds — and a `for-all` name is in scope
+in both `given` and `invariant`, with the type its generator declares.
+`run-reducer(<reducer>)` takes a reducer name rather than a value ([§8.3](#_8-3-property-tests)).
+
+Before these were resolved, a name in a test body was accepted whatever it
+said, and the lowering dropped what it could not read: a slot key naming
+nothing left the test running against the slot's default, and an event target
+naming no tile left it running against no target — both **passing**, while
+asserting something they had never set up. An undefined call inside an
+`invariant` was worse than either, because the property runner catches the
+trial's exception and renders it as a falsified invariant: the output accused
+the code under test of a bug it did not have.
+
 ## 8.2 Reducer Tests
 
 ```kumiki fragment

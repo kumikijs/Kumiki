@@ -151,7 +151,17 @@ export function isBuiltinCallee(callee: string): boolean {
  * whatever `fn` names the caller supplies. Deliberately not the whole
  * definition table — suggesting a slot or a tile for a misspelled function call
  * would rewrite the source into a different kind of mistake.
+ *
+ * `missing` is the name that did not resolve. When it is qualified, the type
+ * members are candidates *on its own qualifier*: `fresh` / `parse` / `show`
+ * resolve on any capitalised name, so there is no list of qualified spellings
+ * to draw from — `Int.pasre` has to be answered with `Int.parse`, built from
+ * the qualifier the author already wrote.
  */
-export function calleeCandidates(fnNames: Iterable<string>): string[] {
-  return [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {
+  const base = [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+  const dot = missing === undefined ? -1 : missing.indexOf(".");
+  if (missing === undefined || dot <= 0 || !QUALIFIER_RE.test(missing.slice(0, dot))) return base;
+  const qualifier = missing.slice(0, dot);
+  return [...base, ...[...TYPE_MEMBER_CALLS.keys()].map((m) => `${qualifier}.${m}`)];
 }

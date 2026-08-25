@@ -678,8 +678,13 @@ type Ctx = {
    * treatment. A new check conditioned on one of these values inherits every
    * position that borrows it, so widen the value's meaning here before adding
    * one rather than assuming the name is the whole story.
+   *
+   * `test` is an expression inside a `test` definition: a slot is readable,
+   * `$1` is bound by nothing, `emit` has no dispatch to reach, and `route` is
+   * not installed — which is every rule below answered the way a test body
+   * wants it, and is why it is its own value rather than a borrowed one.
    */
-  kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init";
+  kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init" | "test";
   localBinds: Set<string>;
   capsAvailable?: Set<string>; // for reducer context
   /**
@@ -1946,10 +1951,20 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.index, sym, errors, ctx);
       return;
     case "Call":
+      // `run-reducer(name)` takes a reducer, not a value, and lowers only
+      // inside a generated property-test trial — so it is absent from the
+      // callee tables on purpose. `checkTest` resolves the name itself; walking
+      // it here would report the callee as undefined and the reducer as a name.
+      if (ctx.kind === "test" && e.callee === "run-reducer") return;
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
     case "MethodCall":
+      // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
+      if (ctx.kind === "test" && e.method === "run-reducer") {
+        checkExpr(e.receiver, sym, errors, ctx);
+        return;
+      }
       if (!KNOWN_METHODS.has(e.method)) {
         errors.push({
           code: "E0801",
@@ -2003,6 +2018,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       return;
     case "Wildcard":
+      // Inside a test body two dedicated passes own these: E0109 for one
+      // outside a reducer-test `expect`, E0103 for a `<slots.X>` naming
+      // nothing. Reporting here as well would make one mistake two diagnostics.
+      if (ctx.kind === "test") return;
       errors.push({
         code: "E0109",
         kind: "test-wildcard-misuse",
@@ -3300,6 +3319,7 @@ function walkExpr(e: Expr | undefined, visit: (n: Expr) => void): void {
 }
 
 function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
+  checkTestNames(t, sym, errors);
   // Wildcards are legal only in a reducer-test `expect`. The `given` (both kinds)
   // and a tile-test `expect` must not use them (E0109); a reducer-test `expect`
   // may, but a `<slots.X>` there must name a real slot (E0103).
@@ -3424,6 +3444,158 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     localTypes: new Map(),
     routeBind: "no-payload",
   });
+}
+
+/**
+ * The names a `test` definition writes.
+ *
+ * A test body is a schema, not an expression. `event: {type: ui.click,
+ * target: B}` is an event pattern, `effects: [persist(x)]` is a list of
+ * effects rather than of calls, and `mocks: {persist: err("x")}` names an
+ * effect and an outcome — so handing the whole record to `checkExpr` reports
+ * the schema itself: a slot called `ui`, a function called `persist`. Each
+ * position is instead checked as what `codegen/emit-test.ts` lowers it as, and
+ * that file is the other half of this one.
+ *
+ * Until this existed nothing here was resolved at all, and the lowering drops
+ * what it cannot read: a slot key that names nothing, or an event target that
+ * names no tile, left the test passing against the defaults it never set.
+ */
+function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const ctx: Ctx = {
+    kind: "test",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+  };
+  // `for-all` names are binds in `given` and in the invariant, with the type
+  // the generator declares — codegen binds them the same way, one per trial.
+  for (const f of t.forAll ?? []) bindLocal(ctx, f.name, f.type);
+
+  for (const f of recordFieldsOf(t.given)) {
+    if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, ctx);
+    else if (f.name === "event") checkTestEvent(f.value, sym, errors, ctx);
+    else if (f.name === "mocks") checkTestMockValues(f.value, sym, errors, ctx);
+    // `in` (tile-test), and the flat event form's leftovers: plain expressions.
+    else checkExpr(f.value, sym, errors, ctx);
+  }
+  if (t.invariant) checkExpr(t.invariant, sym, errors, ctx);
+  if (t.testKind === "reducer-test") {
+    for (const f of recordFieldsOf(t.expect)) {
+      if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, ctx);
+      else if (f.name === "effects") checkTestEffects(f.value, sym, errors, ctx);
+      else checkExpr(f.value, sym, errors, ctx); // `panic`
+    }
+  }
+  if (t.testKind === "episode-test") {
+    for (const f of recordFieldsOf(t.expect)) {
+      if (f.name === "slots-equal" || f.name === "slotsEqual") {
+        // `from-log` is the literal that means "take the log's own values".
+        if (f.value.kind === "Ref" && f.value.name === "from-log") continue;
+        checkTestSlotMap(f.value, sym, errors, ctx);
+      } else checkExpr(f.value, sym, errors, ctx);
+    }
+    checkTestMockValues(t.mocks, sym, errors, ctx);
+  }
+  // A tile-test's `expect` is a tile expression, checked by `checkTileExpr`.
+}
+
+/** The fields of `e` when it is a record literal, and none when it is not. */
+function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: Expr; pos: Pos }[] {
+  if (e === undefined || isTileExpr(e) || e.kind !== "RecordLit") return [];
+  return e.fields;
+}
+
+/** `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots`. */
+function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (rec.kind !== "RecordLit") {
+    checkExpr(rec, sym, errors, ctx);
+    return;
+  }
+  for (const f of rec.fields) {
+    if (!sym.slots.has(f.name)) {
+      errors.push({
+        code: "E0103",
+        kind: "undef-slot",
+        message: `Reference to undefined slot "${f.name}"`,
+        pos: f.pos,
+      });
+    }
+    checkExpr(f.value, sym, errors, ctx);
+  }
+}
+
+/** `{type: <event>, target: <tile>, ...}` — the event a test drives with. */
+function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  for (const f of recordFieldsOf(event)) {
+    // `type` names an event, whose vocabulary is the trigger grammar's, not an
+    // expression's. The lowering reads neither it nor `target`.
+    if (f.name === "type") continue;
+    if (f.name === "target") {
+      const target = f.value;
+      const name =
+        target.kind === "Variant" ? target.name : target.kind === "Ref" ? target.name : undefined;
+      if (name !== undefined && !BUILTIN_TILES.has(name) && !sym.tiles.has(name)) {
+        errors.push({
+          code: "E0105",
+          kind: "undef-tile",
+          message: `Reference to undefined tile "${name}"`,
+          pos: target.pos,
+        });
+      }
+      continue;
+    }
+    checkExpr(f.value, sym, errors, ctx);
+  }
+}
+
+/** `[persist(x), other]` — the effects a reducer-test expects to have been emitted. */
+function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (list.kind !== "ListLit") return;
+  for (const item of list.items) {
+    // A call pins the arguments, a bare name matches by name alone. Anything
+    // else lowers to a sentinel that matches no effect, which the runner
+    // reports as a failed expectation rather than a silence.
+    const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
+    if (name === undefined) continue;
+    if (!sym.effects.has(name)) {
+      errors.push({
+        code: "E0104",
+        kind: "undef-effect",
+        message: `Reference to undefined effect "${name}"`,
+        pos: item.pos,
+      });
+    }
+    if (item.kind === "Call") for (const a of item.args) checkExpr(a, sym, errors, ctx);
+  }
+}
+
+/**
+ * The payloads of `{<effect>: ok(v) | err(e) | delay(ms, ok(v)) | from-log | ignore}`.
+ * The keys are resolved where the two mock forms are validated; `from-log` and
+ * `ignore` are bare names the lowering reads as policies, not references.
+ */
+function checkTestMockValues(
+  rec: Expr | undefined,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  for (const f of recordFieldsOf(rec)) {
+    const v = f.value;
+    if (v.kind !== "Call") continue;
+    if (v.callee === "ok" || v.callee === "err") {
+      for (const a of v.args) checkExpr(a, sym, errors, ctx);
+      continue;
+    }
+    if (v.callee === "delay") {
+      const [ms, inner] = v.args;
+      if (ms) checkExpr(ms, sym, errors, ctx);
+      if (inner?.kind === "Call" && (inner.callee === "ok" || inner.callee === "err")) {
+        for (const a of inner.args) checkExpr(a, sym, errors, ctx);
+      }
+    }
+  }
 }
 
 function checkApp(

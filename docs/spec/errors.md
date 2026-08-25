@@ -341,6 +341,8 @@ An unresolved name is *opaque*, and an opaque type accepts every value — so be
 
 Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
+A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a misspelling did not fail, it changed which branch of the lowering ran: `Int.parse("12")` answers `Some(12)` and `Itn.parse("12")` answers `Some("12")`, which an `Int` slot then holds and every later sum concatenates. The qualifier resolves against the same namespace as any other type name, primitives included.
+
 **Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list. `kumiki fix` proposes the closest type name.
 
 ### E0118 `undef-theme`

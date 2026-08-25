@@ -447,7 +447,7 @@ export function planFixesExplained(
       const fnNames = listDefs(store)
         .filter((e) => e.layer === "fn")
         .map((e) => e.name);
-      const suggested = suggestNameFrom(calleeCandidates(fnNames), missing);
+      const suggested = suggestNameFrom(calleeCandidates(fnNames, missing), missing);
       if (!suggested) {
         skip(err.code, "e0116-no-close-callee", err.message);
         continue;

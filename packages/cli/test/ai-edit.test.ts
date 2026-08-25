@@ -898,7 +898,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="+")',
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 2}}",
         "",
       ].join("\n"),
@@ -929,7 +929,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="toggle")',
         "test t =",
         "    reducer-test flip",
-        "        given  = {slots: {flag: false}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {flag: false}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {flag: false}}",
         "",
       ].join("\n"),
@@ -960,7 +960,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="toggle")',
         "test t =",
         "    reducer-test flip",
-        "        given  = {slots: {flag: true}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {flag: true}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {flag: true}}",
         "",
       ].join("\n"),
@@ -993,7 +993,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile App = column(heading("x"), DecBtn)',
         "test t =",
         "    reducer-test dec",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: DecBtn, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: DecBtn}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
@@ -1035,7 +1035,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile App = column(heading("x"), B)',
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 6}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 6}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 8}}",
         "",
       ].join("\n"),
@@ -1094,7 +1094,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="-")',
         "test t =",
         "    reducer-test dec",
-        "        given  = {slots: {count: 5}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 5}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 4}}",
         "",
       ].join("\n"),
@@ -1127,7 +1127,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="mul")',
         "test t =",
         "    reducer-test mul",
-        "        given  = {slots: {count: 2}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 2}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 6}}",
         "",
       ].join("\n"),
@@ -2006,7 +2006,7 @@ describe("write-failure handling", () => {
         "    init   = []",
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
@@ -2678,6 +2678,18 @@ describe("planFixesExplained: skip-reason classification", () => {
     ]);
     expect(patches).toEqual([]);
     expect(skipped[0]?.reason).toBe("e0116-no-close-callee");
+  });
+
+  it("e0116: a misspelt type member is answered on its own qualifier", () => {
+    // `fresh` / `parse` / `show` resolve on any capitalised qualifier, so there
+    // is no table of qualified spellings to suggest from — the candidate is
+    // built from the qualifier the author wrote. Without it, `Int.pasre` had no
+    // repair at all: the callee list is `fn` names and unqualified builtins.
+    const store = writeAndLoad(['slot t : Text = "1"', 'tile App = heading("hi")', ""].join("\n"));
+    const { patches } = planFixesExplained(store, [
+      synth("E0116", 'Call to undefined function "Int.pasre"'),
+    ]);
+    expect(patches[0]?.description).toContain('replace "Int.pasre" with "Int.parse"');
   });
 
   it("e0117-quoted-name-extract-failed: E0117 message without a quoted name", () => {
@@ -3373,10 +3385,16 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
   });
 
   it("runFixFromTest: testRunError variant carries reason=test-runner-threw and printer surfaces it", async () => {
-    // The old-style `event: {kind: click, ...}` compiles but references the
-    // unbound `click` identifier at test evaluation time — the compiled
-    // module throws `ReferenceError: click is not defined` inside
-    // `testFile`, exercising the `try { testFile(...) }` catch path.
+    // A tile-test that omits the `in` its tile declares: the payload is
+    // `undefined` and the body reads a field off it, so the compiled module
+    // throws a `TypeError` inside `testFile` — the `try { testFile(...) }`
+    // catch path this asserts on.
+    //
+    // It used to be an unbound identifier in a test body (`event: {kind:
+    // click, ...}`, naming nothing), which is E0103 at check time now, so that
+    // program no longer reaches the runner. What is left is a hole of another
+    // kind: nothing asks whether a tile-test supplies the argument its target
+    // declares.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-runner-throw-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -3385,15 +3403,16 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
         "slot count : Int = 0",
         "reducer inc on=ui.click(B) do= count := count + 1",
         'tile B = button(text="+")',
-        "tile App = column(B, text(count.show))",
+        "tile Card in={label: Text} = text($1.label)",
+        'tile App = column(B, text(count.show), Card({label: "x"}))',
         "app A",
         "    caps   = []",
         '    routes = {"/" -> App, "/404" -> App}',
         "    init   = []",
         "test t =",
-        "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
-        "        expect = {slots: {count: 1}}",
+        "    tile-test Card",
+        "        given  = {slots: {count: 0}}",
+        '        expect = text("x")',
         "",
       ].join("\n"),
     );
@@ -3475,7 +3494,7 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
         "    init   = []",
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
