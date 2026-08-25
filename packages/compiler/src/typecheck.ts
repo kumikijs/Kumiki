@@ -31,9 +31,9 @@ import type {
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
 import {
-  BUILTIN_ARITY,
+  type BuiltinArity,
+  builtinArity,
   CONSTANT_NAMESPACES,
-  isBuiltinCallee,
   QUALIFIED_BUILTIN_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
@@ -1670,13 +1670,13 @@ function checkCallee(
     });
     return;
   }
-  if (isBuiltinCallee(callee)) {
-    const arity = BUILTIN_ARITY.get(callee);
-    if (arity !== undefined && argCount !== arity) {
+  const arity = builtinArity(callee);
+  if (arity !== undefined) {
+    if (argCount < arity.min || argCount > arity.max) {
       errors.push({
         code: "E0213",
         kind: "call-arity-mismatch",
-        message: `Function "${callee}" expects ${arity} argument(s) but got ${argCount}`,
+        message: `Function "${callee}" expects ${wantedArguments(arity)} but got ${argCount}`,
         pos,
       });
     }
@@ -1704,6 +1704,17 @@ function checkCallee(
     const arg = args[i];
     if (arg) checkAgainst(arg, p.type, sym, errors, ctx);
   });
+}
+
+/**
+ * How many arguments a builtin wants, as the message says it. Only `fmt` has a
+ * range — its signature is `fmt(template, ...args)`, so the template is all
+ * that can be required and naming an exact number would describe a call that
+ * cannot exist.
+ */
+function wantedArguments(arity: BuiltinArity): string {
+  const count = `${arity.min} argument(s)`;
+  return arity.min === arity.max ? count : `at least ${count}`;
 }
 
 /**

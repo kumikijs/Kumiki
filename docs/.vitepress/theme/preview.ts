@@ -90,8 +90,8 @@ export function buildSrcdoc(js: string): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
 <body><div id="root"></div>
-<script>${PREVIEW_PREAMBLE}<\/script>
-<script type="module">${js}<\/script></body></html>`;
+<script>${PREVIEW_PREAMBLE}</script>
+<script type="module">${js}</script></body></html>`;
 }
 
 export type ExamplePreview = { kind: "ok"; srcdoc: string } | { kind: "err"; message: string };

@@ -13,8 +13,8 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Float` | 64bit 浮動小数 | `3.14`, `-0.5` |
 | `Bool` | 真偽値 | `true`, `false` |
 | `Unit` | 単一値 | `()` |
-| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` で生成（§2.2.10 参照） |
-| `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse()` |
+| `Bytes` | バイト列 | リテラルなし、`Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` で生成（§2.2.10 参照） |
+| `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse(text)` |
 | `EffectId` | `emit` が返す不透明ハンドル（§2.1.1.1 参照） | リテラルなし、`EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
@@ -446,6 +446,8 @@ random()                   : Float        ; 0 <= x < 1
 ```
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
+
+埋め込みは**未実装**である：ランタイムに `fmt` ヘルパが無いため、`fmt` の呼び出しはプレースホルダを残したままテンプレートに評価される——`fmt("{0}-{1}", "a", "b")` は `"{0}-{1}"` になる。個数の検査（[E0213](./errors.md#e0213-call-arity-mismatch)）は、この欠落ではなく上のシグネチャに対して行われる。
 
 `+` で `Text` と他型を結合した場合、自動で `show` 相当が呼ばれる。
 

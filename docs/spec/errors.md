@@ -559,6 +559,7 @@ An application passes a different number of arguments than the thing it applies 
 | Applied form | Declares | Message |
 |---|---|---|
 | `f(...)` on a `fn` | its parameter list | `Function "<name>" expects <n> argument(s) but got <m>` |
+| `b(...)` on a built-in call | the arguments a call to it must supply | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
 | `emit E(...)` | one argument, or none when `in=Unit` | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
@@ -566,7 +567,11 @@ An application passes a different number of arguments than the thing it applies 
 
 The tile and effect forms are the ones that used to go unreported: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`; an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch; and a tile that declares no `in=` but is *given* an argument mounts and renders normally, silently dropping the value the caller meant to pass.
 
-Built-in *calls* are not arity-checked: several ignore their arguments entirely at lowering (`Decoder.Json(Text)` lowers to a sentinel regardless), so a count is not a meaningful contract for them. A **method** is checked when its lowering reads a fixed number of arguments — `t.format()` used to pass `check` and then kill `build` with a bare `TypeError` carrying no position. Only the minimum is enforced: `get-or` and `slice` branch on how many they were given.
+A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP §6.1.4](./http.md)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail.
+
+`fmt` is the only builtin with a range. Its signature is `fmt(template, ...args)` ([Standard Library §2.4.5](./stdlib.md)), so the template is all that can be required, and its message names a minimum — `expects at least 1 argument(s) but got 0`. `now` is held to exactly none, but no call can break that: it is a keyword rather than a name, and the parser builds its zero-argument call itself, so `now(1)` is a parse error before any of this is reached.
+
+A **method** is checked when its lowering reads a fixed number of arguments — `t.format()` used to pass `check` and then kill `build` with a bare `TypeError` carrying no position. Only the minimum is enforced: `get-or` and `slice` branch on how many they were given.
 
 **Fix**: Pass the declared number of arguments, or change the declaration.
 
