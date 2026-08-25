@@ -332,7 +332,12 @@ describe("`run-reducer` is a callee only a property-test invariant has", () => {
     const inv = (call: string) => property("{n: Int}", "{slots: {count: n}}", `${call} == n`);
     expect(codes(inv("run-reducer(inc, dec).slots.count"))).toEqual(["E0213"]);
     expect(codes(inv("run-reducer().slots.count"))).toEqual(["E0213"]);
-    expect(codes(inv('run-reducer("inc").slots.count'))).toEqual(["E0102"]);
+    // The message matters as much as the code here: without the shape check the
+    // name reads as `undefined` and the diagnostic points at a reducer nobody
+    // wrote, which is a different mistake from the one the author made.
+    const [err] = check(parse(lex(inv('run-reducer("inc").slots.count'))));
+    expect(err?.code).toBe("E0102");
+    expect(err?.message).toBe("run-reducer expects a reducer name");
   });
 });
 
