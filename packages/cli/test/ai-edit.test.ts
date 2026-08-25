@@ -3411,16 +3411,13 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
   });
 
   it("runFixFromTest: testRunError variant carries reason=test-runner-threw and printer surfaces it", async () => {
-    // A tile-test that omits the `in` its tile declares: the payload is
-    // `undefined` and the body reads a field off it, so the compiled module
-    // throws a `TypeError` inside `testFile` — the `try { testFile(...) }`
-    // catch path this asserts on.
-    //
-    // It used to be an unbound identifier in a test body (`event: {kind:
-    // click, ...}`, naming nothing), which is E0103 at check time now, so that
-    // program no longer reaches the runner. What is left is a hole of another
-    // kind: nothing asks whether a tile-test supplies the argument its target
-    // declares.
+    // The branch under test is what `runFixFromTest` does when the test module
+    // throws instead of reporting. Reaching it through a *program* means
+    // relying on something the checker does not catch — this test used to use
+    // an unbound identifier in a test body, which is E0103 now, and the next
+    // candidate (a tile-test that omits the `in` its tile declares) is itself
+    // filed as a gap. So the throw comes from the runner rather than from a
+    // program, and no future check can take it away.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-runner-throw-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -3429,22 +3426,29 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
         "slot count : Int = 0",
         "reducer inc on=ui.click(B) do= count := count + 1",
         'tile B = button(text="+")',
-        "tile Card in={label: Text} = text($1.label)",
-        'tile App = column(B, text(count.show), Card({label: "x"}))',
+        "tile App = column(B, text(count.show))",
         "app A",
         "    caps   = []",
         '    routes = {"/" -> App, "/404" -> App}',
         "    init   = []",
         "test t =",
-        "    tile-test Card",
-        "        given  = {slots: {count: 0}}",
-        '        expect = text("x")',
+        "    reducer-test inc",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
+        "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
     );
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.resetModules();
+    vi.doMock("../src/smoke.ts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../src/smoke.ts")>()),
+      testFile: () => {
+        throw new Error("the generated module threw");
+      },
+    }));
     try {
-      const outcome = await fixFromTest(file, "t", false);
+      const { fixFromTest: withThrowingRunner } = await import("../src/fix.ts");
+      const outcome = await withThrowingRunner(file, "t", false);
       expect(outcome.status).toBe("no-patch");
       if (outcome.status === "no-patch") {
         expect(outcome.testRunError).toBeDefined();
@@ -3454,6 +3458,8 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
       expect(stderr).toContain("could not run tests");
       expect(stderr).toMatch(/reason:\s+test-runner-threw/);
     } finally {
+      vi.doUnmock("../src/smoke.ts");
+      vi.resetModules();
       errSpy.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
