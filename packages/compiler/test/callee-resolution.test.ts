@@ -737,6 +737,20 @@ describe("the qualifier of a type-member call", () => {
     expect(codes(inReducer('t := Decoder.parse(t).get-or("")'))).toEqual(["E0117"]);
   });
 
+  it("keeps a qualified E0116's message shape readable too", () => {
+    // The repair for a misspelt *member* is built from the qualifier the author
+    // wrote, and `kumiki fix` gets both halves out of this sentence: the name
+    // to replace, and the position to splice at.
+    expect(check(parse(lex(inReducer("a := Int.pasre(t).get-or(0)"))))).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-call",
+        message: 'Call to undefined function "Int.pasre"',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
   it("keeps the message shape a repair can read", () => {
     // `kumiki fix` parses the first quoted name out of an E0117 and suggests
     // from the type namespace — the same sentence `resolveType` produces, so

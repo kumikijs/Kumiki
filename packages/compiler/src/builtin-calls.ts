@@ -105,11 +105,17 @@ export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "Eff
 
 /**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,
- * `Int.parse(t)`, `Time.show(v)`. Codegen matches the qualifier by regex, which
- * used to be the argument for the checker not resolving it either. It is not
- * one: the qualifier decides which branch of the lowering runs, so a misspelt
- * one produces a different value rather than a failure. `checkCallee` resolves
- * it against the type table plus the primitives.
+ * `Int.parse(t)`, `Time.show(v)`. That the qualifier is matched by a regex
+ * rather than resolved used to be the argument for the checker not resolving it
+ * either, and the two members answer it differently:
+ *
+ * - `parse` branches on the qualifier (`Int` / `Float` / `Time` have numeric
+ *   and millisecond readings), so a misspelt one silently produces a different
+ *   value: `Itn.parse("12")` is `Some("12")` where `Int.parse` is `Some(12)`.
+ * - `fresh` and `show` discard it. A misspelling there produces the same value,
+ *   and the name is checked because a qualifier that resolves to no type is
+ *   wrong on its own terms — which makes the checker deliberately stricter
+ *   than the lowering for those two.
  */
 export const TYPE_MEMBER_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["fresh", exactly(0)],
@@ -127,6 +133,18 @@ export const UNIMPLEMENTED_CALLS: ReadonlySet<string> = new Set(["trace"]);
 
 /** The parser's rule for a qualifier, mirrored: a capitalised identifier. */
 const QUALIFIER_RE = /^[A-Z][A-Za-z0-9_]*$/;
+
+/**
+ * Whether `name` can be the qualifier of a lowered call. Exported because the
+ * checker resolves the qualifier of a type-member call against the type table,
+ * and a rule stricter than this one would report an undefined *type* for a name
+ * that has no lowering under any spelling — `Othe-Id.fresh()` is not a type
+ * member at all, because a Kumiki name may contain a hyphen and a qualifier may
+ * not.
+ */
+export function isQualifierName(name: string): boolean {
+  return QUALIFIER_RE.test(name);
+}
 
 /**
  * The argument count a call to `callee` must supply, or `undefined` when codegen

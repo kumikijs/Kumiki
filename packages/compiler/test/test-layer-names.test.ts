@@ -7,7 +7,7 @@
 // the failure that followed blamed the program rather than the test:
 //
 //   given  = {slots: {conut: 3}}          the given is dropped; the test passes
-//   given  = {event: {target: Nope}}      the target is dropped; the test passes
+//   given  = {event: {target: Nope}}      a claim about a tile that is not one
 //   invariant = doubel(n) == n * 2        reported as a counterexample at n = 0
 //
 // The last one is the sharpest: the trial's `doubel is not defined` is caught
@@ -32,11 +32,14 @@ fn double(x: Int) -> Int = x * 2
 effect persist cap=storage.write in=Int out=Result(Unit, Text)
 reducer inc on=ui.click(B) do= count := count + 1
 reducer save on=ui.click(S) do= emit persist(count)
+reducer tick on=timer(1s, name=countdown) do= count := count + 1
+reducer failed on=persist.err($e, _) do= label := $e
+reducer note on=ui.click(B) do= emit toast({message: "hi", tone: "info"})
 tile B = button(text="+", onClick=inc)
 tile S = button(text="save", onClick=save)
 tile Greeting in=Text = heading("Hi, " + $1)
 tile App = column(B, S, text(count.show), text(label))
-app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
+app A caps=[storage.write, notification.show] routes={"/" -> App, "/404" -> App} init=[]
 test t =
 ${body}
 `;
@@ -175,9 +178,11 @@ describe("a slot key names a slot", () => {
 });
 
 describe("the other namespaces a test body names", () => {
-  it("reports an event target that names no tile", () => {
-    // Dropped by the lowering, so the test passed while claiming to click a
-    // tile that does not exist.
+  it("reports a ui event target that names no tile", () => {
+    // The lowering never reads `target` — `eventPayloadJs` filters it out and
+    // the reducer comes from the test's own target — so this is about what the
+    // test says rather than what it does: it claims to click a tile that does
+    // not exist, and nothing said so.
     expect(
       codes(reducerTest(`{slots: {count: 0}, event: {type: ui.click, target: Nope}}`, EXPECT)),
     ).toEqual(["E0105"]);
@@ -239,5 +244,170 @@ describe("one mistake draws one diagnostic", () => {
     expect(codes(reducerTest(GIVEN, `{slots: {count: <slots.conut>}, effects: []}`))).toEqual([
       "E0103",
     ]);
+  });
+});
+
+describe("the target is a tile only when the trigger aims at one", () => {
+  // `EventPattern` also has timer, effect-outcome and lifecycle triggers, and a
+  // reducer driven by one of those has no tile to name. Resolving `target` as a
+  // tile on every test kind rejected programs that compile.
+  it("accepts a timer name", () => {
+    const src = withTest(`    reducer-test tick
+        given  = {slots: {count: 0}, event: {type: timer, target: countdown}}
+        expect = {slots: {count: 1}, effects: []}`);
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("accepts an effect-outcome trigger with no target at all", () => {
+    const src = withTest(`    reducer-test failed
+        given  = {slots: {label: ""}, event: {type: persist.err}}
+        expect = {slots: {label: ""}, effects: []}`);
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("accepts an event that names no type at all", () => {
+    // What a lifecycle reducer-test can write: `app.start` does not parse in an
+    // expression position — `app` is a keyword — so the event it describes has
+    // no `type`, and a rule keyed on one must not fire without it.
+    const src = withTest(`    reducer-test inc
+        given  = {slots: {count: 0}, event: {}}
+        expect = {slots: {count: 1}, effects: []}`);
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("still reports a ui target, which is the one that names a tile", () => {
+    expect(
+      codes(reducerTest(`{slots: {count: 0}, event: {type: ui.click, target: Nope}}`, EXPECT)),
+    ).toEqual(["E0105"]);
+  });
+});
+
+describe("a standard effect is an effect", () => {
+  // `navigate`, `toast`, `log` and the rest are declared by no program, so they
+  // are absent from the effect table and present in the capability one.
+  it("accepts one in `expect.effects`, in both spellings", () => {
+    const src = withTest(`    reducer-test note
+        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 0}, effects: [toast]}`);
+    expect(codes(src)).toEqual([]);
+    expect(codes(src.replace("[toast]", '[toast({message: "hi", tone: "info"})]'))).toEqual([]);
+  });
+
+  it("still reports a name that is neither", () => {
+    expect(codes(reducerTest(GIVEN, `{slots: {count: 1}, effects: [tost]}`))).toEqual(["E0104"]);
+  });
+});
+
+describe("`run-reducer` is a callee only a property-test invariant has", () => {
+  // It lowers to a read of `_init` / `_event`, bound only inside a generated
+  // trial. Written anywhere else, the module dies with `_init is not defined`
+  // before a single test reports — so the whole suite goes, and the name that
+  // caused it is never mentioned.
+  it("reports it in a `given`", () => {
+    const given = `{slots: {count: run-reducer(inc).slots.count}, event: {type: ui.click, target: B}}`;
+    expect(codes(reducerTest(given, EXPECT))).toEqual(["E0116"]);
+  });
+
+  it("reports it in an `expect`", () => {
+    expect(codes(reducerTest(GIVEN, `{slots: {count: run-reducer(inc).slots.count}}`))).toEqual([
+      "E0116",
+    ]);
+  });
+
+  it("reports the chained spelling too", () => {
+    const given = `{slots: {count: run-reducer(inc).run-reducer(inc).slots.count}, event: {type: ui.click, target: B}}`;
+    expect(codes(reducerTest(given, EXPECT))).toEqual(["E0116", "E0116"]);
+  });
+
+  it("says the position is wrong rather than the name", () => {
+    const given = `{slots: {count: run-reducer(inc).slots.count}, event: {type: ui.click, target: B}}`;
+    const [err] = check(parse(lex(reducerTest(given, EXPECT))));
+    expect(err?.message).toBe('Call to "run-reducer" outside a property-test invariant');
+  });
+
+  it("counts its argument, and refuses one that is not a name", () => {
+    // `reducerNameArg` reads a bare name and answers `""` for anything else;
+    // the runner then throws `reducer "" not found`, which the property runner
+    // renders as a counterexample against the code under test.
+    const inv = (call: string) => property("{n: Int}", "{slots: {count: n}}", `${call} == n`);
+    expect(codes(inv("run-reducer(inc, dec).slots.count"))).toEqual(["E0213"]);
+    expect(codes(inv("run-reducer().slots.count"))).toEqual(["E0213"]);
+    expect(codes(inv('run-reducer("inc").slots.count'))).toEqual(["E0102"]);
+  });
+});
+
+describe("a wildcard is reported wherever it is written", () => {
+  // The two dedicated passes walk a `given` and a reducer-test `expect`. An
+  // invariant and an `episode-test` expect belong to neither, and a wildcard
+  // there lowers to a sentinel — so the property is falsified on every trial
+  // and rendered as a counterexample against innocent code.
+  it("reports one in a property-test invariant", () => {
+    expect(codes(property("{n: Int}", "{slots: {count: n}}", "<slots.count> == n"))).toEqual([
+      "E0109",
+    ]);
+  });
+
+  it("reports one in an episode-test `expect`", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {count: <slots.count>}, no-panics: true}`);
+    expect(codes(src)).toEqual(["E0109"]);
+  });
+});
+
+describe("a shape whose fallback is an assertion of its own", () => {
+  it("reports `expect.effects` that is not a list", () => {
+    // `effectListJs` lowers a non-list to `[]`, which asserts that no effect
+    // was emitted — so the forgotten brackets do not weaken the test, they
+    // replace it with a different one that passes.
+    expect(codes(reducerTest(GIVEN, `{slots: {count: 1}, effects: persist(count)}`))).toEqual([
+      "E0713",
+    ]);
+  });
+
+  it("reports a reducer-test mock that is not an outcome", () => {
+    const mock = (v: string) =>
+      reducerTest(
+        `{slots: {count: 0}, event: {type: ui.click, target: B}, mocks: {persist: ${v}}}`,
+        EXPECT,
+      );
+    // Anything unrecognised lowered to `{outcome: "ok", value: null}`, so a
+    // mock written to drive the failure path drove the success one and the
+    // test that asserted the failure passed without ever seeing it.
+    expect(codes(mock("fail(1)"))).toEqual(["E0713"]);
+    expect(codes(mock("delay(10, boom(1))"))).toEqual(["E0713"]);
+    expect(codes(mock("nope"))).toEqual(["E0713"]);
+    // `from-log` / `ignore` belong to an episode-test's vocabulary only.
+    expect(codes(mock("from-log"))).toEqual(["E0713"]);
+  });
+
+  it("keeps the episode-test vocabulary where it is", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {persist: ignore}
+        expect = {slots-equal: from-log, no-panics: true}`);
+    expect(codes(src)).toEqual([]);
+    expect(codes(src.replace("ignore", "fail(1)"))).toEqual(["E0712"]);
+  });
+});
+
+describe("a qualifier is spelled the way codegen matches one", () => {
+  it("leaves a hyphenated name to E0116", () => {
+    // Kumiki names may contain a hyphen and a qualifier may not, so
+    // `Othe-Id.fresh()` has no lowering under any spelling. Reporting an
+    // undefined *type* there sent the repair at a name it could not fix: the
+    // suggestion applied, and the same position reported E0116 instead.
+    const src = withTest(`    reducer-test inc
+        given  = {slots: {label: Othe-Id.fresh()}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 1}, effects: []}`);
+    expect(codes(src)).toEqual(["E0116"]);
+  });
+
+  it("still reports one that is spelled as a qualifier", () => {
+    const src = withTest(`    reducer-test inc
+        given  = {slots: {label: OtherId.fresh()}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 1}, effects: []}`);
+    expect(codes(src)).toEqual(["E0117"]);
   });
 });

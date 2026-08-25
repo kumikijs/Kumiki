@@ -2685,11 +2685,37 @@ describe("planFixesExplained: skip-reason classification", () => {
     // is no table of qualified spellings to suggest from — the candidate is
     // built from the qualifier the author wrote. Without it, `Int.pasre` had no
     // repair at all: the callee list is `fn` names and unqualified builtins.
-    const store = writeAndLoad(['slot t : Text = "1"', 'tile App = heading("hi")', ""].join("\n"));
-    const { patches } = planFixesExplained(store, [
-      synth("E0116", 'Call to undefined function "Int.pasre"'),
-    ]);
-    expect(patches[0]?.description).toContain('replace "Int.pasre" with "Int.parse"');
+    //
+    // Run end to end rather than from a synthesised diagnostic: the two joins
+    // that can break are the message shape the compiler emits for a qualified
+    // callee, and whether `replaceAt` — which splices at an exact column —
+    // rewrites a dotted name.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-qualified-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot a : Int = 0",
+        'slot t : Text = "1"',
+        "reducer r on=ui.click(B) do= a := Int.pasre(t).get-or(0)",
+        'tile B = button(text="b")',
+        "tile App = column(B, text(a.show), text(t))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain(
+      'replace "Int.pasre" with "Int.parse" at 3:35',
+    );
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("a := Int.parse(t).get-or(0)");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("e0117-quoted-name-extract-failed: E0117 message without a quoted name", () => {

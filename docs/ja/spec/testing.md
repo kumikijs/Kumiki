@@ -17,7 +17,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 `test` 定義は **6 つ目のレイヤ**。CRDT graph に格納され、`kumiki test` で実行される。本番ビルドには含まれない。
 
-> **実装状況.** 実装済み：`reducer-test`、`tile-test`、`property-test`（[Property テスト](#_8-3-property-tests)）、`kumiki test` ランナー（名前 / `prefix*` フィルタ、テストごとの**時間**表示 `(1ms)` / `(100 cases, 23ms)`、`--coverage`、`--watch`）、`kumiki fix --auto-patch <test-name>`（[失敗テストからの修正](#_8-7-2-fixing-from-a-failing-test)）、`expect` の**ワイルドカード**（`<any-id>` / `<slots.X>`、[ワイルドカード](#_8-2-2-wildcards)）、`reducer-test` 内の **effect 結果モック**（`given.mocks`、[Effect mock](#_8-5-effect-mock)）。ランナーは `PASS` / `FAIL` 行と、失敗時に `expected` / `actual` / `diff at <path>`、およびスカラーのリーフを特定できる場合は値矢印（`"a" -> "b"`）を表示する。仕様化済みで**未実装**：`episode-test`（ランタイムの episode loop [Episode Loop](./runtime.md#_10-5-episode-loop) が前提）。
+> **実装状況.** 実装済み：`reducer-test`、`tile-test`、`property-test`（[Property テスト](#_8-3-property-tests)）、`kumiki test` ランナー（名前 / `prefix*` フィルタ、テストごとの**時間**表示 `(1ms)` / `(100 cases, 23ms)`、`--coverage`、`--watch`）、`kumiki fix --auto-patch <test-name>`（[失敗テストからの修正](#_8-7-2-fixing-from-a-failing-test)）、`expect` の**ワイルドカード**（`<any-id>` / `<slots.X>`、[ワイルドカード](#_8-2-2-wildcards)）、`reducer-test` 内の **effect 結果モック**（`given.mocks`、[Effect mock](#_8-5-effect-mock)）、および `episode-test`（[Episode リプレイ](#_8-6-episode-replay)、ランタイムの [Episode Loop](./runtime.md#_10-5-episode-loop) に支えられる）。ランナーは `PASS` / `FAIL` 行と、失敗時に `expected` / `actual` / `diff at <path>`、およびスカラーのリーフを特定できる場合は値矢印（`"a" -> "b"`）を表示する。
 
 ### 8.1.1 テスト本体が書く名前
 
@@ -26,14 +26,18 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 | 位置 | 名前の正体 | 報告 |
 |---|---|---|
 | `given.slots` / `expect.slots` のキー | slot | [E0103](./errors.md#e0103-undef-ref-undef-slot) |
-| `given.event.target` | tile | [E0105](./errors.md#e0105-undef-tile) |
-| `expect.effects` の要素 | effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
+| `given.event.target`（`type` が `ui.*` のとき） | tile | [E0105](./errors.md#e0105-undef-tile) |
+| `expect.effects` の要素 | effect（宣言されたもの、または標準 effect） | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | `given.mocks` のキー | effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | すべての式——slot の値、`given.in`、`expect.panic`、`invariant`、モックのペイロード、`episode-test` の `expect` | 式レイヤの規則どおり | E0103 / E0116 など |
 
-`given.event.type` が名指すのは event であり、その語彙は式レイヤではなくトリガ文法のものである。テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`run-reducer(<reducer>)` が取るのは値ではなく reducer 名である（[§8.3](#_8-3-property-tests)）。
+`given.event.type` が名指すのは event であり、その語彙は式レイヤではなくトリガ文法のものである。`target` が tile なのはその event が `ui.*` のときだけで、timer で駆動される reducer は timer 名を書き、effect の結果で駆動される reducer には書く名前が無い。どちらのフィールドも生成されたテストには届かない——payload は event の*その他の*フィールドから作られ、ランナーが適用する reducer はテスト自身の target である——ので、この規則はテストが何を*する*かではなく何を*言っている*かについてのものである。
 
-これらが解決されるまで、テスト本体の名前は何を書いても受理され、lowering は読めないものを捨てていた：何も名指さない slot キーはテストを slot の既定値のまま走らせ、tile を名指さない event target はテストを target 無しで走らせる——どちらも**成功**しながら、自分が用意していない前提を主張していた。`invariant` の中の未定義呼び出しはさらに悪い。property ランナーが trial の例外を捕まえて invariant の反証として描画するため、出力は無実のコードを犯人に仕立てていた。
+テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`run-reducer(<reducer>)` が取るのは値ではなく reducer 名であり、呼べるのは property-test の invariant だけである（[§8.3](#_8-3-property-tests)）：trial の束縛を読む形に lowering されるため、それ以外の場所では、生成モジュールがどのテストも結果を出す前に死ぬ。
+
+2 つの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になる。
+
+これらが解決されるまで、テスト本体の名前は何を書いても受理され、lowering は読めないものを捨てていた：何も名指さない slot キーはテストを slot の既定値のまま走らせる——**成功**しながら、自分が用意していない前提を主張していた。`invariant` の中の未定義呼び出しはさらに悪い。property ランナーが trial の例外を捕まえて invariant の反証として描画するため、出力は無実のコードを犯人に仕立てていた。
 
 ## 8.2 Reducer テスト
 

@@ -27,25 +27,40 @@ what it is:
 | Position | The name is | Reported as |
 |---|---|---|
 | a `given.slots` / `expect.slots` key | a slot | [E0103](./errors.md#e0103-undef-ref-undef-slot) |
-| `given.event.target` | a tile | [E0105](./errors.md#e0105-undef-tile) |
-| an `expect.effects` entry | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
+| `given.event.target`, when `type` is a `ui.*` one | a tile | [E0105](./errors.md#e0105-undef-tile) |
+| an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
 
 `given.event.type` names an event, whose vocabulary belongs to the trigger
-grammar rather than to the expression layer. A slot is *readable* in a test
-body — the value is the one the slot holds — and a `for-all` name is in scope
-in both `given` and `invariant`, with the type its generator declares.
-`run-reducer(<reducer>)` takes a reducer name rather than a value ([§8.3](#_8-3-property-tests)).
+grammar rather than to the expression layer. `target` is only a tile when that
+event is a `ui.*` one: a reducer driven by a timer names the timer, and one
+driven by an effect outcome has no name to give. Neither field reaches the
+generated test — the payload is built from the event's *other* fields, and the
+reducer the runner applies is the test's own target — so this rule is about
+what the test says rather than what it does.
 
-Before these were resolved, a name in a test body was accepted whatever it
+A slot is *readable* in a test body — the value is the one the slot holds — and
+a `for-all` name is in scope in both `given` and `invariant`, with the type its
+generator declares. `run-reducer(<reducer>)` takes a reducer name rather than a
+value, and only a property-test invariant may call it
+([§8.3](#_8-3-property-tests)): it lowers to a read of the trial's bindings, so
+anywhere else the generated module dies before a single test reports.
+
+Two positions are checked for *shape* rather than for names, because what the
+lowering does with an unrecognised one is assert something else
+([E0713](./errors.md#e0713-test-shape-invalid)): a `reducer-test` mock that is
+not `ok(...)` / `err(...)` / `delay(...)` became a success mock, and an
+`expect.effects` that is not a list became the assertion that no effect was
+emitted.
+
+Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
-nothing left the test running against the slot's default, and an event target
-naming no tile left it running against no target — both **passing**, while
-asserting something they had never set up. An undefined call inside an
-`invariant` was worse than either, because the property runner catches the
-trial's exception and renders it as a falsified invariant: the output accused
-the code under test of a bug it did not have.
+nothing left the test running against the slot's default — **passing**, while
+asserting something it had never set up. An undefined call inside an
+`invariant` was worse, because the property runner catches the trial's
+exception and renders it as a falsified invariant: the output accused the code
+under test of a bug it did not have.
 
 ## 8.2 Reducer Tests
 

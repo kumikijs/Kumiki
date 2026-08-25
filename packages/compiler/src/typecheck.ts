@@ -34,6 +34,7 @@ import {
   type BuiltinArity,
   builtinArity,
   CONSTANT_NAMESPACES,
+  isQualifierName,
   QUALIFIED_BUILTIN_CALLS,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
@@ -679,10 +680,14 @@ type Ctx = {
    * position that borrows it, so widen the value's meaning here before adding
    * one rather than assuming the name is the whole story.
    *
-   * `test` is an expression inside a `test` definition: a slot is readable,
-   * `$1` is bound by nothing, `emit` has no dispatch to reach, and `route` is
-   * not installed — which is every rule below answered the way a test body
-   * wants it, and is why it is its own value rather than a borrowed one.
+   * `test` is an expression inside a `test` definition. It answers the four
+   * rules below the way a test body needs — a slot is readable, `$1` is bound
+   * by nothing, `emit` has no dispatch to reach — but so would a borrowed
+   * value. What it is really for is the branches that *suppress* a check
+   * inside a test body: `run-reducer` as a callee, and a wildcard whose
+   * diagnostic another pass owns. Both are positions where the general rule
+   * would report a mistake that is not one, so a fifth branch on this value
+   * should be read as a suppression until it proves otherwise.
    */
   kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init" | "test";
   localBinds: Set<string>;
@@ -699,6 +704,23 @@ type Ctx = {
    * variable as an Int.
    */
   localTypes: Map<string, TypeExpr>;
+  /**
+   * `run-reducer(<reducer>)` lowers to a read of `_init` / `_event`, which are
+   * bound only inside a generated property trial — so a property-test
+   * invariant is the one expression that may call it. Everywhere else in a
+   * test body the emitted module dies with `_init is not defined` before a
+   * single test reports, which is why the *position* is refused rather than
+   * the reducer name resolved.
+   */
+  runReducerScope?: boolean;
+  /**
+   * A wildcard here is already reported by one of `checkTest`'s two dedicated
+   * passes — E0109 for one anywhere in a `given`, E0103 for a `<slots.X>`
+   * naming nothing in a reducer-test `expect`. Set only in those positions, so
+   * one mistake draws one diagnostic there and a wildcard where neither pass
+   * looks (an invariant, an `episode-test` expect) still draws E0109.
+   */
+  wildcardsReportedElsewhere?: boolean;
   /**
    * Whether the runtime fills `$route` into the payload this expression is
    * evaluated with. Required, so every scope has to answer it — the field was
@@ -1684,7 +1706,15 @@ function checkCallee(
   // for an unknown type name covers this one without knowing about it.
   if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
     const qualifier = callee.slice(0, dot);
-    if (!isKnownTypeName(qualifier, sym) && !isPrimTypeName(qualifier)) {
+    // The same spelling rule `builtinArity` and codegen apply. Without it this
+    // reported an undefined *type* for a name that has no lowering under any
+    // spelling — and the type-name repair it invited landed on E0116 at the
+    // same position, costing a rollback and a round.
+    if (
+      isQualifierName(qualifier) &&
+      !isKnownTypeName(qualifier, sym) &&
+      !isPrimTypeName(qualifier)
+    ) {
       errors.push({
         code: "E0117",
         kind: "undef-type",
@@ -1727,6 +1757,22 @@ function checkCallee(
   fn.params.forEach((p, i) => {
     const arg = args[i];
     if (arg) checkAgainst(arg, p.type, sym, errors, ctx);
+  });
+}
+
+/**
+ * `run-reducer` outside the one expression that can lower it.
+ *
+ * The position is what is wrong, so this is reported where the call is written
+ * rather than against the reducer it names — which may well exist.
+ */
+function reportRunReducerPosition(ctx: Ctx, pos: Pos, errors: KumikiError[]): void {
+  if (ctx.runReducerScope) return;
+  errors.push({
+    code: "E0116",
+    kind: "undef-call",
+    message: 'Call to "run-reducer" outside a property-test invariant',
+    pos,
   });
 }
 
@@ -1953,9 +1999,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
       // inside a generated property-test trial — so it is absent from the
-      // callee tables on purpose. `checkTest` resolves the name itself; walking
-      // it here would report the callee as undefined and the reducer as a name.
-      if (ctx.kind === "test" && e.callee === "run-reducer") return;
+      // callee tables on purpose. `checkTest` resolves the name and the count
+      // there; walking it here would report the callee as undefined and the
+      // reducer as a name.
+      if (ctx.kind === "test" && e.callee === "run-reducer") {
+        reportRunReducerPosition(ctx, e.pos, errors);
+        return;
+      }
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
@@ -1963,6 +2013,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === "run-reducer") {
         checkExpr(e.receiver, sym, errors, ctx);
+        reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
       if (!KNOWN_METHODS.has(e.method)) {
@@ -2018,10 +2069,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       return;
     case "Wildcard":
-      // Inside a test body two dedicated passes own these: E0109 for one
-      // outside a reducer-test `expect`, E0103 for a `<slots.X>` naming
-      // nothing. Reporting here as well would make one mistake two diagnostics.
-      if (ctx.kind === "test") return;
+      // In the two positions `checkTest`'s dedicated passes walk — anywhere in
+      // a `given`, and a reducer-test `expect` — reporting here as well would
+      // make one mistake two diagnostics. Everywhere else in a test body this
+      // is the only report there is: a wildcard in an invariant lowers to a
+      // sentinel, so the property is falsified on every trial and rendered as
+      // a counterexample against the code under test.
+      if (ctx.wildcardsReportedElsewhere) return;
       errors.push({
         code: "E0109",
         kind: "test-wildcard-misuse",
@@ -3370,20 +3424,44 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     // The `for-all` types must resolve, and every `run-reducer(name)` in the
     // invariant must name a declared reducer.
     for (const f of t.forAll ?? []) resolveType(f.type, sym, errors);
-    const checkRunReducer = (arg: Expr | undefined): void => {
-      const rn = arg?.kind === "Ref" ? arg.name : arg?.kind === "Variant" ? arg.name : undefined;
-      if (rn !== undefined && !sym.reducers.has(rn)) {
+    // `run-reducer` is the one callee `checkExpr` does not walk, so its argument
+    // and its count are resolved here or nowhere. `reducerNameArg` reads a bare
+    // name and answers `""` for anything else, and the runner then throws
+    // `reducer "" not found` — which the property runner renders as a
+    // counterexample, blaming the code under test for the test's own mistake.
+    const checkRunReducer = (args: Expr[], pos: Pos): void => {
+      if (args.length !== 1) {
+        errors.push({
+          code: "E0213",
+          kind: "call-arity-mismatch",
+          message: `Function "run-reducer" expects 1 argument(s) but got ${args.length}`,
+          pos,
+        });
+        return;
+      }
+      const arg = args[0] as Expr;
+      const rn = arg.kind === "Ref" ? arg.name : arg.kind === "Variant" ? arg.name : undefined;
+      if (rn === undefined) {
+        errors.push({
+          code: "E0102",
+          kind: "undef-reducer",
+          message: "run-reducer expects a reducer name",
+          pos: arg.pos,
+        });
+        return;
+      }
+      if (!sym.reducers.has(rn)) {
         errors.push({
           code: "E0102",
           kind: "undef-reducer",
           message: `Reference to undefined reducer "${rn}" in run-reducer`,
-          pos: arg?.pos ?? t.pos,
+          pos: arg.pos,
         });
       }
     };
     walkExpr(t.invariant, (n) => {
-      if (n.kind === "Call" && n.callee === "run-reducer") checkRunReducer(n.args[0]);
-      if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args[0]);
+      if (n.kind === "Call" && n.callee === "run-reducer") checkRunReducer(n.args, n.pos);
+      if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args, n.pos);
     });
     return;
   }
@@ -3457,12 +3535,17 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
  * position is instead checked as what `codegen/emit-test.ts` lowers it as, and
  * that file is the other half of this one.
  *
- * Until this existed nothing here was resolved at all, and the lowering drops
- * what it cannot read: a slot key that names nothing, or an event target that
- * names no tile, left the test passing against the defaults it never set.
+ * What this adds is the positions nothing looked at: the slot keys, the event
+ * target, the effect names, and every expression the lowering evaluates. The
+ * reducer target, the `mocks` keys, a `<slots.X>` in a reducer-test `expect`,
+ * the `for-all` types and the `run-reducer` target were resolved before it.
+ *
+ * The lowering drops what it cannot read, which is why the gap was invisible:
+ * a slot key that names nothing left the test passing against the default it
+ * never set.
  */
 function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const ctx: Ctx = {
+  const base: Ctx = {
     kind: "test",
     localBinds: new Set(),
     localTypes: new Map(),
@@ -3470,21 +3553,25 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   };
   // `for-all` names are binds in `given` and in the invariant, with the type
   // the generator declares — codegen binds them the same way, one per trial.
-  for (const f of t.forAll ?? []) bindLocal(ctx, f.name, f.type);
+  for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
+  // `checkTest` walks the whole of `given` for E0109 and the whole of a
+  // reducer-test `expect` for E0103, so a wildcard in either is already
+  // reported. Nothing walks an invariant or an `episode-test` expect.
+  const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
 
   for (const f of recordFieldsOf(t.given)) {
-    if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, ctx);
-    else if (f.name === "event") checkTestEvent(f.value, sym, errors, ctx);
-    else if (f.name === "mocks") checkTestMockValues(f.value, sym, errors, ctx);
-    // `in` (tile-test), and the flat event form's leftovers: plain expressions.
-    else checkExpr(f.value, sym, errors, ctx);
+    if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, owned);
+    else if (f.name === "event") checkTestEvent(f.value, sym, errors, owned);
+    else if (f.name === "mocks") checkTestMockValues(f.value, sym, errors, owned);
+    // `in` (tile-test), and any key other than the three above.
+    else checkExpr(f.value, sym, errors, owned);
   }
-  if (t.invariant) checkExpr(t.invariant, sym, errors, ctx);
+  if (t.invariant) checkExpr(t.invariant, sym, errors, { ...base, runReducerScope: true });
   if (t.testKind === "reducer-test") {
     for (const f of recordFieldsOf(t.expect)) {
-      if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, ctx);
-      else if (f.name === "effects") checkTestEffects(f.value, sym, errors, ctx);
-      else checkExpr(f.value, sym, errors, ctx); // `panic`
+      if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, owned);
+      else if (f.name === "effects") checkTestEffects(f.value, sym, errors, owned);
+      else checkExpr(f.value, sym, errors, owned); // `panic`
     }
   }
   if (t.testKind === "episode-test") {
@@ -3492,10 +3579,10 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
       if (f.name === "slots-equal" || f.name === "slotsEqual") {
         // `from-log` is the literal that means "take the log's own values".
         if (f.value.kind === "Ref" && f.value.name === "from-log") continue;
-        checkTestSlotMap(f.value, sym, errors, ctx);
-      } else checkExpr(f.value, sym, errors, ctx);
+        checkTestSlotMap(f.value, sym, errors, base);
+      } else checkExpr(f.value, sym, errors, base);
     }
-    checkTestMockValues(t.mocks, sym, errors, ctx);
+    checkTestMockValues(t.mocks, sym, errors, base, true);
   }
   // A tile-test's `expect` is a tile expression, checked by `checkTileExpr`.
 }
@@ -3525,17 +3612,27 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
   }
 }
 
-/** `{type: <event>, target: <tile>, ...}` — the event a test drives with. */
+/**
+ * `{type: <event>, target: <tile>, ...}` — the event a test drives with.
+ *
+ * The lowering reads neither `type` nor `target`: `eventPayloadJs` filters both
+ * out, and the reducer the runner applies comes from the test's own target. So
+ * the `target` rule below is about what the test *says* rather than what it
+ * does — and it only says a tile when the trigger is a `ui.*` one. A reducer
+ * driven by a timer names the timer, and one driven by an effect outcome or a
+ * lifecycle event has no name to give at all.
+ */
 function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  const uiEvent = isUiEventType(recordFieldsOf(event).find((f) => f.name === "type")?.value);
   for (const f of recordFieldsOf(event)) {
     // `type` names an event, whose vocabulary is the trigger grammar's, not an
-    // expression's. The lowering reads neither it nor `target`.
+    // expression's.
     if (f.name === "type") continue;
     if (f.name === "target") {
       const target = f.value;
       const name =
         target.kind === "Variant" ? target.name : target.kind === "Ref" ? target.name : undefined;
-      if (name !== undefined && !BUILTIN_TILES.has(name) && !sym.tiles.has(name)) {
+      if (uiEvent && name !== undefined && !BUILTIN_TILES.has(name) && !sym.tiles.has(name)) {
         errors.push({
           code: "E0105",
           kind: "undef-tile",
@@ -3549,16 +3646,38 @@ function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ct
   }
 }
 
+/** Whether `given.event.type` names a `ui.*` trigger — the ones aimed at a tile. */
+function isUiEventType(type: Expr | undefined): boolean {
+  if (type === undefined) return false;
+  // `ui.click` parses as a field read on the name `ui`.
+  if (type.kind === "FieldAccess") return type.base.kind === "Ref" && type.base.name === "ui";
+  return false;
+}
+
 /** `[persist(x), other]` — the effects a reducer-test expects to have been emitted. */
 function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (list.kind !== "ListLit") return;
+  if (list.kind !== "ListLit") {
+    // A missing pair of brackets does not weaken the assertion, it replaces
+    // it: `effectListJs` lowers anything that is not a list to `[]`, which
+    // says "no effects were emitted" — so a test that named one passes against
+    // a reducer that emits nothing, and the name inside is never resolved.
+    errors.push({
+      code: "E0713",
+      kind: "test-shape-invalid",
+      message: "`expect.effects` must be a list of effects",
+      pos: list.pos,
+    });
+    return;
+  }
   for (const item of list.items) {
     // A call pins the arguments, a bare name matches by name alone. Anything
     // else lowers to a sentinel that matches no effect, which the runner
     // reports as a failed expectation rather than a silence.
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
     if (name === undefined) continue;
-    if (!sym.effects.has(name)) {
+    // The standard effects (`navigate`, `toast`, `log`, …) are declared by no
+    // program, so the table they live in is the capability one.
+    if (!sym.effects.has(name) && !BUILTIN_EFFECT_CAPS.has(name)) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -3572,29 +3691,48 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
 
 /**
  * The payloads of `{<effect>: ok(v) | err(e) | delay(ms, ok(v)) | from-log | ignore}`.
+ *
  * The keys are resolved where the two mock forms are validated; `from-log` and
- * `ignore` are bare names the lowering reads as policies, not references.
+ * `ignore` are bare names the lowering reads as policies, not references, and
+ * belong to an `episode-test` only.
+ *
+ * The shape is checked here for the same reason E0712 checks an episode's:
+ * `mockScriptJs` answers a value it does not recognise with
+ * `{outcome: "ok", value: null}`, so a mock written to drive the failure path
+ * drove the success one instead — and a test asserting what happens when an
+ * effect fails passed, permanently, having never failed it.
  */
 function checkTestMockValues(
   rec: Expr | undefined,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
+  episode = false,
 ): void {
   for (const f of recordFieldsOf(rec)) {
     const v = f.value;
-    if (v.kind !== "Call") continue;
-    if (v.callee === "ok" || v.callee === "err") {
-      for (const a of v.args) checkExpr(a, sym, errors, ctx);
+    if (episode && v.kind === "Ref" && (v.name === "from-log" || v.name === "ignore")) continue;
+    const outcome = v.kind === "Call" && (v.callee === "ok" || v.callee === "err") ? v : undefined;
+    if (outcome) {
+      for (const a of outcome.args) checkExpr(a, sym, errors, ctx);
       continue;
     }
-    if (v.callee === "delay") {
+    if (v.kind === "Call" && v.callee === "delay" && !episode) {
       const [ms, inner] = v.args;
       if (ms) checkExpr(ms, sym, errors, ctx);
       if (inner?.kind === "Call" && (inner.callee === "ok" || inner.callee === "err")) {
         for (const a of inner.args) checkExpr(a, sym, errors, ctx);
+        continue;
       }
     }
+    // An `episode-test`'s mocks have their own diagnostic, one section up.
+    if (episode) continue;
+    errors.push({
+      code: "E0713",
+      kind: "test-shape-invalid",
+      message: `Mock for "${f.name}" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``,
+      pos: v.pos,
+    });
   }
 }
 
