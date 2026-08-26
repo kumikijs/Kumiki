@@ -195,6 +195,16 @@ slot k : Kept  = 3`;
     expect(inReducer(src, `n := [x, x].length`)).toEqual([]);
     const rec = `${src}\ntype R = {v: Int}\nslot r : R = {v: 0}`;
     expect(inReducer(rec, `r := {v: x}`)).toEqual([]);
+
+    // The chain walk needs a guard of its own for the same reason, and its
+    // failure is a hang rather than a `RangeError`: it is a loop, so each turn
+    // pushes a name instead of a frame.
+    const nominalCycle = `type A2 = nominal B2
+type B2 = nominal A2
+slot p : A2 = 1
+slot q : B2 = 2
+slot n : Int = 0`;
+    expect(inReducer(nominalCycle, `n := [p, q].length`)).toEqual([]);
   });
 
   it("resolves a generic alias with its argument, not with a name that shadows it", () => {
