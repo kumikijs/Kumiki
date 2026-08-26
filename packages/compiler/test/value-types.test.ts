@@ -113,6 +113,139 @@ describe("assignability — nominal, refinement and aliases", () => {
   });
 });
 
+/**
+ * Two `nominal` definitions over one base used to accept each other, so
+ * `PostId := UserId` compiled — which is the one mistake `nominal` exists to
+ * catch, and the opposite of what language.md §1.3.5 tells a reader.
+ *
+ * The rule is stated in one line and the cases below are it: two nominals
+ * declared under different names reject each other, a nominal and its base
+ * accept each other both ways, and only a named `type` definition confers the
+ * identity.
+ */
+describe("assignability — a nominal type is distinct from every other one", () => {
+  const MONEY = `type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+slot c : Cents = 1
+slot y : Yen   = 2
+slot n : Int   = 3`;
+
+  it("reports one nominal assigned to another over the same base", () => {
+    const errs = check(parse(lex(`${MONEY}\nreducer r on=ui.click(B) do= c := y\n${TAIL}`)));
+    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
+    // The names as written, not the base they share — an "Expected Int but got
+    // Int" here would read as a compiler bug rather than as the mistake it is.
+    expect(errs[0]?.message).toBe("Expected Cents but got Yen");
+  });
+
+  it("accepts a base literal in a nominal slot", () => {
+    expect(prog(MONEY)).toEqual([]);
+  });
+
+  it("accepts the base in a nominal position and the nominal in a base position", () => {
+    expect(inReducer(MONEY, `c := n`)).toEqual([]);
+    expect(inReducer(MONEY, `n := c`)).toEqual([]);
+  });
+
+  it("accepts arithmetic on a nominal, which yields its base", () => {
+    expect(inReducer(MONEY, `c := c + 1`)).toEqual([]);
+  });
+
+  it("still accepts a value the refinement rejects", () => {
+    // The refinement is a runtime check (forms.md §5.6). This rule is about
+    // which type a value has, not about whether the value is in range.
+    expect(prog(`slot e : Email = "not-an-email"`)).toEqual([]);
+  });
+
+  it("treats an alias to a nominal as the same type", () => {
+    const src = `type Cents = nominal Int where positive
+type Money = Cents
+slot c : Cents = 1
+slot m : Money = 2`;
+    expect(prog(src)).toEqual([]);
+    expect(inReducer(src, `m := c`)).toEqual([]);
+    expect(inReducer(src, `c := m`)).toEqual([]);
+  });
+
+  it("takes no identity from a nominal written inline at a use site", () => {
+    // There is no definition to name, so there is nothing to tell it apart
+    // from any other nominal over Int.
+    const src = `type Yen = nominal Int where positive
+slot y : Yen = 1
+slot x : nominal Int = 2`;
+    expect(inReducer(src, `x := y`)).toEqual([]);
+  });
+
+  it("reports one standard-library nominal assigned to another", () => {
+    const src = `slot u : Url   = "https://example.com"
+slot e : Email = "a@example.com"`;
+    const errs = check(parse(lex(`${src}\nreducer r on=ui.click(B) do= e := u\n${TAIL}`)));
+    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe("Expected Email but got Url");
+  });
+
+  it("compares the arguments of a generic nominal, which shares its name", () => {
+    const src = `type Box(T) = nominal List(T)
+slot bi : Box(Int)  = [1]
+slot bt : Box(Text) = ["a"]`;
+    expect(prog(src)).toEqual([]);
+    expect(inReducer(src, `bi := bt`)).toEqual(["E0201"]);
+    expect(inReducer(src, `bi := bi`)).toEqual([]);
+  });
+
+  it("reports a nominal element inside a container", () => {
+    const src = `${MONEY}\nslot l : List(Cents) = []`;
+    expect(inReducer(src, `l := [y]`)).toEqual(["E0201"]);
+    expect(inReducer(src, `l := [c]`)).toEqual([]);
+  });
+
+  it("reports a nominal in every position that has a declared type", () => {
+    const POSITIONS = `type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+type Wallet = {balance: Cents}
+slot y : Yen = 1
+slot w : Wallet = {balance: 0}
+fn add(a: Cents) -> Cents = a
+effect save cap=storage.write in=Cents out=Result(Unit, Text)
+tile Amount in=Cents = box(text($1.show))`;
+    const app = `tile B = button(text="b")
+tile App = column(B)
+app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    const withBody = (body: string) =>
+      codes(`${POSITIONS}\nreducer r on=ui.click(B) do= ${body}\n${app}`);
+
+    expect(withBody(`w.balance := y`)).toEqual(["E0201"]);
+    expect(withBody(`w.balance := add(y)`)).toEqual(["E0201"]);
+    expect(withBody(`emit save(y)`)).toEqual(["E0202"]);
+    expect(codes(`${POSITIONS}\ntile Home = Amount(y)\n${app}`)).toEqual(["E0201"]);
+    expect(codes(`${POSITIONS}\nfn wrong(a: Yen) -> Cents = a\n${app}`)).toEqual(["E0201"]);
+  });
+
+  it("stays silent when either side is undecidable", () => {
+    // `Q` is not a type, so `q` has none, and a nominal identity nothing can
+    // resolve must not become a mismatch on top of the undefined-name report.
+    expect(prog(`type Cents = nominal Int where positive\nslot q : Q = 1`)).toEqual(["E0117"]);
+    expect(
+      inReducer(
+        `type PostId = nominal Text where uuid
+type UserId = nominal Text where uuid
+slot p : PostId = "a"`,
+        `p := UserId.fresh()`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not reach the comparison operators", () => {
+    // `==` is defined on every type and ordering asks `orderingFamily`, not
+    // this relation. Both nominals reduce to Int there, so neither is
+    // reported — pinned so that changing it is a decision rather than a
+    // side effect of this rule.
+    expect(inReducer(MONEY, `n := if c == y then 1 else 2`)).toEqual([]);
+    expect(inReducer(MONEY, `n := if c < y then 1 else 2`)).toEqual([]);
+  });
+});
+
 describe("assignability — containers", () => {
   it("reports the mismatched element of a list literal, at the element", () => {
     const errs = check(parse(lex(`slot l : List(Int) = [1, "a", true]\n${TAIL}`)));

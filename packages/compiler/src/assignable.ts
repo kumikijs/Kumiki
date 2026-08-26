@@ -13,6 +13,12 @@
 // an unsubstituted type parameter all read as `unknown`, and `unknown` is
 // assignable in both directions. A false positive rejects a program that runs;
 // a false negative only loses a diagnostic that never existed before.
+//
+// `nominal` is the deliberate exception, and the only rule here that rejects a
+// program the runtime would have run: `Cents := Yen` is two integers on the
+// metal. What it reports is a mistake against the declaration rather than a
+// value that would fail, which is the whole purpose of writing `nominal` —
+// language.md §1.3.5. Every other rule keeps the reading above.
 
 import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
@@ -72,6 +78,38 @@ export function unaliasType(
   if (t.kind === "TypeNominal" || t.kind === "TypeRefinement")
     return unaliasType(t.inner, env, seen);
   return t;
+}
+
+/**
+ * The name that makes a type nominal, or `null` when nothing does.
+ *
+ * Nominality belongs to the definition, not to the type expression: two
+ * definitions with byte-identical bodies are still two types, and an alias to
+ * one of them is the same type. So the answer is the name of the definition
+ * whose body *is* a `nominal`, reached by following aliases and refinements —
+ * `type Money = Cents` answers `Cents`, and `type P = Int where positive`
+ * answers nothing, because a refinement on its own confers no identity.
+ *
+ * A `nominal` written inline at a use site (`slot x : nominal Int = 0`) has no
+ * definition to name and so no identity; it is compared structurally.
+ *
+ * Deliberately independent of `unaliasType`, which strips `nominal` and must
+ * keep doing so: method resolution, `elementType` and the arithmetic checks all
+ * need to see the base.
+ */
+function nominalName(
+  t: TypeExpr | null,
+  env: TypeEnv,
+  seen: ReadonlySet<string> = new Set(),
+): string | null {
+  if (!t) return null;
+  if (t.kind === "TypeRefinement") return nominalName(t.inner, env, seen);
+  if (t.kind !== "TypeRef" && t.kind !== "TypeApp") return null;
+  if (seen.has(t.name)) return null;
+  const def = env.types.get(t.name);
+  if (!def) return null;
+  if (def.body.kind === "TypeNominal") return t.name;
+  return nominalName(def.body, env, new Set([...seen, t.name]));
 }
 
 export function paramSubstitution(params: string[], args: TypeExpr[]): Map<string, TypeExpr> {
@@ -181,6 +219,15 @@ function relate(
     if (seen.has(key)) return true;
     seen = new Set([...seen, key]);
   }
+  // Asked before the wrappers come off, because taking them off is exactly what
+  // loses the answer. Two names that both resolve to a `nominal` are two types
+  // unless they are the same name; one nominal and its base still meet, which
+  // is what lets `slot c : Cents = 1` and `c := c + 1` stand. Equal names fall
+  // through rather than returning early, so `Box(Int)` and `Box(Text)` are
+  // still told apart by their arguments.
+  const an = nominalName(actual, env);
+  const dn = nominalName(declared, env);
+  if (an !== null && dn !== null && an !== dn) return false;
   const a = unaliasType(actual, env);
   const d = unaliasType(declared, env);
   if (a === null || d === null) return true;
