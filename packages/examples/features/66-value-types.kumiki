@@ -15,9 +15,13 @@ type Fahrenheit = nominal Int where between(-130, 140)
 
 type Reading = {label: Text, celsius: Celsius}
 
-# The shared base is the bridge, so no cast form is needed: arithmetic on a
-# nominal yields its base, and a base value goes back into any nominal over it.
-# That is why `-> Celsius` accepts this body and why `celsius + 1` below stands.
+# The shared base is the bridge, so no cast form is needed: a base value goes
+# into any nominal over it, which is why `slot forecast : Fahrenheit = 70` needs
+# no wrapping and why `celsius + 1` below stands.
+#
+# What brings this body back to that base is `.round`, not the arithmetic —
+# `/` is Float (§1.9.4), and `-> Celsius = (f - 32) * 5 / 9` is E0201 for the
+# same reason `toFahrenheit` has to be declared `-> Float`.
 fn toCelsius(f: Fahrenheit) -> Celsius = ((f - 32) * 5 / 9).round
 
 # `-> Float`, because `/` is Float even between two Ints (§1.9.4). Declaring

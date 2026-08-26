@@ -52,7 +52,7 @@ app MyApp
 
 - **Duration literals** like `1h` only work inside effect policy (`debounce(300ms)`). In expressions use constructors: `now.plus(Duration.h(1))`.
 - **Immutable record update**: `profile.copy(age = profile.age + 1)`.
-- **Two `nominal` types over one base are two types** (E0201): `postId := userId` is refused even when both are `nominal Text where uuid`. The base still flows in and out — `slot c : Cents = 1` and `c := c + 1` need no cast — so a deliberate conversion is a `fn` declared with the target as its return type.
+- **Two `nominal` types over one base are two types** (E0201): `postId := userId` is refused even when both are `nominal Text where uuid`. The base still flows in and out — `slot c : Cents = 1` and `c := c + 1` need no cast — so a deliberate conversion is a `fn` whose return type is the target *and whose body reaches the base*: `fn toUser(p: PostId) -> UserId = p + ""`. The identity body (`= p`) is the same E0201.
 - **One write per path-shape per reducer** (E0601): chain instead of writing the same slot twice — `tasks := tasks.remove(id).filter(pred)`. Note `tasks[id].status` and `tasks[id].updatedAt` are *different* shapes and may coexist.
 - **Map/Set/Option/List methods are polymorphic**: `.filter`, `.map`, `.get-or`, `.has`, `.toggle`, `.remove`, `.keys`, `.size`.
 - **Variant payloads in match**: `match opt with | None -> ... | Some(x) -> ...`.

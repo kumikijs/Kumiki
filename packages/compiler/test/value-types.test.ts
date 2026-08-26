@@ -152,9 +152,13 @@ slot n : Int   = 3`;
     expect(inReducer(MONEY, `c := c + 1`)).toEqual([]);
   });
 
-  it("still accepts a value the refinement rejects", () => {
-    // The refinement is a runtime check (forms.md §5.6). This rule is about
-    // which type a value has, not about whether the value is in range.
+  it("still accepts a value outside the refinement", () => {
+    // The refinement is validation's question (forms.md §5.6) and this check
+    // never evaluates one. The rule is about which type a value has, not about
+    // whether the value is in range.
+    expect(
+      inReducer(`type Volume = nominal Int where between(0, 11)\nslot v : Volume = 5`, `v := 50`),
+    ).toEqual([]);
     expect(prog(`slot e : Email = "not-an-email"`)).toEqual([]);
   });
 
