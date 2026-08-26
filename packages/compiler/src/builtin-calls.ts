@@ -105,9 +105,17 @@ export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "Eff
 
 /**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,
- * `Int.parse(t)`, `Time.show(v)`. The qualifier is not resolved against the
- * type table: codegen does not resolve it either, and a checker stricter than
- * the lowering it guards would reject programs that build and run.
+ * `Int.parse(t)`, `Time.show(v)`. That the qualifier is matched by a regex
+ * rather than resolved used to be the argument for the checker not resolving it
+ * either, and the two members answer it differently:
+ *
+ * - `parse` branches on the qualifier (`Int` / `Float` / `Time` have numeric
+ *   and millisecond readings), so a misspelt one silently produces a different
+ *   value: `Itn.parse("12")` is `Some("12")` where `Int.parse` is `Some(12)`.
+ * - `fresh` and `show` discard it. A misspelling there produces the same value,
+ *   and the name is checked because a qualifier that resolves to no type is
+ *   wrong on its own terms — which makes the checker deliberately stricter
+ *   than the lowering for those two.
  */
 export const TYPE_MEMBER_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["fresh", exactly(0)],
@@ -125,6 +133,18 @@ export const UNIMPLEMENTED_CALLS: ReadonlySet<string> = new Set(["trace"]);
 
 /** The parser's rule for a qualifier, mirrored: a capitalised identifier. */
 const QUALIFIER_RE = /^[A-Z][A-Za-z0-9_]*$/;
+
+/**
+ * Whether `name` can be the qualifier of a lowered call. Exported because the
+ * checker resolves the qualifier of a type-member call against the type table,
+ * and a rule stricter than this one would report an undefined *type* for a name
+ * that has no lowering under any spelling — `Othe-Id.fresh()` is not a type
+ * member at all, because a Kumiki name may contain a hyphen and a qualifier may
+ * not.
+ */
+export function isQualifierName(name: string): boolean {
+  return QUALIFIER_RE.test(name);
+}
 
 /**
  * The argument count a call to `callee` must supply, or `undefined` when codegen
@@ -149,7 +169,17 @@ export function isBuiltinCallee(callee: string): boolean {
  * whatever `fn` names the caller supplies. Deliberately not the whole
  * definition table — suggesting a slot or a tile for a misspelled function call
  * would rewrite the source into a different kind of mistake.
+ *
+ * `missing` is the name that did not resolve. When it is qualified, the type
+ * members are candidates *on its own qualifier*: `fresh` / `parse` / `show`
+ * resolve on any capitalised name, so there is no list of qualified spellings
+ * to draw from — `Int.pasre` has to be answered with `Int.parse`, built from
+ * the qualifier the author already wrote.
  */
-export function calleeCandidates(fnNames: Iterable<string>): string[] {
-  return [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {
+  const base = [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+  const dot = missing === undefined ? -1 : missing.indexOf(".");
+  if (missing === undefined || dot <= 0 || !QUALIFIER_RE.test(missing.slice(0, dot))) return base;
+  const qualifier = missing.slice(0, dot);
+  return [...base, ...[...TYPE_MEMBER_CALLS.keys()].map((m) => `${qualifier}.${m}`)];
 }

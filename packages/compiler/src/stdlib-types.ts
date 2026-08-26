@@ -143,6 +143,17 @@ const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "EffectId",
 ];
 
+const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
+
+/**
+ * Whether `name` is a primitive type name. Separate from the symbol table
+ * because the grammar resolves these itself: a primitive is a `TypePrim`, so
+ * asking `sym.types` about `Int` answers no.
+ */
+export function isPrimTypeName(name: string): boolean {
+  return PRIM_TYPE_NAME_SET.has(name);
+}
+
 /**
  * Every type name a program may write, given its own `type` definitions. The
  * candidate set `kumiki fix` suggests from for E0117 — a name from another

@@ -321,7 +321,11 @@ A call `f(...)` names no function. The candidate set is the program's `fn` defin
 | `file-url` | [Forms §5.10](./forms.md) |
 | `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
 
-`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116.
+`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
+
+> `Call to "run-reducer" outside a property-test invariant`
+
+The lowering reads `_init` and `_event`, which are bound only inside a trial, so the module a `given` or an `expect` produces dies with `_init is not defined` before a single test reports its result.
 
 > `Call to undefined function "<name>"`
 
@@ -340,6 +344,8 @@ A type name resolves to nothing: it names no `type` definition, no [standard-lib
 An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
 
 Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+
+A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — and the two members answer differently for it. `parse` branches on the qualifier, so a misspelling did not fail, it changed which branch ran: `Int.parse("12")` answers `Some(12)` and `Itn.parse("12")` answers `Some("12")`, which an `Int` slot then holds and every later sum concatenates. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this.
 
 **Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list. `kumiki fix` proposes the closest type name.
 
@@ -772,7 +778,7 @@ A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set 
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
-Testing-DSL invariants (currently E0712; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+Testing-DSL invariants (currently E0712 and E0713; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
 
 ### E0712 `episode-mock-invalid`
 
@@ -781,6 +787,20 @@ An `episode-test` `mocks` record binds an effect to a policy value that is not o
 > `Mock for "<name>" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``
 
 **Fix**: Replace the mock value with one of the four accepted forms. Use `from-log` to replay from the recorded episode, `ignore` to no-op the effect, `ok(<value>)` to force a success payload, or `err(<value>)` to force a failure. See [episode-test](./testing.md).
+
+### E0713 `test-shape-invalid`
+
+A test-body position holds a value whose shape the lowering does not read, and whose fallback is an assertion of its own rather than a failure.
+
+Two positions have one today:
+
+- A `reducer-test`'s `given.mocks` binds an effect to something other than `ok(...)`, `err(...)` or `delay(<ms>, ok(...)|err(...))`. `mockScriptJs` answers anything else with `{outcome: "ok", value: null}`, so a mock written to drive the failure path drove the success one — and a test asserting what happens when an effect fails passed, permanently, having never failed it. ([E0712](#e0712-episode-mock-invalid) is the same rule for an `episode-test`, whose vocabulary also includes `from-log` and `ignore`.)
+- An `expect.effects` that is not a list. `effectListJs` lowers a non-list to `[]`, which is not an absent assertion but the assertion *no effects were emitted* — so `effects: persist(count)`, a forgotten pair of brackets, passes against a reducer that emits nothing, and the effect named inside it is never resolved.
+
+> `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
+> `` `expect.effects` must be a list of effects ``
+
+**Fix**: Write the accepted shape. Both positions also throw at codegen now, so a caller that skips `check` gets a named failure rather than a silently rewritten assertion.
 
 ## E08xx — Runtime Hazards
 
