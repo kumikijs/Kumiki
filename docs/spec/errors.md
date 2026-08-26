@@ -404,11 +404,13 @@ A consequence worth knowing: a reducer whose own name is capitalised cannot be b
 
 The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
-Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed. `nominal` and `where` wrappers are transparent to it: the refinement is a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)), and two nominals over the same base accept each other. That reads against [§1.3.5](./language.md#_1-3-5-type-canonicalization) and is tracked separately.
+Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed, and a `where` refinement is transparent: it is a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)), so `slot e : Email = "not-an-email"` is accepted here and fails at validation instead.
+
+`nominal` is the exception, and the one rule in this code that reports a program the runtime would have run. A nominal type is identified by the name it is declared under ([§1.3.5](./language.md#_1-3-5-type-canonicalization)), so two declarations over one base reject each other — `Cents := Yen`, `postId := userId` — while a nominal and its base still accept each other in both directions, which is what leaves `slot c : Cents = 1` and `c := c + 1` legal. The operators are outside it: `==` is defined on every type and ordering asks only whether both sides are numbers, so `cents < yen` is not reported.
 
 **The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result depends on its receiver, a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) remain the checks that a name exists at all.
 
-**Fix**: Correct the value, or widen the declared type.
+**Fix**: Correct the value, or widen the declared type. For a nominal mismatch that is deliberate, convert through the base — a `fn` declared with the nominal return type accepts a body of that base, which is the construction form the language has.
 
 ### E0202 `emit-arg-type-mismatch`
 

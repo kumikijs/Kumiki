@@ -166,6 +166,23 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 Structurally identical types have the same content-hash. Only `nominal` produces a new hash.
 
+A `nominal` type is identified by **the name it is declared under**, so two declarations over one base are two types even when their bodies are identical:
+
+```kumiki fragment
+type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+```
+
+`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
+
+A nominal and its **base** accept each other in both directions. That is what makes `slot c : Cents = 1` legal without a construction form, and arithmetic yields the base ([§1.9](#_1-9-expression-language)), so `c := c + 1` stands. It is also how one nominal is deliberately converted to another: a `fn` declared with the nominal return type accepts a body of that base.
+
+```kumiki fragment
+fn toYen(c: Cents, rate: Int) -> Yen = c * rate
+```
+
+A `where` refinement carries no identity of its own — `type Positive = Int where positive` is `Int` — and remains a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)): `slot e : Email = "not-an-email"` is accepted here and fails at validation.
+
 ---
 
 ## 1.4 Store Layer (`slot`)

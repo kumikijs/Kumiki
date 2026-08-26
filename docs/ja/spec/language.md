@@ -166,6 +166,23 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 構造的に同一の型は同一 content-hash を持つ。`nominal` のみが新 hash を生む。
 
+`nominal` 型を同定するのは **宣言された名前** である。したがって同じ基底型に対する 2 つの宣言は、body が同一であっても 2 つの型である：
+
+```kumiki fragment
+type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+```
+
+`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
+
+nominal と **その基底型** は双方向に互いを受理する。これが `slot c : Cents = 1` を構築形式なしで成立させており、算術は基底型を返すので（[§1.9](#_1-9-式言語)）`c := c + 1` もそのまま通る。ある nominal を別の nominal へ意図的に変換する手段でもある：nominal を戻り型に宣言した `fn` は、その基底型の body を受理する。
+
+```kumiki fragment
+fn toYen(c: Cents, rate: Int) -> Yen = c * rate
+```
+
+`where` の refinement 自体は同定に寄与せず（`type Positive = Int where positive` は `Int` である）、runtime の検査のままである（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)）：`slot e : Email = "not-an-email"` はここでは受理され、バリデーションで失敗する。
+
 ---
 
 ## 1.4 ストアレイヤ (`slot`)
