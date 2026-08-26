@@ -2914,19 +2914,38 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
 function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | null {
   const first = types[0];
   if (types.length === 0 || !first) return null;
-  const agreeOn = (ref: TypeExpr): boolean =>
-    types.every((t) => t !== null && assignable(t, ref, sym) && assignable(ref, t, sym));
-  if (agreeOn(first)) return first;
-  if (types.some((t) => t === null)) return null;
-  // Assignability is not transitive across `nominal`: a `Cents` and a `Yen`
-  // both meet `Int` and refuse each other. Answering `null` there would lose
-  // every check that depends on the whole expression having a type — the
-  // member on `(if flag then cents else yen).x` stops being resolved — and
-  // would make a list literal's answer depend on which item came first. The
-  // base they share is the honest common type, and reaching it costs one
-  // comparison only when the written types disagree.
+  for (const t of types.slice(1)) {
+    if (!t) return null;
+    if (!assignable(t, first, sym) || !assignable(first, t, sym))
+      return sharedBase(types, first, sym);
+  }
+  return first;
+}
+
+/**
+ * The base every one of `types` meets, when they do not all meet each other.
+ *
+ * Assignability is not transitive across `nominal`: a `Cents` and a `Yen` both
+ * meet `Int` and refuse each other. Answering `null` there loses every check
+ * that needs the whole expression to have a type — the member on
+ * `(if flag then cents else yen).x` stops being resolved — and makes a list
+ * literal's answer depend on which item came first.
+ *
+ * Reached only after a disagreement, so the common case pays nothing. That
+ * matters more than it looks: `commonType` runs at every level of a nested
+ * list literal, and comparing a deep type against itself once per level took
+ * the 255-deep parser-limit case from 2ms to over a second.
+ */
+function sharedBase(
+  types: (TypeExpr | null)[],
+  first: TypeExpr,
+  sym: SymbolTable,
+): TypeExpr | null {
   const base = unaliasType(first, sym);
-  return base !== null && agreeOn(base) ? base : null;
+  if (base === null) return null;
+  const meets = (t: TypeExpr | null): boolean =>
+    t !== null && assignable(t, base, sym) && assignable(base, t, sym);
+  return types.every(meets) ? base : null;
 }
 
 /**
