@@ -177,8 +177,16 @@ slot k : Kept  = 3`;
   it("terminates on an alias cycle", () => {
     // The identity walk runs before `unaliasType` and follows the same `TypeRef`
     // chain, so it needs its own guard: without one this never returns and
-    // `check` hangs instead of reporting the cycle.
-    expect(prog(`type A = B\ntype B = A\nslot x : A = 1`)).toEqual([]);
+    // `check` hangs instead of answering.
+    //
+    // Reaching it takes a comparison `checkAgainst` does not filter out first:
+    // it drops an expression whose type is unresolvable before calling the
+    // relation, so `n := x` alone would leave the walk unvisited and this test
+    // green for the wrong reason. Typing a list literal is the reachable
+    // route: `commonType` over its items calls the relation directly, and the
+    // walk blows the stack without the guard.
+    const src = `type A = B\ntype B = A\nslot x : A = 1\nslot n : Int = 0`;
+    expect(inReducer(src, `n := [x, x].length`)).toEqual([]);
   });
 
   it("takes no identity from a nominal written inline at a use site", () => {
