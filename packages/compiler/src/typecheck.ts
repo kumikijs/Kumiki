@@ -2914,11 +2914,19 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
 function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | null {
   const first = types[0];
   if (types.length === 0 || !first) return null;
-  for (const t of types.slice(1)) {
-    if (!t) return null;
-    if (!assignable(t, first, sym) || !assignable(first, t, sym)) return null;
-  }
-  return first;
+  const agreeOn = (ref: TypeExpr): boolean =>
+    types.every((t) => t !== null && assignable(t, ref, sym) && assignable(ref, t, sym));
+  if (agreeOn(first)) return first;
+  if (types.some((t) => t === null)) return null;
+  // Assignability is not transitive across `nominal`: a `Cents` and a `Yen`
+  // both meet `Int` and refuse each other. Answering `null` there would lose
+  // every check that depends on the whole expression having a type — the
+  // member on `(if flag then cents else yen).x` stops being resolved — and
+  // would make a list literal's answer depend on which item came first. The
+  // base they share is the honest common type, and reaching it costs one
+  // comparison only when the written types disagree.
+  const base = unaliasType(first, sym);
+  return base !== null && agreeOn(base) ? base : null;
 }
 
 /**

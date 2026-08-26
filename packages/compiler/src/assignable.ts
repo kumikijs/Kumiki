@@ -14,11 +14,12 @@
 // assignable in both directions. A false positive rejects a program that runs;
 // a false negative only loses a diagnostic that never existed before.
 //
-// `nominal` is the deliberate exception, and the only rule here that rejects a
-// program the runtime would have run: `Cents := Yen` is two integers on the
-// metal. What it reports is a mistake against the declaration rather than a
-// value that would fail, which is the whole purpose of writing `nominal` —
-// language.md §1.3.5. Every other rule keeps the reading above.
+// `nominal` is the deliberate exception: the only rule here that rejects when
+// every value of the actual type is a valid value of the declared one. `1.5` is
+// not an `Int` and `{a, b}` is not an `{a: Int}`, but every `Yen` is a perfectly
+// good `Cents` — so what this reports is a mistake against the declaration
+// rather than a value that would fail, which is the whole purpose of writing
+// `nominal` (language.md §1.3.5). Every other rule keeps the reading above.
 
 import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
@@ -81,14 +82,26 @@ export function unaliasType(
 }
 
 /**
- * The name that makes a type nominal, or `null` when nothing does.
+ * Strip the `where` wrappers off a type expression. The first refinement on a
+ * `nominal` is folded into the node as a property; a second one wraps it, so a
+ * question about a body's shape has to look past however many are there.
+ */
+function bareType(t: TypeExpr): TypeExpr {
+  let cur = t;
+  while (cur.kind === "TypeRefinement") cur = cur.inner;
+  return cur;
+}
+
+/**
+ * The declaration that makes `t` nominal — its name, and the type it was
+ * declared over — or `null` when nothing does.
  *
  * Nominality belongs to the definition, not to the type expression: two
  * definitions with byte-identical bodies are still two types, and an alias to
- * one of them is the same type. So the answer is the name of the definition
- * whose body *is* a `nominal`, reached by following aliases and refinements —
- * `type Money = Cents` answers `Cents`, and `type P = Int where positive`
- * answers nothing, because a refinement on its own confers no identity.
+ * one of them is the same type. So the answer is the definition whose body *is*
+ * a `nominal`, reached by following aliases and refinements — `type Money =
+ * Cents` answers `Cents`, and `type P = Int where positive` answers nothing,
+ * because a refinement on its own confers no identity.
  *
  * A `nominal` written inline at a use site (`slot x : nominal Int = 0`) has no
  * definition to name and so no identity; it is compared structurally.
@@ -97,19 +110,50 @@ export function unaliasType(
  * keep doing so: method resolution, `elementType` and the arithmetic checks all
  * need to see the base.
  */
-function nominalName(
+function nominalDecl(
   t: TypeExpr | null,
   env: TypeEnv,
   seen: ReadonlySet<string> = new Set(),
-): string | null {
+): { readonly name: string; readonly over: TypeExpr } | null {
   if (!t) return null;
-  if (t.kind === "TypeRefinement") return nominalName(t.inner, env, seen);
+  if (t.kind === "TypeRefinement") return nominalDecl(t.inner, env, seen);
   if (t.kind !== "TypeRef" && t.kind !== "TypeApp") return null;
   if (seen.has(t.name)) return null;
   const def = env.types.get(t.name);
   if (!def) return null;
-  if (def.body.kind === "TypeNominal") return t.name;
-  return nominalName(def.body, env, new Set([...seen, t.name]));
+  // Substituted for the same reason `unaliasType` substitutes: a type
+  // parameter may be spelled the same as a top-level definition, and an
+  // unsubstituted `TypeRef` would resolve against that global instead — so
+  // `type Alias(Cents) = Cents` would answer `Cents` for every argument.
+  const body =
+    t.kind === "TypeApp"
+      ? substituteType(def.body, paramSubstitution(def.params, t.args))
+      : def.body;
+  const bare = bareType(body);
+  if (bare.kind === "TypeNominal") return { name: t.name, over: bare.inner };
+  return nominalDecl(body, env, new Set([...seen, t.name]));
+}
+
+/**
+ * Every nominal name `t` is declared under, outermost first, ending where the
+ * declarations reach a type that is not itself nominal.
+ *
+ * `type Deep = nominal Cents` over `type Cents = nominal Int` answers
+ * `["Deep", "Cents"]`, which is what lets a `Deep` be accepted where a `Cents`
+ * is required — it was declared as one — while a `Cents` is still refused
+ * where a `Deep` is required.
+ */
+function nominalChain(t: TypeExpr | null, env: TypeEnv): string[] {
+  const chain: string[] = [];
+  let cur = t;
+  for (;;) {
+    // Re-entering a name means the declarations loop; the chain so far is the
+    // whole finite answer, and reporting the loop belongs elsewhere.
+    const decl = nominalDecl(cur, env, new Set(chain));
+    if (decl === null) return chain;
+    chain.push(decl.name);
+    cur = decl.over;
+  }
 }
 
 export function paramSubstitution(params: string[], args: TypeExpr[]): Map<string, TypeExpr> {
@@ -220,14 +264,22 @@ function relate(
     seen = new Set([...seen, key]);
   }
   // Asked before the wrappers come off, because taking them off is exactly what
-  // loses the answer. Two names that both resolve to a `nominal` are two types
-  // unless they are the same name; one nominal and its base still meet, which
-  // is what lets `slot c : Cents = 1` and `c := c + 1` stand. Equal names fall
-  // through rather than returning early, so `Box(Int)` and `Box(Text)` are
-  // still told apart by their arguments.
-  const an = nominalName(actual, env);
-  const dn = nominalName(declared, env);
-  if (an !== null && dn !== null && an !== dn) return false;
+  // loses the answer.
+  //
+  // A value is refused only when it carries a nominal declaration of its own
+  // and the required name is nowhere in that declaration's chain. So a type
+  // with no nominal name meets any nominal over it — which is what lets
+  // `slot c : Cents = 1` and `c := c + 1` stand — and a `Deep` declared
+  // `nominal Cents` is accepted where a `Cents` is required, while a `Cents` is
+  // still refused where a `Deep` is.
+  //
+  // A name that does match falls through rather than returning early, so
+  // `Box(Int)` and `Box(Text)` are still told apart by their arguments.
+  const required = nominalDecl(declared, env)?.name;
+  if (required !== undefined) {
+    const declaredAs = nominalChain(actual, env);
+    if (declaredAs.length > 0 && !declaredAs.includes(required)) return false;
+  }
   const a = unaliasType(actual, env);
   const d = unaliasType(declared, env);
   if (a === null || d === null) return true;
