@@ -40,8 +40,9 @@ example, benchmark, spec block and fixture in the repo passes unchanged.
 
 The refinement is unaffected and remains a runtime check — `slot e : Email =
 "not-an-email"` is still accepted by `check` and still fails at validation. So
-are the operators: `==` is defined on every type and ordering asks only whether
-both sides are numbers, so `cents < yen` is not reported.
+are the operators: `==` is defined on every type, and ordering asks only whether
+both sides share a family — number, text or time — which two nominals over one
+base always do, so neither `cents < yen` nor `postId < userId` is reported.
 
 `docs/spec/language.md` §1.3.5 and `docs/spec/errors.md` E0201 disagreed about
 this — §1.3.5 said `nominal` makes a new type, E0201 said it was transparent —

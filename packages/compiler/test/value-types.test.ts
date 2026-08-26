@@ -259,12 +259,20 @@ slot p : PostId = "a"`,
   });
 
   it("does not reach the comparison operators", () => {
-    // `==` is defined on every type and ordering asks `orderingFamily`, not
-    // this relation. Both nominals reduce to Int there, so neither is
-    // reported — pinned so that changing it is a decision rather than a
-    // side effect of this rule.
+    // `==` is defined on every type, and ordering asks `orderingFamily` rather
+    // than this relation — which answers by family, so two nominals over Int
+    // are both "number" and two over Text are both "text". Neither pair is
+    // reported; pinned so that changing it is a decision rather than a side
+    // effect of this rule.
     expect(inReducer(MONEY, `n := if c == y then 1 else 2`)).toEqual([]);
     expect(inReducer(MONEY, `n := if c < y then 1 else 2`)).toEqual([]);
+    const IDS = `type PostId = nominal Text where uuid
+type UserId = nominal Text where uuid
+slot p : PostId = "a"
+slot u : UserId = "b"
+slot n : Int = 0`;
+    expect(inReducer(IDS, `n := if p == u then 1 else 2`)).toEqual([]);
+    expect(inReducer(IDS, `n := if p < u then 1 else 2`)).toEqual([]);
   });
 });
 
