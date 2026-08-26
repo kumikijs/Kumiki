@@ -160,11 +160,25 @@ slot n : Int   = 3`;
   it("treats an alias to a nominal as the same type", () => {
     const src = `type Cents = nominal Int where positive
 type Money = Cents
+type Kept  = Cents where positive
 slot c : Cents = 1
-slot m : Money = 2`;
+slot m : Money = 2
+slot k : Kept  = 3`;
     expect(prog(src)).toEqual([]);
     expect(inReducer(src, `m := c`)).toEqual([]);
     expect(inReducer(src, `c := m`)).toEqual([]);
+    // A refinement on the way to the nominal does not hide it either.
+    expect(inReducer(src, `k := c`)).toEqual([]);
+    expect(
+      inReducer(`${src}\ntype Yen = nominal Int where positive\nslot y : Yen = 4`, `k := y`),
+    ).toEqual(["E0201"]);
+  });
+
+  it("terminates on an alias cycle", () => {
+    // The identity walk runs before `unaliasType` and follows the same `TypeRef`
+    // chain, so it needs its own guard: without one this never returns and
+    // `check` hangs instead of reporting the cycle.
+    expect(prog(`type A = B\ntype B = A\nslot x : A = 1`)).toEqual([]);
   });
 
   it("takes no identity from a nominal written inline at a use site", () => {
