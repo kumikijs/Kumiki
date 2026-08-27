@@ -10,7 +10,7 @@ npm i -g kumiki
 npx kumiki --help
 ```
 
-Node.js 22 以降が必要。
+必要なのは Node.js 20 以降（パッケージが宣言している下限）。
 
 ::: tip インストールすらせずに試す
 [Playground](./playground.md) はコンパイラとランタイムをブラウザ内で動かす。例を選び、左で編集すれば右に描画される。
