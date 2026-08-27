@@ -1,10 +1,10 @@
 # Kumiki 仕様
 
-ここは Kumiki 言語とランタイムの**正規（normative）仕様**である。実装（`packages/`）と本仕様が食い違った場合、原則として本仕様を正とし、どちらを直すかを設計判断として PR に記録する。
+ここは Kumiki 言語とランタイムの**正規（normative）仕様**である。実装（`packages/`）と本仕様が食い違った場合、本仕様を正とし、どちらを直すかを PR に記録する。
 
-チュートリアルや how-to は仕様ではなく [Kumiki ガイド](../guide/) に置く。動作する実例は [Kumiki Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) にある。
+通読する必要はない。書き始める前に読むべき文書は [言語コア](./language.md) だけで、残りはすでに手元にある疑問に答えるためにある。チュートリアルや how-to は仕様ではなく [ガイド](../guide/) に置き、どの機能にも動く 1 ファイルが [Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) にある。
 
-## 目次
+## 文書
 
 | 文書 | 内容 |
 |---|---|
@@ -20,11 +20,12 @@
 | [テスト](./testing.md) | テスト戦略 |
 | [エラーコード](./errors.md) | エラーコードカタログ（E0000..E08xx） |
 
-以下の 3 つの索引は**機械検証されている**。`packages/tests/spec-index.test.ts` が、全 anchor リンクの実在、examples 索引と `packages/examples/features/` 配下の `.kumiki` ファイル群（fixture / README / `.scenario.json` 等は対象外）の一致、診断コード索引と[エラーコード](./errors.md)の一致、そして英語版・日本語版 index の構造同期を検証する。コンパイラ側のドリフトガード（`packages/compiler/test/spec-drift.test.ts`、実装 ⇆ errors.md）と合わせて、spec ⇆ 実装 ⇆ examples の三角関係が機械的に閉じる。
+## 索引
 
-## 層 × 機能マトリクス
+上の文書への相互参照。手書きではなく、コンパイラと examples から生成している。
 
-各機能次元が 7 層のどこに接するか。セルはその交点を規定するセクションへのリンク。`—` はその次元に層固有の規則が無いことを表す。
+::: details 層 × 機能マトリクス — 各機能が 7 層のどこに接するか
+セルはその交点を規定するセクションへのリンク。`—` はその次元に層固有の規則が無いことを表す。
 
 <!-- matrix:start -->
 | 機能 | `type` | `slot` | `effect` | `reducer` | `tile` | `fn` | `app` |
@@ -43,11 +44,9 @@
 <!-- matrix:end -->
 
 AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#_9-3-1-op-の種類)）は全層の定義に一様に適用される。マトリクスの行には層固有のセクションのみを載せている。
+:::
 
-## 診断コード索引
-
-[エラーコード](./errors.md)に文書化された全コードを、発火する層と所属する機能次元でクロス分類したもの。
-
+::: details 診断コード — エラーコードの全コードを層と機能で分類
 <!-- codes:start -->
 | コード | kind | 層 | 機能 |
 |---|---|---|---|
@@ -117,10 +116,10 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
 <!-- codes:end -->
+:::
 
-## examples 索引
-
-[`packages/examples/features/`](https://github.com/kumikijs/Kumiki/tree/main/packages/examples/features) の各ファイルは、マトリクスの 1 セル（または近接する数セル）を実演する。「層」はその例の中心となる定義、「仕様」は実演対象のセクション。
+::: details 機能 example — マトリクスのセルごとに動く 1 ファイル
+Layers はその example が中心に据える定義、Spec は実演しているセクション。
 
 <!-- examples:start -->
 | Example | 層 | 機能 | 仕様 |
@@ -203,3 +202,4 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | `76-conditional-adds-a-universal-handler.kumiki` | slot, reducer, tile | コア | [§10.3.11](./runtime.md#_10-3-11-要素同一性を保った-reconciliation-190) |
 | `77-int-float-math.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.7](./stdlib.md#_2-2-7-int-float) |
 <!-- examples:end -->
+:::

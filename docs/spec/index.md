@@ -1,10 +1,10 @@
 # Kumiki Specification
 
-This is the **normative specification** of the Kumiki language and runtime. When the implementation (`packages/`) and this specification disagree, this specification is, as a rule, taken as authoritative, and which side to fix is recorded as a design decision in the PR.
+This is the **normative specification** of the Kumiki language and runtime. When the implementation in `packages/` and this text disagree, this text wins, and the PR records which side gets fixed.
 
-Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/). Working examples are in [Kumiki Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples).
+You do not have to read it end to end. [Language Core](./language.md) is the one document to read before writing Kumiki; the rest answer a question you already have. Tutorials and how-tos are not specification and live in the [guide](../guide/), and every feature has a runnable file in [examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples).
 
-## Table of Contents
+## Documents
 
 | Document | Contents |
 |---|---|
@@ -20,11 +20,12 @@ Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/
 | [Testing](./testing.md) | Testing strategy |
 | [Error Codes](./errors.md) | Error code catalog (E0000..E08xx) |
 
-The three indices below are **machine-checked**: `packages/tests/spec-index.test.ts` verifies that every anchor link resolves, that the examples index lists exactly the `.kumiki` files under `packages/examples/features/` (fixtures, READMEs, `.scenario.json` files, and other non-`.kumiki` files are out of scope), that the diagnostic code index matches [Error Codes](./errors.md), and that the English and Japanese indices stay structurally in sync. Together with the compiler-side drift guard (`packages/compiler/test/spec-drift.test.ts`, implementation ⇆ errors.md), the spec ⇆ implementation ⇆ examples triangle is closed mechanically.
+## Indexes
 
-## Layer × Feature Matrix
+Three cross-references into the documents above, each generated from the compiler and the examples rather than written by hand.
 
-Where each feature dimension touches each of the 7 layers. A cell links to the section that specifies that intersection; `—` means the dimension has no layer-specific rules there.
+::: details Layer × feature matrix — where each feature touches the 7 layers
+A cell links to the section that specifies that intersection; `—` means the dimension has no layer-specific rules there.
 
 <!-- matrix:start -->
 | Feature | `type` | `slot` | `effect` | `reducer` | `tile` | `fn` | `app` |
@@ -43,11 +44,9 @@ Where each feature dimension touches each of the 7 layers. A cell links to the s
 <!-- matrix:end -->
 
 AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-3-1-op-kinds)) apply uniformly to definitions of every layer; the matrix row lists only the layer-specific sections.
+:::
 
-## Diagnostic Code Index
-
-Every code documented in [Error Codes](./errors.md), cross-classified by the layer it fires on and the feature dimension it belongs to.
-
+::: details Diagnostic codes — every code in Error Codes, by layer and feature
 <!-- codes:start -->
 | Code | Kind | Layer | Feature |
 |---|---|---|---|
@@ -117,10 +116,10 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
 <!-- codes:end -->
+:::
 
-## Feature Examples Index
-
-Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumiki/tree/main/packages/examples/features) demonstrates one matrix cell (or a small cluster). Layers name the definitions the example centers on; Spec links the section it demonstrates.
+::: details Feature examples — one runnable file per matrix cell
+Layers name the definitions the example centers on; Spec links the section it demonstrates.
 
 <!-- examples:start -->
 | Example | Layers | Feature | Spec |
@@ -203,3 +202,4 @@ Each file under [`packages/examples/features/`](https://github.com/kumikijs/Kumi
 | `76-conditional-adds-a-universal-handler.kumiki` | slot, reducer, tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
 | `77-int-float-math.kumiki` | slot, reducer, tile | stdlib | [§2.2.7](./stdlib.md#_2-2-7-int-float) |
 <!-- examples:end -->
+:::

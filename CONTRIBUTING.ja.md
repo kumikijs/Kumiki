@@ -63,3 +63,16 @@ pnpm exec turbo run typecheck test lint build
 | 動く例 | `packages/examples/features/` または `packages/examples/apps/` |
 | 実装 | `packages/*/src/` |
 | テスト | パッケージ内 `test/`、横断は `packages/tests/` |
+
+## ドキュメントに対する CI 検査
+
+ドキュメントもコードと同じように機械検査している。古くなった相互参照は、読者を誤らせる前にビルドを落とす。
+
+| テスト | 固定していること |
+|---|---|
+| `packages/tests/spec-index.test.ts` | `docs/spec/index.md` の 3 索引が、`errors.md` の記載コードと `packages/examples/features/` 配下の `.kumiki` ファイルにちょうど一致すること。英語版と日本語版の索引が構造的に同期していること。 |
+| `packages/tests/docs-links.test.ts` | `docs/` 配下のツリー内リンクと `#anchor` が、VitePress が実際に出力するページ・見出しに解決すること。 |
+| `packages/tests/spec-blocks.test.ts` | `docs/` 配下の `kumiki` コードブロックがマーカー通りに振る舞うこと（無印は check が通る、`fragment` は通らない、`snippet` はパースできない、`invalid` は失敗する）。 |
+| `packages/compiler/test/spec-drift.test.ts` | 実装と `errors.md` のコードカタログが一致すること。 |
+
+これで spec ⇆ 実装 ⇆ examples の三角が機械的に閉じる。索引を手書きせず生成しているのはこのためである。
