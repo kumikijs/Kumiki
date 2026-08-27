@@ -1,5 +1,222 @@
 # @kumikijs/runtime
 
+## 0.13.0
+
+### Minor Changes
+
+- 85a792b: fix(runtime): a conditional branch that _adds_ `onFocus` / `onBlur` /
+  `onKeyDown` / `onMouseEnter` now reaches the DOM.
+
+  Those four are lifted onto every tile kind by the runtime rather than by a
+  per-kind renderer, and they dispatch through one shared per-element slot. The
+  native listeners that read the slot were registered only when the tile carried
+  a handler at create time — so a branch introducing one on a later render had
+  nowhere to land: the element is reused, the slot is refreshed with the new
+  handler, and no listener was ever registered to read it. Nothing threw, and no
+  diagnostic fired; the handler simply never ran.
+
+  Registration now happens on the render that first fills the slot, at create
+  time or on a patch. A tile that never carries one of the four still registers
+  nothing, so the saving on the tiles that will never need them is kept.
+
+  `onClick` was unaffected throughout — its listener is registered
+  unconditionally by the button renderer.
+
+- 301b09a: chore: require Node 24.
+
+  Node 20 reached end of life, so every package's `engines.node` moves from
+  `>=20` (`>=20.6` for `@kumikijs/vite`, which needs the synchronous
+  `import.meta.resolve` that landed there) to `>=24`. CI builds and tests on 24
+  as well, matching the release workflow, which was already there.
+
+  **Breaking for anyone installing on Node 20 or 22**: the packages declare the
+  new floor, so `npm i` warns and an `engine-strict` install fails. Nothing in
+  the published code depends on a Node 24 API today — the bump states the
+  version the toolchain is actually tested on, rather than one that no longer
+  receives security fixes.
+
+- 080f358: feat(runtime): the scenario tier can fire keydown and mouseenter.
+
+  `ui.key` and `ui.hover` lift to `onKeyDown` / `onMouseEnter`, which the runtime
+  wires through the same per-element slot as `onFocus` / `onBlur`. `focus` and
+  `blur` exist as scenario actions precisely so that `addEventListener →
+applyUiEventHandlers → reducer` path could be asserted; the other two had no
+  action, no example driving them and no reach from `smoke`, which dispatches only
+  click, input, change and submit. The runtime's own tests fire all four directly,
+  so a wiring regression was not invisible — but nothing in the example corpus
+  could reach these two, so a program that renders and then ignores a key press
+  passed check, build, smoke and every scenario.
+
+  `{"key": "<selector>", "value": "<key>"}` dispatches a `KeyboardEvent` carrying
+  that key, and `{"hover": "<selector>"}` dispatches a `mouseenter`. Both are
+  dispatched on the element the selector matches, which is where the runtime
+  attaches its listener. `keydown` bubbles from there — that is what lets
+  `ui.key(Container)` be driven from a focusable descendant — while `mouseenter`
+  does not, since a browser fires a separate one on each ancestor rather than
+  propagating a single event.
+
+  A `ui.key` reducer's payload carries `key` and `code`; only `key` is set from
+  this tier, because a `code` names a physical key that a scenario asking for
+  `"Enter"` has not chosen. `value` is required and must be non-empty: the event's
+  `key` defaults to the empty string and the listener never reads it, so a step
+  pressing nothing would fire the reducer and report success.
+
+  The browser tier does not run these two yet, and now says so by name rather
+  than reporting them as unknown actions.
+
+- d398cbc: fix: make the spec's own examples compile, and give each code one meaning.
+
+  **Every ` ```kumiki ` block in `docs/` is now checked.** Fewer than half of
+  them parsed: 27 blocks used `;` as a comment while `language.md` §1.2 defines
+  `#` as the comment and `;` as the statement separator — which the corpus uses
+  it as, so the conversion is per occurrence rather than wholesale. A block now
+  declares what it is (a complete program, a `fragment` of definitions, a
+  `snippet` of less than a definition, or a deliberately `invalid` example) and
+  each mark is falsifiable in both directions, so a wrong mark fails as loudly as
+  a wrong block. English and Japanese must mark the same block the same way.
+
+  **`ai-edit.md` defined a second table of diagnostic codes**, disagreeing with
+  `errors.md` on eleven of them — `E0302` meant "direct effect call" in one and
+  "unknown capability" in the other, in a document that calls a code a permanent
+  contract. The section now points at `errors.md`, and the spec-drift guard reads
+  every file that assigns a code (`typecheck.ts`, `cli/src/fix.ts`,
+  `mcp/src/index.ts`), not the checker alone. `E0000` — which those two tools
+  synthesize so a parse failure can appear in a list of diagnostics — is
+  documented rather than deleted; `--refs` no longer claims a band (`E05xx`) that
+  no code has ever belonged to.
+
+  Two implementation-side corrections came out of the same pass:
+
+  - **`Route` gains `pattern` and `hash`.** The router builds all five fields and
+    `routing.md` §3.2 documents all five; the compiler's standard-library table
+    had three, so a generated provider signature typed `route.pattern` as
+    `unknown`.
+  - **`toast` honours `duration` and carries its `kind`.** `lifecycle.md` §7.7
+    has always shown `duration: Option(Duration)` and the example corpus emits
+    it; the runtime ignored it and every `kind`, hardcoding three seconds. The
+    kind lands as `data-kumiki-toast-kind` with no built-in appearance (the call
+    `variant` makes on a button), and the toast is the `aria-live` region
+    `lifecycle.md` §7.8 lists as a runtime guarantee.
+
+- 79b221e: fix(runtime): serve the style the client paints, and make one `AppShape`
+  mounted twice mean two views of one app.
+
+  **SSR carried no styling at all.** `ssr-render.ts` did not contain the word
+  `props`, so a served page laid every flex container out as a block and reflowed
+  the moment hydration finished — the layout shift SSR exists to remove. The
+  prop-to-style mapping is now data (`containerStyleDecls` / `textStyleDecls`),
+  applied to an element by the renderers and serialised into a `style` attribute
+  by the server. A kind's own base layout stays with the per-kind switch on each
+  side, because the renderers are the per-app DCE unit; a test that renders one
+  node per kind both ways and compares the element, its attributes and its
+  CSSOM-normalised style is what keeps the two copies honest. It also found that
+  the icon placeholder used a different attribute than the renderer writes, the
+  spinner was a `div` where the client makes a labelled `span`, the skeleton had
+  none of its frame, and a `label` dropped its `for`.
+
+  A responsive value collapses to its base on the server — a breakpoint is a
+  question about a viewport it does not have. Class-backed layers (`transition`,
+  the `hover:` / `focus:` / `active:` blocks, motion) stay client-only.
+
+  **Mounting one shape twice froze the earlier mount.** Each mount overwrote the
+  shape's imperative seams, so the last one captured every event that resolved
+  through the shape: the first host's own buttons re-rendered the second, and
+  `el.setSlot` on the first element landed on the second. The spec says passing
+  the compiled default export rather than the `createApp` factory "shares one
+  instance across all elements of that tag", which is only worth saying if every
+  element stays live.
+
+  A shape carries the app's state, so a second mount is a second _view_. Where the
+  app is painted is now per view (the mounted element, the tree behind it, the map
+  the next reconcile diffs against) and what it says is shared, because the state
+  is. What the app owns once belongs to the first mount — `app.init`, `app.start`,
+  the timers, the router, the effect dispatcher — so a second view does not re-run
+  initialization or double a timer's ticks. Disposing a view leaves the others
+  interactive; the app is torn down with the last one, after which the shape starts
+  over — initialization, timers and router run again, while `app.live` keeps
+  whatever the app had written. Adding a view with `hydrate` throws rather than overlaying a server
+  snapshot onto a state that is already live.
+
+  Apps built with `createApp()` per instance are unaffected, and the multi-mount
+  isolation guarantees are unchanged.
+
+- b8bd5d9: fix: make the documented tile props reach the DOM.
+
+  **A prop's name had two spellings.** The compiler lowers a Kumiki name to a
+  JS-safe key (`test-id` → `test_id`, `max-w` → `max_w`), while `TileProps` is an
+  open record — so a runtime that read `props["max-w"]` type-checked, rendered,
+  and did nothing. Every app in the corpus set a page width that never applied.
+  The lowered name is now the only spelling the runtime reads, and the guard is a
+  table that starts from `.kumiki` source and ends at an attribute or a CSS
+  declaration, on both rendering paths: a hand-built `TileNode` can agree with the
+  runtime about a spelling the compiler never emits, which is how this survived a
+  suite that compared the two paths to each other.
+
+  **A named argument was dropped unless its kind lifted it.** The spec writes
+  `button(text="Log in", loading=pending)` a few lines from `{variant: "ghost"}`,
+  so the two forms have to arrive alike; instead, `image(alt="A cat")` satisfied
+  the a11y check and rendered no `alt`. Every named argument now folds into the
+  props — the generalization of the `id` fold that already existed for selector
+  matching — so it reaches the renderers and the `$el` payload from either form.
+
+  Now applied to **every kind**, client and server alike, because the mapping
+  moved out of the per-kind renderers and into the one pass that sees every
+  element: `class` (added to the runtime's own classes, not over them), `aria` and
+  a bare `aria-*`, `test-id` as `data-kumiki-test`, `role`, `id`, the style
+  shorthands (`bg`, `color`, `pad`, `pad-x` / `pad-y`, `gap-x` / `gap-y`,
+  `radius`, `shadow`, `size`, `weight`) and the sizing props (`w`, `h`, `min-w`,
+  `min-h`, `max-w`, `max-h`, `aspect`, `wrap`) — so a `max-w` on an `image` and a
+  `bg` on a `button`, both of which the spec's own examples write, now land. A
+  kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size`, a
+  `skeleton`'s `h`. `radius` and `shadow` read the theme sections of those names
+  rather than the spacing scale, and the SSR pass resolves the theme at all,
+  which it did not: a themed page was served with the unthemed defaults.
+
+  Per tile: a `button`'s `loading` (disabled, `aria-busy`, a spinner in front of
+  the label), `disabled` and `variant`; an `image`'s `width` / `height` /
+  `loading`; a `link`'s `external`; a `divider`'s `orientation`; and the input
+  family's `disabled` / `readonly` / `auto-complete`, which forms.md §5.3 calls
+  their common props. All of it is diffed on the reconcile's patch path, so a
+  `class` bound to a slot swaps rather than accumulates and a `max-w` that goes
+  away leaves.
+
+  **New diagnostic `E0705` (`a11y-label-for`)**, under `--strict-a11y`: a
+  `label {for: "x"}` whose literal target matches no `id="x"` anywhere in the
+  program. Two of the example apps had five such labels between them.
+
+  `style.md` §4.4.7 drops `"sm"` from `w`: there is no width scale in the theme,
+  so it was a token name with nothing behind it. `testing.md` §8.8 now names the
+  global that exists (`window.__kumikiApp.live`) instead of one that never did.
+
+- 4de2473: Close the blind spots that let a broken example stay green.
+
+  `kumiki smoke` and the test suite were two implementations of one pipeline and
+  disagreed about the same example: six examples reached real hosts, and whether
+  the DNS failure landed inside the settle window decided the outcome. They share
+  one loader now, and both install the same doubles — a `fetch` answered by the
+  example's own `<source>.http.json`, and an `IntersectionObserver` that actually
+  notifies, since happy-dom's `observe()` is a no-op and the runtime's prefetch
+  path was unreachable from either headless tier.
+
+  `smoke` also answers for two things it used to wave through: a render of nothing
+  but empty containers is now reported as not rendered, and forms are submitted —
+  after the fields inside them — so a form written without a submit button, the
+  shape the spec's own example uses, reaches its `ui.submit` reducer at all.
+
+  The scenario runner refuses what it cannot evaluate. The `expect` keys, the
+  action kinds and the document itself are closed sets, the browser tier's names
+  fail with a message saying so, and a scenario is checked before the app is
+  mounted. Two actions join: `wait`, so a debounce window or a retry backoff is
+  one step, and `submit`, whose selector may name the form or anything inside it.
+  The first paint is now a step of its own when it reports anything, so an
+  `app.init` effect that fails with no `.err` reducer fails the run instead of
+  being dropped.
+
+  The `Action` union gains `submit` and `wait` at both tiers; `@kumikijs/cli`
+  newly exports the test doubles (`installTestDoubles`, `useHttpFixture`,
+  `readHttpFixture`, `httpRequests`) and its app loader. A scenario that carried a
+  key nobody evaluated used to pass and now fails, which is the point.
+
 ## 0.12.0
 
 ### Minor Changes

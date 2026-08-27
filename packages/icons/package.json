@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/icons",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Kumiki built-in icon set — Heroicons solid SVG path data, keyed by name. Auto-bundled by @kumikijs/vite and the kumiki CLI.",
   "license": "Apache-2.0",

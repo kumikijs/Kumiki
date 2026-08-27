@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/compiler",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "module",
   "description": "Kumiki compiler — lexer, parser, typechecker, and code generator.",
   "license": "Apache-2.0",
