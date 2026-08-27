@@ -1,5 +1,114 @@
 # @kumikijs/mcp
 
+## 0.5.0
+
+### Minor Changes
+
+- bf37539: Stop `fix` from treating a warning as a file it cannot repair, and report the warnings it sets aside.
+
+  The fix-from-test path gated its behavioural tier on "does this file have diagnostics", counting advisory ones. A `W0212` anywhere in a file made `kumiki fix --auto-patch <test>` return `no-patch` without running the test at all — and the second gate did the same after a compile repair had already landed, so a successful repair reported the warning it revealed as what remained.
+
+  Warnings are now carried rather than dropped: `FixPlan`, `FixApplyResult` and `FixFromTestOutcome` each expose them, both `fix` modes report a clean-but-advisory file the way `check` does (`no errors (1 warning)`, exit 0) and list the warnings under every verdict, and `kumiki_fix` does the same — including on the wire, where the apply envelope now carries a `warnings` array beside `remaining`.
+
+- f48fd58: fix(mcp): the edit tools report what they did — the op-id, and the whole
+  cascade a `remove` took.
+
+  `kumiki_remove` answered `removed slot.count` for an operation that had also
+  deleted the reducers reading that slot, the tile rendering them, and the `app`
+  routing to that tile. The CLI has printed the cascade since the op log learned
+  to record it (spec/ai-edit.md §9.4.1); the MCP handler dropped the result on
+  the floor, so the surface agents actually drive was the one that said an edit
+  deleting six definitions had deleted one — and a file could lose its entry
+  point with nothing in the transcript to say so.
+
+  The op-id went the same way, in `kumiki_add`, `kumiki_replace`,
+  `kumiki_remove` and `kumiki_rename` alike, though the §9.7 tool table lists it
+  as the return value of all five edit tools. It is the handle `kumiki patch
+revert` takes, and what identifies the op among the entries `kumiki_history`
+  returns, so an agent that made an edit could not name it afterwards.
+
+  Both surfaces now format their report with one shared function, `describeEdit`,
+  newly exported from `@kumikijs/cli` — the CLI verbs print it and the MCP tools
+  return it, so the two cannot answer the same edit differently. CLI output is
+  unchanged, byte for byte.
+
+- 301b09a: chore: require Node 24.
+
+  Node 20 reached end of life, so every package's `engines.node` moves from
+  `>=20` (`>=20.6` for `@kumikijs/vite`, which needs the synchronous
+  `import.meta.resolve` that landed there) to `>=24`. CI builds and tests on 24
+  as well, matching the release workflow, which was already there.
+
+  **Breaking for anyone installing on Node 20 or 22**: the packages declare the
+  new floor, so `npm i` warns and an `engine-strict` install fails. Nothing in
+  the published code depends on a Node 24 API today — the bump states the
+  version the toolchain is actually tested on, rather than one that no longer
+  receives security fixes.
+
+- db8e843: fix: let the Vite plugin do what a bundler plugin is for.
+
+  **The runtime is no longer copied into every module.** `bundle` now defaults to
+  `false`, so the compiled module keeps its `import "@kumikijs/runtime"` and the
+  bundler ships one copy. The old default fought the pattern this plugin's own
+  documentation recommends — `mount` comes from that same package — so a project
+  that imported one `.kumiki` file built the runtime twice (129 kB against 82 kB
+  for the counter), and each further `.kumiki` import added another. Size was the
+  smaller half: the runtime keeps module-level state, and the injected
+  state-style sheet is found by DOM id while its sequence counter restarts per
+  copy. The plugin resolves the specifier from the project when it can and from
+  its own dependency otherwise, so a project that installed only `@kumikijs/vite`
+  still builds — with one copy either way. `bundle: true` remains for a module
+  that must stand alone.
+
+  **`generateDts` emitted TypeScript that did not compile.** A slot name is
+  allowed to be kebab-case, and it was written into the declaration bare
+  (`my-slot: string`); the generated helpers were called `Provider` / `Slots` /
+  `Providers`, which are among the likelier names a program declares itself. With
+  `types: true` both landed in the user's project and broke their `tsc`. Slot
+  names are now quoted — the spelling the emitted `slots` object actually uses —
+  the helpers are `KumikiProvider` / `KumikiSlots` / `KumikiProviders`, and a type
+  whose Kumiki name is not a TypeScript identifier is declared under one that is.
+  The guard runs a real `tsc` over the generated output.
+
+  **A parse error is now a diagnostic.** `compile()` returns type errors but
+  throws lex and parse errors, and the plugin only handled the returned form — so
+  the most common authoring mistake reached Vite's overlay as a stack of compiler
+  frames with no line to jump to. Both now arrive with file, line and column.
+
+  **`kumiki.caps.json` is found where a project would put it.** The lookup only
+  ever checked the directory holding the `.kumiki` file; a manifest at the project
+  root — where the rest of a Vite project's configuration lives — was ignored
+  without a word. It is now searched for from the source file up to the project
+  root — the nearest `package.json` — nearest manifest wins, and a
+  malformed manifest on that path is an error naming the file rather than a
+  silent fall-through. `E0302` now says which manifest was read, or which
+  directories were searched — in the plugin and in `kumiki check` / `kumiki
+build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
+  its `path` inputs get the widened search too.
+
+  The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
+  `import.meta.resolve` synchronous — the runtime fallback above is built on it.
+
+### Patch Changes
+
+- Updated dependencies [82cfa6c]
+- Updated dependencies [bf37539]
+- Updated dependencies [3b1f5e8]
+- Updated dependencies [7cce9ce]
+- Updated dependencies [f48fd58]
+- Updated dependencies [301b09a]
+- Updated dependencies [3e33233]
+- Updated dependencies [f04b1c5]
+- Updated dependencies [7a754ad]
+- Updated dependencies [c11152b]
+- Updated dependencies [d398cbc]
+- Updated dependencies [732cb16]
+- Updated dependencies [b8bd5d9]
+- Updated dependencies [4de2473]
+- Updated dependencies [db8e843]
+  - @kumikijs/compiler@0.13.0
+  - @kumikijs/cli@0.8.0
+
 ## 0.4.0
 
 ### Minor Changes

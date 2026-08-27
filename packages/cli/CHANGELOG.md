@@ -1,5 +1,282 @@
 # @kumikijs/cli
 
+## 0.8.0
+
+### Minor Changes
+
+- bf37539: Stop `fix` from treating a warning as a file it cannot repair, and report the warnings it sets aside.
+
+  The fix-from-test path gated its behavioural tier on "does this file have diagnostics", counting advisory ones. A `W0212` anywhere in a file made `kumiki fix --auto-patch <test>` return `no-patch` without running the test at all — and the second gate did the same after a compile repair had already landed, so a successful repair reported the warning it revealed as what remained.
+
+  Warnings are now carried rather than dropped: `FixPlan`, `FixApplyResult` and `FixFromTestOutcome` each expose them, both `fix` modes report a clean-but-advisory file the way `check` does (`no errors (1 warning)`, exit 0) and list the warnings under every verdict, and `kumiki_fix` does the same — including on the wire, where the apply envelope now carries a `warnings` array beside `remaining`.
+
+- f48fd58: fix(mcp): the edit tools report what they did — the op-id, and the whole
+  cascade a `remove` took.
+
+  `kumiki_remove` answered `removed slot.count` for an operation that had also
+  deleted the reducers reading that slot, the tile rendering them, and the `app`
+  routing to that tile. The CLI has printed the cascade since the op log learned
+  to record it (spec/ai-edit.md §9.4.1); the MCP handler dropped the result on
+  the floor, so the surface agents actually drive was the one that said an edit
+  deleting six definitions had deleted one — and a file could lose its entry
+  point with nothing in the transcript to say so.
+
+  The op-id went the same way, in `kumiki_add`, `kumiki_replace`,
+  `kumiki_remove` and `kumiki_rename` alike, though the §9.7 tool table lists it
+  as the return value of all five edit tools. It is the handle `kumiki patch
+revert` takes, and what identifies the op among the entries `kumiki_history`
+  returns, so an agent that made an edit could not name it afterwards.
+
+  Both surfaces now format their report with one shared function, `describeEdit`,
+  newly exported from `@kumikijs/cli` — the CLI verbs print it and the MCP tools
+  return it, so the two cannot answer the same edit differently. CLI output is
+  unchanged, byte for byte.
+
+- 301b09a: chore: require Node 24.
+
+  Node 20 reached end of life, so every package's `engines.node` moves from
+  `>=20` (`>=20.6` for `@kumikijs/vite`, which needs the synchronous
+  `import.meta.resolve` that landed there) to `>=24`. CI builds and tests on 24
+  as well, matching the release workflow, which was already there.
+
+  **Breaking for anyone installing on Node 20 or 22**: the packages declare the
+  new floor, so `npm i` warns and an `engine-strict` install fails. Nothing in
+  the published code depends on a Node 24 API today — the bump states the
+  version the toolchain is actually tested on, rather than one that no longer
+  receives security fixes.
+
+- 7a754ad: fix(compiler): report a `$route` the runtime never binds (E0119), and fix the
+  patch composition it exposed.
+
+  **E0119 `route-bind-out-of-scope`.** `$route` is not a name in a table — it is a
+  payload field the runtime fills in, on the route lifecycle path (`route.enter` /
+  `route.leave` / `route.error`) and on a link's prefetch path, and nowhere else.
+  Every other reducer read `{}`: each field off it came back `undefined`, so every
+  comparison against one was quietly false and the body did nothing. The check
+  names the `route` slot, which holds the current route and is readable from every
+  reducer, and `kumiki fix` proposes that rewrite.
+
+  The exemption for a prefetch target is by NAME, and deliberately so: a reducer
+  has one trigger and the check has no path sensitivity, so a reducer that is both
+  a prefetch target and triggered some other way is not reported on either path.
+  Exempting is the side that never rejects a working program.
+
+  The spec moved to match the runtime rather than the other way round: it named
+  enter/leave, and the runtime has always also bound `route.error` and the
+  prefetch target — `routing.md` §3.4 and `language.md` §1.6.5 now name all four.
+
+  **`kumiki fix` composes a plan by what each patch disturbs.** `AutoPatch` gains
+  a required `anchor`: `span` (writes at a position — composed from the right),
+  `line` (rewrites the first match on its line, so it can move a column no
+  position predicts — composed after every span), `region` (adds or extends text
+  elsewhere — composed last). Without it, one repair moved the column another was
+  measured at, the regression gate read the moved diagnostic as introduced, and
+  the whole plan rolled back with the file unchanged. `runFixFromTest`'s tier-1
+  repair, which writes with no gate at all, composed the same way and landed half
+  a plan.
+
+  A name-suggest repair now writes at the reported position when the position
+  really holds the name it quotes, and falls back to the line scan only where it
+  does not (E0211 reports at the reducer and names a tile).
+
+  Repairs no longer rewrite a file's line endings: editing a line used to
+  round-trip the whole file through `split(/\r?\n/).join("\n")`, turning a
+  one-token repair into a whole-file diff on any CRLF checkout.
+
+- 4de2473: Close the blind spots that let a broken example stay green.
+
+  `kumiki smoke` and the test suite were two implementations of one pipeline and
+  disagreed about the same example: six examples reached real hosts, and whether
+  the DNS failure landed inside the settle window decided the outcome. They share
+  one loader now, and both install the same doubles — a `fetch` answered by the
+  example's own `<source>.http.json`, and an `IntersectionObserver` that actually
+  notifies, since happy-dom's `observe()` is a no-op and the runtime's prefetch
+  path was unreachable from either headless tier.
+
+  `smoke` also answers for two things it used to wave through: a render of nothing
+  but empty containers is now reported as not rendered, and forms are submitted —
+  after the fields inside them — so a form written without a submit button, the
+  shape the spec's own example uses, reaches its `ui.submit` reducer at all.
+
+  The scenario runner refuses what it cannot evaluate. The `expect` keys, the
+  action kinds and the document itself are closed sets, the browser tier's names
+  fail with a message saying so, and a scenario is checked before the app is
+  mounted. Two actions join: `wait`, so a debounce window or a retry backoff is
+  one step, and `submit`, whose selector may name the form or anything inside it.
+  The first paint is now a step of its own when it reports anything, so an
+  `app.init` effect that fails with no `.err` reducer fails the run instead of
+  being dropped.
+
+  The `Action` union gains `submit` and `wait` at both tiers; `@kumikijs/cli`
+  newly exports the test doubles (`installTestDoubles`, `useHttpFixture`,
+  `readHttpFixture`, `httpRequests`) and its app loader. A scenario that carried a
+  key nobody evaluated used to pass and now fails, which is the point.
+
+- db8e843: fix: let the Vite plugin do what a bundler plugin is for.
+
+  **The runtime is no longer copied into every module.** `bundle` now defaults to
+  `false`, so the compiled module keeps its `import "@kumikijs/runtime"` and the
+  bundler ships one copy. The old default fought the pattern this plugin's own
+  documentation recommends — `mount` comes from that same package — so a project
+  that imported one `.kumiki` file built the runtime twice (129 kB against 82 kB
+  for the counter), and each further `.kumiki` import added another. Size was the
+  smaller half: the runtime keeps module-level state, and the injected
+  state-style sheet is found by DOM id while its sequence counter restarts per
+  copy. The plugin resolves the specifier from the project when it can and from
+  its own dependency otherwise, so a project that installed only `@kumikijs/vite`
+  still builds — with one copy either way. `bundle: true` remains for a module
+  that must stand alone.
+
+  **`generateDts` emitted TypeScript that did not compile.** A slot name is
+  allowed to be kebab-case, and it was written into the declaration bare
+  (`my-slot: string`); the generated helpers were called `Provider` / `Slots` /
+  `Providers`, which are among the likelier names a program declares itself. With
+  `types: true` both landed in the user's project and broke their `tsc`. Slot
+  names are now quoted — the spelling the emitted `slots` object actually uses —
+  the helpers are `KumikiProvider` / `KumikiSlots` / `KumikiProviders`, and a type
+  whose Kumiki name is not a TypeScript identifier is declared under one that is.
+  The guard runs a real `tsc` over the generated output.
+
+  **A parse error is now a diagnostic.** `compile()` returns type errors but
+  throws lex and parse errors, and the plugin only handled the returned form — so
+  the most common authoring mistake reached Vite's overlay as a stack of compiler
+  frames with no line to jump to. Both now arrive with file, line and column.
+
+  **`kumiki.caps.json` is found where a project would put it.** The lookup only
+  ever checked the directory holding the `.kumiki` file; a manifest at the project
+  root — where the rest of a Vite project's configuration lives — was ignored
+  without a word. It is now searched for from the source file up to the project
+  root — the nearest `package.json` — nearest manifest wins, and a
+  malformed manifest on that path is an error naming the file rather than a
+  silent fall-through. `E0302` now says which manifest was read, or which
+  directories were searched — in the plugin and in `kumiki check` / `kumiki
+build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
+  its `path` inputs get the widened search too.
+
+  The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
+  `import.meta.resolve` synchronous — the runtime fallback above is built on it.
+
+### Patch Changes
+
+- d398cbc: fix: make the spec's own examples compile, and give each code one meaning.
+
+  **Every ` ```kumiki ` block in `docs/` is now checked.** Fewer than half of
+  them parsed: 27 blocks used `;` as a comment while `language.md` §1.2 defines
+  `#` as the comment and `;` as the statement separator — which the corpus uses
+  it as, so the conversion is per occurrence rather than wholesale. A block now
+  declares what it is (a complete program, a `fragment` of definitions, a
+  `snippet` of less than a definition, or a deliberately `invalid` example) and
+  each mark is falsifiable in both directions, so a wrong mark fails as loudly as
+  a wrong block. English and Japanese must mark the same block the same way.
+
+  **`ai-edit.md` defined a second table of diagnostic codes**, disagreeing with
+  `errors.md` on eleven of them — `E0302` meant "direct effect call" in one and
+  "unknown capability" in the other, in a document that calls a code a permanent
+  contract. The section now points at `errors.md`, and the spec-drift guard reads
+  every file that assigns a code (`typecheck.ts`, `cli/src/fix.ts`,
+  `mcp/src/index.ts`), not the checker alone. `E0000` — which those two tools
+  synthesize so a parse failure can appear in a list of diagnostics — is
+  documented rather than deleted; `--refs` no longer claims a band (`E05xx`) that
+  no code has ever belonged to.
+
+  Two implementation-side corrections came out of the same pass:
+
+  - **`Route` gains `pattern` and `hash`.** The router builds all five fields and
+    `routing.md` §3.2 documents all five; the compiler's standard-library table
+    had three, so a generated provider signature typed `route.pattern` as
+    `unknown`.
+  - **`toast` honours `duration` and carries its `kind`.** `lifecycle.md` §7.7
+    has always shown `duration: Option(Duration)` and the example corpus emits
+    it; the runtime ignored it and every `kind`, hardcoding three seconds. The
+    kind lands as `data-kumiki-toast-kind` with no built-in appearance (the call
+    `variant` makes on a button), and the toast is the `aria-live` region
+    `lifecycle.md` §7.8 lists as a runtime guarantee.
+
+- 732cb16: fix(compiler): resolve the names a test body writes, and a call's qualifier.
+
+  Two holes of the same kind: a name that resolved to nothing, accepted because
+  nothing asked.
+
+  **A test body was not name-resolved at all.** `checkTest` walked a `given` for
+  misplaced wildcards, an invariant for `run-reducer`'s target, and an `expect`
+  for `<slots.X>` — none of which reaches `checkExpr`. What the lowering could
+  not read, it dropped:
+
+  | Written                           | `check` | `kumiki test`                             |
+  | --------------------------------- | ------- | ----------------------------------------- |
+  | `given = {slots: {conut: 3}}`     | ok      | passes — against the slot's default       |
+  | `given = {event: {target: Nope}}` | ok      | passes — the target is dropped either way |
+  | `invariant = doubel(n) == n * 2`  | ok      | "counterexample at n = 0"                 |
+
+  The last one is the sharpest: the property runner catches the trial's
+  `doubel is not defined` and renders it as a falsified invariant, so the output
+  accuses the code under test of a bug it does not have.
+
+  A test body cannot simply be handed to `checkExpr`, because it is a schema:
+  `event: {type: ui.click, target: B}` is an event pattern, `effects: [persist(x)]`
+  is a list of effects rather than of calls, and `mocks: {persist: err("x")}` is
+  neither. Each position is checked as what codegen lowers it as — a slot key is
+  a slot, an `effects` entry is an effect (standard ones included), an event
+  `target` is a tile when the trigger is a `ui.*` one, and everything the
+  lowering evaluates is an expression. `docs/spec/testing.md` §8.1.1 is the table.
+
+  Two positions are checked for _shape_, under the new **E0713**, because an
+  unrecognised one is not ignored but re-interpreted: a `reducer-test` mock that
+  is not `ok(...)` / `err(...)` / `delay(...)` became a _success_ mock, so a test
+  asserting what happens when an effect fails passed without ever failing it; and
+  an `expect.effects` that is not a list became the assertion that no effect was
+  emitted, so a forgotten pair of brackets replaced the test rather than
+  weakening it. Both throw at codegen too, so the check and the lowering cannot
+  drift apart.
+
+  `run-reducer` is refused outside a property-test invariant, where alone it can
+  lower: elsewhere the generated module reads `_init`, which nothing binds, and
+  the whole suite dies with `_init is not defined` before a single test reports.
+  Its argument is counted and required to be a reducer name — `run-reducer("inc")`
+  reached the runner as `reducer "" not found`.
+
+  **A call's qualifier resolved to nothing.** `T.fresh()` / `T.parse(t)` /
+  `T.show(v)` lower on any capitalised `T`, because codegen matches the shape by
+  regex — and the checker took that as its own rule. `parse` branches on the
+  qualifier, so a misspelling changed the value instead of failing:
+  `Int.parse("12")` is `Some(12)` and `Itn.parse("12")` is `Some("12")`, which an
+  `Int` slot then holds and every later sum concatenates. `fresh` and `show`
+  discard it, so those are checked because a qualifier naming no type is wrong on
+  its own terms. It is `E0117` now, with the sentence `resolveType` already
+  produced, so `kumiki fix`'s did-you-mean over type names covers it — and
+  `Int.pasre(t)` gets one too, built from the qualifier the author wrote.
+
+  **Breaking**, in two places:
+
+  - A test that named something undeclared no longer compiles: a slot key with a
+    typo, a `ui.*` event target that is not a tile, the old
+    `event: {kind: click, tile: B, id: none}` spelling (whose `kind` and `id`
+    values name nothing), and the two shapes above.
+  - `T.fresh()` and `T.show(v)` on an undeclared type are now `E0117`. Codegen
+    ignores the qualifier for those two, so this rejects a program that ran
+    correctly — `SessionId.fresh()` with no `type SessionId` is the shape to
+    expect.
+
+- Updated dependencies [82cfa6c]
+- Updated dependencies [85a792b]
+- Updated dependencies [3b1f5e8]
+- Updated dependencies [7cce9ce]
+- Updated dependencies [301b09a]
+- Updated dependencies [3e33233]
+- Updated dependencies [f04b1c5]
+- Updated dependencies [7a754ad]
+- Updated dependencies [c11152b]
+- Updated dependencies [080f358]
+- Updated dependencies [d398cbc]
+- Updated dependencies [79b221e]
+- Updated dependencies [732cb16]
+- Updated dependencies [b8bd5d9]
+- Updated dependencies [4de2473]
+- Updated dependencies [db8e843]
+  - @kumikijs/compiler@0.13.0
+  - @kumikijs/runtime@0.13.0
+  - @kumikijs/vite@0.6.0
+
 ## 0.7.0
 
 ### Minor Changes

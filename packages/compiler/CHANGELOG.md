@@ -1,5 +1,474 @@
 # @kumikijs/compiler
 
+## 0.13.0
+
+### Minor Changes
+
+- 82cfa6c: fix(compiler): count a built-in call's arguments, and stop supplying the ones it left out.
+
+  `checkCallee` resolved a builtin by name and then returned. The arguments were
+  whatever the lowering happened to read, and every lowering that read one
+  substituted a default when it was absent — so an omission became a plausible
+  value rather than a diagnostic:
+
+  | Written             | Lowered to                              |
+  | ------------------- | --------------------------------------- |
+  | `Duration.s()`      | `((0) * 1000)` — zero milliseconds      |
+  | `Bytes.from-text()` | `_s.bytesFromText("")`                  |
+  | `file-url()`        | `_s.fileUrl(undefined)`                 |
+  | `panic()`           | `_s.panic("")` — a stop with no message |
+  | `fmt()`             | `""`                                    |
+
+  `Duration.s()` is the sharpest: a timer written with an empty duration fires
+  immediately and forever, with `check`, `build` and `smoke` all green. Extra
+  arguments were equally unchecked — `Duration.s(1, 2, "x")` dropped the tail.
+
+  The callee tables now carry the count beside the name, so resolving a builtin
+  and knowing its arity are one lookup and a builtin cannot be added without
+  deciding it. A mismatch is `E0213` at the call site. What is checked is the
+  count and not the argument's type: `Decoder.Json(User)` still lowers to a
+  sentinel that ignores the type it was given.
+
+  `fmt` is the only name with a range: its signature is `fmt(template, ...args)`,
+  so the template is all that can be required and its message names a minimum.
+  `now` is held to none, but no call can break that — it is a keyword, and the
+  parser builds its zero-argument call itself.
+
+  Codegen's defaults are gone rather than unreachable: a lowering that needs an
+  argument and does not have one throws, with its position. That is not only a
+  guard for callers who skip `check` — `checkCallee` runs where `checkExpr`
+  walks, and an `app.http` field, a `test` body and an effect's
+  `policy=latest-per-key(...)` key are not walked, so a call that omits its
+  argument in one of those checks clean and fails the build.
+
+  **Breaking**: a call that was accepted because nothing counted it is now
+  rejected. `Duration.s()` and the rest of the table above are the ones that
+  mattered, and `Int.parse()` / `Time.show()` join them — both defaulted to `""`
+  and compiled. Two more are worth naming because they read as correct today —
+  `Decoder.Json` written without its payload type (the type is what makes the
+  decode type-safe, and a decoder that forgot it was indistinguishable from one
+  that had it), and `Decoder.Text(Text)` / `Decoder.Bytes(…)` / `Decoder.None(…)`
+  written _with_ an argument, which those three constants never had.
+
+- 3b1f5e8: fix(compiler): a handler bound to a tile name is reported instead of dropped.
+
+  `box(text("x"), onClick=Card)` passed `check` and compiled into an element
+  with no listener. A capitalised name written as a named argument of a builtin
+  that takes tiles parses as a tile call, and the checker asked what shape the
+  argument had before it asked whether the argument was a handler — so the
+  binding was checked as a nested tile and never reached the handler branch.
+  Codegen made the same reading and captured nothing, and the handler-name skip
+  that builds the element payload dropped it from the props as well. Both halves
+  agreed, which is why nothing reported it: the tile rendered, the click did
+  nothing, and no diagnostic anywhere said why.
+
+  The handler is now asked about first, in both forms and for every handler name,
+  and answers `E0201` — the same code `onClick=1` already gave. `W0213` comes
+  with it when the tile does not fire that event, as it already did for the
+  props-block form, which parses the same name as a variant tag and reported it
+  all along.
+
+  The cycle search made the same mis-reading one layer down: a handler naming an
+  enclosing tile reported `E0005`, that the tile "expands into itself", about a
+  tile that is never rendered there. It now skips handler arguments too. Only
+  programs that this release starts rejecting can reach that path — a handler
+  that names a reducer is a plain reference, which contributed no expansion edge
+  before or now.
+
+- 7cce9ce: feat(compiler): the arithmetic the spec documented now exists, as methods.
+
+  `docs/spec/stdlib.md` §2.4.4 listed twelve names under a `math` namespace. None
+  of them worked, and none could: a call qualifier is a capitalised name, so
+  `math.abs(x)` parses as a reference to a name called `math` and every call
+  reported `E0103`. Four of them — `abs`, `min`, `max`, `clamp` — already existed
+  one section earlier as methods on the number.
+
+  The rest are methods now: `floor`, `ceil`, `round`, `sqrt`, `log`, `exp` and
+  `pow(n)`, in both the `x.m` and `x.m()` forms for the argument-less ones.
+  `floor` / `ceil` / `round` are typed `Int` whatever they are given, `sqrt` /
+  `log` / `exp` are typed `Float`, and `pow` has no result type at all — `2.pow(3)`
+  is an `Int` and `2.pow(-1)` is `0.5` — so a `pow` expression is not checked
+  against its target, as `min` / `max` / `clamp` never were.
+
+  `math.random` becomes `random()`, a builtin call beside `now` and `fmt`. §2.4.4
+  made it "callable only inside a reducer (treated as an effect)" — a purity rule
+  no other builtin has, including `now`, which is just as non-deterministic. It is
+  callable wherever an expression is. It takes no arguments, and unlike the other
+  builtins says so: `random(1, 6)` is `E0213` rather than a silently ignored range
+  and a die that always rolls 1.
+
+  **Breaking**: `random` is now a reserved callee. A program that declares
+  `fn random()` still compiles, but the builtin wins at every call site, so the
+  calls take its `Float` result — reported at the call site rather than at the
+  definition that lost.
+
+  The arithmetic methods are also **members of a number only**. They were added to
+  a receiver-blind table, where `someText.round` passed and lowered to
+  `Math.round("hello")` — `NaN` into whatever it was assigned to. Every name in
+  §2.2.7 now reports `E0108` on a receiver whose type is known and is not `Int` or
+  `Float`, in both spellings; a receiver whose type is not known keeps the dynamic
+  pass-through. This also reaches four names that predate this change (`abs`,
+  `neg`, `to-float`, `to-int`), which had the same hole.
+
+  Writing a method that takes arguments without them — `f.pow`, `f.min` — is
+  `E0213` too. The parser produces a field access when there is no argument list,
+  which the arity check never saw, so those reached codegen's bracket fallback and
+  wrote `undefined` into the slot.
+
+  An argument outside a function's domain produces what the platform produces:
+  `(-1.0).sqrt` is `NaN` and `(0.0).log` is `-Infinity`, which `.show` renders as
+  those words. `round`'s ties go up, toward +∞ — `(-2.5).round` is `-2`. The spec
+  says both now rather than leaving them to be discovered.
+
+- 301b09a: chore: require Node 24.
+
+  Node 20 reached end of life, so every package's `engines.node` moves from
+  `>=20` (`>=20.6` for `@kumikijs/vite`, which needs the synchronous
+  `import.meta.resolve` that landed there) to `>=24`. CI builds and tests on 24
+  as well, matching the release workflow, which was already there.
+
+  **Breaking for anyone installing on Node 20 or 22**: the packages declare the
+  new floor, so `npm i` warns and an `engine-strict` install fails. Nothing in
+  the published code depends on a Node 24 API today — the bump states the
+  version the toolchain is actually tested on, rather than one that no longer
+  receives security fixes.
+
+- 3e33233: fix(compiler): tell two `nominal` types apart.
+
+  `unaliasType` stripped `nominal` before comparing, and every caller of the
+  assignability relation went through it — so a nominal type accepted any other
+  nominal over the same base:
+
+  ```kumiki
+  type Cents = nominal Int where positive
+  type Yen   = nominal Int where positive
+  slot c : Cents = 1
+  slot y : Yen   = 2
+  reducer mix on=ui.click(B) do= c := y      # ok
+  ```
+
+  Which is the one mistake `nominal` exists to catch, and the shape it guards is
+  everywhere: `packages/examples/apps/03-blog` declares `PostId` and `UserId` as
+  `nominal Text where uuid`, and `05-project-management` declares three such ids.
+  Confusing two of them was accepted by `check`, `build` and `smoke` alike, and
+  showed up as the wrong row being loaded.
+
+  A nominal type is now identified by **the name it is declared under**. Two
+  declarations over one base reject each other with `E0201`, naming both types as
+  written — `Expected Cents but got Yen`. An alias to a nominal names the same
+  type, and a `nominal` written inline at a use site declares no name and is still
+  compared structurally.
+
+  A type carrying **no nominal name of its own** meets any nominal declared over
+  it, in both directions, so nothing that compiled for the right reason stops
+  compiling: `slot c : Cents = 1` needs no construction form, and arithmetic
+  yields the base so `c := c + 1` stands. Every example, benchmark, spec block and
+  fixture in the repo passes unchanged.
+
+  A nominal declared over another nominal is a narrowing and goes one way:
+  `type Deep = nominal Cents` accepts a `Deep` where a `Cents` is required and
+  refuses a `Cents` where a `Deep` is. A deliberate conversion between two
+  unrelated nominals goes through the base they share, written as a `fn` whose
+  return type is the destination — `fn toUser(p: PostId) -> UserId = p + ""`. The
+  identity body is the same E0201; nothing checks that such a `fn` converts
+  anything, only that its body reached the base.
+
+  **Breaking** for a program that mixed two nominals: the standard library's
+  `Url`, `Email`, `Uuid`, `HttpStatus` and `Duration` are nominals too, so
+  `slot e : Email = someUrl` is now an error where it used to compile.
+
+  The refinement is unaffected: this check still never evaluates one, so
+  `volume := 50` on `nominal Int where between(0, 11)` is still well typed and the
+  range is still validation's question ([Forms §5.6](./forms.md)). So
+  are the operators: `==` is defined on every type, and ordering asks only whether
+  both sides share a family — number, text or time — which two nominals over a
+  number, text or time base always do, so neither `cents < yen` nor
+  `postId < userId` is reported. Over any other base the operator reports the
+  missing family itself, as it always did.
+
+  `docs/spec/language.md` §1.3.5 and `docs/spec/errors.md` E0201 disagreed about
+  this — §1.3.5 said `nominal` makes a new type, E0201 said it was transparent —
+  and both now state the rule above.
+
+- f04b1c5: fix: read a stdlib constant written without its parentheses.
+
+  `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` are values, and `http.md`
+  §6.1.4 writes them bare. Only `EffectId.none` ever parsed that way — the parser
+  carried a one-off for exactly that spelling — so every other constant fell
+  through to a field read on a variant named after the qualifier and emitted
+  `undefined`. `check` had no reason to object, and the emitted module was valid
+  JavaScript.
+
+  **It was not harmless.** The HTTP handler reads `decode ?? "json"`, so
+  `undefined` means json: a body meant to be discarded was parsed, and a 204 with
+  no body threw inside `res.json()` and took the `.err` branch. Two effects in the
+  blog example shipped that way.
+
+  The parser now reads a member of a constant namespace as a zero-argument call,
+  which is the channel typecheck and codegen already share with
+  `Decoder.Json(User)` — one decision site instead of three. A member these
+  namespaces do not have is an **E0116** now rather than silence followed by
+  `undefined`, and that includes the ones `TYPE_MEMBER_CALLS` used to resolve on
+  any capitalised qualifier: `EffectId.fresh` passed `check` and lowered to
+  `_s.freshId()`, minting a real id where the author wrote the empty sentinel, so
+  a later `http.cancel` on it cancelled nothing. `EffectId.show(h)` — the
+  qualified spelling of `h.show` — is unaffected; only the zero-argument form is
+  refused.
+
+  `Duration.*` and `Bytes.*` are deliberately not read this way: they take an
+  argument, and codegen defaults a missing one to `0` / `""` / `[]`. Both
+  outcomes are silent, so the choice is between two silences — a duration
+  defaulted to zero reads as a plausible value and survives, while `undefined`
+  fails the first thing that touches it.
+
+- 7a754ad: fix(compiler): report a `$route` the runtime never binds (E0119), and fix the
+  patch composition it exposed.
+
+  **E0119 `route-bind-out-of-scope`.** `$route` is not a name in a table — it is a
+  payload field the runtime fills in, on the route lifecycle path (`route.enter` /
+  `route.leave` / `route.error`) and on a link's prefetch path, and nowhere else.
+  Every other reducer read `{}`: each field off it came back `undefined`, so every
+  comparison against one was quietly false and the body did nothing. The check
+  names the `route` slot, which holds the current route and is readable from every
+  reducer, and `kumiki fix` proposes that rewrite.
+
+  The exemption for a prefetch target is by NAME, and deliberately so: a reducer
+  has one trigger and the check has no path sensitivity, so a reducer that is both
+  a prefetch target and triggered some other way is not reported on either path.
+  Exempting is the side that never rejects a working program.
+
+  The spec moved to match the runtime rather than the other way round: it named
+  enter/leave, and the runtime has always also bound `route.error` and the
+  prefetch target — `routing.md` §3.4 and `language.md` §1.6.5 now name all four.
+
+  **`kumiki fix` composes a plan by what each patch disturbs.** `AutoPatch` gains
+  a required `anchor`: `span` (writes at a position — composed from the right),
+  `line` (rewrites the first match on its line, so it can move a column no
+  position predicts — composed after every span), `region` (adds or extends text
+  elsewhere — composed last). Without it, one repair moved the column another was
+  measured at, the regression gate read the moved diagnostic as introduced, and
+  the whole plan rolled back with the file unchanged. `runFixFromTest`'s tier-1
+  repair, which writes with no gate at all, composed the same way and landed half
+  a plan.
+
+  A name-suggest repair now writes at the reported position when the position
+  really holds the name it quotes, and falls back to the line scan only where it
+  does not (E0211 reports at the reducer and names a tile).
+
+  Repairs no longer rewrite a file's line endings: editing a line used to
+  round-trip the whole file through `split(/\r?\n/).join("\n")`, turning a
+  one-token repair into a whole-file diff on any CRLF checkout.
+
+- c11152b: Reject a direct route read in an `app.init` argument, and check init arguments in the scope they are lowered in.
+
+  `route` and `$route` written in an init argument now report `E0120 route-in-app-init`. Those arguments are evaluated once, while the app object is built; the route is installed by the mount that follows, so the read captured `undefined` and the app threw at mount with `check` and `build` both clean. A read reached through a `fn` call is not covered — the check looks at the reference, not at the call graph.
+
+  The checker walked init arguments in a reducer scope while codegen lowered them in the plain one. It now uses the same scope, which makes an `emit` expression there the purity error it always was (`E0305`) instead of a `_emits.push(…)` in the app object literal — a `ReferenceError` at import, so nothing mounted at all.
+
+  A `let` or pattern binding named `route` or `$route` is that binding, in both the checker and codegen: neither report fires on a shadowed name. `$route` was already being reported that way outside `app.init`, and no longer is.
+
+- d398cbc: fix: make the spec's own examples compile, and give each code one meaning.
+
+  **Every ` ```kumiki ` block in `docs/` is now checked.** Fewer than half of
+  them parsed: 27 blocks used `;` as a comment while `language.md` §1.2 defines
+  `#` as the comment and `;` as the statement separator — which the corpus uses
+  it as, so the conversion is per occurrence rather than wholesale. A block now
+  declares what it is (a complete program, a `fragment` of definitions, a
+  `snippet` of less than a definition, or a deliberately `invalid` example) and
+  each mark is falsifiable in both directions, so a wrong mark fails as loudly as
+  a wrong block. English and Japanese must mark the same block the same way.
+
+  **`ai-edit.md` defined a second table of diagnostic codes**, disagreeing with
+  `errors.md` on eleven of them — `E0302` meant "direct effect call" in one and
+  "unknown capability" in the other, in a document that calls a code a permanent
+  contract. The section now points at `errors.md`, and the spec-drift guard reads
+  every file that assigns a code (`typecheck.ts`, `cli/src/fix.ts`,
+  `mcp/src/index.ts`), not the checker alone. `E0000` — which those two tools
+  synthesize so a parse failure can appear in a list of diagnostics — is
+  documented rather than deleted; `--refs` no longer claims a band (`E05xx`) that
+  no code has ever belonged to.
+
+  Two implementation-side corrections came out of the same pass:
+
+  - **`Route` gains `pattern` and `hash`.** The router builds all five fields and
+    `routing.md` §3.2 documents all five; the compiler's standard-library table
+    had three, so a generated provider signature typed `route.pattern` as
+    `unknown`.
+  - **`toast` honours `duration` and carries its `kind`.** `lifecycle.md` §7.7
+    has always shown `duration: Option(Duration)` and the example corpus emits
+    it; the runtime ignored it and every `kind`, hardcoding three seconds. The
+    kind lands as `data-kumiki-toast-kind` with no built-in appearance (the call
+    `variant` makes on a button), and the toast is the `aria-live` region
+    `lifecycle.md` §7.8 lists as a runtime guarantee.
+
+- 732cb16: fix(compiler): resolve the names a test body writes, and a call's qualifier.
+
+  Two holes of the same kind: a name that resolved to nothing, accepted because
+  nothing asked.
+
+  **A test body was not name-resolved at all.** `checkTest` walked a `given` for
+  misplaced wildcards, an invariant for `run-reducer`'s target, and an `expect`
+  for `<slots.X>` — none of which reaches `checkExpr`. What the lowering could
+  not read, it dropped:
+
+  | Written                           | `check` | `kumiki test`                             |
+  | --------------------------------- | ------- | ----------------------------------------- |
+  | `given = {slots: {conut: 3}}`     | ok      | passes — against the slot's default       |
+  | `given = {event: {target: Nope}}` | ok      | passes — the target is dropped either way |
+  | `invariant = doubel(n) == n * 2`  | ok      | "counterexample at n = 0"                 |
+
+  The last one is the sharpest: the property runner catches the trial's
+  `doubel is not defined` and renders it as a falsified invariant, so the output
+  accuses the code under test of a bug it does not have.
+
+  A test body cannot simply be handed to `checkExpr`, because it is a schema:
+  `event: {type: ui.click, target: B}` is an event pattern, `effects: [persist(x)]`
+  is a list of effects rather than of calls, and `mocks: {persist: err("x")}` is
+  neither. Each position is checked as what codegen lowers it as — a slot key is
+  a slot, an `effects` entry is an effect (standard ones included), an event
+  `target` is a tile when the trigger is a `ui.*` one, and everything the
+  lowering evaluates is an expression. `docs/spec/testing.md` §8.1.1 is the table.
+
+  Two positions are checked for _shape_, under the new **E0713**, because an
+  unrecognised one is not ignored but re-interpreted: a `reducer-test` mock that
+  is not `ok(...)` / `err(...)` / `delay(...)` became a _success_ mock, so a test
+  asserting what happens when an effect fails passed without ever failing it; and
+  an `expect.effects` that is not a list became the assertion that no effect was
+  emitted, so a forgotten pair of brackets replaced the test rather than
+  weakening it. Both throw at codegen too, so the check and the lowering cannot
+  drift apart.
+
+  `run-reducer` is refused outside a property-test invariant, where alone it can
+  lower: elsewhere the generated module reads `_init`, which nothing binds, and
+  the whole suite dies with `_init is not defined` before a single test reports.
+  Its argument is counted and required to be a reducer name — `run-reducer("inc")`
+  reached the runner as `reducer "" not found`.
+
+  **A call's qualifier resolved to nothing.** `T.fresh()` / `T.parse(t)` /
+  `T.show(v)` lower on any capitalised `T`, because codegen matches the shape by
+  regex — and the checker took that as its own rule. `parse` branches on the
+  qualifier, so a misspelling changed the value instead of failing:
+  `Int.parse("12")` is `Some(12)` and `Itn.parse("12")` is `Some("12")`, which an
+  `Int` slot then holds and every later sum concatenates. `fresh` and `show`
+  discard it, so those are checked because a qualifier naming no type is wrong on
+  its own terms. It is `E0117` now, with the sentence `resolveType` already
+  produced, so `kumiki fix`'s did-you-mean over type names covers it — and
+  `Int.pasre(t)` gets one too, built from the qualifier the author wrote.
+
+  **Breaking**, in two places:
+
+  - A test that named something undeclared no longer compiles: a slot key with a
+    typo, a `ui.*` event target that is not a tile, the old
+    `event: {kind: click, tile: B, id: none}` spelling (whose `kind` and `id`
+    values name nothing), and the two shapes above.
+  - `T.fresh()` and `T.show(v)` on an undeclared type are now `E0117`. Codegen
+    ignores the qualifier for those two, so this rejects a program that ran
+    correctly — `SessionId.fresh()` with no `type SessionId` is the shape to
+    expect.
+
+- b8bd5d9: fix: make the documented tile props reach the DOM.
+
+  **A prop's name had two spellings.** The compiler lowers a Kumiki name to a
+  JS-safe key (`test-id` → `test_id`, `max-w` → `max_w`), while `TileProps` is an
+  open record — so a runtime that read `props["max-w"]` type-checked, rendered,
+  and did nothing. Every app in the corpus set a page width that never applied.
+  The lowered name is now the only spelling the runtime reads, and the guard is a
+  table that starts from `.kumiki` source and ends at an attribute or a CSS
+  declaration, on both rendering paths: a hand-built `TileNode` can agree with the
+  runtime about a spelling the compiler never emits, which is how this survived a
+  suite that compared the two paths to each other.
+
+  **A named argument was dropped unless its kind lifted it.** The spec writes
+  `button(text="Log in", loading=pending)` a few lines from `{variant: "ghost"}`,
+  so the two forms have to arrive alike; instead, `image(alt="A cat")` satisfied
+  the a11y check and rendered no `alt`. Every named argument now folds into the
+  props — the generalization of the `id` fold that already existed for selector
+  matching — so it reaches the renderers and the `$el` payload from either form.
+
+  Now applied to **every kind**, client and server alike, because the mapping
+  moved out of the per-kind renderers and into the one pass that sees every
+  element: `class` (added to the runtime's own classes, not over them), `aria` and
+  a bare `aria-*`, `test-id` as `data-kumiki-test`, `role`, `id`, the style
+  shorthands (`bg`, `color`, `pad`, `pad-x` / `pad-y`, `gap-x` / `gap-y`,
+  `radius`, `shadow`, `size`, `weight`) and the sizing props (`w`, `h`, `min-w`,
+  `min-h`, `max-w`, `max-h`, `aspect`, `wrap`) — so a `max-w` on an `image` and a
+  `bg` on a `button`, both of which the spec's own examples write, now land. A
+  kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size`, a
+  `skeleton`'s `h`. `radius` and `shadow` read the theme sections of those names
+  rather than the spacing scale, and the SSR pass resolves the theme at all,
+  which it did not: a themed page was served with the unthemed defaults.
+
+  Per tile: a `button`'s `loading` (disabled, `aria-busy`, a spinner in front of
+  the label), `disabled` and `variant`; an `image`'s `width` / `height` /
+  `loading`; a `link`'s `external`; a `divider`'s `orientation`; and the input
+  family's `disabled` / `readonly` / `auto-complete`, which forms.md §5.3 calls
+  their common props. All of it is diffed on the reconcile's patch path, so a
+  `class` bound to a slot swaps rather than accumulates and a `max-w` that goes
+  away leaves.
+
+  **New diagnostic `E0705` (`a11y-label-for`)**, under `--strict-a11y`: a
+  `label {for: "x"}` whose literal target matches no `id="x"` anywhere in the
+  program. Two of the example apps had five such labels between them.
+
+  `style.md` §4.4.7 drops `"sm"` from `w`: there is no width scale in the theme,
+  so it was a token name with nothing behind it. `testing.md` §8.8 now names the
+  global that exists (`window.__kumikiApp.live`) instead of one that never did.
+
+- db8e843: fix: let the Vite plugin do what a bundler plugin is for.
+
+  **The runtime is no longer copied into every module.** `bundle` now defaults to
+  `false`, so the compiled module keeps its `import "@kumikijs/runtime"` and the
+  bundler ships one copy. The old default fought the pattern this plugin's own
+  documentation recommends — `mount` comes from that same package — so a project
+  that imported one `.kumiki` file built the runtime twice (129 kB against 82 kB
+  for the counter), and each further `.kumiki` import added another. Size was the
+  smaller half: the runtime keeps module-level state, and the injected
+  state-style sheet is found by DOM id while its sequence counter restarts per
+  copy. The plugin resolves the specifier from the project when it can and from
+  its own dependency otherwise, so a project that installed only `@kumikijs/vite`
+  still builds — with one copy either way. `bundle: true` remains for a module
+  that must stand alone.
+
+  **`generateDts` emitted TypeScript that did not compile.** A slot name is
+  allowed to be kebab-case, and it was written into the declaration bare
+  (`my-slot: string`); the generated helpers were called `Provider` / `Slots` /
+  `Providers`, which are among the likelier names a program declares itself. With
+  `types: true` both landed in the user's project and broke their `tsc`. Slot
+  names are now quoted — the spelling the emitted `slots` object actually uses —
+  the helpers are `KumikiProvider` / `KumikiSlots` / `KumikiProviders`, and a type
+  whose Kumiki name is not a TypeScript identifier is declared under one that is.
+  The guard runs a real `tsc` over the generated output.
+
+  **A parse error is now a diagnostic.** `compile()` returns type errors but
+  throws lex and parse errors, and the plugin only handled the returned form — so
+  the most common authoring mistake reached Vite's overlay as a stack of compiler
+  frames with no line to jump to. Both now arrive with file, line and column.
+
+  **`kumiki.caps.json` is found where a project would put it.** The lookup only
+  ever checked the directory holding the `.kumiki` file; a manifest at the project
+  root — where the rest of a Vite project's configuration lives — was ignored
+  without a word. It is now searched for from the source file up to the project
+  root — the nearest `package.json` — nearest manifest wins, and a
+  malformed manifest on that path is an error naming the file rather than a
+  silent fall-through. `E0302` now says which manifest was read, or which
+  directories were searched — in the plugin and in `kumiki check` / `kumiki
+build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
+  its `path` inputs get the widened search too.
+
+  The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
+  `import.meta.resolve` synchronous — the runtime fallback above is built on it.
+
+### Patch Changes
+
+- Updated dependencies [85a792b]
+- Updated dependencies [301b09a]
+- Updated dependencies [080f358]
+- Updated dependencies [d398cbc]
+- Updated dependencies [79b221e]
+- Updated dependencies [b8bd5d9]
+- Updated dependencies [4de2473]
+  - @kumikijs/runtime@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes
