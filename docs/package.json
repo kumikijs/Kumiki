@@ -9,7 +9,8 @@
     "dev": "vitepress dev",
     "build": "vitepress build",
     "preview": "vitepress preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@kumikijs/compiler": "workspace:*",
@@ -18,6 +19,8 @@
     "shiki": "^4.2.0"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
     "vite": "catalog:",
     "vitepress": "catalog:",
     "vitest": "catalog:",

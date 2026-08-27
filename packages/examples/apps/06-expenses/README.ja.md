@@ -16,11 +16,17 @@
 - フィルタトグルと、フィルタに影響されない合計
 - 追加後の入力欄クリア
 
-## 検証
+## 実行
+
+以下のコマンドはすべて**リポジトリルート**で実行する。
 
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts smoke examples/apps/06-expenses/app.kumiki
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts run   examples/apps/06-expenses/app.kumiki examples/apps/06-expenses/scenario.json
+pnpm kumiki check packages/examples/apps/06-expenses/app.kumiki
+pnpm kumiki build packages/examples/apps/06-expenses/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/06-expenses/app.kumiki
+pnpm kumiki run packages/examples/apps/06-expenses/app.kumiki packages/examples/apps/06-expenses/scenario.json
 ```
 
-`scenario.json` は要件を実行可能な受け入れ基準（AC）に落としたもの。`tests/` が CI で実行する。
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。
+
+関連仕様: [stdlib](../../../../docs/ja/spec/stdlib.md) / [testing](../../../../docs/ja/spec/testing.md)

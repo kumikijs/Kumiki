@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { replaceDef } from "../mutate.ts";
+import { describeEdit, replaceDef } from "../mutate.ts";
 import { resolveBody } from "./_shared/body-input.ts";
 import { requireValue } from "./_shared/value.ts";
 
@@ -33,7 +33,7 @@ export function registerReplace(program: Command): void {
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         try {
           const opId = replaceDef(resolve(process.cwd(), file), qname, body);
-          console.log(`replaced ${qname}  (${opId})`);
+          console.log(describeEdit({ op: "replace", qname, opId }));
         } catch (e) {
           console.error(String(e));
           process.exit(1);

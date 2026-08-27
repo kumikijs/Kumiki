@@ -13,9 +13,9 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Float` | 64-bit floating point | `3.14`, `-0.5` |
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
-| `Bytes` | byte sequence | no literal; `Bytes.from-text()` / `Bytes.from-base64()` / `Bytes.from-bytes()` (see §2.2.10) |
-| `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse()` |
-| `EffectId` | opaque handle returned by `emit` (see §2.1.1.1) | no literal; `EffectId.none` |
+| `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see [§2.2.10](#_2-2-10-bytes)) |
+| `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse(text)` |
+| `EffectId` | opaque handle returned by `emit` (see [§2.1.1.1](#_2-1-1-1-effectid)) | no literal; `EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
 
@@ -50,10 +50,11 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (nanoseconds) |
-| `Route` | `{path: Text, params: Map(Text, Text), query: Map(Text, Text)}` |
+| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Text, cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` |
 
 ---
 
@@ -80,16 +81,16 @@ map(expr)                   : Map(K, V')       ; within expr, $1=key, $2=value
 
 `.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda can handle them as `$1=key, $2=value` via runtime destructuring:
 
-```kumiki
+```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
    = m.entries.sort-by($2.createdAt).map($1)
 ```
 
 `get-or` is a polymorphic method that **can also be used for Option**:
 
-```kumiki
-m.get-or(k, default)         ; Map: default if there is no value
-opt.get-or(default)          ; Option: default if None, v if Some(v)
+```kumiki snippet
+m.get-or(k, default)         # Map: default if there is no value
+opt.get-or(default)          # Option: default if None, v if Some(v)
 ```
 
 `.filter` **can be used on both List and Map**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):
@@ -141,11 +142,11 @@ zip(other)                  : List(Tuple(T, U))
 
 **Parenthesis-free shortcut**: argument-less methods (`is-empty` / `length` / `reverse` / `sort` / `unique` / `head` / `tail` / `last`) **can omit `()` and be written like a field**:
 
-```kumiki
+```kumiki fragment
 slot todos : List(Todo) = []
-fn count() -> Int = todos.length              ; parenthesis-free OK
-fn empty?() -> Bool = todos.is-empty          ; same as above
-fn norm() -> List(Todo) = todos.reverse       ; same as above
+fn count() -> Int = todos.length              # parenthesis-free OK
+fn empty() -> Bool = todos.is-empty           # same as above
+fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
 > **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
@@ -207,8 +208,16 @@ parse-float                 : Option(Float)
 
 ```
 abs, neg, min(b), max(b), clamp(lo, hi)
+floor, ceil, round                            ; -> Int
+sqrt, log, exp, pow(n)                        ; log is the natural logarithm
 show, to-float (Int), to-int (Float, truncated)
 ```
+
+`floor` / `ceil` / `round` are *typed* `Int` whatever they are given, and `round`'s ties go up, toward +∞ — `(-2.5).round` is `-2`. `sqrt` / `log` / `exp` are typed `Float`. `pow` has no result type at all: `2.pow(3)` is an `Int` and `2.pow(-1)` is `0.5`, so the receiver does not decide it, and a `pow` expression is not checked against its target.
+
+These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier is a capitalised name, so `math.abs(x)` is a reference to a name called `math` and reports [E0103](./errors.md#e0103-undef-ref-undef-slot).
+
+An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
 
@@ -223,6 +232,23 @@ diff(other)                 : Duration
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 ```
 
+`format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:
+
+| token | field |
+|---|---|
+| `yyyy` | year, 4 digits |
+| `MM` | month, `01`–`12` |
+| `dd` | day of month, `01`–`31` |
+| `HH` | hour, `00`–`23` |
+| `mm` | minute, `00`–`59` |
+| `ss` | second, `00`–`59` |
+
+Every occurrence of a token is replaced, including one inside a word: `format("summer dd")` renders `su05er 14`, because `mm` is a token wherever it appears. There is no escape — a pattern is tokens and separators (`-`, `/`, `:`, spaces), not prose.
+
+The fields are **local** ones. The result carries no timezone in it, so it is read as the reader's wall clock; UTC fields would show the wrong day to every reader whose local date differs from the UTC one at that moment — after midnight east of Greenwich, and during the evening west of it.
+
+`Time.parse` yields the instant as a millisecond number, the same representation [§2.2.9](#_2-2-9-duration) gives every `Time`; text that names no instant — including the empty string — is `None`. A **date-only** string is read as **local** midnight, not the UTC midnight the platform's own parser gives it: `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string.
+
 ### 2.2.9 Duration
 
 ```
@@ -236,7 +262,7 @@ to-ms                       : Int
 
 Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
 
-```kumiki
+```kumiki fragment
 fn isSoon(due: Time) -> Bool = due < now.plus(Duration.h(72))
 fn elapsed(start: Time) -> Duration = now.diff(start)
 ```
@@ -283,6 +309,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `code` | code | `lang` |
 | `markdown` | Markdown rendering | (content is the argument) |
 
+`link` `external` opens the link in a new browsing context (`target="_blank"`, with the `rel="noopener noreferrer"` that has to accompany it) and leaves it to the browser rather than the router.
+
 ### 2.3.3 Media Elements
 
 | Element | Role | Main props |
@@ -290,6 +318,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `image` | image | `src`, `alt`, `width`, `height`, `loading` |
 | `icon` | icon | `name`, `size` |
 | `video` | video | `src`, `controls`, `autoplay` |
+
+`image` `width` / `height` are written as attributes, which is what reserves the box before the image arrives; `loading` takes `lazy` or `eager`.
 
 ### 2.3.4 Input Elements
 
@@ -304,6 +334,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
+
+`button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
 
 ### 2.3.5 Forms
 
@@ -330,11 +362,12 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 | Element | Role | Main props |
 |---|---|---|
+| `overlay` | z-axis stack: the first child is the base layer, each later child is placed over it — the substrate the rest of this table is built on ([Style §4.4.3](./style.md#_4-4-3-stack)) | `align` |
 | `modal` | modal | `open`, `onClose`, `title` |
 | `drawer` | drawer | `open`, `onClose`, `side` |
 | `tooltip` | tooltip | `text`, `placement` |
 | `popover` | popover | `open`, `onClose`, `placement` |
-| `toast` | toast notification | `kind` (info/success/warn/error), `text` |
+| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-level`, with no built-in appearance), `text`, `duration` (see [Lifecycle §7.7](./lifecycle.md#_7-7-toasts) for the per-kind defaults) |
 | `details` | native `<details>` disclosure (#190) — `summary` labels the header; children make up the collapsible panel | `summary`, `open` |
 
 ### 2.3.8 Feedback
@@ -361,13 +394,22 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 Every tile accepts the following common props (built-in):
 
-| prop | Type | Meaning |
+| prop | Type | Becomes |
 |---|---|---|
-| `class` | `Text` | style class name |
-| `style` | `Map(Text, Text)` | inline style (minimal use recommended) |
-| `aria` | `Map(Text, Text)` | ARIA attributes |
-| `key` | `Text` | uniquely identifies an element within a for |
-| `test-id` | `Text` | ID for testing |
+| `class` | `Text` | class tokens, **added** to the classes the runtime puts on the element |
+| `style` | `Map(Text, Text)` | inline style declarations — each key is a CSS property, applied after the shorthands so it wins (minimal use recommended) |
+| `aria` | `Map(Text, Text)` | one `aria-*` attribute per entry; a key already spelled `aria-…` is not prefixed twice |
+| `key` | `Text` | tile identity across renders — lifted out of the props, never an attribute |
+| `test-id` | `Text` | the `data-kumiki-test` attribute ([Testing §8.8](./testing.md#_8-8-integration-tests-browser-driven)) |
+| `id` | `Text` | the element's `id`, and the `#id` half of a reducer's selector ([§1.6.2](./language.md#_1-6-2-selectors)) |
+| `role` | `Text` | the `role` attribute, replacing whatever the tile kind assumes |
+| `aria-*` | `Text` | that ARIA attribute, written on its own instead of through the `aria` map |
+
+`class` / `style` are the escape hatch [Style §4.1](./style.md#_4-1-policy) describes. All of the above apply to **every kind**, and so do the style shorthands ([§4.3.1](./style.md#_4-3-1-shorthand-properties)) and the sizing props ([§4.4.7](./style.md#_4-4-7-sizing)): the runtime writes them outside the per-kind renderers, so a `max-w` on an `image` and a `bg` on a `button` land, and a tile a host registered ([Runtime §10.3.10](./runtime.md#_10-3-10-stable-tile-identity)) gets them too.
+
+A kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size` picks the size of the thing rather than a typography token, and a `skeleton`'s `h` is its placeholder height.
+
+Both rendering paths write them: what a mounted element carries, a served page carries. The exception is the class-backed layers (`transition`, the `hover:` / `focus:` / `active:` blocks, `motion`), which are injected CSS and exist only after hydration.
 
 ---
 
@@ -392,20 +434,23 @@ TypeName.parse(text)       : Option(T)    ; string parsing of a nominal type
 TypeName.show(value)       : Text         ; the string representation of a value
 ```
 
-### 2.4.4 Math
+### 2.4.4 Randomness
 
 ```
-math.abs, math.min, math.max, math.clamp
-math.floor, math.ceil, math.round
-math.sqrt, math.pow, math.log, math.exp
-math.random                : Float        ; callable only inside a reducer (treated as an effect)
+random()                   : Float        ; 0 <= x < 1
 ```
+
+The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the number.
+
+`random()` reads the environment the way `now` does, and like `now` it is callable wherever an expression is. Its answer is different every time it is read, so it takes its parentheses.
 
 ### 2.4.5 String Formatting
 
 ```
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
+
+Substitution is **not implemented yet**: the runtime carries no `fmt` helper, so a `fmt` call evaluates to its template with the placeholders intact — `fmt("{0}-{1}", "a", "b")` is `"{0}-{1}"`. The call is still counted ([E0213](./errors.md#e0213-call-arity-mismatch)) against the signature above, not against that gap.
 
 When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically.
 
@@ -415,6 +460,8 @@ When you concatenate `Text` with another type using `+`, the equivalent of `show
 trace(label, value)        : T            ; records to the episode log with a label, returns the value as is
 panic(message)             : never        ; stops the program (inside a reducer only)
 ```
+
+`trace` is **not implemented yet**: a lowered expression has no route to the mount's episode logger, so recording one needs a runtime seam that does not exist. `check` reports [E0802](./errors.md#e0802-unimplemented-function) for a call to it, rather than letting the name become an undefined global at evaluation time. `panic` is implemented.
 
 ---
 
@@ -443,7 +490,7 @@ Writing a capability in `app.caps` that is neither standard nor registered is a 
 
 #### Registering custom capabilities (`kumiki.caps.json`)
 
-A project can extend the accepted set with a **`kumiki.caps.json`** manifest placed in the same directory as the `.kumiki` file:
+A project can extend the accepted set with a **`kumiki.caps.json`** manifest:
 
 ```json
 {
@@ -455,7 +502,9 @@ A project can extend the accepted set with a **`kumiki.caps.json`** manifest pla
 
 Each entry is a capability name in `group.action` form (lowercase, dot-separated) — either a bare string or an object with a `description`. A registered name is then accepted in `app.caps`, and an effect bound to it (`effect track cap=telemetry.track …`) becomes emittable and is dispatched at the capability boundary — and is mockable in scenarios exactly like a standard effect. A name already in the standard set must not be re-declared.
 
-This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [27-custom-capability](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
+**Where the manifest is looked for.** The manifest registers capabilities for a *project*, so it is searched for from the directory holding the `.kumiki` file upwards, one directory at a time, up to and including the project root — the nearest directory holding a `package.json`, or the filesystem root when there is none. The bound is the same for every tool: a host's own notion of a project root (Vite's `root`, which for `kumiki dev` is the `.kumiki` file's own directory) does not narrow it, because one file must resolve to one manifest whichever tool reads it. The **nearest** manifest is the one that is read; the rest are not consulted. A manifest on that path that exists but is malformed is an error naming the file, never a silent fall-through to one further up. When a name in `app.caps` is still unregistered, [E0302](./errors.md#e0302-unknown-capability) is reported, and `kumiki check` / `kumiki build` / the Vite plugin name the manifest they read, or the directories they searched.
+
+This is a **capability-boundary registration: a declarative manifest, not new syntax or arbitrary code** — consistent with Kumiki's non-goal of macro/DSL extension. Working example: [27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki) (+ its `kumiki.caps.json`).
 
 #### Supplying the implementation (host capability providers)
 
@@ -494,11 +543,13 @@ The compiled bundle auto-mounts to `#root`; a host embedding the bundle can regi
 
 The standard effect corresponding to each capability. If the capability is in `app.caps`, it is automatically usable.
 
+The converse is checked too: emitting one of these without its capability in `app.caps` is [E0301](./errors.md#e0301-missing-capability). They have no `effect` declaration to read a `cap=` off — the runtime registers them itself — so the requirement comes from the capability each is registered behind, written with each effect below. This section lists all of them, and it is the list the compiler holds.
+
 → For the detailed specification, see [HTTP / Storage](./http.md).
 
 ### 2.6.1 Navigation
 
-```kumiki
+```kumiki fragment
 effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text)}  out=Unit
 effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text)} out=Unit
 effect navigate-back   cap=nav.back  in=Unit  out=Unit
@@ -506,15 +557,35 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 Toast
 
-```kumiki
-effect toast       cap=notification.show  in={kind: Text, text: Text}  out=Unit
+The banner the runtime renders carries `data-kumiki-toast` (the marker a test selects on) and `data-level`.
+
+```kumiki fragment
+effect toast       cap=notification.show
+                   in={kind: Text, text: Text, duration: Option(Duration)}
+                   out=Unit
 ```
 
 ### 2.6.3 Log
 
-```kumiki
+```kumiki fragment
 effect log         cap=log.write    in={level: Text, message: Text, data: Map(Text, Text)}  out=Unit
 ```
+
+### 2.6.4 Scroll
+
+```kumiki snippet
+effect scroll-to   in={x: Int, y: Int}  out=Unit
+```
+
+The one standard effect with no capability: it moves the viewport of the page the user is already looking at, and reaches nothing outside it. → [Routing §3.9](./routing.md#_3-9-scroll-restoration).
+
+### 2.6.5 Confirm
+
+```kumiki fragment
+effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
+```
+
+Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. → [Lifecycle §7.6](./lifecycle.md#_7-6-confirmation-dialogs).
 
 ---
 
@@ -522,7 +593,7 @@ effect log         cap=log.write    in={level: Text, message: Text, data: Map(Te
 
 Types such as `Money`, `Percent`, and `Decimal` are defined on the application side using `nominal`. Kumiki is unopinionated.
 
-```kumiki
+```kumiki fragment
 type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```

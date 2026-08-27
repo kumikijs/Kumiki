@@ -1,0 +1,49 @@
+{
+  "steps": [
+    {
+      "label": "mode=true, so the live branch is the one wired to `alpha`",
+      "expect": {
+        "noErrors": true,
+        "state": { "mode": true, "log": "" },
+        "domIncludes": ["log=[] mode=true"]
+      }
+    },
+    {
+      "label": "clicking it runs alpha",
+      "do": { "clickText": "act" },
+      "expect": { "noErrors": true, "state": { "log": "A" }, "domIncludes": ["log=[A] mode=true"] }
+    },
+    {
+      "label": "flip to the else branch — same kind, same label, different reducer",
+      "do": { "clickText": "flip" },
+      "expect": {
+        "noErrors": true,
+        "state": { "mode": false },
+        "domIncludes": ["log=[A] mode=false"]
+      }
+    },
+    {
+      "label": "the reused element must now reach `beta`, not the `alpha` it was created with",
+      "do": { "clickText": "act" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "AB" },
+        "domIncludes": ["log=[AB] mode=false"]
+      }
+    },
+    {
+      "label": "flipping back restores `alpha` — the refresh is not a one-shot",
+      "do": { "clickText": "flip" },
+      "expect": { "noErrors": true, "state": { "mode": true } }
+    },
+    {
+      "label": "and alpha runs again",
+      "do": { "clickText": "act" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "ABA" },
+        "domIncludes": ["log=[ABA] mode=true"]
+      }
+    }
+  ]
+}

@@ -107,7 +107,7 @@ fn sessionLabel(s: Option(Session)) -> Text
 reducer boot      on=app.start             do= emit loadSession()
                                                emit fetchIndex()
 
-reducer sessIn    on=loadSession.ok($s,_)  do= session := $s.get-or(None)
+reducer sessIn    on=loadSession.ok($s,_)  do= session := $s
 
 reducer indexIn
     on=fetchIndex.ok($l, _)
@@ -174,7 +174,7 @@ reducer startEdit
 
 reducer editorReady
     on=fetchPost.ok($p, $id)
-    do= if $route.pattern == "/posts/:id/edit" && $route.params.get-or("id", "") == $id.show
+    do= if route.pattern == "/posts/:id/edit" && route.params.get-or("id", "") == $id.show
         then editor := Some({title: $p.title, body: $p.body, tags: $p.tags})
         else ()
 
@@ -184,7 +184,7 @@ reducer editBody   on=ui.input(BodyInput)  do= editor.get.body  := $event.value
 reducer saveEdit
     on=ui.click(SaveEditBtn)
     do= editSaving := true
-        match routeId($route) with
+        match routeId(route) with
             | Some(pid) -> emit savePost({id: pid, title: editor.get.title,
                                           body: editor.get.body, tags: editor.get.tags})
             | None      -> ()

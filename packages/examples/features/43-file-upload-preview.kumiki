@@ -13,7 +13,7 @@ reducer pickFile
 
 tile Preview
     = when(avatar.is-some,
-        image(src=file-url(avatar.get)) {w: 100, h: 100})
+        image(src=file-url(avatar.get), alt="Selected avatar") {w: 100, h: 100})
 
 tile App = column(AvatarPicker, Preview) {pad: "lg", gap: "md"}
 

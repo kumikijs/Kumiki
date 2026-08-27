@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "the declared types are what renders: Float division and a matched union tag",
+      "expect": {
+        "noErrors": true,
+        "state": { "status": { "_tag": "Idle" } },
+        "domIncludes": ["21°C = 69.8°F", "idle", "18°C", "21°C", "forecast 70°F"]
+      }
+    },
+    {
+      "label": "a record patch keeps every other field and the union carries its payload",
+      "do": { "clickText": "+1°C" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "reading": { "label": "outside", "celsius": 22 },
+          "status": { "_tag": "Done", "_0": 22 }
+        },
+        "domIncludes": ["22°C = 71.6°F", "done at 22", "outside"]
+      }
+    },
+    {
+      "label": "a Fahrenheit reaches a Celsius field only through the conversion, and arrives converted",
+      "do": { "clickText": "use forecast" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "reading": { "label": "forecast", "celsius": 21 },
+          "forecast": 70
+        },
+        "domIncludes": ["21°C = 69.8°F", "loading", "forecast 70°F"]
+      }
+    },
+    {
+      "label": "the largest exactly-representable Int survives the round trip into an Option",
+      "do": { "clickText": "reset" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "reading": { "label": "outside", "celsius": 21 },
+          "lastRun": { "_tag": "Some", "_0": 9007199254740991 }
+        },
+        "domIncludes": ["21°C = 69.8°F", "idle"]
+      }
+    }
+  ]
+}

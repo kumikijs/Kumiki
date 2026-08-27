@@ -1,0 +1,43 @@
+{
+  "GET /api/posts": {
+    "json": ["9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60", "3a7b8c91-4d5e-4f60-8a1b-2c3d4e5f6071"]
+  },
+  "GET /api/posts/9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60": {
+    "json": {
+      "id": "9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60",
+      "title": "Seven layers, one file",
+      "body": "Every definition stands on its own.",
+      "authorId": "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "tags": ["kumiki", "design"]
+    }
+  },
+  "GET /api/posts/3a7b8c91-4d5e-4f60-8a1b-2c3d4e5f6071": {
+    "json": {
+      "id": "3a7b8c91-4d5e-4f60-8a1b-2c3d4e5f6071",
+      "title": "Reading a diff instead of a screen",
+      "body": "The oracle is app state, not pixels.",
+      "authorId": "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+      "publishedAt": "2026-02-02T12:30:00.000Z",
+      "tags": ["testing"]
+    }
+  },
+  "POST /api/auth/login": {
+    "json": {
+      "userId": "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+      "token": "session-token"
+    }
+  },
+  "POST /api/auth/logout": { "status": 204 },
+  "PUT /api/posts/9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60": {
+    "json": {
+      "id": "9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60",
+      "title": "Seven layers, one file",
+      "body": "Every definition stands on its own.",
+      "authorId": "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+      "publishedAt": "2026-01-15T09:00:00.000Z",
+      "tags": ["kumiki", "design"]
+    }
+  },
+  "DELETE /api/posts/9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60": { "status": 204 }
+}

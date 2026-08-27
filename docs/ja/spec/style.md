@@ -1,5 +1,7 @@
 # スタイル・レイアウト・テーマ
 
+tile がどう見た目を得るか。CSS は書かない — その理由が [§4.1](#_4-1-方針)、アプリが参照するデザイントークンが [§4.2](#_4-2-design-tokens)、tile が受け取るレイアウト props が [§4.4](#_4-4-レイアウト) にある。
+
 ## 4.1 方針
 
 Kumiki は **CSS を直接書かせない**。CSS のカスケード・特異度・継承は AI にとって最大の隠れた依存源で、Kumiki の「副作用静的追跡」原則と相反する。
@@ -19,7 +21,7 @@ Kumiki は **CSS を直接書かせない**。CSS のカスケード・特異度
 
 `theme` 定義で宣言する：
 
-```kumiki
+```kumiki fragment
 theme DefaultTheme = {
     colors: {
         bg:        "#ffffff",
@@ -75,7 +77,7 @@ theme-entry ::= identifier ':' (string | '{' theme-entry (',' theme-entry)* '}')
 
 ### 4.2.2 app への適用
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
@@ -89,7 +91,7 @@ app TodoApp
 
 tile prop の中でトークンを参照する場合、`@` 接頭辞を使う：
 
-```kumiki
+```kumiki fragment
 tile Card = box(
               column(
                 heading("Title"),
@@ -105,7 +107,7 @@ tile Card = box(
 
 `@colors.surface` は theme から解決される。テーマ切り替え時に自動で再描画される。
 
-### 4.3.1 短縮プロパティ
+### 4.3.1 短縮プロパティ {#_4-3-1-shorthand-properties}
 
 頻出のスタイル props は **共通 props** として提供され、`@` を書かなくても解決される：
 
@@ -121,7 +123,7 @@ tile Card = box(
 | `size` | typography.size token name | `size: "lg"` |
 | `weight` | typography.weight token name | `weight: "bold"` |
 
-```kumiki
+```kumiki fragment
 tile Card = box(
               column(
                 heading("Title") {size: "lg", weight: "bold"},
@@ -144,7 +146,7 @@ tile Card = box(
 
 ### 4.4.1 row / column
 
-```kumiki
+```kumiki snippet
 row(A, B, C) {gap: "md", align: "center", justify: "between"}
 column(A, B, C) {gap: "sm", align: "stretch"}
 ```
@@ -158,9 +160,9 @@ column(A, B, C) {gap: "sm", align: "stretch"}
 
 ### 4.4.2 grid
 
-```kumiki
+```kumiki snippet
 grid(A, B, C, D) {cols: 2, gap: "md"}
-grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     ; 数値 or 配列
+grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     # 数値 or 配列
 ```
 
 | prop | 値 |
@@ -174,13 +176,13 @@ grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     ; 数値 or 配列
 
 `stack` は **vertical stack** — `column` と意味的に同等のレイアウト（子を縦並びに積む）。視覚的な「積み重ね」のニュアンスがほしい時に使う。
 
-```kumiki
+```kumiki snippet
 stack(Card1, Card2, Card3) {gap: "md"}
 ```
 
 **オーバーレイ（z 軸方向の重ね配置）.** z 軸方向に子を重ねるには `overlay` builtin を使う：
 
-```kumiki
+```kumiki snippet
 overlay(Content, when(modalOpen, Modal())) {align: "center"}
 ```
 
@@ -195,7 +197,7 @@ overlay(Content, when(modalOpen, Modal())) {align: "center"}
 | `scroll` | overflow auto なコンテナ。`h` 指定で固定高スクロール |
 | `fieldset` | form 内のフィールドグループ。`<fieldset>` 相当 |
 
-```kumiki
+```kumiki snippet
 panel(heading("Settings"), settingsForm) {bg: "surface", pad: "md"}
 region(navList) {role: "navigation", aria-label: "Main"}
 scroll(longList) {h: 400}
@@ -203,17 +205,20 @@ scroll(longList) {h: 400}
 
 ### 4.4.5 divider
 
-水平線（`<hr>`）。区切り用：
+区切り線（`<hr>`）：
 
-```kumiki
+```kumiki snippet
 column(A, divider(), B)
+row(A, divider() {orientation: "vertical"}, B)
 ```
+
+`orientation` は `horizontal`（既定）または `vertical` を取る。垂直の線は入っている行の高さいっぱいに伸びる。
 
 ### 4.4.6 box
 
 汎用コンテナ。pad/bg/radius/shadow などで装飾する：
 
-```kumiki
+```kumiki snippet
 box(content) {
     pad: "lg",
     bg: "primary",
@@ -222,16 +227,18 @@ box(content) {
 }
 ```
 
-### 4.4.7 サイズ
+### 4.4.7 サイズ {#_4-4-7-sizing}
 
 | prop | 意味 |
 |---|---|
-| `w` | width。`"full"` / `"auto"` / `"sm"` / 数値（px） |
+| `w` | width。`"full"`（包含ボックス全体）/ 数値（px）/ 任意の CSS 長さ |
 | `h` | height |
 | `min-w`, `min-h`, `max-w`, `max-h` | min/max |
 | `aspect` | `"1/1"` / `"16/9"` 等 |
 
-```kumiki
+`pad` / `gap` / `radius` / `shadow` と違い、これらはトークン名ではない——テーマに幅のスケールは存在せず、ここでの `"sm"` は中身のない名前になる。数値は px、それ以外は CSS としてそのまま渡る（`"auto"`、`"50vh"`、`"32rem"`）。唯一の略記が `"full"` である。
+
+```kumiki snippet
 image(src=url) {w: "full", max-w: 600, aspect: "16/9"}
 ```
 
@@ -241,7 +248,7 @@ image(src=url) {w: "full", max-w: 600, aspect: "16/9"}
 
 スタイル props はオブジェクトでブレイクポイント分岐できる：
 
-```kumiki
+```kumiki snippet
 column(A, B, C) {
     gap: {base: "sm", md: "md", lg: "lg"},
     pad: {base: "md", lg: "xl"}
@@ -256,11 +263,11 @@ grid(A, B, C, D) {
 
 ---
 
-## 4.6 ダークモード
+## 4.6 ダークモード {#_4-6-dark-mode}
 
 複数 theme を定義し、`slot theme-name` を切り替える：
 
-```kumiki
+```kumiki snippet
 theme Light = {colors: {bg: "#fff", fg: "#000", ...}, ...}
 theme Dark  = {colors: {bg: "#0a0a0a", fg: "#fff", ...}, ...}
 
@@ -274,14 +281,16 @@ app App
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
     init   = []
-    theme  = themeName        ; slot を直接指す
+    theme  = themeName        # slot を直接指す
 ```
 
-`theme = themeName` のように slot を指定すると、その値が変わるたびにテーマが切り替わる。`themeName` の値は宣言された theme 名のいずれか（コンパイラがチェック）。
+`theme = themeName` のように slot を指定すると、その値が変わるたびにテーマが切り替わる。
+
+この節に書く名前はコンパイラが解決する：宣言済みの `theme` か宣言済みの slot でなければならず、それ以外は [E0118](./errors.md#e0118-undef-theme) になる。一方、その slot が保持する**値**は検査しない。宣言された theme 名のいずれかであるべきで — 上の例もそうなっている — しかし常にそうである必要はない：`app.start` でテーマを決めるアプリ（[§4.6.1](#_4-6-1-os-設定への追従)）は、ヘルパが動かなかったことを可視化するために、どの theme も指さないセンチネルから slot を始めてよい。センチネルと綴り間違いは同じプログラムであり、区別には意図が要る。どの theme にも一致しない値は、組み込みの既定値で描画される。
 
 ### 4.6.1 OS 設定への追従
 
-```kumiki
+```kumiki fragment
 reducer initTheme
     on=app.start
     do= themeName := if prefers-dark() then "Dark" else "Light"
@@ -295,11 +304,11 @@ reducer initTheme
 
 タイルプリミティブは状態別 props を持つ：
 
-```kumiki
+```kumiki snippet
 button(text="Save") {
     bg: "primary",
     color: "bg",
-    hover: {bg: "primary-dark"},      ; トークン未定義なら警告
+    hover: {bg: "primary-dark"},      # 未知のトークンは CSS 値としてそのまま渡る
     focus: {shadow: "md"},
     disabled: {bg: "muted", color: "border"}
 }
@@ -313,20 +322,53 @@ button(text="Save") {
 
 `icon` 要素は名前で参照する：
 
-```kumiki
+```kumiki snippet
 icon(name="check") {size: "md", color: "success"}
 ```
 
-組み込みアイコンセットを提供予定（リストは後日）。カスタムアイコンは `theme.icons` でパス登録：
+### 4.8.1 組み込みセット
 
-```kumiki
+閉じた名前集合を `@kumikijs/icons` が提供する（Heroicons v2 Solid、24×24、単一パス、fill ベース）。ツールチェイン（`@kumikijs/vite` と `kumiki` CLI）はコンパイル済みタイルから `icon(name=<リテラル>)` 呼び出しを走査し、参照された分のパスデータだけを生成後の `App.icons` に焼き込む。アイコンを使わないアプリのバンドルコストはゼロ。
+
+初期セットの名前を用途別に示す：
+
+- **状態**: `check`, `check-circle`, `x`, `x-circle`, `info`, `alert-triangle`, `alert-circle`, `help-circle`, `shield-check`, `shield-exclamation`
+- **ナビゲーション**: `chevron-up`, `chevron-down`, `chevron-left`, `chevron-right`, `chevrons-left`, `chevrons-right`, `arrow-up`, `arrow-down`, `arrow-left`, `arrow-right`, `arrow-up-right`, `arrow-down-left`, `caret-up`, `caret-down`
+- **アクション**: `plus`, `minus`, `edit`, `pencil`, `trash`, `save`, `copy`, `clipboard`, `search`, `filter`, `refresh`, `settings`, `more-horizontal`, `more-vertical`, `share`, `print`
+- **一般**: `home`, `user`, `users`, `bell`, `calendar`, `clock`, `star`, `heart`, `bookmark`, `eye`, `eye-off`, `menu`, `sun`, `moon`
+- **ファイル / リンク**: `file`, `file-text`, `folder`, `folder-open`, `download`, `upload`, `external-link`, `link`, `paperclip`, `image`
+- **認証 / デバイス**: `lock`, `unlock`, `key`, `mail`, `phone`, `camera`, `microphone`, `wifi`
+
+自動バンドルは `name` が文字列リテラルのとき（例：`icon(name="check")`）にだけ働く。動的な形（slot 参照、`if` 式、計算値）はそのまま残り、レンダリング時に `theme.icons` だけで解決される——組み込みレジストリは参照されない。未使用パスをツールチェインが刈り取れるよう、またタイポをコンパイル時のシグナルとして受け取れるよう、リテラル名を優先すること。
+
+### 4.8.2 props
+
+| prop | 効果 |
+|---|---|
+| `size: "sm" \| "md" \| "lg" \| "xl"` | 16 / 24 / 32 / 48 px のボックス。数値は px として扱う。それ以外の文字列はそのまま通す（`"1.5em"`）。既定は `1em` なので、アイコンは周囲のフォントサイズを継承する。 |
+| `color: <theme-color> \| <css color>` | `theme.colors` に対して解決される。SVG は `currentColor` で塗られる。 |
+
+### 4.8.3 カスタムアイコンと上書き — `theme.icons`
+
+カスタム名の登録も、組み込みの上書きも `theme.icons` で行う。値は 24×24 の viewBox に置く単一の `<path>` の `d` 属性——組み込みセットと同じ規約：
+
+```kumiki snippet
 theme MyTheme = {
     ...,
     icons: {
-        logo: "M3 3h18v18H3z..."     ; SVG path
+        logo:  "M3 3h18v18H3z..."     # カスタム名
+        check: "M4 12l5 5L20 6"        # 組み込みを上書き
     }
 }
 ```
+
+レンダリング時の解決順は `theme.icons[name]` → コンパイル時に焼き込んだ組み込み（`App.icons[name]`）→ `[name]` プレースホルダへのフォールバック。プレースホルダは未知の名前をレンダリングを壊さずに可視化するので、smoke 実行でタイポが表に出る。
+
+`@kumikijs/icons` を入れないスタンドアロンのアプリでも `icon(name=…)` は使える——必要な名前をすべて `theme.icons` に登録すればよい。
+
+### 4.8.4 strict モード {#_4-8-4-strict-mode}
+
+フェイルソフトな `[name]` プレースホルダは AI ファーストの記述にとって正しい既定だが、厳格なパイプラインはフェイルファストな検査をオプトインできる。`kumiki check --strict-icons`（および Vite プラグインの `{ strictIcons: true }`）は、`@kumikijs/icons` にもソース中のどの `theme.icons` ブロックにも無い名前を持つリテラルの `icon(name="<x>")` を、すべて check 時の `E0704 unknown-icon` 診断に変える。動的な `icon(name=<expr>)` は検査対象外のまま——名前は check 時に解決できず、ランタイムのプレースホルダに落ちる。
 
 ---
 
@@ -341,7 +383,7 @@ theme MyTheme = {
 
 `when` で表示切替したタイルに自動適用される：
 
-```kumiki
+```kumiki snippet
 when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 ```
 
@@ -349,7 +391,7 @@ when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 
 再利用可能で任意（ただし閉じた文法）のアニメーション — スピナー、パルス、独自の入退場 — には **`motion`** を宣言する。これは `theme` と同格のトップレベル定義（純粋に表示用の定義で、7 つのロジックレイヤーには**含めない** — [レイヤ一覧](./language.md#_1-1-1-list-of-layers) 参照）であり、任意の tile の `motion` プロップから参照する。
 
-```kumiki
+```kumiki fragment
 motion Spin = {
     keyframes: {from: {rotate: 0}, to: {rotate: 360}},
     duration:  "slow",        # "fast" | "normal" | "slow"、または正の Int（ミリ秒）
@@ -379,7 +421,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
 
 ---
 
-## 4.10 グローバル CSS / リセット
+## 4.10 グローバル CSS / リセット {#_4-10-global-css-reset}
 
 ランタイムは最小リセット CSS を埋め込む。アプリ側からの追加は **意図的に不可能**。
 
@@ -387,7 +429,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
 
 例外：`<head>` への meta タグ・OG 画像などは `app.meta` で宣言：
 
-```kumiki
+```kumiki snippet
 app TodoApp
     ...
     meta = {

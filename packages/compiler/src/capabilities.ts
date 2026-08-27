@@ -35,6 +35,26 @@ export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
   "socket.send",
 ]);
 
+/**
+ * The effects the runtime registers itself (docs/spec/stdlib.md §2.6), mapped
+ * to the capability each one is gated on — `null` for the one that needs none.
+ *
+ * They are not `effect` declarations, so nothing in a program says what they
+ * require; without this table the capability check has no capability to look
+ * at and passes. The runtime has no such gap: an undeclared capability there
+ * drops the effect with a console warning, so `emit navigate(…)` under
+ * `caps=[]` compiles, mounts, and silently does nothing.
+ */
+export const BUILTIN_EFFECT_CAPS: ReadonlyMap<string, string | null> = new Map([
+  ["navigate", "nav.push"],
+  ["navigate-replace", "nav.replace"],
+  ["navigate-back", "nav.back"],
+  ["scroll-to", null],
+  ["toast", "notification.show"],
+  ["confirm", "notification.show"],
+  ["log", "log.write"],
+]);
+
 export type CapabilityManifest = { capabilities: string[] };
 
 export type ManifestResult =

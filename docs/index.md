@@ -33,9 +33,9 @@ features:
     details: Per-feature minimal examples and apps ordered by size. Questions and bugs are answered by adding an example and a test.
 ---
 
-## Same UI, different philosophy
+## The same app, twice
 
-The same app in two worlds: [fetch example](https://github.com/kage1020/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
+One fetch-and-render screen, written both ways: [fetch example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
 
 <div class="home-compare">
 <div class="home-compare-col">
@@ -130,7 +130,7 @@ export function App() {
 
 Want to change it? It's loaded in the [Playground](/guide/playground).
 
-What to notice:
+Three differences survive into every app you write:
 
 - **`policy=latest` is one annotation.** Dropping stale responses in React is a hand-written `AbortController` ritual — exactly the kind of outside-the-text machinery that breaks when an AI edits it.
 - **The side effect is declared, not hidden.** `caps = [http.get]` is checked by the compiler; an effect with an undeclared capability is a compile error, not a surprise.

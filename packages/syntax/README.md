@@ -1,6 +1,6 @@
 # @kumikijs/syntax
 
-TextMate grammar for the [Kumiki](https://github.com/kage1020/Kumiki) language —
+TextMate grammar for the [Kumiki](https://github.com/kumikijs/Kumiki) language —
 syntax highlighting for `.kumiki` files in Shiki, VitePress, VS Code, or any
 TextMate-compatible highlighter.
 

@@ -228,4 +228,28 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(d1).toBe("M1 1 L2 2");
     expect(d2).toBe("M9 9 L8 8");
   });
+
+  // T1-T5 are all about apps that must NOT share. The other half of the
+  // registry's job is the shape mounted twice on purpose, which resolves to one
+  // app from both roots and paints both — see `shared-mount.test.ts` for what
+  // that app then owns once. Here: the registry maps two roots to one app, and
+  // dropping one leaves the other resolvable.
+  it("resolves both roots of one shape to that shape, and survives one being dropped (T8)", () => {
+    const app = makeBindApp();
+    const root1 = freshRoot();
+    const root2 = freshRoot();
+    const first = mount(app, root1);
+    mount(app, root2);
+
+    expect(resolveApp(root1.querySelector("input") as Element)).toBe(app);
+    expect(resolveApp(root2.querySelector("input") as Element)).toBe(app);
+
+    typeInto(root1.querySelector("input") as HTMLInputElement, "shared");
+    expect(app.live?.text).toBe("shared");
+    expect(root2.textContent ?? "").toContain("Text: shared");
+
+    first.dispose();
+    expect(root1.hasAttribute("data-kumiki-root")).toBe(false);
+    expect(resolveApp(root2.querySelector("input") as Element)).toBe(app);
+  });
 });

@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been measured yet",
+      "expect": { "noErrors": true, "state": { "clicks": 0 }, "domIncludes": ["Clicks: 0"] }
+    },
+    {
+      "label": "the click advances the slot and sends one measurement carrying the NEW count",
+      "do": { "clickText": "Bump" },
+      "expect": { "noErrors": true, "state": { "clicks": 1 }, "domIncludes": ["Clicks: 1"] }
+    },
+    {
+      "label": "and each further click sends its own",
+      "do": { "clickText": "Bump" },
+      "expect": { "noErrors": true, "state": { "clicks": 2 }, "domIncludes": ["Clicks: 2"] }
+    }
+  ]
+}

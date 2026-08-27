@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 
 const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
 
@@ -33,7 +34,8 @@ describe("codegen", () => {
     expect(result.js).toContain("_reducers");
     // Handlers dispatch through the instance's own `App`; the global stays as
     // a tooling state oracle only.
-    expect(result.js).toContain('App._dispatch("inc"');
+    expect(result.js).toContain('_h("inc")');
+    expect(result.js).toContain("App._dispatch(n, el)");
     expect(result.js).toContain("globalThis.__kumikiApp = App;");
   });
 
@@ -154,7 +156,7 @@ describe("codegen", () => {
     // A custom cap (registered via kumiki.caps.json → `capabilities`) has no
     // built-in implementation. Instead of the old "not implemented" stub, the
     // generated invoke resolves the host-supplied provider at the capability
-    // boundary (caps.provider(cap)) and errors clearly when none is registered.
+    // boundary (_caps.provider(cap)) and errors clearly when none is registered.
     const src = `
       slot sent : Int = 0
       effect track cap=telemetry.track in={name: Text} out=Unit
@@ -170,7 +172,7 @@ describe("codegen", () => {
     });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('caps.provider("telemetry.track")');
+    expect(result.js).toContain('_caps.provider("telemetry.track")');
     expect(result.js).toContain("Capability telemetry.track has no provider");
     expect(result.js).not.toContain("not implemented");
     // The auto-mount call threads host providers through.
@@ -193,8 +195,8 @@ describe("codegen", () => {
     });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('caps.provider("telemetry.track")');
-    expect(result.js).toMatch(/const req = .*;\s*const p = caps\.provider/s);
+    expect(result.js).toContain('_caps.provider("telemetry.track")');
+    expect(result.js).toMatch(/const _req = .*;\s*const _provider = _caps\.provider/s);
   });
 
   it("emits a default-exported App module instead of auto-mounting when exportApp is set", () => {
@@ -224,7 +226,7 @@ describe("codegen", () => {
     const src = `
       slot xs : List(Int) = []
       effect load cap=http.get in={url: Url} out=Unit
-      reducer go on=ui.click(B) do= emit load({url: Url})
+      reducer go on=ui.click(B) do= emit load({url: "https://example.com/x"})
       tile B = button(text="b")
       tile App = column(B)
       app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
@@ -232,7 +234,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('caps.provider("http.get")');
+    expect(result.js).toContain('_caps.provider("http.get")');
     expect(result.js).toContain("httpFetch(");
     // the handler is imported (modular: its feature module; monolith: the runtime entry)
     expect(result.js).toMatch(/import \{[^}]*httpFetch[^}]*\}/);
@@ -252,7 +254,11 @@ describe("codegen", () => {
     expect(result.js).toContain("export { createApp };");
   });
 
-  it("produces independent live state from two createApp() instances", async () => {
+  // Same reason as `js-identifier-safety.test.ts`: a real module load on a
+  // cold cache, not a slow compiler.
+  it("produces independent live state from two createApp() instances", {
+    timeout: 30_000,
+  }, async () => {
     // Evaluate the generated factory and assert the two apps don't share `live`.
     const src = `
       slot n : Int = 0
@@ -267,9 +273,11 @@ describe("codegen", () => {
     const mod = await importGenerated(result.js);
     const a = mod.createApp();
     const b = mod.createApp();
-    expect(a.live).not.toBe(b.live);
-    a.live.n = 5;
-    expect(b.live.n).toBe(0); // mutation of one instance must not leak to the other
+    const aLive = defined(a.live, "the first instance's live map");
+    const bLive = defined(b.live, "the second instance's live map");
+    expect(aLive).not.toBe(bLive);
+    aLive.n = 5;
+    expect(bLive.n).toBe(0); // mutation of one instance must not leak to the other
   });
 
   it("makes a standard storage effect provider-overridable (with map-request mapping first)", () => {
@@ -285,7 +293,7 @@ describe("codegen", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     // request is mapped, THEN the provider is consulted with the mapped req
-    expect(result.js).toMatch(/const req = [\s\S]*caps\.provider\("storage\.write"\)/);
+    expect(result.js).toMatch(/const _req = [\s\S]*_caps\.provider\("storage\.write"\)/);
     expect(result.js).toContain("storageWrite(");
     expect(result.js).toMatch(/import \{[^}]*storageWrite[^}]*\}/);
   });
@@ -378,7 +386,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onKeyDown: \(el\) => \{ App._dispatch\("onKey"/);
+    expect(result.js).toMatch(/onKeyDown: _h\("onKey"\)/);
   });
 
   it("emits onMouseEnter for ui.hover(EnclosingTile) on a box (§1.6.1)", () => {
@@ -392,7 +400,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onMouseEnter: \(el\) => \{ App._dispatch\("onHover"/);
+    expect(result.js).toMatch(/onMouseEnter: _h\("onHover"\)/);
   });
 
   // issue #122 — §1.6.1 ui.focus / ui.blur. Parser/AST already accepted
@@ -414,7 +422,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
+    expect(result.js).toMatch(/onFocus: _h\("recordFocus"\)/);
   });
 
   it("emits onBlur for ui.blur(EnclosingTile) on an input (§1.6.1)", () => {
@@ -428,7 +436,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => \{ App._dispatch\("markBlur"/);
+    expect(result.js).toMatch(/onBlur: _h\("markBlur"\)/);
   });
 
   it("emits onFocus on a textarea (one of the focusable tile gates) (§1.6.1)", () => {
@@ -442,7 +450,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
+    expect(result.js).toMatch(/onFocus: _h\("recordFocus"\)/);
   });
 
   // The "non-focusable" guard is a deliberate codegen design choice: a
@@ -505,7 +513,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onFocus: \(el\) => \{ App._dispatch\("recordFocus"/);
+    expect(result.js).toMatch(/onFocus: _h\("recordFocus"\)/);
   });
 
   it("emits onClick on a radio tile so `ui.click(Radio)` reducers fire (§1.6.1)", () => {
@@ -519,7 +527,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onClick: \(el\) => \{ App._dispatch\("pick"/);
+    expect(result.js).toMatch(/onClick: _h\("pick"\)/);
   });
 
   it("emits onChange on form-control tiles (check / radio / switch / slider) — `ui.change(Tile)` reducers fire (§1.6.1)", () => {
@@ -540,9 +548,7 @@ describe("codegen", () => {
       const result = compile(src, { runtimeSpecifier: "./runtime.js" });
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") continue;
-      expect(result.js).toMatch(
-        new RegExp(`onChange: \\(el\\) => \\{ App\\._dispatch\\("${reducer}"`),
-      );
+      expect(result.js).toMatch(new RegExp(`onChange: _h\\("${reducer}"\\)`));
     }
   });
 
@@ -558,7 +564,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toMatch(/onBlur: \(el\) => \{ App._dispatch\("markBlur"/);
+    expect(result.js).toMatch(/onBlur: _h\("markBlur"\)/);
   });
 
   it("emits an Array.isArray guard for a tuple pattern arm (§1.9)", () => {
@@ -727,12 +733,9 @@ describe("codegen", () => {
     // Anchor on dispatch occurrences in the full emitted module (not a regex
     // slice — a `}` inside a future dispatch payload would cut the slice early
     // and silently pass even after a regression).
-    const iLog = result.js.indexOf('_dispatch("logHit"');
-    const iSave = result.js.indexOf('_dispatch("save"');
-    const iAudit = result.js.indexOf('_dispatch("audit"');
-    expect(iLog).toBeGreaterThanOrEqual(0);
-    expect(iSave).toBeGreaterThan(iLog);
-    expect(iAudit).toBeGreaterThan(iSave);
+    // The memoised handler's argument list is the dispatch order.
+    const chain = /onClick: _h\(([^)]*)\)/.exec(result.js)?.[1];
+    expect(chain).toBe('"logHit", "save", "audit"');
   });
 
   it("emits a single onClick that wraps the one dispatch when only one reducer matches", () => {
@@ -746,8 +749,7 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('_dispatch("inc", el)');
-    expect(result.js).toMatch(/onClick: \(el\) => \{ App._dispatch\("inc"/);
+    expect(result.js).toMatch(/onClick: _h\("inc"\)/);
   });
 
   it("chains explicit `onClick=fn` and a separate ui.click reducer on the same tile (§1.6.4)", () => {
@@ -767,17 +769,12 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // Both dispatches present, explicit before implicit.
-    const iExplicit = result.js.indexOf('_dispatch("onExplicit"');
-    const iImplicit = result.js.indexOf('_dispatch("onImplicit"');
-    expect(iExplicit).toBeGreaterThanOrEqual(0);
-    expect(iImplicit).toBeGreaterThan(iExplicit);
+    // Both dispatches present, explicit before implicit — the chained
+    // handler below carries them in that order.
     // Per element they collapse into one chained handler. Guards against a
     // duplicate-key object literal (`{ onClick: a, onClick: b }`) by checking
     // the explicit dispatch and the implicit dispatch land in the same body.
-    expect(result.js).toMatch(
-      /onClick: \(el\) => \{ App._dispatch\("onExplicit", el\); App._dispatch\("onImplicit", el\) \}/,
-    );
+    expect(result.js).toMatch(/onClick: _h\("onExplicit", "onImplicit"\)/);
   });
 
   it("dedupes overlapping explicit + implicit wiring of the same reducer (no double-fire)", () => {
@@ -795,10 +792,11 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // Exactly one dispatch of `inc` in the onClick body.
-    const matches = result.js.match(/_dispatch\("inc"/g) ?? [];
+    // `inc` is wired once, not twice, so the handler takes a single name.
+    const matches = result.js.match(/_h\("inc"\)/g) ?? [];
     // One per route (/, /404) — both renderings emit the same chain.
     expect(matches.length).toBe(2);
+    expect(result.js).not.toContain('_h("inc", "inc")');
   });
 
   it("dispatches every reducer subscribing to the same (tile, ui.submit) in source order (§1.6.4)", () => {
@@ -814,14 +812,8 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    const iSave = result.js.indexOf('_dispatch("save"');
-    const iAudit = result.js.indexOf('_dispatch("audit"');
-    expect(iSave).toBeGreaterThanOrEqual(0);
-    expect(iAudit).toBeGreaterThan(iSave);
-    // Both dispatches share a single chained handler body.
-    expect(result.js).toMatch(
-      /onSubmit: \(el\) => \{ App._dispatch\("save", el\); App._dispatch\("audit", el\) \}/,
-    );
+    // Source order, and a single chained handler rather than two props.
+    expect(result.js).toMatch(/onSubmit: _h\("save", "audit"\)/);
   });
 
   it("dispatches every reducer subscribing to the same (tile, ui.hover) in source order (§1.6.4)", () => {
@@ -839,13 +831,8 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    const iWake = result.js.indexOf('_dispatch("wake"');
-    const iNote = result.js.indexOf('_dispatch("note"');
-    expect(iWake).toBeGreaterThanOrEqual(0);
-    expect(iNote).toBeGreaterThan(iWake);
-    expect(result.js).toMatch(
-      /onMouseEnter: \(el\) => \{ App._dispatch\("wake", el\); App._dispatch\("note", el\) \}/,
-    );
+    // Source order, carried by the chained handler's argument list.
+    expect(result.js).toMatch(/onMouseEnter: _h\("wake", "note"\)/);
   });
 
   // Issue #188 — the compiler lifts author-written `{key: expr}` from tile
@@ -1071,5 +1058,73 @@ describe("codegen", () => {
         expect(w.key).not.toBe("_s.show(o)");
       }
     });
+  });
+});
+
+// `app.init` arguments and an effect's `latest-per-key` key expression are the
+// two places codegen lowers an expression outside any reducer body. Both were
+// lowered against a fabricated empty `GenCtx`, so a slot reference had no slot
+// table to resolve against and came out as a bare identifier. They fail in
+// different places, which matters when one recurs: an init argument sits in the
+// app object literal, so the module throws on import; a key expression sits in
+// an arrow body, so the app imports and renders and throws on first dispatch.
+describe("expressions outside a reducer body still see the slot table", () => {
+  const SRC = `
+    slot noteKey : Text = "kumiki:note"
+    slot got     : Text = "none"
+    effect loadNote cap=http.get
+                    in=Text
+                    out=Result(Text, Text)
+                    policy=latest-per-key(noteKey)
+    reducer onOk on=loadNote.ok($v, _) do= got := $v
+    tile App = column(text(got))
+    app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[loadNote(noteKey)]
+  `;
+
+  /** The one emitted line starting with `label`. Line-wise, so a second entry
+   *  on the same line cannot slip past a match that stopped at the first `]`. */
+  function emittedLine(js: string, label: string): string {
+    const line = js.split(/\r?\n/).find((l) => l.includes(label));
+    if (line === undefined) throw new Error(`no emitted line contains ${label}`);
+    return line;
+  }
+
+  it("lowers a slot reference in an app.init argument to the live map", () => {
+    const result = compile(SRC, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const init = emittedLine(result.js, "init: [");
+    expect(init).toContain('args: [_live["noteKey"]]');
+    expect(init).not.toMatch(/args: \[\s*noteKey/);
+  });
+
+  it("lowers a slot reference in latest-per-key to the live map", () => {
+    const result = compile(SRC, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const keyOf = emittedLine(result.js, "keyOf:");
+    expect(keyOf).toContain('String(_live["noteKey"])');
+  });
+
+  // Not a regression guard for the bug above — `jsOfExpr` checks `localBinds`
+  // before the slot table, so this emits the same text either way. It guards
+  // the fix from over-reaching and turning the lambda's own parameter into a
+  // slot read, which would break every `latest-per-key($1)` in the corpus.
+  it("still binds the key lambda's own $1", () => {
+    const result = compile(
+      `
+      slot got : Text = "none"
+      effect load cap=http.get in=Text out=Result(Text, Text) policy=latest-per-key($1)
+      reducer onOk on=load.ok($v, _) do= got := $v
+      tile App = column(text(got))
+      app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
+      `,
+      { runtimeSpecifier: "./runtime.js" },
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const keyOf = emittedLine(result.js, "keyOf:");
+    expect(keyOf).toContain("_d_1");
+    expect(keyOf).not.toContain("_live");
   });
 });

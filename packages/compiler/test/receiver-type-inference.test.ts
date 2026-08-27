@@ -92,7 +92,7 @@ tile App = column(T)`),
     const js = compileOk(
       app(`type Node = { head: Text, size: Int }
 tile Row in=Node = text($1.head)
-tile App = column(Row)`),
+tile App = column(Row({head: "h", size: 1}))`),
     );
     expect(js).not.toContain("_s.listHead(");
     expect(js).toContain('["head"]');

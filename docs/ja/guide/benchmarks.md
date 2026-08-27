@@ -1,13 +1,13 @@
 # ベンチマーク
 
-「React よりトークンが少ない」「LLM が仕様書だけで習得できる」という Kumiki の主張は、宣言ではなく実測である。2 つのスイートが [`benchmarks`](https://github.com/kage1020/Kumiki/tree/main/packages/benchmarks) にある。
+「React よりトークンが少ない」「LLM が仕様書だけで習得できる」という Kumiki の主張は、宣言ではなく実測である。2 つのスイートが [`benchmarks`](https://github.com/kumikijs/Kumiki/tree/main/packages/benchmarks) にある。
 
 - **サイズ比較** — Kumiki のアプリと*編集*は、等価な React と比べてどれだけコンパクトか。決定的に再実行可能。
 - **学習コスト** — 仕様書だけを与えられた LLM が、単一パスで parse / typecheck / build を通るプログラムを書けるか。
 
 ## サイズ比較（Kumiki vs React）
 
-ベースラインは同じ TodoMVC の 2 実装 — [`02-todomvc/app.kumiki`](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/02-todomvc/app.kumiki) と素の React [`App.tsx`](https://github.com/kage1020/Kumiki/blob/main/packages/benchmarks/size-comparison/todomvc-react/src/App.tsx)。トークン化は `gpt-tokenizer`。
+ベースラインは同じ TodoMVC の 2 実装 — [`02-todomvc/app.kumiki`](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/02-todomvc/app.kumiki) と素の React [`App.tsx`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/size-comparison/todomvc-react/src/App.tsx)。トークン化は `gpt-tokenizer`。
 
 ### ファイル全体
 
@@ -44,7 +44,7 @@ Kumiki の AI 編集動詞（`add` / `replace` / `remove`）は定義を丸ご�
 
 ## 学習コスト（仕様書だけで Kumiki を書く）
 
-各タスクはモデルに **`docs/spec/` + タスク仕様のみ**を与え、単一パスで `.kumiki` プログラムを書かせる — example アプリなし、コンパイラのループなし、リトライなし。その後ハーネスが parse / typecheck / build を採点する。プロトコルの詳細と公平性に関する注記（初回の Claude 4/4 を破棄した理由を含む）は [`learning-cost/summary.md`](https://github.com/kage1020/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md) を参照。
+各タスクはモデルに **`docs/spec/` + タスク仕様のみ**を与え、単一パスで `.kumiki` プログラムを書かせる — example アプリなし、コンパイラのループなし、リトライなし。その後ハーネスが parse / typecheck / build を採点する。プロトコルの詳細と公平性に関する注記（初回の Claude 4/4 を破棄した理由を含む）は [`learning-cost/summary.md`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md) を参照。
 
 | タスク | ベンダー | LOC | cl100k | parse | typecheck | build |
 |---|---|---:|---:|:--:|:--:|:--:|
@@ -63,7 +63,7 @@ Kumiki の AI 編集動詞（`add` / `replace` / `remove`）は定義を丸ご�
 
 - **中規模アプリは仕様書だけ・単一パスでビルドが通る。** 全ベンダーが v2 をビルドし、3 社中 2 社が ~600 行の v3 をビルド。
 - **Codex は着手したタスクをすべてビルド — ~880 行の v4 を通した唯一のベンダー。** Claude は v3 まで持ちこたえ、v4 規模で未サポートの `match` パターンを使って parse 失敗。Gemini は最も早く劣化。
-- **このベンチマークはコンパイラのテストでもある。** 実行の過程で実在する欠陥が 2 件浮上 — build でクラッシュする組み込みタイル（[#61](https://github.com/kage1020/Kumiki/issues/61)）と、例示でしか述べられていなかった規則（[#62](https://github.com/kage1020/Kumiki/issues/62)）。どちらも修正済みで、上の表は修正後のコンパイラで採点。残る 3 つの ❌ は、ツールチェーンが*正しく*拒否している純粋な authoring エラーである。
+- **このベンチマークはコンパイラのテストでもある。** 実行の過程で実在する欠陥が 2 件浮上 — build でクラッシュする組み込みタイル（[#61](https://github.com/kumikijs/Kumiki/issues/61)）と、例示でしか述べられていなかった規則（[#62](https://github.com/kumikijs/Kumiki/issues/62)）。どちらも修正済みで、上の表は修正後のコンパイラで採点。残る 3 つの ❌ は、ツールチェーンが*正しく*拒否している純粋な authoring エラーである。
 
 ## 再現方法
 

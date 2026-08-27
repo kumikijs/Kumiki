@@ -14,8 +14,15 @@ An SPA with routing and asynchronous data fetching. It handles list → detail n
 
 ## Run
 
+Every command below is run **from the repository root**.
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/03-blog/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/03-blog/app.kumiki
+pnpm kumiki build packages/examples/apps/03-blog/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/03-blog/app.kumiki
+pnpm kumiki run packages/examples/apps/03-blog/app.kumiki packages/examples/apps/03-blog/scenario.json
 ```
 
-Related specs: [routing](../../../spec/routing.md) / [http](../../../spec/http.md) / [lifecycle](../../../spec/lifecycle.md)
+`scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI. `app.http.json` is the fixture those runs answer from — the headless tiers never reach the network.
+
+Related specs: [routing](../../../../docs/spec/routing.md) / [http](../../../../docs/spec/http.md) / [lifecycle](../../../../docs/spec/lifecycle.md)

@@ -1,0 +1,55 @@
+# Feature: stdlib constants written without parentheses.
+# `Decoder.Text` / `Decoder.None` (http.md §6.1.4) and `EffectId.none`
+# (stdlib.md §2.1.1.1) are values, not calls, and the spec writes them bare.
+# Written that way they used to parse as a field read on a variant named after
+# the qualifier and emit `undefined` — and the HTTP handler reads
+# `decode ?? "json"`, so a body meant to be discarded was parsed instead.
+# Every constant below is in the bare form on purpose.
+#
+# Neither effect declares an `.err` reducer, deliberately: an error the app does
+# not consume is what `kumiki smoke` reports, so the wrong lowering fails there
+# and not only in a unit test.
+#
+# `Decoder.Bytes` is not exercised here. The runtime has no branch for it — the
+# `"bytes"` sentinel falls through to `res.text()` — so an assertion about it
+# would be an assertion about text.
+
+slot handle : EffectId = EffectId.none
+slot note   : Text     = "idle"
+slot pinged : Bool     = false
+
+effect loadNote  cap=http.get
+                 in=Unit
+                 out=Result(Text, HttpError)
+                 policy=latest
+                 map-request={url: "/api/note", decode: Decoder.Text}
+
+effect ping      cap=http.post
+                 in=Unit
+                 out=Result(Unit, HttpError)
+                 map-request={url: "/api/ping", body: Empty, decode: Decoder.None}
+
+effect drop      cap=http.cancel in=EffectId out=Unit
+
+reducer load    on=ui.click(LoadBtn)      do= let h = emit loadNote()
+                                              handle := h
+                                              emit ping()
+reducer noteOk  on=loadNote.ok($body, _)  do= note   := $body
+                                              handle := EffectId.none
+reducer pingOk  on=ping.ok(_, _)          do= pinged := true
+reducer cancel  on=ui.click(CancelBtn)    do= emit drop(handle)
+                                              handle := EffectId.none
+
+tile LoadBtn   = button(text="Load", onClick=load)
+tile CancelBtn = button(text="Cancel", onClick=cancel)
+tile App = column(
+             LoadBtn,
+             CancelBtn,
+             text("note: " + note),
+             text("pinged: " + pinged.show))
+           {pad: "lg", gap: "md"}
+
+app ParenLessStdlibConstants
+    caps   = [http.get, http.post, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

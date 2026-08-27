@@ -2,11 +2,15 @@ import type { AppShape, EpisodeLogEntry, EpisodeMockPolicy } from "@kumikijs/run
 import { _stdlibTest } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
-function makeCounterApp(): AppShape {
+/** An app whose `live` map is already populated, which is what replay needs. */
+type ReplayableApp = AppShape & { live: Record<string, unknown> };
+
+function makeCounterApp(): ReplayableApp {
   const slots = {
     count: { value: 0 },
   };
-  const app: AppShape = {
+  const app: ReplayableApp = {
+    live: {},
     slots,
     caps: [],
     effects: {},
@@ -25,17 +29,17 @@ function makeCounterApp(): AppShape {
     ],
     root: () => ({ kind: "text", text: "" }),
   };
-  app.live = {};
   for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
   return app;
 }
 
-function makeLoadUserApp(): AppShape {
+function makeLoadUserApp(): ReplayableApp {
   const slots = {
     user: { value: null as unknown },
     error: { value: null as unknown },
   };
-  const app: AppShape = {
+  const app: ReplayableApp = {
+    live: {},
     slots,
     caps: [],
     effects: {
@@ -65,7 +69,6 @@ function makeLoadUserApp(): AppShape {
     ],
     root: () => ({ kind: "text", text: "" }),
   };
-  app.live = {};
   for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
   return app;
 }

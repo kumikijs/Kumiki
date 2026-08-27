@@ -8,6 +8,19 @@ import { describe, expect, it } from "vitest";
 
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Wait for the ladder to finish climbing rather than for a duration. A fixed
+ * window says "three attempts fit in 40ms", which is a claim about the machine:
+ * under a loaded test run the timers land late and the count is short. The
+ * assertions still fail loudly if the condition never holds.
+ */
+async function until(done: () => boolean, limitMs = 2000): Promise<void> {
+  const deadline = Date.now() + limitMs;
+  while (!done() && Date.now() < deadline) await tick(5);
+  // One more turn for the result to reach its .ok / .err reducer.
+  await tick(10);
+}
+
 function makeApp(args: {
   retry?: AppShape["effects"][string]["retry"];
   responses: EffectResult[];
@@ -28,7 +41,7 @@ function makeApp(args: {
       load: {
         name: "load",
         cap: "http.get",
-        retry: args.retry,
+        ...(args.retry ? { retry: args.retry } : {}),
         invoke: async () => {
           attempts++;
           return responses.shift() ?? { kind: "err", value: { status: 0, message: "exhausted" } };
@@ -79,7 +92,7 @@ describe("EffectSpec.retry (#83)", () => {
     document.body.appendChild(root);
     try {
       const { dispose } = mount(state.app, root);
-      await tick(60);
+      await until(() => state.attempts === 3);
       expect(state.attempts).toBe(3);
       expect(state.lastOk?.value).toEqual({ hello: "world" });
       expect(state.lastErr?.value).toBeNull();
@@ -120,7 +133,7 @@ describe("EffectSpec.retry (#83)", () => {
     document.body.appendChild(root);
     try {
       const { dispose } = mount(state.app, root);
-      await tick(40);
+      await until(() => state.attempts === 3);
       expect(state.attempts).toBe(3);
       expect((state.lastErr?.value as { message: string }).message).toBe("net");
       dispose();

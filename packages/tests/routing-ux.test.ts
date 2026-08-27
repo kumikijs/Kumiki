@@ -22,42 +22,10 @@ function freshRoot(): HTMLElement {
 }
 
 describe("issue #86 — link prefetch", () => {
-  // happy-dom ships a stub `IntersectionObserver` whose `observe()` is a no-op
-  // (TODO upstream). Swap in a fake that synchronously fires for the observed
-  // target so the runtime's primary path — IO entry → reducer dispatch — gets
-  // exercised in CI. The fake is restored after each test.
-  let originalIO: typeof globalThis.IntersectionObserver | undefined;
-
-  beforeEach(() => {
-    originalIO = (globalThis as { IntersectionObserver?: typeof IntersectionObserver })
-      .IntersectionObserver;
-    class FakeIO {
-      private cb: IntersectionObserverCallback;
-      constructor(cb: IntersectionObserverCallback) {
-        this.cb = cb;
-      }
-      observe(target: Element): void {
-        // Fire as if `target` is already in the viewport, but on a microtask so
-        // we don't re-enter render() before the runtime returns from observe().
-        queueMicrotask(() => {
-          const entry = { isIntersecting: true, target } as IntersectionObserverEntry;
-          this.cb([entry], this as unknown as IntersectionObserver);
-        });
-      }
-      disconnect(): void {}
-      unobserve(): void {}
-      takeRecords(): IntersectionObserverEntry[] {
-        return [];
-      }
-    }
-    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
-      FakeIO as unknown as typeof IntersectionObserver;
-  });
-
-  afterEach(() => {
-    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = originalIO;
-  });
-
+  // The observer this runs against is the harness double, installed for every
+  // file in this suite and by `kumiki smoke` alike — happy-dom's own
+  // `observe()` is a no-op, so before it this path was unreachable from both
+  // headless tiers and each test that wanted it built its own fake.
   it("dispatches the named reducer with $route.params on viewport entry", async () => {
     const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
     const root = freshRoot();
@@ -71,6 +39,30 @@ describe("issue #86 — link prefetch", () => {
     expect(app.live?.lastId).toBe("abc-123");
     expect(root.textContent).toContain("prefetched: 1");
     expect(root.textContent).toContain("lastId: abc-123");
+  });
+
+  // The other branch of `typeof IntersectionObserver === "function"`. A DOM
+  // without one has to prefetch on a microtask instead.
+  it("falls back to a microtask where there is no IntersectionObserver", async () => {
+    const g = globalThis as {
+      IntersectionObserver?: typeof IntersectionObserver | undefined;
+    };
+    const original = g.IntersectionObserver;
+    // Deleted rather than set to `undefined`. Both reach the fallback — the
+    // renderer reads the global into a local and asks `typeof` — but an own
+    // property holding `undefined` is not the DOM this test is named after.
+    delete g.IntersectionObserver;
+    try {
+      const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
+      const root = freshRoot();
+      mount(app, root, { router: "memory" });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(app.live?.prefetched).toBe(1);
+      expect(app.live?.lastId).toBe("abc-123");
+    } finally {
+      // Absent to begin with stays absent — the delete above already left it so.
+      if (original) g.IntersectionObserver = original;
+    }
   });
 });
 

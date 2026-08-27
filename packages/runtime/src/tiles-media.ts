@@ -1,11 +1,28 @@
 // Media tile renderers (#71): image and video.
 
-import type { TilePatchers, TileRenderers } from "./core.ts";
+import { attrValue, type TilePatchers, type TileRenderers } from "./core.ts";
 
 /** Read `{id: "..."}` from a tile's props (§1.6.2), when the tile kind doesn't lift `id` to a top-level field. */
 function propId(node: { props?: Record<string, unknown> }): string | undefined {
   const raw = node.props?.id;
   return raw == null ? undefined : String(raw);
+}
+
+/**
+ * `width` / `height` / `loading` on an `<img>` (stdlib.md §2.3.3). The first
+ * two are what reserve the box before the bytes arrive — an image without them
+ * moves everything below it when it loads, which is the layout shift the SSR
+ * path exists to avoid. Shared by create and patch.
+ */
+function applyImageBox(img: HTMLImageElement, props?: Record<string, unknown>): void {
+  for (const name of ["width", "height"] as const) {
+    const v = attrValue(props?.[name]);
+    if (v !== undefined) img.setAttribute(name, String(v));
+    else img.removeAttribute(name);
+  }
+  const loading = props?.loading;
+  if (loading === "lazy" || loading === "eager") img.setAttribute("loading", loading);
+  else img.removeAttribute("loading");
 }
 
 export const mediaTiles: TileRenderers = {
@@ -15,6 +32,7 @@ export const mediaTiles: TileRenderers = {
     img.src = node.src;
     const alt = node.props?.alt;
     if (typeof alt === "string") img.alt = alt;
+    applyImageBox(img, node.props);
     const id = propId(node);
     if (id) img.id = id;
     return img;
@@ -45,6 +63,7 @@ export const mediaPatchers: TilePatchers = {
     // clears the cache-warmed decoded-image bitmap), so a bind-driven
     // rerender that leaves `src` untouched should not thrash the image.
     if (img.getAttribute("src") !== newNode.src) img.src = newNode.src;
+    applyImageBox(img, newNode.props);
     const alt = newNode.props?.alt;
     if (typeof alt === "string") {
       if (img.alt !== alt) img.alt = alt;

@@ -541,22 +541,23 @@ tile IssueDetailPage
 # ====== Tiles: new issue page ======
 
 tile NewTitleInput
-    = input(bind=draft.title, placeholder="Title", required=true)
+    = input(id="new-title", bind=draft.title, placeholder="Title", required=true)
 
 tile NewBodyInput
-    = textarea(bind=draft.body, placeholder="Describe the issue...", rows=6)
+    = textarea(id="new-body", bind=draft.body, placeholder="Describe the issue...", rows=6)
 
 tile NewPrioritySelect
     = select(
+        id="new-priority",
         bind=draft.priority,
         options=priorityOptions(),
         placeholder="Priority")
 
 tile NewAssigneeInput
-    = input(bind=draft.assignee, placeholder="Assignee")
+    = input(id="new-assignee", bind=draft.assignee, placeholder="Assignee")
 
 tile NewTagsInput
-    = input(bind=draft.tags, placeholder="Tags (comma-separated)")
+    = input(id="new-tags", bind=draft.tags, placeholder="Tags (comma-separated)")
 
 tile CancelNewBtn
     = button(text="Cancel", onClick=cancelNew) {variant: "ghost"}

@@ -25,6 +25,12 @@ import {
   smoke,
   type TestResult,
 } from "@kumikijs/runtime";
+import {
+  type HttpFixture,
+  installTestDoubles,
+  readHttpFixture,
+  useHttpFixture,
+} from "./harness.ts";
 
 let domReady = false;
 export function ensureDom(): void {
@@ -33,6 +39,10 @@ export function ensureDom(): void {
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
   // accept events constructed from the DOM realm).
   GlobalRegistrator.register({ url: "http://localhost/" });
+  // …then the doubles the DOM does not supply: a `fetch` that answers from the
+  // example's own fixture instead of the network, and an IntersectionObserver
+  // that actually notifies. Installed after registration, which overwrites both.
+  installTestDoubles();
   domReady = true;
 }
 
@@ -46,7 +56,7 @@ export type LoadedApp = AppShape & { live: Record<string, unknown> };
 export async function loadApp(
   source: string,
   capabilities: string[] = [],
-  opts: { includeTests?: boolean; sourcePath?: string } = {},
+  opts: { includeTests?: boolean; sourcePath?: string; moduleDir?: string } = {},
 ): Promise<LoadedApp> {
   const baseOpts = {
     runtimeSpecifier: "ignored",
@@ -83,7 +93,11 @@ export async function loadApp(
   }
 
   const patched = result.js.replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "");
-  const dir = mkdtempSync(join(tmpdir(), "kumiki-smoke-"));
+  // A fresh directory per call, so the same source loaded twice in one process
+  // is two modules rather than one cached one. `moduleDir` exists for a caller
+  // whose module resolver is confined to a project root (vitest): the default
+  // OS temp dir is outside it.
+  const dir = mkdtempSync(join(opts.moduleDir ?? tmpdir(), "kumiki-smoke-"));
   const file = join(dir, "app.mjs");
   writeFileSync(file, patched);
   await import(pathToFileURL(file).href);
@@ -96,16 +110,34 @@ export async function loadApp(
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
-  opts: { sourcePath?: string; diagnosticsAsIssues?: boolean } = {},
+  opts: {
+    sourcePath?: string;
+    diagnosticsAsIssues?: boolean;
+    /** Overrides the fixture read from `sourcePath`; for a source with no file. */
+    httpFixture?: HttpFixture | null;
+    /** Milliseconds to settle after each step. Default 20, as the CLI drives it. */
+    settleMs?: number;
+  } = {},
 ): Promise<SmokeReport> {
   ensureDom();
+  // Effects run for real here (unlike `runScenario`, which replaces every
+  // `invoke`), so the http capability is answered by the example's own
+  // `.http.json`. Without a path there is no fixture, and any request reports
+  // itself rather than reaching a host.
+  useHttpFixture(
+    opts.httpFixture !== undefined
+      ? opts.httpFixture
+      : opts.sourcePath
+        ? readHttpFixture(opts.sourcePath)
+        : null,
+  );
   const app = await loadApp(source, capabilities, opts);
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
     return await smoke(app, root, {
-      settleMs: 20,
+      settleMs: opts.settleMs ?? 20,
       diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
     });
   } finally {
@@ -178,6 +210,10 @@ export async function runScenarioSource(
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
   ensureDom();
+  // A scenario scripts effects at the `invoke` boundary, so http never reaches
+  // `fetch` — the fixture is here for a capability the runner does not wrap,
+  // and to keep a stray request reported rather than live.
+  useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
   const app = await loadApp(source, capabilities, {
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
@@ -194,6 +230,38 @@ export async function runScenarioSource(
   }
 }
 
+/**
+ * Read a scenario document, or fail with a message that names the file.
+ *
+ * Two paths are on the command line, so "which file" is the first thing any
+ * failure here has to answer — a read error, a `SyntaxError` that otherwise
+ * names only a character offset, or a document that parsed and is not a
+ * scenario, which reaches the runner as a `TypeError` about a property.
+ */
+function loadScenario(path: string): Scenario {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (e) {
+    throw new Error(`could not read scenario ${path}: ${e instanceof Error ? e.message : e}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+  }
+  const steps = (doc as { steps?: unknown } | null)?.steps;
+  if (!Array.isArray(steps)) {
+    throw new Error(`${path} is not a scenario: it needs a "steps" array`);
+  }
+  const bad = steps.findIndex((s) => typeof s !== "object" || s === null || Array.isArray(s));
+  if (bad !== -1) {
+    throw new Error(`${path} is not a scenario: steps[${bad}] is not a step object`);
+  }
+  return doc as Scenario;
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
@@ -201,7 +269,7 @@ export async function runCmd(
   capabilities: string[] = [],
   opts: { episodeLog?: string } = {},
 ): Promise<void> {
-  const scenario = JSON.parse(readFileSync(scenarioPath, "utf8")) as Scenario;
+  const scenario = loadScenario(scenarioPath);
   // Episode log is opt-in: write only when the caller asked for it via the
   // `--episode-log <file>` flag or the `KUMIKI_EPISODE_LOG` env var. This keeps
   // example runs from littering sidecar JSONL next to every .kumiki file. When
@@ -221,6 +289,7 @@ export async function runCmd(
     const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
     console.log(`[${status}] ${head}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
+    for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
     // Advisory, and attributed to the action above it — that pairing is the
     // whole reason the runner buffers diagnostics per step. Listed rather than
@@ -340,10 +409,21 @@ export async function runTests(
   };
 }
 
-/** Print a `TestReport` in the §8.7.1 format. Returns the failure count. */
+/**
+ * Print a `TestReport` in the §8.7.1 format and return the number of failures
+ * the caller should exit on — the count of failing tests, or 1 for a filter
+ * that matched nothing, which is a failure with no failing test behind it.
+ */
 function printTestReport(report: TestReport): number {
   if (report.results.length === 0) {
-    console.log(report.filter ? `no tests match "${report.filter}"` : "no tests found");
+    // A filter that matches nothing is a failure: the caller named tests that
+    // are not there, and a renamed test would otherwise leave CI green while
+    // running nothing. Having no tests at all when none were asked for is not.
+    if (report.filter) {
+      console.error(`no tests match "${report.filter}"`);
+      return 1;
+    }
+    console.log("no tests found");
     return 0;
   }
   for (const r of report.results) {

@@ -1,5 +1,5 @@
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
-import { type GenCtx, jsName, makeEvalCtx } from "./context.ts";
+import { type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -39,7 +39,7 @@ export function builtinEffectCall(eff: EffectDef, reqVar: string): string | null
   }
   if (eff.cap.startsWith("http.")) {
     const method = eff.cap.slice("http.".length).toUpperCase();
-    return `httpFetch(${JSON.stringify(method)}, ${reqVar}, _http, signal)`;
+    return `httpFetch(${JSON.stringify(method)}, ${reqVar}, _http, _signal)`;
   }
   return null;
 }
@@ -52,25 +52,25 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   // implementation. Custom capabilities have no built-in, so their fallback is a
   // clear "no provider" error.
   const capJs = JSON.stringify(eff.cap);
-  const reqVar = eff.mapRequest ? "req" : "input";
+  const reqVar = eff.mapRequest ? "_req" : "_input";
   const builtin = builtinEffectCall(eff, reqVar);
   const fallback =
     builtin ??
     `{ kind: "err", value: { message: ${JSON.stringify(`Capability ${eff.cap} has no provider`)} } }`;
-  const tail = `const p = caps.provider(${capJs}); if (p) return p(${reqVar}, caps, signal); return ${fallback};`;
+  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) return _provider(${reqVar}, _caps, _signal); return ${fallback};`;
 
   let invokeBody: string;
   if (eff.mapRequest) {
     const mapJs = jsOfExpr(eff.mapRequest, makeEvalCtx(gen, new Set(["$1"])));
-    invokeBody = `async (${jsName("$1")}, caps, signal) => { const req = ${mapJs}; ${tail} }`;
+    invokeBody = `async (${jsBinding("$1")}, _caps, _signal) => { const _req = ${mapJs}; ${tail} }`;
   } else {
-    invokeBody = `async (input, caps, signal) => { ${tail} }`;
+    invokeBody = `async (_input, _caps, _signal) => { ${tail} }`;
   }
 
   return `{
     name: ${JSON.stringify(eff.name)},
     cap: ${JSON.stringify(eff.cap)},
-    policy: ${policyJs(eff.policy)},
+    policy: ${policyJs(gen, eff.policy)},
     retry: ${retryJs(eff.retry)},
     invoke: ${invokeBody},
   }`;
@@ -82,13 +82,21 @@ export function retryJs(r?: RetryExpr): string {
   return `{ kind: "exponential", n: ${r.n}, ms: ${r.ms}, factor: ${r.factor} }`;
 }
 
-export function policyJs(p?: PolicyExpr): string {
+/**
+ * Lower an effect's `policy=` to the descriptor the dispatcher reads. Only
+ * `latest-per-key` carries an expression: the key lambda, whose scope is the
+ * ordinary non-reducer one plus its own `$1`. `gen` is what lets that
+ * expression see the slot table — without it a slot reference lowered to a bare
+ * identifier, and because the lambda body only runs when the effect is
+ * dispatched, the app imported, mounted and rendered before throwing.
+ */
+export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   if (!p) return "undefined";
   switch (p.kind) {
     case "PolLatest":
       return `{ kind: "latest" }`;
     case "PolLatestKey":
-      return `{ kind: "latest-per-key", keyOf: ((${jsName("$1")}) => String(${jsOfExpr(p.key, { gen: {} as GenCtx, localBinds: new Set(["$1"]) })})) }`;
+      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, makeEvalCtx(gen, new Set(["$1"])))})) }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":

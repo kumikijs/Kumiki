@@ -1,0 +1,55 @@
+{
+  "steps": [
+    {
+      "label": "three bumps fit under the ceiling and commit whole",
+      "do": { "clickText": "bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 1, "mirror": 1, "log": "!" }
+      }
+    },
+    {
+      "do": { "clickText": "bump" },
+      "expect": { "noErrors": true, "state": { "count": 2, "mirror": 2, "log": "!!" } }
+    },
+    {
+      "do": { "clickText": "bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 3, "mirror": 3, "log": "!!!" },
+        "domIncludes": ["count=3 mirror=3 log=[!!!]"]
+      }
+    },
+    {
+      "label": "the fourth bump overflows: nothing commits, and it is reported",
+      "do": { "clickText": "bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 3, "mirror": 3, "log": "!!!" },
+        "domIncludes": ["count=3 mirror=3 log=[!!!]"],
+        "errorIncludes": [
+          "reducer \"bump\" was rejected: slot \"count\" cannot hold 4 (between(0, 3))"
+        ]
+      }
+    },
+    {
+      "label": "the guarded shape does nothing at the ceiling, quietly",
+      "do": { "clickText": "guarded" },
+      "expect": { "noErrors": true, "state": { "count": 3, "mirror": 3, "log": "!!!" } }
+    },
+    {
+      "label": "and the app is still live — a rejection is not a panic",
+      "do": { "clickText": "reset" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 0, "mirror": 0, "log": "" },
+        "domIncludes": ["count=0 mirror=0 log=[]"]
+      }
+    },
+    {
+      "label": "guarded commits again once there is room",
+      "do": { "clickText": "guarded" },
+      "expect": { "noErrors": true, "state": { "count": 1, "mirror": 0, "log": "" } }
+    }
+  ]
+}

@@ -1,10 +1,10 @@
 # Kumiki Specification
 
-This is the **normative specification** of the Kumiki language and runtime. When the implementation (`packages/`) and this specification disagree, this specification is, as a rule, taken as authoritative, and which side to fix is recorded as a design decision in the PR.
+This is the **normative specification** of the Kumiki language and runtime. When the implementation in `packages/` and this text disagree, this text wins, and the PR records which side gets fixed.
 
-Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/). Working examples are in [Kumiki Examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples).
+You do not have to read it end to end. [Language Core](./language.md) is the one document to read before writing Kumiki; the rest answer a question you already have. Tutorials and how-tos are not specification and live in the [guide](../guide/), and every feature has a runnable file in [examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples).
 
-## Table of Contents
+## Documents
 
 | Document | Contents |
 |---|---|
@@ -18,13 +18,14 @@ Tutorials and how-tos are not specification and live in [Kumiki Guide](../guide/
 | [Runtime](./runtime.md) | Runtime implementation guide (signal graph, mount, dispatch, dispose) |
 | [AI Editing](./ai-edit.md) | AI editing API, CRDT ops, referential integrity |
 | [Testing](./testing.md) | Testing strategy |
-| [Error Codes](./errors.md) | Error code catalog (E0001..E08xx) |
+| [Error Codes](./errors.md) | Error code catalog (E0000..E08xx) |
 
-The three indices below are **machine-checked**: `packages/tests/spec-index.test.ts` verifies that every anchor link resolves, that the examples index lists exactly the `.kumiki` files under `packages/examples/features/` (fixtures, READMEs, `.scenario.json` files, and other non-`.kumiki` files are out of scope), that the diagnostic code index matches [Error Codes](./errors.md), and that the English and Japanese indices stay structurally in sync. Together with the compiler-side drift guard (`packages/compiler/test/spec-drift.test.ts`, implementation ⇆ errors.md), the spec ⇆ implementation ⇆ examples triangle is closed mechanically.
+## Indexes
 
-## Layer × Feature Matrix
+Three cross-references into the documents above, each generated from the compiler and the examples rather than written by hand.
 
-Where each feature dimension touches each of the 7 layers. A cell links to the section that specifies that intersection; `—` means the dimension has no layer-specific rules there.
+::: details Layer × feature matrix — where each feature touches the 7 layers
+A cell links to the section that specifies that intersection; `—` means the dimension has no layer-specific rules there.
 
 <!-- matrix:start -->
 | Feature | `type` | `slot` | `effect` | `reducer` | `tile` | `fn` | `app` |
@@ -43,19 +44,24 @@ Where each feature dimension touches each of the 7 layers. A cell links to the s
 <!-- matrix:end -->
 
 AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-3-1-op-kinds)) apply uniformly to definitions of every layer; the matrix row lists only the layer-specific sections.
+:::
 
-## Diagnostic Code Index
-
-Every code documented in [Error Codes](./errors.md), cross-classified by the layer it fires on and the feature dimension it belongs to.
-
+::: details Diagnostic codes — every code in Error Codes, by layer and feature
 <!-- codes:start -->
 | Code | Kind | Layer | Feature |
 |---|---|---|---|
+| [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | core |
 | [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | routing |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | lifecycle |
+| [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | core |
+| [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | core |
+| [E0005](./errors.md#e0005-tile-cycle) | `tile-cycle` | tile | core |
+| [E0006](./errors.md#e0006-fn-cycle) | `fn-cycle` | fn | core |
+| [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | core |
+| [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | core |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | core |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | core |
-| [E0104](./errors.md#e0104-undef-effect) | `undef-effect` | effect | core |
+| [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | core |
 | [E0106](./errors.md#e0106-undef-timer) | `undef-timer` | reducer | lifecycle |
 | [E0105](./errors.md#e0105-undef-tile) | `undef-tile` | tile | core |
 | [E0107](./errors.md#e0107-undef-motion) | `undef-motion` | tile | style |
@@ -66,6 +72,12 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0112](./errors.md#e0112-duplicate-sub-route) | `duplicate-sub-route` | tile | routing |
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | routing |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
+| [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
+| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | core |
+| [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | core |
+| [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | style |
+| [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | routing |
+| [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | routing |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -78,9 +90,17 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0211](./errors.md#e0211-undef-tile-in-selector) | `undef-tile-in-selector` | reducer | core |
 | [E0212](./errors.md#e0212-selector-id-mismatch-opt-in-via-strict-selector-id) | `selector-id-mismatch` | reducer | core |
 | [W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) | `ui-event-tile-mismatch` | reducer | core |
+| [E0213](./errors.md#e0213-call-arity-mismatch) | `call-arity-mismatch` | fn | core |
+| [E0214](./errors.md#e0214-missing-record-field) | `missing-record-field` | type | core |
+| [E0215](./errors.md#e0215-unknown-record-field) | `unknown-record-field` | type | core |
+| [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | core |
+| [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | core |
+| [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | core |
+| [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
+| [E0304](./errors.md#e0304-derived-slot) | `derived-slot` | slot | core |
 | [E0305](./errors.md#e0305-fn-impurity) | `fn-impurity` | fn | core |
 | [E0401](./errors.md#e0401-motion-unknown-property) | `motion-unknown-property` | tile | style |
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
@@ -90,13 +110,16 @@ Every code documented in [Error Codes](./errors.md), cross-classified by the lay
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
 | [E0704](./errors.md#e0704-unknown-icon) | `unknown-icon` | tile | style |
+| [E0705](./errors.md#e0705-a11y-label-for) | `a11y-label-for` | tile | lifecycle |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
+| [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
+| [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
 <!-- codes:end -->
+:::
 
-## Feature Examples Index
-
-Each file under [`packages/examples/features/`](https://github.com/kage1020/Kumiki/tree/main/packages/examples/features) demonstrates one matrix cell (or a small cluster). Layers name the definitions the example centers on; Spec links the section it demonstrates.
+::: details Feature examples — one runnable file per matrix cell
+Layers name the definitions the example centers on; Spec links the section it demonstrates.
 
 <!-- examples:start -->
 | Example | Layers | Feature | Spec |
@@ -161,4 +184,22 @@ Each file under [`packages/examples/features/`](https://github.com/kage1020/Kumi
 | `58-unkeyed-conditional-rebuild.kumiki` | tile | core | [§10.3.12](./runtime.md#_10-3-12-reconcile-diagnostics) |
 | `59-overlay-keyed-layers.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `60-empty-state-keyed-list.kumiki` | tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
+| `61-reserved-identifier-names.kumiki` | fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
+| `62-conditional-inline-tile-handlers.kumiki` | tile, reducer | core | [§10.3.13](./runtime.md#_10-3-13-data-prop-equality) |
+| `63-reducer-batch-atomicity.kumiki` | slot, reducer | core | [§10.3.3](./runtime.md#_10-3-3-batching) |
+| `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
+| `65-prefers-dark.kumiki` | app, reducer | style | [§4.6.1](./style.md#_4-6-1-following-os-settings) |
+| `66-value-types.kumiki` | type, slot, fn | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
+| `67-self-reference.kumiki` | tile, slot, fn | core | [§1.7.2](./language.md#_1-7-2-invariants) |
+| `68-name-uniqueness.kumiki` | type, slot, fn | core | [§1.3.1](./language.md#_1-3-1-syntax) |
+| `69-builtin-effect-capabilities.kumiki` | reducer, effect | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
+| `70-spec-grammar.kumiki` | type, slot, fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
+| `71-button-type.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
+| `72-time-format.kumiki` | slot, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
+| `73-effect-policy-queue.kumiki` | slot, effect, reducer | lifecycle | [§10.4.3](./runtime.md#_10-4-3-policy-handling) |
+| `74-common-tile-props.kumiki` | slot, reducer, tile | style | [§2.3.10](./stdlib.md#_2-3-10-common-specification-of-props) |
+| `75-paren-less-stdlib-constants.kumiki` | slot, effect, reducer | http | [§6.1.4](./http.md#_6-1-4-the-decoder-type) |
+| `76-conditional-adds-a-universal-handler.kumiki` | slot, reducer, tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
+| `77-int-float-math.kumiki` | slot, reducer, tile | stdlib | [§2.2.7](./stdlib.md#_2-2-7-int-float) |
 <!-- examples:end -->
+:::

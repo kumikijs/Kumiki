@@ -19,9 +19,52 @@ A `test` definition is **the sixth layer**. It is stored in the CRDT graph and r
 
 > **Implementation status.** Implemented: `reducer-test`, `tile-test`, `property-test` ([Property Tests](#_8-3-property-tests)), and `episode-test` ([Episode replay](#_8-6-episode-replay)) backed by the runtime [Episode Loop](./runtime.md#_10-5-episode-loop); the `kumiki test` runner with name / `prefix*` filtering, per-test **timings** (`(1ms)` / `(100 cases, 23ms)`), `--coverage`, and `--watch`; `kumiki fix --auto-patch <test-name>` ([Fixing from a failing test](#_8-7-2-fixing-from-a-failing-test)); `expect` **wildcards** (`<any-id>` / `<slots.X>`, [Wildcards](#_8-2-2-wildcards)); and **effect-result mocks** inside `reducer-test` (`given.mocks`, [Effect mock](#_8-5-effect-mock)). The runner prints `PASS` / `FAIL` lines plus `expected` / `actual` / `diff at <path>` and — when it can isolate a scalar leaf — the value arrow (`"a" -> "b"`) on failure.
 
+### 8.1.1 The names a test body writes
+
+A test body is a schema, not an expression, so each position is resolved as
+what it is:
+
+| Position | The name is | Reported as |
+|---|---|---|
+| a `given.slots` / `expect.slots` key | a slot | [E0103](./errors.md#e0103-undef-ref-undef-slot) |
+| `given.event.target`, when `type` is a `ui.*` one | a tile | [E0105](./errors.md#e0105-undef-tile) |
+| an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
+| a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
+| every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
+
+`given.event.type` names an event, whose vocabulary belongs to the trigger
+grammar rather than to the expression layer. `target` is only a tile when that
+event is a `ui.*` one: a reducer driven by a timer names the timer, and one
+driven by an effect outcome has no name to give. Neither field reaches the
+generated test — the payload is built from the event's *other* fields, and the
+reducer the runner applies is the test's own target — so this rule is about
+what the test says rather than what it does.
+
+A slot is *readable* in a test body — the value is the one the slot holds — and
+a `for-all` name is in scope in both `given` and `invariant`, with the type its
+generator declares. `run-reducer(<reducer>)` takes a reducer name rather than a
+value, and only a property-test invariant may call it
+([§8.3](#_8-3-property-tests)): it lowers to a read of the trial's bindings, so
+anywhere else the generated module dies before a single test reports.
+
+Two positions are checked for *shape* rather than for names, because what the
+lowering does with an unrecognised one is assert something else
+([E0713](./errors.md#e0713-test-shape-invalid)): a `reducer-test` mock that is
+not `ok(...)` / `err(...)` / `delay(...)` became a success mock, and an
+`expect.effects` that is not a list became the assertion that no effect was
+emitted.
+
+Before any of this was resolved, a name in a test body was accepted whatever it
+said, and the lowering dropped what it could not read: a slot key naming
+nothing left the test running against the slot's default — **passing**, while
+asserting something it had never set up. An undefined call inside an
+`invariant` was worse, because the property runner catches the trial's
+exception and renders it as a falsified invariant: the output accused the code
+under test of a bug it did not have.
+
 ## 8.2 Reducer Tests
 
-```kumiki
+```kumiki fragment
 test addTodo-basic =
     reducer-test addTodo
         given = {
@@ -51,9 +94,13 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
 
-### 8.2.3 Expecting a panic
+### 8.2.3 The batch rule applies here too
 
-```kumiki
+A reducer-test asserts what the *running app* would do, so a batch a refinement rejects leaves every slot at its `given` value and emits nothing ([batching](./runtime.md#a-batch-commits-all-or-nothing)). The rejection is reported on `console.error`, not through `expect` — the tier has no `errorIncludes` counterpart, so an `expect` block alone cannot distinguish "the batch was refused" from "the reducer did nothing".
+
+### 8.2.4 Expecting a panic
+
+```kumiki fragment
 test addTodo-empty =
     reducer-test addTodo
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
@@ -62,7 +109,7 @@ test addTodo-empty =
 
 ## 8.3 Property Tests
 
-```kumiki
+```kumiki fragment
 test toggle-is-involution =
     property-test
         for-all = {todoId: TodoId, todos: Map(TodoId, Todo)}
@@ -103,7 +150,7 @@ Each type has an automatic generator:
 
 Custom generators:
 
-```kumiki
+```kumiki snippet
 test foo =
     property-test
         for-all = {x: Int where between(0, 100)}
@@ -116,7 +163,7 @@ test foo =
 
 Compare a tile's structure against an expected value:
 
-```kumiki
+```kumiki fragment
 test counter-display =
     tile-test App
         given = {slots: {count: 5}, in: ()}
@@ -131,7 +178,7 @@ The snapshot is a deep structural comparison. Class names and styles are out of 
 
 Replace an effect's return value:
 
-```kumiki
+```kumiki fragment
 test loadUser-success =
     reducer-test fetchUser-flow
         given = {
@@ -155,16 +202,16 @@ The runner dispatches the triggering event, then drives the emit → result → 
 
 Replay an episode log recorded in production and verify the result:
 
-```kumiki
+```kumiki fragment
 test bug-2026-05-21 =
     episode-test
         load    = "fixtures/episode-2026-05-21.log"
         mocks   = {
-            loadUser: from-log,        ; return the result recorded in the log as-is
+            loadUser: from-log,        # return the result recorded in the log as-is
             persist:  ignore
         }
         expect  = {
-            slots-equal: from-log,     ; final slots match the log's record
+            slots-equal: from-log,     # final slots match the log's record
             no-panics: true
         }
 ```
@@ -213,16 +260,18 @@ Non-literal divergences (numeric slots, wrong operators, effect-list mismatches)
 
 E2E is implemented outside the runtime. Use existing tools such as Playwright / Cypress. From the Kumiki side:
 
-- A **`test-id` prop** can be attached to every tile
-- The **`data-kumiki-tile`** attribute is automatically applied by the runtime
-- The **`window.__KUMIKI__`** exposes internal slots read-only (test-time only)
+- A **`test-id` prop** can be attached to every tile, and becomes the **`data-kumiki-test`** attribute
+- The **`data-kumiki-tile`** attribute is automatically applied by the runtime, naming the kind
+- **`window.__kumikiApp.live`** is the app's slot map — the state oracle the scenario and browser tiers read
 
 ```javascript
 // Playwright example
 await page.locator('[data-kumiki-test=add-btn]').click()
-const todos = await page.evaluate(() => window.__KUMIKI__.slots.todos)
+const todos = await page.evaluate(() => window.__kumikiApp.live.todos)
 expect(Object.keys(todos)).toHaveLength(1)
 ```
+
+`__kumikiApp` is the compiled module's own export of its `AppShape`; `live` is the slot map behind it. It is the same object the runtime renders from, not a copy taken for testing — reading it is safe, writing it is not.
 
 ## 8.9 Design Decision Record
 
@@ -246,7 +295,7 @@ Separate from the `test` definitions above (in-language tests), the toolchain pr
 
 ### smoke (layer 2)
 
-`kumiki smoke <file>` mounts a compiled app to a headless DOM (happy-dom), fires events at all operable elements after the initial render, and at each step monitors for runtime exceptions, console errors, unhandled rejections, and empty rendering. It automatically detects the class of bugs previously verified by a human in the browser, such as "the type passes, but it calls a method that doesn't exist in the runtime and crashes on operation" or "it doesn't render." It is general-purpose and has no app-specific knowledge.
+`kumiki smoke <file>` mounts a compiled app to a headless DOM (happy-dom), fires events at all operable elements after the initial render, and at each step monitors for runtime exceptions, console errors, unhandled rejections, and empty rendering. **Empty** means the render carries neither text nor an element that is content on its own (an image, a control, a status region) — a tree of empty containers is a blank page, not a render. Forms are submitted directly, after the fields inside them: a `form` usually has no submit button to click, and where it has one, whether a synthetic click submits it is activation behaviour that differs per DOM — dispatching on the form means the same thing in all of them, and is the only path that reaches a `ui.submit` reducer for a form written without a button. It automatically detects the class of bugs previously verified by a human in the browser, such as "the type passes, but it calls a method that doesn't exist in the runtime and crashes on operation" or "it doesn't render." It is general-purpose and has no app-specific knowledge.
 
 Real rendering in a browser (CSS layout, real focus, etc.) cannot be fully reproduced by a headless DOM. The **real-browser tier** for that is `@kumikijs/e2e` (Chromium / Playwright), which runs in the **same scenario format** as the headless-DOM tier. The state oracle is likewise `window.__kumikiApp.live`, and displayed text is `innerText` (visible only). In addition, it has browser-only assertions:
 
@@ -257,9 +306,9 @@ Because it is heavy (browser binaries), it is not included in the default CI tes
 
 **Fixture shape (`.browser.json`).** A `.browser.json` is the same JSON as a `scenario.json` — `{ "steps": [{ "label"?, "do"?, "expect"? }, ...] }` — with these intentional differences from the scenario tier:
 
-- `expect` may additionally use the browser-only assertions `focused` / `visible` / `hidden` / `animating` described above.
+- `expect` may additionally use the browser-only assertions `focused` / `visible` / `hidden` / `animating` described above, and `elementState`.
 - Uncaught JS exceptions and `console.error` output are **always fatal** at this tier — a real defect must not slip through as "green with warnings". `expect.noErrors` is accepted for scenario-format compatibility but is redundant here.
-- `effects: { ... }` (the scenario tier's capability-boundary mock) is **not supported**. The browser tier drives a real Chromium against the real DOM/CSS on purpose; mocking effects would defeat what tier 3 is for.
+- `effects: { ... }` (the scenario tier's capability-boundary mock) is **not supported**, and a fixture carrying one is refused rather than run — the browser tier drives a real Chromium against the real DOM/CSS on purpose, and silently ignoring the block would leave a fixture believing its requests were stubbed while they left the machine. The `expect` keys and action kinds are a closed set here too — the scenario tier's, minus `errorIncludes` and minus the `key` / `hover` actions, plus the browser-only names above and `setProperty` — checked before the page is opened, values as well as kinds. `errorIncludes` asks the runner to *require* an error, which this tier treats as fatal, so a fixture using it is refused rather than left unevaluated. `{submit}` calls `requestSubmit()` rather than dispatching an event, because running the real thing — constraint validation included — is what this tier is for.
 - The runner serves the compiled app on a fixed intercepted origin (`http://kumiki.local/`), so the default history-based router runs as it would in production — `navigate` actions round-trip through real `history.pushState`. There is no per-fixture router-mode switch.
 
 Drop a fixture at `packages/examples/features/<name>.browser.json` (paired with the sibling `<name>.kumiki`) or `packages/examples/apps/<app>/<any>.browser.json` (paired with `app.kumiki` in the same directory) and `pnpm test:e2e` picks it up automatically — one Playwright test per fixture. `kumiki-e2e <file> <scenario.json> [--headed]` remains the single-fixture CLI wrapper (same runner, own Chromium).
@@ -279,9 +328,9 @@ These run in default CI (no browser binaries), so a re-introduced dropped-expres
 
 `kumiki run <file> <scenario.json>` (MCP: `kumiki_run_scenario`) drives the app with a **scenario** and returns a structured trace for each step. This becomes the foundation for a "generate → execute → observe → fix loop without a human in the loop."
 
-- **Action**: `{dispatch, payload?}` (fire a reducer by name) / `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{fill, value}` / `{choose, value}` / `{navigate}`. `{focus}` and `{blur}` dispatch a real DOM `FocusEvent` on a selector match, so the scenario tier alone verifies the `addEventListener` wiring that feeds `ui.focus` / `ui.blur` reducers.
+- **Action**: `{dispatch, payload?}` (fire a reducer by name) / `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`. `{focus}`, `{blur}`, `{key}` and `{hover}` dispatch a real DOM event on a selector match — `FocusEvent`, a `KeyboardEvent` carrying `value` as its `key`, and a `mouseenter` — so the scenario tier alone verifies the `addEventListener` wiring that feeds `ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducers. Each is dispatched on the element the selector matches, which is where the runtime attaches its listener. `keydown` bubbles from there, which is what lets `ui.key(Container)` be driven from a focusable descendant; `focus`, `blur` and `mouseenter` do not bubble, and a browser fires a separate `mouseenter` on each ancestor rather than propagating one. A `ui.key` reducer's payload carries `key` and `code`: only `key` is set from this tier, since a `code` names a physical key that a scenario asking for `"Enter"` has not chosen. `{submit}` dispatches the form event a `ui.submit` reducer listens for; its selector may name the form or anything inside it, since a `form` tile carries no id unless its author gave it one. `{wait}` settles for that many milliseconds on top of the step's own settle, which is how a debounce window, a retry backoff or a timer is observed — a step with no action does not settle at all.
 - **Observation**: after each step, record `state` (a slot snapshot), `domText`, `errors`, and `emits` (the fired effects).
-- **Assertion (expect)**: `{ noErrors?, state?, domIncludes?, domExcludes? }`. `state` is a **partial match against slot state** (dot-separated paths allowed). Because you can verify state rather than DOM text, it can mechanically detect **non-exception behavior bugs** (the class a human notices by clicking), such as "a select always ending up at the last option." This is equivalent to making the acceptance criteria (AC) of TDD executable.
+- **Assertion (expect)**: `{ noErrors?, errorIncludes?, state?, domIncludes?, domExcludes? }` — a **closed set**, as the action list above is. A key outside it fails the run rather than being skipped, and the browser-only names (`focused` / `visible` / `hidden` / `animating` / `elementState`, and the `setProperty` action) fail with a message naming the tier that owns them, so a `.browser.json` **whose assertions are browser-tier** is refused instead of passing having checked nothing. A fixture that happens to assert only what a headless DOM can answer runs here unchanged, and one in the corpus does. The document itself is closed the same way — `steps` (required, and non-empty: a scenario that asserts nothing must not report success) plus `effects` / `defaultEffect` — so a misspelled `steps` is named rather than read as absent. A scenario is validated before the app is mounted, and every problem in it is reported at once. `state` is a **partial match against slot state** (dot-separated paths allowed). `errorIncludes` is the counterpart to `noErrors` — each substring must appear in some error reported during that step — for contracts whose whole point is that the runtime *surfaces* something, such as a reducer batch a refinement rejected ([batching](./runtime.md#a-batch-commits-all-or-nothing)) or an effect error no `.err` reducer consumes. It is scenario-tier only: the browser tier treats any reported error as fatal. Because you can verify state rather than DOM text, it can mechanically detect **non-exception behavior bugs** (the class a human notices by clicking), such as "a select always ending up at the last option." This is equivalent to making the acceptance criteria (AC) of TDD executable.
 - **effect script**: `effects: { <name>: [{outcome, value}, ...] }` replaces HTTP / Storage results in order, keeping the loop deterministic and network-independent.
 
 Why this works cleanly in Kumiki: because state is explicit (slots), the oracle is trustworthy; because events are declarative (reducer names), it can be driven precisely; and because effects can be mocked at the capability boundary, it is reproducible. The agent generates "app + scenario (AC)" from requirements and self-corrects by reading the trace, so the human only needs to state the requirements once. The loop procedure is described in `.claude/skills/kumiki-iterate`.

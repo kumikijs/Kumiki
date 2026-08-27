@@ -35,17 +35,25 @@ Kumiki は JSX・Hooks・依存配列・Provider といった「人間の認知�
 
 ## クイックスタート
 
+`.kumiki` ファイルを 1 つ書いたら:
+
+```sh
+npm i -g kumiki
+kumiki dev app.kumiki        # ホットリロード付きで配信
+kumiki check app.kumiki      # 型検査して診断を出す
+kumiki build app.kumiki ./out
+```
+
+その最初の 1 ファイルを書くところは [はじめに](./docs/guide/getting-started.md)、1 レイヤずつ組み立てるのは [最初のアプリ](./docs/guide/your-first-app.md) にある。
+
+Kumiki 自体を開発する場合は clone して:
+
 ```sh
 pnpm install
 pnpm build          # 全パッケージをビルド
 pnpm test           # 全テスト
-
-# Kumiki プログラムを検査・ビルド（リポジトリルートで実行）
 pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
-pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
 ```
-
-はじめての人は [docs/guide/getting-started.md](./docs/guide/getting-started.md) → [docs/guide/your-first-app.md](./docs/guide/your-first-app.md) へ。
 
 ## パッケージ
 
@@ -58,7 +66,7 @@ pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
 
 ## 運用モデル
 
-このリポジトリは「**見ればすべての疑問が解決する**」状態を目指す。質問・issue・バグ報告には、原則として **examples と tests を足すことで答える**。壊れた例は CI で弾かれる（[tests/](./tests/)）。詳しくは [CONTRIBUTING.md](./CONTRIBUTING.md)。
+このリポジトリは「**見ればすべての疑問が解決する**」状態を目指す。質問・issue・バグ報告には、原則として **examples と tests を足すことで答える**。壊れた例は CI で弾かれる（[packages/tests/](./packages/tests/)）。詳しくは [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## ライセンス
 

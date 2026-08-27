@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-type AbortLog = { aborted: boolean; signal?: AbortSignal };
+type AbortLog = { aborted: boolean; signal?: AbortSignal | undefined };
 
 function makeCancelApp(): {
   app: AppShape;

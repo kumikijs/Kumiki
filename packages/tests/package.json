@@ -7,11 +7,14 @@
   "license": "Apache-2.0",
   "scripts": {
     "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
     "lint": "biome check ."
   },
   "devDependencies": {
+    "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
+    "@types/node": "catalog:",
     "happy-dom": "catalog:",
     "typescript": "catalog:",
     "vitepress": "catalog:",

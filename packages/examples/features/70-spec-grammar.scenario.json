@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "label": "the trailing # is a comment, and \\u{...} is one character",
+      "expect": {
+        "noErrors": true,
+        "state": { "reading": 20, "picked": "–" },
+        "domIncludes": ["reading: 20", "picked: –"]
+      }
+    },
+    {
+      "label": "the tight Row#pick selector still binds",
+      "do": { "clickText": "reading: 20" },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": "now: 20" },
+        "domIncludes": ["picked: now: 20"]
+      }
+    },
+    {
+      "label": "a negative bound is a bound, so 25.0 is still in range",
+      "do": { "clickText": "warmer" },
+      "expect": { "noErrors": true, "state": { "reading": 25 } }
+    },
+    {
+      "label": "the guarded panic does not fire",
+      "do": { "clickText": "panic" },
+      "expect": { "noErrors": true, "state": { "reading": 25 } }
+    }
+  ]
+}

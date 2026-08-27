@@ -1,0 +1,48 @@
+# Feature: `policy=queue` runs one invocation at a time, in the order emitted.
+#
+# The dispatcher had no `queue` branch, so it fell through to the default and
+# ran every emit in parallel — the one policy whose whole purpose is that it
+# does not (runtime.md §10.4.3). Three emits from a single reducer overlapped.
+#
+# `log` below is written by the `.ok` reducer, so the order it ends up in is
+# the order the invocations finished. The scenario shows the result — one
+# click, three effects, `log=abc` — but it cannot tell FIFO from parallel:
+# scenario-tier effects resolve from scripted results in order either way.
+# What overlap is impossible is measured in
+# packages/runtime/test/spec-divergences.test.ts, which counts invocations in
+# flight against a provider that takes real time.
+
+slot log     : Text = ""
+slot pending : Int  = 0
+
+effect record cap=log.write
+              in=Text
+              out=Unit
+              policy=queue
+
+reducer send on=ui.click(SendBtn) do=
+    pending := 3
+    emit record("a")
+    emit record("b")
+    emit record("c")
+
+reducer done on=record.ok(_, $sent) do=
+    log := log + $sent
+    pending := pending - 1
+
+# Without a host provider for `log.write` the effect errs — visible here rather
+# than dropped, and it keeps `pending` honest either way (#37).
+reducer failed on=record.err(_, $sent) do=
+    log := log + "!"
+    pending := pending - 1
+
+tile SendBtn = button(text="send", onClick=send)
+tile App = column(
+             SendBtn,
+             text("log=" + log),
+             text("pending=" + pending.show))
+
+app QueuePolicy
+    caps   = [log.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -1,6 +1,7 @@
 import type { Expr, TileDef, TileExpr } from "../ast.ts";
+import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
-import { addBind, type EvalCtx, type GenCtx, jsName, makeEvalCtx } from "./context.ts";
+import { addBind, type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, tupleArm } from "./expr.ts";
 import { keyFor, propsFor } from "./selector.ts";
 
@@ -26,9 +27,9 @@ export function tileExprJs(
       const iter = jsOfExpr(t.iter, ctx);
       const inner = makeEvalCtx(gen, ctx.localBinds);
       inner.localBinds.add(t.bind);
-      const impl = `_s.show(${jsName(t.bind)})`;
+      const impl = `_s.show(${jsBinding(t.bind)})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${jsName(t.bind)}) => (${tileExprJs(t.body, gen, inner, enclosingTile, impl)}))`;
+      return `((${iter}) || []).map((${jsBinding(t.bind)}) => (${tileExprJs(t.body, gen, inner, enclosingTile, impl)}))`;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
@@ -44,7 +45,7 @@ export function tileExprJs(
             for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
             const binds = arm.pattern.binds
               .map((b, i) =>
-                b !== "_" ? `const ${jsName(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
+                b !== "_" ? `const ${jsBinding(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
               )
               .join(" ");
             return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTile, implicitKeyExpr)}; }`;
@@ -52,7 +53,7 @@ export function tileExprJs(
           if (arm.pattern.kind === "PBind") {
             const inner = makeEvalCtx(gen, ctx.localBinds);
             inner.localBinds.add(arm.pattern.name);
-            return `if (true) { const ${jsName(arm.pattern.name)} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTile, implicitKeyExpr)}; }`;
+            return `if (true) { const ${jsBinding(arm.pattern.name)} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTile, implicitKeyExpr)}; }`;
           }
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTile, implicitKeyExpr)}; }`;
@@ -128,14 +129,13 @@ function tileCallJs(
     if (!def) throw new Error(`Tile "${name}" not found`);
     const inner = makeEvalCtx(gen, ctx.localBinds);
     const arg1 = t.args[0];
-    const TILE_KINDS = new Set(["TileCall", "TileFor", "TileWhen", "TileIf", "TileMatch"]);
     const wrapBoundary = (body: string): string => {
       if (!def.errorBoundary) return body;
       const fb = gen.tiles.find((x) => x.name === def.errorBoundary);
       if (!fb) return body;
       const fbCtx = makeEvalCtx(gen, new Set(["$1"]));
       const fbBody = tileExprJs(fb.body, gen, fbCtx, fb.name);
-      return `((() => { try { return ${body}; } catch (_err) { const ${jsName("$1")} = { message: String(_err && _err.message || _err), location: ${JSON.stringify(def.name)} }; return ${fbBody}; } })())`;
+      return `((() => { try { return ${body}; } catch (_err) { const ${jsBinding("$1")} = { message: String(_err && _err.message || _err), location: ${JSON.stringify(def.name)} }; return ${fbBody}; } })())`;
     };
     // Each user-tile call site wraps its rendered output with `_named(…, "X")`
     // so the runtime can diff `tile.mount(X)` / `tile.unmount(X)` against the
@@ -144,8 +144,7 @@ function tileCallJs(
     const nameLit = JSON.stringify(def.name);
     if (arg1) {
       const v = arg1.value;
-      const isTile = TILE_KINDS.has((v as { kind?: string }).kind ?? "");
-      if (isTile) {
+      if (isTileExpr(v)) {
         return wrap(
           wrapBoundary(`_named(${tileExprJs(v as TileExpr, gen, inner, def.name)}, ${nameLit})`),
         );
@@ -159,7 +158,7 @@ function tileCallJs(
       const bodyJs = tileExprJs(def.body, gen, addBind(inner, "$1"), def.name);
       return wrap(
         wrapBoundary(
-          `((_arg, _propsOuter) => { const ${jsName("$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
+          `((_arg, _propsOuter) => { const ${jsBinding("$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
         ),
       );
     }
@@ -208,7 +207,12 @@ function tileCallJs(
       case "button": {
         const textArg = t.args.find((a) => a.name === "text");
         const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
-        return `({ kind: "button", text: _s.show(${textJs}), props: ${propsObj} })`;
+        // `type=` decides whether this button submits the form it is inside
+        // (forms.md §5.2.2). Emitted only when written, so a button that says
+        // nothing keeps the HTML default rather than being given one here.
+        const typeArg = t.args.find((a) => a.name === "type");
+        const typeField = typeArg ? `type: ${jsOfExpr(asExpr(typeArg.value), ctx)}, ` : "";
+        return `({ kind: "button", text: _s.show(${textJs}), ${typeField}props: ${propsObj} })`;
       }
       case "input": {
         const fields: string[] = [`kind: "input"`];
@@ -535,14 +539,8 @@ function collectChildren(
   for (const a of args) {
     if (a.name) continue; // skip named args at container level
     const v = a.value;
-    if (
-      (v as TileExpr).kind === "TileCall" ||
-      (v as TileExpr).kind === "TileFor" ||
-      (v as TileExpr).kind === "TileWhen" ||
-      (v as TileExpr).kind === "TileIf" ||
-      (v as TileExpr).kind === "TileMatch"
-    ) {
-      parts.push(tileExprJs(v as TileExpr, gen, ctx, enclosingTile));
+    if (isTileExpr(v)) {
+      parts.push(tileExprJs(v, gen, ctx, enclosingTile));
     } else if ((v as Expr).kind === "Ref") {
       const refName = (v as Expr & { name: string }).name;
       const def = gen.tiles.find((x) => x.name === refName);

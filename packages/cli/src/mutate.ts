@@ -3,8 +3,15 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { check, lex, parse } from "@kumikijs/compiler";
-import { directDeps, findReferences, load, type Store } from "./store.ts";
+import { check, lex, type Pos, parse } from "@kumikijs/compiler";
+import {
+  type DefEntry,
+  directDeps,
+  findReferences,
+  load,
+  referenceSites,
+  type Store,
+} from "./store.ts";
 
 // Crockford base32. The mutate-op id is a §9.3.3 ULID — 10-char ms timestamp
 // prefix followed by 16 random chars — so that lexicographic ordering matches
@@ -37,6 +44,8 @@ export type OpLogEntry = {
   body?: string;
   newName?: string;
   cascade?: boolean;
+  /** Every definition a cascade deleted, the requested one first (§9.4.1). */
+  removed?: string[];
   patch?: unknown;
   author: string;
   ts: number;
@@ -52,6 +61,7 @@ type RawOp = {
   body?: string;
   newName?: string;
   cascade?: boolean;
+  removed?: string[];
   patch?: unknown;
 };
 
@@ -144,6 +154,7 @@ function logOp(path: string, op: RawOp): string {
     ...(op.body !== undefined ? { body: op.body } : {}),
     ...(op.newName !== undefined ? { newName: op.newName } : {}),
     ...(op.cascade !== undefined ? { cascade: op.cascade } : {}),
+    ...(op.removed !== undefined ? { removed: op.removed } : {}),
     ...(op.patch !== undefined ? { patch: op.patch } : {}),
     author: authorOf(),
     ts: Date.now(),
@@ -166,7 +177,12 @@ function validate(path: string): { ok: true } | { ok: false; message: string } {
     // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
     // warnings (W02xx) describe pre-existing dead code patterns and would
     // wedge legitimate edits to unrelated layers.
-    const errors = check(program).filter((d) => d.severity !== "warning");
+    //
+    // `requireApp: false` because a program is built one definition at a time:
+    // the first `add` into a new file, and every edit until the `app` lands,
+    // would otherwise roll back with E0003. Whether the result is a complete
+    // application is what `kumiki check` answers afterwards.
+    const errors = check(program, { requireApp: false }).filter((d) => d.severity !== "warning");
     if (errors.length > 0) {
       const summary = errors
         .slice(0, 3)
@@ -220,6 +236,58 @@ function enforceLock(path: string, qname: string): void {
   }
 }
 
+/**
+ * What one mutation did, as the surfaces report it.
+ *
+ * Every op carries its op-id: it is the handle `kumiki patch revert` takes, so
+ * an edit that does not hand it back cannot be undone by the caller that made
+ * it. `remove` carries the definitions it deleted, because a cascade removes
+ * the dependents of the name it was given — up to and including the `app` — and
+ * a report naming only that one name is how a file loses its entry point
+ * quietly.
+ */
+export type EditReport =
+  | { op: "add" | "replace" | "edit"; qname: string; opId: string }
+  | { op: "rename"; qname: string; newName: string; opId: string }
+  | { op: "remove"; qname: string; opId: string; removed: RemovedNames };
+
+/**
+ * The definitions one `remove` deleted: the requested name, then the cascade.
+ *
+ * A remove always deletes at least the name it was given, and the report puts
+ * that one on the headline line rather than among its own casualties — so the
+ * split is the tuple, not a filter that has to recognise the name again.
+ */
+export type RemovedNames = [requested: string, ...cascaded: string[]];
+
+/**
+ * Render an `EditReport` for a human or an agent to read.
+ *
+ * The `kumiki` verbs print this and the MCP tools return it, so the two
+ * surfaces cannot answer the same edit differently — they did, and the one
+ * agents drive was the one saying less.
+ */
+export function describeEdit(report: EditReport): string {
+  const opIdSuffix = `  (${report.opId})`;
+  switch (report.op) {
+    case "add":
+      return `added ${report.qname}${opIdSuffix}`;
+    case "replace":
+      return `replaced ${report.qname}${opIdSuffix}`;
+    case "edit":
+      return `edited ${report.qname}${opIdSuffix}`;
+    case "rename":
+      return `renamed ${report.qname} -> ${report.newName}${opIdSuffix}`;
+    case "remove": {
+      const [, ...cascaded] = report.removed;
+      return [
+        `removed ${report.qname}${opIdSuffix}`,
+        ...cascaded.map((q) => `  cascaded ${q}`),
+      ].join("\n");
+    }
+  }
+}
+
 export function addDef(path: string, layer: string, name: string, body: string): string {
   enforceLock(path, `${layer}.${name}`);
   const src = readFileSync(path, "utf8");
@@ -257,7 +325,12 @@ export function replaceDef(path: string, qname: string, body: string): string {
   return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body });
 }
 
-export function removeDef(path: string, qname: string, cascade: boolean): string {
+/** Removes `qname`, plus everything that references it when `cascade`. */
+export function removeDef(
+  path: string,
+  qname: string,
+  cascade: boolean,
+): { opId: string; removed: RemovedNames } {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -307,7 +380,27 @@ export function removeDef(path: string, qname: string, cascade: boolean): string
     writeFileSync(path, original);
     throw new Error(`remove rejected: ${v.message}`);
   }
-  return logOp(path, { op: "remove", layer: entry.layer, name: entry.name, cascade });
+  // §9.4.1: a cascade is one op, and it says what it took. Replay could already
+  // reproduce the state — `applyOne` re-runs `removeDef` with `cascade`, which
+  // re-derives the same dependent set — but nothing in the log or on stdout
+  // said that removing one definition had removed eight. `removed` is written
+  // whenever `cascade` was requested, including when it took nothing, so its
+  // absence means "not a cascade" rather than "a cascade with no dependents".
+  const removed: RemovedNames = [
+    qname,
+    ...removalEntries
+      .map((e) => `${e.layer}.${e.name}`)
+      .filter((q) => q !== qname)
+      .sort((a, b) => a.localeCompare(b)),
+  ];
+  const opId = logOp(path, {
+    op: "remove",
+    layer: entry.layer,
+    name: entry.name,
+    cascade,
+    ...(cascade ? { removed } : {}),
+  });
+  return { opId, removed };
 }
 
 export function renameDef(path: string, qname: string, newName: string): string {
@@ -316,43 +409,66 @@ export function renameDef(path: string, qname: string, newName: string): string 
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const old = entry.name;
-  // Replace `old` as a whole word, but leave commented or stringed occurrences
-  // alone. Line-by-line so we can skip past `#` and inside `"…"`.
-  const re = new RegExp(`\\b${escapeRegExp(old)}\\b`, "g");
-  const next = store.lines
-    .map((line) => {
-      const depth = 0;
-      let result = "";
-      let i = 0;
-      while (i < line.length) {
-        const ch = line[i];
-        if (ch === "#") {
-          result += line.slice(i);
-          break;
-        }
-        if (ch === '"') {
-          // copy the whole string literal verbatim
-          const start = i;
-          i++;
-          while (i < line.length && line[i] !== '"') {
-            if (line[i] === "\\") i++;
-            i++;
-          }
-          i++;
-          result += line.slice(start, i);
-          continue;
-        }
-        result += ch;
-        i++;
+  if (old === newName) return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
+  if (store.byQName.has(`${entry.layer}.${newName}`)) {
+    throw new Error(`Cannot rename ${qname}: ${entry.layer}.${newName} already exists`);
+  }
+
+  // Every occurrence to rewrite, as (line, col) — the definition's own name plus
+  // each resolved reference to it. Nothing else is touched, so a record field, a
+  // word in a comment, a string literal and a loop variable that merely share
+  // the spelling are left alone by construction rather than by a filter that has
+  // to anticipate them.
+  // Some references have no identifier position of their own — a test's
+  // `{slots: {count: 0}}` key is a record key, not a token the AST points at.
+  // They are edges for `refs` and `remove --cascade` but nothing `rename` can
+  // rewrite, so refuse rather than half-rename the program.
+  const unpositioned = store.defs.filter((e) =>
+    referenceSites(store, `${e.layer}.${e.name}`).some(
+      (r) => r.layer === entry.layer && r.name === old && !r.pos,
+    ),
+  );
+  if (unpositioned.length > 0) {
+    const where = unpositioned.map((e) => `${e.layer}.${e.name}`).join(", ");
+    throw new Error(
+      `Cannot rename ${qname}: it is named in a position with no rewritable identifier (${where}). Edit those definitions first.`,
+    );
+  }
+
+  const sites: Pos[] = [defNamePos(store, entry, old)];
+  for (const e of store.defs) {
+    for (const r of referenceSites(store, `${e.layer}.${e.name}`)) {
+      if (r.layer === entry.layer && r.name === old && r.pos) sites.push(r.pos);
+    }
+  }
+
+  const lines = store.lines.slice();
+  // Right-to-left within a line so earlier columns keep their positions.
+  const byLine = new Map<number, number[]>();
+  for (const p of sites) {
+    const cols = byLine.get(p.line) ?? [];
+    cols.push(p.col);
+    byLine.set(p.line, cols);
+  }
+  for (const [line, cols] of byLine) {
+    const text = lines[line - 1];
+    if (text === undefined) {
+      throw new Error(`rename aborted: reference at line ${line} is past the end of the file`);
+    }
+    let next = text;
+    for (const col of [...new Set(cols)].sort((a, b) => b - a)) {
+      const at = col - 1;
+      if (next.slice(at, at + old.length) !== old) {
+        throw new Error(
+          `rename aborted: expected "${old}" at ${line}:${col} but found "${next.slice(at, at + old.length)}"`,
+        );
       }
-      // Now apply rename to the non-string, non-comment prefix and re-glue.
-      const codePart = result;
-      const tail = line.slice(codePart.length);
-      const renamed = codePart.replace(re, newName);
-      void depth;
-      return renamed + tail;
-    })
-    .join("\n");
+      next = next.slice(0, at) + newName + next.slice(at + old.length);
+    }
+    lines[line - 1] = next;
+  }
+
+  const next = lines.join("\n");
   const original = store.source;
   writeFileSync(path, next);
   const v = validate(path);
@@ -361,6 +477,26 @@ export function renameDef(path: string, qname: string, newName: string): string 
     throw new Error(`rename rejected: ${v.message}`);
   }
   return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
+}
+
+/**
+ * Where a definition's own name sits. The AST records the definition's start,
+ * which is the keyword; the name is the first identifier after it.
+ *
+ * The search must begin past the keyword, not at it: `pos.col` is 1-based and
+ * `indexOf`'s offset is 0-based, so starting at `col` began one character into
+ * the keyword — and a name that is a suffix of its own keyword (`slot lot`,
+ * `fn n`, `type e`) matched inside the keyword instead. That produced
+ * `stotal lot` from `rename slot.lot total`, written to disk before `validate`
+ * caught it and rolled back.
+ */
+function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
+  const line = store.lines[entry.range.startLine - 1] ?? "";
+  const keywordCol = (entry.def as { pos?: Pos }).pos?.col ?? 1;
+  const from = keywordCol - 1 + entry.layer.length;
+  const at = line.indexOf(name, from);
+  if (at < 0) throw new Error(`rename aborted: cannot locate "${name}" on its own definition line`);
+  return { line: entry.range.startLine, col: at + 1 };
 }
 
 /**
@@ -535,7 +671,7 @@ function applyOne(path: string, op: RawOp): string {
       if (!op.newName) throw new Error("rename op missing newName");
       return renameDef(path, `${op.layer}.${op.name}`, op.newName);
     case "remove":
-      return removeDef(path, `${op.layer}.${op.name}`, op.cascade ?? false);
+      return removeDef(path, `${op.layer}.${op.name}`, op.cascade ?? false).opId;
     default:
       throw new Error(`unknown op kind "${op.op}"`);
   }
@@ -554,7 +690,7 @@ export function patchRevert(path: string, opId: string): string {
   switch (target.op) {
     case "add":
       // Inverse of add = remove.
-      return removeDef(path, `${target.layer}.${target.name}`, false);
+      return removeDef(path, `${target.layer}.${target.name}`, false).opId;
     case "remove": {
       // Inverse of remove = add. The removed body was the previous replace/add body.
       const prev = priorBody(log, idx, target.layer, target.name);

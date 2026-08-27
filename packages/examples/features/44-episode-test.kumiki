@@ -7,7 +7,9 @@
 type N = nominal Int where between(0, 999)
 slot count : N = 0
 
-reducer inc on=ui.click(IncBtn) do= count := count + 1
+# `N` is bounded, so `inc` guards its ceiling: a refused write would discard
+# the whole batch (spec/runtime.md §10.3.3).
+reducer inc on=ui.click(IncBtn) do= if count < 999 then count := count + 1
 
 tile IncBtn = button(text="+")
 tile App    = column(heading("Count: " + count.show), IncBtn) {pad: "md"}

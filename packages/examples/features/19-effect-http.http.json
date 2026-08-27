@@ -1,0 +1,5 @@
+{
+  "GET /api/quote": {
+    "json": { "text": "Programs must be written for people to read.", "author": "Hal Abelson" }
+  }
+}

@@ -29,13 +29,16 @@ import {
   computeSlotDiffs,
   type EffectResult,
   type EmitSpec,
+  NONE,
   type ParsedRoute,
   panicInfo,
   pickRootTile,
   type RoutingImpl,
   readStatus,
+  reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
+  withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
 import { renderTileToString } from "./ssr-render.ts";
@@ -123,7 +126,7 @@ export async function renderToString(
           search: "",
           hash: "",
         })
-      : { path: routePath, pattern: routePath, params: {}, query: {}, hash: null };
+      : { path: routePath, pattern: routePath, params: {}, query: {}, hash: NONE };
   live.route = parsedRoute;
 
   const now = options.now ?? (() => Date.now());
@@ -150,7 +153,9 @@ export async function renderToString(
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
 
-    const html = renderTileToString(pickRootTile(app, live));
+    // Inside the render bracket, so `@token` references resolve against this
+    // app's theme rather than the built-in fallbacks.
+    const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
     for (const [k, meta] of Object.entries(app.slots)) {
@@ -300,7 +305,15 @@ function applyReducerOnSsr(
     logger.recordPanic({ ...panicInfo(e, "hydrate"), location: `reducer "${r.name}"` });
     return null;
   }
-  const { diffs, dirty } = computeSlotDiffs(live, applied.slots, slotMetas);
+  const { diffs, dirty, rejected } = computeSlotDiffs(live, applied, slotMetas);
+  if (rejected.length > 0) {
+    // §10.3.3 all-or-nothing, on the server too: nothing was written, so the
+    // emits must not chain either. Reported here as well as on the client so a
+    // rejection baked into the SSR pass is not discovered only after hydration.
+    reportRejectedBatch(r.name, rejected);
+    logger.recordReducer(r.name, [], []);
+    return { emits: [] };
+  }
   logger.recordReducer(
     r.name,
     diffs,

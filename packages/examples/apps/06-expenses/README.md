@@ -16,11 +16,17 @@ This app was built as a **demo of the autonomous iterate loop**, and in the proc
 - A filter toggle and a total that is unaffected by the filter
 - Clearing the input field after adding
 
-## Validation
+## Run
+
+Every command below is run **from the repository root**.
 
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts smoke examples/apps/06-expenses/app.kumiki
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts run   examples/apps/06-expenses/app.kumiki examples/apps/06-expenses/scenario.json
+pnpm kumiki check packages/examples/apps/06-expenses/app.kumiki
+pnpm kumiki build packages/examples/apps/06-expenses/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/06-expenses/app.kumiki
+pnpm kumiki run packages/examples/apps/06-expenses/app.kumiki packages/examples/apps/06-expenses/scenario.json
 ```
 
-`scenario.json` distills the requirements into executable acceptance criteria (AC). `tests/` runs them in CI.
+`scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI.
+
+Related specs: [stdlib](../../../../docs/spec/stdlib.md) / [testing](../../../../docs/spec/testing.md)

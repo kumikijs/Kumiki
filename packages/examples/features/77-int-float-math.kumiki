@@ -1,0 +1,73 @@
+# Feature: §2.2.7 Int / Float arithmetic, and §2.4.4 `random()`.
+#
+# The spec used to document these as a `math.*` namespace. It could not exist:
+# a call qualifier is a capitalised name, so `math.abs(x)` is a reference to a
+# name called `math` and every one of the twelve names was E0103. They are
+# methods on the number instead — which is where `abs` / `min` / `clamp`
+# already were.
+#
+# `round()` is written with its parentheses and the others without, because both
+# spellings are the language: an argument-less method reads either way.
+#
+# `random()` is the one that is not a method, because it has no receiver. It
+# reads the environment like `now` and, like `now`, is callable anywhere. The
+# roll below is asserted through `inRange` rather than by value: what a scenario
+# can pin about a random number is the range it came from.
+
+slot base    : Float = 2.25
+slot down    : Int   = 0
+slot up      : Int   = 0
+slot nearest : Int   = 0
+slot root    : Float = 0.0
+slot squared : Float = 0.0
+slot lnOne   : Float = -1.0
+slot expZero : Float = 0.0
+slot negative : Float = 0.0 - 2.5
+slot negRound : Int   = 0
+slot negFloor : Int   = 0
+slot notNumber : Text = ""
+slot noBound   : Text = ""
+slot roll    : Int   = 0
+slot inRange : Bool  = false
+
+reducer measure on=ui.click(MeasureBtn)
+    do= down    := base.floor
+        up      := base.ceil
+        nearest := base.round()
+        root    := base.sqrt
+        squared := base.sqrt.pow(2)
+        lnOne   := 1.0.log
+        expZero := 0.0.exp
+        # Ties go up, toward +inf — the same rule JS rounds by, and the one a
+        # positive receiver cannot tell apart from half-away-from-zero.
+        negRound := negative.round
+        negFloor := negative.floor
+        # Outside the domain, the platform's answer reaches the slot unchanged.
+        # `Int` is the type of `.floor`, not a promise that the value is one.
+        notNumber := (0.0 - 1.0).sqrt.show
+        noBound   := 0.0.log.show
+
+reducer roll6 on=ui.click(RollBtn)
+    do= roll    := (random() * 6.0).floor + 1
+        inRange := roll >= 1 && roll <= 6
+
+tile MeasureBtn = button(text="measure", onClick=measure)
+tile RollBtn    = button(text="roll", onClick=roll6)
+
+tile App
+    = column(
+        heading("Int / Float methods"),
+        MeasureBtn,
+        text("floor=" + down.show + " ceil=" + up.show + " round=" + nearest.show),
+        text("sqrt=" + root.show + " pow=" + squared.show),
+        text("log=" + lnOne.show + " exp=" + expZero.show),
+        text("round(-2.5)=" + negRound.show + " floor(-2.5)=" + negFloor.show),
+        text("sqrt(-1)=" + notNumber + " log(0)=" + noBound),
+        RollBtn,
+        text("roll=" + roll.show + " inRange=" + inRange.show)
+      )
+
+app IntFloatMath
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

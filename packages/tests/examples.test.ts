@@ -6,7 +6,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, type KumikiError } from "@kumikijs/compiler";
+import { A11Y_CODES, compile, type KumikiError } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
 import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -57,6 +57,24 @@ function expectCompiles(file: string): void {
   expect(result.js.length).toBeGreaterThan(0);
 }
 
+/**
+ * The a11y band (`E070x`) is opt-in, so nothing in the default gate reports a
+ * button with no name, an image with no `alt`, or a label whose `for` names no
+ * control. The corpus is the language's own documentation — an example that
+ * would fail the check an author is told to turn on is teaching the wrong
+ * thing, so the corpus holds itself to it even though a user's program is not
+ * required to.
+ */
+function expectPassesStrictA11y(file: string): void {
+  const result = compile(readFileSync(file, "utf8"), {
+    runtimeSpecifier: "./runtime.js",
+    capabilities: resolveCapabilities(file),
+    strictA11y: true,
+  });
+  const a11y = result.kind === "fail" ? result.errors.filter((e) => A11Y_CODES.has(e.code)) : [];
+  expect(fmtErrors(a11y)).toBe("");
+}
+
 describe("feature examples", () => {
   const files = listFeatureExamples();
   it("there are feature examples to check", () => {
@@ -65,6 +83,7 @@ describe("feature examples", () => {
   for (const file of files) {
     it(`compiles ${file.split(/[\\/]/).slice(-1)[0]}`, () => {
       expectCompiles(file);
+      expectPassesStrictA11y(file);
     });
   }
 });
@@ -78,6 +97,7 @@ describe("app examples", () => {
     const label = file.split(/[\\/]/).slice(-2).join("/");
     it(`compiles ${label}`, () => {
       expectCompiles(file);
+      expectPassesStrictA11y(file);
     });
   }
 });
@@ -89,7 +109,9 @@ describe("app examples", () => {
 // compile-green. Aligned with the operating model: every new example must pass
 // check + build + smoke; the scenario tier extends that to "DOM wired + reducer
 // fires" for examples that opt in by providing a scenario.
-function listFeatureScenarios(): { kumiki: string; scenario: string; label: string }[] {
+type ScenarioCase = { kumiki: string; scenario: string; label: string };
+
+function listFeatureScenarios(): ScenarioCase[] {
   const dir = join(examplesDir, "features");
   return readdirSync(dir)
     .filter((f) => f.endsWith(".scenario.json"))
@@ -104,33 +126,76 @@ function listFeatureScenarios(): { kumiki: string; scenario: string; label: stri
     .filter((s) => statSync(s.kumiki).isFile());
 }
 
+/** Every `apps/<name>/scenario.json`, paired with the app it drives. */
+function listAppScenarios(): ScenarioCase[] {
+  return listAppExamples()
+    .map((kumiki) => ({
+      kumiki,
+      scenario: join(dirname(kumiki), "scenario.json"),
+      label: kumiki.split(/[\\/]/).slice(-2)[0] ?? kumiki,
+    }))
+    .filter((s) => {
+      try {
+        return statSync(s.scenario).isFile();
+      } catch {
+        return false;
+      }
+    });
+}
+
+async function runScenarioCase(s: ScenarioCase): Promise<void> {
+  // `kumiki run` is a fresh process at `http://localhost/`, and a scenario is
+  // written against that. Here every scenario shares one document, so one that
+  // navigates leaves the next one mounting at a path it has no route for —
+  // reset the history so both tiers start where the author assumed.
+  window.history.replaceState(null, "", "/");
+  const app = await loadApp(s.kumiki);
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  try {
+    const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Scenario;
+    const report = await runScenario(app, root, scenario);
+    if (report.ok) return;
+    const detail = report.steps
+      .map((st, i) => {
+        const errs = st.errors.length ? ` errors=${st.errors.join("|")}` : "";
+        const fails = st.failures.length ? ` failures=${st.failures.join("|")}` : "";
+        return `step ${i} (${st.label ?? st.action ?? "-"}):${errs}${fails}`;
+      })
+      .filter((l) => l.includes("errors=") || l.includes("failures="))
+      .join("\n");
+    throw new Error(`${s.label} did not pass its scenario:\n${detail}`);
+  } finally {
+    root.remove();
+  }
+}
+
 describe("feature scenarios", () => {
   const scenarios = listFeatureScenarios();
   it("there are feature scenarios to run", () => {
     expect(scenarios.length).toBeGreaterThan(0);
   });
   for (const s of scenarios) {
-    it(`runs ${s.label}.scenario.json`, async () => {
-      const app = await loadApp(s.kumiki);
-      const root = document.createElement("div");
-      document.body.appendChild(root);
-      try {
-        const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Scenario;
-        const report = await runScenario(app, root, scenario);
-        if (!report.ok) {
-          const detail = report.steps
-            .map((st, i) => {
-              const errs = st.errors.length ? ` errors=${st.errors.join("|")}` : "";
-              const fails = st.failures.length ? ` failures=${st.failures.join("|")}` : "";
-              return `step ${i} (${st.label ?? st.action ?? "-"}):${errs}${fails}`;
-            })
-            .filter((l) => l.includes("errors=") || l.includes("failures="))
-            .join("\n");
-          throw new Error(`${s.label}.scenario.json did not pass:\n${detail}`);
-        }
-      } finally {
-        root.remove();
-      }
-    });
+    it(`runs ${s.label}.scenario.json`, () => runScenarioCase(s));
+  }
+});
+
+// An app is the corpus's answer to "what does a real program look like", and
+// compiling is the weakest thing that can be said about one. Every app carries
+// a scenario, and the floor below is what keeps a new app from arriving without
+// the assertions that say what it does.
+describe("app scenarios", () => {
+  const scenarios = listAppScenarios();
+
+  it("every app example ships a scenario", () => {
+    const scenarioed = new Set(scenarios.map((s) => s.kumiki));
+    const missing = listAppExamples()
+      .filter((f) => !scenarioed.has(f))
+      .map((f) => f.split(/[\\/]/).slice(-2)[0]);
+    expect(missing).toEqual([]);
+  });
+
+  for (const s of scenarios) {
+    it(`runs ${s.label}/scenario.json`, () => runScenarioCase(s));
   }
 });

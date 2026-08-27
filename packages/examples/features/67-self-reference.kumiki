@@ -1,0 +1,52 @@
+# Feature: what a definition written in terms of itself looks like instead.
+#
+# A tile that expands into itself is E0005, a `fn` that calls itself is E0006,
+# and a slot whose initial value reads a slot is E0304 (spec/errors.md). Each
+# shape below is the accepted form of one of those mistakes — the rejected
+# forms used to crash the compiler, run against the invariant, or break the
+# mounted app.
+
+type Node = {label: Text, depth: Int}
+
+# E0304: `slot total : Int = nodes.length` reads a slot. Derived values belong
+# in the fn layer — a slot read in an initial value is emitted as a lookup in
+# the live-value table, which does not exist yet while the slot table is built.
+slot nodes : List(Node) = [
+    {label: "root",   depth: 0},
+    {label: "child",  depth: 1},
+    {label: "leaf",   depth: 2}
+]
+slot picked : Int = 0
+
+# E0006: `fn depthOf(n: Int) -> Int = if n <= 0 then 0 else depthOf(n - 1) + 1`
+# is direct recursion. Folding over the data terminates by construction, which
+# is what the invariant is protecting.
+fn deepest(xs: List(Node)) -> Int = xs.fold(0, if $2.depth > $1 then $2.depth else $1)
+fn labelAt(xs: List(Node), i: Int) -> Text =
+    xs.filter($1.depth == i).map($1.label).join(", ")
+
+# E0005: `tile Row = row(text("x"), Row)` expands into itself, and so does a
+# pair of tiles that name each other. Repetition over a collection is `for`,
+# which draws one child per element and stops.
+tile NodeRow in=Node = row(
+                         text($1.label),
+                         text("depth " + $1.depth.show) {color: "muted"})
+                       {gap: "sm"}
+
+tile NextBtn = button(text="next", onClick=advance)
+
+reducer advance on=ui.click(NextBtn)
+    do= picked := (picked + 1) % nodes.length
+
+tile App = column(
+             heading("nodes"),
+             column(for n in nodes NodeRow(n) {key: n.label}) {gap: "xs"},
+             text("deepest: " + deepest(nodes).show),
+             text("picked: " + labelAt(nodes, picked)),
+             NextBtn)
+           {pad: "lg", gap: "md"}
+
+app SelfReference
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

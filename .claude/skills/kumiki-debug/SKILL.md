@@ -18,12 +18,32 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | code | meaning | usual fix |
 |---|---|---|
 | `E0001` | `app.routes` missing `/404` | add `"/404" -> NotFound` |
+| `E0003` | no `app` definition (an empty file counts) | add the `app` entry point; expected while a program is still being assembled with the editing verbs, which do not enforce it |
+| `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
+| `E0005` | a tile expands into itself, directly or through other tiles | break the loop — repetition belongs in `for`, alternatives in `when` / `match` |
+| `E0006` | a `fn` calls itself, directly or through other functions | rewrite as `fold` / `map` / `filter` over the data |
+| `E0007` | two definitions of one layer share a name — only one of them takes effect | delete or rename one |
+| `E0008` | a name written twice inside one construct (app/effect/tile clause, record key or field, map key, tile argument or prop, fn/type parameter, `for-all` generator, union tag, route pattern) | delete the later one |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
-| `E0104` | undefined effect in `emit` | declare the effect or fix the name |
+| `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
-| `E0201` | handler arg/prop is not a reducer | point it at a `reducer` |
-| `E0301` | effect needs a capability not in `app.caps` | add the cap to `caps = [...]` |
+| `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
+| `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
+| `E0119` | `$route` in a reducer the runtime does not bind one in (anything but `route.enter` / `route.leave` / `route.error` and a link's prefetch target) | read the `route` slot instead; try `kumiki_fix` |
+| `E0120` | `route` or `$route` in an `app.init` argument — those are evaluated while the app object is built, before any mount installs a route | move the read into a `route.enter` reducer; reading the `route` slot does **not** help here |
+| `E0201` | a value does not have the type its position requires (slot init, assignment, `fn` argument / return, tile `in=`, operator operand) | correct the value, or widen the declared type. Two `nominal` types over one base are distinct, so a deliberate conversion goes through the **base**: `fn toUser(p: PostId) -> UserId = p + ""`, never `= p`, which is this same error |
+| `E0202` | an `emit` argument does not match the effect's `in=` | pass a value of the declared type |
+| `E0211` | a reducer's `ui.*` selector or `tile.mount` / `tile.unmount` names an undeclared tile | declare the tile or fix the name; try `kumiki_fix` |
+| `E0213` | wrong argument count: `fn` call, `emit`, user-tile call, or variant payload | pass the declared number |
+| `E0214` | a record literal is missing a declared field | supply it — Kumiki records have no optional fields |
+| `E0215` | a record literal / `.copy(f=v)` names a field the type does not have | fix the name, or declare it on the type |
+| `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
+| `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
+| `E0218` | a `for` iterates a `Map` or a `Set` directly | iterate `m.keys` / `s.to-list`; `kumiki fix` appends it |
+| `W0213` | a handler prop sits on a tile that never fires it | move it onto the button / input, or subscribe with `on=ui.<ev>(<Tile>)` |
+| `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
+| `E0304` | a slot's initial value reads a slot (its own or another's) | give it a standalone value and derive the rest in a `fn` |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
@@ -33,12 +53,16 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 ## Auto-fix
 
-For name-resolution errors (E0102–E0105), the compiler can suggest the closest existing name:
+For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions.
 
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file> --apply  # apply them
 ```
+
+Both forms exit `1` while the file still has errors, so the first one exits `1`
+whenever it has anything to propose — that is the proposal succeeding, not
+failing. Read the output, not the code, until `--apply` reports the file clean.
 
 Or `kumiki_fix` via `@kumiki/mcp`.
 

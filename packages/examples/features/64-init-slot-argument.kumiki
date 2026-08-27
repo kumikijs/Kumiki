@@ -1,0 +1,59 @@
+# Feature: `app.init` fires effects at startup, and its arguments are ordinary
+# expressions — a slot reference included.
+#
+# Codegen lowers two expressions outside any reducer body: an `app.init`
+# argument, and an effect's `latest-per-key` key. Both were lowered against an
+# empty slot table, so a slot reference had nothing to resolve against and came
+# out as a bare identifier. They fail differently, which is worth knowing when
+# one recurs:
+#
+#   - an init argument sits in the app object literal, so the module throws
+#     `ReferenceError` on import and nothing ever mounts;
+#   - a `latest-per-key` key sits inside an arrow body, so the app imports,
+#     mounts and renders, then throws on the first dispatch of that effect.
+#
+# Both are exercised below. Init arguments are evaluated once, when the app
+# object is built, and never re-read.
+
+slot noteKey  : Text = "kumiki:note"
+slot themeKey : Text = "kumiki:theme"
+slot note     : Text = "(loading)"
+slot scope    : Text = ""
+slot themeAt  : Text = ""
+
+# The key is `noteKey`'s current value, NOT the argument — `latest-per-key`
+# here ignores `$1`, so every load shares one key regardless of what is being
+# read. That is the point: the key expression is a slot reference, which is the
+# second repaired site.
+effect loadNote  cap=storage.read
+                 in=Text
+                 out=Result(Option(Text), Text)
+                 policy=latest-per-key(noteKey)
+                 map-request={key: $1, decode: Decoder.Json(Text)}
+
+# The idiomatic form: keyed by the argument. This is what makes the init
+# argument's value observable from inside the app — `$k` below is the value
+# that was passed, so a scenario can assert it.
+effect loadTheme cap=storage.read
+                 in=Text
+                 out=Result(Option(Text), Text)
+                 policy=latest-per-key($1)
+                 map-request={key: $1, decode: Decoder.Json(Text)}
+
+reducer noteOk    on=loadNote.ok($o, $k)  do= note  := $o.get-or("(empty)")
+                                              scope := $k
+reducer noteFail  on=loadNote.err(_, $k)  do= note  := "(empty)"
+                                              scope := $k
+reducer themeOk   on=loadTheme.ok(_, $k)  do= themeAt := $k
+reducer themeFail on=loadTheme.err(_, $k) do= themeAt := $k
+
+tile App = column(
+             text("note=" + note),
+             text("scope=" + scope),
+             text("themeAt=" + themeAt))
+           {pad: "lg", gap: "sm"}
+
+app InitSlotArgument
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadNote(noteKey), loadTheme(themeKey)]

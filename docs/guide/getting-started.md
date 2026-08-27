@@ -1,24 +1,32 @@
 # Getting Started
 
-Kumiki is an AI-first web framework. You describe an app as small, interlocking definitions and the toolchain compiles it to a plain browser app.
+Install the CLI, write one file, and watch it run in a browser. Nothing else is required — no clone, no bundler config, no project scaffold.
 
-## Try it without installing
+## Install
 
-The fastest taste is the [Playground](./playground.md): it runs the compiler and runtime entirely in your browser. Pick an example, edit on the left, and watch it render on the right — no clone, no install.
+```sh
+npm i -g kumiki
+# or, without installing
+npx kumiki --help
+```
 
-Work locally (below) when you want the CLI, MCP, or your own files.
+Node.js 24 or newer, which is what the packages declare.
 
-## What a Kumiki program looks like
+::: tip No install at all
+The [Playground](./playground.md) runs the compiler and the runtime inside your browser. Pick an example, edit on the left, watch it render on the right.
+:::
 
-A counter is just a few declarations — `slot` is state, `reducer` turns an event into a state change, `tile` projects state to UI, and `app` wires it together:
+## Write an app
+
+Save this as `app.kumiki`:
 
 ```kumiki
 slot count : Int = 0
 
 reducer inc on=ui.click(IncBtn) do= count := count + 1
 
-tile IncBtn = button(text="+1")
-tile App    = column(heading("Count: " + count), IncBtn)
+tile IncBtn = button(text="+1", onClick=inc)
+tile App    = column(heading("Count: " + count.show), IncBtn)
 
 app Counter
     caps   = []
@@ -26,75 +34,71 @@ app Counter
     init   = []
 ```
 
-That is the whole mental model. The full example is [app.kumiki](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki), and the seven layers are covered in [Thinking in Kumiki](./thinking-in-kumiki.md).
+Four declarations: `slot` is the state, `reducer` turns an event into a state change, `tile` projects state to UI, and `app` names the entry point. [Your First App](./your-first-app.md) builds the same file line by line, and [Thinking in Kumiki](./thinking-in-kumiki.md) covers the remaining three layers.
 
-## Set up locally
-
-You need **Node.js 22+**. Install `@kumikijs/cli`:
+## Run it
 
 ```sh
-npm i -g @kumikijs/cli
-# or run without installing
-npx @kumikijs/cli --help
+kumiki dev app.kumiki
+# → kumiki dev — http://localhost:5173/
 ```
 
-If you want to explore the source — examples, benchmarks, and the playground — clone the repository instead and use the workspace `kumiki` script:
+Open that URL and click `+1`. The dev server rebuilds on save and shows compile errors in an overlay.
+
+When you want a static bundle instead:
 
 ```sh
-git clone https://github.com/kage1020/Kumiki.git
-cd Kumiki
-pnpm install        # links the workspace packages — required before any command
-pnpm build          # build all packages
-pnpm test           # optional: confirm every package turns green
-```
-
-## Run your first example
-
-**Check** — parse and type-check a `.kumiki` file:
-
-```sh
-pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
-# → ok
-```
-
-**Build** — compile to a static app:
-
-```sh
-pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
+kumiki build app.kumiki ./out
 # → Wrote out/index.html, app.js, runtime/ (core, stdlib, tiles-layout, tiles-text, tiles-input)
 ```
 
-Open `out/index.html` in a browser and the counter works: "Count: 0" with buttons that increment, decrement, and reset. `app.js` is the generated pure logic; `runtime/` holds only the DOM-runtime modules this app actually uses (minified — the counter ships ~9KB gzip; an app that never routes or renders tables ships no router or table code).
+`out/index.html` opens straight from disk. `runtime/` carries only the modules this app touches, so the counter ships about 9KB gzipped; an app that never routes or renders a table ships no router and no table code.
 
-**Smoke** — confirm it actually runs, not just compiles. This mounts the app in a headless DOM and clicks through it:
+## Verify it
+
+`check` reads the file without running it:
 
 ```sh
-pnpm kumiki smoke packages/examples/apps/01-counter/app.kumiki
-# → ok — mounted, rendered, 3 interaction(s), no runtime errors
+kumiki check app.kumiki
+# → ok
 ```
 
-## When something fails
+`smoke` mounts the app in a headless DOM and clicks through it, which catches the app that compiles and then renders nothing:
 
-Check errors carry a code and a location:
+```sh
+kumiki smoke app.kumiki
+# → ok — mounted, rendered, 1 interaction(s), no runtime errors
+```
+
+Both are worth running before you ship. `kumiki` with no arguments lists the rest of the commands.
+
+## When check fails
+
+Every diagnostic carries a code and a position:
 
 ```
 E0103 undef-ref at 3:39: Reference to undefined name "total"
 ```
 
-The code (here `E0103`) names the category — look it up in the [error catalog](../spec/errors.md). Most failures are a typo or a missing definition, and [Thinking in Kumiki](./thinking-in-kumiki.md) plus the [recipes](./recipes.md) cover the common fixes.
-
-If a command itself errors out:
-
-- `Cannot find package '@kumikijs/compiler'` or `tsx: command not found` → you skipped `pnpm install`; run it.
-- A path-not-found on the `.kumiki` file → check the path is relative to the repo root (that is where `pnpm kumiki` runs).
-
-## Editor / AI integration (MCP)
-
-`@kumikijs/mcp` exposes check, build, edit, and spec-search as MCP tools, so an AI agent can drive Kumiki end to end. For an example client configuration, see [README.md](https://github.com/kage1020/Kumiki/blob/main/packages/mcp/README.md).
+The code names the category. Look it up in the [error catalog](../spec/errors.md) — `E0103` there tells you the name resolves to nothing, which is a typo or a missing definition nine times out of ten. `kumiki fix app.kumiki E0103` proposes a patch for the codes that have one.
 
 ## Next
 
-- [Your First App](./your-first-app.md) — write a Counter from scratch, one layer at a time.
-- [Thinking in Kumiki](./thinking-in-kumiki.md) — the 7 layers and how they differ from React.
-- [Examples](https://github.com/kage1020/Kumiki/tree/main/packages/examples) — minimal per-feature samples and complete apps.
-- [Playground](./playground.md) — keep experimenting in the browser.
+- [Your First App](./your-first-app.md) — the counter, one layer at a time
+- [Recipes](./recipes.md) — reverse lookup from "I want to do X" to a working example
+- [Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) — one file per feature, plus complete apps
+
+::: details Working from a clone
+Clone the repository when you want the examples, the benchmarks, or the compiler source. The workspace exposes the same CLI as `pnpm kumiki`, run from the repository root:
+
+```sh
+git clone https://github.com/kumikijs/Kumiki.git
+cd Kumiki
+pnpm install
+pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
+```
+:::
+
+::: details Driving Kumiki from an AI agent
+`@kumikijs/mcp` exposes check, build, per-definition editing, and spec search as MCP tools. See its [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) for a client configuration.
+:::

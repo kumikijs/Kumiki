@@ -81,6 +81,11 @@ export const statusTiles: TileRenderers = {
   skeleton(node) {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "skeleton";
+    // A skeleton is a region whose content has not arrived. `aria-busy` is what
+    // says so to assistive technology, and it is also the only thing that
+    // distinguishes this placeholder from an empty <div> for anything reading
+    // the tree — `kumiki smoke`'s "did this render anything" check included.
+    div.setAttribute("aria-busy", "true");
     div.style.background = "#eee";
     div.style.borderRadius = "8px";
     div.style.minHeight = "60px";
@@ -98,6 +103,10 @@ export const statusTiles: TileRenderers = {
   toast(node) {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "toast";
+    // lifecycle.md §7.8: a toast is announced. Politely — it reports something
+    // that has already happened and does not interrupt what the user is doing.
+    div.setAttribute("role", "status");
+    div.setAttribute("aria-live", "polite");
     if (node.level) div.dataset.level = node.level;
     div.style.padding = "8px 12px";
     div.style.borderRadius = "6px";
@@ -107,6 +116,10 @@ export const statusTiles: TileRenderers = {
   error(node) {
     const span = document.createElement("span");
     span.dataset.kumikiTile = "error";
+    // Assertively: an error is why the user's action did not go through, and
+    // a screen reader that waits for a pause may never mention it.
+    span.setAttribute("role", "alert");
+    span.setAttribute("aria-live", "assertive");
     span.dataset.field = node.field;
     span.style.color = "#c00";
     span.textContent = resolveFieldError(node.field);

@@ -6,6 +6,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readHttpFixture, useHttpFixture } from "@kumikijs/cli";
 import { smoke } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp } from "./helpers/load.ts";
@@ -34,6 +35,11 @@ function appExamples(): string[] {
 }
 
 async function smokeFile(file: string): Promise<void> {
+  // Effects run for real under `smoke`, so an http-backed example is answered
+  // by its own `<source>.http.json`. An example with no fixture that reaches
+  // for the network reports the miss and fails here — the same way it does
+  // from `kumiki smoke`.
+  useHttpFixture(readHttpFixture(file));
   const app = await loadApp(file);
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -123,6 +129,32 @@ describe("reconcile diagnostics reach the smoke report", () => {
     }
   });
 
+  // The example the spec cites for §10.3.10 has to be one where the keys are
+  // actually consulted. Its `for` used to share the App column with a heading
+  // and a button row, which made that child list mixed — keyed matching is
+  // all-or-nothing per parent, so every length change rebuilt the whole column
+  // and the example demonstrated the opposite of its own comment. Asserted as
+  // "no reconcile fallback of any reason" rather than "no child-count-change": a
+  // `wrapped-children` or `unplaceable-insert` here would mean the keyed pass
+  // stood down for a different reason, and the identity claim would be just as
+  // untrue.
+  it("reports nothing for the keyed list the identity guarantee is written against", async () => {
+    const file = join(examplesDir, "features", "53-keyed-list-identity.kumiki");
+    const app = await loadApp(file);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const report = await smoke(app, root, { settleMs: 20 });
+      expect(report.ok).toBe(true);
+      const fallbacks = report.diagnostics
+        .map((d) => d.diagnostic)
+        .filter((d) => d.kind === "reconcile-fallback");
+      expect(fallbacks.map((d) => d.reason)).toEqual([]);
+    } finally {
+      root.remove();
+    }
+  });
+
   // And the blind side of the placement probe: `Solo` is a one-layer overlay,
   // which measures as "places its children directly" until it grows. The pair
   // of diagnostics is the fix being visible — before it, the second layer was
@@ -137,7 +169,8 @@ describe("reconcile diagnostics reach the smoke report", () => {
       expect(report.ok).toBe(true);
       const solo = report.diagnostics
         .map((d) => d.diagnostic)
-        .filter((d) => d.kind === "reconcile-fallback" && d.tile === "Solo");
+        .filter((d) => d.kind === "reconcile-fallback")
+        .filter((d) => d.tile === "Solo");
       expect(solo.map((d) => d.reason)).toEqual(["unplaceable-insert", "child-count-change"]);
     } finally {
       root.remove();

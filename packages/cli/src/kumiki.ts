@@ -38,7 +38,7 @@ const USAGES: Record<string, string> = {
   view: "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]",
   refs: "Usage: kumiki refs <input.kumiki> <qname>",
   check:
-    "Usage: kumiki check <input.kumiki> [--strict-a11y|--strict-icons|--strict-selector-id|--types|--refs|--effects]",
+    "Usage: kumiki check <input.kumiki> [--strict-a11y] [--strict-icons] [--strict-selector-id] [--types] [--refs] [--effects]",
   smoke: "Usage: kumiki smoke <input.kumiki>",
   dev: "Usage: kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]",
   test: "Usage: kumiki test <input.kumiki> [name|prefix*]",
@@ -107,11 +107,11 @@ async function main(argv: string[]): Promise<void> {
       ) {
         process.exit(e.exitCode ?? 0);
       }
-      // Parse failures (unknown option, missing option arg, excess positional):
-      // print commander's diagnostic first so the exact flag / count the user
-      // typo'd is preserved, then append the per-verb USAGE so tests that
-      // assert on the verb-specific usage string keep passing.
-      console.error(e.message);
+      // Parse failures (unknown option, missing option arg, excess positional,
+      // a positional outside its `choices`): commander has already written its
+      // own diagnostic to stderr — under `exitOverride` it prints first and
+      // throws second — so all that is left here is the per-verb usage line.
+      // Re-printing `e.message` said the same sentence twice.
       if (e.code === "commander.excessArguments" && argv[2] === "replay") {
         // Preserve the pre-refactor wording so `unexpected positional` regex hits.
         console.error("kumiki replay: unexpected positional arguments after <episode-id>");

@@ -1,0 +1,34 @@
+{
+  "steps": [
+    {
+      "label": "four rows, one per id",
+      "expect": {
+        "noErrors": true,
+        "state": { "ids": [1, 2, 3, 4] },
+        "domIncludes": ["1", "2", "3", "4"]
+      }
+    },
+    {
+      "label": "drop the head — the other three rows are the same instances, which this tier cannot see; the browser fixture beside this file is what proves it",
+      "do": { "clickText": "drop first" },
+      "expect": { "noErrors": true, "state": { "ids": [2, 3, 4] }, "domExcludes": ["1"] }
+    },
+    {
+      "label": "rotate — same membership, different order",
+      "do": { "clickText": "rotate" },
+      "expect": { "noErrors": true, "state": { "ids": [3, 4, 2] }, "domIncludes": ["2"] }
+    },
+    { "do": { "clickText": "drop first" }, "expect": { "state": { "ids": [4, 2] } } },
+    { "do": { "clickText": "drop first" }, "expect": { "state": { "ids": [2] } } },
+    {
+      "label": "empty — the loop is this container's only child, so the container keeps its element and nothing is reported",
+      "do": { "clickText": "drop first" },
+      "expect": { "noErrors": true, "state": { "ids": [] }, "domExcludes": ["2"] }
+    },
+    {
+      "label": "rotating an empty list is a no-op, not a panic",
+      "do": { "clickText": "rotate" },
+      "expect": { "noErrors": true, "state": { "ids": [] } }
+    }
+  ]
+}

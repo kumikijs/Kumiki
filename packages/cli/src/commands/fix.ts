@@ -28,11 +28,22 @@ export function registerFix(program: Command): void {
         const apply = Boolean(options.apply);
         const fixPath = resolve(process.cwd(), file);
         if (options.autoPatch !== undefined) {
-          const outcome = await fixFromTest(fixPath, options.autoPatch, apply, capsFor(fixPath));
-          if (!outcome.ok) process.exitCode = 1;
+          const outcome = await fixFromTest(
+            fixPath,
+            options.autoPatch,
+            apply,
+            capsFor(fixPath).capabilities,
+          );
+          // `ok` counts "a fix is available in dry-run" as success, which is a
+          // proposal rather than a repair: the test still fails and the file
+          // is untouched. The exit code answers the same question here as it
+          // does for the diagnostic path — is the file in the state that was
+          // asked for now that the process is ending?
+          const repaired = outcome.status === "already-pass" || (apply && outcome.ok);
+          if (!repaired) process.exitCode = 1;
           return;
         }
-        fixCmd(fixPath, apply, code, capsFor(fixPath));
+        process.exitCode = fixCmd(fixPath, apply, code, capsFor(fixPath).capabilities);
       },
     );
 }

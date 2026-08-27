@@ -7,12 +7,15 @@ import type {
   AppMetaConfig,
   BinOp,
   Def,
+  DuplicateName,
   EffectDef,
   EventPattern,
   Expr,
   FnDef,
   Lvalue,
   MatchArm,
+  MotionDef,
+  NamedRef,
   Pattern,
   PolicyExpr,
   Pos,
@@ -23,6 +26,7 @@ import type {
   SlotDef,
   Statement,
   TestDef,
+  ThemeDef,
   TileArg,
   TileDef,
   TileExpr,
@@ -33,6 +37,7 @@ import type {
   TypeExpr,
   UiEventKind,
 } from "./ast.ts";
+import { CONSTANT_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
 
 export class ParseError extends Error {
@@ -43,6 +48,28 @@ export class ParseError extends Error {
     super(`Parse error at ${pos.line}:${pos.col}: ${message}`);
   }
 }
+
+/** Stays in step with the AST's spelling of the prefix operators. */
+type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
+
+/**
+ * How deep a tree a program may build (language.md §1.2.3).
+ *
+ * The bound is on the *result*, not on how the parser reached it. Everything
+ * downstream of the parse — the typechecker, the reference walk, code
+ * generation — descends the tree by recursion, so a tree past what the call
+ * stack holds surfaces as a bare `RangeError` with no position wherever it is
+ * first walked. Bounding the parse alone would only move that crash: a
+ * left-associative chain (`1 + 1 + 1 + …`, `x.trim().trim()…`) is parsed by a
+ * loop but still builds one node per operator, and at 3,000 operators it
+ * parsed clean and then took down `compile`.
+ *
+ * So a chain counts against the same budget nesting does, and one budget
+ * covers both. The limit is far above anything written in practice — no
+ * program in this repository's examples or benchmarks comes close, and the
+ * corpus gates would fail if one ever did.
+ */
+const MAX_NESTING_DEPTH = 256;
 
 const PRIM_TYPES = new Set([
   "Int",
@@ -126,7 +153,48 @@ const REFINE_PREDS = new Set([
 
 class Parser {
   private i = 0;
+  private depth = 0;
   constructor(private tokens: Token[]) {}
+
+  /** The one place the budget is refused, so every caller reports alike. */
+  private refuseDepth(): never {
+    throw new ParseError(
+      `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
+      this.peek().pos,
+    );
+  }
+
+  /**
+   * Parse one level deeper, refusing to go past `MAX_NESTING_DEPTH`.
+   *
+   * Every construct that can contain itself goes through this, so a program
+   * that nests too far is reported at the token where the parser stopped
+   * rather than crashing the process. The budget is over the whole enclosing
+   * tree, not per construct: a pattern inside a slot's initializer starts one
+   * level down because that is where its node will sit.
+   */
+  private descend<T>(parseNested: () => T): T {
+    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth();
+    this.depth += 1;
+    try {
+      return parseNested();
+    } finally {
+      this.depth -= 1;
+    }
+  }
+
+  /**
+   * Charge `built` levels against the same budget without recursing.
+   *
+   * A left-associative chain — `1 + 1 + 1 + …`, `x.trim().trim()…`, a run of
+   * prefix operators — is parsed by a loop, so it costs the parser no stack.
+   * It still builds one node per operator, each nested inside the last, and
+   * everything downstream walks that by recursion. Left unbounded it parsed
+   * clean and crashed `compile` instead.
+   */
+  private widen(built: number): void {
+    if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
+  }
 
   // ----- low-level token utilities -----
 
@@ -184,8 +252,11 @@ class Parser {
     const start = this.eat("ident", "theme");
     const name = this.eat("ident").value;
     this.eat("op", "=");
-    const body = this.parseThemeRecord();
-    return { kind: "ThemeDef", name, body, pos: start.pos };
+    const duplicateKeys: DuplicateName[] = [];
+    const body = this.parseThemeRecord(duplicateKeys);
+    const def: ThemeDef = { kind: "ThemeDef", name, body, pos: start.pos };
+    if (duplicateKeys.length > 0) def.duplicateKeys = duplicateKeys;
+    return def;
   }
 
   // `motion N = { keyframes: {...}, duration: ..., ... }`. The body reuses the
@@ -195,36 +266,56 @@ class Parser {
     const start = this.eat("ident", "motion");
     const name = this.eat("ident").value;
     this.eat("op", "=");
-    const body = this.parseThemeRecord();
-    return { kind: "MotionDef", name, body, pos: start.pos };
+    const duplicateKeys: DuplicateName[] = [];
+    const body = this.parseThemeRecord(duplicateKeys);
+    const def: MotionDef = { kind: "MotionDef", name, body, pos: start.pos };
+    if (duplicateKeys.length > 0) def.duplicateKeys = duplicateKeys;
+    return def;
   }
 
-  private parseThemeRecord(): { [k: string]: import("./ast.ts").ThemeValue } {
+  private parseThemeRecord(duplicates: DuplicateName[]): {
+    [k: string]: import("./ast.ts").ThemeValue;
+  } {
+    return this.descend(() => this.parseThemeRecordNested(duplicates));
+  }
+
+  private parseThemeRecordNested(duplicates: DuplicateName[]): {
+    [k: string]: import("./ast.ts").ThemeValue;
+  } {
     this.eat("op", "{");
-    const out: { [k: string]: import("./ast.ts").ThemeValue } = {};
+    // Prototype-less: `out["__proto__"] = v` on an object literal replaces the
+    // prototype instead of adding a property, so the key vanished from the
+    // body and `Object.hasOwn` could never see it written twice.
+    const out: { [k: string]: import("./ast.ts").ThemeValue } = Object.create(null);
     if (!this.matchOp("}")) {
-      this.parseThemeEntry(out);
+      this.parseThemeEntry(out, duplicates);
       while (this.matchOp(",")) {
         this.next();
         if (this.matchOp("}")) break;
-        this.parseThemeEntry(out);
+        this.parseThemeEntry(out, duplicates);
       }
     }
     this.eat("op", "}");
     return out;
   }
 
-  private parseThemeEntry(out: { [k: string]: import("./ast.ts").ThemeValue }): void {
+  private parseThemeEntry(
+    out: { [k: string]: import("./ast.ts").ThemeValue },
+    duplicates: DuplicateName[],
+  ): void {
     const keyTok = this.peek();
     if (keyTok.kind !== "ident" && keyTok.kind !== "kw" && keyTok.kind !== "str") {
       throw new ParseError(`Expected theme key`, keyTok.pos);
     }
     this.next();
     const key = keyTok.value as string;
+    // `out` is this record's own keys, so sibling records with a key in common
+    // are not a duplicate — only a key written twice in the same braces is.
+    if (Object.hasOwn(out, key)) duplicates.push({ name: key, pos: keyTok.pos });
     this.eat("op", ":");
     const v = this.peek();
     if (v.kind === "op" && v.value === "{") {
-      out[key] = this.parseThemeRecord();
+      out[key] = this.parseThemeRecord(duplicates);
     } else if (v.kind === "str") {
       this.next();
       out[key] = v.value;
@@ -284,10 +375,16 @@ class Parser {
   }
 
   private parseTypeExpr(): TypeExpr {
+    return this.descend(() => this.parseTypeExprNested());
+  }
+
+  private parseTypeExprNested(): TypeExpr {
     // Union: parse first, then check for `|` follow-up
     const first = this.parseTypeUnionAtom();
     if (this.matchOp("|")) {
-      const variants: { name: string; payloads: TypeExpr[] }[] = [this.typeAsVariant(first)];
+      const variants: { name: string; payloads: TypeExpr[]; pos: Pos }[] = [
+        this.typeAsVariant(first),
+      ];
       while (this.matchOp("|")) {
         this.next();
         variants.push(this.typeAsVariant(this.parseTypeUnionAtom()));
@@ -303,9 +400,9 @@ class Parser {
     return first;
   }
 
-  private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[] } {
-    if (t.kind === "TypeRef") return { name: t.name, payloads: [] };
-    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args };
+  private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
+    if (t.kind === "TypeRef") return { name: t.name, payloads: [], pos: t.pos };
+    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args, pos: t.pos };
     throw new ParseError(`Unsupported variant form`, t.pos);
   }
 
@@ -336,7 +433,7 @@ class Parser {
     // Record: { fields }
     if (this.matchOp("{")) {
       const start = this.next();
-      const fields: { name: string; type: TypeExpr }[] = [];
+      const fields: { name: string; type: TypeExpr; pos: Pos }[] = [];
       if (!this.matchOp("}")) {
         fields.push(this.parseTypeField());
         while (this.matchOp(",")) {
@@ -370,11 +467,11 @@ class Parser {
     return { kind: "TypeRef", name, pos: t.pos };
   }
 
-  private parseTypeField(): { name: string; type: TypeExpr } {
-    const name = this.eat("ident").value;
+  private parseTypeField(): { name: string; type: TypeExpr; pos: Pos } {
+    const tok = this.eat("ident");
     this.eat("op", ":");
     const type = this.parseTypeExpr();
-    return { name, type };
+    return { name: tok.value, type, pos: tok.pos };
   }
 
   private parseRefinement(): Refinement {
@@ -400,6 +497,14 @@ class Parser {
 
   private parseRefinementArg(): number | string {
     const t = this.peek();
+    // A refinement's arguments are literals, and `-40.0` is one. The lexer
+    // emits the sign as its own operator (it has no way to know whether a `-`
+    // is unary), so a literal-only position has to put it back.
+    if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
+      this.next();
+      const n = this.next() as { value: number };
+      return -n.value;
+    }
     if (t.kind === "num") {
       this.next();
       return t.value;
@@ -521,14 +626,15 @@ class Parser {
           throw new ParseError(`Unknown ui event "${sub}"`, t.pos);
         }
         this.eat("op", "(");
-        const tile = this.eat("ident").value;
+        const tileTok = this.eat("ident");
+        const tile = tileTok.value;
         let id: string | undefined;
         if (this.matchOp("#")) {
           this.next();
           id = this.eat("ident").value;
         }
         this.eat("op", ")");
-        const sel: { tile: string; id?: string } = { tile };
+        const sel: { tile: string; id?: string; tilePos?: Pos } = { tile, tilePos: tileTok.pos };
         if (id) sel.id = id;
         return { kind: "UiEvent", ev: sub as UiEventKind, selector: sel, pos: t.pos };
       }
@@ -547,11 +653,12 @@ class Parser {
           throw new ParseError(`Unknown tile lifecycle event "tile.${sub}"`, t.pos);
         }
         this.eat("op", "(");
-        const tile = this.eat("ident").value;
+        const tileTok = this.eat("ident");
         this.eat("op", ")");
         return {
           kind: "LifecycleEvent",
-          name: `tile.${sub}(${JSON.stringify(tile)})`,
+          name: `tile.${sub}(${JSON.stringify(tileTok.value)})`,
+          tileTarget: { event: `tile.${sub}`, name: tileTok.value, pos: tileTok.pos },
           pos: t.pos,
         };
       }
@@ -591,6 +698,8 @@ class Parser {
           effect: name,
           outcome: sub,
           binds,
+          // `t` is the effect name itself — the pattern starts with it.
+          effectPos: t.pos,
           pos: t.pos,
         };
       }
@@ -619,6 +728,10 @@ class Parser {
   // ----- statements -----
 
   private parseStatement(): Statement {
+    return this.descend(() => this.parseStatementNested());
+  }
+
+  private parseStatementNested(): Statement {
     if (this.matchKw("for")) {
       const start = this.next();
       const bindTok = this.eat("ident");
@@ -668,7 +781,8 @@ class Parser {
     }
     if (this.matchKw("emit")) {
       const start = this.next();
-      const effect = this.eat("ident").value;
+      const effectTok = this.eat("ident");
+      const effect = effectTok.value;
       this.eat("op", "(");
       const args: Expr[] = [];
       if (!this.matchOp(")")) {
@@ -679,7 +793,7 @@ class Parser {
         }
       }
       this.eat("op", ")");
-      return { kind: "Emit", effect, args, pos: start.pos };
+      return { kind: "Emit", effect, args, effectPos: effectTok.pos, pos: start.pos };
     }
     // `stop-timer(N)` — clear a named timer. `stop-timer` lexes as one ident.
     const cur = this.peek();
@@ -689,6 +803,16 @@ class Parser {
       const name = this.eat("ident").value;
       this.eat("op", ")");
       return { kind: "StopTimer", name, pos: cur.pos };
+    }
+    // `panic("...")` (stdlib §2.4) is documented as usable inside a reducer,
+    // and a reducer body is statements. As an expression it was writable only
+    // by assigning it to something, which is the opposite of what it does.
+    if (cur.kind === "ident" && cur.value === "panic" && this.matchTAt(1, "op", "(")) {
+      this.next();
+      this.eat("op", "(");
+      const message = this.parseExpr();
+      this.eat("op", ")");
+      return { kind: "PanicStmt", message, pos: cur.pos };
     }
     // SlotAssign with lvalue path
     const lvalue = this.parseLvalue();
@@ -753,6 +877,10 @@ class Parser {
   // ----- expressions -----
 
   parseExpr(): Expr {
+    return this.descend(() => this.parseExprNested());
+  }
+
+  private parseExprNested(): Expr {
     // `emit X(args)` as an expression (spec http.md §6.4, stdlib §2.1.1.1) —
     // yields the dispatched effect's `EffectId`. Statement-form `emit` is
     // parsed earlier in `parseStatement` (with no capture), so we only reach
@@ -760,7 +888,8 @@ class Parser {
     // `let id = emit X(...)`.
     if (this.matchKw("emit")) {
       const start = this.next();
-      const effect = this.eat("ident").value;
+      const effectTok = this.eat("ident");
+      const effect = effectTok.value;
       this.eat("op", "(");
       const args: Expr[] = [];
       if (!this.matchOp(")")) {
@@ -771,7 +900,7 @@ class Parser {
         }
       }
       this.eat("op", ")");
-      return { kind: "EmitExpr", effect, args, pos: start.pos };
+      return { kind: "EmitExpr", effect, args, effectPos: effectTok.pos, pos: start.pos };
     }
     return this.parseLogicOr();
   }
@@ -783,7 +912,10 @@ class Parser {
     // (capital-letter variant or `_`) and a `->`. This lets `a | b` mean bool
     // OR in expression context while still letting `not x | Done -> ...` be
     // parsed as a match arm separator.
+    let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
+      built += 1;
+      this.widen(built);
       const op = "|" as BinOp;
       this.next();
       const rhs = this.parseLogicAnd();
@@ -797,36 +929,45 @@ class Parser {
     const next = this.peek(1);
     // `| _ ->` is a wildcard match arm
     if (next.kind === "ident" && next.value === "_") return true;
-    // `| Variant ->` or `| Variant(args) ->`
+    // `| Variant ->` / `| Variant(args) ->`, and `| (p, q) ->` — a tuple
+    // pattern arm (§1.9). A payload or a tuple proves nothing on its own:
+    // `a | Some(1).is-some` and `a | (b)` are ors written with the same tokens,
+    // so what decides is whether a `->` closes the parens.
     if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
-      // Look further: must eventually find `->` before another `|` or terminator.
-      // Simple check: peek(2) must be `->` or `(`.
       const after = this.peek(2);
-      if (after.kind === "op" && (after.value === "->" || after.value === "(")) return true;
+      if (after.kind === "op" && after.value === "->") return true;
+      if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
     }
-    // `| (p, q) ->` — tuple pattern arm (§1.9). Walk forward through balanced
-    // parens and accept the arm only when the closing `)` is followed by `->`.
-    if (next.kind === "op" && next.value === "(") {
-      let depth = 1;
-      let i = 2;
-      while (depth > 0) {
-        const tok = this.peek(i);
-        if (tok.kind === "eof") return false;
-        if (tok.kind === "op" && tok.value === "(") depth++;
-        else if (tok.kind === "op" && tok.value === ")") depth--;
-        i++;
-      }
-      const after = this.peek(i);
-      return after.kind === "op" && after.value === "->";
-    }
+    if (next.kind === "op" && next.value === "(") return this.arrowClosesParens(2);
     return false;
+  }
+
+  /**
+   * From `peek(from)`, one paren already open: skip to its match and answer
+   * whether a `->` follows it.
+   */
+  private arrowClosesParens(from: number): boolean {
+    let depth = 1;
+    let i = from;
+    while (depth > 0) {
+      const tok = this.peek(i);
+      if (tok.kind === "eof") return false;
+      if (tok.kind === "op" && tok.value === "(") depth++;
+      else if (tok.kind === "op" && tok.value === ")") depth--;
+      i++;
+    }
+    const after = this.peek(i);
+    return after.kind === "op" && after.value === "->";
   }
   private parseLogicAnd(): Expr {
     let lhs = this.parseCmp();
     // `&&` and `&` are both accepted as boolean AND — `&` is a tolerance alias
     // for LLMs that bring C-style habits. (`|` would conflict with type union
     // and match arm separator; only `&` can be safely aliased.)
+    let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
+      built += 1;
+      this.widen(built);
       this.next();
       const rhs = this.parseCmp();
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
@@ -835,7 +976,10 @@ class Parser {
   }
   private parseCmp(): Expr {
     let lhs = this.parseAdd();
+    let built = 0;
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
+      built += 1;
+      this.widen(built);
       const op = this.eat("op").value as BinOp;
       const rhs = this.parseAdd();
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
@@ -844,7 +988,10 @@ class Parser {
   }
   private parseAdd(): Expr {
     let lhs = this.parseMul();
+    let built = 0;
     while (this.matchAnyOp(["+", "-"])) {
+      built += 1;
+      this.widen(built);
       const op = this.eat("op").value as BinOp;
       const rhs = this.parseMul();
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
@@ -853,7 +1000,10 @@ class Parser {
   }
   private parseMul(): Expr {
     let lhs = this.parseUnary();
+    let built = 0;
     while (this.matchAnyOp(["*", "/", "%"])) {
+      built += 1;
+      this.widen(built);
       const op = this.eat("op").value as BinOp;
       const rhs = this.parseUnary();
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
@@ -861,32 +1011,54 @@ class Parser {
     return lhs;
   }
   private parseUnary(): Expr {
-    if (this.matchOp("-")) {
-      const tok = this.next();
-      const rhs = this.parseUnary();
-      return { kind: "UnaryOp", op: "-", rhs, pos: tok.pos };
+    // A run of prefix operators (`- - x`, `not not b`) is collected in a loop
+    // rather than by recursing per operator: a chain is not nesting, and one
+    // long enough used to exhaust the stack. `not` is the keyword spelling
+    // of `!`.
+    const prefixes: { op: UnaryOp; pos: Pos }[] = [];
+    while (true) {
+      if (this.matchOp("-")) prefixes.push({ op: "-", pos: this.next().pos });
+      else if (this.matchOp("!")) prefixes.push({ op: "!", pos: this.next().pos });
+      else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
+      else break;
     }
-    if (this.matchOp("!")) {
-      const tok = this.next();
-      const rhs = this.parseUnary();
-      return { kind: "UnaryOp", op: "!", rhs, pos: tok.pos };
+    this.widen(prefixes.length);
+    let e = this.parsePostfix();
+    for (const prefix of prefixes.reverse()) {
+      e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
     }
-    // `not` as keyword equivalent of `!`
-    if (this.matchT("ident", "not")) {
-      const tok = this.next();
-      const rhs = this.parseUnary();
-      return { kind: "UnaryOp", op: "!", rhs, pos: tok.pos };
-    }
-    return this.parsePostfix();
+    return e;
   }
 
   private parsePostfix(): Expr {
     let e = this.parsePrimary();
+    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        this.next();
+        built += 1;
+        this.widen(built);
+        const dotTok = this.next();
         const fldTok = this.peek();
+        // `slot s : Float = 1.` at the end of a line: the member name is
+        // whatever the next line starts with, so this reads as a chained
+        // access and the error surfaces there instead. A chain written across
+        // lines puts the `.` on the member's line, never on the receiver's.
+        if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
+          throw new ParseError(
+            `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+            e.pos,
+          );
+        }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
+          // `1.` lexes as the number then the access operator, so what arrives
+          // here is a member access with no member — and `Expected field or
+          // method name` describes the tokens rather than the mistake.
+          if (e.kind === "Num") {
+            throw new ParseError(
+              `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+              e.pos,
+            );
+          }
           throw new ParseError(`Expected field or method name`, fldTok.pos);
         }
         this.next();
@@ -932,6 +1104,8 @@ class Parser {
           e = { kind: "FieldAccess", base: e, field: fld, pos: e.pos };
         }
       } else if (this.matchOp("[")) {
+        built += 1;
+        this.widen(built);
         this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -947,7 +1121,7 @@ class Parser {
     const t = this.peek();
     if (t.kind === "num") {
       this.next();
-      return { kind: "Num", value: t.value, pos: t.pos };
+      return { kind: "Num", value: t.value, raw: t.raw, pos: t.pos };
     }
     if (t.kind === "str") {
       this.next();
@@ -972,7 +1146,26 @@ class Parser {
     }
     if (t.kind === "op" && t.value === "(") {
       this.next();
+      // `()` is the unit literal (spec §1.2). It was writable only as a bare
+      // statement, so §7's `do= ()` read and §8's `-> ()` did not.
+      if (this.matchOp(")")) {
+        this.next();
+        return { kind: "Unit", pos: t.pos };
+      }
       const inner = this.parseExpr();
+      // `(a, b)` is a tuple. `Tuple` is a type and tuple PATTERNS destructure
+      // one, so §1.8.4's `match (lr, tag) with` was a documented example with
+      // no way to write its scrutinee.
+      if (this.matchOp(",")) {
+        this.next();
+        const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
+        while (this.matchOp(",")) {
+          this.next();
+          items.push(this.parseExpr());
+        }
+        this.eat("op", ")");
+        return { kind: "TupleLit", items, pos: t.pos };
+      }
       this.eat("op", ")");
       return inner;
     }
@@ -1041,20 +1234,31 @@ class Parser {
       // capital-cased identifier; otherwise this is a method call on a value and
       // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
-      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). Bare
-      // form (no parens) so slot init / cancel-no-op reads cleanly; treated
-      // as a 0-arg Call so typecheck/codegen handle it via the same
-      // builtin-call channel as `Decoder.Json` / `TodoId.fresh`.
+      // A member of a constant namespace, written without parentheses:
+      // `EffectId.none` (stdlib §2.1.1.1), `Decoder.Text` / `Decoder.Bytes` /
+      // `Decoder.None` (http §6.1.4). Read as a 0-arg Call so typecheck and
+      // codegen handle it through the same builtin-call channel as
+      // `Decoder.Json(User)` / `TodoId.fresh()` — one decision site rather than
+      // three. Left to postfix parsing it becomes a field read on a variant of
+      // the qualifier's name, which emits `undefined` and which nothing objects
+      // to; the member being wrong is then an E0116 rather than silence.
+      //
+      // `kw` is accepted alongside `ident` to mirror the parenthesised branch
+      // below, which needs it — none of the constants named above lex as a
+      // keyword. Matching the two shapes keeps `Decoder.if` a resolvable callee
+      // that `checkCallee` names, rather than a parse error in one form and a
+      // diagnostic in the other.
       if (
-        name === "EffectId" &&
+        CONSTANT_NAMESPACES.has(name) &&
         this.matchOp(".") &&
-        this.matchTAt(1, "ident") &&
-        (this.peek(1) as { value: string }).value === "none" &&
+        (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")
       ) {
         this.next(); // .
-        this.next(); // none
-        return { kind: "Call", callee: "EffectId.none", args: [], pos: t.pos };
+        // The guard restricts this token to `ident` / `kw`, both of which carry
+        // a string `value`, so there is no other shape to fall back to.
+        const member = (this.next() as { value: string }).value;
+        return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
       }
       if (
         isQualifierReceiver &&
@@ -1144,6 +1348,10 @@ class Parser {
   }
 
   private parsePattern(): Pattern {
+    return this.descend(() => this.parsePatternNested());
+  }
+
+  private parsePatternNested(): Pattern {
     const t = this.peek();
     if (t.kind === "ident" && t.value === "_") {
       this.next();
@@ -1221,7 +1429,7 @@ class Parser {
       }
     }
     if (isRecord) {
-      const fields: { name: string; value: Expr }[] = [];
+      const fields: { name: string; value: Expr; pos: Pos }[] = [];
       while (true) {
         const keyTok = this.peek();
         if (keyTok.kind !== "ident" && keyTok.kind !== "kw") {
@@ -1237,7 +1445,7 @@ class Parser {
         } else {
           value = { kind: "Ref", name: fieldName, pos: fieldPos };
         }
-        fields.push({ name: fieldName, value });
+        fields.push({ name: fieldName, value, pos: fieldPos });
         if (!this.matchOp(",")) break;
         this.next();
       }
@@ -1288,9 +1496,22 @@ class Parser {
     const name = this.eat("ident").value;
     let inType: TypeExpr | undefined;
     let errorBoundary: string | undefined;
-    let subRoutes: { path: string; tile: string }[] | undefined;
+    let errorBoundaryPos: Pos | undefined;
+    let subRoutes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] | undefined;
     let scrollRestoration: boolean | undefined;
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+    // Same assembly as `app` and `effect`: one variable per clause, so a
+    // second `in=` silently retypes `$1` and a second `error-boundary=`
+    // decides by line order which tile a failed render falls back to.
+    const noteClause = (tok: Token): void => {
+      // Only the clause keywords matter; the loop rejects anything else.
+      if (tok.kind !== "kw" && tok.kind !== "ident") return;
+      if (seenClauses.has(tok.value)) duplicateClauses.push({ name: tok.value, pos: tok.pos });
+      seenClauses.add(tok.value);
+    };
     while (!this.matchOp("=")) {
+      noteClause(this.peek());
       if (this.matchKw("in")) {
         this.next();
         this.eat("op", "=");
@@ -1300,7 +1521,9 @@ class Parser {
       if (this.matchT("ident", "error-boundary")) {
         this.next();
         this.eat("op", "=");
-        errorBoundary = this.eat("ident").value;
+        const tok = this.eat("ident");
+        errorBoundary = tok.value;
+        errorBoundaryPos = tok.pos;
         continue;
       }
       if (this.matchT("ident", "scroll-restoration")) {
@@ -1330,14 +1553,20 @@ class Parser {
     this.eat("op", "=");
     const body = this.parseTileExpr();
     const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
+    if (errorBoundaryPos) def.errorBoundaryPos = errorBoundaryPos;
     if (subRoutes) def.subRoutes = subRoutes;
     if (scrollRestoration === false) def.scrollRestoration = false;
     return def;
   }
 
   private parseTileExpr(): TileExpr {
+    return this.descend(() => this.parseTileExprNested());
+  }
+
+  private parseTileExprNested(): TileExpr {
     // for/when/if/match control
     if (this.matchKw("for")) {
       const start = this.next();
@@ -1383,6 +1612,10 @@ class Parser {
   }
 
   private parseTileCall(): TileExpr {
+    return this.descend(() => this.parseTileCallNested());
+  }
+
+  private parseTileCallNested(): TileExpr {
     const nameTok = this.eat("ident");
     const name = nameTok.value;
     const isBuiltin = BUILTIN_TILES.has(name);
@@ -1429,7 +1662,7 @@ class Parser {
       // whether the parent tile is itself a value-arg builtin.
       const argTakesValue = parentTakesValueArg || VALUE_NAMED_ARGS.has(name);
       const value = this.parseArgValue(parentIsBuiltin, argTakesValue);
-      return { kind: "TileArg", name, value };
+      return { kind: "TileArg", name, namePos: first.pos, value };
     }
     return { kind: "TileArg", value: this.parseArgValue(parentIsBuiltin, parentTakesValueArg) };
   }
@@ -1485,7 +1718,7 @@ class Parser {
     this.next();
     this.eat("op", ":");
     const value = this.parseExpr();
-    return { kind: "TileProp", name: nameTok.value as string, value };
+    return { kind: "TileProp", name: nameTok.value as string, pos: nameTok.pos, value };
   }
 
   // ----- fn -----
@@ -1494,7 +1727,7 @@ class Parser {
     const start = this.eat("kw", "fn");
     const name = this.eat("ident").value;
     this.eat("op", "(");
-    const params: { name: string; type: TypeExpr }[] = [];
+    const params: { name: string; type: TypeExpr; pos: Pos }[] = [];
     if (!this.matchOp(")")) {
       params.push(this.parseFnParam());
       while (this.matchOp(",")) {
@@ -1515,11 +1748,11 @@ class Parser {
     return def;
   }
 
-  private parseFnParam(): { name: string; type: TypeExpr } {
-    const name = this.eat("ident").value;
+  private parseFnParam(): { name: string; type: TypeExpr; pos: Pos } {
+    const tok = this.eat("ident");
     this.eat("op", ":");
     const type = this.parseTypeExpr();
-    return { name, type };
+    return { name: tok.value, type, pos: tok.pos };
   }
 
   // ----- effect -----
@@ -1534,8 +1767,17 @@ class Parser {
     let retry: RetryExpr | undefined;
     let mapRequest: Expr | undefined;
 
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+
     while (this.isEffectField()) {
       const key = this.peek();
+      // Same assembly as `app`: one variable per clause, so a second one wins
+      // and the first is gone by the time the tree exists.
+      if (key.kind === "kw" || key.kind === "ident") {
+        if (seenClauses.has(key.value)) duplicateClauses.push({ name: key.value, pos: key.pos });
+        seenClauses.add(key.value);
+      }
       if (key.kind === "kw" && key.value === "cap") {
         this.next();
         this.eat("op", "=");
@@ -1579,6 +1821,7 @@ class Parser {
     if (policy) def.policy = policy;
     if (retry) def.retry = retry;
     if (mapRequest) def.mapRequest = mapRequest;
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     return def;
   }
 
@@ -1622,7 +1865,7 @@ class Parser {
     if (t.value === "none") return { kind: "RetryNone" };
     if (t.value === "linear") {
       this.eat("op", "(");
-      const n = this.eat("num").value;
+      const n = this.eatRetryCount();
       this.eat("op", ",");
       const ms = this.parseDuration();
       this.eat("op", ")");
@@ -1630,24 +1873,73 @@ class Parser {
     }
     if (t.value === "exponential") {
       this.eat("op", "(");
-      const n = this.eat("num").value;
+      const n = this.eatRetryCount();
       this.eat("op", ",");
       const ms = this.parseDuration();
       this.eat("op", ",");
-      const factor = this.eat("num").value;
+      const factor = this.eatRetryFactor();
       this.eat("op", ")");
       return { kind: "RetryExp", n, ms, factor };
     }
     throw new ParseError(`Unknown retry "${t.value}"`, t.pos);
   }
 
+  /**
+   * A retry count. Signed, because `§1.2` makes a sign part of a number
+   * literal and `Expected num, got op(-)` said nothing about what is wrong with
+   * one — and then rejected, because a negative count is not a shorter retry
+   * policy, it is a policy that cannot run. Whole, for the same reason: 2.5
+   * attempts is not a number of attempts.
+   */
+  private eatRetryCount(): number {
+    const t = this.peek();
+    const n = this.eatSignedNumber();
+    if (n < 0 || !Number.isInteger(n)) {
+      throw new ParseError(`Retry count must be a whole number, 0 or more (got ${n})`, t.pos);
+    }
+    return n;
+  }
+
+  /**
+   * A retry backoff factor — a multiplier, so signed like every other literal
+   * and then held to being one.
+   */
+  private eatRetryFactor(): number {
+    const t = this.peek();
+    const n = this.eatSignedNumber();
+    if (n <= 0) {
+      throw new ParseError(`Retry factor must be greater than 0 (got ${n})`, t.pos);
+    }
+    return n;
+  }
+
+  /** A number literal with the sign the lexer emits as its own operator. */
+  private eatSignedNumber(): number {
+    if (this.matchOp("-") && this.matchTAt(1, "num")) {
+      this.next();
+      return -this.eat("num").value;
+    }
+    return this.eat("num").value;
+  }
+
   private parseDuration(): number {
-    const n = this.eat("num").value;
-    const unit = this.eat("ident").value;
+    const numTok = this.peek();
+    const n = this.eatSignedNumber();
+    const unitTok = this.eat("ident");
+    const unit = unitTok.value;
+    // A duration is a length of time, and the runtime reads every one of them
+    // as a delay: `setInterval(f, -1000)` is clamped to the minimum, so
+    // `on=timer(-1s)` would fire a "once a second" reducer hundreds of times a
+    // second. `§1.2` makes the sign part of the literal, so the grammar admits
+    // it and the meaning is what rejects it.
+    if (n < 0) {
+      throw new ParseError(`Duration must be 0 or more (got ${n})`, numTok.pos);
+    }
     if (unit === "ms") return n;
     if (unit === "s") return n * 1000;
     if (unit === "m") return n * 60 * 1000;
-    throw new ParseError(`Unknown duration unit "${unit}"`, this.peek().pos);
+    // At the unit, not at whatever follows it: the unit is what has to change.
+    throw new ParseError(`Unknown duration unit "${unit}"`, unitTok.pos);
   }
 
   // ----- app -----
@@ -1656,32 +1948,45 @@ class Parser {
     const start = this.eat("kw", "app");
     const name = this.eat("ident").value;
     let caps: string[] = [];
-    let routes: { path: string; tile: string }[] = [];
+    let routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     let init: Expr[] = [];
-    let theme: string | undefined;
+    let theme: NamedRef | undefined;
     let http: AppHttpConfig | undefined;
     let indexedDb: AppIndexedDbConfig | undefined;
     let meta: AppMetaConfig | undefined;
     let analytics: AppAnalyticsConfig | undefined;
 
+    const duplicateClauses: DuplicateName[] = [];
+    const seenClauses = new Set<string>();
+    const configSources: Expr[] = [];
+
     while (!this.isAppEnd()) {
       const ident = this.eat("ident");
       const k = ident.value;
+      // Each clause is assigned into a single variable, so a second one
+      // overwrites the first and leaves nothing behind — for `caps` that means
+      // the declared capability set depends silently on clause order.
+      if (seenClauses.has(k)) duplicateClauses.push({ name: k, pos: ident.pos });
+      seenClauses.add(k);
       this.eat("op", "=");
       if (k === "caps") caps = this.parseQualifiedList();
       else if (k === "routes") routes = this.parseRouteMap();
       else if (k === "init") init = this.parseInitList();
-      else if (k === "theme") theme = this.eat("ident").value;
-      else if (k === "http") http = this.parseAppHttp(ident.pos);
-      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos);
-      else if (k === "meta") meta = this.parseAppMeta(ident.pos);
-      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos);
+      else if (k === "theme") {
+        const tok = this.eat("ident");
+        theme = { name: tok.value, pos: tok.pos };
+      } else if (k === "http") http = this.parseAppHttp(ident.pos, configSources);
+      else if (k === "indexed-db") indexedDb = this.parseAppIndexedDb(ident.pos, configSources);
+      else if (k === "meta") meta = this.parseAppMeta(ident.pos, configSources);
+      else if (k === "analytics") analytics = this.parseAppAnalytics(ident.pos, configSources);
       else {
         throw new ParseError(`Unknown app field "${k}"`, ident.pos);
       }
     }
 
     const def: AppDef = { kind: "AppDef", name, caps, routes, init, pos: start.pos };
+    if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
+    if (configSources.length > 0) def.configSources = configSources;
     if (theme) def.theme = theme;
     if (http) def.http = http;
     if (indexedDb) def.indexedDb = indexedDb;
@@ -1691,8 +1996,9 @@ class Parser {
   }
 
   // app.meta = { title?, description?, og-image?, favicon? } — spec style.md §4.10.
-  private parseAppMeta(pos: Pos): AppMetaConfig {
+  private parseAppMeta(pos: Pos, sources: Expr[]): AppMetaConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.meta must be a record literal`, pos);
     }
@@ -1723,8 +2029,9 @@ class Parser {
   }
 
   // app.analytics = { provider: "console" | "noop", app-id? } — spec runtime.md §10.4.6.
-  private parseAppAnalytics(pos: Pos): AppAnalyticsConfig {
+  private parseAppAnalytics(pos: Pos, sources: Expr[]): AppAnalyticsConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.analytics must be a record literal`, pos);
     }
@@ -1755,8 +2062,9 @@ class Parser {
   }
 
   // app.indexed-db = { name, version, stores: [{ name, key, indexes? }] } — spec http.md §6.7.4.
-  private parseAppIndexedDb(pos: Pos): AppIndexedDbConfig {
+  private parseAppIndexedDb(pos: Pos, sources: Expr[]): AppIndexedDbConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.indexed-db must be a record literal`, pos);
     }
@@ -1843,8 +2151,9 @@ class Parser {
   // app.http = { base-url, headers, on-401, on-403, on-5xx, timeout, credentials } — spec http.md §6.3.
   // headers is kept as Expr so the codegen can wrap it in a closure (slot
   // references must re-evaluate on every request, not freeze at mount).
-  private parseAppHttp(pos: Pos): AppHttpConfig {
+  private parseAppHttp(pos: Pos, sources: Expr[]): AppHttpConfig {
     const rec = this.parseExpr();
+    sources.push(rec);
     if (rec.kind !== "RecordLit") {
       throw new ParseError(`app.http must be a record literal`, pos);
     }
@@ -1879,17 +2188,26 @@ class Parser {
     return cfg;
   }
 
-  private appHttpReducerRef(field: string, value: Expr): string {
+  private appHttpReducerRef(field: string, value: Expr): NamedRef {
     if (value.kind !== "Ref") {
       throw new ParseError(`app.http.${field} must be a reducer name (bare identifier)`, value.pos);
     }
-    return value.name;
+    return { name: value.name, pos: value.pos };
   }
 
   private isAppEnd(): boolean {
     const t = this.peek();
     if (t.kind === "eof") return true;
     if (t.kind === "kw") return true;
+    // `theme` and `motion` are the two definition heads that are not reserved
+    // words, because `theme = T` is also an `app` clause. The shape tells them
+    // apart: a definition names itself first (`theme T = …`), a clause assigns
+    // straight away (`theme = T`). Without this an `app` written before either
+    // one ate it as a clause of its own, though §1.1 says definitions are
+    // unordered.
+    if (t.kind === "ident" && (t.value === "theme" || t.value === "motion")) {
+      return this.matchTAt(1, "ident") && this.matchTAt(2, "op", "=");
+    }
     return false;
   }
 
@@ -1912,7 +2230,8 @@ class Parser {
         kindTok.pos,
       );
     }
-    const target = this.eat("ident").value;
+    const targetTok = this.eat("ident");
+    const target = targetTok.value;
 
     const givenKw = this.eat("ident");
     if (givenKw.value !== "given") {
@@ -1933,6 +2252,7 @@ class Parser {
       name,
       testKind: kindTok.value,
       target,
+      targetPos: targetTok.pos,
       given,
       expect,
       pos: start.pos,
@@ -2024,15 +2344,15 @@ class Parser {
   }
 
   /** `{ name: TypeExpr, … }` — the `for-all` generators (types, not values). */
-  private parseForAllRecord(): { name: string; type: TypeExpr }[] {
+  private parseForAllRecord(): { name: string; type: TypeExpr; pos: Pos }[] {
     this.eat("op", "{");
-    const out: { name: string; type: TypeExpr }[] = [];
+    const out: { name: string; type: TypeExpr; pos: Pos }[] = [];
     if (!this.matchOp("}")) {
       while (true) {
-        const id = this.eat("ident").value;
+        const id = this.eat("ident");
         this.eat("op", ":");
         const type = this.parseTypeExpr();
-        out.push({ name: id, type });
+        out.push({ name: id.value, type, pos: id.pos });
         if (!this.matchOp(",")) break;
         this.next();
       }
@@ -2059,14 +2379,27 @@ class Parser {
     let name = this.eat("ident").value;
     while (this.matchOp(".")) {
       this.next();
-      name += `.${this.eat("ident").value}`;
+      // A segment after `.` is a name in the capability's own namespace, not in
+      // the language's, so a keyword there is unambiguous — and
+      // `caps=[telemetry.out]` was otherwise unwritable.
+      name += `.${this.eatName().value}`;
     }
     return name;
   }
 
-  private parseRouteMap(): { path: string; tile: string }[] {
+  /** An identifier, or a keyword used where only a name can appear. */
+  private eatName(): { value: string; pos: Pos } {
+    const t = this.peek();
+    if (t.kind === "kw") {
+      this.next();
+      return { value: t.value, pos: t.pos };
+    }
+    return this.eat("ident");
+  }
+
+  private parseRouteMap(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] {
     this.eat("op", "{");
-    const routes: { path: string; tile: string }[] = [];
+    const routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[] = [];
     if (!this.matchOp("}")) {
       routes.push(this.parseRouteEntry());
       while (this.matchOp(",")) {
@@ -2078,17 +2411,18 @@ class Parser {
     return routes;
   }
 
-  private parseRouteEntry(): { path: string; tile: string } {
-    const path = this.eat("str").value;
+  private parseRouteEntry(): { path: string; tile: string; tilePos?: Pos; pathPos: Pos } {
+    const pathTok = this.eat("str");
+    const path = pathTok.value;
     if (this.matchOp("->>")) {
       this.next();
       // redirect target as string. Represent it as a tile name.
       const target = this.eat("str").value;
-      return { path, tile: `>>${target}` };
+      return { path, tile: `>>${target}`, pathPos: pathTok.pos };
     }
     this.eat("op", "->");
-    const tile = this.eat("ident").value;
-    return { path, tile };
+    const tok = this.eat("ident");
+    return { path, tile: tok.value, tilePos: tok.pos, pathPos: pathTok.pos };
   }
 
   private parseInitList(): Expr[] {

@@ -1,6 +1,6 @@
 # @kumikijs/compiler
 
-Kumiki compiler — lexer, parser, typechecker, and code generator. Part of [Kumiki](https://github.com/kage1020/Kumiki), an AI-first web framework language.
+Kumiki compiler — lexer, parser, typechecker, and code generator. Part of [Kumiki](https://github.com/kumikijs/Kumiki), an AI-first web framework language.
 
 ## Install
 

@@ -7,11 +7,42 @@
 // stays named — no test needs to mock reads.
 import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
-import type { KumikiError, TestDef } from "@kumikijs/compiler";
-import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
+import type { KumikiError, Pos, TestDef } from "@kumikijs/compiler";
+import {
+  BUILTIN_EFFECT_CAPS,
+  calleeCandidates,
+  check,
+  collectTimerNames,
+  lex,
+  parse,
+  typeCandidates,
+  variantTagsOf,
+} from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
+
+/**
+ * How much of the source a patch's `apply` disturbs — the only thing that
+ * decides what order a plan may be composed in.
+ *
+ * A repair whose replacement is a different length shifts everything after it,
+ * and the regression gate reads a diagnostic's identity as `code@line:col`. So
+ * a patch applied before another that writes to its left turns that other one's
+ * diagnostic into an "introduced" one and rolls the whole plan back.
+ *
+ * `span` is the precise case and composes from the right. `line` cannot: it
+ * rewrites the first match on its line wherever that is, so it can move a
+ * column no `pos` predicts, and it goes after every `span`. `region` is
+ * everything whose write this plan does not express as a position — text added
+ * or extended elsewhere in the file (which moves whole lines), and the
+ * offset-addressed splices `planTestPatch` builds, which are applied alone. It
+ * goes last.
+ */
+export type PatchAnchor =
+  | { kind: "span"; pos: Pos }
+  | { kind: "line"; pos: Pos }
+  | { kind: "region" };
 
 export type AutoPatch = {
   code: string;
@@ -19,6 +50,12 @@ export type AutoPatch = {
   /** Free-form description of the fix to be applied. */
   description: string;
   apply: (text: string) => string;
+  /**
+   * What this patch disturbs. Required, so a new repair branch has to answer
+   * it — the previous optional field was silently omitted by two branches and
+   * they were composed as though they wrote where their diagnostic pointed.
+   */
+  anchor: PatchAnchor;
 };
 
 /**
@@ -80,6 +117,112 @@ function levenshtein(a: string, b: string): number {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The identifier at `pos`, when the expression starting there IS that
+ * identifier and nothing more. `null` for anything a suffix cannot simply be
+ * appended to — a call, an index, an existing field access — because the
+ * diagnostic gives the start of the expression and not its end.
+ */
+function identifierAt(store: Store, pos: Pos): string | null {
+  const line = store.lines[pos.line - 1];
+  if (line === undefined) return null;
+  const rest = line.slice(pos.col - 1);
+  const m = /^[A-Za-z_][A-Za-z0-9_-]*/.exec(rest);
+  if (!m) return null;
+  const after = rest.slice(m[0].length);
+  if (/^[.([]/.test(after)) return null;
+  return m[0];
+}
+
+/**
+ * Where line `line` (1-based) starts and where it ends, as offsets into `text`.
+ * `end` is the offset of the terminator, so on a CRLF file the slice
+ * `[start, end)` keeps the trailing `\r`. Neither consumer minds: a `\b`-search
+ * is unaffected by it (`\r` is not a word character), and no name a repair
+ * writes can contain one.
+ *
+ * Everything that edits a line goes through this rather than
+ * `split(/\r?\n/).join("\n")`, which rewrites every CRLF in the file to LF —
+ * a whole-file diff for a one-token repair, on the platform where CRLF is the
+ * default, with nothing said about it.
+ */
+function lineSpan(text: string, line: number): { start: number; end: number } | null {
+  let start = 0;
+  for (let n = 1; n < line; n++) {
+    const nl = text.indexOf("\n", start);
+    if (nl === -1) return null;
+    start = nl + 1;
+  }
+  if (start > text.length) return null;
+  const nl = text.indexOf("\n", start);
+  return { start, end: nl === -1 ? text.length : nl };
+}
+
+/**
+ * Replace `missing` with `replacement` at exactly the reported position.
+ *
+ * The name-suggest branches historically replaced the first `\b`-delimited
+ * match on the diagnostic's line, which is not the same thing: Kumiki
+ * identifiers are kebab-case and `\b` matches either side of a `-`, so the
+ * first match on `n := re-laod(laod(n))` is inside `re-laod` even when the
+ * diagnostic points at `laod`. Returns the text unchanged when the position
+ * does not hold `missing` — the caller's regression gate then rolls the patch
+ * back rather than writing a rewrite of something else.
+ */
+function replaceAt(text: string, pos: Pos, missing: string, replacement: string): string {
+  const span = lineSpan(text, pos.line);
+  if (!span) return text;
+  const at = span.start + pos.col - 1;
+  if (at + missing.length > span.end) return text;
+  if (text.slice(at, at + missing.length) !== missing) return text;
+  return text.slice(0, at) + replacement + text.slice(at + missing.length);
+}
+
+/**
+ * Replace the first `\b`-delimited `missing` anywhere on line `pos.line`.
+ *
+ * The fallback for a diagnostic whose position is not the name it quotes —
+ * E0211 reports at the reducer and names the tile — where there is nothing to
+ * measure from and the line is the only handle. Which is why a patch built
+ * this way is anchored `line` and never composed as though it wrote at `pos`.
+ */
+function replaceOnLine(text: string, pos: Pos, missing: string, replacement: string): string {
+  const span = lineSpan(text, pos.line);
+  if (!span) return text;
+  const line = text.slice(span.start, span.end);
+  const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
+  const at = line.search(re);
+  if (at === -1) return text;
+  return (
+    text.slice(0, span.start + at) + replacement + text.slice(span.start + at + missing.length)
+  );
+}
+
+/**
+ * The anchor a name-suggest repair deserves: `span` when the reported column
+ * really holds the name it quotes, `line` when it does not. Nothing declares
+ * which diagnostics are which — E0211's position is the reducer and its name
+ * is a tile, and the rest point at the name — so it is measured rather than
+ * listed, and a diagnostic that changes where it points changes anchor with it.
+ */
+function nameAnchor(store: Store, pos: Pos, missing: string): PatchAnchor {
+  const line = store.lines[pos.line - 1];
+  const at = pos.col - 1;
+  return line !== undefined && line.slice(at, at + missing.length) === missing
+    ? { kind: "span", pos }
+    : { kind: "line", pos };
+}
+
+/** Apply a name-suggest repair the way its anchor says it writes. */
+function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
+  return (text: string): string =>
+    anchor.kind === "span"
+      ? replaceAt(text, anchor.pos, missing, suggested)
+      : anchor.kind === "line"
+        ? replaceOnLine(text, anchor.pos, missing, suggested)
+        : text;
 }
 
 /**
@@ -186,6 +329,9 @@ function appendAppCap(text: string, cap: string, appRange: [number, number] | nu
  *   - **E0209** (pat-unknown-variant) — variant tags live inside the union
  *     type's payload list; we resolve them via `variantTagsOf(typeName,
  *     program)` (built-in `Option` / `Result` plus user `TypeDef` bodies).
+ *   - **E0104** (undef-effect) — the effect namespace plus the standard
+ *     effects, which no program declares and which the shared list therefore
+ *     never held.
  * Adding either code back to *this* set silently corrupts the source: the
  * shared candidate list has no timer / variant entries, so `suggestName`
  * would propose an unrelated tile or reducer whose name happens to be close.
@@ -193,7 +339,6 @@ function appendAppCap(text: string, cap: string, appRange: [number, number] | nu
 const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
   "E0102", // undef-reducer
   "E0103", // undef-ref / undef-slot
-  "E0104", // undef-effect
   "E0105", // undef-tile
   "E0107", // undef-motion
   "E0211", // undef-tile-in-selector
@@ -220,6 +365,19 @@ export function planFixesExplained(
     debugSkip(`planFixes:${code}`, reason, message);
   };
   for (const err of errors) {
+    // Every patch repairs exactly one diagnostic, so the position comes from
+    // the loop and only the anchor is the branch's to choose.
+    const add = (patch: Omit<AutoPatch, "anchor">): void => {
+      patches.push({ ...patch, anchor: { kind: "span", pos: err.pos } });
+    };
+    const addAnchored = (anchor: PatchAnchor, patch: Omit<AutoPatch, "anchor">): void => {
+      patches.push({ ...patch, anchor });
+    };
+    // For the repairs that add or extend a region elsewhere in the file, which
+    // moves every line after it.
+    const addElsewhere = (patch: Omit<AutoPatch, "anchor">): void => {
+      patches.push({ ...patch, anchor: { kind: "region" } });
+    };
     const beforePatches = patches.length;
     const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
@@ -237,18 +395,12 @@ export function planFixesExplained(
         skip(err.code, "no-close-name-suggestion", err.message);
         continue;
       }
-      patches.push({
+      const anchor = nameAnchor(store, err.pos, missing);
+      addAnchored(anchor, {
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
-        apply: (text: string) => {
-          const lines = text.split(/\r?\n/);
-          const idx = err.pos.line - 1;
-          const line = lines[idx] ?? "";
-          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
-          lines[idx] = line.replace(re, suggested);
-          return lines.join("\n");
-        },
+        apply: applyNameFix(anchor, missing, suggested),
       });
     }
     if (err.code === "E0106") {
@@ -271,18 +423,154 @@ export function planFixesExplained(
         skip(err.code, "e0106-no-close-timer", err.message);
         continue;
       }
-      patches.push({
+      const anchor = nameAnchor(store, err.pos, missing);
+      addAnchored(anchor, {
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
-        apply: (text: string) => {
-          const lines = text.split(/\r?\n/);
-          const idx = err.pos.line - 1;
-          const line = lines[idx] ?? "";
-          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
-          lines[idx] = line.replace(re, suggested);
-          return lines.join("\n");
-        },
+        apply: applyNameFix(anchor, missing, suggested),
+      });
+    }
+    if (err.code === "E0116") {
+      // Message shape: `Call to undefined function "<name>"`. The candidate set
+      // is the fn namespace plus the built-in calls — NOT every definition. A
+      // slot or tile is in a different namespace, so proposing one produces
+      // E0116 again at the same position: the patch fails the regression gate,
+      // is rolled back, and the repair loop has spent a round on a name that
+      // could never have resolved.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0116-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const fnNames = listDefs(store)
+        .filter((e) => e.layer === "fn")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(calleeCandidates(fnNames, missing), missing);
+      if (!suggested) {
+        skip(err.code, "e0116-no-close-callee", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        // Spliced at the reported column rather than at the line's first `\b`
+        // match. Kumiki identifiers are kebab-case and `\b` matches at a `-`,
+        // so `re-laod(laod(n))` has the first match inside `re-laod` — the
+        // patch would rewrite a name that was never the one reported.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0117") {
+      // Message shape: `Reference to undefined type "<name>"`. The candidate
+      // set is the type namespace — the program's own `type` definitions plus
+      // the primitives, the standard library's domain types, and the generic
+      // constructors. A slot or fn name would be E0117 again at the same
+      // position, so the same namespace argument as E0116 applies.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0117-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const userTypes = listDefs(store)
+        .filter((e) => e.layer === "type")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(typeCandidates(userTypes), missing);
+      if (!suggested) {
+        skip(err.code, "e0117-no-close-type", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        // Column splice for the same reason as E0116: a type name may sit
+        // inside a longer one on the same line (`Map(Text, Txt)`), and `\b`
+        // would find the wrong occurrence.
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0104") {
+      // Message shape: `Reference to undefined effect "<name>"`. The candidate
+      // set is the effect namespace plus the standard effects the runtime
+      // registers itself — a tile or slot whose name is close is E0104 again at
+      // the same position, and the standard effects were reachable from no
+      // candidate list at all, so `emit navigat(…)` had no proposal.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0104-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const candidates = listDefs(store)
+        .filter((e) => e.layer === "effect")
+        .map((e) => e.name)
+        .concat([...BUILTIN_EFFECT_CAPS.keys()]);
+      const suggested = suggestNameFrom(candidates, missing);
+      if (!suggested) {
+        skip(err.code, "e0104-no-close-effect", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0118") {
+      // Message shape: `Reference to undefined theme "<name>"`. The candidate
+      // set is the two namespaces `app.theme` accepts — a `theme` definition,
+      // or the slot whose value selects one. Every other layer would be E0118
+      // again at the same position.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length === 0) {
+        skip(err.code, "e0118-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const candidates = listDefs(store)
+        .filter((e) => e.layer === "theme" || e.layer === "slot")
+        .map((e) => e.name);
+      const suggested = suggestNameFrom(candidates, missing);
+      if (!suggested) {
+        skip(err.code, "e0118-no-close-theme", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
+      });
+    }
+    if (err.code === "E0216") {
+      // Message shape: `Variant "<tag>" is not a member of type "<T>"` — the
+      // constructor-side twin of E0209, and resolved the same way.
+      const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
+      if (quoted.length < 2) {
+        skip(err.code, "e0216-quoted-name-extract-failed", err.message);
+        continue;
+      }
+      const missing = quoted[0]!;
+      const tags = variantTagsOf(quoted[1]!, store.program);
+      if (!tags || tags.length === 0) {
+        skip(err.code, "e0216-unresolved-variant-type", err.message);
+        continue;
+      }
+      const suggested = suggestNameFrom(tags, missing);
+      if (!suggested) {
+        skip(err.code, "e0216-no-close-tag", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, missing, suggested),
       });
     }
     if (err.code === "E0209") {
@@ -309,18 +597,12 @@ export function planFixesExplained(
         skip(err.code, "e0209-no-close-tag", err.message);
         continue;
       }
-      patches.push({
+      const anchor = nameAnchor(store, err.pos, missing);
+      addAnchored(anchor, {
         code: err.code,
         message: err.message,
         description: `replace "${missing}" with "${suggested}" at ${err.pos.line}:${err.pos.col}`,
-        apply: (text: string) => {
-          const lines = text.split(/\r?\n/);
-          const idx = err.pos.line - 1;
-          const line = lines[idx] ?? "";
-          const re = new RegExp(`\\b${escapeRegex(missing)}\\b`);
-          lines[idx] = line.replace(re, suggested);
-          return lines.join("\n");
-        },
+        apply: applyNameFix(anchor, missing, suggested),
       });
     }
     if (err.code === "E0301") {
@@ -352,7 +634,7 @@ export function planFixesExplained(
         skip(err.code, "e0301-cap-already-present-or-no-caps-field", err.message);
         continue;
       }
-      patches.push({
+      addElsewhere({
         code: err.code,
         message: err.message,
         description: `add capability "${cap}" to app.caps`,
@@ -360,7 +642,7 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0001") {
-      patches.push({
+      addElsewhere({
         code: err.code,
         message: err.message,
         description: `add "/404" -> NotFound to app.routes (you must define a NotFound tile)`,
@@ -379,6 +661,43 @@ export function planFixesExplained(
         },
       });
     }
+    if (err.code === "E0218") {
+      // Message shape: `"for" iterates a List, but this is a <T> — iterate its
+      // .<remedy>`. The repair is a suffix on the iterated expression, and the
+      // diagnostic's position is where that expression starts — so this only
+      // fires when the expression is a plain name whose end is unambiguous.
+      // `for t in issues[$1].tags` reports at `issues`, and appending there
+      // would produce `issues.keys[$1].tags`.
+      const remedy = /iterate its (\.[a-z-]+)/.exec(err.message)?.[1];
+      if (!remedy) {
+        skip(err.code, "e0218-remedy-extract-failed", err.message);
+        continue;
+      }
+      const name = identifierAt(store, err.pos);
+      if (!name) {
+        skip(err.code, "e0218-target-not-a-plain-name", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `append "${remedy}" to "${name}" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, name, `${name}${remedy}`),
+      });
+    }
+    if (err.code === "E0119") {
+      // The slot holds the current route and is in scope in every reducer, and
+      // a reducer this fires in was never going to get a bind — so dropping the
+      // `$` is the whole repair. The diagnostic points at the `$`, and
+      // `replaceAt` writes only if that is what is there, so a drifted position
+      // leaves the file alone.
+      add({
+        code: err.code,
+        message: err.message,
+        description: `read the "route" slot instead of "$route" at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
+      });
+    }
     // Default classifier: this diagnostic code has no repair branch at all.
     // Distinct from `*-quoted-name-extract-failed` (which means "a branch
     // fired but the message shape didn't match") — `no-repair-branch` means
@@ -391,15 +710,108 @@ export function planFixesExplained(
   return { patches, skipped };
 }
 
+/**
+ * The order a plan may be composed in, by how much of the source each patch
+ * disturbs (see `PatchAnchor`): every `span` first and from the right, then
+ * every `line`, then every `region`. Within a tier the plan's own order is
+ * kept, which for `line` matters: two repairs of the same misspelling on one
+ * line each take the first remaining match.
+ *
+ * This is only about not invalidating the *positions* patches were measured
+ * at. A diagnostic that no patch repairs still moves when a patch to its left
+ * lands, and the regression gate — which compares `code@line:col` — still
+ * calls the moved one introduced and rolls the plan back. Ordering cannot
+ * reach that; only a position-independent identity could.
+ */
+const ANCHOR_TIER: Record<PatchAnchor["kind"], number> = { span: 0, line: 1, region: 2 };
+
+function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
+  return [...patches].sort((a, b) => {
+    const tier = ANCHOR_TIER[a.anchor.kind] - ANCHOR_TIER[b.anchor.kind];
+    if (tier !== 0) return tier;
+    if (a.anchor.kind !== "span" || b.anchor.kind !== "span") return 0;
+    return b.anchor.pos.line - a.anchor.pos.line || b.anchor.pos.col - a.anchor.pos.col;
+  });
+}
+
 export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
   return planFixesExplained(store, errors).patches;
 }
 
 /**
+ * The diagnostics `fix` is about: the errors, never the warnings.
+ *
+ * A warning is advisory — `check` reports one and exits 0 — and no branch in
+ * `planFixes` emits a patch for a warning code. `fix` is the only reader that
+ * treated the two tiers alike, which is why a file `check` calls
+ * `ok (1 warning)` came back from `fix` as "(no auto-patches available)".
+ *
+ * A `check()` here is read for one of three decisions, and each wants the
+ * errors alone:
+ *
+ *  - what to repair, so a warning is not reported as an error nobody can fix;
+ *  - whether to keep a repair. Filtering after the patch only would count a
+ *    warning the file already had as one the patch introduced, and roll back a
+ *    repair that fixed a real error;
+ *  - whether the fix-from-test path may run its behavioural tier. That gate
+ *    asks "does this file compile", so a warning anywhere in the file stopped
+ *    `--auto-patch` repairing a failing test — and its second gate did the
+ *    same after a compile repair had already landed.
+ *
+ * What the filter must not do is hide them. `advisory` is the other half, and
+ * every result that leaves this file carries it: `FixPlan.warnings`,
+ * `FixApplyResult.warnings`, `FixFromTestOutcome.warnings`. Every verdict
+ * printed from those says how many, and lists them under whatever it said.
+ */
+function repairable(diagnostics: KumikiError[]): KumikiError[] {
+  return diagnostics.filter((d) => d.severity !== "warning");
+}
+
+/**
+ * The wording every verb uses for a count of advisory diagnostics.
+ *
+ * Exported and called by `check` and by the MCP tools rather than copied:
+ * "the two verbs cannot disagree about a file neither of them will change" is
+ * only true if one of them cannot be reworded without the other.
+ */
+export function plural(n: number): string {
+  return `${n} warning${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * A headline plus the advisory count, when there is one. Every verdict `fix`
+ * prints goes through here: the whole point is that two verbs cannot describe
+ * one file differently, which a second spelling of this would reintroduce.
+ */
+function verdict(headline: string, warnings: KumikiError[]): string {
+  return warnings.length > 0 ? `${headline} (${plural(warnings.length)})` : headline;
+}
+
+/** The warnings themselves, under whatever verdict or diagnostic list precedes them. */
+function reportWarnings(warnings: KumikiError[]): void {
+  for (const w of warnings) console.error(`${w.code} ${w.message}`);
+}
+
+/**
+ * The warnings to report for a path that wrote nothing: the ones the plan
+ * already typechecked. Spelled as a helper so a return that leaves the file
+ * alone cannot quietly claim the post-patch set instead.
+ */
+function unchanged(plan: FixPlan): { warnings: KumikiError[] } {
+  return { warnings: plan.warnings };
+}
+
+/** The other half of the same split, kept beside it so neither drifts. */
+function advisory(diagnostics: KumikiError[]): KumikiError[] {
+  return diagnostics.filter((d) => d.severity === "warning");
+}
+
+/**
  * Pure planner: read + typecheck + planFixes (filtered by `onlyCode` when set).
  * No I/O beyond reading the file. Returned `patches` is empty when nothing is
- * repairable; `errors` carries the raw diagnostics either way so the caller can
- * distinguish "clean file" from "errors but nothing to auto-fix".
+ * repairable; `errors` carries every error either way — warnings excluded, see
+ * `repairable` — so the caller can distinguish "clean file" from "errors but
+ * nothing to auto-fix".
  */
 export function planFix(
   path: string,
@@ -407,18 +819,35 @@ export function planFix(
   capabilities: string[] = [],
 ): FixPlan {
   const store = load(path);
-  const errors = check(store.program, { capabilities });
-  if (errors.length === 0) return { errors, patches: [] };
-  const all = planFixes(store, errors);
+  const diagnostics = check(store.program, { capabilities });
+  const errors = repairable(diagnostics);
+  const warnings = advisory(diagnostics);
+  if (errors.length === 0) return { errors, warnings, patches: [], skipped: [] };
+  const { patches: all, skipped } = planFixesExplained(store, errors);
   const patches = onlyCode ? all.filter((p) => p.code === onlyCode) : all;
-  return { errors, patches };
+  return { errors, warnings, patches, skipped };
 }
 
 export type FixPlan = {
-  /** Raw typecheck errors on `path`. Empty when the file is clean. */
+  /** Typecheck errors on `path`, warnings excluded. Empty when the file is clean. */
   errors: KumikiError[];
+  /**
+   * The advisory half of the same `check()`. Carried rather than dropped so a
+   * caller reporting a clean file can still say what is in it — `fix` answering
+   * "no errors" for a file `check` calls "ok (1 warning)" is the same wrong
+   * answer as the one this split removes, told the other way round.
+   */
+  warnings: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
   patches: AutoPatch[];
+  /**
+   * The diagnostics no patch covers, with the classifier for why. Every error
+   * lands in exactly one of `patches` or `skipped`, so a caller that reports
+   * only the patches is telling the reader the file has fewer problems than it
+   * does. Not affected by `onlyCode` — a patch the caller filtered out was
+   * still found.
+   */
+  skipped: SkipReason[];
 };
 
 /**
@@ -448,19 +877,38 @@ export function applyFixPlan(
   const plan = planFix(path, onlyCode, capabilities);
   const before = readFileSync(path, "utf8");
   if (plan.patches.length === 0) {
-    return { applied: 0, before, after: before, remaining: plan.errors };
+    return { applied: 0, before, after: before, remaining: plan.errors, ...unchanged(plan) };
   }
+  // Counted one patch at a time, because a patch can decline to change
+  // anything: `replaceAt` returns the source untouched when the reported
+  // column does not hold the name it was told to replace. Composed with
+  // patches that do land, the regression gate passes on the strength of the
+  // others and the no-op would still be reported as applied.
   let after = before;
-  for (const p of plan.patches) after = p.apply(after);
+  let applied = 0;
+  for (const p of applicationOrder(plan.patches)) {
+    const next = p.apply(after);
+    if (next !== after) applied += 1;
+    after = next;
+  }
+  if (applied === 0) {
+    // Nothing changed, so there is nothing to gate and nothing to write. This
+    // is "no auto-patch took effect", not a rollback — `regressionBlocked`
+    // stays unset so the caller reports it as such.
+    return { applied: 0, before, after: before, remaining: plan.errors, ...unchanged(plan) };
+  }
   // Regression gate. Every path that would touch disk first re-parses and
   // re-typechecks the composed source, then compares diagnostic *sets* (code
   // + position) rather than counts. Rollback triggers when any of:
   //   1. The composed source no longer parses at all — a *parse-error* is
   //      strictly worse than the original type errors, so we discard even
   //      though the pre-patch file had errors.
-  //   2. Any diagnostic exists in `after` but not `before` — introduced a
+  //   2. Any *error* exists in `after` but not `before` — introduced a
   //      new failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
-  //      count-only guard would miss.
+  //      count-only guard would miss. Warnings are outside the comparison in
+  //      both directions, deliberately: a repair that clears an error and
+  //      reveals an advisory diagnostic is still a repair, and rolling it back
+  //      would leave the file holding the error to avoid holding the warning.
   //   3. No diagnostic from `before` was resolved — the patch either did
   //      nothing (silent noop) or replaced errors position-for-position
   //      with different codes (still a swap).
@@ -493,11 +941,18 @@ export function applyFixPlan(
       before,
       after: before,
       remaining: [...plan.errors, synthetic],
+      ...unchanged(plan),
       regressionBlocked: true,
       parseError: message,
     };
   }
-  const dryRemaining = check(parsed, { capabilities });
+  // One typecheck, both halves. The errors decide the gate; the warnings are
+  // what the file will be carrying once this write lands, which is not the set
+  // it started with — a repair that resolves an undefined tile onto one that
+  // cannot fire the event a reducer subscribes to reveals a warning that was
+  // not there before.
+  const afterDiagnostics = check(parsed, { capabilities });
+  const dryRemaining = repairable(afterDiagnostics);
   const afterSet = new Set(dryRemaining.map(key));
   const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
   const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
@@ -507,7 +962,10 @@ export function applyFixPlan(
       before,
       after: before,
       remaining: plan.errors,
+      ...unchanged(plan),
       regressionBlocked: true,
+      blocked:
+        introduced.length > 0 ? { reason: "introduced", introduced } : { reason: "resolved-none" },
     };
   }
   try {
@@ -522,10 +980,11 @@ export function applyFixPlan(
       before,
       after: before,
       remaining: plan.errors,
+      ...unchanged(plan),
       writeError: e instanceof Error ? e.message : String(e),
     };
   }
-  return { applied: plan.patches.length, before, after, remaining: dryRemaining };
+  return { applied, before, after, remaining: dryRemaining, warnings: advisory(afterDiagnostics) };
 }
 
 export type FixApplyResult = {
@@ -536,12 +995,19 @@ export type FixApplyResult = {
   /** Source after writing (already on disk). */
   after: string;
   /**
-   * Residual diagnostics after the write. Empty ⇔ file is clean. When the
-   * write produced unparseable source, this contains a synthetic `E0000`
-   * parse-error so the empty-⇔-clean invariant holds without callers needing
-   * to inspect `parseError` first.
+   * Residual errors after the write, warnings excluded. Empty ⇔ file is clean.
+   * When the write produced unparseable source, this contains a synthetic
+   * `E0000` parse-error so the empty-⇔-clean invariant holds without callers
+   * needing to inspect `parseError` first.
    */
   remaining: KumikiError[];
+  /**
+   * The advisory half of the same typecheck — the diagnostics `fix` read and
+   * decided not to act on. Required, so every path has to answer it: a path
+   * that wrote nothing reports what the plan found, and the one that wrote
+   * reports what the file carries now, which is not always the same set.
+   */
+  warnings: KumikiError[];
   /**
    * Raw parser message when the composed patches broke syntax. Duplicated by
    * the `E0000` entry in `remaining`; kept as a convenience field for
@@ -549,12 +1015,19 @@ export type FixApplyResult = {
    */
   parseError?: string;
   /**
-   * True when the composed patch would have introduced *more* diagnostics
-   * than the pre-patch file had — the regression gate rolled the write back
-   * and `applied` is `0`. Absent means either the patch cleanly applied or
-   * there was nothing to apply.
+   * True when the regression gate rolled the write back and `applied` is `0`.
+   * Absent means either the patch cleanly applied or there was nothing to
+   * apply. `blocked` says which of the gate's two conditions it was.
    */
   regressionBlocked?: boolean;
+  /**
+   * Why the gate rolled back. `introduced` carries the diagnostics the
+   * re-check reported that the original did not — which is not the same as
+   * "new failures": the gate reads a diagnostic's identity as `code@line:col`,
+   * so a diagnostic no patch repaired appears here when a patch to its left
+   * moved it. Naming them is what lets a reader tell the two apart.
+   */
+  blocked?: { reason: "introduced"; introduced: KumikiError[] } | { reason: "resolved-none" };
   /**
    * Raw filesystem error message when the composed patches passed the
    * regression gate but the write threw (EACCES / ENOSPC / EBUSY, …). When
@@ -568,28 +1041,58 @@ export type FixApplyResult = {
   writeError?: string;
 };
 
+/**
+ * Print what `fix` found (and, with `apply`, what it wrote) and return the exit
+ * code the caller should end on: `0` when the file is clean, `1` when errors
+ * are still in it.
+ *
+ * Returned rather than assigned to `process.exitCode`, because the CLI is not
+ * the only caller — tests drive this in-process, and a function that sets the
+ * exit code as a side effect would fail the vitest worker that called it.
+ */
 export function fixCmd(
   path: string,
   apply: boolean,
   onlyCode?: string,
   capabilities: string[] = [],
-): void {
+): number {
   if (!apply) {
-    const { errors, patches } = planFix(path, onlyCode, capabilities);
+    const { errors, warnings, patches, skipped } = planFix(path, onlyCode, capabilities);
     if (errors.length === 0) {
-      console.log("no errors");
-      return;
+      // Same shape `check` reports a clean-but-advisory file with, so the two
+      // verbs cannot disagree about a file neither of them will change — and
+      // the same shape `--apply` prints below, which changes it just as little.
+      console.log(verdict("no errors", warnings));
+      reportWarnings(warnings);
+      return 0;
     }
     if (patches.length === 0) {
       console.log("(no auto-patches available)");
       for (const e of errors) console.error(`${e.code} ${e.message}`);
-      return;
+      // Under the errors, not instead of them: a file with both is one `check`
+      // reports both for, and the branch that has an error to report is no
+      // more entitled to drop the rest than the clean one above.
+      reportWarnings(warnings);
+      return 1;
     }
     for (const p of patches) {
       console.log(`${p.code} ${p.message}`);
       console.log(`  fix: ${p.description}`);
     }
-    return;
+    // A repair loop that sees only the repairable half applies it and calls the
+    // file done. The `--apply` path already reports what survives; the dry run
+    // has to say the same thing before anything is written.
+    if (skipped.length > 0) {
+      console.log(`(no auto-patch for ${skipped.length} of ${errors.length})`);
+      // The kebab-case reason travels with the line: it is the stable half of
+      // this output, and a repair loop deciding whether to retry or escalate
+      // reads it rather than the prose.
+      for (const s of skipped) console.error(`${s.code} ${s.message} [${s.reason}]`);
+    }
+    reportWarnings(warnings);
+    // A dry run leaves every error where it found it, so the file is still
+    // broken and `kumiki fix <f> && next-step` must not run `next-step`.
+    return 1;
   }
   const result = applyFixPlan(path, onlyCode, capabilities);
   if (result.applied === 0) {
@@ -599,29 +1102,48 @@ export function fixCmd(
       // so scripts inspecting `remaining` still get the compile state, but the
       // I/O failure itself must not silently look like "no auto-patches".
       console.error(`could not write fixes to ${path}: ${result.writeError}`);
-      process.exitCode = 1;
-      return;
+      return 1;
     }
     if (result.remaining.length === 0) {
-      console.log("no errors");
-      return;
+      console.log(verdict("no errors", result.warnings));
+      reportWarnings(result.warnings);
+      return 0;
     }
-    if (result.regressionBlocked) {
-      console.log("(auto-patch rolled back — it would have introduced new errors)");
+    // Order matters: a parse-error sets `regressionBlocked` as well, so asking
+    // about the rollback first tells the reader the patch "would have
+    // introduced new errors" and never that it broke the file's syntax.
+    if (result.parseError) {
+      console.log(`fixes broke the file: ${result.parseError}`);
+    } else if (result.blocked?.reason === "resolved-none") {
+      console.log("(auto-patch rolled back — it resolved none of the reported diagnostics)");
+    } else if (result.blocked?.reason === "introduced") {
+      // Named rather than summarised as "new errors": the commonest cause is a
+      // diagnostic no patch repaired that a repair to its left moved, and the
+      // position in this list is what shows that.
+      const where = result.blocked.introduced
+        .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
+        .join(", ");
+      console.log(
+        `(auto-patch rolled back — the re-check reported ${where}, which it did not before)`,
+      );
+    } else if (result.regressionBlocked) {
+      console.log("(auto-patch rolled back)");
     } else {
       console.log("(no auto-patches available)");
     }
     for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
-    return;
+    reportWarnings(result.warnings);
+    return 1;
   }
-  if (result.parseError) {
-    console.error(`fixes broke the file: ${result.parseError}`);
-    return;
+  if (result.remaining.length === 0) {
+    console.log(verdict(`applied ${result.applied} fix(es) — file now clean`, result.warnings));
+    reportWarnings(result.warnings);
+    return 0;
   }
-  if (result.remaining.length === 0)
-    console.log(`applied ${result.applied} fix(es) — file now clean`);
-  else
-    console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
+  console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
+  for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+  reportWarnings(result.warnings);
+  return 1;
 }
 
 // ----- `kumiki fix --auto-patch <test-name>` (M4b) -----
@@ -653,7 +1175,7 @@ export function fixCmd(
  * `patch` is preserved on `phase: "test"` for retry / display, and the
  * on-disk file is byte-identical to before the call.
  */
-export type FixFromTestOutcome =
+type FixFromTestStatus =
   | {
       ok: false;
       status: "no-patch";
@@ -732,6 +1254,20 @@ export type FixFromTestOutcome =
       compileFixes?: number;
       patch?: AutoPatch;
     };
+
+/**
+ * One of the statuses above, plus the advisory diagnostics from the last
+ * typecheck this call ran.
+ *
+ * An intersection rather than a field repeated on nine members, so a status
+ * added later cannot be the one that forgets it — and required rather than
+ * optional, because an optional field is one nothing has to fill. The
+ * behavioural tier replaces a string literal in a tile, so "the last
+ * typecheck" is still the right description of what these describe after it.
+ */
+export type FixFromTestOutcome = FixFromTestStatus & {
+  warnings: KumikiError[];
+};
 
 /**
  * Inverse of the lexer's string-body decoding
@@ -1126,6 +1662,7 @@ function planExactLiteralPatchExplained(
       description: `replace ${actualLit} with ${expectedLit} (from failing test "${r.name}" @ ${at})`,
       apply: (text: string) =>
         text.slice(0, hit) + expectedLit + text.slice(hit + actualLit.length),
+      anchor: { kind: "region" },
     },
   };
 }
@@ -1207,6 +1744,7 @@ function planPartialStringPatchExplained(
       message: `test "${r.name}" failed at ${at}`,
       description: `replace "${midA}" with "${midE}" inside "${target.body}" (from failing test "${r.name}" @ ${at})`,
       apply: (text: string) => text.slice(0, target.start) + patchedLit + text.slice(target.end),
+      anchor: { kind: "region" },
     },
   };
 }
@@ -1303,6 +1841,7 @@ function planArithmeticPatchExplained(
       message: `test "${r.name}" failed at ${at}`,
       description: newDesc,
       apply: (text: string) => text.slice(0, start) + newLine + text.slice(end),
+      anchor: { kind: "region" },
     },
   };
 }
@@ -1325,7 +1864,20 @@ export async function runFixFromTest(
 ): Promise<FixFromTestOutcome> {
   // Tier 1: a file that doesn't compile can't run its tests — repair first.
   const store = load(path);
-  const compileErrors = check(store.program, { capabilities });
+  const firstPass = check(store.program, { capabilities });
+  const compileErrors = repairable(firstPass);
+  // Updated by the only other typecheck this function runs, so whichever
+  // outcome it reaches describes the file as that typecheck last saw it.
+  let warnings = advisory(firstPass);
+  /**
+   * Attach them. Every return goes through here rather than repeating the
+   * field twelve times — and the field is required on the outcome, so a
+   * thirteenth that skipped this would not compile.
+   */
+  const stamp = <T extends FixFromTestStatus>(o: T): T & { warnings: KumikiError[] } => ({
+    ...o,
+    warnings,
+  });
   let compileFixes = 0;
   if (compileErrors.length > 0) {
     const { patches, skipped } = planFixesExplained(store, compileErrors);
@@ -1335,18 +1887,18 @@ export async function runFixFromTest(
       // and every quoted-name branch fell through". Absent when the compile
       // errors didn't match any repair branch at all (no skip recorded).
       const reason = skipped[0]?.reason;
-      return { ok: false, status: "no-patch", compileErrors, ...(reason ? { reason } : {}) };
+      return stamp({ ok: false, status: "no-patch", compileErrors, ...(reason ? { reason } : {}) });
     }
     if (!apply) {
-      return {
+      return stamp({
         ok: true,
         status: "compile-proposed",
         compileFixes: patches.length,
         compilePatches: patches,
-      };
+      });
     }
     let text = readFileSync(path, "utf8");
-    for (const p of patches) text = p.apply(text);
+    for (const p of applicationOrder(patches)) text = p.apply(text);
     try {
       atomicWriteFileSync(path, text);
     } catch (e) {
@@ -1354,13 +1906,13 @@ export async function runFixFromTest(
       // nothing landed. The `write-failed` variant + `phase: "compile"` tells
       // the printer / MCP serializer to avoid the misleading "applied N
       // compile fix(es)" header.
-      return {
+      return stamp({
         ok: false,
         status: "write-failed",
         phase: "compile",
         writeError: e instanceof Error ? e.message : String(e),
         compileFixes: patches.length,
-      };
+      });
     }
     compileFixes = patches.length;
     // Split the catches: only `parse(lex(text))` may legitimately throw with
@@ -1370,16 +1922,23 @@ export async function runFixFromTest(
     try {
       parsed = parse(lex(text));
     } catch (e) {
-      return {
+      return stamp({
         ok: false,
         status: "compile-remaining",
         compileFixes,
         parseError: e instanceof Error ? e.message : String(e),
-      };
+      });
     }
-    const remaining = check(parsed, { capabilities });
+    const afterRepair = check(parsed, { capabilities });
+    warnings = advisory(afterRepair);
+    const remaining = repairable(afterRepair);
     if (remaining.length > 0) {
-      return { ok: false, status: "compile-remaining", compileFixes, compileErrors: remaining };
+      return stamp({
+        ok: false,
+        status: "compile-remaining",
+        compileFixes,
+        compileErrors: remaining,
+      });
     }
   }
 
@@ -1388,7 +1947,7 @@ export async function runFixFromTest(
   try {
     before = await testFile(path, capabilities);
   } catch (e) {
-    return {
+    return stamp({
       ok: false,
       status: "no-patch",
       testRunError: e instanceof Error ? e.message : String(e),
@@ -1397,24 +1956,24 @@ export async function runFixFromTest(
       // itself blew up" from "the file compiles but no patch applies".
       reason: "test-runner-threw",
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   const target = before.find((r) => r.name === testName);
   if (!target) {
-    return {
+    return stamp({
       ok: false,
       status: "not-found",
       availableTests: before.map((r) => r.name),
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   if (target.pass) {
-    return {
+    return stamp({
       ok: true,
       status: "already-pass",
       pass: true,
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
 
   // Tier 2: behavioral, deterministic literal repair. Re-load from the current
@@ -1425,17 +1984,22 @@ export async function runFixFromTest(
   const curStore = load(path);
   const attempt = planTestPatchExplained(curSource, target, testBodyLineRanges(curStore), curStore);
   if (!attempt.patch) {
-    return {
+    return stamp({
       ok: false,
       status: "no-patch",
       failingTest: target,
       reason: attempt.reason,
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   const patch = attempt.patch;
   if (!apply) {
-    return { ok: true, status: "proposed", patch, ...(compileFixes ? { compileFixes } : {}) };
+    return stamp({
+      ok: true,
+      status: "proposed",
+      patch,
+      ...(compileFixes ? { compileFixes } : {}),
+    });
   }
   // Apply the patch OUTSIDE the try — a throw from `patch.apply` (codegen /
   // slice-index bug in the tier planner, or a downstream regression in
@@ -1446,21 +2010,21 @@ export async function runFixFromTest(
   try {
     atomicWriteFileSync(path, patched);
   } catch (e) {
-    return {
+    return stamp({
       ok: false,
       status: "write-failed",
       phase: "test",
       writeError: e instanceof Error ? e.message : String(e),
       patch,
       ...(compileFixes ? { compileFixes } : {}),
-    };
+    });
   }
   const after = await testFile(path, capabilities);
   const nowPass = after.find((r) => r.name === testName)?.pass === true;
   const regressed = after
     .filter((r) => !r.pass && before.find((b) => b.name === r.name)?.pass === true)
     .map((r) => r.name);
-  return {
+  return stamp({
     ok: nowPass && regressed.length === 0,
     status: "applied",
     pass: nowPass,
@@ -1469,7 +2033,7 @@ export async function runFixFromTest(
     // on the `applied` branch. Baked into the type by the discriminated union.
     regressed,
     ...(compileFixes ? { compileFixes } : {}),
-  };
+  });
 }
 
 export async function fixFromTest(
@@ -1480,6 +2044,11 @@ export async function fixFromTest(
 ): Promise<FixFromTestOutcome> {
   const outcome = await runFixFromTest(path, testName, apply, capabilities);
   printFixFromTest(outcome, testName, path);
+  // Under whatever the printer said, on every branch. The switch returns from
+  // inside each case, so this is the one place that reaches all of them — and
+  // an outcome's warnings are worth the same on the branch that repaired the
+  // file as on the branch that gave up.
+  reportWarnings(outcome.warnings);
   return outcome;
 }
 
@@ -1503,7 +2072,12 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
     // `phase: "test"` the Tier-1 write did land; header is honest.
     !(outcome.status === "write-failed" && outcome.phase === "compile")
   ) {
-    console.log(`applied ${outcome.compileFixes} compile fix(es) — file now compiles`);
+    console.log(
+      verdict(
+        `applied ${outcome.compileFixes} compile fix(es) — file now compiles`,
+        outcome.warnings,
+      ),
+    );
   }
   switch (outcome.status) {
     case "no-patch": {
@@ -1564,7 +2138,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       return;
     }
     case "already-pass": {
-      console.log(`test "${testName}" passes — nothing to fix`);
+      console.log(verdict(`test "${testName}" passes — nothing to fix`, outcome.warnings));
       return;
     }
     case "proposed": {
@@ -1576,7 +2150,12 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
     }
     case "applied": {
       const nowPass = outcome.pass === true;
-      console.log(`applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`);
+      console.log(
+        verdict(
+          `applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`,
+          outcome.warnings,
+        ),
+      );
       if (outcome.regressed && outcome.regressed.length > 0) {
         console.log(
           `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,

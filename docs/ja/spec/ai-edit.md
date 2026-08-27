@@ -13,21 +13,13 @@ Kumiki のコードは物理ファイルではなく **content-addressable CRDT 
 
 ## 9.1 全体像
 
-```
-┌───────────────────────────────────────────────┐
-│              CRDT graph store                  │
-│  (definition の集合、各々が content-addressable) │
-└───────────────────────────────────────────────┘
-        ↑                          ↓
-        │                          │ kumiki view
-        │ kumiki op apply          │
-        │                          ↓
-┌───────────────┐            ┌──────────────────────┐
-│ AI エージェント │ ←─────── │ projection (text)    │
-└───────────────┘  edit op   └──────────────────────┘
-```
+編集は 3 つの地点を巡る:
 
-AI が見るのは graph からの **projection（テキスト断面）**。AI が出力するのは **op**（テキスト diff ではない）。
+1. **store** — CRDT graph。定義の集合を保持し、各定義は自身の本体のハッシュで参照される。
+2. **projection** — `kumiki view` が store から描き出すテキスト。エージェントが求めた定義だけを含む。
+3. **op** — エージェントが書き戻すもの。`kumiki op apply` が store に畳み込む。
+
+つまり AI が読むのは graph のテキスト断面であり、返すのは op であって、テキスト diff ではない。
 
 ---
 
@@ -64,6 +56,8 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
+書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
+
 ### 9.2.3 検証系
 
 ```bash
@@ -74,6 +68,8 @@ kumiki check --effects             # capability・policy 整合性のみ
 kumiki check --a11y                # アクセシビリティ規約
 ```
 
+3 つの絞り込みフラグは「どの種類の誤りか」という 1 本の軸で選ぶ。フラグは残すものを指定するので合成される — `--types --refs` は片方ではなく両方の帯を報告する。構造（`E00xx`）、オプトイン検査とテスト DSL 不変条件（`E07xx`）、ランタイムハザード（`E08xx`）はその軸に乗っていない — どのフラグも選択しないため、**どの絞り込みでも必ず報告される**。フラグが決められるのは「どの種類の誤りを聞きたいか」であって、エントリポイントの無いプログラムを健全に見せることはできない。
+
 ### 9.2.4 修正補助
 
 ```bash
@@ -81,6 +77,39 @@ kumiki fix --auto-patch <error-id>          # エラーを自動修正する CRD
 kumiki fix --apply                          # 提案をそのまま適用
 kumiki fix --interactive                    # 提案を 1 つずつ確認しながら適用
 ```
+
+### 9.2.5 終了コード
+
+どの verb も終了コードで結果を報告する。出力のうちシェルが読むのはそこだけだからである。`kumiki fix --apply && kumiki build …` はファイルが壊れたままなら止まらなければならないし、`kumiki test app.kumiki 'checkout-*'` は渡された名前がどのテストにも一致しなければ失敗しなければならない。
+
+| code | 意味 |
+|---|---|
+| `0` | 頼まれたことを実行した |
+| `1` | 実行した上で、その操作が失敗した |
+| `2` | 引数の形が違う |
+
+`2` は `.kumiki` ファイルを読む前に決まる — 位置引数の不足、未知のオプション、許可された集合の外にある位置引数。したがって `2` が「プログラムを見た結果」を意味することは決してない。`2` が何を報告していようと、プログラムは調べられていない。
+
+verb ごとに、`1` が意味するのは以下である。
+
+| verb | `1` になる条件 |
+|---|---|
+| `check` | 絞り込みフラグを通り抜けた severity `error` の診断がある。警告は終了コードを変えない（`ok (1 warning)` は `0`） |
+| `build` | プログラムがコンパイルできない、または出力を書けない |
+| `smoke` | アプリが mount に失敗する、または操作が例外を投げる |
+| `run` | シナリオ文書が読めない・シナリオではない、またはステップが失敗する |
+| `test` | テストが失敗した、**または** フィルタが指定されていてどのテストにも一致しなかった。フィルタ無しでテストが 0 件なら `0`。`--watch` は中断されるまで終わらないので何も報告しない |
+| `fix` | プロセス終了時点でファイルが求められた状態になっていない。すなわちエラーが残っている、または `--auto-patch <test>` で指定したテストが通っていない。dry run は何も修復しないので、その状態に既に無いファイルはすべて `1` になる |
+| `view` / `refs` | ファイル、またはその中の完全名が存在しない。`view --history` が要求するのはファイルだけである — 削除された定義にも履歴はあり、まさにそのときに参照されるからである |
+| `list` | ファイルが存在しない、またはフィルタがどの種類の定義も指していない。実在するがその下に定義が無い場合は何も出力せず `0` |
+| `add` / `replace` / `remove` / `rename` / `edit` / `patch` | 書き込みが拒否されロールバックされた |
+| `lock` / `unlock` | ロックを他のエージェントが保持している、または解放すべきロックが無い |
+| `replay` | ログが読めない、指定した episode がログに無い、または再生した episode が panic した |
+| `dev` | サーバを起動できなかった。起動後は中断されるまで動き続けるので何も報告しない |
+
+警告が終了コードを変えることはない。2 つの段階を分けているのはまさにそこで、`error` は「プログラムが誤っている」という主張、`warning` は「怪しい」という主張であり、パイプラインを止めてよいのは前者だけである。
+
+MCP サーバ（[§9.7](#_9-7-mcp-server)）は同じ問いに `isError` で答える。ここで `1` になる失敗は、あちらで `isError: true` になる。フラグが内容を変えることはない — 失敗した check は診断を、失敗したシナリオはトレースを返したままである。答えを 1 つも生み出せなかった失敗（ファイルが無い、名前が何も指さない）だけが、内容を封筒 `{"error": {"kind", "message"}}` に置き換える。
 
 ## 9.3 CRDT op の形式
 
@@ -146,7 +175,7 @@ CRDT が構文収束を保証しても、**意味的衝突**は別問題：
 
 Kumiki はこれを **2 段階で防ぐ**：
 
-### 9.4.1 op 発行時の事前検査
+### 9.4.1 op 発行時の事前検査 {#_9-4-1-pre-check-at-op-issuance}
 
 ```bash
 kumiki remove slot.draft
@@ -225,34 +254,11 @@ hash(def) = blake3(canonical(def.body) ⊕ hash(dep1) ⊕ hash(dep2) ⊕ ...)
 }
 ```
 
-### 9.6.1 主なエラーコード
+### 9.6.1 コードの定義場所
 
-| code | 種類 |
-|---|---|
-| `E0101` | 未定義型 |
-| `E0102` | 未定義 reducer |
-| `E0103` | 未定義 slot |
-| `E0104` | 未定義 effect |
-| `E0105` | 未定義 tile |
-| `E0106` | 未定義 fn |
-| `E0201` | 型不一致 |
-| `E0202` | refinement 違反 |
-| `E0203` | union 網羅性不足 |
-| `E0204` | nominal 型混同 |
-| `E0301` | capability 不足 |
-| `E0302` | effect 直接呼び出し |
-| `E0303` | reducer 外での slot 書き込み |
-| `E0304` | tile 内 effect emit |
-| `E0305` | fn 内 slot 読み書き / effect emit |
-| `E0306` | event selector が tile 名ではない |
-| `E0401` | 直接再帰 |
-| `E0402` | ラムダ使用 |
-| `E0403` | null 使用 |
-| `E0404` | 任意述語 |
-| `E0501` | 参照整合性違反 (dangling) |
-| `E0502` | 循環依存 |
-| `E0601` | 同 slot への複数書き込み |
-| `E0701` | a11y 警告（label/alt 等） |
+[エラーコード仕様](./errors.md) が、すべてのコードを 1 箇所で規範的に定義する — 何が発生させ、どんなメッセージを持ち、どう直すか。ここでは再掲しない。表が 2 つあったせいで `E0302` は「effect の直接呼び出し」と「未知の capability」の両方を意味するようになった。どちらの文書を開いたかで意味が変わるコードは、errors.md が言うところの永続的な契約ではない。
+
+自動修復に関して見るべきは errors.md の **自動修復のカバレッジ** 表で、コードごとに `kumiki fix` が修復できるか、どの戦略で行うかを示す。下記のループはそれを消費する。
 
 ### 9.6.2 自動修復ループ
 
@@ -274,7 +280,7 @@ done
 
 `kumiki fix --auto-patch <code>` で auto-patch があるエラーは構造的に解決される。auto-patch がないエラーだけ AI のコンテキストに乗せて修正させる。
 
-## 9.7 MCP サーバ
+## 9.7 MCP サーバ {#_9-7-mcp-server}
 
 Kumiki は Model Context Protocol サーバとして起動でき、AI エージェントから直接 tool 呼び出しできる：
 
@@ -292,7 +298,7 @@ kumiki mcp serve --store ./project.kumiki-store
 | `kumiki_replace` | `qname, body` | op-id |
 | `kumiki_edit` | `qname, patch` | op-id |
 | `kumiki_rename` | `qname, new_name` | op-id |
-| `kumiki_remove` | `qname, cascade?: bool` | op-id |
+| `kumiki_remove` | `qname, cascade?: bool` | op-id + 削除された定義名（[§9.4.1](#_9-4-1-pre-check-at-op-issuance)） |
 | `kumiki_check` | `scope?: string` | error list (JSON) |
 | `kumiki_fix` | `error_code, apply?: bool` | patch (JSON) |
 | `kumiki_refs` | `qname` | 参照元リスト |
@@ -395,4 +401,4 @@ project.kumiki/
 ## 9.12 次
 
 - ランタイム実装の詳細 → [ランタイム](./runtime.md)
-- 完全例 → [examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples)
+- 完全例 → [examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples)

@@ -1,0 +1,49 @@
+# Feature: the props every tile accepts, and what each one becomes.
+#
+# `class`, `aria`, `test-id`, `role` and the sizing shorthands (`w`, `max-w`,
+# `pad-x`, …) were documented, carried by the compiler, and read by nothing:
+# `TileProps` is an open record, so a runtime that looked for `props["max-w"]`
+# while the compiler emitted `max_w` type-checked, rendered, and did nothing.
+# Every app in this corpus set a page width that never applied.
+#
+# What a scenario can see of that is `loading`: a loading button is disabled,
+# so clicking it must not run its reducer. The attributes themselves are
+# asserted in `packages/tests/tile-props.test.ts`, which compares the mounted
+# DOM against the served HTML — this tier reads text, not attributes.
+
+slot name  : Text = ""
+slot busy  : Bool = false
+slot saves : Int  = 0
+
+reducer begin on=ui.click(StartBtn) do= busy  := true
+reducer save  on=ui.click(SaveBtn)  do= saves := saves + 1
+
+tile NameInput = input(id="name", bind=name, placeholder="Name")
+
+# `for` names an id that exists — a label that names nothing is an E0705
+# under `--strict-a11y`.
+tile NameField = column(
+                   label(text="Name") {for: "name"},
+                   NameInput) {gap: "xs"}
+
+tile StartBtn = button(text="start") {test-id: "start", variant: "ghost"}
+
+# `loading` is bound, so the spinner and the disabled state follow the slot
+# rather than being decided once at first render.
+tile SaveBtn = button(text="save") {loading: busy, test-id: "save"}
+
+tile App = region(
+             column(
+               NameField,
+               row(StartBtn, SaveBtn) {gap: "sm", wrap: true},
+               divider() {orientation: "vertical"},
+               link(to="https://example.com", text="the docs") {external: true},
+               text("saves=" + saves.show) {class: "tally", test-id: "tally"})
+             {gap: "md", pad: "md", pad-x: "lg", w: "full", max-w: 640,
+              shadow: "sm", radius: "md"})
+           {role: "main", aria-label: "Common props"}
+
+app CommonTileProps
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

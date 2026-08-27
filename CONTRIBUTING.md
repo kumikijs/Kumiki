@@ -43,6 +43,9 @@ pnpm exec turbo run typecheck test lint build
 Everything must be green. In particular:
 
 - **Every new example must pass check + build + smoke** (`packages/tests/` verifies this automatically). `check`/`build` only guarantee syntax, types, and codegen. Whether it **actually mounts and survives interaction** is verified by `kumiki smoke <file>` (= the runtime smoke in `packages/tests/`). "Compiles but errors / renders nothing when run" bugs are caught here.
+- **An example never reaches the network.** An example that emits an http effect ships a sibling `<source>.http.json` — `{"GET /api/quote": {"json": …}}`, or an array whose last entry repeats when a retry ladder needs different answers. A request with no entry is reported and fails the run, so a missing fixture cannot hide behind an app's own `.err` reducer.
+- **Every app example ships a `scenario.json`**, and `packages/tests/` runs it. Compiling and surviving `smoke` says nothing about whether the app does what it is for; the scenario is where that is written down. A feature example may add `<name>.scenario.json` the same way.
+- **A test file lives inside a typechecked program.** Vitest strips types without checking them, so an assertion in an unchecked file can stop asserting without failing: `filter((d) => d.kind === "stale-closure-risk")` is structurally empty once that member is gone, and green forever. A workspace package that ships tests declares a `typecheck` script whose config includes them; where the build config's `rootDir` cannot take `test/`, that is a sibling `tsconfig.typecheck.json`. `packages/tests/typecheck-coverage.test.ts` enumerates the workspace with pnpm and the test files with git, and fails when a package does not.
 - **Inline lint suppression (`@biome-ignore`, etc.) is forbidden**. If you want to add one, fix the design instead.
 - **Don't hardcode dependency versions**. Install the latest with `pnpm add`, and put shared versions in the catalog of `pnpm-workspace.yaml`.
 
@@ -70,3 +73,16 @@ release, merge `dev` → `main` (one PR): the `release` workflow then opens a si
 | Working examples | `packages/examples/features/` or `packages/examples/apps/` |
 | Implementation | `packages/*/src/` |
 | Tests | per-package `test/`, cross-cutting in `packages/tests/` |
+
+## What CI checks in the docs
+
+Documentation is guarded the same way code is, so a stale cross-reference fails a build instead of misleading a reader.
+
+| Test | What it pins |
+|---|---|
+| `packages/tests/spec-index.test.ts` | The three indexes in `docs/spec/index.md` list exactly the codes `errors.md` documents and exactly the `.kumiki` files under `packages/examples/features/`; the English and Japanese indexes stay structurally in sync. |
+| `packages/tests/docs-links.test.ts` | Every in-tree link and `#anchor` under `docs/` resolves to a page and a heading VitePress really emits. |
+| `packages/tests/spec-blocks.test.ts` | Every fenced `kumiki` block under `docs/` behaves as its marker claims: an unmarked block checks clean, a `fragment` does not, a `snippet` does not parse, and an `invalid` fails. |
+| `packages/compiler/test/spec-drift.test.ts` | The implementation and `errors.md` agree on the code catalog. |
+
+Together they close the spec ⇆ implementation ⇆ examples triangle, which is why the indexes are generated rather than written by hand.

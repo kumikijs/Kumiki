@@ -43,6 +43,9 @@ pnpm exec turbo run typecheck test lint build
 すべて緑であること。特に:
 
 - **新しい example は必ず check + build + smoke が通る**（`packages/tests/` が自動検証する）。`check`/`build` は構文・型・codegen までしか保証しない。**実際に mount して操作して落ちないか**は `kumiki smoke <file>`（= `packages/tests/` の runtime smoke）で検証する。「コンパイルは通るが動かすとエラー/何も描画されない」バグはここで捕まえる。
+- **example はネットワークに出ない。** http effect を emit する example は、隣に `<source>.http.json` を置く — `{"GET /api/quote": {"json": …}}`、retry のはしごのように応答を変えたい場合は最後の要素が繰り返される配列。エントリのないリクエストは報告されて実行を失敗させるので、fixture の欠落がアプリ自身の `.err` reducer に隠れることはない。
+- **app example は必ず `scenario.json` を持つ**。`packages/tests/` がそれを実行する。コンパイルが通り `smoke` を生き延びることは、そのアプリが目的を果たすかについて何も言っていない。それを書き留める場所が scenario である。feature example も同様に `<name>.scenario.json` を追加できる。
+- **テストファイルは型チェックされるプログラムの中に置く。** Vitest は型を検査せず剥がすだけなので、型チェックされていないファイルの assertion は落ちないまま何も主張しなくなる: `filter((d) => d.kind === "stale-closure-risk")` はそのメンバーが消えた時点で構造的に空になり、永遠に緑のままになる。テストを持つ workspace パッケージは、それらを include する config を指す `typecheck` script を宣言する。build の config の `rootDir` が `test/` を取り込めない場合は、隣に置く `tsconfig.typecheck.json` がそれ。`packages/tests/typecheck-coverage.test.ts` が workspace を pnpm で、テストファイルを git で列挙し、宣言していないパッケージがあれば落ちる。
 - **lint の inline 抑制（`@biome-ignore` 等）は禁止**。足したくなったら設計を直す。
 - **依存バージョンを直書きしない**。`pnpm add` で最新を入れ、共通バージョンは `pnpm-workspace.yaml` の catalog に置く。
 
@@ -60,3 +63,16 @@ pnpm exec turbo run typecheck test lint build
 | 動く例 | `packages/examples/features/` または `packages/examples/apps/` |
 | 実装 | `packages/*/src/` |
 | テスト | パッケージ内 `test/`、横断は `packages/tests/` |
+
+## ドキュメントに対する CI 検査
+
+ドキュメントもコードと同じように機械検査している。古くなった相互参照は、読者を誤らせる前にビルドを落とす。
+
+| テスト | 固定していること |
+|---|---|
+| `packages/tests/spec-index.test.ts` | `docs/spec/index.md` の 3 索引が、`errors.md` の記載コードと `packages/examples/features/` 配下の `.kumiki` ファイルにちょうど一致すること。英語版と日本語版の索引が構造的に同期していること。 |
+| `packages/tests/docs-links.test.ts` | `docs/` 配下のツリー内リンクと `#anchor` が、VitePress が実際に出力するページ・見出しに解決すること。 |
+| `packages/tests/spec-blocks.test.ts` | `docs/` 配下の `kumiki` コードブロックがマーカー通りに振る舞うこと（無印は check が通る、`fragment` は通らない、`snippet` はパースできない、`invalid` は失敗する）。 |
+| `packages/compiler/test/spec-drift.test.ts` | 実装と `errors.md` のコードカタログが一致すること。 |
+
+これで spec ⇆ 実装 ⇆ examples の三角が機械的に閉じる。索引を手書きせず生成しているのはこのためである。

@@ -1,0 +1,4 @@
+{
+  "GET /api/note": { "text": "kumiki" },
+  "POST /api/ping": { "status": 204 }
+}

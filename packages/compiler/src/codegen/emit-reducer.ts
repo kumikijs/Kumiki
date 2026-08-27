@@ -1,6 +1,25 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
-import { type EvalCtx, type GenCtx, jsName, makeEvalCtx } from "./context.ts";
+import { assertNever } from "../ast.ts";
+import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
+import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
+
+/**
+ * Wrap a write to `slot` so the refinement is checked *as it happens*
+ * (spec/runtime.md §10.3.3). Slots with no refinement are emitted bare — the
+ * wrapper would be dead weight on every assignment in the program.
+ *
+ * Checking the batch's final value alone is not enough: `_next` is a map, so a
+ * `for` loop writing the same slot repeatedly only preserves the last value,
+ * and an intermediate that left the slot's range would never be seen. That
+ * intermediate is readable by later statements in the body exactly like a
+ * committed one, which is the leak this rule exists to close.
+ */
+function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
+  const def = gen.slots.find((s) => s.name === slot);
+  if (!def || refinementJs(def.type, gen) === undefined) return valueJs;
+  return `_s.slotWrite(_slots, _rejected, ${JSON.stringify(slot)}, ${valueJs})`;
+}
 
 /** All effect names emitted anywhere in a reducer body (descends into control flow). */
 export function collectEmits(stmts: Statement[]): string[] {
@@ -61,6 +80,21 @@ export function collectEmits(stmts: Statement[]): string[] {
         out.push(e.effect);
         for (const a of e.args) visitExpr(a);
         return;
+      case "TupleLit":
+        for (const it of e.items) visitExpr(it);
+        return;
+      // Leaves: nothing inside to reach an emit through.
+      case "Num":
+      case "Str":
+      case "Bool":
+      case "Unit":
+      case "Ref":
+      case "Wildcard":
+      case "TokenRef":
+        return;
+      default:
+        assertNever(e);
+        return;
     }
   };
   const walk = (ss: Statement[]): void => {
@@ -80,6 +114,10 @@ export function collectEmits(stmts: Statement[]): string[] {
       } else if (s.kind === "MatchStmt") {
         visitExpr(s.scrutinee);
         for (const a of s.arms) walk(a.body);
+      } else if (s.kind === "PanicStmt") {
+        visitExpr(s.message);
+      } else if (s.kind !== "StopTimer" && s.kind !== "NoopStmt") {
+        assertNever(s);
       }
     }
   };
@@ -142,6 +180,21 @@ export function scanRunReducers(e: Expr | undefined, cb: (name: string) => void)
     case "Variant":
       for (const p of e.payload) scanRunReducers(p, cb);
       break;
+    case "TupleLit":
+      for (const it of e.items) scanRunReducers(it, cb);
+      break;
+    // Leaves, plus the two forms whose own arguments are walked above.
+    case "Num":
+    case "Str":
+    case "Bool":
+    case "Unit":
+    case "Ref":
+    case "Wildcard":
+    case "TokenRef":
+    case "EmitExpr":
+      break;
+    default:
+      assertNever(e);
   }
 }
 
@@ -170,21 +223,24 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
   stmtLines.push(`const _next = {};`);
   stmtLines.push(`const _emits = [];`);
   stmtLines.push(`const _stops = [];`);
+  stmtLines.push(`const _rejected = [];`);
   // bind payload positional args. For effect events, $1, $2, etc. are payload props.
   if (r.on.kind === "EffectEvent") {
     for (let i = 0; i < r.on.binds.length; i++) {
       const name = r.on.binds[i]!;
       if (name === "_") continue;
-      stmtLines.push(`const ${jsName(name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
+      stmtLines.push(`const ${jsBinding(name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
     }
   }
-  stmtLines.push(`const ${jsName("$el")} = _payload.$el || {};`);
-  stmtLines.push(`const ${jsName("$event")} = _payload.$event || _payload || {};`);
-  stmtLines.push(`const ${jsName("$route")} = _payload.$route || {};`);
+  stmtLines.push(`const ${jsBinding("$el")} = _payload.$el || {};`);
+  stmtLines.push(`const ${jsBinding("$event")} = _payload.$event || _payload || {};`);
+  stmtLines.push(`const ${jsBinding("$route")} = _payload.$route || {};`);
 
   for (const st of r.do) stmtLines.push(genStatement(st, ctx));
 
-  stmtLines.push(`return { slots: _next, emits: _emits, stopTimers: _stops };`);
+  stmtLines.push(
+    `return { slots: _next, emits: _emits, stopTimers: _stops, rejected: _rejected };`,
+  );
 
   return `  {
     name: ${JSON.stringify(r.name)},
@@ -202,7 +258,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
     const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
     inner.localBinds.add(s.bind);
     const body = s.body.map((b) => genStatement(b, inner)).join("\n  ");
-    return `for (const ${jsName(s.bind)} of ((${iter}) || [])) {\n  ${body}\n}`;
+    return `for (const ${jsBinding(s.bind)} of ((${iter}) || [])) {\n  ${body}\n}`;
   }
   if (s.kind === "IfStmt") {
     const cond = jsOfExpr(s.cond, ctx);
@@ -219,7 +275,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
           for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
           const binds = arm.pattern.binds
             .map((b, i) =>
-              b !== "_" ? `const ${jsName(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
+              b !== "_" ? `const ${jsBinding(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
             )
             .join(" ");
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
@@ -229,7 +285,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
           const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
           inner.localBinds.add(arm.pattern.name);
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (true) { const ${jsName(arm.pattern.name)} = _v;\n  ${body}\n}`;
+          return `if (true) { const ${jsBinding(arm.pattern.name)} = _v;\n  ${body}\n}`;
         }
         if (arm.pattern.kind === "PTuple") {
           const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
@@ -248,7 +304,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
   if (s.kind === "LetStmt") {
     const rhs = jsOfExpr(s.rhs, ctx);
     ctx.localBinds.add(s.name);
-    return `const ${jsName(s.name)} = ${rhs};`;
+    return `const ${jsBinding(s.name)} = ${rhs};`;
   }
   if (s.kind === "Emit") {
     // `confirm` (lifecycle §7.6) carries `onYes`/`onNo` reducer references —
@@ -265,13 +321,18 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
   if (s.kind === "StopTimer") {
     return `_stops.push(${JSON.stringify(s.name)});`;
   }
+  // The same helper the expression form lowers to — it throws, so a statement
+  // is the shape that always fitted.
+  if (s.kind === "PanicStmt") {
+    return `_s.panic(${jsOfExpr(s.message, ctx)});`;
+  }
   return genSlotAssign(s.lvalue, s.rhs, ctx);
 }
 
 export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   const rhsJs = jsOfExpr(rhs, ctx);
   if (lv.kind === "LSlot") {
-    return `_next[${JSON.stringify(lv.name)}] = ${rhsJs};`;
+    return `_next[${JSON.stringify(lv.name)}] = ${slotWriteJs(lv.name, rhsJs, ctx.gen)};`;
   }
   // Build update for nested lvalue.
   // The root slot name + path → produce a new object.
@@ -295,7 +356,8 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
     if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
     else pathExpr += `, ${jsOfExpr(seg.expr, ctx)}`;
   }
-  return `_next[${JSON.stringify(root)}] = _setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs});`;
+  const updated = `_setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
+  return `_next[${JSON.stringify(root)}] = ${slotWriteJs(root, updated, ctx.gen)};`;
 }
 
 export function lvalueRootName(lv: Lvalue): string {
@@ -315,7 +377,7 @@ export function jsOfConfirmArg(a: Expr, ctx: EvalCtx): string {
     const v = f.value;
     if ((f.name === "onYes" || f.name === "onNo") && v.kind === "Ref") {
       const refName = v.name;
-      const isReducer = ctx.gen.reducers?.some((r) => r.name === refName);
+      const isReducer = ctx.gen.reducers.some((r) => r.name === refName);
       if (isReducer) {
         return `${JSON.stringify(f.name)}: ${JSON.stringify(refName)}`;
       }

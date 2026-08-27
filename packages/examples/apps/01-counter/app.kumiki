@@ -1,11 +1,15 @@
 # Counter
-# 12 lines of code, demonstrates: type, slot, reducer, tile, app
+# 15 lines of code, demonstrates: type, slot, reducer, tile, app
+#
+# `N` bounds the count, so `inc` / `dec` guard their own edge: a write outside
+# the range is refused and takes the rest of the reducer's batch with it
+# (spec/runtime.md §10.3.3).
 
 type   N      = nominal Int where between(0, 999)
 slot   count  : N    = 0
 
-reducer inc   on=ui.click(IncBtn)   do= count := count + 1
-reducer dec   on=ui.click(DecBtn)   do= count := count - 1
+reducer inc   on=ui.click(IncBtn)   do= if count < 999 then count := count + 1
+reducer dec   on=ui.click(DecBtn)   do= if count > 0   then count := count - 1
 reducer reset on=ui.click(ResetBtn) do= count := 0
 
 tile   IncBtn   = button(text="+")

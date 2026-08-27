@@ -1,6 +1,8 @@
 # ライフサイクル・エラー境界・サスペンス
 
-## 7.1 ライフサイクルイベント一覧
+ランタイムが reducer に制御を渡す瞬間——起動・画面遷移・タイマー——と、失敗したときにアプリが何をするか。反応できるイベントの一覧が [§7.1](#_7-1-list-of-lifecycle-events)、[§7.3](#_7-3-エラー境界-タイル単位) 以降が失敗側（tile 単位の境界・loading 表示・404 ページ）である。
+
+## 7.1 ライフサイクルイベント一覧 {#_7-1-list-of-lifecycle-events}
 
 | イベント | タイミング |
 |---|---|
@@ -25,7 +27,7 @@
 
 アプリ起動時に 1 回だけ発火。`app.init = [...]` で宣言した effect 列が emit された**後**に届く。
 
-```kumiki
+```kumiki fragment
 reducer boot
     on=app.start
     do= emit loadSession()
@@ -39,17 +41,17 @@ reducer boot
 
 ブラウザが `beforeunload` を発火したタイミング。短時間で完了する処理のみ実行可能（ブラウザ仕様）。
 
-```kumiki
+```kumiki fragment
 reducer cleanup
     on=app.stop
-    do= emit persist(todos)         ; 同期 storage.write のみ実用的
+    do= emit persist(todos)         # 同期 storage.write のみ実用的
 ```
 
 ### 7.1.3 app.visible / app.hidden
 
 `visibilitychange` イベントに対応。タブ切り替えで状態をポーズしたい場合：
 
-```kumiki
+```kumiki fragment
 reducer pause on=app.hidden  do= timerPaused := true
 reducer resume on=app.visible do= timerPaused := false
                                  emit syncFromServer()
@@ -57,14 +59,14 @@ reducer resume on=app.visible do= timerPaused := false
 
 ### 7.1.4 app.online / app.offline
 
-```kumiki
+```kumiki fragment
 reducer onlineSync   on=app.online   do= emit retryQueued()
 reducer showOffline  on=app.offline  do= emit toast({kind: "warn", text: "Offline"})
 ```
 
 ### 7.1.5 timer
 
-```kumiki
+```kumiki fragment
 reducer poll
     on=timer(5s)
     do= emit fetchUpdates()
@@ -78,19 +80,19 @@ reducer poll
 
 タイマーに名前を付けると、reducer から明示的に停止できる：
 
-```kumiki
+```kumiki fragment
 slot remaining : Int = 10
 
 reducer tick on=timer(1s, name=countdown) do= remaining := remaining - 1
 reducer stop on=ui.click(StopBtn)         do= stop-timer(countdown)
 ```
 
-- `timer(d, name=N)` は interval を識別子 `N` の下に登録する。タイマー名は単一のネームスペースを共有し、アプリ内で一意でなければならない（重複は [E0002](./errors.md)）。
-- `stop-timer(N)` は reducer の文で、`N` という名前の interval を clear する。実行後、そのタイマーは発火しなくなる。未宣言のタイマー名を参照するとコンパイルエラー（[E0106](./errors.md)）。
+- `timer(d, name=N)` は interval を識別子 `N` の下に登録する。タイマー名は単一のネームスペースを共有し、アプリ内で一意でなければならない（重複は [E0002](./errors.md#e0002-duplicate-timer-name)）。
+- `stop-timer(N)` は reducer の文で、`N` という名前の interval を clear する。実行後、そのタイマーは発火しなくなる。未宣言のタイマー名を参照するとコンパイルエラー（[E0106](./errors.md#e0106-undef-timer)）。
 - `stop-timer` は純粋な制御文である — slot の読み書きも effect の emit もしないので、reducer は純粋なまま。runtime は reducer の結果を適用するときに interval を clear する。
 - 停止したタイマーは**自動では再開しない**。再開は再マウント時のみ。`app` の dispose 時に、全タイマー（稼働中・停止中問わず）が clear される。
 
-```kumiki
+```kumiki fragment
 reducer tick on=timer(1s)   do= elapsed := elapsed + 1
 reducer poll on=timer(30s)  do= emit fetchUpdates()
 reducer fast on=timer(100ms) do= emit syncCursor()
@@ -100,7 +102,7 @@ reducer fast on=timer(100ms) do= emit syncCursor()
 
 特定の tile が DOM に現れた / 消えたタイミング。
 
-```kumiki
+```kumiki fragment
 reducer trackPageView
     on=tile.mount(SettingsPage)
     do= emit track({event: "settings_view", props: {}})
@@ -129,7 +131,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 
 ### 7.2.3 app.error reducer {#_7-2-3-the-app-error-reducer}
 
-```kumiki
+```kumiki fragment
 slot lastError : Option(PanicInfo) = None
 
 reducer onPanic
@@ -141,10 +143,10 @@ reducer onPanic
 
 `PanicInfo` の型：
 
-```kumiki
+```kumiki fragment
 type PanicInfo = {
     message: Text,
-    location: Text,         ; "reducer:foo:line:42"
+    location: Text,         # "reducer:foo:line:42"
     episode-id: Text,
     cause: Option(Text)
 }
@@ -156,7 +158,7 @@ type PanicInfo = {
 
 特定の tile 配下の描画エラーを捕捉して fallback を出す：
 
-```kumiki
+```kumiki fragment
 tile UserPage
     error-boundary = ErrorFallback
     = page(
@@ -182,7 +184,7 @@ tile ErrorFallback
 
 非同期 effect の結果待ちで loading 表示したい場合。Kumiki は **明示的に `LoadResult(T)` 型を使う**ことを推奨する：
 
-```kumiki
+```kumiki fragment
 type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 slot user : LoadResult(User) = Idle
@@ -217,7 +219,7 @@ network コードはほぼ常に `match` で書く。これは Kumiki におけ�
 
 `/404` への到達は通常のルートと同じ。ルートマッチに失敗するとランタイムが `nav.replace` で `/404` に飛ばす。
 
-```kumiki
+```kumiki fragment
 tile NotFound = page(
                   heading("404"),
                   text("Page not found"),
@@ -226,7 +228,7 @@ tile NotFound = page(
 
 ### 7.5.2 ルート単位のエラー fallback
 
-```kumiki
+```kumiki fragment
 reducer onRouteErr
     on=route.error("/todos/:id")
     do= toastError := Some("Failed to load todo")
@@ -235,11 +237,11 @@ reducer onRouteErr
 
 ---
 
-## 7.6 確認ダイアログ
+## 7.6 確認ダイアログ {#_7-6-confirmation-dialogs}
 
 Kumiki は **`window.confirm` 相当を effect として提供**する：
 
-```kumiki
+```kumiki snippet
 effect confirm cap=notification.show
                in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}
                out=Unit
@@ -253,7 +255,7 @@ reducer askDelete
             onNo:  noop
         })
 
-reducer doDelete on=ui.click(_) do= ...     ; ※ 実装上は別名 reducer を作る方が綺麗
+reducer doDelete on=ui.click(_) do= ...     # ※ 実装上は別名 reducer を作る方が綺麗
 reducer noop     on=ui.click(_) do= ()
 ```
 
@@ -263,7 +265,7 @@ reducer noop     on=ui.click(_) do= ()
 
 ## 7.7 トースト
 
-```kumiki
+```kumiki fragment
 effect toast cap=notification.show
              in={kind: Text, text: Text, duration: Option(Duration)}
              out=Unit
@@ -273,7 +275,7 @@ reducer notifySave
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
 
-`kind` は `info` / `success` / `warning` / `error` のいずれか。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warning 5s, error 0=手動閉じ）。
+`kind` は `info` / `success` / `warn` / `error` のいずれかで、DOM には `data-level` として載る — ランタイムは見た目を与えない。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warn 5s, error 0 = 閉じるまで残る）。`Some(Duration.ms(0))` は同じことを明示的に頼む書き方。
 
 ランタイムは画面右下にトーストスタックを管理する組み込み tile を持つ。
 
@@ -283,15 +285,15 @@ reducer notifySave
 
 | 規約 | 適用 |
 |---|---|
-| `button` には必ず `text` または `aria-label` | コンパイル時警告 |
-| `image` には必ず `alt` | コンパイル時警告 |
-| `link` には必ず内側テキストか `aria-label` | コンパイル時警告 |
-| `form` 内の `input` には対応する `label` | コンパイル時警告 |
+| `button` には必ず `text` または `aria-label` | [E0701](./errors.md#e0701-a11y-button)、`--strict-a11y` 時 |
+| `image` には必ず `alt` | [E0702](./errors.md#e0702-a11y-image)、`--strict-a11y` 時 |
+| `link` には必ず内側テキストか `aria-label` | [E0703](./errors.md#e0703-a11y-link)、`--strict-a11y` 時 |
+| `label {for: "x"}` は存在する `id="x"` を指すこと | [E0705](./errors.md#e0705-a11y-label-for)、`--strict-a11y` 時 |
 | キーボード操作 (Tab/Enter/Esc) はランタイムが自動 | ランタイム保証 |
 | フォーカス管理: `modal` は trap focus | ランタイム保証 |
-| `aria-live` 領域: `toast` と `error` で自動 | ランタイム保証 |
+| `aria-live` 領域: `toast`（`role="status"`、polite）と `error`（`role="alert"`、assertive）で自動 — tile も `toast` effect のバナーも、クライアント／サーバとも | ランタイム保証 |
 
-これらは「警告」レベルで、コンパイルは通る。`--strict-a11y` フラグで警告をエラーに昇格できる。
+検査される行は**デフォルト off、on のときはエラー**。`--strict-a11y` を付けなければコンパイラはこれらを警告として報告するのではなく完全に除外するため、ビルドは何も言わない。フラグを付けるとビルドが落ちる。ランタイム保証はどちらでも成立する。
 
 ---
 
@@ -305,10 +307,10 @@ reducer notifySave
 | `transient` | 破棄（初期値に戻る） |
 | `volatile` | 永続化対象から外す（log にも書かれない、reload で破棄） |
 
-```kumiki
-slot draft : Text             = ""        ; reload で維持
-slot toast : Option(Toast)    transient = None  ; reload で破棄
-slot password : Text          volatile  = ""    ; episode log にも書かれない
+```kumiki fragment
+slot draft : Text             = ""        # reload で維持
+slot toast : Option(Toast)    transient = None  # reload で破棄
+slot password : Text          volatile  = ""    # episode log にも書かれない
 ```
 
 ---

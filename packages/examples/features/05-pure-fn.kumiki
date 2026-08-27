@@ -1,9 +1,13 @@
 # Feature: pure `fn` helpers.
 # A fn depends only on its arguments — it must not read slots (see errors E0305).
+#
+# The return type is `Float` because `/` is: `c * 9 / 5` is 37.8 at 21°C, and
+# declaring `-> Int` used to compile and then render `69.8` from a function
+# that promised whole numbers (spec/language.md §1.9.4).
 
 slot celsius : Int = 20
 
-fn toFahrenheit(c: Int) -> Int = c * 9 / 5 + 32
+fn toFahrenheit(c: Int) -> Float = c * 9 / 5 + 32
 
 reducer warmer on=ui.click(WarmBtn) do= celsius := celsius + 1
 

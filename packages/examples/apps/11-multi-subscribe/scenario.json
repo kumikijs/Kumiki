@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "both slots start at zero",
+      "expect": {
+        "noErrors": true,
+        "state": { "version": 0, "log": 0 },
+        "domIncludes": ["version: 0", "log: 0"]
+      }
+    },
+    {
+      "label": "one click runs BOTH reducers subscribed to it (§1.6.4), not just the first",
+      "do": { "clickText": "Save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "version": 1, "log": 1 },
+        "domIncludes": ["version: 1", "log: 1"]
+      }
+    },
+    {
+      "label": "and they stay in step",
+      "do": { "clickText": "Save" },
+      "expect": { "noErrors": true, "state": { "version": 2, "log": 2 } }
+    }
+  ]
+}

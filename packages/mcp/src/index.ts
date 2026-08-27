@@ -10,12 +10,16 @@ import { resolve } from "node:path";
 import {
   addDef,
   applyFixPlan,
+  describeEdit,
   editDef,
   episodeLogPathFor,
   findReferences,
+  HEADLESS_ACTION_KEYS,
+  LAYERS,
   listDefs,
   load,
   planFix,
+  plural,
   removeDef,
   renameDef,
   replaceDef,
@@ -27,7 +31,9 @@ import {
   viewHistory,
   viewWithDeps,
 } from "@kumikijs/cli";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 type Scenario = Parameters<typeof runScenarioSource>[1];
 
@@ -45,8 +51,61 @@ import { getSpecDoc, listSpecDocs, searchSpec } from "./spec.ts";
 
 type Diagnostic = { code: string; kind: string; message: string; line: number; col: number };
 
+/**
+ * The shape of each scenario action, for the one surface an agent reads before
+ * writing a scenario. Keyed by the runner's own action set, so an action added
+ * there and forgotten here is a compile error rather than an action no caller
+ * of this tool knows exists — this description had drifted by six of them, and
+ * the set is closed, so an action missing from it is unreachable in practice.
+ */
+const ACTION_SHAPES: Record<(typeof HEADLESS_ACTION_KEYS)[number], string> = {
+  dispatch: "{dispatch, payload?}",
+  clickText: "{clickText}",
+  click: "{click}",
+  focus: "{focus}",
+  blur: "{blur}",
+  key: "{key, value}",
+  hover: "{hover}",
+  fill: "{fill, value}",
+  choose: "{choose, value}",
+  navigate: "{navigate}",
+  submit: "{submit}",
+  wait: "{wait}",
+};
+const SCENARIO_ACTIONS = HEADLESS_ACTION_KEYS.map((k) => ACTION_SHAPES[k]).join(", ");
+
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
+}
+
+/**
+ * A tool answer that reports failure.
+ *
+ * The content is whatever the caller asked for — the diagnostics, the smoke
+ * report, the scenario trace — and `isError` is the one field a client can
+ * branch on without reading prose. The rule, so that no tool needs its own:
+ * **`isError` is set exactly when the matching CLI verb would exit non-zero**
+ * (docs/spec/ai-edit.md §9.2.5). `build failed:` and `scenario FAILED` exist
+ * only as sentences, so without this an agent driving generate → check → fix
+ * over MCP reads a failed build as a finished one.
+ */
+function failed(s: string) {
+  return { ...text(s), isError: true };
+}
+
+/**
+ * Resolve `path` for a tool that reads a sidecar rather than the file itself.
+ *
+ * The op-log and the episode log are separate files, so those tools never open
+ * the `.kumiki` — and answered "(no history)" / "(no episode log)" for a path
+ * that was never there, which is exactly what an app nobody has edited or run
+ * yet looks like. The source file is required to exist; the sidecar's absence
+ * stays an ordinary answer.
+ */
+function requireSourceFile(path: string): string {
+  const abs = resolve(process.cwd(), path);
+  if (!existsSync(abs)) throw new Error(`File "${abs}" not found`);
+  return abs;
 }
 
 function readSource(input: { source?: string | undefined; path?: string | undefined }): string {
@@ -56,8 +115,9 @@ function readSource(input: { source?: string | undefined; path?: string | undefi
 }
 
 /**
- * Registered capabilities for an input: from the `kumiki.caps.json` next to a
- * `path`, or an explicit `capabilities` list when only `source` is given.
+ * Registered capabilities for an input: from the nearest `kumiki.caps.json` at
+ * or above a `path` (searched up to the project root), or an explicit
+ * `capabilities` list when only `source` is given.
  */
 function capsForInput(input: {
   path?: string | undefined;
@@ -72,11 +132,17 @@ function capsForInput(input: {
  * own JSON shape (e.g. `{ total, passed, ... }`); a client that always
  * `JSON.parse`s the tool output would otherwise hit an exception on the
  * failure path with the older `"error: <msg>"` plain-text form.
+ *
+ * `isError` is the field the protocol gives clients to branch on, and it has to
+ * agree with the envelope: a caught failure returned without it reported
+ * success for a file that does not exist, while the same failure in a tool with
+ * no catch reached the SDK and came back flagged. A client branching on
+ * `isError` saw half its failures as results.
  */
 function errText(e: unknown) {
   const kind = e instanceof CapabilityManifestError ? "capability-manifest" : "error";
   const message = e instanceof Error ? e.message : String(e);
-  return text(JSON.stringify({ error: { kind, message } }, null, 2));
+  return { ...text(JSON.stringify({ error: { kind, message } }, null, 2)), isError: true };
 }
 
 /**
@@ -241,15 +307,22 @@ function validate(
   source: string,
   capabilities: string[] = [],
   opts: StrictCheckOpts = {},
-): { ok: boolean; diagnostics: Diagnostic[] } {
+): { ok: boolean; failing: boolean; diagnostics: Diagnostic[] } {
   try {
     const program = parse(lex(source));
     const errors = check(program, { capabilities, ...opts });
-    return { ok: errors.length === 0, diagnostics: toDiagnostics(errors) };
+    return {
+      ok: errors.length === 0,
+      // A warning is reported and does not fail — the same split `kumiki
+      // check` makes when it prints `ok (1 warning)` and exits 0.
+      failing: errors.some((e) => e.severity !== "warning"),
+      diagnostics: toDiagnostics(errors),
+    };
   } catch (e) {
     const pe = e as { message?: string; pos?: { line: number; col: number } };
     return {
       ok: false,
+      failing: true,
       diagnostics: [
         {
           code: "E0000",
@@ -266,7 +339,36 @@ function validate(
 export function createServer(): McpServer {
   const server = new McpServer({ name: "kumiki", version: "0.1.0" });
 
-  server.registerTool(
+  /**
+   * Register a tool whose failures always leave through `errText`.
+   *
+   * Wrapping at registration rather than inside each handler is the point: a
+   * per-handler `try` is something a new tool can be written without, and
+   * that is exactly how half of these ended up reporting a missing file as a
+   * successful result while the other half reported it as an error.
+   *
+   * The assertion is the price of implementing a callback type whose
+   * parameters depend on a type variable: `ToolCallback<InputArgs>` resolves
+   * to concrete parameters only once `InputArgs` is, and every call site below
+   * supplies one. The explicit return type keeps the assertion from covering
+   * what this function returns as well — without it the `catch` arm is checked
+   * against an unresolved conditional type, which accepts anything.
+   */
+  const tool = <InputArgs extends ZodRawShapeCompat>(
+    name: string,
+    config: { title: string; description: string; inputSchema: InputArgs },
+    handler: ToolCallback<InputArgs>,
+  ): void => {
+    server.registerTool(name, config, (async (args, extra): Promise<CallToolResult> => {
+      try {
+        return await handler(args, extra);
+      } catch (e) {
+        return errText(e);
+      }
+    }) as ToolCallback<InputArgs>);
+  };
+
+  tool(
     "kumiki_check",
     {
       title: "Check Kumiki source",
@@ -279,7 +381,7 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
         strictA11y: z
           .boolean()
@@ -296,26 +398,23 @@ export function createServer(): McpServer {
       },
     },
     async (input) => {
-      try {
-        const strictOpts: StrictCheckOpts = {
-          ...(input.strictA11y ? { strictA11y: true } : {}),
-          ...(input.strictIcons ? { strictIcons: true } : {}),
-          ...(input.strictSelectorId ? { strictSelectorId: true } : {}),
-        };
-        if (input.strictIcons && input.path) {
-          const registry = await resolveBuiltinIcons(resolve(process.cwd(), input.path));
-          if (registry) strictOpts.iconNames = Object.keys(registry);
-        }
-        const result = validate(readSource(input), capsForInput(input), strictOpts);
-        if (result.ok) return text("ok — no diagnostics");
-        return text(JSON.stringify(result.diagnostics, null, 2));
-      } catch (e) {
-        return errText(e);
+      const strictOpts: StrictCheckOpts = {
+        ...(input.strictA11y ? { strictA11y: true } : {}),
+        ...(input.strictIcons ? { strictIcons: true } : {}),
+        ...(input.strictSelectorId ? { strictSelectorId: true } : {}),
+      };
+      if (input.strictIcons && input.path) {
+        const registry = await resolveBuiltinIcons(resolve(process.cwd(), input.path));
+        if (registry) strictOpts.iconNames = Object.keys(registry);
       }
+      const result = validate(readSource(input), capsForInput(input), strictOpts);
+      if (result.ok) return text("ok — no diagnostics");
+      const body = JSON.stringify(result.diagnostics, null, 2);
+      return result.failing ? failed(body) : text(body);
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_build",
     {
       title: "Build Kumiki source",
@@ -329,33 +428,29 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities accepted in app.caps (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
       },
     },
     async (input) => {
-      try {
-        const source = readSource(input);
-        const result = compile(source, {
-          runtimeSpecifier: "./runtime.js",
-          bundle: true,
-          readRuntimeBundle: nodeRuntimeBundleReader,
-          capabilities: capsForInput(input),
-        });
-        if (result.kind === "fail") {
-          return text(`build failed:\n${JSON.stringify(toDiagnostics(result.errors), null, 2)}`);
-        }
-        if (input.includeJs) return text(result.js);
-        return text(
-          `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,
-        );
-      } catch (e) {
-        return errText(e);
+      const source = readSource(input);
+      const result = compile(source, {
+        runtimeSpecifier: "./runtime.js",
+        bundle: true,
+        readRuntimeBundle: nodeRuntimeBundleReader,
+        capabilities: capsForInput(input),
+      });
+      if (result.kind === "fail") {
+        return failed(`build failed:\n${JSON.stringify(toDiagnostics(result.errors), null, 2)}`);
       }
+      if (input.includeJs) return text(result.js);
+      return text(
+        `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,
+      );
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_smoke",
     {
       title: "Runtime smoke test",
@@ -368,36 +463,31 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
       },
     },
     async (input) => {
-      try {
-        const report = await smokeSource(readSource(input), capsForInput(input));
-        if (report.ok) {
-          return text(
-            `ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`,
-          );
-        }
-        const lines = report.issues.map(
-          (i) => `[${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`,
-        );
+      const report = await smokeSource(readSource(input), capsForInput(input));
+      if (report.ok) {
         return text(
-          `runtime smoke failed (mounted=${report.mounted}, rendered=${report.rendered}):\n${lines.join("\n")}`,
+          `ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`,
         );
-      } catch (e) {
-        return errText(e);
       }
+      const lines = report.issues.map(
+        (i) => `[${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`,
+      );
+      return failed(
+        `runtime smoke failed (mounted=${report.mounted}, rendered=${report.rendered}):\n${lines.join("\n")}`,
+      );
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_run_scenario",
     {
       title: "Run a scenario",
-      description:
-        "Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with `expect` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call `kumiki_auto_patch { apply: true, testName }` (test-driven, deterministic literal repair); on a compile diagnostic, call `kumiki_fix { apply: true }` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action `do` is one of: {dispatch, payload?}, {clickText}, {click}, {fill, value}, {choose, value}, {navigate}. An `expect` is { noErrors?, state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths).",
+      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -412,26 +502,25 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities (when passing `source`). With `path`, a co-located kumiki.caps.json is read automatically.",
+            "Project-registered capabilities (when passing `source`). With `path`, the nearest kumiki.caps.json at or above it is read automatically.",
           ),
       },
     },
     async (input) => {
-      let report: Awaited<ReturnType<typeof runScenarioSource>>;
-      try {
-        report = await runScenarioSource(
-          readSource(input),
-          input.scenario as unknown as Scenario,
-          capsForInput(input),
-        );
-      } catch (e) {
-        return errText(e);
-      }
+      const report = await runScenarioSource(
+        readSource(input),
+        input.scenario as unknown as Scenario,
+        capsForInput(input),
+      );
       const lines = report.steps.map((s, i) => {
         const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
           ...s.errors.map((e) => `    error: ${e}`),
+          // An error the step's `errorIncludes` asked for is out of `errors`,
+          // so without this line the agent driving the fix loop reads a step
+          // that reported something as one that reported nothing.
+          ...s.expectedErrors.map((e) => `    expected error: ${e}`),
           ...s.failures.map((f) => `    assert: ${f}`),
         ];
         const emits = s.emits.length ? `    emits: ${s.emits.map((e) => e.effect).join(", ")}` : "";
@@ -440,20 +529,23 @@ export function createServer(): McpServer {
       const tail = report.ok ? "scenario passed" : "scenario FAILED";
       // Include the final state snapshot to help the agent diagnose.
       const finalState = report.steps.at(-1)?.state ?? {};
-      return text(`${lines.join("\n")}\n\n${tail}\nfinal state: ${JSON.stringify(finalState)}`);
+      const body = `${lines.join("\n")}\n\n${tail}\nfinal state: ${JSON.stringify(finalState)}`;
+      return report.ok ? text(body) : failed(body);
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_list",
     {
       title: "List definitions",
       description: "List the definitions in a .kumiki file, optionally filtered by layer.",
       inputSchema: {
         path: z.string().describe("Path to a .kumiki file"),
-        layer: z
-          .enum(["type", "slot", "effect", "reducer", "tile", "fn", "app", "theme"])
-          .optional(),
+        // Derived from the labels the store puts on definitions, so this
+        // filter and `kumiki list <layer>` accept the same set. Written out
+        // here, it omitted `test` and `motion` — definitions the tool listed
+        // but could not filter to.
+        layer: z.enum(LAYERS).optional(),
       },
     },
     async ({ path, layer }) => {
@@ -465,7 +557,7 @@ export function createServer(): McpServer {
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_view",
     {
       title: "View a definition",
@@ -480,11 +572,12 @@ export function createServer(): McpServer {
     async ({ path, name, withDeps }) => {
       const store = load(resolve(process.cwd(), path));
       const out = withDeps ? viewWithDeps(store, name) : viewDef(store, name);
-      return text(out ?? `not found: ${name}`);
+      if (out === null) throw new Error(`Definition "${name}" not found`);
+      return text(out);
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_refs",
     {
       title: "Find references",
@@ -493,16 +586,20 @@ export function createServer(): McpServer {
     },
     async ({ path, name }) => {
       const store = load(resolve(process.cwd(), path));
+      // "(no references)" for a name that is not defined reads as "safe to
+      // delete", which is the opposite of what a typo'd name means. Same
+      // answer as `kumiki_view` gives to the same question.
+      if (!store.byQName.has(name)) throw new Error(`Definition "${name}" not found`);
       const refs = findReferences(store, name).map((r) => `${r.qname} @ line ${r.line}`);
       return text(refs.join("\n") || "(no references)");
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_add",
     {
       title: "Add a definition",
-      description: "Append a new definition to a .kumiki file.",
+      description: "Append a new definition to a .kumiki file. Returns the new op-id.",
       inputSchema: {
         path: z.string(),
         layer: z.enum(["type", "slot", "effect", "reducer", "tile", "fn", "app", "theme"]),
@@ -511,52 +608,54 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, layer, name, body }) => {
-      addDef(resolve(process.cwd(), path), layer, name, body);
-      return text(`added ${layer}.${name}`);
+      const opId = addDef(resolve(process.cwd(), path), layer, name, body);
+      return text(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_replace",
     {
       title: "Replace a definition",
-      description: "Replace the body of an existing definition.",
+      description: "Replace the body of an existing definition. Returns the new op-id.",
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
     async ({ path, name, body }) => {
-      replaceDef(resolve(process.cwd(), path), name, body);
-      return text(`replaced ${name}`);
+      const opId = replaceDef(resolve(process.cwd(), path), name, body);
+      return text(describeEdit({ op: "replace", qname: name, opId }));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_remove",
     {
       title: "Remove a definition",
       description:
-        "Remove a definition. Set cascade=true to also remove definitions that only it referenced.",
+        "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
+        "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
+        "line for each further definition the cascade took.",
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },
     },
     async ({ path, name, cascade }) => {
-      removeDef(resolve(process.cwd(), path), name, cascade ?? false);
-      return text(`removed ${name}`);
+      const result = removeDef(resolve(process.cwd(), path), name, cascade ?? false);
+      return text(describeEdit({ op: "remove", qname: name, ...result }));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_rename",
     {
       title: "Rename a definition",
-      description: "Rename a definition and update all references.",
+      description: "Rename a definition and update all references. Returns the new op-id.",
       inputSchema: { path: z.string(), name: z.string(), newName: z.string() },
     },
     async ({ path, name, newName }) => {
-      renameDef(resolve(process.cwd(), path), name, newName);
-      return text(`renamed ${name} -> ${newName}`);
+      const opId = renameDef(resolve(process.cwd(), path), name, newName);
+      return text(describeEdit({ op: "rename", qname: name, newName, opId }));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_edit",
     {
       title: "Edit part of a definition",
@@ -575,11 +674,11 @@ export function createServer(): McpServer {
     },
     async ({ path, name, patch }) => {
       const opId = editDef(resolve(process.cwd(), path), name, patch);
-      return text(`edited ${name}  (${opId})`);
+      return text(describeEdit({ op: "edit", qname: name, opId }));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_history",
     {
       title: "Show edit history",
@@ -588,13 +687,13 @@ export function createServer(): McpServer {
       inputSchema: { path: z.string(), name: z.string() },
     },
     async ({ path, name }) => {
-      const log = viewHistory(resolve(process.cwd(), path), name);
+      const log = viewHistory(requireSourceFile(path), name);
       if (log.length === 0) return text(`(no history for ${name})`);
       return text(JSON.stringify(log, null, 2));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_episode",
     {
       title: "Fetch a runtime episode",
@@ -603,20 +702,16 @@ export function createServer(): McpServer {
       inputSchema: { path: z.string(), episodeId: z.string() },
     },
     async ({ path, episodeId }) => {
-      try {
-        const logPath = episodeLogPathFor(resolve(process.cwd(), path));
-        if (!existsSync(logPath)) return text("(no episode log)");
-        const { entries } = readEpisodeLog(logPath);
-        const hit = entries.find((e) => e.id === episodeId);
-        if (hit) return text(JSON.stringify(hit, null, 2));
-        return text(`(no episode with id ${episodeId})`);
-      } catch (e) {
-        return errText(e);
-      }
+      const logPath = episodeLogPathFor(requireSourceFile(path));
+      if (!existsSync(logPath)) return text("(no episode log)");
+      const { entries } = readEpisodeLog(logPath);
+      const hit = entries.find((e) => e.id === episodeId);
+      if (hit) return text(JSON.stringify(hit, null, 2));
+      throw new Error(`no episode with id ${episodeId}`);
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_episode_list",
     {
       title: "List recent runtime episodes",
@@ -633,38 +728,34 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, limit }) => {
-      try {
-        const logPath = episodeLogPathFor(resolve(process.cwd(), path));
-        if (!existsSync(logPath)) return text("(no episode log)");
-        const { entries, skipped, firstMalformedLine } = readEpisodeLog(logPath);
-        if (entries.length === 0) return text("(empty episode log)");
-        const n = limit ?? 20;
-        const summaries = entries
-          .slice(-n)
-          .reverse()
-          .map((ep) => ({
-            id: ep.id,
-            trigger: { kind: ep.trigger?.kind, target: ep.trigger?.target },
-            status: ep.status,
-            steps: Array.isArray(ep.steps) ? ep.steps.length : 0,
-          }));
-        if (skipped > 0) {
-          return text(
-            JSON.stringify(
-              { summaries, warnings: buildEpisodeWarnings(skipped, firstMalformedLine) },
-              null,
-              2,
-            ),
-          );
-        }
-        return text(JSON.stringify(summaries, null, 2));
-      } catch (e) {
-        return errText(e);
+      const logPath = episodeLogPathFor(requireSourceFile(path));
+      if (!existsSync(logPath)) return text("(no episode log)");
+      const { entries, skipped, firstMalformedLine } = readEpisodeLog(logPath);
+      if (entries.length === 0) return text("(empty episode log)");
+      const n = limit ?? 20;
+      const summaries = entries
+        .slice(-n)
+        .reverse()
+        .map((ep) => ({
+          id: ep.id,
+          trigger: { kind: ep.trigger?.kind, target: ep.trigger?.target },
+          status: ep.status,
+          steps: Array.isArray(ep.steps) ? ep.steps.length : 0,
+        }));
+      if (skipped > 0) {
+        return text(
+          JSON.stringify(
+            { summaries, warnings: buildEpisodeWarnings(skipped, firstMalformedLine) },
+            null,
+            2,
+          ),
+        );
       }
+      return text(JSON.stringify(summaries, null, 2));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_episode_tail",
     {
       title: "Tail the most recent runtime episodes",
@@ -681,30 +772,26 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, n }) => {
-      try {
-        const logPath = episodeLogPathFor(resolve(process.cwd(), path));
-        if (!existsSync(logPath)) return text("(no episode log)");
-        const { entries, skipped, firstMalformedLine } = readEpisodeLog(logPath);
-        if (entries.length === 0) return text("(empty episode log)");
-        const take = n ?? 5;
-        const episodes = entries.slice(-take).reverse();
-        if (skipped > 0) {
-          return text(
-            JSON.stringify(
-              { episodes, warnings: buildEpisodeWarnings(skipped, firstMalformedLine) },
-              null,
-              2,
-            ),
-          );
-        }
-        return text(JSON.stringify(episodes, null, 2));
-      } catch (e) {
-        return errText(e);
+      const logPath = episodeLogPathFor(requireSourceFile(path));
+      if (!existsSync(logPath)) return text("(no episode log)");
+      const { entries, skipped, firstMalformedLine } = readEpisodeLog(logPath);
+      if (entries.length === 0) return text("(empty episode log)");
+      const take = n ?? 5;
+      const episodes = entries.slice(-take).reverse();
+      if (skipped > 0) {
+        return text(
+          JSON.stringify(
+            { episodes, warnings: buildEpisodeWarnings(skipped, firstMalformedLine) },
+            null,
+            2,
+          ),
+        );
       }
+      return text(JSON.stringify(episodes, null, 2));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_fix",
     {
       title: "Plan or apply rule-based auto-fixes",
@@ -724,54 +811,72 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+            "Project-registered capabilities. Defaults to the nearest kumiki.caps.json at or above the path.",
           ),
       },
     },
     async (input) => {
-      try {
-        const abs = resolve(process.cwd(), input.path);
-        const caps = capsForInput(input);
-        if (input.apply) {
-          const r = applyFixPlan(abs, input.only, caps);
-          return text(
-            JSON.stringify(
-              {
-                applied: r.applied,
-                before: r.before,
-                after: r.after,
-                remaining: toDiagnostics(r.remaining),
-                // Surface every non-success modifier on the wire so callers
-                // can distinguish "no patch was needed" (`applied === 0`,
-                // no modifier) from a rollback / parser-break / I/O failure.
-                // Without these fields the three failure shapes collapse into
-                // one indistinguishable `applied: 0`.
-                ...(r.parseError ? { parseError: r.parseError } : {}),
-                ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
-                ...(r.writeError ? { writeError: r.writeError } : {}),
-              },
-              null,
-              2,
-            ),
-          );
-        }
-        const plan = planFix(abs, input.only, caps);
-        if (plan.errors.length === 0) return text("no errors");
-        if (plan.patches.length === 0) {
-          return text(
-            `(no auto-patches available)\n${plan.errors
-              .map((e) => `${e.code} ${e.message}`)
-              .join("\n")}`,
-          );
-        }
-        return text(plan.patches.map((p) => `${p.code}: ${p.description}`).join("\n"));
-      } catch (e) {
-        return errText(e);
+      const abs = resolve(process.cwd(), input.path);
+      const caps = capsForInput(input);
+      if (input.apply) {
+        const r = applyFixPlan(abs, input.only, caps);
+        const body = JSON.stringify(
+          {
+            applied: r.applied,
+            before: r.before,
+            after: r.after,
+            remaining: toDiagnostics(r.remaining),
+            // The advisory half, always — an empty `remaining` means the file
+            // is clean of errors, not that it is clean, and an agent deciding
+            // whether it is done reads this envelope rather than the CLI's
+            // stdout.
+            warnings: toDiagnostics(r.warnings),
+            // Surface every non-success modifier on the wire so callers
+            // can distinguish "no patch was needed" (`applied === 0`,
+            // no modifier) from a rollback / parser-break / I/O failure.
+            // Without these fields the three failure shapes collapse into
+            // one indistinguishable `applied: 0`.
+            ...(r.parseError ? { parseError: r.parseError } : {}),
+            ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
+            ...(r.writeError ? { writeError: r.writeError } : {}),
+          },
+          null,
+          2,
+        );
+        return r.remaining.length > 0 ? failed(body) : text(body);
       }
+      const plan = planFix(abs, input.only, caps);
+      const advisory = plan.warnings.map((w) => `${w.code} ${w.message}`);
+      if (plan.errors.length === 0) {
+        // The warnings come out with the verdict. `kumiki_check` on the same
+        // file returns a JSON diagnostics array — non-`isError`, since nothing
+        // in it is fatal — so an agent told a bare "no errors" here has two
+        // answers about one file and nothing that reconciles them. The
+        // clean-file verdict is still `text`, not `failed`.
+        if (plan.warnings.length === 0) return text("no errors");
+        return text([`no errors (${plural(plan.warnings.length)})`, ...advisory].join("\n"));
+      }
+      // A dry run proposes and repairs nothing, so the file still has every
+      // error it started with — which is what `isError` reports here.
+      if (plan.patches.length === 0) {
+        return failed(
+          [
+            "(no auto-patches available)",
+            ...plan.errors.map((e) => `${e.code} ${e.message}`),
+            ...advisory,
+          ].join("\n"),
+        );
+      }
+      // The unrepairable half goes out with the repairable half. An agent
+      // that reads only the proposals treats the file as one patch away from
+      // clean when it is not.
+      const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
+      const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);
+      return failed([...proposals, ...unrepaired, ...advisory].join("\n"));
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_auto_patch",
     {
       title: "Fix a failing test (behavioral auto-patch)",
@@ -788,23 +893,24 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+            "Project-registered capabilities. Defaults to the nearest kumiki.caps.json at or above the path.",
           ),
       },
     },
     async (input) => {
-      try {
-        const abs = resolve(process.cwd(), input.path);
-        const caps = capsForInput(input);
-        const outcome = await runFixFromTest(abs, input.testName, input.apply === true, caps);
-        return text(JSON.stringify(serialiseFixFromTest(outcome), null, 2));
-      } catch (e) {
-        return errText(e);
-      }
+      const abs = resolve(process.cwd(), input.path);
+      const caps = capsForInput(input);
+      const apply = input.apply === true;
+      const outcome = await runFixFromTest(abs, input.testName, apply, caps);
+      const body = JSON.stringify(serialiseFixFromTest(outcome), null, 2);
+      // `ok` counts a dry-run proposal as success; the named test passing is
+      // what was asked for. Same rule as `kumiki fix --auto-patch`.
+      const repaired = outcome.status === "already-pass" || (apply && outcome.ok);
+      return repaired ? text(body) : failed(body);
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_test",
     {
       title: "Run in-language tests",
@@ -820,35 +926,33 @@ export function createServer(): McpServer {
           .array(z.string())
           .optional()
           .describe(
-            "Project-registered capabilities. Defaults to the co-located kumiki.caps.json.",
+            "Project-registered capabilities. Defaults to the nearest kumiki.caps.json at or above the path.",
           ),
       },
     },
     async (input) => {
-      try {
-        const abs = resolve(process.cwd(), input.path);
-        const caps = capsForInput(input);
-        const report = await runTests(abs, input.filter, caps);
-        return text(
-          JSON.stringify(
-            {
-              total: report.total,
-              passed: report.passed,
-              failed: report.failed,
-              filter: report.filter ?? null,
-              results: report.results,
-            },
-            null,
-            2,
-          ),
-        );
-      } catch (e) {
-        return errText(e);
-      }
+      const abs = resolve(process.cwd(), input.path);
+      const caps = capsForInput(input);
+      const report = await runTests(abs, input.filter, caps);
+      const body = JSON.stringify(
+        {
+          total: report.total,
+          passed: report.passed,
+          failed: report.failed,
+          filter: report.filter ?? null,
+          results: report.results,
+        },
+        null,
+        2,
+      );
+      // A filter that matches nothing is a failure for the same reason it is
+      // one in `kumiki test`: the caller named tests that are not there.
+      const matchedNothing = report.filter !== undefined && report.total === 0;
+      return report.failed > 0 || matchedNothing ? failed(body) : text(body);
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_spec_search",
     {
       title: "Search the spec",
@@ -862,7 +966,7 @@ export function createServer(): McpServer {
     },
   );
 
-  server.registerTool(
+  tool(
     "kumiki_spec_list",
     {
       title: "List spec documents",
@@ -872,14 +976,21 @@ export function createServer(): McpServer {
     async () => text(listSpecDocs().join("\n") || "(docs/spec not found)"),
   );
 
-  server.registerTool(
+  tool(
     "kumiki_spec_get",
     {
       title: "Get a spec document",
       description: "Fetch the full text of one spec document (e.g. 'language' or 'errors.md').",
       inputSchema: { doc: z.string() },
     },
-    async ({ doc }) => text(getSpecDoc(doc) ?? `not found: ${doc}`),
+    async ({ doc }) => {
+      const body = getSpecDoc(doc);
+      // A name that resolves to no document is a caller mistake, not an empty
+      // document: returning the sentence as the answer means a client reads
+      // "not found: langauge" as the spec text it asked for.
+      if (body === null) throw new Error(`no spec document named "${doc}"`);
+      return text(body);
+    },
   );
 
   return server;

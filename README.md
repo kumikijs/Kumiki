@@ -35,17 +35,25 @@ Cross-vendor measurements (Claude / Codex / Gemini) show that, from the specific
 
 ## Quick Start
 
+Write a `.kumiki` file, then:
+
+```sh
+npm i -g kumiki
+kumiki dev app.kumiki        # serve it with hot reload
+kumiki check app.kumiki      # typecheck and report diagnostics
+kumiki build app.kumiki ./out
+```
+
+[Getting Started](./docs/guide/getting-started.md) walks through that first file, and [Your First App](./docs/guide/your-first-app.md) builds it one layer at a time.
+
+Working on Kumiki itself, from a clone:
+
 ```sh
 pnpm install
 pnpm build          # build all packages
 pnpm test           # all tests
-
-# Check and build a Kumiki program (run from the repo root)
 pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
-pnpm kumiki build packages/examples/apps/01-counter/app.kumiki ./out
 ```
-
-If you're new, go to [docs/guide/getting-started.md](./docs/guide/getting-started.md) → [docs/guide/your-first-app.md](./docs/guide/your-first-app.md).
 
 ## Packages
 
@@ -58,7 +66,7 @@ If you're new, go to [docs/guide/getting-started.md](./docs/guide/getting-starte
 
 ## Operating model
 
-This repository aims for a state where "**looking at it resolves every question**". Questions, issues, and bug reports are, as a rule, **answered by adding examples and tests**. Broken examples are rejected by CI ([tests/](./tests/)). See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+This repository aims for a state where "**looking at it resolves every question**". Questions, issues, and bug reports are, as a rule, **answered by adding examples and tests**. Broken examples are rejected by CI ([packages/tests/](./packages/tests/)). See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 ## License
 

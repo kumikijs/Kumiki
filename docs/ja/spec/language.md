@@ -1,5 +1,7 @@
 # 言語コア仕様
 
+Kumiki プログラムを構成する 7 種類の定義と、それらが共有する式・文・パターン。まず [§1.1](#_1-1-プログラムの全体構造) でプログラム全体の形を掴み、あとは今から書く層を読めばよい。
+
 ## 1.1 プログラムの全体構造
 
 Kumiki プログラムは **7 種類の定義の集合**である。物理的なファイル境界は存在せず、各定義は次の 4 つ組として content-addressable graph に格納される：
@@ -17,7 +19,7 @@ definition  ::= type-def | slot-def | effect-def | reducer-def | tile-def | fn-d
 
 定義は順不同で前方参照可能。コンパイラがトポロジカルソートを行う。
 
-### 1.1.1 レイヤ一覧
+### 1.1.1 レイヤ一覧 {#_1-1-1-list-of-layers}
 
 | レイヤ | 役割 | 純粋性 |
 |---|---|---|
@@ -36,18 +38,37 @@ definition  ::= type-def | slot-def | effect-def | reducer-def | tile-def | fn-d
 ## 1.2 字句
 
 ```
-identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; 最大 32 文字
+identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; 最大 32 文字、最長一致
 qname       ::= identifier ('.' identifier)*     ; ドット区切り完全名
+cap-name    ::= identifier ('.' cap-segment)*    ; ケイパビリティ。そのセグメントはこの言語の中の何も指さない
+cap-segment ::= identifier | keyword             ; ゆえに `telemetry.out` は構文エラーではない
 literal     ::= number | string | bool | unit
 number      ::= int | float
 int         ::= '-'? [0-9]+
-float       ::= '-'? [0-9]+ '.' [0-9]+
+float       ::= '-'? [0-9]+ '.' [0-9]+           ; 小数点以下の数字は必須
 string      ::= '"' (escape | non-quote-char)* '"'
 escape      ::= '\\' ('n' | 't' | 'r' | '"' | '\\' | 'u{' hex+ '}')
 bool        ::= 'true' | 'false'
 unit        ::= '()'
+tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; Tuple が型を付ける値
 comment     ::= '#' until-eol                    ; 1 行コメントのみ
 ```
+
+**`-` は識別子の文字でも引き算でもあり、最長一致で決める。** `page-size` / `base-url` / `on-401` / `count-1` はそれぞれ 1 つの名前であり、名前とリテラルの引き算を `count - 1` と書くのはそのためである。
+
+::: details `count-1` の書き分けと、解決しなかった場合
+`-` の直後に識別子文字があれば名前が続き、なければそこで名前が終わる。`count- 1` も引き算になる（`-` の続く先が無い）。`count -1` が引き算になる理由は別で、空白が `-` に到達する前に名前を終わらせているからである。どこにも解決されない `count-1` は [E0103](./errors.md#e0103-undef-ref-undef-slot) であり、その旨がメッセージに出る。
+:::
+
+**両側のどちらかに空白がある `#` は常にコメントを開始する。** セレクタ演算子（[§1.6.1](#_1-6-1-構文)）になるのは `SaveBtn#new` の形だけである。
+
+::: details 正確な条件と、`#` がコメントのままになる場所
+セレクタ演算子になるのは、直前の文字が値を終える文字（識別子文字、または閉じる `)` / `]` / `}`）であり、**かつ**直後の文字が識別子を開始する場合だけである。行頭の `#TODO` や `= 0# how many` を含むそれ以外では行末までがコメントになる。したがって `#id` の断片は英字または `_` で始まる — `tile-ref` が元から要求していたとおりである。
+:::
+
+::: details 位置情報 — 行終端・UTF-16 の列・BOM
+行の終端は `\n` または `\r\n` であり、単独の `\r` は行内の空白である。列は UTF-16 コードユニットを数えるので、サロゲートペアの文字は列を 2 進める — Language Server Protocol と同じ規約であり、Kumiki の位置を使う側が必要とする規約でもある（パッチはソース行を `column - 1` で分割する）。先頭の BOM が空白として扱われるのも同じ理由で、テキストの一部ではないが分割される文字列の一部ではあるので、1 列を占める。
+:::
 
 ### 1.2.1 演算子
 
@@ -82,8 +103,13 @@ fresh  self  now  null
 - **インデント非依存**: 行頭の空白は無視される
 - **改行が文区切り**: `do=` 内のみ `;` で複数文
 - **識別子は 32 文字以内**
+- **式・型・パターン・tile の木は 256 段まで**: 超えるとパーサが位置付きのエラーを報告する。examples と benchmarks のどのプログラムも上限に迫らない。
 - **複数行コメント禁止**
 - **マクロ禁止**
+
+::: details 256 段は何に対する上限か
+自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続）もこれを超えるノードを作れない。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
+:::
 
 ---
 
@@ -142,7 +168,7 @@ one-of(v1, v2, ...)
 
 ### 1.3.4 例
 
-```kumiki
+```kumiki fragment
 type UserId    = nominal Text where len-eq(36)
 type Email     = nominal Text where email
 type Url       = nominal Text where url
@@ -156,6 +182,36 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 構造的に同一の型は同一 content-hash を持つ。`nominal` のみが新 hash を生む。
 
+`nominal` 型を同定するのは **宣言された名前** である。したがって同じ基底型に対する 2 つの宣言は、body が同一であっても 2 つの型である：
+
+```kumiki fragment
+type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+```
+
+`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
+
+**自身の nominal 名を持たない**型は、その上に宣言されたどの nominal とも双方向に受理し合う。これが `slot c : Cents = 1` を構築形式なしで成立させており、算術は基底型を返すので（[§1.9](#_1-9-式言語)）`c := c + 1` もそのまま通る。
+
+nominal の上に宣言された nominal は **narrowing** であり、一方向だけ通る：
+
+```kumiki fragment
+type Deep = nominal Cents
+```
+
+どの `Deep` も `Cents` として宣言されているので、`Cents` が要求される位置に `Deep` は入る。逆に `Deep` が要求される位置の `Cents` は [E0201](./errors.md#e0201-type-mismatch) である。`Int` は依然としてどちらとも通じる。
+
+無関係な 2 つの nominal 間の変換は、両者が共有する基底型を経由する。それを書き留める場所が `fn` であり、戻り型が行き先を表し、body は**基底型に到達していなければならない**：
+
+```kumiki fragment
+fn toYen(c: Cents, rate: Int) -> Yen = c * rate
+fn toUser(p: PostId) -> UserId       = p + ""
+```
+
+前者は算術が `Int` に、後者は `+ ""` が `Text` に着地する。恒等な body はコンパイルできない — `fn toUser(p: PostId) -> UserId = p` は E0201 である。`p` はまだ `PostId` だからである。この `fn` が実際に何かを変換していることは検査されない。記録されるのは意図であり、強制されるのは body の型だけである。
+
+`where` の refinement 自体は同定に寄与せず（`type Positive = Int where positive` は `Int` である）、compile 時ではなく runtime の検査のままである（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)）：`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` は型としては正しく、範囲を決めるのはバリデーションである。
+
 ---
 
 ## 1.4 ストアレイヤ (`slot`)
@@ -163,7 +219,7 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 ### 1.4.1 構文
 
 ```
-slot-def    ::= 'slot' identifier ':' type-expr modifier* ('=' init-expr)?
+slot-def    ::= 'slot' identifier ':' type-expr modifier? '=' init-expr
 modifier    ::= 'transient' | 'volatile'
 init-expr   ::= literal | record-literal | collection-literal | builtin-call
 ```
@@ -174,6 +230,10 @@ init-expr   ::= literal | record-literal | collection-literal | builtin-call
 | `transient` | ホットリロード時に破棄 |
 | `volatile` | episode log に書かれない、ホットリロード時に破棄 |
 
+modifier は最大 1 つ。`volatile` は `transient` がすることをすべて含むので、両方を並べても `volatile` 単独が言っていない事は何も言わない。
+
+初期値は必須。`=` の無い slot は、プログラムが最初に書き込むまで何かを保持していなければならないが、言語にその値が無い — null も、型ごとのゼロ値も無い。
+
 ### 1.4.2 不変条件
 
 1. **全 slot がグローバル**
@@ -183,7 +243,7 @@ init-expr   ::= literal | record-literal | collection-literal | builtin-call
 
 ### 1.4.3 例
 
-```kumiki
+```kumiki fragment
 slot todos       : Map(TodoId, Todo)              = {}
 slot filter      : Filter                         = All
 slot draft       : Text where len-lt(280)         = ""
@@ -227,7 +287,7 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 
 ### 1.5.3 例
 
-```kumiki
+```kumiki fragment
 effect loadUser  cap=http.get
                  in=UserId
                  out=Result(User, HttpError)
@@ -255,7 +315,7 @@ reducer-def ::= 'reducer' identifier
 event-pattern ::= ui-event | effect-event | timer-event | lifecycle-event | route-event
 ui-event      ::= 'ui' '.' ui-kind '(' selector ')'
 ui-kind       ::= 'click' | 'submit' | 'change' | 'input' | 'focus' | 'blur' | 'key' | 'hover'
-selector      ::= tile-ref | 'self'
+selector      ::= tile-ref
 tile-ref      ::= identifier ('#' identifier)?    ; TileName または TileName#id
 effect-event  ::= identifier '.' ('ok' | 'err') '(' bind (',' bind)* ')'
 timer-event   ::= 'timer' '(' duration ')'   ; intervalMs ごとに当該 reducer を発火
@@ -297,45 +357,45 @@ path          ::= identifier
 
 セレクタは **`TileName`** または **`TileName#id`** のみ（CSS 属性セレクタは廃止）。
 
-```kumiki
+```kumiki snippet
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' は組み込み要素、tile 名ではない
+reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' は組み込み要素、tile 名ではない
 ```
 
 組み込み要素（`button`, `input`, `form` 等）にイベントを直接バインドするには、**ラッパ tile を作る**：
 
-```kumiki
+```kumiki snippet
 tile LoginForm = form(...) {id: "main"}
 
 reducer doLogin
-    on=ui.submit(LoginForm)         ; tile 名で参照
+    on=ui.submit(LoginForm)         # tile 名で参照
     do= emit login({...})
 ```
 
 **`TileName#id`** は、dispatch された要素の `{id}` プロップが `id` と一致する場合だけ subscription を発火させる。`TileName` だけの reducer は全インスタンスに対して発火するが、`#id` 付き reducer はランタイムが id 一致を確認した時のみ発火する。同じ組み込み要素をラップする tile が複数ある状況で意図を明示し、別の tile が誤って同じ reducer を起動するのを防ぐために使う:
 
-```kumiki
+```kumiki snippet
 tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
 tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
 
-reducer add  on=ui.submit(NewForm#new)   do= ...   ; "new" form のみ
-reducer save on=ui.submit(EditForm#edit) do= ...   ; "edit" form のみ
+reducer add  on=ui.submit(NewForm#new)   do= ...   # "new" form のみ
+reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 ```
 
-`{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。§1.6.4 Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
+`{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。[§1.6.4](#_1-6-4-不変条件) Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
 
 ### 1.6.3 lvalue の意味論
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
 
-```kumiki
-; これらの reducer 文は:
+```kumiki snippet
+# これらの reducer 文は:
 todos[id].done := true
 editor.title := "New"
-editor.get.body := "Body"        ; Option 経由（コンパイラが Option.map に展開）
+editor.get.body := "Body"        # Option 経由（コンパイラが Option.map に展開）
 
-; 内部的にこう展開される:
+# 内部的にこう展開される:
 todos := todos.update(id, $1.copy(done=true))
 editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
@@ -345,7 +405,7 @@ editor := editor.map($1.copy(body="Body"))
 
 **`.copy(field=value, ...)`**: record の immutable update を行うショートカット。method 呼び出しに見えるが、内部的には named-arg を集めて `recordCopy(rec, {field: value, ...})` に展開される。複数 field を 1 度に更新できる：
 
-```kumiki
+```kumiki snippet
 editor := editor.copy(title="New", body="Body", updatedAt=now)
 issue.copy(status=Done, priority=High)
 ```
@@ -366,6 +426,9 @@ issue.copy(status=Done, priority=High)
      - `if cond then x := 1 else x := 2; x := 3` ✗ (排他分岐合算後にさらに同 path)
    - 同じ shape でも index 値が違う (`m[k1]` と `m[k2]`) のは静的判定不能なため 1 write として扱う（厳しい側）。複数 key を更新したい場合は `for` ループを使う
 5. **`fn` 呼び出しは可能**（純粋なので安全）
+6. **バッチは全部通るか全部通らないか**: どれか 1 つの slot の新しい値がその型の refinement に違反したら、その reducer 適用は丸ごと破棄される — slot 書き込みなし、`emit` なし、`stop-timer` なし — そして拒否が報告される（[batching](./runtime.md#a-batch-commits-all-or-nothing) 参照）。到達しうる境界はプログラム側の責任である。ガードは自分で書く
+   - `Volume = nominal Int where between(0, 11)` に対する `volume := volume + 1` は 11 で ✗（拒否され、報告される）
+   - `if volume < 11 then volume := volume + 1` ✓
 
 ### 1.6.5 positional binding
 
@@ -374,12 +437,12 @@ issue.copy(status=Done, priority=High)
 | `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
-| `$route` | route.enter/leave 時の Route |
+| `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
 | `$now` | 現在時刻 |
 
 ### 1.6.6 例
 
-```kumiki
+```kumiki fragment
 reducer addTodo
     on=ui.submit(NewTodoForm)
     do= let id = TodoId.fresh()
@@ -461,7 +524,7 @@ pattern      ::= identifier
 
 イベントハンドラは **reducer 名を渡す**：
 
-```kumiki
+```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
 ```
 
@@ -469,7 +532,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 ### 1.7.4 例
 
-```kumiki
+```kumiki fragment
 tile TodoRow  in=TodoId
               = row(
                   check(value=todos[$1].done, onClick=toggle) {todoId: $1},
@@ -517,7 +580,7 @@ fn-param    ::= identifier ':' type-expr
 
 ### 1.8.4 例
 
-```kumiki
+```kumiki fragment
 fn matchFilter(t: Todo, f: Filter) -> Bool
    = match f with
        | All     -> true
@@ -542,7 +605,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
 
 ### 1.8.5 tile / reducer からの呼び出し
 
-```kumiki
+```kumiki fragment
 tile TodoList = column(
                   for id in todos.keys
                     when(matchFilter(todos[id], filter), TodoRow(id)))
@@ -561,15 +624,15 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
 
 ラムダがないため、高階関数渡しは「fn 名」または「式断片」を使う：
 
-```kumiki
-items.map(double)         ; 登録済み fn 名
-items.map($1 * 2)         ; 式断片（$1 は要素）
-items.filter(matchFilter($1, filter))  ; fn 呼び出しを式断片に埋め込む
+```kumiki snippet
+items.map(double)         # 登録済み fn 名
+items.map($1 * 2)         # 式断片（$1 は要素）
+items.filter(matchFilter($1, filter))  # fn 呼び出しを式断片に埋め込む
 ```
 
 部分適用は **明示的に書く**（カリー化なし）：
 
-```kumiki
+```kumiki snippet
 fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
@@ -621,19 +684,55 @@ unop        ::= '-' | '!'
 - **`null` / `undefined` 禁止**
 - **`while` ループ禁止**
 - **代入式禁止**（`:=` は statement、式中で使えない）
+- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
+
+```kumiki snippet
+# ❌ リテラルパターン — サポートされない
+match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
+
+# ✅ if/else で値によって分岐する
+if label == "Overdue" then red else if label == "Today" then amber else gray
+
+# ✅ あるいはケースを union に持ち上げて variant に match する
+type Urgency = Overdue | Today | Later
+match urgency with | Overdue -> red | Today -> amber | Later -> gray
+```
 
 ### 1.9.2 高階関数の代わり
 
-```kumiki
-items.map($1 * 2)                          ; 式断片
-items.map(formatPrice)                     ; fn 名
-items.filter(matchFilter($1, filter))      ; fn 呼び出し
-items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
+```kumiki snippet
+items.map($1 * 2)                          # 式断片
+items.map(formatPrice)                     # fn 名
+items.filter(matchFilter($1, filter))      # fn 呼び出し
+items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 ```
 
 ### 1.9.3 短絡評価
 
 `&` と `|` は短絡評価。
+
+### 1.9.4 演算子の型
+
+各演算子のオペランド型と結果型。コンパイラが検査する（[E0201](./errors.md#e0201-type-mismatch)）：
+
+| 演算子 | オペランド | 結果 |
+|---|---|---|
+| `+` | どちらか一方が `Text` | `Text` — 連結。もう一方は文字列化される |
+| `+` `-` `*` `%` | 両方が数値 | どちらかが `Float` なら `Float`、そうでなければ `Int` |
+| `/` | 両方が数値 | **常に `Float`** |
+| `<` `>` `<=` `>=` | 両方が数値、両方が `Text`、または両方が `Time` | `Bool` |
+| `&` `\|` | 両方が `Bool` | `Bool` |
+| `==` `!=` | 任意の 2 値 | `Bool` |
+| 単項 `-` | 数値 | オペランドと同じ型 |
+| 単項 `!` | `Bool` | `Bool` |
+
+`/` は `Int` 同士でも `Float` である。runtime では JavaScript の `/` そのもので、`5 / 2`
+は `2` ではなく `2.5` になる — 結果型を `Int` と宣言することは runtime が守らない約束をす
+ることであり、`fn half(x: Int) -> Int = x / 2` は拒否される。整数が欲しい箇所では `.to-int`
+（切り捨て。[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)）を取るか、`Float` を宣言する。
+
+`EffectId` はこの表の外にある：適用できるのは `==` と `!=` だけである
+（[E0204](./errors.md#e0204-effect-id-misuse)）。
 
 ---
 
@@ -682,7 +781,7 @@ emit-list  ::= effect-call (',' effect-call)*
 
 → [ルーティング](./routing.md), [HTTP / Storage](./http.md)
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = [storage.read, storage.write, http.get]
     routes = {"/" -> TodoList, "/todo/:id" -> TodoDetail, "/404" -> NotFound}
@@ -690,11 +789,21 @@ app TodoApp
     theme  = DefaultTheme
 ```
 
+### 1.12.1 `init` の引数が評価されるタイミング {#_1-12-1-when-init-arguments-are-evaluated}
+
+`init` の各エントリは effect 呼び出しであり、その引数は通常の式である。slot 参照も書ける。引数は app オブジェクトの構築時に**一度だけ**評価され、得られた値が読み直されることはない。後から slot が変わっても、すでに捕捉された引数には反映されない。
+
+その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` はコンパイルエラーになる（[E0120](./errors.md#e0120-route-in-app-init)）。`$route` も同様に、ここでは runtime が束縛しない。route が必要なら `route.enter` reducer 側で受け取ること。
+
+`now` は使えるが、捕捉のされ方は同じ — app オブジェクトが構築された瞬間に評価され、effect が走る瞬間ではない。dispatch 時点の時刻が要るなら、結果を受ける reducer 側で取ること。
+
+引数の周りに reducer も無いので、`emit` 式もここでは使えない（[E0305](./errors.md#e0305-fn-impurity)）。エントリそのものが dispatch である。
+
 ---
 
 ## 1.13 反例
 
-```kumiki
+```kumiki snippet
 # ❌ ローカル状態
 tile Foo = let x = 0 in button(text=x.show)   # tile 内で代入は不可（let で式束縛は可、slot 代わりにはならない）
 
@@ -725,8 +834,8 @@ reducer r on=ui.change(input[type=file]) do= ...   # tile 名で書け
 type N      = nominal Int where between(0, 999)
 slot count  : N    = 0
 
-reducer inc   on=ui.click(IncBtn)   do= count := count + 1
-reducer dec   on=ui.click(DecBtn)   do= count := count - 1
+reducer inc   on=ui.click(IncBtn)   do= if count < 999 then count := count + 1
+reducer dec   on=ui.click(DecBtn)   do= if count > 0   then count := count - 1
 reducer reset on=ui.click(ResetBtn) do= count := 0
 
 tile IncBtn   = button(text="+")
@@ -743,4 +852,4 @@ app Counter
     init   = []
 ```
 
-→ [標準ライブラリ](./stdlib.md), [ルーティング](./routing.md), [01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
+→ [標準ライブラリ](./stdlib.md), [ルーティング](./routing.md), [01-counter](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)

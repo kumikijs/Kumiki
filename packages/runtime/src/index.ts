@@ -20,7 +20,7 @@ import { indexedDelete, indexedQuery, indexedRead, indexedWrite } from "./effect
 import { sessionRead, sessionWrite, storageRead, storageWrite } from "./effects-storage.ts";
 import { installToast } from "./effects-toast.ts";
 import { routing } from "./router.ts";
-import { type RenderToStringResult, renderToString } from "./ssr.ts";
+import type { RenderToStringResult } from "./ssr.ts";
 import { _stdlibCore } from "./stdlib.ts";
 import { _stdlibTest } from "./testkit.ts";
 import { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
@@ -119,6 +119,7 @@ export {
   type Action,
   type EffectScript,
   type Expect,
+  HEADLESS_ACTION_KEYS,
   runScenario,
   type Scenario,
   type ScenarioReport,
@@ -127,6 +128,7 @@ export {
 } from "./scenario.ts";
 export {
   describeDiagnostic,
+  SMOKE_CONTENT_SELECTORS,
   type SmokeDiagnostic,
   type SmokeIssue,
   type SmokeOptions,

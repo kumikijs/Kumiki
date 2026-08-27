@@ -51,6 +51,59 @@ describe("scenario runner", () => {
     expect(report.steps[0]?.failures[0]).toContain("count");
   });
 
+  // Some contracts are "the runtime must say something" — a reducer batch a
+  // refinement rejected, an effect error no `.err` reducer consumes. The tier
+  // could only assert the absence of errors, so those were unassertable and an
+  // example demonstrating one had to settle for not failing.
+  describe("errorIncludes", () => {
+    const atomicity = join(examples, "features", "63-reducer-batch-atomicity.kumiki");
+
+    const toCeiling = [
+      { do: { clickText: "bump" } },
+      { do: { clickText: "bump" } },
+      { do: { clickText: "bump" } },
+    ];
+
+    it("passes when the named error is reported, and keeps it out of the failures", async () => {
+      const app = await loadApp(atomicity);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          ...toCeiling,
+          {
+            do: { clickText: "bump" },
+            // `noErrors` still holds: it means "nothing this step did not ask
+            // for", so the two compose instead of contradicting.
+            expect: { noErrors: true, errorIncludes: ['reducer "bump" was rejected'] },
+          },
+        ],
+      });
+      expect(report.ok).toBe(true);
+      const last = report.steps[3];
+      expect(last?.errors).toEqual([]);
+      expect(last?.expectedErrors).toHaveLength(1);
+      expect(last?.expectedErrors[0]).toContain("cannot hold 4 (between(0, 3))");
+    });
+
+    it("fails when the named error is not reported", async () => {
+      const app = await loadApp(atomicity);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: { clickText: "bump" }, expect: { errorIncludes: ["was rejected"] } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.failures[0]).toContain('expected an error including "was rejected"');
+      expect(report.steps[0]?.failures[0]).toContain("none");
+    });
+
+    it("still fails on an error the step did not name", async () => {
+      const app = await loadApp(atomicity);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [...toCeiling, { do: { clickText: "bump" }, expect: { errorIncludes: [] } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[3]?.errors).toHaveLength(1);
+    });
+  });
+
   // A manifest-registered custom capability (telemetry.track) must compile and
   // its effect must be emittable + dispatched — mocked deterministically here,
   // exactly like a standard effect. loadApp resolves examples/features/kumiki.caps.json.
@@ -417,6 +470,26 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
+  // The blog's editor route reaches its slot through two reducers that are NOT
+  // route reducers — one on `fetchPost.ok`, one on the Save click. Both used to
+  // read `$route`, which the runtime only fills in for a route lifecycle
+  // reducer, so the comparison against the route was made against `undefined`
+  // and the editor never opened: the route rendered a spinner forever. The
+  // route slot is what those two read now, and this scenario is what says so.
+  it("runs the blog editor route end to end (route slot outside a route reducer)", async () => {
+    const dir = join(examples, "apps", "03-blog");
+    const app = await loadApp(join(dir, "app.kumiki"));
+    const scenario = JSON.parse(readFileSync(join(dir, "scenario.json"), "utf8")) as Scenario;
+    const report = await runScenario(app, freshRoot(), scenario);
+    if (!report.ok) {
+      const detail = report.steps
+        .flatMap((s, i) => [...s.errors, ...s.failures].map((m) => `step ${i}: ${m}`))
+        .join("\n");
+      throw new Error(`blog scenario failed:\n${detail}`);
+    }
+    expect(report.ok).toBe(true);
+  });
+
   // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
   // definition order". The 11-multi-subscribe app puts two reducers on
   // ui.click(SaveBtn) — clicking the button must advance BOTH slots, not just
@@ -467,12 +540,17 @@ describe("scenario runner", () => {
     expect(step0?.state.last).toBe(1);
   });
 
-  // The dispatch-only scenario for ui.focus / ui.blur verifies the reducer body
-  // but not the DOM wiring — addEventListener("focus") → applyUiEventHandlers →
-  // reducer. The `focus` / `blur` primitives let a scenario exercise that path
-  // in one step, so "compiles + DOM wired + reducer fires" can be observed in
-  // the scenario tier alone.
-  describe("focus / blur DOM-event primitives", () => {
+  // A dispatch-only scenario for a ui.<event> reducer verifies the reducer body
+  // but not the DOM wiring — addEventListener(...) → `installUiEventListeners`
+  // → reducer. These four primitives let a scenario exercise that path in one
+  // step, so "compiles + DOM wired + reducer fires" can be observed in the
+  // scenario tier alone. Feature example 76 walks the other way in, where the
+  // listener is registered by the patch that first puts a handler in the slot.
+  //
+  // What each dispatch carries is part of the contract, not an implementation
+  // detail: `keydown` bubbles and the other three do not, and the payload a
+  // `ui.key` reducer reads is filled from the event.
+  describe("focus / blur / key / hover DOM-event primitives", () => {
     async function compileInline(name: string, src: string): Promise<string> {
       const here = dirname(fileURLToPath(import.meta.url));
       const tmp = join(here, ".smoke-tmp", `${name}.kumiki`);
@@ -519,16 +597,106 @@ describe("scenario runner", () => {
       expect(report.ok).toBe(true);
     });
 
-    it("reports a clear error when the focus/blur selector matches nothing", async () => {
+    it("reports a clear error when a selector matches nothing", async () => {
       const path = await compileInline("focus-missing", focusApp);
       const app = await loadApp(path);
+      for (const action of [
+        { focus: "#does-not-exist" },
+        { key: "#does-not-exist", value: "Enter" },
+        { hover: "#does-not-exist" },
+      ]) {
+        const report = await runScenario(app, freshRoot(), {
+          steps: [{ do: action, expect: { noErrors: true } }],
+        });
+        expect(report.ok, JSON.stringify(action)).toBe(false);
+        expect(
+          report.steps[0]?.errors.some((e) => e.includes("no element matching selector")),
+          JSON.stringify(action),
+        ).toBe(true);
+      }
+    });
+
+    const keyApp = `
+      slot lastKey  : Text = ""
+      slot lastCode : Text = "unset"
+      slot hovers   : Int  = 0
+      reducer onKey
+          on=ui.key(Field)
+          do= lastKey  := $el.key
+              lastCode := $el.code
+      reducer onHover on=ui.hover(Card)    do= hovers := hovers + 1
+      tile Field = input(placeholder="x") {id: "field"}
+      tile Card  = box(text("hover me")) {id: "card"}
+      tile App   = column(Field, Card, text(lastKey), text(hovers.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("hands the pressed key to the reducer, and an empty code", async () => {
+      // The spec says both halves of this. `code` names a physical key on a
+      // layout, which a scenario asking for "Enter" has not chosen — so filling
+      // it here would be inventing one, and a reducer that reads it must see
+      // what it will see.
+      const path = await compileInline("key-payload", keyApp);
+      const app = await loadApp(path);
       const report = await runScenario(app, freshRoot(), {
-        steps: [{ do: { focus: "#does-not-exist" }, expect: { noErrors: true } }],
+        steps: [
+          {
+            do: { key: "#field", value: "Enter" },
+            expect: { noErrors: true, state: { lastKey: "Enter", lastCode: "" } },
+          },
+        ],
       });
-      expect(report.ok).toBe(false);
-      expect(report.steps[0]?.errors.some((e) => e.includes("no element matching selector"))).toBe(
-        true,
-      );
+      expect(report.ok).toBe(true);
+    });
+
+    it("counts a mouseenter per hover", async () => {
+      const path = await compileInline("hover-primitive", keyApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          { do: { hover: "#card" }, expect: { noErrors: true, state: { hovers: 1 } } },
+          { do: { hover: "#card" }, expect: { state: { hovers: 2 } } },
+        ],
+      });
+      expect(report.ok).toBe(true);
+    });
+
+    // The two events differ here, and the difference is the DOM's, not a
+    // choice: `keydown` bubbles — which is what lets `ui.key(Container)` be
+    // driven from a focusable descendant — and `mouseenter` does not, since a
+    // browser fires a separate one on each ancestor rather than propagating.
+    const nestedApp = `
+      slot keyHits   : Int = 0
+      slot hoverHits : Int = 0
+      reducer onKey   on=ui.key(Decoy)   do= keyHits := keyHits + 1
+      reducer onHover on=ui.hover(Decoy) do= hoverHits := hoverHits + 1
+      tile Decoy = input(placeholder="decoy")
+      tile Inner = input(placeholder="x") {id: "inner"}
+      tile Outer = box(Inner) {id: "outer", onKeyDown: onKey, onMouseEnter: onHover}
+      tile App   = column(Outer, text(keyHits.show), text(hoverHits.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+
+    it("reaches a container's handler from a descendant for keydown, and not for mouseenter", async () => {
+      const path = await compileInline("nested-handlers", nestedApp);
+      const app = await loadApp(path);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          {
+            label: "the container's own element answers both",
+            do: { key: "#outer", value: "a" },
+            expect: { noErrors: true, state: { keyHits: 1 } },
+          },
+          { do: { hover: "#outer" }, expect: { state: { hoverHits: 1 } } },
+          {
+            label: "from the child, the key press arrives and the hover does not",
+            do: { key: "#inner", value: "b" },
+            expect: { state: { keyHits: 2 } },
+          },
+          { do: { hover: "#inner" }, expect: { state: { hoverHits: 1 } } },
+        ],
+      });
+      expect(report.ok).toBe(true);
     });
   });
 });

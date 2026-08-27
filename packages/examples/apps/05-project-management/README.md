@@ -15,8 +15,15 @@ The largest reference app (~1255 lines). It covers a full range of elements that
 
 ## Run
 
+Every command below is run **from the repository root**.
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/05-project-management/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/05-project-management/app.kumiki
+pnpm kumiki build packages/examples/apps/05-project-management/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/05-project-management/app.kumiki
+pnpm kumiki run packages/examples/apps/05-project-management/app.kumiki packages/examples/apps/05-project-management/scenario.json
 ```
 
-Related specs: [language](../../../spec/language.md) / [stdlib](../../../spec/stdlib.md) / [style](../../../spec/style.md) / [errors](../../../spec/errors.md)
+`scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI.
+
+Related specs: [language](../../../../docs/spec/language.md) / [stdlib](../../../../docs/spec/stdlib.md) / [style](../../../../docs/spec/style.md) / [errors](../../../../docs/spec/errors.md)

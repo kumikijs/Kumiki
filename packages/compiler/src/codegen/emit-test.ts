@@ -1,6 +1,6 @@
 import type { EffectDef, Expr, ReducerDef, TestDef, TileDef, TileExpr } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
-import { type EvalCtx, type GenCtx, jsName, makeEvalCtx } from "./context.ts";
+import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
 import { typeToGenDesc } from "./emit-type.ts";
@@ -140,7 +140,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       )
       .join(", ");
     const binds = forAll
-      .map((f) => `const ${jsName(f.name)} = _b[${JSON.stringify(f.name)}];`)
+      .map((f) => `const ${jsBinding(f.name)} = _b[${JSON.stringify(f.name)}];`)
       .join(" ");
     const givenSlots = recordField(t.given, "slots");
     const initSlotsJs = givenSlots ? jsOfExpr(givenSlots, pctx) : "({})";
@@ -211,7 +211,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       let _res = null, _panic = null;
       try { _res = _r.apply(App.live, { $el: _el, $event: _el }); }
       catch (e) { _panic = (e && e.message) ? e.message : String(e); }
-      return _s.runReducerTest({ name: ${nameJs}, givenSlots: { ...App.live }, result: _res, panic: _panic, expect: ${expectJs} });
+      return _s.runReducerTest({ name: ${nameJs}, target: ${JSON.stringify(t.target)}, givenSlots: { ...App.live }, slotMetas: App.slots, result: _res, panic: _panic, expect: ${expectJs} });
     },
   },`;
   }
@@ -239,7 +239,13 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
  * (`persist(x)`, even `persist()`) pins the exact arguments (`argsSpecified: true`).
  */
 function effectListJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "ListLit") return "[]";
+  // `[]` is not the absence of an assertion, it is the assertion that no
+  // effect was emitted — so answering a non-list with it turned a forgotten
+  // pair of brackets into a different, passing test. E0713 reports it at
+  // check time; this is what a caller that skipped `check` gets.
+  if (e.kind !== "ListLit") {
+    throw new Error("expect.effects must be a list of effects");
+  }
   const items = e.items.map((it) => {
     if (it.kind === "Call") {
       const args = it.args.map((a) => jsOfExpr(a, ctx)).join(", ");
@@ -345,7 +351,14 @@ function mockScriptJs(v: Expr, ctx: EvalCtx): string {
       return `{ outcome: ${JSON.stringify(inner.callee)}, value: ${value}, delayMs: ${ms} }`;
     }
   }
-  return `{ outcome: "ok", value: null }`;
+  // A success mock was the old answer for anything unrecognised, so a mock
+  // written to drive the failure path drove the success one and the test that
+  // asserted the failure passed without ever seeing it. E0713 reports it at
+  // check time; the throw is for a caller that skipped `check`, and keeps this
+  // function and that check from drifting apart.
+  throw new Error(
+    "a reducer-test mock must be `ok(...)`, `err(...)`, or `delay(ms, ok(...)|err(...))`",
+  );
 }
 
 /**

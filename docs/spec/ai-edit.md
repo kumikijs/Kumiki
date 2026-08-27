@@ -11,21 +11,13 @@ This provides:
 
 ## 9.1 Overview
 
-```
-┌─────────────────────────────────────────────────┐
-│                 CRDT graph store                  │
-│  (a set of definitions, each content-addressable) │
-└─────────────────────────────────────────────────┘
-        ↑                          ↓
-        │                          │ kumiki view
-        │ kumiki op apply          │
-        │                          ↓
-┌──────────────┐          ┌──────────────────────┐
-│   AI agent   │ ←─────── │ projection (text)    │
-└──────────────┘  edit op └──────────────────────┘
-```
+An edit travels a loop with three stops:
 
-What the AI sees is a **projection (a text cross-section)** of the graph. What the AI outputs is an **op** (not a text diff).
+1. **The store** — the CRDT graph, holding a set of definitions, each addressed by the hash of its own body.
+2. **The projection** — text that `kumiki view` renders out of the store, covering whichever definitions the agent asked for.
+3. **The op** — what the agent writes back, and what `kumiki op apply` folds into the store.
+
+So the AI reads a text cross-section of the graph and answers with an op, never with a text diff.
 
 ---
 
@@ -62,6 +54,8 @@ kumiki patch revert <op-id>                 # revert a specific op
 
 Multi-line bodies (a reducer's `do=` block, a fn's multi-line RHS, etc.) must go through `--body-file` — the positional form is joined with single spaces so whitespace-significant content (newlines, tab runs) is lost. Passing `--body-file` alongside a positional body is rejected as a mutually-exclusive conflict.
 
+A write op is validated by re-parsing and re-typechecking the file, and rolls back on any `severity: "error"` diagnostic — with one exception. A program is built one definition at a time, so it is app-less until the `app` lands; **`E0003 missing-app` does not roll back a write op**. Whether the program is a complete application is what `kumiki check` reports, not what a mid-edit graph must already satisfy.
+
 ### 9.2.3 Validation Commands
 
 ```bash
@@ -72,6 +66,8 @@ kumiki check --effects             # capability/policy consistency only
 kumiki check --a11y                # accessibility conventions
 ```
 
+The three narrowing flags select along one axis: what kind of mistake a diagnostic describes. They name what to keep, so they compose — `--types --refs` reports both bands rather than one of them. Structure (`E00xx`), opt-in checks and testing-DSL invariants (`E07xx`), and runtime hazards (`E08xx`) are not on that axis — no flag selects them, so **every narrowing reports them anyway**. A flag can decide which kind of mistake you want to hear about; it cannot make a program with no entry point look sound.
+
 ### 9.2.4 Fix Assistance
 
 ```bash
@@ -79,6 +75,39 @@ kumiki fix --auto-patch <error-id>          # propose a CRDT op that auto-fixes 
 kumiki fix --apply                          # apply the proposal as-is
 kumiki fix --interactive                    # apply proposals one at a time with confirmation
 ```
+
+### 9.2.5 Exit Codes
+
+Every verb reports through its exit code, because that is the only part of the output a shell reads. `kumiki fix --apply && kumiki build …` has to stop when the file is still broken, and `kumiki test app.kumiki 'checkout-*'` has to fail when the name it was given matches nothing.
+
+| code | meaning |
+|---|---|
+| `0` | the verb did what it was asked |
+| `1` | the verb ran and the operation failed |
+| `2` | the arguments are the wrong shape |
+
+`2` is decided before the `.kumiki` file is read — a missing positional, an unknown option, a positional outside its allowed set. It therefore never means "we looked at your program"; whatever `2` reports, the program was not examined.
+
+Per verb, `1` means:
+
+| verb | exits `1` when |
+|---|---|
+| `check` | a diagnostic of severity `error` survives the narrowing flags. Warnings do not change the code (`ok (1 warning)` is `0`) |
+| `build` | the program does not compile, or the output cannot be written |
+| `smoke` | the app fails to mount, or an interaction throws |
+| `run` | the scenario document is unreadable / not a scenario, or a step fails |
+| `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0`; `--watch` runs until interrupted and so reports nothing |
+| `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` for any file that is not already in that state |
+| `view` / `refs` | the file, or the qualified name inside it, does not exist. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for |
+| `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
+| `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
+| `lock` / `unlock` | the lock is held by another agent, or there is none to release |
+| `replay` | the log is unreadable, the named episode is not in it, or a replayed episode panicked |
+| `dev` | the server could not start. Once it is serving it runs until interrupted, and so reports nothing |
+
+A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.
+
+The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isError`: a failure that would exit `1` here sets `isError: true` there. The content is unchanged by the flag — a failed check still answers with its diagnostics and a failed scenario with its trace. Only a failure that produced no answer at all (a missing file, a name that resolves to nothing) replaces the content with the envelope `{"error": {"kind", "message"}}`.
 
 ## 9.3 The Form of a CRDT op
 
@@ -223,34 +252,11 @@ All errors are structured:
 }
 ```
 
-### 9.6.1 Main Error Codes
+### 9.6.1 Where the codes are defined
 
-| code | Kind |
-|---|---|
-| `E0101` | undefined type |
-| `E0102` | undefined reducer |
-| `E0103` | undefined slot |
-| `E0104` | undefined effect |
-| `E0105` | undefined tile |
-| `E0106` | undefined fn |
-| `E0201` | type mismatch |
-| `E0202` | refinement violation |
-| `E0203` | insufficient union exhaustiveness |
-| `E0204` | nominal type confusion |
-| `E0301` | insufficient capability |
-| `E0302` | direct effect call |
-| `E0303` | slot write outside a reducer |
-| `E0304` | effect emit within a tile |
-| `E0305` | slot read/write / effect emit within a fn |
-| `E0306` | event selector is not a tile name |
-| `E0401` | direct recursion |
-| `E0402` | lambda use |
-| `E0403` | null use |
-| `E0404` | arbitrary predicate |
-| `E0501` | referential integrity violation (dangling) |
-| `E0502` | circular dependency |
-| `E0601` | multiple writes to the same slot |
-| `E0701` | a11y warning (label/alt, etc.) |
+[Error Code Specification](./errors.md) defines every code, normatively and in one place: what raises it, the message it carries, and the fix. Nothing here restates them — a second table is how `E0302` came to mean both "direct effect call" and "unknown capability", and a code whose meaning depends on which document you opened is not the permanent contract errors.md says it is.
+
+For automatic repair, the column that matters is errors.md's own **Auto-patch Coverage** table: it says, per code, whether `kumiki fix` can repair it and by what strategy. The loop below consumes that.
 
 ### 9.6.2 Automatic Repair Loop
 
@@ -290,7 +296,7 @@ The tools provided:
 | `kumiki_replace` | `qname, body` | op-id |
 | `kumiki_edit` | `qname, patch` | op-id |
 | `kumiki_rename` | `qname, new_name` | op-id |
-| `kumiki_remove` | `qname, cascade?: bool` | op-id |
+| `kumiki_remove` | `qname, cascade?: bool` | op-id + the names removed ([§9.4.1](#_9-4-1-pre-check-at-op-issuance)) |
 | `kumiki_check` | `scope?: string` | error list (JSON) |
 | `kumiki_fix` | `error_code, apply?: bool` | patch (JSON) |
 | `kumiki_refs` | `qname` | list of referrers |
@@ -393,4 +399,4 @@ This allows coexistence with existing Git-based workflows. However, **the true s
 ## 9.12 Next
 
 - Runtime implementation details → [Runtime](./runtime.md)
-- Complete examples → [examples/](https://github.com/kage1020/Kumiki/tree/main/packages/examples)
+- Complete examples → [examples/](https://github.com/kumikijs/Kumiki/tree/main/packages/examples)

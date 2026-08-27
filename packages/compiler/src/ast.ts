@@ -5,7 +5,12 @@ export type Pos = { line: number; col: number };
 export type Token =
   | { kind: "ident"; value: string; pos: Pos }
   | { kind: "kw"; value: string; pos: Pos }
-  | { kind: "num"; value: number; pos: Pos }
+  /**
+   * `raw` is the literal as written. `value` is already the rounded double, so
+   * without it a precision diagnostic can only report the rounded number twice
+   * and read as self-contradicting.
+   */
+  | { kind: "num"; value: number; raw: string; pos: Pos }
   | { kind: "str"; value: string; pos: Pos }
   | { kind: "op"; value: string; pos: Pos }
   | { kind: "eof"; pos: Pos };
@@ -36,12 +41,13 @@ export type TestDef = {
   testKind: "reducer-test" | "tile-test" | "property-test" | "episode-test";
   /** Reducer / tile name. Absent for `property-test` / `episode-test`. */
   target?: string;
+  targetPos?: Pos;
   /** The `given = { ... }` record literal (interpreted, not codegen'd as-is). */
   given: Expr;
   /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
   expect?: Expr | TileExpr;
   /** `property-test` only: the `for-all = { name: Type }` generators. */
-  forAll?: { name: string; type: TypeExpr }[];
+  forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
   invariant?: Expr;
   /** `property-test` only: trial count (default 100). */
@@ -57,10 +63,23 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
+/**
+ * A name the parser saw a second time in a construct that keeps only one.
+ *
+ * `app`, `effect` and the theme-record grammar all assemble their fields into
+ * a record, so the later of two same-named clauses overwrites the earlier and
+ * the duplicate leaves no trace in the tree. Recording it here is what lets
+ * the checker report `E0008` — the alternative, throwing from the parser,
+ * would stop at the first one and take the whole file's editing verbs with it.
+ */
+export type DuplicateName = { name: string; pos: Pos };
+
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Keys seen more than once in the body, at any nesting depth. */
+  duplicateKeys?: DuplicateName[];
   pos: Pos;
 };
 
@@ -71,6 +90,8 @@ export type MotionDef = {
   kind: "MotionDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Keys seen more than once in the body, at any nesting depth. */
+  duplicateKeys?: DuplicateName[];
   pos: Pos;
 };
 
@@ -104,9 +125,12 @@ export type TileDef = {
   name: string;
   in?: TypeExpr;
   errorBoundary?: string;
-  subRoutes?: { path: string; tile: string }[];
+  errorBoundaryPos?: Pos;
+  subRoutes?: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
   /** §3.9 scroll-restoration. Absent ≡ default (true). `false` opts the tile out of automatic restore. */
   scrollRestoration?: boolean;
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
   body: TileExpr;
   pos: Pos;
 };
@@ -114,7 +138,7 @@ export type TileDef = {
 export type FnDef = {
   kind: "FnDef";
   name: string;
-  params: { name: string; type: TypeExpr }[];
+  params: { name: string; type: TypeExpr; pos: Pos }[];
   ret?: TypeExpr;
   body: Expr;
   pos: Pos;
@@ -129,6 +153,8 @@ export type EffectDef = {
   policy?: PolicyExpr;
   retry?: RetryExpr;
   mapRequest?: Expr; // record literal usually
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
   pos: Pos;
 };
 
@@ -138,9 +164,9 @@ export type AppHttpConfig = {
   // at mount.
   baseUrl?: Expr;
   headers?: Expr;
-  on401?: string;
-  on403?: string;
-  on5xx?: string;
+  on401?: NamedRef;
+  on403?: NamedRef;
+  on5xx?: NamedRef;
   timeout?: Expr;
   credentials?: Expr;
   pos: Pos;
@@ -184,17 +210,40 @@ export type AppAnalyticsConfig = {
   pos: Pos;
 };
 
+/**
+ * A name written in the source, with where it was written.
+ *
+ * The pair exists so the two cannot drift apart: a name recorded without its
+ * position leaves a diagnostic pointing at the enclosing definition and leaves
+ * `rename` with nothing to rewrite, and every optional-position field so far
+ * has had a fallback that the parser made unreachable.
+ */
+export type NamedRef = { readonly name: string; readonly pos: Pos };
+
 export type AppDef = {
   kind: "AppDef";
   name: string;
   caps: string[];
-  routes: { path: string; tile: string }[];
+  routes: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
   init: Expr[];
-  theme?: string;
+  theme?: NamedRef;
   http?: AppHttpConfig;
   indexedDb?: AppIndexedDbConfig;
   meta?: AppMetaConfig;
   analytics?: AppAnalyticsConfig;
+  /** Clauses written more than once — the later one won silently. */
+  duplicateClauses?: DuplicateName[];
+  /**
+   * The record literals `meta` / `http` / `indexed-db` / `analytics` were
+   * folded from, kept so checks that walk expressions can still reach them.
+   *
+   * Each config above is a narrowed shape with only the fields it recognises,
+   * which is right for everything that reads it — and which is why the source
+   * has to be kept too: a duplicate key is a property of what was *written*,
+   * and folding a record into a config object is exactly where that evidence
+   * would otherwise be lost.
+   */
+  configSources?: Expr[];
   pos: Pos;
 };
 
@@ -208,10 +257,40 @@ export type TypeExpr =
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
   | { kind: "TypeApp"; name: string; args: TypeExpr[]; pos: Pos }
-  | { kind: "TypeRecord"; fields: { name: string; type: TypeExpr }[]; pos: Pos }
-  | { kind: "TypeUnion"; variants: { name: string; payloads: TypeExpr[] }[]; pos: Pos }
+  | { kind: "TypeRecord"; fields: { name: string; type: TypeExpr; pos: Pos }[]; pos: Pos }
+  | { kind: "TypeUnion"; variants: { name: string; payloads: TypeExpr[]; pos: Pos }[]; pos: Pos }
   | { kind: "TypeNominal"; inner: TypeExpr; refinement?: Refinement; pos: Pos }
   | { kind: "TypeRefinement"; inner: TypeExpr; refinement: Refinement; pos: Pos };
+
+/**
+ * Node kinds of `TileExpr`. A tile argument's `value` is typed `Expr | TileExpr`
+ * and every consumer has to tell them apart, so the set lives with the types it
+ * describes rather than being re-listed at each site.
+ */
+const TILE_EXPR_KINDS: ReadonlySet<string> = new Set([
+  "TileCall",
+  "TileFor",
+  "TileWhen",
+  "TileIf",
+  "TileMatch",
+]);
+
+export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
+  return TILE_EXPR_KINDS.has((v as TileExpr).kind);
+}
+
+/**
+ * The end of an exhaustive `switch` over a node union.
+ *
+ * A walker whose `switch` ends in a bare `return` compiles unchanged when a
+ * node kind is added, and then silently skips it — which for a walker that
+ * collects (emits, `run-reducer` targets, references) means a subtree that
+ * stops existing. Ending with `assertNever` makes `tsc` the thing that finds
+ * the next one.
+ */
+export function assertNever(node: never): void {
+  void node;
+}
 
 export type Refinement = {
   kind: "Refinement";
@@ -223,10 +302,41 @@ export type Refinement = {
 // ----- Events -----
 
 export type EventPattern =
-  | { kind: "UiEvent"; ev: UiEventKind; selector: { tile: string; id?: string }; pos: Pos }
-  | { kind: "EffectEvent"; effect: string; outcome: "ok" | "err"; binds: string[]; pos: Pos }
+  | {
+      kind: "UiEvent";
+      ev: UiEventKind;
+      selector: { tile: string; id?: string; tilePos?: Pos };
+      pos: Pos;
+    }
+  | {
+      kind: "EffectEvent";
+      effect: string;
+      outcome: "ok" | "err";
+      binds: string[];
+      /**
+       * Where the effect name sits. Always the same token as `pos` here — the
+       * pattern starts at the name — and named separately because that is a
+       * property of this one pattern rather than of a position field, and
+       * because `refs` and the typechecker both want the name, not the pattern.
+       */
+      effectPos: Pos;
+      pos: Pos;
+    }
   | { kind: "TimerEvent"; intervalMs: number; name?: string; pos: Pos }
-  | { kind: "LifecycleEvent"; name: string; pos: Pos };
+  | {
+      kind: "LifecycleEvent";
+      name: string;
+      /**
+       * The tile `tile.mount(X)` / `tile.unmount(X)` names, and where `X` sits.
+       *
+       * `name` folds the tile in as `tile.mount("X")` because that string is
+       * the key the runtime dispatches on, and reading the tile back out of it
+       * is a decode every caller would have to get right. Absent for the
+       * `app.*` and `route.*` patterns, which name no tile.
+       */
+      tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
+      pos: Pos;
+    };
 
 export type UiEventKind =
   | "click"
@@ -243,7 +353,7 @@ export type UiEventKind =
 export type Statement =
   | { kind: "SlotAssign"; lvalue: Lvalue; rhs: Expr; pos: Pos }
   | { kind: "LetStmt"; name: string; rhs: Expr; pos: Pos }
-  | { kind: "Emit"; effect: string; args: Expr[]; pos: Pos }
+  | { kind: "Emit"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "StopTimer"; name: string; pos: Pos }
   | { kind: "ForStmt"; bind: string; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
@@ -253,6 +363,13 @@ export type Statement =
       arms: { pattern: Pattern; body: Statement[] }[];
       pos: Pos;
     }
+  /**
+   * `panic("...")` written as a statement. Stdlib §2.4 places it inside a
+   * reducer, and a reducer body holds statements, not expressions — as an
+   * expression the only way to write it was to assign its result somewhere,
+   * which is the one thing it never produces.
+   */
+  | { kind: "PanicStmt"; message: Expr; pos: Pos }
   | { kind: "NoopStmt"; pos: Pos };
 
 export type Lvalue =
@@ -263,10 +380,16 @@ export type Lvalue =
 // ----- Expressions -----
 
 export type Expr =
-  | { kind: "Num"; value: number; pos: Pos }
+  | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
+  /**
+   * `(a, b, …)` — the value a `Tuple(T1, …, Tn)` types and a tuple pattern
+   * destructures. Two items minimum; one parenthesised expression is that
+   * expression, which is the older and more common reading of `( … )`.
+   */
+  | { kind: "TupleLit"; items: [Expr, Expr, ...Expr[]]; pos: Pos }
   | { kind: "Ref"; name: string; pos: Pos }
   | { kind: "BinOp"; op: BinOp; lhs: Expr; rhs: Expr; pos: Pos }
   | { kind: "UnaryOp"; op: "-" | "!"; rhs: Expr; pos: Pos }
@@ -285,9 +408,9 @@ export type Expr =
       accessKind?: "field" | "shortcut";
     }
   | { kind: "Index"; base: Expr; index: Expr; pos: Pos }
-  | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, math.abs, ...)
+  | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, Duration.ms, ...)
   | { kind: "MethodCall"; receiver: Expr; method: string; args: Expr[]; pos: Pos }
-  | { kind: "RecordLit"; fields: { name: string; value: Expr }[]; pos: Pos }
+  | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
   | { kind: "ListLit"; items: Expr[]; pos: Pos }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit
   // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a
@@ -302,7 +425,7 @@ export type Expr =
   // `EffectId` (spec §2.1.1.1, http.md §6.4). Statement-form `emit` keeps the
   // separate `Statement.Emit` so existing reducers without a capture stay
   // unchanged.
-  | { kind: "EmitExpr"; effect: string; args: Expr[]; pos: Pos }
+  | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
   // Theme-token reference (spec/style.md §4.3): `@colors.surface`,
   // `@spacing.md`, `@typography.size.lg`. `group` is the top-level theme
@@ -354,11 +477,14 @@ export type TileMatchArm = {
 export type TileArg = {
   kind: "TileArg";
   name?: string;
+  /** Position of the name, when the argument has one. */
+  namePos?: Pos;
   value: Expr | TileExpr;
 };
 
 export type TileProp = {
   kind: "TileProp";
   name: string;
+  pos: Pos;
   value: Expr;
 };

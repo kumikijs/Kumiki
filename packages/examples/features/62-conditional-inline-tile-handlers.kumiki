@@ -1,0 +1,44 @@
+# Feature: a conditional that swaps two inline tiles differing only in their
+# handler.
+#
+# The reconciler decides between "patch this element in place" and "reuse it
+# untouched" by comparing the two tile nodes' own data. Handlers are closures,
+# and codegen used to mint a fresh one on every render, so comparing them by
+# identity would have reported every tile as changed forever — the comparison
+# therefore treated any two functions as equal.
+#
+# That holds only while both closures dispatch to the same reducer. Here they
+# do not: the two branches are the same `button` with the same label, differing
+# only in `onClick`. They compared equal, the element was reused untouched, and
+# it kept dispatching to whichever reducer was live when it was first created.
+# `beta` never ran. Nothing threw, and no diagnostic fired.
+#
+# The log below is the assertion: flipping the branch must change which reducer
+# the button reaches.
+
+slot mode : Bool = true
+slot log  : Text = ""
+
+reducer flip  on=ui.click(FlipBtn) do= mode := not mode
+reducer alpha on=ui.click(ActA)    do= log := log + "A"
+reducer beta  on=ui.click(ActB)    do= log := log + "B"
+
+tile FlipBtn = button(text="flip", onClick=flip)
+
+# Named tiles carry a `_tile` prop, so swapping *these* two always took the
+# patch path and worked. They exist to give the reducers a selector; the
+# conditional below is the shape that broke.
+tile ActA = button(text="act")
+tile ActB = button(text="act")
+
+tile App = column(
+             FlipBtn,
+             if mode then button(text="act", onClick=alpha)
+                     else button(text="act", onClick=beta),
+             text("log=[" + log + "] mode=" + mode.show))
+           {pad: "lg", gap: "sm"}
+
+app ConditionalInlineTileHandlers
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

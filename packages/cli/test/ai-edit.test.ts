@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import {
   addDef,
   applyFixPlan,
+  describeEdit,
+  directDeps,
   editDef,
   findReferences,
   fixCmd,
@@ -31,7 +33,7 @@ import {
   viewHash,
   viewHistory,
 } from "@kumikijs/cli";
-import { check, collectTimerNames, variantTagsOf } from "@kumikijs/compiler";
+import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Re-materialize the `node:fs` namespace as a plain object so per-test
@@ -48,7 +50,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const here = dirname(fileURLToPath(import.meta.url));
-const _COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const TODOMVC = resolve(here, "../../examples/apps/02-todomvc/app.kumiki");
 
 function copy(src: string): string {
@@ -100,10 +102,10 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
   });
 
   it("adds a new slot at the end of the file and validates", () => {
-    addDef(path, "slot", "lastSync", "Time = 0");
+    addDef(path, "slot", "lastSync", "Option(Time) = None");
     const store = load(path);
     expect(store.byQName.has("slot.lastSync")).toBe(true);
-    expect(viewDef(store, "slot.lastSync")).toContain("slot lastSync : Time = 0");
+    expect(viewDef(store, "slot.lastSync")).toContain("slot lastSync : Option(Time) = None");
     // op log entry
     const log = readFileSync(`${path}.kumiki-ops.jsonl`, "utf8");
     expect(log).toContain('"op":"add"');
@@ -116,6 +118,31 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
       /Validation failed/,
     );
     expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  // `add` refuses a duplicate through the validation gate rather than through
+  // a check of its own: it writes, typechecks, and rolls back. That indirection
+  // is why this is pinned — the gate is one `check()` call away from being the
+  // only thing standing between an appending agent and a definition that
+  // silently replaces another.
+  it("rolls back an add that would duplicate an existing definition", () => {
+    const before = readFileSync(path, "utf8");
+    expect(() => addDef(path, "slot", "draft", 'Text = ""')).toThrowError(/E0007/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("refuses a rename onto an existing name in the same layer", () => {
+    const before = readFileSync(path, "utf8");
+    expect(() => renameDef(path, "slot.draft", "todos")).toThrowError(/already exists/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("allows a rename onto a name taken in a different layer", () => {
+    // Namespaces are per layer, so this is legal — and `E0007` must not make
+    // it illegal by accident.
+    renameDef(path, "slot.draft", "matchFilter");
+    expect(load(path).byQName.has("slot.matchFilter")).toBe(true);
+    expect(load(path).byQName.has("fn.matchFilter")).toBe(true);
   });
 
   it("rename updates the def and every reference", () => {
@@ -151,7 +178,319 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
   });
 });
 
+// Every mutator hands back an op-id, and a cascading remove hands back the
+// definitions it took with it. The CLI printed both; the MCP tools dropped
+// them, so one edit had two different answers depending on which surface
+// asked. One function owns the wording now and both surfaces call it, which is
+// what makes them agree — this pins the wording, and the MCP suite pins that
+// the tools go through it.
+describe("describeEdit: the report an edit gives of itself", () => {
+  let removedFrom: string | undefined;
+  afterEach(() => {
+    if (removedFrom) rmSync(dirname(removedFrom), { recursive: true, force: true });
+    removedFrom = undefined;
+  });
+
+  it("puts the requested definition on the headline and the rest under it", () => {
+    const out = describeEdit({
+      op: "remove",
+      qname: "slot.count",
+      opId: "op_0001",
+      removed: ["slot.count", "app.Counter", "tile.App"],
+    });
+    expect(out.split("\n")).toEqual([
+      "removed slot.count  (op_0001)",
+      "  cascaded app.Counter",
+      "  cascaded tile.App",
+    ]);
+  });
+
+  it("stops at the headline when the removal took nothing else", () => {
+    const out = describeEdit({
+      op: "remove",
+      qname: "app.Counter",
+      opId: "op_0002",
+      removed: ["app.Counter"],
+    });
+    expect(out).toBe("removed app.Counter  (op_0002)");
+  });
+
+  it("carries the op-id out of every other kind of edit", () => {
+    expect(describeEdit({ op: "add", qname: "slot.step", opId: "op_1" })).toBe(
+      "added slot.step  (op_1)",
+    );
+    expect(describeEdit({ op: "replace", qname: "slot.step", opId: "op_2" })).toBe(
+      "replaced slot.step  (op_2)",
+    );
+    expect(describeEdit({ op: "edit", qname: "reducer.inc", opId: "op_3" })).toBe(
+      "edited reducer.inc  (op_3)",
+    );
+    expect(
+      describeEdit({ op: "rename", qname: "slot.step", newName: "stride", opId: "op_4" }),
+    ).toBe("renamed slot.step -> stride  (op_4)");
+  });
+
+  it("reports a real cascade off what removeDef returned", () => {
+    // The formatter is only as good as the argument it is given: this is the
+    // pair as the callers use it, on the file the CLI transcript in the
+    // toolchain docs removes from.
+    removedFrom = copy(COUNTER);
+    const result = removeDef(removedFrom, "slot.count", true);
+    expect(result.removed[0]).toBe("slot.count");
+    const out = describeEdit({ op: "remove", qname: "slot.count", ...result });
+    expect(out.split("\n").slice(1)).toEqual([
+      "  cascaded app.Counter",
+      "  cascaded reducer.dec",
+      "  cascaded reducer.inc",
+      "  cascaded reducer.reset",
+      "  cascaded tile.App",
+    ]);
+  });
+});
+
 describe("kumiki fix: auto-patch suggestions", () => {
+  it("appends the list accessor a `for` over a Map is missing (E0218)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-for-"));
+    const file = join(dir, "formap.kumiki");
+    writeFileSync(
+      file,
+      `slot names : Map(Text, Text) = {}
+tile App = column(for k in names text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain('append ".keys" to "names" at 2:28');
+    // The patch has to produce a file that compiles — appending in the wrong
+    // place is worse than proposing nothing.
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("for k in names.keys");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("appends the Set accessor, not a prefix of it (E0218)", () => {
+    // `.to-list` is two words: a remedy pattern that stopped at the first
+    // hyphen would propose `.to`, which parses and means nothing.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-set-"));
+    const file = join(dir, "forset.kumiki");
+    writeFileSync(
+      file,
+      `slot tags : Set(Text) = {}
+tile App = column(for t in tags text(t))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain('append ".to-list" to "tags" at 2:28');
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("for t in tags.to-list");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("declines when the iterated expression is not a plain name (E0218)", () => {
+    // The diagnostic points at where the expression starts, so appending there
+    // would produce `pick.keys(names)`. Reported as a skip with its reason
+    // rather than repaired wrongly.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-for2-"));
+    const file = join(dir, "formap2.kumiki");
+    writeFileSync(
+      file,
+      `slot names : Map(Text, Text) = {}
+fn pick(m: Map(Text, Text)) -> Map(Text, Text) = m
+tile App = column(for k in pick(names) text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.find((sk) => sk.code === "E0218")?.reason).toBe("e0218-target-not-a-plain-name");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rewrites an out-of-scope $route to the slot that holds it (E0119)", () => {
+    // The two name the same route. The bind is only filled in for a route
+    // lifecycle reducer, and the slot is readable from all of them — so the
+    // repair is the `$`, and the patched file has to compile.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-route-"));
+    const file = join(dir, "route.kumiki");
+    writeFileSync(
+      file,
+      `slot seen : Text = ""
+reducer clicked on=ui.click(Btn) do= seen := $route.path
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain(
+      'read the "route" slot instead of "$route" at 2:46',
+    );
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("seen := route.path");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lands both repairs when one line holds two, and the first shifts the second", () => {
+    // `$route` → `route` is a character shorter, so a left-to-right pass moves
+    // the second diagnostic's column by one. The regression gate reads a
+    // diagnostic as `code@line:col`, so the moved one counted as introduced and
+    // the whole plan was rolled back — with the file still holding both errors.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-two-"));
+    const file = join(dir, "two.kumiki");
+    writeFileSync(
+      file,
+      `slot seen : Bool = false
+reducer clicked on=ui.click(Btn) do= seen := $route.path == $route.pattern
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(2);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lands a line-scanning repair beside a positioned one on the same line", () => {
+    // The two families write differently: a name suggestion rewrites the first
+    // match on its line, wherever that is, and `$route` → `route` writes at the
+    // reported column. Composing them right-to-left by position is not enough —
+    // the rightmost `countr` patch rewrites the LEFTMOST one, moves `$route`,
+    // and the positioned patch then declines. Every span goes before every
+    // line-scan for that reason.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-mixed-"));
+    const file = join(dir, "mixed.kumiki");
+    writeFileSync(
+      file,
+      `slot counter : Text = ""
+slot seen : Text = ""
+reducer clicked on=ui.click(Btn) do= seen := countr + $route.path + countr
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(3);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("seen := counter + route.path + counter");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("repairs a diagnostic that does not point at the name it quotes (E0211)", () => {
+    // E0211 reports at the start of the selector and names the tile inside it,
+    // so there is nothing to measure from and the line is the only handle. This
+    // is the whole reason a name suggestion has a line-anchored form at all: a
+    // repair that insisted on writing at the reported column would find
+    // `ui.click(` there, decline, and take the plan down with it.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-selector-"));
+    const file = join(dir, "selector.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+reducer inc on=ui.click(Buton) do= n := n + 1
+tile Button = button(text="+")
+tile App = column(Button, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(1);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain("on=ui.click(Button)");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("names what the gate saw when a diagnostic it cannot repair simply moved", () => {
+    // The gate reads a diagnostic as `code@line:col`, so an unrepairable one to
+    // the right of a repair that lands looks introduced. Ordering cannot reach
+    // this — the message must at least say what it saw, because "it would have
+    // introduced new errors" is false here and sends the reader looking for an
+    // error that does not exist.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-moved-"));
+    const file = join(dir, "moved.kumiki");
+    const source = `slot seen : Text = ""
+reducer clicked on=ui.click(B) do= seen := $route.path + qqqqqqqqqq
+tile B = button(text="go")
+tile App = column(B)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    writeFileSync(file, source);
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(result.blocked?.reason).toBe("introduced");
+    if (result.blocked?.reason === "introduced") {
+      // The same E0103 the file already had, one column to the left.
+      expect(result.blocked.introduced.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toEqual([
+        "E0103@2:57",
+      ]);
+      expect(result.remaining.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toContain(
+        "E0103@2:58",
+      );
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves the file's line endings alone", () => {
+    // A repair used to round-trip the whole file through
+    // `split(/\r?\n/).join("\n")`, so one token's rewrite silently rewrote every
+    // CRLF in the file — on the platform where CRLF is the default.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-crlf-"));
+    const file = join(dir, "crlf.kumiki");
+    const source = [
+      'slot counter : Text = ""',
+      "reducer clicked on=ui.click(Btn) do= counter := $route.path",
+      'tile Btn = button(text="go")',
+      "tile App = column(Btn)",
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+      "",
+    ].join("\r\n");
+    writeFileSync(file, source);
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(1);
+    const after = readFileSync(file, "utf8");
+    expect(after).toBe(source.replace("$route.path", "route.path"));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("suggests did-you-mean for an undef slot reference", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-"));
     const file = join(dir, "broken.kumiki");
@@ -174,6 +513,125 @@ app Counter
     const descs = patches.map((p) => p.description);
     expect(descs.some((d) => d.includes(`replace "conut" with "count"`))).toBe(true);
     expect(descs.some((d) => d.includes(`"/404" -> NotFound`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close fn name for an undefined call, and applies it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-call-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+fn double(x: Int) -> Int = x * 2
+reducer inc on=ui.click(B) do= n := doubel(n)
+tile B = button(text="+")
+tile App = column(B, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([`replace "doubel" with "double" at 3:37`]);
+    fixCmd(file, true);
+    expect(check(load(file).program)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a builtin, not only a declared fn", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-builtin-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot t : Text = "Light"
+reducer initTheme on=app.start do= t := if prefers-drak() then "Dark" else "Light"
+tile App = column(text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    const descs = planFixes(store, check(store.program)).map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "prefers-drak" with "prefers-dark"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close type name for an undefined type, and applies it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-type-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `type Filter = All | Done
+slot f : Filtre = All
+tile App = column(text("x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    expect(planFixes(store, check(store.program)).map((p) => p.description)).toEqual([
+      `replace "Filtre" with "Filter" at 2:10`,
+    ]);
+    fixCmd(file, true);
+    expect(check(load(file).program)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a standard-library type, not only a declared one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-stdtype-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot e : Option(HttpErrro) = None
+tile App = column(text("x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    const descs = planFixes(store, check(store.program)).map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "HttpErrro" with "HttpError"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close variant tag for a constructor the union does not have", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-variant-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `type Status = Idle | Running
+slot s : Status = Runing
+tile App = column(text("x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const store = load(file);
+    expect(planFixes(store, check(store.program)).map((p) => p.description)).toEqual([
+      `replace "Runing" with "Running" at 2:19`,
+    ]);
+    fixCmd(file, true);
+    expect(check(load(file).program)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rewrites the reported column, not the line's first word-boundary match", () => {
+    // Kumiki names are kebab-case, so `\b` matches at each `-`: the first
+    // boundary match for `laod` on this line sits inside `re-laod`, which is
+    // defined and was never the name reported.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-col-"));
+    const file = join(dir, "broken.kumiki");
+    writeFileSync(
+      file,
+      `slot n : Int = 0
+fn re-laod(x: Int) -> Int = x + 1
+fn load(x: Int) -> Int = x * 2
+reducer go on=ui.click(B) do= n := re-laod(laod(n))
+tile B = button(text="+")
+tile App = column(B, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    fixCmd(file, true);
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("re-laod(load(n))");
+    expect(after).toContain("fn re-laod(x: Int)");
+    expect(check(load(file).program)).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -440,7 +898,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="+")',
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 2}}",
         "",
       ].join("\n"),
@@ -471,7 +929,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="toggle")',
         "test t =",
         "    reducer-test flip",
-        "        given  = {slots: {flag: false}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {flag: false}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {flag: false}}",
         "",
       ].join("\n"),
@@ -502,7 +960,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="toggle")',
         "test t =",
         "    reducer-test flip",
-        "        given  = {slots: {flag: true}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {flag: true}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {flag: true}}",
         "",
       ].join("\n"),
@@ -535,7 +993,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile App = column(heading("x"), DecBtn)',
         "test t =",
         "    reducer-test dec",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: DecBtn, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: DecBtn}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
@@ -577,7 +1035,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile App = column(heading("x"), B)',
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 6}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 6}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 8}}",
         "",
       ].join("\n"),
@@ -636,7 +1094,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="-")',
         "test t =",
         "    reducer-test dec",
-        "        given  = {slots: {count: 5}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 5}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 4}}",
         "",
       ].join("\n"),
@@ -669,7 +1127,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
         'tile B = button(text="mul")',
         "test t =",
         "    reducer-test mul",
-        "        given  = {slots: {count: 2}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 2}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 6}}",
         "",
       ].join("\n"),
@@ -935,6 +1393,151 @@ describe("planFixes: expanded auto-patch coverage", () => {
     const patches = planFixes(store, errors);
     const descs = patches.map((p) => p.description);
     expect(descs.some((d) => d.includes(`replace "fadeInn" with "fadeIn"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close tile name for E0211 (undef tile in a lifecycle event)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0211-lifecycle-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot mounts : Int = 0",
+        'tile Panel = card(text("p"))',
+        "reducer onPanel on=tile.mount(Pannel) do= mounts := mounts + 1",
+        "tile App = column(Panel)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "Pannel" with "Panel"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close standard-effect name for E0104", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0104-builtin-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n : Int = 0",
+        'tile Btn = button(text="go", onClick=go)',
+        'reducer go on=ui.click(Btn) do= emit navigat({path: "/x", params: {}})',
+        "tile App = column(Btn)",
+        "app A",
+        "    caps   = [nav.push]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    // The standard effects are in no definition list, so before they were a
+    // candidate set of their own this had no proposal at all.
+    expect(descs.some((d) => d.includes(`replace "navigat" with "navigate"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close effect name for an on=<effect>.ok selector", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0104-selector-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n : Int = 0",
+        "effect load cap=http.get in=Unit out=Result(Text, HttpError)",
+        "reducer got on=laod.ok($v, _) do= n := 1",
+        'tile App = column(text("hi"))',
+        "app A",
+        "    caps   = [http.get]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "laod" with "load"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close reducer name for an app.http handler", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0102-http-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n : Int = 0",
+        "reducer onUnauth on=app.start do= n := 1",
+        'tile App = column(text("hi"))',
+        "app A",
+        "    caps   = [http.get]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        '    http   = {base-url: "/api", on-401: onUnath}',
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "onUnath" with "onUnauth"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close slot name for E0118, not only a theme name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0118-slot-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        'slot themeName : Text = "Light"',
+        'theme Light = {colors: {bg: "#fff"}}',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "    theme  = themeNam",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "themeNam" with "themeName"`))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("suggests a close theme or slot name for E0118", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0118-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        'theme Light = {colors: {bg: "#fff"}}',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "    theme  = Ligth",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    const descs = patches.map((p) => p.description);
+    expect(descs.some((d) => d.includes(`replace "Ligth" with "Light"`))).toBe(true);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1403,7 +2006,7 @@ describe("write-failure handling", () => {
         "    init   = []",
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
@@ -1554,25 +2157,26 @@ describe("write-failure handling", () => {
       ].join("\n"),
     );
     const before = readFileSync(file, "utf8");
-    const prevExit = process.exitCode;
     const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
       throw new Error("EACCES: simulated fixCmd");
     });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      fixCmd(file, true);
+      // The code is returned rather than written to `process.exitCode`: this
+      // call is in-process, and a function that set the exit code as a side
+      // effect would fail the vitest worker that called it.
+      const code = fixCmd(file, true);
       const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
       expect(stderr).toContain(`could not write fixes to ${file}`);
       expect(stderr).toContain("EACCES");
-      expect(process.exitCode).toBe(1);
+      expect(code).toBe(1);
       // On-disk file unchanged.
       expect(readFileSync(file, "utf8")).toBe(before);
     } finally {
       writeSpy.mockRestore();
       errSpy.mockRestore();
       logSpy.mockRestore();
-      process.exitCode = prevExit;
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -1602,8 +2206,8 @@ describe("op log: spec §9.3.2 wire format", () => {
   });
 
   it("chains parent-ops to the last op-id", () => {
-    const first = addDef(path, "slot", "lastSync", "Time = 0");
-    const second = addDef(path, "slot", "prevSync", "Time = 0");
+    const first = addDef(path, "slot", "lastSync", "Option(Time) = None");
+    const second = addDef(path, "slot", "prevSync", "Option(Time) = None");
     const log = readOpLog(path);
     expect(log).toHaveLength(2);
     expect(log[0]!["op-id"]).toBe(first);
@@ -1615,8 +2219,8 @@ describe("op log: spec §9.3.2 wire format", () => {
     // §9.3.3 decides same-name add winners by op-id lexicographic order, so
     // op-ids must be monotonic with creation time — that's why the id is a
     // ULID (10-char ms timestamp + 16 random chars) rather than fully random.
-    const first = addDef(path, "slot", "lastSync", "Time = 0");
-    const second = addDef(path, "slot", "prevSync", "Time = 0");
+    const first = addDef(path, "slot", "lastSync", "Option(Time) = None");
+    const second = addDef(path, "slot", "prevSync", "Option(Time) = None");
     expect(first).toMatch(/^op_[0-9A-HJ-NP-TV-Z]{26}$/);
     expect(second).toMatch(/^op_[0-9A-HJ-NP-TV-Z]{26}$/);
     // Time-prefix (chars 3..13) must be non-decreasing across calls.
@@ -1627,7 +2231,7 @@ describe("op log: spec §9.3.2 wire format", () => {
     const prev = process.env.KUMIKI_AUTHOR;
     process.env.KUMIKI_AUTHOR = "agent:claude-7";
     try {
-      addDef(path, "slot", "lastSync", "Time = 0");
+      addDef(path, "slot", "lastSync", "Option(Time) = None");
       const log = readOpLog(path);
       expect(log[0]!.author).toBe("agent:claude-7");
     } finally {
@@ -1727,21 +2331,21 @@ describe("patch apply / revert", () => {
   it("applies a JSONL ops bundle in order", () => {
     const opsFile = join(dirname(path), "ops.jsonl");
     const ops = [
-      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
-      { op: "replace", layer: "slot", name: "lastSync", body: "Time = 100" },
+      { op: "add", layer: "slot", name: "lastSync", body: "Option(Time) = None" },
+      { op: "replace", layer: "slot", name: "lastSync", body: "Option(Time) = Some(now)" },
     ];
     writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
     const ids = patchApplyFile(path, opsFile);
     expect(ids).toHaveLength(2);
     const store = load(path);
-    expect(viewDef(store, "slot.lastSync")).toContain("= 100");
+    expect(viewDef(store, "slot.lastSync")).toContain("= Some(now)");
   });
 
   it("rolls back the file when any op in the bundle fails", () => {
     const before = readFileSync(path, "utf8");
     const opsFile = join(dirname(path), "ops.jsonl");
     const ops = [
-      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "add", layer: "slot", name: "lastSync", body: "Option(Time) = None" },
       { op: "add", layer: "tile", name: "Broken", body: "column(Nonexistent)" },
     ];
     writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
@@ -1756,7 +2360,7 @@ describe("patch apply / revert", () => {
     const { existsSync: exists } = await import("node:fs");
     const opsFile = join(dirname(path), "ops.jsonl");
     const ops = [
-      { op: "add", layer: "slot", name: "lastSync", body: "Time = 0" },
+      { op: "add", layer: "slot", name: "lastSync", body: "Option(Time) = None" },
       { op: "add", layer: "tile", name: "Broken", body: "column(Nonexistent)" },
     ];
     writeFileSync(opsFile, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
@@ -1765,7 +2369,7 @@ describe("patch apply / revert", () => {
   });
 
   it("reverts an add op via patchRevert", () => {
-    const id = addDef(path, "slot", "lastSync", "Time = 0");
+    const id = addDef(path, "slot", "lastSync", "Option(Time) = None");
     expect(load(path).byQName.has("slot.lastSync")).toBe(true);
     patchRevert(path, id);
     expect(load(path).byQName.has("slot.lastSync")).toBe(false);
@@ -1802,10 +2406,10 @@ describe("viewHistory / viewHash", () => {
   });
 
   it("returns ops for one qname in chronological order", () => {
-    addDef(path, "slot", "lastSync", "Time = 0");
-    replaceDef(path, "slot.lastSync", "Time = 1");
-    replaceDef(path, "slot.lastSync", "Time = 2");
-    addDef(path, "slot", "other", "Time = 0"); // irrelevant
+    addDef(path, "slot", "lastSync", "Option(Time) = None");
+    replaceDef(path, "slot.lastSync", "Option(Time) = Some(now)");
+    replaceDef(path, "slot.lastSync", "Option(Time) = None");
+    addDef(path, "slot", "other", "Option(Time) = None"); // irrelevant
     const hist = viewHistory(path, "slot.lastSync");
     expect(hist).toHaveLength(3);
     expect(hist[0]!.op).toBe("add");
@@ -1870,7 +2474,7 @@ describe("ownership lock", () => {
     process.env.KUMIKI_AUTHOR = "agent-1";
     lockDef(path, "agent-1", "slot.todos*");
     process.env.KUMIKI_AUTHOR = "agent-2";
-    expect(() => addDef(path, "slot", "lastSync", "Time = 0")).not.toThrow();
+    expect(() => addDef(path, "slot", "lastSync", "Option(Time) = None")).not.toThrow();
   });
 
   it("unlock removes the agent's claim", () => {
@@ -1890,11 +2494,11 @@ describe("parallel op merge", () => {
     const aFirst = copy(TODOMVC);
     const bFirst = copy(TODOMVC);
     // a: add new slot. b: rename slot.draft → newDraft.
-    addDef(aFirst, "slot", "lastSync", "Time = 0");
+    addDef(aFirst, "slot", "lastSync", "Option(Time) = None");
     renameDef(aFirst, "slot.draft", "newDraft");
 
     renameDef(bFirst, "slot.draft", "newDraft");
-    addDef(bFirst, "slot", "lastSync", "Time = 0");
+    addDef(bFirst, "slot", "lastSync", "Option(Time) = None");
 
     const aStore = load(aFirst);
     const bStore = load(bFirst);
@@ -2041,6 +2645,129 @@ describe("planFixesExplained: skip-reason classification", () => {
       synth("E0209", 'Variant "ZZZZZZZZZZ" is not a member of scrutinee type "Light"'),
     ]);
     expect(skipped[0]?.reason).toBe("e0209-no-close-tag");
+  });
+
+  it("e0116-quoted-name-extract-failed: E0116 message without a quoted name", () => {
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0116", "call to something undefined"),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0116-quoted-name-extract-failed");
+  });
+
+  it("e0116-no-close-callee: typo too far from every fn and builtin", () => {
+    const store = writeAndLoad(
+      ["fn double(x: Int) -> Int = x * 2", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { skipped } = planFixesExplained(store, [
+      synth("E0116", 'Call to undefined function "ZZZZZZZZZZ"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0116-no-close-callee");
+  });
+
+  it("e0116: a close slot name is not a candidate, so no patch is proposed", () => {
+    // The whole point of the scoped candidate set: `doubel` is one edit from
+    // the slot `double`, but a slot cannot be called, so proposing it would
+    // produce E0116 again and burn a repair round.
+    const store = writeAndLoad(
+      ["slot doubel-value : Int = 0", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0116", 'Call to undefined function "doubel-value"'),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0116-no-close-callee");
+  });
+
+  it("e0116: a misspelt type member is answered on its own qualifier", () => {
+    // `fresh` / `parse` / `show` resolve on any capitalised qualifier, so there
+    // is no table of qualified spellings to suggest from — the candidate is
+    // built from the qualifier the author wrote. Without it, `Int.pasre` had no
+    // repair at all: the callee list is `fn` names and unqualified builtins.
+    //
+    // Run end to end rather than from a synthesised diagnostic: the two joins
+    // that can break are the message shape the compiler emits for a qualified
+    // callee, and whether `replaceAt` — which splices at an exact column —
+    // rewrites a dotted name.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-qualified-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot a : Int = 0",
+        'slot t : Text = "1"',
+        "reducer r on=ui.click(B) do= a := Int.pasre(t).get-or(0)",
+        'tile B = button(text="b")',
+        "tile App = column(B, text(a.show), text(t))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toContain(
+      'replace "Int.pasre" with "Int.parse" at 3:35',
+    );
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("a := Int.parse(t).get-or(0)");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("e0117-quoted-name-extract-failed: E0117 message without a quoted name", () => {
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { patches, skipped } = planFixesExplained(store, [synth("E0117", "some undefined type")]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0117-quoted-name-extract-failed");
+  });
+
+  it("e0117-no-close-type: typo too far from every type name", () => {
+    const store = writeAndLoad(
+      ["type Filter = All | Done", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { skipped } = planFixesExplained(store, [
+      synth("E0117", 'Reference to undefined type "ZZZZZZZZZZ"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0117-no-close-type");
+  });
+
+  it("e0117: a close slot name is not a candidate, so no patch is proposed", () => {
+    // Same namespace argument as E0116: `Filtr` is one edit from the slot
+    // `Filtar`, but a slot name in a type position is E0117 again.
+    const store = writeAndLoad(
+      ["slot Filtar : Int = 0", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { patches, skipped } = planFixesExplained(store, [
+      synth("E0117", 'Reference to undefined type "Filtar"'),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0117-no-close-type");
+  });
+
+  it("e0216-quoted-name-extract-failed: E0216 message without both quoted names", () => {
+    const store = writeAndLoad('tile A = heading("hi")\n');
+    const { skipped } = planFixesExplained(store, [synth("E0216", 'Variant "Zork" is unknown')]);
+    expect(skipped[0]?.reason).toBe("e0216-quoted-name-extract-failed");
+  });
+
+  it("e0216-unresolved-variant-type: the named type is not a union", () => {
+    const store = writeAndLoad(["type N = Int", 'tile App = heading("hi")', ""].join("\n"));
+    const { skipped } = planFixesExplained(store, [
+      synth("E0216", 'Variant "Zork" is not a member of type "N"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0216-unresolved-variant-type");
+  });
+
+  it("e0216-no-close-tag: typo too far from every tag of the union", () => {
+    const store = writeAndLoad(["type S = Idle | Busy", 'tile App = heading("hi")', ""].join("\n"));
+    const { skipped } = planFixesExplained(store, [
+      synth("E0216", 'Variant "ZZZZZZZZZZ" is not a member of type "S"'),
+    ]);
+    expect(skipped[0]?.reason).toBe("e0216-no-close-tag");
   });
 
   it("e0301-quoted-name-extract-failed: E0301 message without the `requires capability` phrase", () => {
@@ -2576,6 +3303,38 @@ describe("planTestPatchExplained: skip-reason classification", () => {
 });
 
 describe("FixFromTestOutcome.reason propagation and printer", () => {
+  it("runFixFromTest: Tier-1 lands both repairs when one line holds two", async () => {
+    // The tier-1 loop composes the same plan `applyFixPlan` does, and writes
+    // without a regression gate — so a repair that moved another's column
+    // failed silently here instead of rolling back.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-tier1-two-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot seen : Bool = false",
+        "reducer clicked on=ui.click(B) do= seen := $route.path == $route.pattern",
+        'tile B = button(text="go")',
+        "tile App = column(B)",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "test t =",
+        "    reducer-test clicked",
+        "        given  = {slots: {seen: false}, event: {type: ui.click, target: B}}",
+        "        expect = {slots: {seen: true}}",
+        "",
+      ].join("\n"),
+    );
+    const outcome = await runFixFromTest(file, "t", true);
+    // Both, not one: a plan that lands half its patches leaves the file still
+    // holding the diagnostic it reported as repaired.
+    expect(outcome.compileFixes).toBe(2);
+    expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("runFixFromTest: Tier-2 no-patch surfaces the tier planner's reason", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-outcome-reason-"));
     const file = join(dir, "in.kumiki");
@@ -2616,7 +3375,8 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     // `app` def in the file, so `planFixesExplained` records
     // `e0301-no-app-def` and returns zero patches. `runFixFromTest` must
     // surface that reason into the outcome, and `printFixFromTest` must
-    // print it above the compile errors.
+    // print it above the compile errors. E0003 fires on the same file and is
+    // appended after, which is what keeps the specific reason first.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-compile-reason-e2e-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -2638,6 +3398,7 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
       expect(outcome.status).toBe("no-patch");
       if (outcome.status === "no-patch") {
         expect(outcome.compileErrors?.some((e) => e.code === "E0301")).toBe(true);
+        expect(outcome.compileErrors?.some((e) => e.code === "E0003")).toBe(true);
         expect(outcome.reason).toBe("e0301-no-app-def");
       }
       const stdout = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
@@ -2650,10 +3411,13 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
   });
 
   it("runFixFromTest: testRunError variant carries reason=test-runner-threw and printer surfaces it", async () => {
-    // The old-style `event: {kind: click, ...}` compiles but references the
-    // unbound `click` identifier at test evaluation time — the compiled
-    // module throws `ReferenceError: click is not defined` inside
-    // `testFile`, exercising the `try { testFile(...) }` catch path.
+    // The branch under test is what `runFixFromTest` does when the test module
+    // throws instead of reporting. Reaching it through a *program* means
+    // relying on something the checker does not catch — this test used to use
+    // an unbound identifier in a test body, which is E0103 now, and the next
+    // candidate (a tile-test that omits the `in` its tile declares) is itself
+    // filed as a gap. So the throw comes from the runner rather than from a
+    // program, and no future check can take it away.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-runner-throw-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -2669,14 +3433,22 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
         "    init   = []",
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
     );
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.resetModules();
+    vi.doMock("../src/smoke.ts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../src/smoke.ts")>()),
+      testFile: () => {
+        throw new Error("the generated module threw");
+      },
+    }));
     try {
-      const outcome = await fixFromTest(file, "t", false);
+      const { fixFromTest: withThrowingRunner } = await import("../src/fix.ts");
+      const outcome = await withThrowingRunner(file, "t", false);
       expect(outcome.status).toBe("no-patch");
       if (outcome.status === "no-patch") {
         expect(outcome.testRunError).toBeDefined();
@@ -2686,6 +3458,8 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
       expect(stderr).toContain("could not run tests");
       expect(stderr).toMatch(/reason:\s+test-runner-threw/);
     } finally {
+      vi.doUnmock("../src/smoke.ts");
+      vi.resetModules();
       errSpy.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
@@ -2752,7 +3526,7 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
         "    init   = []",
         "test t =",
         "    reducer-test inc",
-        "        given  = {slots: {count: 0}, event: {kind: click, tile: B, id: none}}",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}",
         "        expect = {slots: {count: 1}}",
         "",
       ].join("\n"),
@@ -2913,5 +3687,152 @@ describe("KUMIKI_DEBUG=fix hook", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+// Reference resolution used to be a name match over the source text, so a
+// record field, a word in a comment, a string literal and a loop variable all
+// counted as references to a definition that merely shared their spelling.
+// `rename` rewrote every one of them; `remove --cascade` followed them; `refs`
+// and `view --with-deps` disagreed because only one of the two stripped strings.
+describe("references resolve through the AST, not the source text", () => {
+  // `label` is a slot AND a record field AND a word in a comment. Only the slot
+  // and its one real reference may move.
+  const AMBIGUOUS = `type ItemId = nominal Text where len-eq(3)
+type Item   = {id: ItemId, label: Text}
+
+# a counter whose label says count
+slot label : Text = "hi"
+slot count : Int  = 0
+
+reducer bump on=ui.click(Btn) do= count := count + 1
+
+tile Btn = button(text="label", onClick=bump)
+tile App = column(Btn, text(label))
+
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  function write(src: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-refs-"));
+    const dst = join(dir, "input.kumiki");
+    writeFileSync(dst, src);
+    return dst;
+  }
+
+  it("renames a slot without touching a record field of the same name", () => {
+    const f = write(AMBIGUOUS);
+    renameDef(f, "slot.label", "caption");
+    const out = readFileSync(f, "utf8");
+    expect(out).toContain("type Item   = {id: ItemId, label: Text}");
+    expect(out).toContain("slot caption : Text");
+    expect(out).toContain("text(caption)");
+  });
+
+  it("leaves the name alone inside a comment and a string literal", () => {
+    const f = write(AMBIGUOUS);
+    renameDef(f, "slot.label", "caption");
+    const out = readFileSync(f, "utf8");
+    expect(out).toContain("# a counter whose label says count");
+    expect(out).toContain('button(text="label"');
+  });
+
+  it("refuses a rename that would collide with an existing definition", () => {
+    const f = write(AMBIGUOUS);
+    expect(() => renameDef(f, "slot.label", "count")).toThrow(/already exists/);
+    expect(readFileSync(f, "utf8")).toBe(AMBIGUOUS);
+  });
+
+  it("does not count a definition as a reference to itself", () => {
+    const store = load(COUNTER);
+    for (const e of listDefs(store)) {
+      const q = `${e.layer}.${e.name}`;
+      expect(findReferences(store, q).map((r) => r.qname)).not.toContain(q);
+    }
+  });
+
+  // `refs` and `view --with-deps` read the same edge from opposite ends. They
+  // used to disagree: `findReferences` stripped strings before matching and
+  // `directDeps` did not, so a name inside a string literal was a dependency in
+  // one direction and not a reference in the other — and the op log's
+  // `depends-on` recorded the looser of the two.
+  //
+  // Comparing the two APIs to each other would prove nothing now: they read one
+  // shared table, so the comparison is an identity. The edges are pinned
+  // literally instead, which is what would actually go red if the walk changed.
+  it("reports the edges of a known file exactly, in both directions", () => {
+    const store = load(COUNTER);
+    expect(directDeps(store, "app.Counter")).toEqual(["tile.App"]);
+    expect(directDeps(store, "tile.App")).toEqual([
+      "slot.count",
+      "tile.DecBtn",
+      "tile.IncBtn",
+      "tile.ResetBtn",
+    ]);
+    expect(directDeps(store, "slot.count")).toEqual(["type.N"]);
+    expect(directDeps(store, "type.N")).toEqual([]);
+
+    expect(
+      findReferences(store, "slot.count")
+        .map((r) => r.qname)
+        .sort(),
+    ).toEqual(["reducer.dec", "reducer.inc", "reducer.reset", "tile.App"]);
+    expect(findReferences(store, "type.N").map((r) => r.qname)).toEqual(["slot.count"]);
+    // `IncBtn` is named by its reducer's selector and by `tile App` — the
+    // selector edge is the one the AST used to drop.
+    expect(
+      findReferences(store, "tile.IncBtn")
+        .map((r) => r.qname)
+        .sort(),
+    ).toEqual(["reducer.inc", "tile.App"]);
+  });
+
+  it("keeps a definition out of its own reference list even when it recurses", () => {
+    const f = write(`slot depth : Int = 0
+fn countdown(n: Int) -> Int = if n <= 0 then 0 else countdown(n - 1)
+tile Node = column(text(depth.show), Node)
+tile App = column(Node, text(countdown(depth).show))
+
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    const store = load(f);
+    expect(directDeps(store, "fn.countdown")).toEqual([]);
+    expect(directDeps(store, "tile.Node")).toEqual(["slot.depth"]);
+    expect(findReferences(store, "tile.Node").map((r) => r.qname)).toEqual(["tile.App"]);
+  });
+
+  it("cascade removal reports every definition it deletes, as one op", () => {
+    const f = copy(COUNTER);
+    const { removed } = removeDef(f, "slot.count", true);
+    // `count` is read by all three reducers and by `tile App`, and `App` is the
+    // only route target, so `app Counter` goes with it. The three buttons are
+    // referenced BY the reducers, not the other way round, so they survive.
+    // The requested definition comes first — a replay applies it as the head of
+    // the bundle — so compare the set, then pin the head separately.
+    expect(removed[0]).toBe("slot.count");
+    expect([...removed].sort()).toEqual([
+      "app.Counter",
+      "reducer.dec",
+      "reducer.inc",
+      "reducer.reset",
+      "slot.count",
+      "tile.App",
+    ]);
+    const after = load(f);
+    expect(
+      listDefs(after)
+        .map((e) => `${e.layer}.${e.name}`)
+        .sort(),
+    ).toEqual(["tile.DecBtn", "tile.IncBtn", "tile.ResetBtn", "type.N"]);
+    const log = readOpLog(f);
+    expect(log).toHaveLength(1);
+    expect(log[0]?.removed).toEqual(removed);
+    expect(log[0]?.cascade).toBe(true);
   });
 });

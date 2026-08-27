@@ -1,5 +1,7 @@
 # Style, Layout, and Theme
 
+How a tile gets its appearance. You never write CSS: [§4.1](#_4-1-policy) says why, [§4.2](#_4-2-design-tokens) defines the design tokens an app draws from, and [§4.4](#_4-4-layout) covers the layout props tiles accept.
+
 ## 4.1 Policy
 
 Kumiki **does not let you write CSS directly**. CSS cascade, specificity, and inheritance are the biggest source of hidden dependencies for an AI, and they conflict with Kumiki's "statically trackable side effects" principle.
@@ -19,7 +21,7 @@ This covers the visual needs of an ordinary SPA. Reusable, arbitrary animations 
 
 Declared in a `theme` definition:
 
-```kumiki
+```kumiki fragment
 theme DefaultTheme = {
     colors: {
         bg:        "#ffffff",
@@ -75,7 +77,7 @@ theme-entry ::= identifier ':' (string | '{' theme-entry (',' theme-entry)* '}')
 
 ### 4.2.2 Applying It to an app
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
@@ -89,7 +91,7 @@ app TodoApp
 
 To reference a token inside a tile prop, use the `@` prefix:
 
-```kumiki
+```kumiki fragment
 tile Card = box(
               column(
                 heading("Title"),
@@ -121,7 +123,7 @@ Frequently used style props are provided as **common props** and are resolved wi
 | `size` | typography.size token name | `size: "lg"` |
 | `weight` | typography.weight token name | `weight: "bold"` |
 
-```kumiki
+```kumiki fragment
 tile Card = box(
               column(
                 heading("Title") {size: "lg", weight: "bold"},
@@ -144,7 +146,7 @@ Layout is expressed via **tile structure**, not CSS.
 
 ### 4.4.1 row / column
 
-```kumiki
+```kumiki snippet
 row(A, B, C) {gap: "md", align: "center", justify: "between"}
 column(A, B, C) {gap: "sm", align: "stretch"}
 ```
@@ -158,9 +160,9 @@ column(A, B, C) {gap: "sm", align: "stretch"}
 
 ### 4.4.2 grid
 
-```kumiki
+```kumiki snippet
 grid(A, B, C, D) {cols: 2, gap: "md"}
-grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     ; number or array
+grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     # number or array
 ```
 
 | prop | Value |
@@ -174,13 +176,13 @@ grid(A, B, C) {cols: [1, "auto", 1], gap: "sm"}     ; number or array
 
 `stack` is a **vertical stack** — a layout semantically equivalent to `column` (stacking children vertically). Use it when you want the visual nuance of "stacking."
 
-```kumiki
+```kumiki snippet
 stack(Card1, Card2, Card3) {gap: "md"}
 ```
 
 **Overlay (z-axis stacking).** Use the `overlay` builtin to stack children on the z-axis:
 
-```kumiki
+```kumiki snippet
 overlay(Content, when(modalOpen, Modal())) {align: "center"}
 ```
 
@@ -195,7 +197,7 @@ overlay(Content, when(modalOpen, Modal())) {align: "center"}
 | `scroll` | A container with overflow auto. Specify `h` for fixed-height scrolling |
 | `fieldset` | A field group within a form. Equivalent to `<fieldset>` |
 
-```kumiki
+```kumiki snippet
 panel(heading("Settings"), settingsForm) {bg: "surface", pad: "md"}
 region(navList) {role: "navigation", aria-label: "Main"}
 scroll(longList) {h: 400}
@@ -203,17 +205,20 @@ scroll(longList) {h: 400}
 
 ### 4.4.5 divider
 
-A horizontal line (`<hr>`). For separators:
+A rule (`<hr>`). For separators:
 
-```kumiki
+```kumiki snippet
 column(A, divider(), B)
+row(A, divider() {orientation: "vertical"}, B)
 ```
+
+`orientation` takes `horizontal` (the default) or `vertical`; a vertical rule stretches to the height of the row it is in.
 
 ### 4.4.6 box
 
 A general-purpose container. Decorate it with pad/bg/radius/shadow and so on:
 
-```kumiki
+```kumiki snippet
 box(content) {
     pad: "lg",
     bg: "primary",
@@ -226,12 +231,14 @@ box(content) {
 
 | prop | Meaning |
 |---|---|
-| `w` | width. `"full"` / `"auto"` / `"sm"` / number (px) |
+| `w` | width. `"full"` (the whole containing box) / a number (px) / any CSS length |
 | `h` | height |
 | `min-w`, `min-h`, `max-w`, `max-h` | min/max |
 | `aspect` | `"1/1"` / `"16/9"`, etc. |
 
-```kumiki
+Unlike `pad` / `gap` / `radius` / `shadow`, these are not token names: there is no width scale in the theme, so `"sm"` here would be a name with nothing behind it. A number is pixels and anything else is passed through as CSS (`"auto"`, `"50vh"`, `"32rem"`), with `"full"` as the one shorthand.
+
+```kumiki snippet
 image(src=url) {w: "full", max-w: 600, aspect: "16/9"}
 ```
 
@@ -241,7 +248,7 @@ image(src=url) {w: "full", max-w: 600, aspect: "16/9"}
 
 Style props can branch by breakpoint via an object:
 
-```kumiki
+```kumiki snippet
 column(A, B, C) {
     gap: {base: "sm", md: "md", lg: "lg"},
     pad: {base: "md", lg: "xl"}
@@ -260,7 +267,7 @@ The keys are `base` plus the keys of theme.breakpoints (`sm`, `md`, `lg`, `xl`).
 
 Define multiple themes and switch a `slot theme-name`:
 
-```kumiki
+```kumiki snippet
 theme Light = {colors: {bg: "#fff", fg: "#000", ...}, ...}
 theme Dark  = {colors: {bg: "#0a0a0a", fg: "#fff", ...}, ...}
 
@@ -274,14 +281,16 @@ app App
     caps   = []
     routes = {"/" -> Home, "/404" -> NotFound}
     init   = []
-    theme  = themeName        ; points directly at a slot
+    theme  = themeName        # points directly at a slot
 ```
 
-When you specify a slot as in `theme = themeName`, the theme switches whenever that value changes. The value of `themeName` must be one of the declared theme names (checked by the compiler).
+When you specify a slot as in `theme = themeName`, the theme switches whenever that value changes.
+
+The name in the clause is resolved by the compiler: it must be a declared `theme` or a declared slot, and anything else is [E0118](./errors.md#e0118-undef-theme). The *value* that slot holds is not. It should be one of the declared theme names — as it is in the example above — but it does not have to be at every moment: an app that picks its theme on `app.start` ([§4.6.1](#_4-6-1-following-os-settings)) may start the slot at a sentinel that names no theme, precisely so that a helper which failed to run is visible. A sentinel and a misspelling are the same program, so telling them apart takes intent. A value that matches no theme renders with the built-in defaults.
 
 ### 4.6.1 Following OS Settings
 
-```kumiki
+```kumiki fragment
 reducer initTheme
     on=app.start
     do= themeName := if prefers-dark() then "Dark" else "Light"
@@ -295,11 +304,11 @@ reducer initTheme
 
 Tile primitives have per-state props:
 
-```kumiki
+```kumiki snippet
 button(text="Save") {
     bg: "primary",
     color: "bg",
-    hover: {bg: "primary-dark"},      ; warns if the token is undefined
+    hover: {bg: "primary-dark"},      # an unknown token is passed through as a CSS value
     focus: {shadow: "md"},
     disabled: {bg: "muted", color: "border"}
 }
@@ -313,7 +322,7 @@ Supported state keys: `hover` / `focus` / `active` / `disabled` / `selected` / `
 
 The `icon` element is referenced by name:
 
-```kumiki
+```kumiki snippet
 icon(name="check") {size: "md", color: "success"}
 ```
 
@@ -343,12 +352,12 @@ Auto-bundling only triggers when `name` is a string literal — e.g. `icon(name=
 
 Register custom names, or override any built-in, through `theme.icons`. Each value is the `d` attribute of a single `<path>` inside a 24×24 viewBox — the same convention as the built-in set.
 
-```kumiki
+```kumiki snippet
 theme MyTheme = {
     ...,
     icons: {
-        logo:  "M3 3h18v18H3z..."     ; custom name
-        check: "M4 12l5 5L20 6"        ; overrides the built-in
+        logo:  "M3 3h18v18H3z..."     # custom name
+        check: "M4 12l5 5L20 6"        # overrides the built-in
     }
 }
 ```
@@ -374,7 +383,7 @@ The fail-soft `[name]` placeholder is the right default for AI-first authoring, 
 
 Applied automatically to tiles whose visibility is toggled with `when`:
 
-```kumiki
+```kumiki snippet
 when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 ```
 
@@ -382,7 +391,7 @@ when(modalOpen, Modal() {transition: "slide-up", transition-duration: "normal"})
 
 For reusable, arbitrary (but still closed-grammar) animations — spinners, pulses, custom enter/exit — declare a **`motion`**. It is a top-level definition, a sibling of `theme` (a purely presentational definition, **not** one of the seven logic layers — see [List of Layers](./language.md#_1-1-1-list-of-layers)). It is referenced from any tile's `motion` prop.
 
-```kumiki
+```kumiki fragment
 motion Spin = {
     keyframes: {from: {rotate: 0}, to: {rotate: 360}},
     duration:  "slow",        # "fast" | "normal" | "slow", or a positive Int (milliseconds)
@@ -420,7 +429,7 @@ Rationale: global CSS becomes an implicit dependency the AI cannot track. All de
 
 Exception: meta tags and OG images in `<head>` are declared via `app.meta`:
 
-```kumiki
+```kumiki snippet
 app TodoApp
     ...
     meta = {

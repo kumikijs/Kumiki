@@ -1,11 +1,37 @@
-import type { Expr, Pattern } from "../ast.ts";
-import { addBind, type EvalCtx, jsName, makeEvalCtx } from "./context.ts";
+import type { Expr, Pattern, Pos } from "../ast.ts";
+import { addBind, type EvalCtx, jsBinding, jsProperty, makeEvalCtx } from "./context.ts";
 
 /** Extract the reducer name from a `run-reducer(name)` argument (a bare ref). */
 export function reducerNameArg(e: Expr | undefined): string {
   if (e?.kind === "Ref") return e.name;
   if (e?.kind === "Variant") return e.name;
   return "";
+}
+
+/**
+ * The argument a builtin's lowering reads, which every one of them requires.
+ *
+ * These used to substitute a default for a missing one — `0` for a duration,
+ * `""` for a byte string, `undefined` for a file — so an omission became a
+ * plausible value instead of a diagnostic: `Duration.s()` was zero
+ * milliseconds, which is a timer that fires immediately and forever.
+ *
+ * `checkCallee` reports E0213 wherever `checkExpr` walks, which is not
+ * everywhere: an `app.http` field, a `test` body and an effect's
+ * `policy=latest-per-key(...)` key are never walked, so a call in one of those
+ * checks clean and lands here. That is why the throw carries its position —
+ * it is the only thing the author is given, and an error without one is the
+ * failure this file is otherwise closing.
+ */
+function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
+  const arg = args[0];
+  if (!arg) {
+    throw new Error(
+      `${callee}() at ${pos.line}:${pos.col} is missing its argument ` +
+        "(in a position `check` does not walk: an app.http field, a test body, or an effect policy key)",
+    );
+  }
+  return jsOfExpr(arg, ctx);
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
@@ -19,7 +45,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     case "Unit":
       return "null";
     case "Ref": {
-      if (ctx.localBinds.has(e.name)) return jsName(e.name);
+      if (ctx.localBinds.has(e.name)) return jsBinding(e.name);
       if (e.name === "now") return `_s.now()`;
       // `route` is an auto-managed slot maintained by the runtime.
       if (e.name === "route") {
@@ -27,14 +53,14 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
           ? `((_next["route"] !== undefined) ? _next["route"] : _live["route"])`
           : `_live["route"]`;
       }
-      const isSlot = ctx.gen.slots?.some((s) => s.name === e.name);
+      const isSlot = ctx.gen.slots.some((s) => s.name === e.name);
       if (isSlot) {
         const key = JSON.stringify(e.name);
         return ctx.reducerScope
           ? `((_next[${key}] !== undefined) ? _next[${key}] : _live[${key}])`
           : `_live[${key}]`;
       }
-      return jsName(e.name);
+      return jsBinding(e.name);
     }
     case "BinOp": {
       const l = jsOfExpr(e.lhs, ctx);
@@ -95,6 +121,12 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "parse-float") return `_s.parseFloatOpt(${baseJs})`;
       if (e.field === "abs") return `Math.abs(${baseJs})`;
       if (e.field === "neg") return `(-(${baseJs}))`;
+      if (e.field === "floor") return `Math.floor(${baseJs})`;
+      if (e.field === "ceil") return `Math.ceil(${baseJs})`;
+      if (e.field === "round") return `Math.round(${baseJs})`;
+      if (e.field === "sqrt") return `Math.sqrt(${baseJs})`;
+      if (e.field === "log") return `Math.log(${baseJs})`;
+      if (e.field === "exp") return `Math.exp(${baseJs})`;
       if (e.field === "to-float") return `(${baseJs})`;
       if (e.field === "to-int") return `Math.trunc(${baseJs})`;
       return `(${baseJs})[${JSON.stringify(e.field)}]`;
@@ -116,7 +148,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) {
         // `T.parse(text)` → Option<T>. Numeric types coerce to a number so
         // arithmetic (e.g. fold/sum) works; other types keep the string.
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
+        const a = requiredArg(cn, e.args, e.pos, ctx);
         const qualifier = cn.split(".")[0];
         if (qualifier === "Int") {
           return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
@@ -124,61 +156,82 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
         if (qualifier === "Float") {
           return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(_n) : _s.None; })(${a})`;
         }
+        if (qualifier === "Time") {
+          // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one
+          // has to produce that number. Falling into the generic branch below
+          // wrapped the raw text in `Some`, and every later operation — `diff`,
+          // `plus`, `format` — read a string where it needed a number and
+          // produced `NaN`. The zone rule for a date-only string lives with the
+          // formatter that has to agree with it.
+          return `_s.parseTime(${a})`;
+        }
         return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
       }
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
-        return `_s.show(${a})`;
+        return `_s.show(${requiredArg(cn, e.args, e.pos, ctx)})`;
       }
       // Duration constructors → milliseconds (Time is stored as a raw ms number).
-      if (cn === "Duration.ms") return `(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"})`;
-      if (cn === "Duration.s") return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 1000)`;
+      if (cn === "Duration.ms") return `(${requiredArg(cn, e.args, e.pos, ctx)})`;
+      if (cn === "Duration.s") return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 1000)`;
       if (cn === "Duration.m" || cn === "Duration.min")
-        return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 60000)`;
-      if (cn === "Duration.h") return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 3600000)`;
+        return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 60000)`;
+      if (cn === "Duration.h") return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 3600000)`;
       if (cn === "Duration.d" || cn === "Duration.days")
-        return `((${e.args[0] ? jsOfExpr(e.args[0], ctx) : "0"}) * 86400000)`;
+        return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 86400000)`;
       // Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
       // Bytes is represented as Uint8Array at runtime.
       if (cn === "Bytes.from-text")
-        return `_s.bytesFromText(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
+        return `_s.bytesFromText(${requiredArg(cn, e.args, e.pos, ctx)})`;
       if (cn === "Bytes.from-base64")
-        return `_s.bytesFromBase64(${e.args[0] ? jsOfExpr(e.args[0], ctx) : '""'})`;
+        return `_s.bytesFromBase64(${requiredArg(cn, e.args, e.pos, ctx)})`;
       if (cn === "Bytes.from-bytes")
-        return `_s.bytesFromBytes(${e.args[0] ? jsOfExpr(e.args[0], ctx) : "[]"})`;
+        return `_s.bytesFromBytes(${requiredArg(cn, e.args, e.pos, ctx)})`;
       // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). The
       // runtime treats falsy / unknown ids as silent no-ops, so the empty
       // string doubles as a valid slot-initial value AND a guaranteed-no-op
       // cancel target.
       if (cn === "EffectId.none") return `""`;
-      // Decoder.* — codegen treats decoders as a sentinel string; the builtin storage handler
-      // ignores everything except "json".
+      // Decoder.* — codegen treats a decoder as a sentinel string, which the
+      // HTTP handler reads as `decode ?? "json"` and branches on: `json` /
+      // `text` / `none`, everything else falling through to text. Emitting no
+      // sentinel therefore means json, not "no decoding" — which is what made
+      // the paren-less form parse a body that was meant to be discarded.
+      // The storage handler is a different matter: it never receives a decoder
+      // at all and always `JSON.parse`s, so `decode` on a `storage.*` effect is
+      // documented and dropped.
       if (cn === "Decoder.Json") return `"json"`;
       if (cn === "Decoder.Text") return `"text"`;
       if (cn === "Decoder.Bytes") return `"bytes"`;
       if (cn === "Decoder.None") return `"none"`;
       if (cn === "fmt") {
-        // fmt(template, ...args) — very simple {0} {1} substitution
-        const args = e.args.map((a) => jsOfExpr(a, ctx));
-        return `_s.fmt ? _s.fmt(${args.join(", ")}) : ${args[0] ?? '""'}`;
+        // `fmt(template, ...args)` — the runtime has no `fmt` helper, so this
+        // guard always takes the else branch and the template is returned with
+        // its `{0}` placeholders intact. The lowering is written as though the
+        // helper existed, and the arity follows the spec's signature rather
+        // than what the else branch reads.
+        const template = requiredArg(cn, e.args, e.pos, ctx);
+        const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
+        return `_s.fmt ? _s.fmt(${[template, ...rest].join(", ")}) : ${template}`;
       }
       // `panic(message)` — Kumiki's controlled stop-the-program signal
       // (docs/spec/stdlib.md §2.2). Lowers to the runtime helper that throws a
       // KumikiPanic, which the live dispatch / render boundary catches.
-      if (cn === "panic") {
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : '""';
-        return `_s.panic(${a})`;
-      }
+      if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, e.pos, ctx)})`;
+      // `prefers-dark()` — reads `prefers-color-scheme: dark` (style.md §4.6.1).
+      // Environment-reading like `now`, and used the same way: an `app.start`
+      // reducer picks the initial theme from it.
+      if (cn === "prefers-dark") return `_s.prefersDark()`;
+      // `random()` — a Float in [0, 1). Non-deterministic like `now`, and
+      // unrestricted for the same reason: a rule confining it to reducers would
+      // be the only purity rule in the language that no other builtin has.
+      if (cn === "random") return "Math.random()";
       // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.
-      if (cn === "file-url") {
-        const a = e.args[0] ? jsOfExpr(e.args[0], ctx) : "undefined";
-        return `_s.fileUrl(${a})`;
-      }
+      if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
       // Otherwise treat as user-defined fn
-      return `${jsName(cn)}(${args})`;
+      return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
       return methodCallJs(e.receiver, e.method, e.args, ctx);
@@ -188,6 +241,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `{ ${parts.join(", ")} }`;
     }
     case "ListLit":
+      return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+    // The same array a tuple pattern destructures — `tupleArm` guards with
+    // `Array.isArray` and reads by index, so the two halves already agreed on
+    // the shape before there was a way to write one.
+    case "TupleLit":
       return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
     case "MapLit": {
       const parts = e.entries.map((en) => {
@@ -215,7 +273,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `((${jsOfExpr(e.cond, ctx)}) ? (${jsOfExpr(e.consequent, ctx)}) : (${jsOfExpr(e.alternate, ctx)}))`;
     case "LetIn": {
       const inner = addBind(ctx, e.name);
-      return `(() => { const ${jsName(e.name)} = ${jsOfExpr(e.value, ctx)}; return ${jsOfExpr(e.body, inner)}; })()`;
+      return `(() => { const ${jsBinding(e.name)} = ${jsOfExpr(e.value, ctx)}; return ${jsOfExpr(e.body, inner)}; })()`;
     }
     case "Variant":
       return variantJs(e.name, e.payload, ctx);
@@ -236,6 +294,59 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
  * (E0801) at `check` time instead of letting them throw or misbehave at runtime.
  * Keep this in exact sync with the `switch (method)` cases.
  */
+/**
+ * How many arguments a method's lowering reads. Every entry here dereferences
+ * that many with `!`, so a call written with fewer crashes codegen — no file,
+ * no line, no diagnostic. The typechecker reports the shortfall instead
+ * (E0213); `check` and `build` then agree about the same program.
+ *
+ * Only the minimum is listed. `slice` takes one or two and spreads whatever it
+ * is given, so it is absent — a count is only a contract where the lowering
+ * treats it as one.
+ */
+export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
+  ["add", 1],
+  ["chunk", 1],
+  ["clamp", 2],
+  ["concat", 1],
+  ["contains", 1],
+  ["diff", 1],
+  ["ends-with", 1],
+  ["filter", 1],
+  ["find", 1],
+  ["flat-map", 1],
+  ["fold", 2],
+  ["format", 1],
+  ["get", 1],
+  // One shape takes a default, the other a key AND a default; the lowering
+  // branches on the count, so one is the floor.
+  ["get-or", 1],
+  ["has", 1],
+  ["insert", 2],
+  ["intersect", 1],
+  ["join", 1],
+  ["map", 1],
+  ["map-err", 1],
+  ["max", 1],
+  ["pow", 1],
+  ["merge", 1],
+  ["min", 1],
+  ["minus", 1],
+  ["or", 1],
+  ["plus", 1],
+  ["prepend", 1],
+  ["push", 1],
+  ["remove", 1],
+  ["replace", 2],
+  ["sort-by", 1],
+  ["split", 1],
+  ["starts-with", 1],
+  ["toggle", 1],
+  ["union", 1],
+  ["update", 2],
+  ["zip", 1],
+]);
+
 export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "filter",
   "map",
@@ -303,6 +414,15 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "parse-float", // Text.parse-float → Option(Float)
   "abs", // Int/Float.abs
   "neg", // Int/Float.neg
+  // stdlib.md §2.2.7. Documented as a `math.*` namespace the parser could never
+  // read — a lowercase qualifier is not one — so every call reported E0103.
+  "floor", // Float.floor → Int
+  "ceil", // Float.ceil → Int
+  "round", // Float.round → Int (ties go up, toward +∞: (-2.5).round is -2)
+  "sqrt", // Int/Float.sqrt → Float
+  "log", // Int/Float.log → Float (natural logarithm)
+  "exp", // Int/Float.exp → Float
+  "pow", // Int/Float.pow(n)
   "to-float", // Int.to-float → Float
   "to-int", // Float.to-int → Int (truncated)
   // Issue #92: stdlib methods that also have FieldAccess shortcuts (see
@@ -358,6 +478,38 @@ export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
   "neg",
   "to-float",
   "to-int",
+  "floor",
+  "ceil",
+  "round",
+  "sqrt",
+  "log",
+  "exp",
+]);
+
+/**
+ * The members that only a number has (docs/spec/stdlib.md §2.2.7).
+ *
+ * `KNOWN_MEMBERS` is flat — it answers "does the runtime understand this name
+ * on some receiver", not "on this one" — so without this set every arithmetic
+ * name was a member of `Text`, of a `List`, of anything the checker recognised.
+ * `someText.round` passed and lowered to `Math.round("hello")`: `NaN` into
+ * whatever it was assigned to, with nothing reported anywhere.
+ */
+export const NUMERIC_MEMBERS: ReadonlySet<string> = new Set([
+  "abs",
+  "neg",
+  "min",
+  "max",
+  "clamp",
+  "floor",
+  "ceil",
+  "round",
+  "sqrt",
+  "log",
+  "exp",
+  "pow",
+  "to-float",
+  "to-int",
 ]);
 
 /**
@@ -387,7 +539,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
   // Generate a lambda that binds `$1` and `$2` accordingly: for a 2-tuple we
   // bind ($1=k, $2=v); for any other element we bind $1=elem, $2=undefined.
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${jsName("$1")} = _isPair ? __x[0] : __x; const ${jsName("$2")} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
+    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${jsBinding("$1")} = _isPair ? __x[0] : __x; const ${jsBinding("$2")} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {
@@ -402,7 +554,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${jsName("$1")}) => ${jsOfExpr(args[0]!, inner)}))`;
+      return `_s.flatMapOption(${recvJs}, ((${jsBinding("$1")}) => ${jsOfExpr(args[0]!, inner)}))`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -432,7 +584,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "fold":
       // List(T).fold(init, expr) — expr binds $1=acc, $2=elem (distinct from the
       // $1=elem/$2=value convention of filter/map), so emit its own lambda.
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${jsName("$1")}, ${jsName("$2")}) => ${jsOfExpr(args[1]!, inner)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${jsBinding("$1")}, ${jsBinding("$2")}) => ${jsOfExpr(args[1]!, inner)})`;
     case "show":
       return `_s.show(${recvJs})`;
     case "is-some":
@@ -475,8 +627,10 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "trim":
       return `((${recvJs}) || "").trim()`;
     case "format":
-      // Time.format(pattern) — minimal: produce the ISO date portion regardless of pattern.
-      return `(new Date(${recvJs})).toISOString().slice(0, 10)`;
+      // Time.format(pattern) — the pattern is the caller's, not ours. This
+      // used to render the ISO date whatever was asked for, so every
+      // `"yyyy-MM-dd HH:mm"` in an app lost its time and shifted its day.
+      return `_s.formatTime(${recvJs}, ${argRaw(args[0]!)})`;
     case "plus":
       // Time.plus(durationMs) / Duration.plus — both stored as raw ms numbers.
       return `((${recvJs}) + (${argRaw(args[0]!)}))`;
@@ -504,7 +658,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Map(K,V).update(k, expr) — within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${jsName("$1")}) => (${jsOfExpr(args[1]!, inner)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${jsBinding("$1")}) => (${jsOfExpr(args[1]!, inner)})))`;
     case "add":
       // Set(T).add(x)
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
@@ -519,7 +673,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${jsName("$1")}) => (${jsOfExpr(args[0]!, inner)})))`;
+      return `_s.mapErr(${recvJs}, ((${jsBinding("$1")}) => (${jsOfExpr(args[0]!, inner)})))`;
     case "replace":
       // Text.replace(from, to) — replaces every occurrence.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
@@ -570,6 +724,20 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       return `_s.parseFloatOpt(${recvJs})`;
     case "abs":
       return `Math.abs(${recvJs})`;
+    case "floor":
+      return `Math.floor(${recvJs})`;
+    case "ceil":
+      return `Math.ceil(${recvJs})`;
+    case "round":
+      return `Math.round(${recvJs})`;
+    case "sqrt":
+      return `Math.sqrt(${recvJs})`;
+    case "log":
+      return `Math.log(${recvJs})`;
+    case "exp":
+      return `Math.exp(${recvJs})`;
+    case "pow":
+      return `((${recvJs}) ** (${argRaw(args[0]!)}))`;
     case "neg":
       return `(-(${recvJs}))`;
     case "to-float":
@@ -577,8 +745,9 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "to-int":
       return `Math.trunc(${recvJs})`;
     default:
-      // generic fallback: receiver.method(...args)
-      return `(${recvJs}).${jsName(method)}(${args.map(argRaw).join(", ")})`;
+      // generic fallback: receiver.method(...args). A property position, so the
+      // name must stay exactly what the runtime defines — jsProperty, not jsBinding.
+      return `(${recvJs}).${jsProperty(method)}(${args.map(argRaw).join(", ")})`;
   }
 }
 
@@ -617,7 +786,7 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
   let keyJs: string;
   if (eff?.policy?.kind === "PolLatestKey") {
     const keyCtx = { gen: ctx.gen, localBinds: new Set(["$1"]) };
-    keyJs = `String((((${jsName("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
+    keyJs = `String((((${jsBinding("$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
   } else {
     keyJs = `"_"`;
   }
@@ -637,7 +806,7 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
   }
   if (p.kind === "PBind") {
     const inner = addBind(ctx, p.name);
-    return `if (true) { const ${jsName(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
+    return `if (true) { const ${jsBinding(p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
   if (p.kind === "PTuple") {
     const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
@@ -651,7 +820,7 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     const name = p.binds[i]!;
     if (name === "_") continue;
     inner.localBinds.add(name);
-    bindAssigns.push(`const ${jsName(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
+    bindAssigns.push(`const ${jsBinding(name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
   }
   return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
 }
@@ -692,7 +861,7 @@ export function walkPatternForTupleArm(
       return;
     case "PBind":
       inner.localBinds.add(p.name);
-      binds.push(`const ${jsName(p.name)} = ${accessor};`);
+      binds.push(`const ${jsBinding(p.name)} = ${accessor};`);
       return;
     case "PVariant":
       guards.push(`_s.variantIs(${accessor}, ${JSON.stringify(p.name)})`);
@@ -700,7 +869,7 @@ export function walkPatternForTupleArm(
         const name = p.binds[i]!;
         if (name === "_") continue;
         inner.localBinds.add(name);
-        binds.push(`const ${jsName(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
+        binds.push(`const ${jsBinding(name)} = (${accessor})[${JSON.stringify(`_${i}`)}];`);
       }
       return;
     case "PTuple":

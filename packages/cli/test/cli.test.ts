@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -67,7 +67,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const app = readFileSync(join(outDir, "app.js"), "utf8");
     expect(app).toContain('import { mountCore } from "./runtime/core.js"');
     expect(app).toContain('tile: "IncBtn"');
-    expect(app).toContain('App._dispatch("inc"');
+    expect(app).toContain('_h("inc")');
 
     // Size acceptance (#71): the counter runtime payload is well below the
     // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).
@@ -109,10 +109,36 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // build time — a production mount is silent because it passed no
     // `onDiagnostic`, which is what keeps the sink a supported seam in a built
     // artifact rather than a dev-only affordance a bundler strips.
+    // Bumped to 57KB with all-or-nothing reducer batches (spec/runtime.md
+    // §10.3.3): the per-write refinement check, the rejection merge, and the
+    // report that names the slot, value and predicate. Ships in production for
+    // the same reason the diagnostic above does — a reducer the runtime refuses
+    // to commit is invisible from the DOM, so a built artifact that stayed
+    // silent about it would be the defect this budget is meant to protect
+    // against, not the size.
+    // Bumped to 58KB with `policy=queue` (spec/runtime.md §10.4.3) and
+    // `Time.format`'s pattern substitution. Both ride in modules every app
+    // ships — the dispatcher in core.ts, the formatter in stdlib.js — because
+    // per-app pruning is by module, not by function. A counter pays for them;
+    // the alternative is a policy that silently runs in parallel and a
+    // formatter that silently ignores its pattern.
+    // Bumped to 60KB with per-view mounting (spec/runtime.md §10.9.1): the render
+    // pass takes a view record instead of closure locals, and a shape already
+    // mounted attaches another view rather than starting a second app. A
+    // counter mounted once pays for the indirection and the attach path it
+    // never calls — the alternative is what this replaced, where a second mount
+    // silently froze the first and the docs said the two would share a state.
+    // Bumped to 65KB when the documented tile props started reaching the DOM
+    // (spec/stdlib.md §2.3.10, style.md §4.3.1 + §4.4.7): the common-prop
+    // attributes and their reconcile diff in core.js, the sizing and theme-token
+    // mappings, and per-kind props on button / image / link / divider. A counter
+    // uses `gap` and nothing else, and still ships the table — the alternative
+    // is what this replaced, where an app wrote `max-w` or `class` and the
+    // build was the same size because the prop did nothing at all.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(56_000);
+    expect(total).toBeLessThan(65_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
@@ -299,12 +325,32 @@ app StrictThemed
 
   // Critical fix: --strict-icons combined with a scope filter must NOT drop
   // E0704 silently — the strict opt-in is an additive axis, not a sub-band.
-  it("--strict-icons + --types still surfaces E0704", { timeout: 30000 }, () => {
-    const file = join(dir, "bad.kumiki");
-    writeFileSync(file, UNKNOWN);
-    const { out, code } = runCli(["check", file, "--strict-icons", "--types"]);
+  for (const scope of ["--types", "--refs", "--effects"]) {
+    it(`--strict-icons + ${scope} still surfaces E0704`, { timeout: 30000 }, () => {
+      const file = join(dir, "bad.kumiki");
+      writeFileSync(file, UNKNOWN);
+      const { out, code } = runCli(["check", file, "--strict-icons", scope]);
+      expect(code).toBe(1);
+      expect(out).toContain("E0704");
+    });
+  }
+
+  it("--strict-a11y + --types still surfaces the a11y band", { timeout: 30000 }, () => {
+    const file = join(dir, "a11y.kumiki");
+    writeFileSync(
+      file,
+      `slot _ : Text = ""
+tile Pic = image(src="/x.png")
+tile App = column(Pic)
+app StrictA11y
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const { out, code } = runCli(["check", file, "--strict-a11y", "--types"]);
     expect(code).toBe(1);
-    expect(out).toContain("E0704");
+    expect(out).toMatch(/E070[123]/);
   });
 });
 
@@ -388,13 +434,18 @@ app OkApp
 
   // Critical: --strict-selector-id combined with a scope filter must NOT drop
   // E0212 silently — the strict opt-in is an additive axis, not a sub-band.
-  it("--strict-selector-id + --types still surfaces E0212", { timeout: 30000 }, () => {
-    const file = join(dir, "bad.kumiki");
-    writeFileSync(file, MISMATCH);
-    const { out, code } = runCli(["check", file, "--strict-selector-id", "--types"]);
-    expect(code).toBe(1);
-    expect(out).toContain("E0212");
-  });
+  // `--refs` and `--effects` are the cases that actually depend on the
+  // strict-code allowlist: E0212 lives in E02, which `--types` selects anyway,
+  // so a `--types` case alone passes even with the allowlist emptied.
+  for (const scope of ["--types", "--refs", "--effects"]) {
+    it(`--strict-selector-id + ${scope} still surfaces E0212`, { timeout: 30000 }, () => {
+      const file = join(dir, "bad.kumiki");
+      writeFileSync(file, MISMATCH);
+      const { out, code } = runCli(["check", file, "--strict-selector-id", scope]);
+      expect(code).toBe(1);
+      expect(out).toContain("E0212");
+    });
+  }
 });
 
 // #143 — `kumiki check` surfaces W0212 ui-event-tile-mismatch as a non-fatal
@@ -470,6 +521,103 @@ describe("kumiki smoke with a manifest-registered capability", () => {
   });
 });
 
+// The capability manifest registers names for a *project*, so it is looked for
+// from the source file up to the project root — and when a name is still not
+// accepted, the diagnostic says which manifest was read, or where one was
+// looked for. Before that, a manifest one directory up was ignored in silence.
+describe("kumiki check and the capability manifest", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "kumiki-caps-"));
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "p" }));
+    writeFileSync(join(root, "src", "app.kumiki"), CUSTOM_CAP_SRC);
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const CUSTOM_CAP_SRC = `slot sent : Int = 0
+effect track cap=telemetry.track in={name: Text} out=Unit
+reducer fire on=ui.click(B) do= emit track({name: "x"})
+tile B = button(text="b")
+tile App = column(B, text(sent.show))
+app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  function check(): { stdout: string; stderr: string; code: number } {
+    const res = spawnSync("npx", ["tsx", CLI_PATH, "check", join(root, "src", "app.kumiki")], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return {
+      stdout: res.stdout ?? "",
+      stderr: res.stderr ?? "",
+      code: res.status ?? (res.error ? 1 : 0),
+    };
+  }
+
+  it("reads a manifest at the project root, not only beside the source", {
+    timeout: 60_000,
+  }, () => {
+    writeFileSync(
+      join(root, "kumiki.caps.json"),
+      JSON.stringify({ capabilities: ["telemetry.track"] }),
+    );
+    const { stdout, code } = check();
+    expect(code).toBe(0);
+    expect(stdout).toContain("ok");
+  });
+
+  it("names the directories it searched when there is no manifest", { timeout: 60_000 }, () => {
+    const { stderr, code } = check();
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0302");
+    expect(stderr).toContain("no kumiki.caps.json found");
+    expect(stderr).toContain(join(root, "src"));
+  });
+
+  it("says nothing about manifests when the diagnostic is not about capabilities", {
+    timeout: 60_000,
+  }, () => {
+    writeFileSync(
+      join(root, "src", "app.kumiki"),
+      `tile App = column(text(nope))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+    );
+    const { stderr, code } = check();
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0103");
+    expect(stderr).not.toContain("kumiki.caps.json");
+  });
+
+  it("says the same thing from build, which fails on the same diagnostic", {
+    timeout: 60_000,
+  }, () => {
+    const res = spawnSync(
+      "npx",
+      ["tsx", CLI_PATH, "build", join(root, "src", "app.kumiki"), join(root, "out")],
+      { stdio: "pipe", shell: true, encoding: "utf8" },
+    );
+    expect(res.status).toBe(1);
+    expect(res.stderr ?? "").toContain("E0302");
+    expect(res.stderr ?? "").toContain("no kumiki.caps.json found");
+  });
+
+  it("names the manifest it read when that manifest lacks the capability", {
+    timeout: 60_000,
+  }, () => {
+    const manifest = join(root, "kumiki.caps.json");
+    writeFileSync(manifest, JSON.stringify({ capabilities: ["telemetry.identify"] }));
+    const { stderr, code } = check();
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0302");
+    expect(stderr).toContain(manifest);
+  });
+});
+
 describe("kumiki test (in-language test runner)", () => {
   const TESTS = resolve(here, "../../examples/features/28-tests.kumiki");
 
@@ -486,6 +634,29 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("PASS  add-surfaces-persist-error");
     expect(out).toMatch(/PASS {2}inc-dec-roundtrips \(100 cases, \d+ms\)/);
     expect(out).toContain("7/7 passed");
+  });
+
+  // The reducer-test tier has to refuse exactly what the running app refuses.
+  // It used to merge a reducer's returned slots over the given ones with no
+  // refinement check at all, so a batch the app discards passed here — the tier
+  // meant to catch the bug would have certified it.
+  it("refuses a batch the app's refinement rejects", { timeout: 30000 }, () => {
+    const file = resolve(here, "../../examples/features/63-reducer-batch-atomicity.kumiki");
+    const res = spawnSync("npx", ["tsx", CLI_PATH, "test", file], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    expect(res.stdout).toContain("PASS  bump-commits-whole");
+    expect(res.stdout).toContain("PASS  bump-at-ceiling-changes-nothing");
+    expect(res.stdout).toContain("2/2 passed");
+    // The `expect` block alone cannot tell "the batch was refused" from "the
+    // reducer degenerated into a no-op" — both leave the slots untouched — so
+    // pin the report too. The reducer-test tier has no `errorIncludes`
+    // equivalent to express this in-language.
+    expect(res.stderr).toContain(
+      '[kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
+    );
   });
 
   it("filters by a name prefix", { timeout: 30000 }, () => {
@@ -566,7 +737,9 @@ test title-text =
     const file = join(dir, "behavioral.kumiki");
     writeFileSync(file, BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text"]);
-    expect(code).toBe(0);
+    // Proposing is not repairing: the test still fails when the process ends,
+    // which is what the exit code reports.
+    expect(code).toBe(1);
     expect(out).toContain('replace "Helo" with "Hello"');
     // File untouched (AC4).
     expect(readFileSync(file, "utf8")).toContain('heading("Helo")');
@@ -875,5 +1048,170 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
     expect(code).toBe(2);
     expect(out).toMatch(/--until-step/);
     expect(out).toMatch(/positive integer/);
+  });
+});
+
+// `check` is the gate: CI, the MCP server and every editing loop ask it whether
+// a file is sound. It used to answer `ok` for a file with no `app` definition —
+// including a completely empty one — while `build`, `smoke` and `test` all
+// failed on it. E0003 makes the gate agree with the stages behind it.
+describe("kumiki check (E0003 missing-app)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "kumiki-e0003-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
+    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    return {
+      stdout: res.stdout ?? "",
+      stderr: res.stderr ?? "",
+      code: res.status ?? (res.error ? 1 : 0),
+    };
+  }
+
+  function write(name: string, source: string): string {
+    const file = join(dir, name);
+    writeFileSync(file, source);
+    return file;
+  }
+
+  const CASES: Array<[string, string]> = [
+    [
+      "definitions but no entry point",
+      'type N = Int\nslot count : N = 0\ntile App = column(heading("v"))\n',
+    ],
+    ["an empty file", ""],
+    ["whitespace and comments only", "\n  \n# nothing to see\n"],
+  ];
+
+  for (const [label, source] of CASES) {
+    it(`fails on ${label}`, { timeout: 30000 }, () => {
+      const file = write("noapp.kumiki", source);
+      const { stdout, stderr, code } = runCli(["check", file]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0003 missing-app at 1:1");
+      // `check` prints its summary and nothing else on stdout, so an empty
+      // stdout is the precise statement that it did not call the file ok.
+      expect(stdout.trim()).toBe("");
+    });
+  }
+
+  it("reports the same failure from build, rather than an uncaught throw", {
+    timeout: 30000,
+  }, () => {
+    const file = write("noapp.kumiki", CASES[0]![1]);
+    const { stderr, code } = runCli(["build", file, join(dir, "out")]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).not.toContain("No app definition found");
+  });
+
+  it("still passes a file that has an app", { timeout: 30000 }, () => {
+    const { stdout, code } = runCli(["check", COUNTER_PATH]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("ok");
+  });
+
+  // `--types/--refs/--effects` narrow along one axis. Structural errors are not
+  // on that axis, so no scope selects them — and a filter that drops what no
+  // scope can ask for turns every narrowing flag back into the hole above.
+  for (const scope of ["--types", "--refs", "--effects"]) {
+    it(`survives ${scope}`, { timeout: 30000 }, () => {
+      const file = write("noapp.kumiki", CASES[0]![1]);
+      const { stderr, code } = runCli(["check", file, scope]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0003 missing-app");
+    });
+  }
+
+  it("keeps the other structural diagnostic (E0001) visible under --types", {
+    timeout: 30000,
+  }, () => {
+    const file = write(
+      "no404.kumiki",
+      'tile App = column(heading("v"))\napp A caps=[] routes={"/" -> App} init=[]\n',
+    );
+    const { stderr, code } = runCli(["check", file, "--types"]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0001 missing-404");
+  });
+
+  it("does not block an AI edit that leaves the program incomplete", {
+    timeout: 60000,
+  }, () => {
+    const file = write("grow.kumiki", "");
+    const added = runCli(["add", file, "slot", "count", "Int", "=", "0"]);
+    expect(added.code).toBe(0);
+    expect(readFileSync(file, "utf8")).toContain("slot count");
+    // The edit lands; the gate is what reports that the program is not yet
+    // an application.
+    expect(runCli(["check", file]).code).toBe(1);
+  });
+
+  it("catches an app that a cascading remove deleted", { timeout: 60000 }, () => {
+    const file = join(dir, "counter.kumiki");
+    writeFileSync(file, readFileSync(COUNTER_PATH, "utf8"));
+    const removed = runCli(["remove", file, "slot.count", "--cascade"]);
+    expect(removed.code).toBe(0);
+    expect(removed.stdout).toContain("cascaded app.Counter");
+    expect(removed.stdout).toMatch(/\(op_/);
+    const { stderr, code } = runCli(["check", file]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("E0003 missing-app");
+  });
+
+  // The mirror image: too many entry points reads as `ok` and then builds into
+  // whichever one comes first, dropping the other's routes without a word.
+  describe("E0004 duplicate-app", () => {
+    const TWO_APPS = `slot n : Int = 0
+tile App   = column(text(n.show))
+tile Other = column(text("x"))
+app First  caps=[] routes={"/" -> App,    "/404" -> App}   init=[]
+app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
+`;
+
+    it("fails check, naming the app past the first", { timeout: 30000 }, () => {
+      const file = write("two.kumiki", TWO_APPS);
+      const { stdout, stderr, code } = runCli(["check", file]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0004 duplicate-app at 5:1");
+      expect(stderr).toContain("Second");
+      expect(stdout.trim()).toBe("");
+    });
+
+    it("stops the build that used to drop the second app's routes", {
+      timeout: 30000,
+    }, () => {
+      const file = write("two.kumiki", TWO_APPS);
+      const outDir = join(dir, "out-two");
+      const { stderr, code } = runCli(["build", file, outDir]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("E0004 duplicate-app");
+      expect(existsSync(join(outDir, "app.js"))).toBe(false);
+    });
+  });
+
+  // A repair loop reads the dry run to decide what is left to do. Listing only
+  // the repairable diagnostics tells it the file is one patch from clean.
+  it("kumiki fix reports the diagnostics it cannot repair, not just the ones it can", {
+    timeout: 30000,
+  }, () => {
+    const file = write("hide.kumiki", "slot count : Int = 0\ntile App = column(text(cout.show))\n");
+    const { stdout, stderr, code } = runCli(["fix", file]);
+    // A dry run proposes; it does not repair. The file still has both errors
+    // when the process ends, so the exit code has to say so.
+    expect(code).toBe(1);
+    expect(stdout).toContain('fix: replace "cout" with "count"');
+    expect(stdout).toContain("(no auto-patch for 1 of 2)");
+    // The stable kebab reason rides along — a repair loop branches on it.
+    expect(stderr).toContain("E0003 Program has no app definition [no-repair-branch]");
   });
 });

@@ -1,0 +1,41 @@
+# Feature: the standard effects are capability-gated like any other effect.
+# Spec: stdlib.md §2.6 (the standard effects), errors.md E0301.
+#
+# `navigate` / `navigate-back` / `toast` have no `effect` declaration to read a
+# `cap=` off — the runtime registers them itself. They are gated all the same:
+# emitting one without its capability in `app.caps` is E0301, and at runtime an
+# undeclared capability drops the effect with a console warning. Removing
+# `nav.push` below turns the "Go" button into a button that does nothing.
+#
+# The `.ok` selector works on them too: the runtime reports a standard effect's
+# result through the same channel a declared effect's goes through, so
+# `on=navigate.ok(...)` fires once the navigation lands.
+
+slot arrivals : Int = 0
+slot notices  : Int = 0
+
+reducer go       on=ui.click(GoBtn)     do= emit navigate({path: "/other", params: {}})
+reducer back     on=ui.click(BackBtn)   do= emit navigate-back()
+reducer notify   on=ui.click(NotifyBtn) do= notices := notices + 1
+                                            emit toast({kind: "info", text: "notified"})
+reducer arrived  on=navigate.ok(_, _)   do= arrivals := arrivals + 1
+
+tile GoBtn     = button(text="Go", onClick=go)
+tile BackBtn   = button(text="Back", onClick=back)
+tile NotifyBtn = button(text="Notify", onClick=notify)
+
+tile Home  = page(
+               heading("Home"),
+               text("arrivals: " + arrivals.show),
+               text("notices: " + notices.show),
+               GoBtn,
+               NotifyBtn)
+
+tile Other = page(heading("Other"), text("arrivals: " + arrivals.show), BackBtn)
+
+tile NotFound = page(heading("404"))
+
+app BuiltinEffectCapabilities
+    caps   = [nav.push, nav.back, notification.show]
+    routes = {"/" -> Home, "/other" -> Other, "/404" -> NotFound}
+    init   = []

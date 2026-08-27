@@ -18,6 +18,8 @@ import { describe, expect, it } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI_PATH = resolve(here, "../src/kumiki.ts");
 
+// 60s per case, not 30: every one of these is a process start, and this file
+// runs beside the rest of a suite that is mostly process starts too.
 function runCli(args: string[]): { out: string; code: number } {
   try {
     const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
@@ -39,14 +41,14 @@ const VERBS = ["list", "view", "refs", "remove", "rename", "lock", "unlock", "pa
 
 describe("verb registration smoke", () => {
   for (const verb of VERBS) {
-    it(`${verb} exposes --help (proves the verb is registered)`, { timeout: 30000 }, () => {
+    it(`${verb} exposes --help (proves the verb is registered)`, { timeout: 60000 }, () => {
       const { out, code } = runCli([verb, "--help"]);
       expect(code).toBe(0);
       expect(out).toContain(`kumiki ${verb}`);
     });
 
     it(`${verb} exits 2 on missing required args (proves USAGE survived the refactor)`, {
-      timeout: 30000,
+      timeout: 60000,
     }, () => {
       const { out, code } = runCli([verb]);
       expect(code).toBe(2);

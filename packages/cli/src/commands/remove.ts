@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { removeDef } from "../mutate.ts";
+import { describeEdit, removeDef } from "../mutate.ts";
 
 const USAGE = "Usage: kumiki remove <file> <qname> [--cascade]";
 
@@ -19,8 +19,8 @@ export function registerRemove(program: Command): void {
           process.exit(2);
         }
         try {
-          const opId = removeDef(resolve(process.cwd(), file), qname, Boolean(options.cascade));
-          console.log(`removed ${qname}  (${opId})`);
+          const result = removeDef(resolve(process.cwd(), file), qname, Boolean(options.cascade));
+          console.log(describeEdit({ op: "remove", qname, ...result }));
         } catch (e) {
           console.error(String(e));
           process.exit(1);

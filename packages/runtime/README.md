@@ -1,6 +1,6 @@
 # @kumikijs/runtime
 
-Kumiki DOM runtime — mounts compiled Kumiki apps, dispatches effects, and manages the signal graph. Part of [Kumiki](https://github.com/kage1020/Kumiki).
+Kumiki DOM runtime — mounts compiled Kumiki apps, dispatches effects, and manages the signal graph. Part of [Kumiki](https://github.com/kumikijs/Kumiki).
 
 You normally do not import this directly: the compiler embeds the runtime into generated apps. It is published so generated apps and tooling can resolve it.
 

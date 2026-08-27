@@ -14,8 +14,15 @@ The classic TodoMVC. It adds list operations and persistence, forming the skelet
 
 ## Run
 
+Every command below is run **from the repository root**.
+
 ```sh
-pnpm --filter @kumikijs/cli exec tsx src/kumiki.ts build examples/apps/02-todomvc/app.kumiki ./out
+pnpm kumiki check packages/examples/apps/02-todomvc/app.kumiki
+pnpm kumiki build packages/examples/apps/02-todomvc/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/02-todomvc/app.kumiki
+pnpm kumiki run packages/examples/apps/02-todomvc/app.kumiki packages/examples/apps/02-todomvc/scenario.json
 ```
 
-Related specs: [language](../../../spec/language.md) / [forms](../../../spec/forms.md) / [http](../../../spec/http.md)
+`scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI.
+
+Related specs: [language](../../../../docs/spec/language.md) / [forms](../../../../docs/spec/forms.md) / [http](../../../../docs/spec/http.md)

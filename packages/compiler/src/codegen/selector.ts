@@ -1,6 +1,6 @@
-import type { Expr, TileExpr, UiEventKind } from "../ast.ts";
+import { type Expr, isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, UI_LIFTS } from "../ui-lifts.ts";
-import { type EvalCtx, jsName } from "./context.ts";
+import { type EvalCtx, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -15,12 +15,74 @@ export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string
   return `_s.show(${jsOfExpr(keyProp.value, ctx)})`;
 }
 
+/**
+ * Names that never become prop data, whichever way they are written.
+ *
+ * One predicate rather than one list per loop: the top-level props, the `el`
+ * payload and the named-argument fold all have to agree about what is not a
+ * prop, and three copies of the list is three places for them to stop agreeing.
+ * `forEl` adds the two the reducer payload alone excludes.
+ */
+function isNotPropData(tile: string, name: string, forEl = false): boolean {
+  if (HANDLER_NAMES.has(name)) return true;
+  // `key` is lifted to the TileNode's top level by `_wk` at the tile-call
+  // boundary; it must not also flow into `props` or `el`.
+  if (name === "key") return true;
+  // §3.8 link prefetch — the link tile lifts these into top-level fields, and
+  // their value space (a reducer name / an argument record) is not slot data.
+  if (tile === "link" && (name === "prefetch" || name === "prefetch-args")) return true;
+  // §4.3 style block — a CSS prop bag the runtime applies to `el.style`. It is
+  // not reducer data, and shipping it twice re-evaluates every `@token` ref.
+  if (forEl && name === "style") return true;
+  // An lvalue (`todos[i].done`), not a value: lowering it emits a read of the
+  // slot under a name nothing consults.
+  if (forEl && name === "bind") return true;
+  return false;
+}
+
+/** The ARIA a tile asked for: the `aria` map, plus each `aria-*` written on its own. */
+type AriaParts = { map: string | null; direct: Array<[attr: string, js: string]> };
+
+/**
+ * Take one prop or argument if it is ARIA, and say whether it was taken.
+ *
+ * Both spellings the spec uses — the `aria` map (stdlib.md §2.3.10) and a bare
+ * `aria-label` (style.md §4.4.4, and what the a11y checks look for) — are
+ * merged into the map here rather than in the runtime. The runtime cannot do
+ * it: finding `aria-*` among the props means enumerating the props bag, and on
+ * the render path that bag may belong to a host tile (#71) whose object refuses
+ * enumeration — a throw there rebuilds the whole tree.
+ */
+function collectAria(name: string, js: () => string, into: AriaParts): boolean {
+  if (name === "aria") {
+    into.map = js();
+    return true;
+  }
+  if (!name.startsWith("aria-")) return false;
+  into.direct.push([name, js()]);
+  return true;
+}
+
+/** The single `aria` value for a tile, or `null` when it asked for none. */
+function mergedAria(parts: AriaParts): string | null {
+  if (parts.map === null && parts.direct.length === 0) return null;
+  // The map first: a name written on its own is the more specific of the two.
+  const fields = [
+    ...(parts.map === null ? [] : [`...(${parts.map})`]),
+    ...parts.direct.map(([attr, js]) => `${JSON.stringify(attr)}: ${js}`),
+  ];
+  return `{ ${fields.join(", ")} }`;
+}
+
 export function propsFor(
   t: TileExpr & { kind: "TileCall" },
   ctx: EvalCtx,
   enclosingTile?: string,
 ): string {
   const entries: string[] = [];
+  // `{aria: {...}}` and `{aria-label: "…"}` are one channel by the time they
+  // reach the runtime — see `mergedAria`.
+  const aria: AriaParts = { map: null, direct: [] };
   // Capture explicit event-handler wirings (`onClick=foo`, `{onClick: foo}`)
   // by handler name. They are flushed below alongside implicit (tile, ui-event)
   // subscribers as one chained dispatch handler, so spec §1.6.4 (every matching
@@ -46,14 +108,9 @@ export function propsFor(
       recordExplicit(p.name, p.value as Expr);
       continue;
     }
-    // §3.8 link prefetch — the link tile lifts these into top-level fields, so
-    // do not also echo them through `props` (the bare-ident `prefetch: foo`
-    // value would otherwise emit as a JS variable reference at codegen).
-    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
-    // `key` is lifted to the TileNode's top level by `_wk` at the tile-call
-    // boundary; it must not also flow into `props` or `el`.
-    if (p.name === "key") continue;
-    entries.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+    if (isNotPropData(t.name, p.name)) continue;
+    if (collectAria(p.name, () => jsOfExpr(p.value, ctx), aria)) continue;
+    entries.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
 
   // Combine explicit wirings with reducers subscribing to (enclosingTile, ev)
@@ -84,12 +141,13 @@ export function propsFor(
       return true;
     });
     if (names.length === 0) return;
-    // Dispatch through the enclosing `createApp()` scope's own `App` (a lazy
-    // reference — tiles are emitted inside `() =>` thunks that run after the
-    // instance exists), so several compiled apps on one page never cross-wire
-    // through a shared global.
-    const body = names.map((n) => `App._dispatch(${JSON.stringify(n)}, el)`).join("; ");
-    entries.push(`${handlerName}: (el) => { ${body} }`);
+    // `_h` memoises one closure per reducer list inside the enclosing
+    // `createApp()` scope, so re-rendering the same tile yields the *same*
+    // function reference and the reconciler's field comparison can tell "same
+    // handler" from "different handler" by identity. It also dispatches
+    // through that scope's own `App`, so several compiled apps on one page
+    // never cross-wire through a shared global.
+    entries.push(`${handlerName}: ${handlerRef(names)}`);
     emittedHandlers.add(handlerName);
   };
   // Implicit-lift: every ui-event whose tile-kind gate matches `t.name` lifts
@@ -105,34 +163,47 @@ export function propsFor(
   // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
   for (const [handlerName, names] of explicitByHandler) {
     if (emittedHandlers.has(handlerName)) continue;
-    const body = names.map((n) => `App._dispatch(${JSON.stringify(n)}, el)`).join("; ");
-    entries.push(`${handlerName}: (el) => { ${body} }`);
+    entries.push(`${handlerName}: ${handlerRef(names)}`);
   }
   // Build `el` from explicit {name: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of t.props) {
-    if (HANDLER_NAMES.has(p.name)) continue;
-    // §3.8 link prefetch — these are runtime-side fields, not slot data; their
-    // value space (reducer-name ident / argument record) doesn't belong in `el`.
-    if (t.name === "link" && (p.name === "prefetch" || p.name === "prefetch-args")) continue;
-    // §4.3 style block — a CSS prop bag the runtime applies to el.style. It's
-    // not reducer data, and shipping it twice (top-level + el) re-evaluates
-    // every `@token` ref needlessly.
-    if (p.name === "style") continue;
-    // See the `key` note in the top-level props loop above.
-    if (p.name === "key") continue;
-    elProps.push(`${jsName(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+    if (isNotPropData(t.name, p.name, true)) continue;
+    if (p.name === "aria" || p.name.startsWith("aria-")) continue;
+    elProps.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
-  // §1.6.2 — the `id` prop drives `TileName#id` selector matching at dispatch
-  // time via the `el.id` payload. Tiles that lift `id` from positional args
-  // (input, textarea) bury it inside the tile node, so without this fold a
-  // reducer scoped to `Foo#bar` would never fire for `input(id="bar")` even
-  // though the DOM element has `id="bar"`. Block-style `{id: "..."}` already
-  // lands in `elProps` via the loop above; we only fill the gap for args.
-  const hasIdAlready = elProps.some((s) => s.startsWith("id:"));
-  if (!hasIdAlready) {
-    const idArg = t.args.find((a) => a.name === "id");
-    if (idArg) elProps.push(`id: ${jsOfExpr(idArg.value as Expr, ctx)}`);
+  // A named argument carries the same prop as the block form of the same name.
+  // The spec writes the two interchangeably — `button(text="Log in",
+  // loading=loginPending)` in forms.md §5.2 next to `{variant: "ghost"}` in
+  // §5.9 — so they have to arrive alike. Per-kind lowering lifts the arguments
+  // each tile names (`text`, `src`, `type`, `bind`, …) into top-level TileNode
+  // fields; every OTHER named argument used to be dropped here, which is how
+  // `image(alt="…")` satisfied the a11y check and then rendered no `alt`, and
+  // how `button(disabled=true)` rendered an enabled button.
+  //
+  // This generalizes the §1.6.2 `id` fold that used to stand alone: `id` needed
+  // it so a `Foo#bar` selector matches `input(id="bar")`, and every other
+  // argument needs it for the same reason — it is prop data, and props are
+  // where the renderers and the `$el` payload look. Arguments a kind also lifts
+  // are folded rather than enumerated away: a list of "what each kind already
+  // took" would have to stay in step with forty lowering cases, and the day it
+  // fell behind, a prop would go missing exactly the way this fixes.
+  const written = new Set(t.props.map((p) => p.name));
+  for (const a of t.args) {
+    if (!a.name || written.has(a.name)) continue;
+    if (isNotPropData(t.name, a.name, true)) continue;
+    // Children arrive as arguments too (`card(header=Some(…))`). A tile is not
+    // prop data, and lowering one here would build a second copy of its node.
+    if (isTileExpr(a.value)) continue;
+    const js = jsOfExpr(a.value, ctx);
+    if (collectAria(a.name, () => js, aria)) continue;
+    entries.push(`${jsProperty(a.name)}: ${js}`);
+    elProps.push(`${jsProperty(a.name)}: ${js}`);
+  }
+  const ariaJs = mergedAria(aria);
+  if (ariaJs) {
+    entries.push(`aria: ${ariaJs}`);
+    elProps.push(`aria: ${ariaJs}`);
   }
   if (elProps.length > 0) {
     entries.push(`el: { ${elProps.join(", ")} }`);

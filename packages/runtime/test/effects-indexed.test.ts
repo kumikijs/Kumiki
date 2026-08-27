@@ -155,11 +155,13 @@ function makeMockIndexedDb(): IDBFactory {
         },
         onsuccess: null as ((this: IDBOpenDBRequest, ev: Event) => unknown) | null,
         onerror: null as unknown,
-        onupgradeneeded: null as ((this: IDBOpenDBRequest, ev: Event) => unknown) | null,
+        onupgradeneeded: null as
+          | ((this: IDBOpenDBRequest, ev: IDBVersionChangeEvent) => unknown)
+          | null,
         onblocked: null as unknown,
       } as unknown as IDBOpenDBRequest;
       queueMicrotask(() => {
-        if (needsUpgrade) req.onupgradeneeded?.call(req, {} as Event);
+        if (needsUpgrade) req.onupgradeneeded?.call(req, {} as IDBVersionChangeEvent);
         req.onsuccess?.call(req, {} as Event);
       });
       return req;

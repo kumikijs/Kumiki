@@ -23,7 +23,7 @@ import type {
   TypeDef,
 } from "./ast.ts";
 import type { GenCtx } from "./codegen/context.ts";
-import { jsName } from "./codegen/context.ts";
+import { HANDLER_MEMO_PREAMBLE, jsBinding } from "./codegen/context.ts";
 import {
   appAnalyticsJson,
   appMetaJson,
@@ -139,6 +139,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // mounts / Web Component instances therefore never share state. Pure module
   // data (`_s`) stays outside.
   lines.push("function createApp() {");
+  lines.push(HANDLER_MEMO_PREAMBLE);
 
   // fn definitions
   for (const fn of fns) {
@@ -233,7 +234,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push(`  ${JSON.stringify(t.name)}: ${JSON.stringify(t.body)},`);
   }
   lines.push("};");
-  const themeRef = app.theme ? JSON.stringify(app.theme) : "null";
+  const themeRef = app.theme ? JSON.stringify(app.theme.name) : "null";
   lines.push("");
 
   // Motion registry — reusable, scoped animations (M5). The runtime turns each
@@ -251,7 +252,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push(`  caps: ${JSON.stringify(app.caps)},`);
   lines.push("  reducers: _reducers,");
   lines.push("  effects: _effects,");
-  lines.push(`  init: [${app.init.map((e) => emitFromInitExpr(e)).join(", ")}],`);
+  lines.push(`  init: [${app.init.map((e) => emitFromInitExpr(e, ctx)).join(", ")}],`);
   lines.push("  routes: _routes,");
   lines.push("  live: _live,");
   lines.push("  themes: _themes,");
@@ -284,14 +285,23 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   }
 
   // In-language test tile factories close over this instance's live state, so
-  // they are built inside the factory and attached to the app.
+  // they are built inside the factory and attached to the app. The test bodies
+  // themselves go here for the same reason and one more: a `tile-test`'s
+  // `expect` is lowered through the full tile pipeline, so it can emit `_h(...)`
+  // — and `_h` is this scope's handler memo. Emitting the tests at module scope
+  // put those calls where the memo does not exist.
   if (opts.includeTests && tests.length > 0) {
     lines.push("const _tilesById = {");
     for (const tile of tiles) {
-      lines.push(`  ${JSON.stringify(tile.name)}: (${jsName("$1")}) => ${genTile(tile, ctx)},`);
+      lines.push(`  ${JSON.stringify(tile.name)}: (${jsBinding("$1")}) => ${genTile(tile, ctx)},`);
     }
     lines.push("};");
     lines.push("App._tilesById = _tilesById;");
+    lines.push("App._tests = [");
+    for (const t of tests) lines.push(genTest(t, ctx, opts));
+    lines.push("];");
+    // Static coverage for `kumiki test --coverage` (§8.7).
+    lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 
   lines.push("  return App;");
@@ -307,15 +317,13 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("const App = createApp();");
   lines.push("globalThis.__kumikiApp = App;");
 
-  // In-language tests (`kumiki test`) run against the default instance.
+  // In-language tests (`kumiki test`) run against the default instance — the
+  // bodies are built inside `createApp()` above, so this only publishes the
+  // default instance's copy.
   if (opts.includeTests && tests.length > 0) {
     lines.push("");
-    lines.push("const __kumikiTests = [");
-    for (const t of tests) lines.push(genTest(t, ctx, opts));
-    lines.push("];");
-    lines.push("globalThis.__kumikiTests = __kumikiTests;");
-    // Static coverage for `kumiki test --coverage` (§8.7).
-    lines.push(`globalThis.__kumikiCoverage = ${coverageJs(tests, reducers, tiles, effects)};`);
+    lines.push("globalThis.__kumikiTests = App._tests;");
+    lines.push("globalThis.__kumikiCoverage = App._coverage;");
   }
   lines.push("");
 
@@ -380,5 +388,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   };
 }
 
-export { FIELD_ACCESS_SHORTCUTS, KNOWN_MEMBERS, KNOWN_METHODS } from "./codegen/expr.ts";
+export {
+  FIELD_ACCESS_SHORTCUTS,
+  KNOWN_MEMBERS,
+  KNOWN_METHODS,
+  METHOD_MIN_ARGS,
+  NUMERIC_MEMBERS,
+} from "./codegen/expr.ts";
 export { RUNTIME_HELPERS } from "./codegen/runtime-helpers.ts";

@@ -8,7 +8,7 @@ Kumiki のフォームは「個別入力の `bind` で slot に直接束縛」�
 
 ## 5.1 個別入力の双方向束縛
 
-```kumiki
+```kumiki fragment
 slot draft : Text where len-lt(280) = ""
 
 tile Compose = column(
@@ -21,7 +21,7 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
-### 5.1.1 `bind` の対応要素
+### 5.1.1 `bind` の対応要素 {#_5-1-1-elements-that-support-bind}
 
 | 要素 | 受け取れる型 |
 |---|---|
@@ -39,9 +39,11 @@ tile Compose = column(
 - **デフォルト**: 入力を弾く（slot は更新されない）
 - **`strict=false`**: slot は更新するが、フォームの `valid` フラグが false になる
 
-```kumiki
+```kumiki snippet
 input(bind=draft, strict=false)
 ```
+
+この 2 つの挙動はどちらも `bind` に固有のもので、どちらも意図的に静かである。入力途中の値は欠陥ではなく想定内だからだ。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
 
 ---
 
@@ -49,7 +51,7 @@ input(bind=draft, strict=false)
 
 複数の入力をまとめて確定送信したい場合は、**form をラップする tile** を作る：
 
-```kumiki
+```kumiki fragment
 slot loginEmail    : Text                = ""
 slot loginPassword : Text     volatile   = ""
 slot loginError    : Option(HttpError)   = None
@@ -97,6 +99,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 - 1 つでも失敗していれば呼ばれない（個別の error 表示は出る）
 - 厳密モード切替が必要なら `strict=false` を該当入力に
 - `button(type="submit")` をクリックするか、`input` で Enter キーで発火
+- `type` は `submit` / `button` / `reset` のいずれかで、そのまま DOM に書かれ、意味を持つのは form の中だけである。`type` を書かなかったボタンは HTML の既定に従う — すなわち `submit` になるので、form の中にあって送信させたくないボタンには `type="button"` が必要である。3 つ以外のリテラルは [E0201](./errors.md#e0201-type-mismatch) になる：不正な `type` 属性は `submit` に解決されるので、綴り間違いは送信してしまう
 
 ---
 
@@ -110,7 +113,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 | `onInput` | reducer name | input イベントで呼ばれる（onChange より高頻度） |
 | `placeholder` | `Text` | プレースホルダ |
 | `disabled` | `Bool` | 無効化 |
-| `readonly` | `Bool` | 読み取り専用 |
+| `readonly` | `Bool` | 読み取り専用（`select` のように読み取り専用状態を持たないコントロールは無視する） |
 | `required` | `Bool` | 必須 |
 | `auto-focus` | `Bool` | マウント時にフォーカス |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off` 等 |
@@ -119,7 +122,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 ### 5.3.1 input type 別
 
-```kumiki
+```kumiki snippet
 input(bind=email, type="email", auto-complete="email")
 input(bind=password, type="password", auto-complete="current-password")
 input(bind=age, type="number", min=0, max=120)
@@ -134,7 +137,7 @@ input(bind=phone, type="tel", pattern="[0-9-]+")
 
 `bind` で十分足りない（例：入力の都度カスタム処理を走らせたい）場合は、その入力を**専用の小 tile**でラップして `ui.input` / `ui.change` を受ける：
 
-```kumiki
+```kumiki fragment
 slot pw  : Text                   = ""
 slot pw2 : Text                   = ""
 slot pwError : Option(Text)       = None
@@ -155,7 +158,7 @@ reducer validatePw
 
 ### 5.5.1 select
 
-```kumiki
+```kumiki fragment
 type Filter = All | Active | Done
 slot filter : Filter = All
 
@@ -179,7 +182,7 @@ tile FilterSelect = select(
 
 `value=` 形式の場合、change イベントで `ui.change(<SelectTile>)` を購読する reducer が呼ばれ、`$event.value` で選択された variant 値を受け取れる：
 
-```kumiki
+```kumiki fragment
 tile StatusSelect = select(value=issues[iid].status,
                            options=statusOptions(),
                            placeholder="Status")
@@ -200,7 +203,7 @@ input/textarea も `bind=` で slot を更新するほか、`ui.change(InputTile
 
 radio はグループ化のため `group` prop を持つ（CSS の `name` 属性に対応）：
 
-```kumiki
+```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
 tile FilterRadioActive = radio(group="filter", value=Active, selected=(filter == Active)) {label: "Active"}
 tile FilterRadioDone   = radio(group="filter", value=Done,   selected=(filter == Done))   {label: "Done"}
@@ -214,7 +217,7 @@ reducer setFilterDone   on=ui.change(FilterRadioDone)   do= filter := Done
 
 または、`bind` で union 型を直接受ければ単一 reducer 不要：
 
-```kumiki
+```kumiki fragment
 tile FilterRadioGroup = column(
                           radio(group="filter", bind=filter, value=All)    {label: "All"},
                           radio(group="filter", bind=filter, value=Active) {label: "Active"},
@@ -237,7 +240,7 @@ Kumiki のバリデーションは **3 層**：
 
 ### 5.6.1 フォーム横断の例
 
-```kumiki
+```kumiki snippet
 slot pw  : Text  = ""
 slot pw2 : Text  = ""
 slot pwError : Option(Text) = None
@@ -271,7 +274,7 @@ reducer doSignup on=ui.submit(SignupForm) do= ...
 
 `error` 要素で表示：
 
-```kumiki
+```kumiki snippet
 input(bind=email, type="email")
 error(field=email)
 ```
@@ -293,7 +296,7 @@ error(field=email)
 
 カスタムメッセージは `theme.errors` で上書き：
 
-```kumiki
+```kumiki snippet
 theme MyTheme = {
     ...,
     errors: {
@@ -305,9 +308,9 @@ theme MyTheme = {
 
 ---
 
-## 5.8 サブミット中の UI
+## 5.8 サブミット中の UI {#_5-8-ui-during-submission}
 
-```kumiki
+```kumiki fragment
 slot loginPending : Bool = false
 
 reducer doLogin
@@ -333,7 +336,7 @@ reducer loginErr
 
 ## 5.9 multi-step フォーム
 
-```kumiki
+```kumiki fragment
 type Step = Account | Profile | Confirm
 
 slot step : Step = Account
@@ -362,9 +365,9 @@ tile Wizard = column(
 
 ---
 
-## 5.10 ファイルアップロード
+## 5.10 ファイルアップロード {#_5-10-file-upload}
 
-```kumiki
+```kumiki fragment
 slot avatar : Option(File) = None
 
 tile AvatarPicker = input(type="file", accept="image/*")

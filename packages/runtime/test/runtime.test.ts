@@ -1,4 +1,4 @@
-import type { AppShape } from "@kumikijs/runtime";
+import type { AppShape, MountedApp } from "@kumikijs/runtime";
 import {
   _stdlib,
   builtinEffects,
@@ -6,6 +6,7 @@ import {
   KumikiPanic,
   mount,
 } from "@kumikijs/runtime";
+import type { MockInstance } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Hand-crafted AppShape mirroring the counter example, using the Phase 2 runtime contract.
@@ -94,17 +95,22 @@ function makeCounterApp(): AppShape {
   // Provide `_live` so the root() closure can read count after mounts.
   (app as unknown as { _live: Record<string, unknown> })._live = { count: 0 };
   // Intercept the runtime's slot writes by patching apply functions to also
-  // write into our shadow `_live` mirror.
+  // write into our shadow `_live` mirror, under the same all-or-nothing rule
+  // the runtime applies (spec/runtime.md §10.3.3) — a mirror that diverged
+  // would make the DOM assertions below lie about what the app rendered.
   const originalReducers = app.reducers;
   app.reducers = originalReducers.map((r) => ({
     ...r,
     apply: (live, payload) => {
       const result = r.apply(live, payload);
-      const mirror = (app as unknown as { _live: Record<string, unknown> })._live;
-      for (const [k, v] of Object.entries(result.slots)) {
+      const entries = Object.entries(result.slots);
+      const rejected = entries.some(([k, v]) => {
         const meta = slots[k as keyof typeof slots];
-        if (meta?.refine && !meta.refine(v)) continue;
-        mirror[k] = v;
+        return meta?.refine !== undefined && !meta.refine(v);
+      });
+      if (!rejected) {
+        const mirror = (app as unknown as { _live: Record<string, unknown> })._live;
+        for (const [k, v] of entries) mirror[k] = v;
       }
       return result;
     },
@@ -142,10 +148,16 @@ describe("runtime", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 3");
   });
 
-  it("rejects values below refinement floor", () => {
-    mount(makeCounterApp(), root);
+  it("refuses a write below the refinement floor", () => {
+    const app = makeCounterApp();
+    mount(app, root);
     const minus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "-");
     minus?.click();
+    // Assert the runtime's own state, not just the DOM: the fixture keeps a
+    // shadow mirror so `root()` can read the count, and that mirror applies the
+    // same rule — checking it alone would pass even against a runtime that
+    // wrote -1.
+    expect((app as MountedApp).live.count).toBe(0);
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
 
@@ -161,10 +173,15 @@ describe("runtime", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
 
-  it("clamps at refinement ceiling 999", () => {
-    mount(makeCounterApp(), root);
+  // Not a clamp — a refinement is a type constraint, so the write past 999 is
+  // refused (and reported) rather than saturating. The observable count is the
+  // same; a real app guards the edge instead of relying on this.
+  it("refuses a write past the refinement ceiling of 999", () => {
+    const app = makeCounterApp();
+    mount(app, root);
     const plus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "+");
     for (let i = 0; i < 1001; i++) plus?.click();
+    expect((app as MountedApp).live.count).toBe(999);
     expect(root.querySelector("h1")?.textContent).toBe("Count: 999");
   });
 });
@@ -219,6 +236,18 @@ describe("style block application", () => {
     expect(box?.style.background).toBe("rgb(240, 240, 240)");
     expect(box?.style.padding).toBe("12px");
     expect(box?.style.borderRadius).toBe("4px");
+  });
+
+  it("says so when the selected theme name matches no declared theme", () => {
+    // The compiler resolves the name in `app.theme = X` but not the value a
+    // slot behind it holds, so this is where a misspelled theme name surfaces.
+    // Rendering with the built-in defaults otherwise looks merely unstyled.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = makeStyledApp();
+    app.themeName = "Ligth";
+    mount(app, root);
+    expect(warn.mock.calls.flat().join(" ")).toContain('Theme "Ligth" is not declared');
+    warn.mockRestore();
   });
 });
 
@@ -331,7 +360,15 @@ function makeOverlayApp(): AppShape {
               },
             ],
           },
-          open ? { kind: "card", props: {}, children: [{ kind: "text", text: "Modal" }] } : null,
+          ...(open
+            ? [
+                {
+                  kind: "card" as const,
+                  props: {},
+                  children: [{ kind: "text" as const, text: "Modal" }],
+                },
+              ]
+            : []),
         ],
       };
     },
@@ -525,6 +562,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest passes when slots + effects match", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: { count: 0 },
       result: { slots: { count: 1 }, emits: [] },
       panic: null,
@@ -536,6 +575,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest reports the diff path on a slot mismatch", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: { count: 0 },
       result: { slots: { count: 1 }, emits: [] },
       panic: null,
@@ -548,6 +589,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest compares emitted effect names", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: {}, emits: [{ effect: "persist", args: [] }] },
       panic: null,
@@ -561,7 +604,9 @@ describe("in-language test runner helpers", () => {
     expect(
       _stdlib.runReducerTest({
         name: "t",
+        target: "t",
         givenSlots: {},
+        slotMetas: {},
         result: null,
         panic: "draft cannot be empty",
         expect: { kind: "panic", message: "cannot be empty" },
@@ -587,7 +632,9 @@ describe("in-language test runner helpers", () => {
     expect(
       _stdlib.runReducerTest({
         name: "t",
+        target: "t",
         givenSlots: {},
+        slotMetas: {},
         result: { slots: {}, emits: [{ effect: "persist", args: [{ x: 1 }] }] },
         panic: null,
         expect: {
@@ -602,6 +649,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest: a parenthesised effect pins its args (so persist() rejects persist(x))", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: {}, emits: [{ effect: "persist", args: [1] }] },
       panic: null,
@@ -618,6 +667,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest: objects with different keys are not equal (undefined-value guard)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { s: { a: undefined } }, emits: [] },
       panic: null,
@@ -660,6 +711,8 @@ describe("in-language test runner helpers", () => {
   it("runReducerTest exposes the leaf slot values on a slot mismatch", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: { msg: "Helo" },
       result: { slots: { msg: "Helo" }, emits: [] },
       panic: null,
@@ -685,6 +738,8 @@ describe("in-language test runner helpers", () => {
   it("wildcard <any-id> matches any value at a slot position", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { id: "9ab3-generated-uuid" }, emits: [] },
       panic: null,
@@ -696,6 +751,8 @@ describe("in-language test runner helpers", () => {
   it("wildcard <slots.X> in an effect arg matches the post-execution slot value", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: {
         slots: { todos: { a: { text: "Hi" } } },
@@ -716,6 +773,8 @@ describe("in-language test runner helpers", () => {
   it("a <slots.X> effect arg fails when it does not equal the slot value", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: {
         slots: { todos: { a: 1 } },
@@ -737,6 +796,8 @@ describe("in-language test runner helpers", () => {
   it("a <any-id> map key matches exactly one generated entry (value shape compared)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: {
         slots: {
@@ -768,6 +829,8 @@ describe("in-language test runner helpers", () => {
   it("a <any-id> map key fails when zero entries match (AC1)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { todos: {} }, emits: [] },
       panic: null,
@@ -784,6 +847,8 @@ describe("in-language test runner helpers", () => {
   it("a <any-id> map key fails when more than one entry is present (AC1)", () => {
     const r = _stdlib.runReducerTest({
       name: "t",
+      target: "r",
+      slotMetas: {},
       givenSlots: {},
       result: { slots: { todos: { a: { text: "Hello" }, b: { text: "Hello" } } }, emits: [] },
       panic: null,
@@ -803,53 +868,52 @@ describe("in-language test runner helpers", () => {
 describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   // A two-step flow: `fetchUser` emits `loadUser`; its result drives `userLoaded`
   // (`.ok`) or `userFailed` (`.err`). Built as a minimal AppShape-like object.
-  type FlowApp = Parameters<typeof _stdlib.runReducerTestFlow>[0]["app"];
-  const makeFlowApp = (): FlowApp =>
-    ({
-      slots: { users: { value: {} }, error: { value: "" } },
-      live: {},
-      effects: { loadUser: {}, track: {} },
-      reducers: [
-        {
-          name: "fetchUser",
-          event: { kind: "ui", ev: "click" },
-          apply: (_live, p) => ({
-            slots: {},
-            emits: [{ effect: "loadUser", args: [(p as { $el: unknown }).$el] }],
-          }),
+  type FlowInput = Parameters<typeof _stdlib.runReducerTestFlow>[0];
+  type FlowApp = FlowInput["app"];
+  const makeFlowApp = (): FlowApp => ({
+    slots: { users: { value: {} }, error: { value: "" } },
+    live: {},
+    reducers: [
+      {
+        name: "fetchUser",
+        event: { kind: "ui", ev: "click" },
+        apply: (_live, p) => ({
+          slots: {},
+          emits: [{ effect: "loadUser", args: [(p as { $el: unknown }).$el] }],
+        }),
+      },
+      {
+        name: "userLoaded",
+        event: { kind: "effect", effect: "loadUser", outcome: "ok" },
+        apply: (live, p) => {
+          const u = (p as { $1: { id: string } }).$1;
+          return {
+            slots: { users: { ...(live.users as object), [u.id]: u } },
+            emits: [],
+          };
         },
-        {
-          name: "userLoaded",
-          event: { kind: "effect", effect: "loadUser", outcome: "ok" },
-          apply: (live, p) => {
-            const u = (p as { $1: { id: string } }).$1;
-            return {
-              slots: { users: { ...(live.users as object), [u.id]: u } },
-              emits: [],
-            };
-          },
-        },
-        {
-          name: "userFailed",
-          event: { kind: "effect", effect: "loadUser", outcome: "err" },
-          apply: (_live, p) => ({ slots: { error: (p as { $1: unknown }).$1 }, emits: [] }),
-        },
-      ],
-    }) as unknown as FlowApp;
+      },
+      {
+        name: "userFailed",
+        event: { kind: "effect", effect: "loadUser", outcome: "err" },
+        apply: (_live, p) => ({ slots: { error: (p as { $1: unknown }).$1 }, emits: [] }),
+      },
+    ],
+  });
 
-  const run = (app: FlowApp, given: Record<string, unknown>, rest: Record<string, unknown>) => {
-    _stdlib.resetLive(
-      (app as unknown as { live: Record<string, unknown> }).live,
-      (app as unknown as { slots: Record<string, { value: unknown }> }).slots,
-      given,
-    );
+  const run = (
+    app: FlowApp,
+    given: Record<string, unknown>,
+    rest: Pick<FlowInput, "mocks" | "expect">,
+  ) => {
+    _stdlib.resetLive(app.live, app.slots, given);
     return _stdlib.runReducerTestFlow({
       name: "t",
       app,
       target: "fetchUser",
       el: { id: "u1" },
       ...rest,
-    } as Parameters<typeof _stdlib.runReducerTestFlow>[0]);
+    });
   };
 
   it("delivers a mocked `ok` result to the .ok reducer", () => {
@@ -915,9 +979,7 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   it("a mocked `err` with no matching .err reducer fails the test (M2 contract)", () => {
     const app = makeFlowApp();
     // Drop the `.err` handler so the error is unhandled.
-    (app as unknown as { reducers: { name: string }[] }).reducers = (
-      app as unknown as { reducers: { name: string }[] }
-    ).reducers.filter((r) => r.name !== "userFailed");
+    app.reducers = app.reducers.filter((r) => r.name !== "userFailed");
     const r = run(
       app,
       { users: {}, error: "" },
@@ -1189,7 +1251,7 @@ function makeRenderPanicApp(): AppShape {
 
 describe("live panic handling (#24)", () => {
   let root: HTMLElement;
-  let errSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: MockInstance<typeof console.error>;
   beforeEach(() => {
     root = document.createElement("div");
     document.body.appendChild(root);
@@ -1508,7 +1570,7 @@ function makeErringApp(withErrReducer: boolean): AppShape {
 
 describe("unhandled effect-error contract (#37)", () => {
   let root: HTMLElement;
-  let errSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: MockInstance<typeof console.error>;
   const fire = (app: AppShape): void =>
     (app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void })._dispatch(
       "fire",
@@ -1708,7 +1770,8 @@ function makeBuiltinApp(): AppShape {
 
 describe("standard capability override", () => {
   let root: HTMLElement;
-  const fireB = (app: AppShape, name: string): void => (app as AppLive)._dispatch?.(name, {});
+  const fireB = (app: AppShape, name: string): void =>
+    (app as AppShape & Partial<MountedApp>)._dispatch?.(name, {});
   beforeEach(() => {
     root = document.createElement("div");
     document.body.appendChild(root);

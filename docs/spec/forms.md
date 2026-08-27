@@ -8,7 +8,7 @@ Event selectors are **always written as tile names** (CSS attribute selectors ar
 
 ## 5.1 Two-Way Binding of Individual Inputs
 
-```kumiki
+```kumiki fragment
 slot draft : Text where len-lt(280) = ""
 
 tile Compose = column(
@@ -39,9 +39,11 @@ For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters
 - **Default**: the input is rejected (the slot is not updated)
 - **`strict=false`**: the slot is updated, but the form's `valid` flag becomes false
 
-```kumiki
+```kumiki snippet
 input(bind=draft, strict=false)
 ```
+
+Both shapes are specific to `bind`, and both are deliberately quiet: a half-typed value is expected, not a defect. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
 
 ---
 
@@ -49,7 +51,7 @@ input(bind=draft, strict=false)
 
 When you want to commit-submit multiple inputs together, create a **tile that wraps the form**:
 
-```kumiki
+```kumiki fragment
 slot loginEmail    : Text                = ""
 slot loginPassword : Text     volatile   = ""
 slot loginError    : Option(HttpError)   = None
@@ -97,6 +99,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 - If even one fails, it is not called (individual error displays do appear)
 - If strict-mode switching is needed, apply `strict=false` to the relevant input
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
+- `type` is one of `submit` / `button` / `reset`, written through to the DOM verbatim, and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`. A literal outside the three is [E0201](./errors.md#e0201-type-mismatch): an invalid `type` attribute resolves to `submit`, so the typo submits
 
 ---
 
@@ -110,7 +113,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 | `onInput` | reducer name | Called on the input event (more frequent than onChange) |
 | `placeholder` | `Text` | Placeholder |
 | `disabled` | `Bool` | Disable |
-| `readonly` | `Bool` | Read-only |
+| `readonly` | `Bool` | Read-only (a control that has no read-only state, such as a `select`, ignores it) |
 | `required` | `Bool` | Required |
 | `auto-focus` | `Bool` | Focus on mount |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off`, etc. |
@@ -119,7 +122,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 ### 5.3.1 By input type
 
-```kumiki
+```kumiki snippet
 input(bind=email, type="email", auto-complete="email")
 input(bind=password, type="password", auto-complete="current-password")
 input(bind=age, type="number", min=0, max=120)
@@ -134,7 +137,7 @@ input(bind=phone, type="tel", pattern="[0-9-]+")
 
 When `bind` is not enough (e.g., you want to run custom processing on every input), wrap that input in a **dedicated small tile** and receive `ui.input` / `ui.change`:
 
-```kumiki
+```kumiki fragment
 slot pw  : Text                   = ""
 slot pw2 : Text                   = ""
 slot pwError : Option(Text)       = None
@@ -155,7 +158,7 @@ reducer validatePw
 
 ### 5.5.1 select
 
-```kumiki
+```kumiki fragment
 type Filter = All | Active | Done
 slot filter : Filter = All
 
@@ -179,7 +182,7 @@ tile FilterSelect = select(
 
 In the `value=` form, on a change event the reducer subscribing to `ui.change(<SelectTile>)` is called, and you can receive the selected variant value via `$event.value`:
 
-```kumiki
+```kumiki fragment
 tile StatusSelect = select(value=issues[iid].status,
                            options=statusOptions(),
                            placeholder="Status")
@@ -200,7 +203,7 @@ In addition to updating a slot via `bind=`, input/textarea can also fire via the
 
 radio has a `group` prop for grouping (corresponding to CSS's `name` attribute):
 
-```kumiki
+```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
 tile FilterRadioActive = radio(group="filter", value=Active, selected=(filter == Active)) {label: "Active"}
 tile FilterRadioDone   = radio(group="filter", value=Done,   selected=(filter == Done))   {label: "Done"}
@@ -214,7 +217,7 @@ reducer setFilterDone   on=ui.change(FilterRadioDone)   do= filter := Done
 
 Alternatively, if you receive a union type directly via `bind`, a single reducer is unnecessary:
 
-```kumiki
+```kumiki fragment
 tile FilterRadioGroup = column(
                           radio(group="filter", bind=filter, value=All)    {label: "All"},
                           radio(group="filter", bind=filter, value=Active) {label: "Active"},
@@ -237,7 +240,7 @@ Kumiki validation has **three layers**:
 
 ### 5.6.1 Cross-Form Example
 
-```kumiki
+```kumiki snippet
 slot pw  : Text  = ""
 slot pw2 : Text  = ""
 slot pwError : Option(Text) = None
@@ -271,7 +274,7 @@ reducer doSignup on=ui.submit(SignupForm) do= ...
 
 Display via the `error` element:
 
-```kumiki
+```kumiki snippet
 input(bind=email, type="email")
 error(field=email)
 ```
@@ -293,7 +296,7 @@ error(field=email)
 
 Override custom messages via `theme.errors`:
 
-```kumiki
+```kumiki snippet
 theme MyTheme = {
     ...,
     errors: {
@@ -307,7 +310,7 @@ theme MyTheme = {
 
 ## 5.8 UI During Submission
 
-```kumiki
+```kumiki fragment
 slot loginPending : Bool = false
 
 reducer doLogin
@@ -333,7 +336,7 @@ reducer loginErr
 
 ## 5.9 Multi-step Forms
 
-```kumiki
+```kumiki fragment
 type Step = Account | Profile | Confirm
 
 slot step : Step = Account
@@ -364,7 +367,7 @@ Splitting each step into an independent tile makes it easier for the AI to track
 
 ## 5.10 File Upload
 
-```kumiki
+```kumiki fragment
 slot avatar : Option(File) = None
 
 tile AvatarPicker = input(type="file", accept="image/*")

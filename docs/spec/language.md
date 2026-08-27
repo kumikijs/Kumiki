@@ -1,5 +1,7 @@
 # Language Core Specification
 
+The seven kinds of definition a Kumiki program is made of, plus the expressions, statements and patterns they share. [§1.1](#_1-1-overall-program-structure) gives the shape of a whole program; after that, read the layer you are about to write.
+
 ## 1.1 Overall Program Structure
 
 A Kumiki program is a **set of 7 kinds of definitions**. There are no physical file boundaries; each definition is stored in a content-addressable graph as the following 4-tuple:
@@ -36,18 +38,37 @@ These seven are the **logic/data/UI core** — what an author must learn to expr
 ## 1.2 Lexical
 
 ```
-identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; max 32 characters
+identifier  ::= [a-zA-Z][a-zA-Z0-9_-]*           ; max 32 characters, longest munch
 qname       ::= identifier ('.' identifier)*     ; dot-separated fully qualified name
+cap-name    ::= identifier ('.' cap-segment)*    ; a capability, whose segments name nothing in this language
+cap-segment ::= identifier | keyword             ; so `telemetry.out` is a capability, not a syntax error
 literal     ::= number | string | bool | unit
 number      ::= int | float
 int         ::= '-'? [0-9]+
-float       ::= '-'? [0-9]+ '.' [0-9]+
+float       ::= '-'? [0-9]+ '.' [0-9]+           ; the digits after the point are required
 string      ::= '"' (escape | non-quote-char)* '"'
 escape      ::= '\\' ('n' | 't' | 'r' | '"' | '\\' | 'u{' hex+ '}')
 bool        ::= 'true' | 'false'
 unit        ::= '()'
+tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; the value a Tuple types
 comment     ::= '#' until-eol                    ; single-line comment only
 ```
+
+**`-` is both an identifier character and subtraction, and longest munch decides.** `page-size`, `base-url`, `on-401` and `count-1` are one name each, which is why subtraction between a name and a literal is written `count - 1`.
+
+::: details Every spacing of `count-1`, and what an unresolved one reports
+A `-` continues the identifier when an identifier character follows it, and ends it otherwise. `count- 1` is also subtraction, because there the `-` has nothing to continue into; `count -1` is subtraction because the space ended the name before the `-` was reached at all. A name written `count-1` that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), and its message says so.
+:::
+
+**A `#` with whitespace on either side of it always starts a comment.** It is the selector operator ([§1.6.1](#_1-6-1-syntax)) only in the tight form `SaveBtn#new`.
+
+::: details The exact condition, and where a `#` still comments
+A `#` is the selector operator only when the character before it ends a value — an identifier character, or a closing `)` / `]` / `}` — *and* the character after it begins an identifier. Everywhere else, including `#TODO` at the start of a line and `= 0# how many`, it runs to the end of the line. A `#id` fragment therefore begins with a letter or `_`, which is what `tile-ref` already required.
+:::
+
+::: details Positions — line terminators, UTF-16 columns, and the BOM
+A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line. A column counts UTF-16 code units, so an astral character advances it by two — the same convention the Language Server Protocol uses, and the one every consumer of a Kumiki position needs, since a patch splices a source line at `column - 1`. A leading byte-order mark is whitespace for the same reason: it is not part of the text, but it is part of the string being spliced, so it takes a column.
+:::
 
 ### 1.2.1 Operators
 
@@ -82,8 +103,13 @@ fresh  self  now  null
 - **Indentation-independent**: leading whitespace is ignored
 - **Newline is the statement separator**: only inside `do=` can `;` join multiple statements
 - **Identifiers are at most 32 characters**
+- **An expression, type, pattern or tile tree is at most 256 levels deep**: past that the parser reports a positioned error. No program in the examples or benchmarks comes near it.
 - **Multi-line comments prohibited**
 - **Macros prohibited**
+
+::: details What the 256-level limit is measured against
+A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+:::
 
 ---
 
@@ -142,7 +168,7 @@ Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to writ
 
 ### 1.3.4 Examples
 
-```kumiki
+```kumiki fragment
 type UserId    = nominal Text where len-eq(36)
 type Email     = nominal Text where email
 type Url       = nominal Text where url
@@ -156,6 +182,36 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 Structurally identical types have the same content-hash. Only `nominal` produces a new hash.
 
+A `nominal` type is identified by **the name it is declared under**, so two declarations over one base are two types even when their bodies are identical:
+
+```kumiki fragment
+type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+```
+
+`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
+
+A type that carries **no nominal name of its own** meets any nominal declared over it, in both directions. That is what makes `slot c : Cents = 1` legal without a construction form, and arithmetic yields the base ([§1.9](#_1-9-expression-language)), so `c := c + 1` stands.
+
+A nominal declared over another nominal is a **narrowing**, and goes one way only:
+
+```kumiki fragment
+type Deep = nominal Cents
+```
+
+Every `Deep` was declared a `Cents`, so a `Deep` is accepted where a `Cents` is required; a `Cents` where a `Deep` is required is [E0201](./errors.md#e0201-type-mismatch). `Int` still meets both.
+
+Converting between two unrelated nominals goes through the base they share, and a `fn` is where that is written down — the return type documents the destination, and the body has to have **reached the base**:
+
+```kumiki fragment
+fn toYen(c: Cents, rate: Int) -> Yen = c * rate
+fn toUser(p: PostId) -> UserId       = p + ""
+```
+
+The arithmetic in the first lands on `Int`; the `+ ""` in the second lands on `Text`. The identity body does not compile — `fn toUser(p: PostId) -> UserId = p` is E0201, because `p` is still a `PostId`. Nothing checks that such a `fn` converts anything; it records the intent, and the type of its body is all that is enforced.
+
+A `where` refinement carries no identity of its own — `type Positive = Int where positive` is `Int` — and remains a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)) rather than a compile-time one: on `type Volume = nominal Int where between(0, 11)`, `volume := 50` is well typed, and the range is what validation decides.
+
 ---
 
 ## 1.4 Store Layer (`slot`)
@@ -163,7 +219,7 @@ Structurally identical types have the same content-hash. Only `nominal` produces
 ### 1.4.1 Syntax
 
 ```
-slot-def    ::= 'slot' identifier ':' type-expr modifier* ('=' init-expr)?
+slot-def    ::= 'slot' identifier ':' type-expr modifier? '=' init-expr
 modifier    ::= 'transient' | 'volatile'
 init-expr   ::= literal | record-literal | collection-literal | builtin-call
 ```
@@ -174,6 +230,10 @@ init-expr   ::= literal | record-literal | collection-literal | builtin-call
 | `transient` | Discarded on hot reload |
 | `volatile` | Not written to the episode log; discarded on hot reload |
 
+At most one modifier: `volatile` already does everything `transient` does, so writing both says nothing `volatile` alone does not.
+
+The initial value is required. A slot with no `=` would have to hold something before the program first writes to it, and the language has no value for that — no null, and no per-type zero.
+
 ### 1.4.2 Invariants
 
 1. **All slots are global**
@@ -183,7 +243,7 @@ init-expr   ::= literal | record-literal | collection-literal | builtin-call
 
 ### 1.4.3 Examples
 
-```kumiki
+```kumiki fragment
 slot todos       : Map(TodoId, Todo)              = {}
 slot filter      : Filter                         = All
 slot draft       : Text where len-lt(280)         = ""
@@ -227,7 +287,7 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 
 ### 1.5.3 Examples
 
-```kumiki
+```kumiki fragment
 effect loadUser  cap=http.get
                  in=UserId
                  out=Result(User, HttpError)
@@ -255,7 +315,7 @@ reducer-def ::= 'reducer' identifier
 event-pattern ::= ui-event | effect-event | timer-event | lifecycle-event | route-event
 ui-event      ::= 'ui' '.' ui-kind '(' selector ')'
 ui-kind       ::= 'click' | 'submit' | 'change' | 'input' | 'focus' | 'blur' | 'key' | 'hover'
-selector      ::= tile-ref | 'self'
+selector      ::= tile-ref
 tile-ref      ::= identifier ('#' identifier)?    ; TileName or TileName#id
 effect-event  ::= identifier '.' ('ok' | 'err') '(' bind (',' bind)* ')'
 timer-event   ::= 'timer' '(' duration ')'   ; fires this reducer every intervalMs
@@ -295,51 +355,51 @@ In other words, you can mix one-line layout and block layout. When writing in ne
 
 **Multiple subscriptions to the same event are allowed.** When two or more reducers
 declare the same `on=` pattern (e.g. both subscribe to `ui.click(SubmitBtn)`), all
-of them fire in definition order — see §1.6.4 Invariant 3.
+of them fire in definition order — see [§1.6.4](#_1-6-4-invariants) Invariant 3.
 
 ### 1.6.2 Selectors
 
 A selector is **`TileName`** or **`TileName#id`** only (CSS attribute selectors have been removed).
 
-```kumiki
+```kumiki snippet
 reducer add     on=ui.click(AddBtn)         do= ...
 reducer toggle  on=ui.click(TodoRow)        do= ...
-reducer login   on=ui.submit(form#login)    do= ... ; ❌ 'form' is a built-in element, not a tile name
+reducer login   on=ui.submit(form#login)    do= ... # ❌ 'form' is a built-in element, not a tile name
 ```
 
 To bind events directly to built-in elements (`button`, `input`, `form`, etc.), **create a wrapper tile**:
 
-```kumiki
+```kumiki snippet
 tile LoginForm = form(...) {id: "main"}
 
 reducer doLogin
-    on=ui.submit(LoginForm)         ; reference by tile name
+    on=ui.submit(LoginForm)         # reference by tile name
     do= emit login({...})
 ```
 
 **`TileName#id`** narrows a subscription to dispatched elements whose `{id}` prop equals `id`. A bare `TileName` reducer still fires for every instance; an `#id`-scoped reducer fires **only** when the runtime sees a matching id. Use it to make intent explicit when several tiles wrap the same built-in element, so the wrong one cannot quietly trigger the wrong reducer:
 
-```kumiki
+```kumiki snippet
 tile NewForm  = form(submit-text="add",  text=draft.new)  {id: "new"}
 tile EditForm = form(submit-text="save", text=draft.edit) {id: "edit"}
 
-reducer add  on=ui.submit(NewForm#new)   do= ...   ; only the "new" form
-reducer save on=ui.submit(EditForm#edit) do= ...   ; only the "edit" form
+reducer add  on=ui.submit(NewForm#new)   do= ...   # only the "new" form
+reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 ```
 
-The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from §1.6.4 Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
+The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from [§1.6.4](#_1-6-4-invariants) Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
 ### 1.6.3 lvalue Semantics
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
 
-```kumiki
-; These reducer statements:
+```kumiki snippet
+# These reducer statements:
 todos[id].done := true
 editor.title := "New"
-editor.get.body := "Body"        ; via Option (compiler expands to Option.map)
+editor.get.body := "Body"        # via Option (compiler expands to Option.map)
 
-; are internally expanded as:
+# are internally expanded as:
 todos := todos.update(id, $1.copy(done=true))
 editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
@@ -349,7 +409,7 @@ editor := editor.map($1.copy(body="Body"))
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 
-```kumiki
+```kumiki snippet
 editor := editor.copy(title="New", body="Body", updatedAt=now)
 issue.copy(status=Done, priority=High)
 ```
@@ -370,6 +430,9 @@ issue.copy(status=Done, priority=High)
      - `if cond then x := 1 else x := 2; x := 3` ✗ (same path again after combining mutually exclusive branches)
    - Even with the same shape, different index values (`m[k1]` and `m[k2]`) cannot be statically decided, so they are treated as 1 write (the stricter side). If you want to update multiple keys, use a `for` loop
 5. **Calling `fn` is allowed** (safe because it is pure)
+6. **The batch commits all-or-nothing**: if any slot's new value violates its type's refinement, the entire reducer application is discarded — no slot write, no `emit`, no `stop-timer` — and the rejection is reported (see [batching](./runtime.md#a-batch-commits-all-or-nothing)). A reachable bound is the program's business: write the guard.
+   - `volume := volume + 1` on `Volume = nominal Int where between(0, 11)` ✗ at 11 (rejected and reported)
+   - `if volume < 11 then volume := volume + 1` ✓
 
 ### 1.6.5 Positional Binding
 
@@ -378,14 +441,14 @@ issue.copy(status=Done, priority=High)
 | `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument) |
 | `$el` | the `{...}` props of the tile that fired the event |
 | `$event` | the event payload |
-| `$route` | the Route at route.enter/leave |
+| `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
 | `$now` | the current time |
 
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
 ### 1.6.6 Examples
 
-```kumiki
+```kumiki fragment
 reducer addTodo
     on=ui.submit(NewTodoForm)
     do= let id = TodoId.fresh()
@@ -472,7 +535,7 @@ pattern      ::= identifier
 
 An event handler **takes a reducer name**:
 
-```kumiki
+```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
 ```
 
@@ -485,7 +548,7 @@ the argument as `$1`. **`$1` is available only when `in=` is declared** — usin
 `$1` in a tile with no `in=` is an undefined reference (E0103). Callers pass the
 argument positionally: `TodoRow(id)`.
 
-```kumiki
+```kumiki fragment
 tile TodoRow  in=TodoId
               = row(
                   check(value=todos[$1].done, onClick=toggle) {todoId: $1},
@@ -533,7 +596,7 @@ fn-param    ::= identifier ':' type-expr
 
 ### 1.8.4 Examples
 
-```kumiki
+```kumiki fragment
 fn matchFilter(t: Todo, f: Filter) -> Bool
    = match f with
        | All     -> true
@@ -558,7 +621,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
 
 ### 1.8.5 Calling from tile / reducer
 
-```kumiki
+```kumiki fragment
 tile TodoList = column(
                   for id in todos.keys
                     when(matchFilter(todos[id], filter), TodoRow(id)))
@@ -577,15 +640,15 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
 
 Since there are no lambdas, passing higher-order functions uses either a "fn name" or an "expression fragment":
 
-```kumiki
-items.map(double)         ; registered fn name
-items.map($1 * 2)         ; expression fragment ($1 is the element)
-items.filter(matchFilter($1, filter))  ; embed a fn call in an expression fragment
+```kumiki snippet
+items.map(double)         # registered fn name
+items.map($1 * 2)         # expression fragment ($1 is the element)
+items.filter(matchFilter($1, filter))  # embed a fn call in an expression fragment
 ```
 
 Partial application is **written explicitly** (no currying):
 
-```kumiki
+```kumiki snippet
 fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
@@ -639,30 +702,55 @@ unop        ::= '-' | '!'
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
 - **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
 
-  ```kumiki
-  # ❌ literal patterns — not supported
-  match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
+```kumiki snippet
+# ❌ literal patterns — not supported
+match label with | "Overdue" -> red | "Today" -> amber | _ -> gray
 
-  # ✅ branch on a value with if/else
-  if label == "Overdue" then red else if label == "Today" then amber else gray
+# ✅ branch on a value with if/else
+if label == "Overdue" then red else if label == "Today" then amber else gray
 
-  # ✅ or lift the cases into a union and match the variant
-  type Urgency = Overdue | Today | Later
-  match urgency with | Overdue -> red | Today -> amber | Later -> gray
-  ```
+# ✅ or lift the cases into a union and match the variant
+type Urgency = Overdue | Today | Later
+match urgency with | Overdue -> red | Today -> amber | Later -> gray
+```
 
 ### 1.9.2 Alternatives to Higher-Order Functions
 
-```kumiki
-items.map($1 * 2)                          ; expression fragment
-items.map(formatPrice)                     ; fn name
-items.filter(matchFilter($1, filter))      ; fn call
-items.fold(0, $1 + $2.price)               ; ($1: acc, $2: elem)
+```kumiki snippet
+items.map($1 * 2)                          # expression fragment
+items.map(formatPrice)                     # fn name
+items.filter(matchFilter($1, filter))      # fn call
+items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 ```
 
 ### 1.9.3 Short-Circuit Evaluation
 
 `&` and `|` use short-circuit evaluation.
+
+### 1.9.4 Operator Types
+
+Every operator's operand and result types, which the compiler checks
+([E0201](./errors.md#e0201-type-mismatch)):
+
+| Operator | Operands | Result |
+|---|---|---|
+| `+` | `Text` on either side | `Text` — concatenation; the other side is stringified |
+| `+` `-` `*` `%` | both numeric | `Float` if either operand is `Float`, else `Int` |
+| `/` | both numeric | **`Float`, always** |
+| `<` `>` `<=` `>=` | both numeric, both `Text`, or both `Time` | `Bool` |
+| `&` `\|` | both `Bool` | `Bool` |
+| `==` `!=` | any two values | `Bool` |
+| unary `-` | numeric | the operand's type |
+| unary `!` | `Bool` | `Bool` |
+
+`/` is `Float` even between two `Int`s. It is JavaScript's `/` at runtime — `5 / 2`
+is `2.5`, not `2` — so an `Int` result type would be a promise the runtime does not
+keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
+[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
+declare the `Float`.
+
+`EffectId` is outside this table: only `==` and `!=` apply to it
+([E0204](./errors.md#e0204-effect-id-misuse)).
 
 ---
 
@@ -711,7 +799,7 @@ emit-list  ::= effect-call (',' effect-call)*
 
 → [Routing](./routing.md), [HTTP / Storage](./http.md)
 
-```kumiki
+```kumiki fragment
 app TodoApp
     caps   = [storage.read, storage.write, http.get]
     routes = {"/" -> TodoList, "/todo/:id" -> TodoDetail, "/404" -> NotFound}
@@ -719,11 +807,21 @@ app TodoApp
     theme  = DefaultTheme
 ```
 
+### 1.12.1 When `init` arguments are evaluated
+
+An `init` entry is an effect call, and its arguments are ordinary expressions — a slot reference included. They are evaluated **once**, when the app object is constructed, and the resulting values are never re-read: a later change to a slot is not reflected in an argument already captured.
+
+What a slot reference sees at that moment is its **declared default**. `route` is the exception — it is maintained by the runtime and does not exist yet, so `init = [load(route.path)]` is a compile error ([E0120](./errors.md#e0120-route-in-app-init)), as is `$route`, which the runtime does not bind here either. Take the route from a `route.enter` reducer instead.
+
+`now` is available and is captured the same way: it evaluates to the moment the app object was built, not to the moment the effect runs. An entry that needs the time of its own dispatch should take it in the reducer that handles the result.
+
+There is no reducer around these arguments either, so an `emit` expression is not available in one ([E0305](./errors.md#e0305-fn-impurity)): the entry itself is the dispatch.
+
 ---
 
 ## 1.13 Counterexamples
 
-```kumiki
+```kumiki snippet
 # ❌ local state
 tile Foo = let x = 0 in button(text=x.show)   # assignment inside a tile is not allowed (let binds an expression, but is not a substitute for a slot)
 
@@ -763,8 +861,8 @@ link(to="/x") {text("Home")}                           # `{...}` is key:value pr
 type N      = nominal Int where between(0, 999)
 slot count  : N    = 0
 
-reducer inc   on=ui.click(IncBtn)   do= count := count + 1
-reducer dec   on=ui.click(DecBtn)   do= count := count - 1
+reducer inc   on=ui.click(IncBtn)   do= if count < 999 then count := count + 1
+reducer dec   on=ui.click(DecBtn)   do= if count > 0   then count := count - 1
 reducer reset on=ui.click(ResetBtn) do= count := 0
 
 tile IncBtn   = button(text="+")
@@ -781,4 +879,4 @@ app Counter
     init   = []
 ```
 
-→ [Standard Library](./stdlib.md), [Routing](./routing.md), [apps/01-counter](https://github.com/kage1020/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)
+→ [Standard Library](./stdlib.md), [Routing](./routing.md), [apps/01-counter](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/01-counter/app.kumiki)

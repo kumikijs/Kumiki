@@ -55,7 +55,17 @@ function isPanic(e: unknown): e is KumikiPanic {
 export type TileNode = (
   | { kind: "page" | "column" | "row" | "card" | "box"; children: TileNode[]; props?: TileProps }
   | { kind: "heading" | "text"; text: string; props?: TileProps }
-  | { kind: "button"; text: string; props?: TileProps; loading?: boolean; disabled?: boolean }
+  | {
+      kind: "button";
+      text: string;
+      /** `loading`, `disabled` and `variant` live here — see `applyButtonState`. */
+      props?: TileProps;
+      /**
+       * `submit` / `button` / `reset`. Absent means the tile did not say, and
+       * the HTML default applies — which is `submit` inside a form.
+       */
+      type?: string;
+    }
   | {
       kind: "input";
       props?: TileProps;
@@ -232,7 +242,17 @@ export type ReducerSpec = {
   apply: (
     slots: Record<string, unknown>,
     payload: Record<string, unknown>,
-  ) => { slots: Record<string, unknown>; emits: EmitSpec[]; stopTimers?: string[] };
+  ) => {
+    slots: Record<string, unknown>;
+    emits: EmitSpec[];
+    stopTimers?: string[];
+    /**
+     * Refinements the body violated *while running* (runtime.md §10.3.3).
+     * Codegen fills this; a hand-written `apply` omits it and is covered by the
+     * final-value scan in {@link batchRejections} instead.
+     */
+    rejected?: RefinementRejection[];
+  };
 };
 
 export type EmitSpec = { effect: string; args: unknown[] };
@@ -408,8 +428,8 @@ export type ReconcileFallback =
 
 /**
  * Why a pair of data-prop values can never compare equal, however identical the
- * two renders that produced them are. Both are settled rules of the equality
- * kernel rather than bugs in it — the point of naming them is that a tile
+ * two renders that produced them are. Each is a settled rule of the equality
+ * kernel rather than a bug in it — the point of naming them is that a tile
  * carrying one pays for a diff it can never win.
  */
 export type NeverEqualCause =
@@ -421,7 +441,17 @@ export type NeverEqualCause =
    */
   | "non-plain-object"
   /** `NaN`, which is not equal to itself by definition. */
-  | "nan";
+  | "nan"
+  /**
+   * A function whose identity changed. The scan keeps no history, so this
+   * fires on any two distinct closures — including the one-off swap a
+   * conditional makes between two properly memoised handlers. What it always
+   * means is that this pair could not compare equal; whether it repeats
+   * depends on whether the host rebuilds the handler per render, which is the
+   * case worth fixing. Codegen memoises one closure per reducer list, so a
+   * compiled app only reports this on a genuine change.
+   */
+  | "function-identity";
 
 /**
  * A framework-internals observation, delivered to `MountOptions.onDiagnostic`.
@@ -432,30 +462,13 @@ export type NeverEqualCause =
  * *why* the runtime made that choice — useful when tuning an app or a host
  * integration, noise in a behavioural trace.
  *
- * The three variants differ in severity, not just in shape. A
- * `reconcile-fallback` costs performance and browser-owned element state; a
- * `never-equal-prop` costs a diff and a patch on every render; a
- * `stale-closure-risk` means the app is running the wrong code. A host wiring
- * these to a console should route them to different levels.
+ * The two variants differ in cost, not in correctness. A `reconcile-fallback`
+ * costs performance and browser-owned element state; a `never-equal-prop` costs
+ * a diff and a patch on every render. Both leave the app correct, so a host
+ * wiring these to a console should warn on each and error on neither.
  */
 export type RuntimeDiagnostic =
   | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)
-  | (DiagnosticSite & {
-      /**
-       * A prop whose function identity changed was treated as equal, so the
-       * tile was reused with the previous render's closure still attached.
-       * Reported only for host-registered renderers: the built-ins dispatch
-       * every handler through a per-element slot the patcher refreshes, so a
-       * re-minted closure is not a hazard there.
-       */
-      kind: "stale-closure-risk";
-      /**
-       * Dotted path of the offending field — `props.onClick` for the
-       * conventional placement, a bare `onClick` for a handler the host hung
-       * off the node itself.
-       */
-      field: string;
-    })
   | (DiagnosticSite & {
       /**
        * A data prop holds a value that cannot compare equal to a structurally
@@ -466,8 +479,8 @@ export type RuntimeDiagnostic =
        * already reported as `no-patcher`, and this names the field that reason
        * cannot.
        *
-       * Reported only for host-registered renderers: codegen emits neither
-       * cause, so a built-in tile carrying one came from a host-built tree.
+       * Reported only for host-registered renderers: codegen emits no cause,
+       * so a built-in tile carrying one came from a host-built tree.
        */
       kind: "never-equal-prop";
       /** Dotted path of the offending field, e.g. `props.at` or a bare `at`. */
@@ -578,22 +591,21 @@ export type MountOptions = {
   /**
    * Development-time observation channel for the reconcile diff. When present,
    * every rebuild the walker performs instead of preserving element identity is
-   * reported here, along with the two host-tile hazards the prop-equality check
-   * creates: a function identity it waved through, and a value it can never
-   * call equal. Omit it (the default) and the checks never run: production
-   * mounts pay one optional-call check per decision and nothing else.
+   * reported here, along with the host-tile cost the prop-equality check
+   * exposes: a value — a per-render closure, a `Date`, a `NaN` — that can never
+   * compare equal to its counterpart. Omit it (the default) and the checks
+   * never run: production mounts pay one optional-call check per decision and
+   * nothing else.
    */
   onDiagnostic?: (d: RuntimeDiagnostic) => void;
   /**
    * Tile kinds whose renderer came from the host rather than the built-in set.
-   * Scopes the two per-field scans in `onDiagnostic` — stale closures on the
-   * reuse decision, never-equal props on the unequal one — which would
-   * otherwise fire once per field per render on every built-in tile. The
-   * built-ins route handlers through per-element slots and carry only the plain
-   * data codegen emits, so neither hazard reaches them. The package entry's
-   * `mount` derives this from the `tiles` override map; callers using
-   * `mountCore` with their own renderers pass it themselves. Ignored without
-   * `onDiagnostic`.
+   * Scopes the per-field `never-equal-prop` scan in `onDiagnostic`, which would
+   * otherwise fire once per field per render on every built-in tile. Codegen
+   * carries only plain data and memoises every handler, so no built-in tile can
+   * hold a never-equal value in the first place. The package entry's `mount`
+   * derives this from the `tiles` override map; callers using `mountCore` with
+   * their own renderers pass it themselves. Ignored without `onDiagnostic`.
    */
   hostTileKinds?: readonly string[];
   /**
@@ -616,6 +628,9 @@ export type MountOptions = {
    * render: the `app.init` effects are NOT re-dispatched and the bootstrap
    * episode replaces the local init causal chain. Lifecycle reducers
    * (`app.start`, `route.enter`) still fire as usual (§10.6.2 step 5).
+   *
+   * Refused when the shape is already mounted: a snapshot overlays a state that
+   * is about to be built, and this app's is already live.
    */
   hydrate?: boolean;
 };
@@ -707,12 +722,22 @@ export type AppShape = {
   _rerender?: () => void;
 };
 
+/**
+ * The tagged representation every `Option` uses (`stdlib.ts`'s `Some` / `None`).
+ * Declared here rather than imported from the stdlib module so a routing-only
+ * app does not pull the stdlib into its module graph for two object literals.
+ */
+export type OptionOf<T> = { _tag: "Some"; _0: T } | { _tag: "None" };
+export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
+export const NONE: OptionOf<never> = { _tag: "None" };
+
 export type ParsedRoute = {
   path: string;
   pattern: string;
   params: Record<string, string>;
   query: Record<string, string>;
-  hash: string | null;
+  /** `Option(Text)` — routing.md §3.2, and what a `match route.hash` expects. */
+  hash: OptionOf<string>;
   /** Matched sub-route pattern when the parent route delegates to `route-outlet` (§3.6). */
   childPattern?: string;
 };
@@ -737,7 +762,7 @@ export interface Router {
 }
 
 function emptyRoute(): ParsedRoute {
-  return { path: "/", pattern: "/", params: {}, query: {}, hash: null };
+  return { path: "/", pattern: "/", params: {}, query: {}, hash: NONE };
 }
 
 /**
@@ -797,24 +822,162 @@ export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>)
   return app.root ? app.root() : { kind: "text", text: "(no root)" };
 }
 
+/** One slot in a reducer batch whose new value its refinement refuses. */
+export type RefinementRejection = {
+  slot: string;
+  value: unknown;
+  /** The predicate name + args, when the slot carries them (`between`, [0, 3]). */
+  kind?: string;
+  args?: (number | string)[];
+};
+
+/** Describe one rejected write, carrying the predicate when the slot names it. */
+export function refinementRejectionOf(
+  slot: string,
+  value: unknown,
+  meta: { refineKind?: string; refineArgs?: unknown },
+): RefinementRejection {
+  const rejection: RefinementRejection = { slot, value };
+  if (meta.refineKind !== undefined) rejection.kind = meta.refineKind;
+  if (Array.isArray(meta.refineArgs)) rejection.args = meta.refineArgs as (number | string)[];
+  return rejection;
+}
+
 /**
- * Apply a reducer's returned slot map and compute the `slot-diffs` an episode
- * step needs (docs/spec/language.md §175 — `volatile` slots get the new value
- * but are excluded from diffs / dirty signal-update). Pure: it mutates the
+ * The slots in a reducer's returned map whose *final* value fails their
+ * refinement (runtime.md §10.3.3).
+ *
+ * This is the backstop, not the primary check: a batch is a map, so it only
+ * remembers the last value written to each slot, and a `for` loop that leaves
+ * the range and comes back would look clean here. Codegen therefore wraps each
+ * individual write in `_s.slotWrite`, which reports as it happens. This pass
+ * still runs because a hand-written `AppShape` (tests, Web Component hosts,
+ * anything not produced by codegen) has no wrapped writes at all.
+ *
+ * {@link batchRejections} merges the two, and every path that applies a batch
+ * goes through it.
+ */
+export function refinementRejections(
+  next: Record<string, unknown>,
+  slotMetas: Record<
+    string,
+    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
+  >,
+): RefinementRejection[] {
+  const out: RefinementRejection[] = [];
+  for (const [k, v] of Object.entries(next)) {
+    const meta = slotMetas[k];
+    if (!meta?.refine || meta.refine(v)) continue;
+    out.push(refinementRejectionOf(k, v, meta));
+  }
+  return out;
+}
+
+/**
+ * Every refinement a reducer's result violated: the per-write rejections
+ * codegen collected during the body, plus the final-value scan for results that
+ * did not come from codegen. Deduplicated by slot, first occurrence winning —
+ * the first out-of-range value a loop produced is the one that explains the
+ * rejection, not the value the slot happened to end on.
+ *
+ * Every path that applies a reducer batch — live mount, SSR, episode replay,
+ * both reducer-test harnesses, `run-reducer` inside a property-test — calls
+ * this, so "a batch commits all-or-nothing" cannot drift between the tiers that
+ * are supposed to verify each other.
+ */
+export function batchRejections(
+  result: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | null | undefined,
+  slotMetas: Record<
+    string,
+    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
+  >,
+): RefinementRejection[] {
+  const out: RefinementRejection[] = [];
+  const seen = new Set<string>();
+  for (const r of [
+    ...(result?.rejected ?? []),
+    ...refinementRejections(result?.slots ?? {}, slotMetas),
+  ]) {
+    if (seen.has(r.slot)) continue;
+    seen.add(r.slot);
+    out.push(r);
+  }
+  return out;
+}
+
+/** `slot "count" cannot hold 4 (between(0, 3))`. */
+function describeRejection(r: RefinementRejection): string {
+  const pred =
+    r.kind === undefined
+      ? "its refinement"
+      : r.args && r.args.length > 0
+        ? `${r.kind}(${r.args.join(", ")})`
+        : r.kind;
+  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred})`;
+}
+
+/**
+ * Render a rejected value for the report. Bounded, because the value came from
+ * app data: a `len-lt(280)` slot handed a 50 kB paste would otherwise put 50 kB
+ * on one console line. `JSON.stringify` also needs help at both ends — it
+ * returns undefined for a function or a bare `undefined`, throws on a cycle,
+ * and renders every non-finite number as `null`, which would point a reader at
+ * a missing value when the real cause is a division by zero.
+ */
+function showRejectedValue(value: unknown): string {
+  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
+  let shown: string;
+  try {
+    shown = JSON.stringify(value) ?? String(value);
+  } catch {
+    shown = String(value);
+  }
+  return shown.length > 120 ? `${shown.slice(0, 117)}...` : shown;
+}
+
+/**
+ * Surface a reducer batch discarded by a refinement (runtime.md §10.3.3). Not
+ * a panic — the app is untouched and still interactive — but a reducer that
+ * quietly does nothing is indistinguishable from a broken selector, so it is
+ * reported on the same `console.error` channel as an unhandled effect error and
+ * the verification tiers (smoke / runScenario, which patch `console.error`)
+ * flag it.
+ */
+export function reportRejectedBatch(
+  reducer: string,
+  rejections: readonly RefinementRejection[],
+): void {
+  console.error(
+    `[kumiki] reducer ${JSON.stringify(reducer)} was rejected: ${rejections
+      .map(describeRejection)
+      .join(", ")}. No slot was written and no effect was emitted.`,
+  );
+}
+
+/**
+ * Apply a reducer's result and compute the `slot-diffs` an episode step needs.
+ * A `volatile` slot takes its new value but is excluded from the diffs and the
+ * dirty signal-update (docs/spec/language.md §1.4.1). Pure: it mutates the
  * `prev` record (the live `app.live`) in place but otherwise has no side
  * effects, so both `applyReducer` (mount) and the SSR pseudo-reducer pipeline
- * can share the exact same volatile/refine semantics.
+ * share the exact same volatile/refine semantics.
+ *
+ * A non-empty `rejected` means nothing was written at all — not even a volatile
+ * slot, which rolls back with the rest. The batch is all-or-nothing, so the
+ * caller must also drop that reducer's emits and stop-timers rather than
+ * treating this as "no slots changed".
  */
 export function computeSlotDiffs(
   prev: Record<string, unknown>,
-  next: Record<string, unknown>,
+  result: { slots: Record<string, unknown>; rejected?: RefinementRejection[] },
   slotMetas: Record<string, SlotMeta>,
-): { diffs: SlotDiff[]; dirty: string[] } {
+): { diffs: SlotDiff[]; dirty: string[]; rejected: RefinementRejection[] } {
+  const rejected = batchRejections(result, slotMetas);
+  if (rejected.length > 0) return { diffs: [], dirty: [], rejected };
   const diffs: SlotDiff[] = [];
   const dirty: string[] = [];
-  for (const [k, v] of Object.entries(next)) {
+  for (const [k, v] of Object.entries(result.slots)) {
     const meta = slotMetas[k];
-    if (meta?.refine && !meta.refine(v)) continue;
     const before = prev[k];
     prev[k] = v;
     if (!meta?.volatile) {
@@ -822,7 +985,7 @@ export function computeSlotDiffs(
       dirty.push(k);
     }
   }
-  return { diffs, dirty };
+  return { diffs, dirty, rejected };
 }
 
 // ---------------------------------------------------------------------------
@@ -856,6 +1019,100 @@ export type MountedApp = AppShape & {
 };
 
 const appByRoot = new WeakMap<Element, MountedApp>();
+
+/**
+ * The live mount of an `AppShape`, if it has one. A shape carries the app's
+ * state, so mounting it into a second host is a second *view* of one app
+ * (runtime.md §10.9.1: passing the compiled default export rather than the
+ * `createApp` factory "shares one instance across all elements") — not a
+ * second app. Before this, the second mount overwrote the shape's imperative
+ * seams and the first host froze: its own buttons re-rendered the other one.
+ *
+ * `attach` adds a view to the running mount and returns that view's handle;
+ * everything the app owns once — `app.init`, `app.start`, timers, the router,
+ * the effect dispatcher — belongs to the first mount and is torn down when the
+ * last view is disposed. Keyed by the shape, so a `createApp()` per element
+ * (independent state) is unaffected.
+ */
+const mountedShapes = new WeakMap<AppShape, { attach: (target: HTMLElement) => MountHandle }>();
+
+/** What a mount (or an additional view of one) gives its caller back. */
+export type MountHandle = {
+  dispose: () => void;
+  episodes: () => ReturnType<EpisodeLogger["list"]>;
+};
+
+/**
+ * Options that describe the APP rather than the host, answered before a second
+ * mount of one shape is allowed to become a view of it.
+ *
+ * Three tiers, because they fail differently:
+ *
+ * - **Refused.** Honouring them would need machinery this app already has and
+ *   cannot have twice. `styleRoot` / `styleHost` are the sharp one: a view in
+ *   its own shadow root would paint there while every injected `<style>` —
+ *   theme, animations, state blocks, motion — stayed in the first view's root,
+ *   and the shadow boundary would leave it completely unstyled. Style roots are
+ *   per document, not per view; an app that needs one per element needs an app
+ *   per element.
+ * - **Ignored, and said so.** They configure something the running app already
+ *   decided. The first mount's answer stands and a warning names what was
+ *   dropped, because a provider that never fires is otherwise indistinguishable
+ *   from a capability that does nothing.
+ * - **Silent.** The `mount` entry point supplies these itself (`tiles`,
+ *   `routing`, `builtins`, …), so they arrive on every call and say nothing
+ *   about the caller's intent.
+ */
+const VIEW_REFUSED = [
+  "hydrate",
+  "ssrSnapshot",
+  "bootstrapEpisode",
+  "styleRoot",
+  "styleHost",
+] as const;
+const VIEW_IGNORED = [
+  "providers",
+  "router",
+  "initialPath",
+  "episodeLogger",
+  "onDiagnostic",
+] as const;
+
+/**
+ * Whether the caller actually asked for this option, as opposed to defaulting
+ * it. An empty record or array counts as not asking — `defineKumikiElement`
+ * hands `mount` a providers map on every element whether the host registered
+ * one or not. Emptiness is only consulted for plain records and arrays: a
+ * `ShadowRoot` has no own enumerable keys and is very much an answer.
+ */
+function optionGiven(value: unknown): boolean {
+  if (value === undefined || value === false) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function rejectViewOptions(options: MountOptions): void {
+  const record = options as unknown as Record<string, unknown>;
+  const refused = VIEW_REFUSED.filter((k) => optionGiven(record[k]));
+  if (refused.length > 0) {
+    throw new Error(
+      `mount: this AppShape is already mounted, so a second mount is another view of the same app (runtime.md §10.9.1). ${refused.join(", ")} cannot be given per view — it configures the app itself, which is already running. Mount a \`createApp()\` instance for an independent one.`,
+    );
+  }
+  const ignored = VIEW_IGNORED.filter((k) => optionGiven(record[k]));
+  if (ignored.length > 0) {
+    console.warn(
+      `kumiki: this AppShape is already mounted, so ${ignored.join(", ")} was ignored — the mount that started the app owns it. Mount a \`createApp()\` instance to give this host its own.`,
+    );
+  }
+}
 
 /** Non-null only while a mount's synchronous render pass is running. */
 let renderingApp: MountedApp | null = null;
@@ -920,8 +1177,13 @@ export function getRenderingApp(): MountedApp | undefined {
  * Bracket a render pass. Saved/restored (not just cleared) because a custom
  * element inside the tree can synchronously mount a nested Kumiki app while
  * the outer render is still on the stack.
+ *
+ * Exported for the SSR pass, which is a render pass with no DOM: without the
+ * bracket `currentTheme()` is null on the server and every token falls back to
+ * its default, so a themed page was served with the *unthemed* spacing,
+ * colours, radii and shadows and re-styled itself on hydration.
  */
-function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
   const prev = renderingApp;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
@@ -951,12 +1213,30 @@ export function warnUnresolvedEvent(el: Element, what: string): void {
  * builtin effects passed via options. Generated apps from `kumiki build` call
  * this with just the modules they import; the package-entry `mount` wraps it
  * with the full built-in set for back-compat.
+ *
+ * **Mounting an `AppShape` that is already mounted adds a view of it** rather
+ * than starting a second app (§10.9.1) — the shape carries the state, so the
+ * hosts show the same slots and initialization runs once. The options that
+ * describe the app then belong to the mount that started it: some are refused
+ * and some are ignored with a warning (see `VIEW_REFUSED` / `VIEW_IGNORED`),
+ * `hydrate` among the refused. Pass a `createApp()` instance for an
+ * independent app.
  */
 export function mountCore(
   app: AppShape,
   target: HTMLElement,
   options: MountOptions = {},
-): { dispose: () => void; episodes: () => ReturnType<EpisodeLogger["list"]> } {
+): MountHandle {
+  // A shape that is already mounted gets another view of the same app rather
+  // than a second app. Everything below this line is the first mount's
+  // business, and running it again would fire `app.init` twice, start a second
+  // copy of every timer, and overwrite the seams the running views dispatch
+  // through.
+  const running = mountedShapes.get(app);
+  if (running) {
+    rejectViewOptions(options);
+    return running.attach(target);
+  }
   // Episode logger (§10.5). Null when the host did not opt in — every record
   // call below short-circuits via the `?.` optional chain, so the no-logger
   // path stays zero-cost.
@@ -1001,7 +1281,6 @@ export function mountCore(
   const tiles = options.tiles ?? {};
   const tilePatchers = options.tilePatchers ?? {};
   const ctxWrap = { applyMotion, applyUiEventHandlers, renderMissingTile };
-  let currentMap: TileElementMap = new WeakMap();
 
   // Routing source: provided by the router feature module. A mount without
   // `options.routing` has no router at all — route-slot reads stay static and
@@ -1047,16 +1326,64 @@ export function mountCore(
   const scrollSaved = new Map<string, { x: number; y: number }>();
   let lastNavSource: "push" | "replace" | "pop" = "push";
 
-  let currentRoot: HTMLElement | null = null;
-  // Previously rendered tile tree, kept as the "old" side of the next
-  // reconcile. Cleared to null after a panic-fallback render so the following
-  // pass restarts from a full mount rather than diffing against a discarded
-  // tree.
-  let currentTree: TileNode | null = null;
+  /**
+   * One host this app is painted into. A shape can be mounted more than once
+   * (runtime.md §10.9.1: passing the default export rather than `createApp`
+   * shares one instance across every element), and everything about *where* it
+   * is painted is per view — the mounted element, the tree that produced it,
+   * and the node→element map the next reconcile diffs against. Everything
+   * about *what* it says is shared, because the state is.
+   */
+  type MountView = {
+    target: HTMLElement;
+    /**
+     * Whether this view's target already holds server HTML. The one branch it
+     * gates REPLACES that HTML wholesale (§10.6.2) rather than adopting it —
+     * node-preserving hydration is not implemented — so what it buys is that
+     * the served DOM and the client's never end up as siblings.
+     */
+    hydrate: boolean;
+    root: HTMLElement | null;
+    /**
+     * Previously rendered tile tree, kept as the "old" side of the next
+     * reconcile. Cleared to null after a panic-fallback render so the following
+     * pass restarts from a full mount rather than diffing against a discarded
+     * tree.
+     */
+    tree: TileNode | null;
+    map: TileElementMap;
+  };
+  /** What one pass produced: the tree it painted, and what it freshly built. */
+  type PassResult = { tree: TileNode | null; touched: string[] };
+  const newView = (into: HTMLElement, hydrate: boolean): MountView => ({
+    target: into,
+    hydrate,
+    root: null,
+    tree: null,
+    map: new WeakMap(),
+  });
+  const ownView = newView(target, options.hydrate === true);
+  const views: MountView[] = [ownView];
+  /**
+   * Add a view of this already-running app. It takes a host and nothing else:
+   * everything else a mount can be given describes the app, which this one
+   * already has — `rejectViewOptions` is what says so, before the call.
+   */
+  const attach = (into: HTMLElement): MountHandle => {
+    const view = newView(into, false);
+    views.push(view);
+    registerAppRoot(into, app);
+    withRenderingApp(app, () => {
+      renderPass(view);
+    });
+    return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
+  };
   // #189: identifiers the most recent reconcile pass freshly built. Consumed
   // by `applyReducer` when it fires the trailing `signal-update` step so
   // `binds-updated` lists the tiles/binds the diff actually patched. Empty
-  // after a full-render / panic-fallback pass (those are not a diff).
+  // after a full-render / panic-fallback pass (those are not a diff). With
+  // several views it is all of theirs, one entry per view that touched a
+  // given id: the reducer patched every view, and the sole consumer dedups.
   let lastRenderTouched: string[] = [];
   let disposed = false;
   // Named timers (`timer(d, name=N)`) are addressable so a reducer can
@@ -1069,15 +1396,33 @@ export function mountCore(
   let prevMountedTiles = new Set<string>();
   const render = (): void => {
     // Late effect results (e.g. an in-flight fetch that resolves after the app
-    // was disposed) must not touch the DOM — `currentRoot` has already been
+    // was disposed) must not touch the DOM — each view's root has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
     if (disposed) return;
-    withRenderingApp(app, renderPass);
+    withRenderingApp(app, () => {
+      const touched: string[] = [];
+      let tree: TileNode | null = null;
+      for (let i = 0; i < views.length; i++) {
+        const pass = renderPass(views[i]!);
+        if (i === 0) tree = pass.tree;
+        touched.push(...pass.touched);
+      }
+      lastRenderTouched = touched;
+      // Fired once from the app's tree, which every view paints from, rather
+      // than from each view's pass. Repeating the call would be harmless today
+      // — the diff is set-based, so a second one has nothing new to report —
+      // but a view that carried its own `prevMountedTiles` would fire
+      // `tile.mount(X)` once per host, and these reducers subscribe and fetch.
+      syncMountedTiles(tree);
+    });
   };
-  // The full render pass, bracketed by `withRenderingApp` so render-time app
-  // resolution (theme tokens, icon lookup — the tree is still detached, so
-  // `resolveApp` cannot walk it) lands on this mount's app.
-  const renderPass = (): void => {
+  // One view's render pass. `render` brackets it with `withRenderingApp` so
+  // render-time app resolution (theme tokens, icon lookup — the tree is still
+  // detached, so `resolveApp` cannot walk it) lands on this mount's app.
+  // Returns the tree it painted, or null if it panicked.
+  const renderPass = (view: MountView): PassResult => {
+    const target = view.target;
+    let touched: string[] = [];
     // Focus / caret snapshot — kept as a fallback for panic / reconcile-
     // bailout paths that swap DOM wholesale via `target.replaceChild` (or
     // route-error retry). On the reconcile happy path (#187 keyed diff +
@@ -1128,7 +1473,7 @@ export function mountCore(
     // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
     // `newMap` (and recursively for its children). Reconcile also writes into
     // `newMap` when it decides to *reuse* an old element (bypassing render).
-    // Either way, `newMap` becomes `currentMap` at the end of the pass so
+    // Either way, `newMap` becomes `view.map` at the end of the pass so
     // next round can find each mounted node's live element in O(1).
     let newMap: TileElementMap = new WeakMap();
     let tileCtx = makeMappingTileCtx(tiles, newMap, ctxWrap);
@@ -1146,18 +1491,18 @@ export function mountCore(
     // Reset for this pass. The reconcile branch overwrites with the diff's
     // touched set; every other branch (full-render, panic recovery) leaves it
     // empty — those paths intentionally do not carry per-tile attribution.
-    lastRenderTouched = [];
+    touched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
-      if (currentTree && currentRoot) {
+      if (view.tree && view.root) {
         // Diff path: reuse unchanged tile DOM in place, rebuild only changed
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
-        // differ from `currentRoot` if the root tile itself was rebuilt.
+        // differ from `view.root` if the root tile itself was rebuilt.
         try {
           const rec = reconcileTree({
-            oldNode: currentTree,
-            oldEl: currentRoot,
-            oldMap: currentMap,
+            oldNode: view.tree,
+            oldEl: view.root,
+            oldMap: view.map,
             newNode: renderedTree,
             newMap,
             ctx: tileCtx,
@@ -1165,7 +1510,7 @@ export function mountCore(
             diag,
           });
           dom = rec.el;
-          lastRenderTouched = rec.touched;
+          touched = rec.touched;
         } catch (reconcileErr) {
           // Reconcile itself broke — safety net: rebuild the whole tree and
           // swap wholesale, recording the panic so the failure is visible in
@@ -1179,15 +1524,15 @@ export function mountCore(
             location: "reconcile",
           });
           dom = fullRender(renderedTree);
-          target.replaceChild(dom, currentRoot);
+          target.replaceChild(dom, view.root);
         }
       } else {
         // Initial mount, or first render after a panic reset — no old tree
         // to diff against.
         dom = tileCtx.render(renderedTree);
-        if (currentRoot) {
-          target.replaceChild(dom, currentRoot);
-        } else if (options.hydrate && target.firstChild) {
+        if (view.root) {
+          target.replaceChild(dom, view.root);
+        } else if (view.hydrate && target.firstChild) {
           // §10.6.2: the SSR HTML is already in `target` (the host injected it
           // before calling `hydrate`). Replace it with the CSR-rendered tree
           // wholesale so we never end up with SSR + CSR DOM as siblings. True
@@ -1232,21 +1577,21 @@ export function mountCore(
       }
       // Panic path always swaps wholesale (never diffs against a possibly-
       // corrupt tree).
-      if (currentRoot) {
-        target.replaceChild(dom, currentRoot);
-      } else if (options.hydrate && target.firstChild) {
+      if (view.root) {
+        target.replaceChild(dom, view.root);
+      } else if (view.hydrate && target.firstChild) {
         target.replaceChildren(dom);
       } else {
         target.appendChild(dom);
       }
     }
-    currentRoot = dom;
+    view.root = dom;
     // On panic (either the primary render threw and no route.error recovered
     // it, or the recovery render also threw), abandon the diff baseline so the
     // next render starts from a clean full mount. Otherwise carry the fresh
     // tree + map forward as the next pass's `old` side.
-    currentTree = panicked ? null : renderedTree;
-    currentMap = newMap;
+    view.tree = panicked ? null : renderedTree;
+    view.map = newMap;
 
     // On the happy patch path element identity is preserved, so this `focus()`
     // degrades to a no-op — the browser cursor is already on the still-mounted
@@ -1294,22 +1639,35 @@ export function mountCore(
       }
     }
 
-    // tile.mount(X) / tile.unmount(X): walk the tree, diff against the previous
-    // render's set, fire the lifecycle reducer for each newly-present / newly-
-    // absent user tile (§7.1.6). The set is updated BEFORE the reducer fires so
-    // a re-render kicked off by the reducer sees the post-mount snapshot — that
-    // is what prevents mount events from re-firing every reducer cycle.
-    const nowMounted = renderedTree ? collectMountedTiles(renderedTree) : new Set<string>();
-    if (nowMounted.size > 0 || prevMountedTiles.size > 0) {
-      const toMount: string[] = [];
-      const toUnmount: string[] = [];
-      for (const n of nowMounted) if (!prevMountedTiles.has(n)) toMount.push(n);
-      for (const n of prevMountedTiles) if (!nowMounted.has(n)) toUnmount.push(n);
-      prevMountedTiles = nowMounted;
-      for (const n of toMount) fireLifecycle(`tile.mount(${JSON.stringify(n)})`);
-      for (const n of toUnmount) fireLifecycle(`tile.unmount(${JSON.stringify(n)})`);
-    }
+    // The tree, not "the tree if this view survived": a panic is about how a
+    // view painted, and `tile.mount(X)` is about what the app is showing. When
+    // this returned null on panic, every mounted tile counted as unmounted, so
+    // a render panic fired `tile.unmount` for all of them — unsubscribes,
+    // leave notifications, whatever those reducers do — and the recovery render
+    // fired `tile.mount` right back. `view.tree` below is the separate
+    // question of what the next reconcile may diff against, and that one does
+    // reset on panic.
+    return { tree: renderedTree, touched };
   };
+
+  /**
+   * tile.mount(X) / tile.unmount(X): walk the tree, diff against the previous
+   * render's set, fire the lifecycle reducer for each newly-present / newly-
+   * absent user tile (§7.1.6). The set is updated BEFORE the reducer fires so
+   * a re-render kicked off by the reducer sees the post-mount snapshot — that
+   * is what prevents mount events from re-firing every reducer cycle.
+   */
+  function syncMountedTiles(tree: TileNode | null): void {
+    const nowMounted = tree ? collectMountedTiles(tree) : new Set<string>();
+    if (nowMounted.size === 0 && prevMountedTiles.size === 0) return;
+    const toMount: string[] = [];
+    const toUnmount: string[] = [];
+    for (const n of nowMounted) if (!prevMountedTiles.has(n)) toMount.push(n);
+    for (const n of prevMountedTiles) if (!nowMounted.has(n)) toUnmount.push(n);
+    prevMountedTiles = nowMounted;
+    for (const n of toMount) fireLifecycle(`tile.mount(${JSON.stringify(n)})`);
+    for (const n of toUnmount) fireLifecycle(`tile.unmount(${JSON.stringify(n)})`);
+  }
 
   function fireLifecycle(name: string): void {
     for (const r of app.reducers) {
@@ -1429,10 +1787,21 @@ export function mountCore(
       if (opened) episode?.endTrigger();
       return;
     }
-    // Compute slot diffs (excluding `volatile` slots per language.md §175):
+    // Compute slot diffs (excluding `volatile` slots per language.md §1.4.1):
     // shared with the SSR pseudo-reducer pipeline so volatile semantics never
     // drift across the hydration boundary.
-    const { diffs, dirty } = computeSlotDiffs(slotValues, result.slots, app.slots);
+    const { diffs, dirty, rejected } = computeSlotDiffs(slotValues, result, app.slots);
+    if (rejected.length > 0) {
+      // §10.3.3: a refinement rejects the whole batch, not just its own slot.
+      // Nothing was written, so the emits and stop-timers that batch produced
+      // must not run either — they were computed from state that never became
+      // real. The reducer is still logged (it did run, and changed nothing) so
+      // a replay does not show a trigger with no reducer under it.
+      reportRejectedBatch(r.name, rejected);
+      episode?.recordReducer(r.name, [], []);
+      if (opened) episode?.endTrigger();
+      return;
+    }
     episode?.recordReducer(
       r.name,
       diffs,
@@ -1657,8 +2026,7 @@ export function mountCore(
   // tests) always re-apply this app's theme, even if the name matches.
   lastAppliedThemeName = null;
   applyThemeDefaults(app);
-  lastAppliedThemeName =
-    (app.live?.[app.themeName ?? ""] as string | undefined) ?? app.themeName ?? null;
+  lastAppliedThemeName = resolvedThemeName(app) ?? null;
 
   // Initial route sync — but first resolve any static redirect (top-level
   // `->>` or one declared inside a matched parent's sub-routes per §3.6).
@@ -1715,7 +2083,7 @@ export function mountCore(
       pattern: to,
       params: args,
       query: {},
-      hash: null,
+      hash: NONE,
     };
     applyReducer(r, { $route: syntheticRoute });
   };
@@ -1796,18 +2164,38 @@ export function mountCore(
   }
 
   render();
+  // Registered here rather than beside `views`, because everything between the
+  // two can throw — `hydrate` without a bootstrap episode is a public call that
+  // does. A record left behind by a mount that never finished would turn every
+  // later `mount(app, …)` into a view of a half-built app: no `app.init`, no
+  // timers, no router, and no handle in anyone's hands to dispose it with.
+  mountedShapes.set(app, { attach });
+  /**
+   * Drop one view. The app itself — timers, router, host listeners, the effect
+   * dispatcher — outlives it as long as another view is painting; the last one
+   * out turns off the lights, and un-registers the shape so a later `mount`
+   * starts it over. `app.live` is the shape's own and is deliberately left
+   * alone: what a later mount gets is a running app again, not a reset one —
+   * `createApp()` is what returns a shape at its declared defaults.
+   */
+  function disposeView(view: MountView): void {
+    const at = views.indexOf(view);
+    if (at === -1) return;
+    views.splice(at, 1);
+    view.target.replaceChildren();
+    unregisterAppRoot(view.target, app);
+    if (views.length > 0) return;
+    disposed = true;
+    for (const h of anonTimers) clearInterval(h);
+    for (const h of namedTimers.values()) clearInterval(h);
+    namedTimers.clear();
+    routerUnsub?.();
+    for (const unsub of lifecycleUnsubs) unsub();
+    dispatcher.dispose();
+    mountedShapes.delete(app);
+  }
   return {
-    dispose: () => {
-      disposed = true;
-      for (const h of anonTimers) clearInterval(h);
-      for (const h of namedTimers.values()) clearInterval(h);
-      namedTimers.clear();
-      routerUnsub?.();
-      for (const unsub of lifecycleUnsubs) unsub();
-      target.replaceChildren();
-      unregisterAppRoot(target, app);
-      dispatcher.dispose();
-    },
+    dispose: () => disposeView(ownView),
     /** Recently-recorded episodes for this mount (§10.7 `app.episodes`). */
     episodes: () => episode?.list() ?? [],
   };
@@ -1987,12 +2375,24 @@ function makeEffectDispatcher(
     token?: string;
     effectName?: string;
   };
+  // `policy=queue` (§10.4.3): one chain per effect id. `tail` is the promise
+  // every new dispatch appends to, so at most one invocation of that id is in
+  // flight; `pending` is the entries that have not started yet, which is what
+  // `dispose()` has to release — each already claimed an episode token.
+  type QueueEntry = { token: string; effectName: string };
+  type Queue = { tail: Promise<void>; pending: QueueEntry[] };
   type RunState = {
     inflight: Map<string, AbortController>;
     timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
+    queues: Map<string, Queue>;
   };
-  const state: RunState = { inflight: new Map(), timers: new Map(), onceSeen: new Map() };
+  const state: RunState = {
+    inflight: new Map(),
+    timers: new Map(),
+    onceSeen: new Map(),
+    queues: new Map(),
+  };
 
   const launch = async (
     eff: EffectSpec,
@@ -2054,6 +2454,16 @@ function makeEffectDispatcher(
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+          }
+          // A queued entry that has not started is the same pending launch as
+          // a debounce timer: it holds an episode token and would run after
+          // the user pressed Cancel unless it is released here.
+          const q = state.queues.get(target);
+          if (q) {
+            const waiting = q.pending.splice(0, q.pending.length);
+            for (const e of waiting) {
+              if (e.token) onPolicyCancel?.(e.token, e.effectName);
+            }
           }
           const t = state.timers.get(target);
           // Only debounce timers represent a pending launch we want to drop.
@@ -2117,6 +2527,38 @@ function makeEffectDispatcher(
         state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
         return;
       }
+      if (policy.kind === "queue") {
+        // Claim the episode token NOW, like the debounce branch: this launch
+        // happens when the ones before it finish, and a token taken then would
+        // attach the effect-start to whatever episode is on top by that point
+        // rather than to the one that emitted (spec §10.5.1).
+        const token = onLaunch?.(eff.name, input) ?? "";
+        const entry: QueueEntry = { token, effectName: eff.name };
+        const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
+        q.pending.push(entry);
+        const runNext = async (): Promise<void> => {
+          const idx = q.pending.indexOf(entry);
+          // Gone from `pending` means something already released this entry's
+          // token — `dispose()`, or a cancel by id — so there is nothing left
+          // to run.
+          if (idx === -1) return;
+          q.pending.splice(idx, 1);
+          await launch(eff, input, key, token);
+        };
+        // Both arms, so a rejection anywhere in the chain does not skip every
+        // later `onFulfilled` — that would leave this id's queue dead for the
+        // rest of the mount, with each stranded entry still holding the
+        // episode token it claimed.
+        //
+        // No test reaches it: `launch` catches its own failures, and every
+        // caller between here and it does too, so there is no path today that
+        // rejects. It stays because the alternative is a policy whose failure
+        // mode is silent and permanent, resting on a property of code three
+        // layers away that nothing states.
+        q.tail = q.tail.then(runNext, runNext);
+        state.queues.set(id, q);
+        return;
+      }
       if (policy.kind === "throttle") {
         if (state.timers.has(id)) return;
         const h = setTimeout(() => state.timers.delete(id), policy.ms);
@@ -2152,6 +2594,17 @@ function makeEffectDispatcher(
           onPolicyCancel?.(t.token, t.effectName);
         }
       }
+      // Queued launches that never started hold a claimed effect-start on an
+      // episode that has already closed — the same debt the debounce drain
+      // above settles. Clearing `pending` is also what tells the chained thunk
+      // not to run.
+      for (const q of state.queues.values()) {
+        const waiting = q.pending.splice(0, q.pending.length);
+        for (const e of waiting) {
+          if (e.token) onPolicyCancel?.(e.token, e.effectName);
+        }
+      }
+      state.queues.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
     },
@@ -2408,15 +2861,6 @@ function formatStackForConsole(stack: string, message: string): string[] {
 }
 
 /**
- * Surface an effect `err` result that no `.err` reducer consumes (#37). A failed
- * capability must never fail silently — the storage-unavailable case (sandbox /
- * private mode) otherwise looks like the app does nothing. Reported via
- * console.error so the verification tiers (smoke / runScenario, which patch
- * console.error) flag it. Production noise
- * is the app's own choice: wire an `.err` reducer to handle (or deliberately
- * ignore) the error.
- */
-/**
  * Walk a rendered TileNode tree and collect the names of every user-defined
  * tile boundary in it (lifecycle.md §7.1.6). Codegen marks each user-tile call
  * site by attaching `_tile: "Name"` to the produced node's props via `_named`,
@@ -2479,6 +2923,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Surface an effect `err` result that no `.err` reducer consumes. A failed
+ * capability must never fail silently — the storage-unavailable case (sandbox /
+ * private mode) otherwise looks like the app does nothing. Reported via
+ * console.error so the verification tiers (smoke / runScenario, which patch
+ * console.error) flag it. Production noise is the app's own choice: wire an
+ * `.err` reducer to handle (or deliberately ignore) the error.
+ */
 export function reportUnhandledEffectError(effect: string, value: unknown): void {
   const message =
     value && typeof value === "object" && "message" in value
@@ -2513,11 +2965,14 @@ function renderPanicFallback(e: unknown): HTMLElement {
 // (position + `kind`) unless the tile carries a `TileNode.key`, in which
 // case the keyed child-list path pairs children across renders by key.
 //
-// Reused tiles are NEVER re-touched: `applyMotion` restarts animations, and
-// `applyUiEventHandlers` uses `addEventListener` and would multiply-register
-// on every reuse. Because our equality check compares DATA props (ignoring
-// function-valued fields), the OLD closure on a reused element is
-// behaviourally equivalent to what a fresh render would install.
+// Reused tiles are NEVER re-touched by this create path: `applyMotion` would
+// restart animations. The handlers do not need it — a changed closure reaches
+// a reused element through the shared slot the reconcile refreshes, and
+// `installUiEventListeners` is idempotent per element, so re-touching would
+// buy nothing rather than double-register. Function-valued props are compared
+// by identity like every other value (see `tileValueEqual`), so a tile whose
+// handler changed is a difference the walker acts on, not one this path has to
+// stand in for.
 
 type TileElementMap = WeakMap<TileNode, HTMLElement>;
 
@@ -2540,6 +2995,15 @@ function makeMappingTileCtx(
       const el = renderer ? renderer(node, ctx) : wrap.renderMissingTile(node);
       wrap.applyMotion(el, node.props);
       wrap.applyUiEventHandlers(el, node.props);
+      // Last, so a tile's own `class` / `aria` / `role` / `id` and everything
+      // its style props say reach every kind without each renderer repeating
+      // it — including host-registered kinds (#71), which no renderer here can
+      // reach, and the kinds whose renderers style nothing (an `image`, a
+      // `button`), where a `max-w` used to be dropped on the floor. It runs
+      // after the motion classes for the same reason it adds rather than
+      // assigns: the runtime owns classes on this element too.
+      applyCommonProps(el, node.props);
+      setDecls(el, propStyleDecls(node.props, pickForViewport, node.kind));
       map.set(node, el);
       return el;
     },
@@ -2555,12 +3019,6 @@ function makeMappingTileCtx(
  */
 type ReconcileDiag = {
   fallback: (fallback: ReconcileFallback, node: TileNode) => void;
-  /**
-   * Called on the reuse decision — the props compared equal, so the mounted
-   * element keeps whatever closures it was created with. Only host-registered
-   * kinds are inspected.
-   */
-  staleClosure: (oldNode: TileNode, newNode: TileNode) => void;
   /**
    * Called on the unequal decision — the props differed, so this tile is about
    * to be patched or rebuilt. Names the fields that will differ again on every
@@ -2641,13 +3099,6 @@ function makeReconcileDiag(
         ...fallback,
       });
     },
-    staleClosure(oldNode, newNode) {
-      scan(oldNode, newNode, (site, field, oldValue, newValue) =>
-        typeof oldValue === "function" && typeof newValue === "function" && oldValue !== newValue
-          ? { ...site, kind: "stale-closure-risk", field }
-          : undefined,
-      );
-    },
     neverEqual(oldNode, newNode) {
       scan(oldNode, newNode, (site, field, oldValue, newValue) => {
         const cause = neverEqualCause(oldValue, newValue);
@@ -2660,8 +3111,7 @@ function makeReconcileDiag(
 /**
  * Own data fields paired old-to-new, one level deep into `props` — where a
  * renderer's handlers and data conventionally live (`props.onClick`,
- * `props.value`). Shared by both host-tile scans, on either side of the
- * equality fork.
+ * `props.value`). Feeds the host-tile `never-equal-prop` scan.
  *
  * This is NOT the full set `tileFieldsEqual` compares: that one recurses to
  * the bottom of arrays and nested objects, while this stops at `props.x` on
@@ -2752,8 +3202,8 @@ function reconcileNode(
   if (oldNode.kind !== newNode.kind) {
     return replaceWithFreshTile(oldEl, newNode, ctx, touched);
   }
-  // Same kind, differing own data props (`children` / `key` / functions
-  // excluded — see `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
+  // Same kind, differing own data props (`children` / `key` excluded — see
+  // `TILE_SKIP_TOP` / `tileValueEqual`). #190 identity-
   // preserving path: if a per-kind patcher is registered, mutate the mounted
   // element in place (preserving `<select>` open state / focus / caret /
   // `<video>` playback / `<details>` open / `contenteditable`), then continue
@@ -2790,9 +3240,26 @@ function reconcileNode(
       // (`tiles-input.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
       // (`tiles-text.ts`) are refreshed by their per-kind patchers; the
       // universal onKeyDown / onFocus / onBlur / onMouseEnter handlers, which
-      // `applyUiEventHandlers` wires on every tile via the create ctx, live in
-      // this shared UI_HANDLER_STATE and are refreshed here.
+      // `applyUiEventHandlers` lifts onto every tile kind via the create ctx,
+      // live in this shared UI_HANDLER_STATE and are refreshed here. This is
+      // also where their listeners are first registered, when the create-time
+      // props carried none of the four and this render introduces one.
       refreshUiHandlerSlot(oldEl, (newNode as { props?: TileProps }).props);
+      // The common props and the prop-derived style are applied outside the
+      // per-kind renderers, so no patcher re-applies them; without this a
+      // `class` bound to a slot keeps the token it was first rendered with,
+      // and a `max-w` that went away stays on the element.
+      patchCommonProps(
+        oldEl,
+        (oldNode as { props?: TileProps }).props,
+        (newNode as { props?: TileProps }).props,
+      );
+      patchPropStyle(
+        oldEl,
+        (oldNode as { props?: TileProps }).props,
+        (newNode as { props?: TileProps }).props,
+        newNode.kind,
+      );
       touched.push(tileTouchedId(newNode));
       // Fall through to the children reconcile below — a container tile may
       // have both attribute AND child changes in the same render.
@@ -2800,12 +3267,11 @@ function reconcileNode(
       diag?.fallback({ reason: "no-patcher" }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
-  } else {
-    // Reuse decision: this element stays mounted with the closures it was
-    // created with. Safe for the built-ins, a stale-closure hazard for a
-    // host renderer that captured a per-render handler.
-    diag?.staleClosure(oldNode, newNode);
   }
+  // No `else`: when every own field compares equal the element stays mounted
+  // untouched, and that is unconditionally safe — handlers compare by identity
+  // (§10.3.13), so reaching here means the mounted element already holds the
+  // handlers this render produced.
   const oldChildren = getTileChildren(oldNode);
   const newChildren = getTileChildren(newNode);
   if (oldChildren.length === 0 && newChildren.length === 0) {
@@ -3434,7 +3900,7 @@ function replaceWithFreshTile(
   const parent = oldEl.parentNode;
   // No parent → the caller's `oldEl` is detached from the live tree. If we
   // silently returned `fresh` the caller would install a floating subtree as
-  // `currentRoot` and every subsequent `_rerender` would run against DOM the
+  // the view's root and every subsequent `_rerender` would run against DOM the
   // user cannot see. Throw so the outer reconcile catch bails to a full
   // rebuild + `target.replaceChild(...)` and the failure is recorded.
   if (!parent) {
@@ -3495,12 +3961,23 @@ function tileFieldsEqual(a: TileNode, b: TileNode): boolean {
   return true;
 }
 
+/**
+ * Functions are compared by identity here, like every other value.
+ *
+ * They were once exempt — any two functions counted as equal — because codegen
+ * minted a fresh closure per render, so identity comparison would have marked
+ * every interactive tile as changed forever. That was sound only while both
+ * closures dispatched to the same reducer. A conditional swapping two inline
+ * tiles that differ *only* in their handler reused the element untouched and
+ * kept dispatching to the reducer it was created with, silently.
+ *
+ * Codegen memoises one closure per reducer list, so an unchanged handler is the
+ * same reference and still takes the reuse fast path. A host that mints one per
+ * render pays a patch — or, with no patcher registered, a rebuild — and is told
+ * so through `never-equal-prop` / `function-identity`.
+ */
 function tileValueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // Ignore closure identity for handler-shaped fields — codegen mints new
-  // closures per render, but a same-data reused tile keeps working with the
-  // old closure (which references the same stable dispatch seam).
-  if (typeof a === "function" && typeof b === "function") return true;
   if (a === null || b === null) return false;
   if (typeof a !== "object" || typeof b !== "object") return false;
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -3558,6 +4035,10 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
   // The same instance handed over twice compares equal through `===`. Only a
   // value rebuilt per render is a hazard, so a stable one is not reported.
   if (a === b) return undefined;
+  // Two different functions. The kernel compares these by identity (a handler
+  // that changed is a real change), so a per-render closure makes this tile
+  // unequal to itself forever.
+  if (typeof a === "function" && typeof b === "function") return "function-identity";
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return undefined;
   // The kernel takes arrays element-wise, so an array is not itself a
   // never-equal value. Descending into one to find an exotic element is the
@@ -3572,14 +4053,21 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
 }
 
 // Per-element slot for the universally-lifted UI handlers (onKeyDown /
-// onMouseEnter / onFocus / onBlur). Same pattern as tiles-input.ts INPUT_STATE
-// and tiles-text.ts LINK_STATE: native listeners are registered once at
-// create-time and dispatch through the slot; `refreshUiHandlerSlot` overwrites
-// the slot when a patch runs so the new node's handler + `el` payload reach
-// subsequent events. Without this, `applyUiEventHandlers` used to close over
-// the create-time `props` — and because `tileValueEqual` treats function
-// values as always-equal, a changed handler or `el` payload would never even
-// trigger a subtree rebuild, silently firing the stale closure on every event.
+// onMouseEnter / onFocus / onBlur). Same slot-dispatch shape as
+// tiles-input.ts INPUT_STATE and tiles-text.ts LINK_STATE: the native listener
+// reads the slot instead of closing over the create-time `props`, and
+// `refreshUiHandlerSlot` overwrites the slot when a patch runs so the new
+// node's handler + `el` payload reach subsequent events. Without it the patch
+// path — which exists precisely so a changed handler lands on an element that
+// keeps its identity — would leave a listener firing the previous render's
+// closure.
+//
+// One thing differs from those two, and it is what this comment exists to say:
+// they register their listeners unconditionally at create time, while these
+// four register on whichever render first puts a handler in the slot
+// (`installUiEventListeners`). Most tiles carry none of the four, and a
+// conditional branch that introduces one later has to be given somewhere to
+// land.
 type UiHandlerSlot = {
   onKeyDown?: EventHandler;
   onMouseEnter?: EventHandler;
@@ -3588,6 +4076,15 @@ type UiHandlerSlot = {
   el?: Record<string, unknown>;
 };
 const UI_HANDLER_STATE = new WeakMap<HTMLElement, UiHandlerSlot>();
+/**
+ * Elements whose four native listeners are already registered. The runtime
+ * holds no listener refs, so registration has to be idempotent by bookkeeping
+ * rather than by removal.
+ */
+const UI_HANDLER_LISTENING = new WeakSet<HTMLElement>();
+
+const slotHasHandler = (slot: UiHandlerSlot): boolean =>
+  Boolean(slot.onKeyDown ?? slot.onMouseEnter ?? slot.onFocus ?? slot.onBlur);
 
 function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
   const slot: UiHandlerSlot = {};
@@ -3605,20 +4102,40 @@ function toUiHandlerSlot(props?: TileProps): UiHandlerSlot {
  * by `reconcileNode` whenever a patch runs, so re-used elements dispatch
  * `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` through the LATEST closure
  * instead of the create-time one.
+ *
+ * A conditional whose later branch *introduces* one of the four used to arrive
+ * here with nothing to dispatch through: the element is reused, so its
+ * create-time props had decided whether any listener existed, and they carried
+ * none. Registering on the render that first fills the slot is what gives that
+ * handler somewhere to land.
+ *
+ * The write is unconditional, unlike `applyUiEventHandlers` below, and that
+ * asymmetry is load-bearing: a listener registered on an earlier render stays
+ * registered, so overwriting with an empty slot is the only thing that stops a
+ * branch which *drops* its handler from going on dispatching the old one.
  */
 function refreshUiHandlerSlot(el: HTMLElement, props?: TileProps): void {
-  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  const slot = toUiHandlerSlot(props);
+  UI_HANDLER_STATE.set(el, slot);
+  if (slotHasHandler(slot)) installUiEventListeners(el);
 }
 
 function applyUiEventHandlers(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
-  const hasAny =
-    Boolean(props.onKeyDown) ||
-    Boolean(props.onMouseEnter) ||
-    Boolean(props.onFocus) ||
-    Boolean(props.onBlur);
-  if (!hasAny) return;
-  UI_HANDLER_STATE.set(el, toUiHandlerSlot(props));
+  const slot = toUiHandlerSlot(props);
+  // A tile that carries none of the four registers nothing, and writes no slot
+  // — most tiles never will, and the listeners would be four no-ops over an
+  // empty slot. Nothing is registered yet at this point, so unlike the refresh
+  // above there is no stale dispatch for an empty slot to shut off.
+  if (!slotHasHandler(slot)) return;
+  UI_HANDLER_STATE.set(el, slot);
+  installUiEventListeners(el);
+}
+
+/** Register the four native listeners, once per element. */
+function installUiEventListeners(el: HTMLElement): void {
+  if (UI_HANDLER_LISTENING.has(el)) return;
+  UI_HANDLER_LISTENING.add(el);
   el.addEventListener("keydown", (e) => {
     const state = UI_HANDLER_STATE.get(el);
     if (!state?.onKeyDown) return;
@@ -3655,47 +4172,52 @@ function renderMissingTile(node: TileNode): HTMLElement {
   return span;
 }
 
-export function applyContainerProps(el: HTMLElement, props?: TileProps): void {
-  if (!props) return;
-  applyResponsive(el, props.gap, (v) => (el.style.gap = mapToken(String(v))));
-  applyResponsive(el, props.align, (v) => (el.style.alignItems = mapAlign(String(v))));
-  applyResponsive(el, props.justify, (v) => (el.style.justifyContent = mapJustify(String(v))));
-  applyResponsive(el, props.pad, (v) => (el.style.padding = mapToken(String(v))));
-  const mw = props["max-w"] ?? props.maxWidth;
-  if (mw !== undefined) el.style.maxWidth = typeof mw === "number" ? `${mw}px` : String(mw);
-  if (typeof props.bg === "string") el.style.background = mapColor(props.bg as string);
-  if (typeof props.radius === "string") el.style.borderRadius = mapToken(props.radius as string);
-  applyStyleBlock(el, props.style);
-  applyStateStyles(el, props);
-  applyTransition(el, props);
-}
+/**
+ * One CSS declaration a tile's props contribute, as `[property, value]`.
+ *
+ * The prop-to-style mapping is expressed as data rather than as writes to an
+ * element because two paths need it: the live renderers set it on a real
+ * element, and the SSR pass (`ssr-render.ts`) serialises it into a `style`
+ * attribute. When only the first existed, a served page carried none of what a
+ * tile's props say about it.
+ *
+ * What is NOT here is what a declaration list cannot carry: `transition` and
+ * the `hover:` / `focus:` / `active:` blocks are classes backed by injected
+ * CSS, and motion is the same. Those stay with the appliers below, and stay
+ * absent from the server's output.
+ */
+export type StyleDecl = [property: string, value: string];
 
 /**
- * Apply a `style: { ... }` block (spec/style.md §4.3) — each key is set as a CSS
- * property on the element verbatim. Keys are kebab-case CSS property names
- * (`background`, `padding`, `border-radius`, `box-shadow`, …) and their values
- * are resolved strings/numbers (`@token` references are already lowered by the
- * compiler). Numbers fall back to `px`, matching the spec's spacing convention.
+ * How a responsive `{base, sm, md, lg, xl}` value collapses to the one value a
+ * declaration can hold. The client asks the viewport; the server has none and
+ * takes the base. Injected rather than branched on, so there is one mapping
+ * with one difference in it rather than two mappings.
  */
-function applyStyleBlock(el: HTMLElement, raw: unknown): void {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (value === undefined || value === null) continue;
-    const v = typeof value === "number" ? `${value}px` : String(value);
-    el.style.setProperty(key, v);
-  }
-}
+export type ResponsivePick = (raw: unknown) => string | number | undefined;
 
-/** Apply a value that may be a literal or a responsive `{base, sm, md, lg, xl}` map. */
-function applyResponsive(_el: HTMLElement, raw: unknown, set: (v: unknown) => void): void {
-  if (raw === undefined || raw === null) return;
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    set(raw);
-    return;
-  }
+/**
+ * A prop value a declaration can hold; anything else is not one.
+ *
+ * The empty string is not one either. A conditional writes it for the branch
+ * that means "nothing" (`{max-w: if wide then 600 else ""}`), and a declaration
+ * with an empty value is not a declaration — on the mount path it removes the
+ * property, so the served page has to leave it out rather than serialise
+ * `max-width: `.
+ */
+const asScalar = (v: unknown): string | number | undefined =>
+  (typeof v === "string" && v !== "") || typeof v === "number" ? v : undefined;
+
+/** The value a server can know: the base, or the literal if it is not a map. */
+export const pickBaseValue: ResponsivePick = (raw) => {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
+  return asScalar((raw as Record<string, unknown>).base);
+};
+
+/** The largest matching breakpoint, falling back to the base. */
+const pickForViewport: ResponsivePick = (raw) => {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
   const m = raw as Record<string, unknown>;
-  if (m.base !== undefined) set(m.base);
-  // Pick the first matching breakpoint from largest to smallest.
   const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
     ["xl", "(min-width: 1280px)"],
     ["lg", "(min-width: 1024px)"],
@@ -3703,11 +4225,289 @@ function applyResponsive(_el: HTMLElement, raw: unknown, set: (v: unknown) => vo
     ["sm", "(min-width: 640px)"],
   ];
   for (const [bp, q] of order) {
-    if (m[bp] !== undefined && window.matchMedia(q).matches) {
-      set(m[bp]);
-      return;
+    if (m[bp] !== undefined && window.matchMedia(q).matches) return asScalar(m[bp]);
+  }
+  return asScalar(m.base);
+};
+
+/**
+ * The declarations a `style: { ... }` block contributes (spec/style.md §4.3) —
+ * each key becomes a CSS property verbatim. Keys are kebab-case CSS property
+ * names (`background`, `padding`, `border-radius`, `box-shadow`, …) and their
+ * values are resolved strings/numbers (`@token` references are already lowered
+ * by the compiler). Numbers fall back to `px`, matching the spec's spacing
+ * convention.
+ */
+function styleBlockDecls(raw: unknown): StyleDecl[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const out: StyleDecl[] = [];
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === undefined || value === null) continue;
+    out.push([key, typeof value === "number" ? `${value}px` : String(value)]);
+  }
+  return out;
+}
+
+/**
+ * The inline style a container tile's props contribute. `pick` is required
+ * rather than defaulted: the two callers answer the breakpoint question
+ * differently, and a default would let a new one inherit the viewport answer
+ * on a machine that has no viewport.
+ */
+export function propStyleDecls(
+  props: TileProps | undefined,
+  pick: ResponsivePick,
+  kind?: string,
+): StyleDecl[] {
+  if (!props) return [];
+  const owned = kind === undefined ? undefined : KIND_OWNED_PROPS[kind];
+  if (owned) {
+    const rest: TileProps = { ...props };
+    for (const name of owned) delete (rest as Record<string, unknown>)[name];
+    props = rest;
+  }
+  const out: StyleDecl[] = [];
+  const gap = pick(props.gap);
+  if (gap !== undefined) out.push(["gap", mapToken(String(gap))]);
+  const gapX = pick(props.gap_x);
+  if (gapX !== undefined) out.push(["column-gap", mapToken(String(gapX))]);
+  const gapY = pick(props.gap_y);
+  if (gapY !== undefined) out.push(["row-gap", mapToken(String(gapY))]);
+  const align = pick(props.align);
+  if (align !== undefined) out.push(["align-items", mapAlign(String(align))]);
+  const justify = pick(props.justify);
+  if (justify !== undefined) out.push(["justify-content", mapJustify(String(justify))]);
+  // `pad` first: the per-axis props refine it, so each has to be able to
+  // overwrite the shorthand's contribution on the axis it names.
+  const pad = pick(props.pad);
+  if (pad !== undefined) out.push(["padding", mapToken(String(pad))]);
+  const padX = pick(props.pad_x);
+  if (padX !== undefined) {
+    out.push(["padding-left", mapToken(String(padX))], ["padding-right", mapToken(String(padX))]);
+  }
+  const padY = pick(props.pad_y);
+  if (padY !== undefined) {
+    out.push(["padding-top", mapToken(String(padY))], ["padding-bottom", mapToken(String(padY))]);
+  }
+  // Sizing (style.md §4.4.7). Each is the same question — how big — so they
+  // share one value mapping rather than six.
+  for (const [prop, css] of SIZING_PROPS) {
+    const v = pick(props[prop]);
+    if (v !== undefined) out.push([css, mapLength(v)]);
+  }
+  // `aspect` is a ratio, not a length: `1` means 1/1, and `1px` means nothing.
+  const aspect = pick(props.aspect);
+  if (aspect !== undefined) out.push(["aspect-ratio", String(aspect)]);
+  // `wrap` is a boolean, so it never survives the scalar pick the sizing props
+  // go through.
+  if (typeof props.wrap === "boolean") out.push(["flex-wrap", props.wrap ? "wrap" : "nowrap"]);
+  // Each of these reads a token name, so each goes through `token`: an empty
+  // one is the branch of a conditional that means "not said", and a declaration
+  // with an empty value is not a declaration. Left in, the mount path's
+  // `setProperty(prop, "")` *removes* the property — taking the kind's own base
+  // with it — while the server serialises `border-radius: `, which is invalid
+  // and ignored, so the two paths disagree about a `card`'s corners.
+  const bg = token(props.bg);
+  if (bg !== undefined) out.push(["background", mapColor(bg)]);
+  const radius = token(props.radius);
+  if (radius !== undefined) out.push(["border-radius", mapRadius(radius)]);
+  const shadow = token(props.shadow);
+  if (shadow !== undefined) out.push(["box-shadow", mapShadow(shadow)]);
+  // The typography shorthands (style.md §4.3.1). They inherit, so a container
+  // that sets `color` or `size` sets it for what is inside it.
+  if (props.strike) out.push(["text-decoration", "line-through"]);
+  const color = token(props.color);
+  if (color !== undefined) out.push(["color", mapColor(color)]);
+  const size = token(props.size);
+  if (size !== undefined) out.push(["font-size", mapSize(size)]);
+  if (props.weight === "bold") out.push(["font-weight", "700"]);
+  // Last, so an explicit declaration wins over the shorthand for the same
+  // property — `{radius: "md", style: {"border-radius": "50%"}}` is a circle.
+  out.push(...styleBlockDecls(props.style));
+  return out;
+}
+
+/**
+ * Props a kind maps itself, which the shared mapping must therefore leave
+ * alone. A `spinner`'s `size` picks the size of the spinner, not a typography
+ * token; an `icon`'s sizes the SVG box; a `skeleton`'s `h` is its placeholder
+ * height. Without this the shared mapping would run last and overwrite the
+ * kind's answer with the general one.
+ *
+ * Both render paths read this table, so an exception cannot exist on one side
+ * only.
+ */
+const KIND_OWNED_PROPS: Record<string, readonly string[] | undefined> = {
+  spinner: ["size"],
+  icon: ["size"],
+  skeleton: ["h"],
+};
+
+/** A token name a tile wrote, or `undefined` when it wrote none. */
+const token = (v: unknown): string | undefined =>
+  typeof v === "string" && v !== "" ? v : undefined;
+
+/**
+ * The sizing props and the CSS property each one is. Names are the LOWERED
+ * form — the compiler maps a Kumiki name to a JS-safe key (`max-w` ->
+ * `max_w`), and that key is the only spelling the runtime reads. Reading
+ * `props["max-w"]` here type-checked and rendered nothing, which is how every
+ * app in the corpus set a page width that never applied.
+ */
+const SIZING_PROPS: ReadonlyArray<readonly [prop: string, css: string]> = [
+  ["w", "width"],
+  ["h", "height"],
+  ["min_w", "min-width"],
+  ["min_h", "min-height"],
+  ["max_w", "max-width"],
+  ["max_h", "max-height"],
+];
+
+/**
+ * A size, as CSS. A number is pixels (the spec's spacing convention) and
+ * `"full"` is the whole of the containing box; anything else is already a CSS
+ * length (`"auto"`, `"50vh"`, `"16/9"`) and passes through.
+ */
+function mapLength(v: string | number): string {
+  if (typeof v === "number") return `${v}px`;
+  return v === "full" ? "100%" : v;
+}
+
+function setDecls(el: HTMLElement, decls: StyleDecl[]): void {
+  for (const [k, v] of decls) el.style.setProperty(k, v);
+}
+
+/**
+ * Move an element from the style its props asked for last render to the one
+ * they ask for now. `before` is undefined on the create path.
+ *
+ * The removal half is what a re-applying `setProperty` loop cannot do: a
+ * conditional that swaps two containers of the same kind reuses the element,
+ * and without this the one that no longer sets `max-width` keeps the other's.
+ * Only properties these props set are ever removed — a kind's own base layout
+ * is not in the list, so it survives.
+ */
+export function patchPropStyle(
+  el: HTMLElement,
+  before: TileProps | undefined,
+  after: TileProps | undefined,
+  kind?: string,
+): void {
+  const was = propStyleDecls(before, pickForViewport, kind);
+  const now = propStyleDecls(after, pickForViewport, kind);
+  for (const [prop] of was) {
+    if (!now.some(([p]) => p === prop)) el.style.removeProperty(prop);
+  }
+  setDecls(el, now);
+}
+
+/** An attribute a tile's props ask for. */
+export type AttrDecl = [name: string, value: string];
+
+/**
+ * The attributes every tile kind accepts, whatever it renders (stdlib.md
+ * §2.3.10). They are data for the same reason the style mapping is: the live
+ * renderers set them on an element and the SSR pass serialises them, and one
+ * table is what keeps a served page and a mounted one saying the same thing.
+ *
+ * `class` is the only one that is not simply "set the attribute" — the runtime
+ * puts its own classes on the same element (the animation classes, the state-
+ * style classes), so the author's tokens are added to what is there rather
+ * than written over it.
+ *
+ * Every prop is read by name. Nothing here enumerates `props`: a host tile
+ * (#71) owns its own props object, and a `Object.keys` against one that refuses
+ * enumeration throws on the render path, where the throw costs the whole tree.
+ * That is why a bare `aria-label` arrives already folded into `aria` — the
+ * compiler merges the two spellings, because only it can do so by name.
+ */
+export function commonAttrDecls(props?: TileProps): AttrDecl[] {
+  if (!props) return [];
+  const out: AttrDecl[] = [];
+  if (typeof props.class === "string" && props.class.trim() !== "")
+    out.push(["class", props.class]);
+
+  // An empty value is the branch of a conditional that means "not said", so it
+  // writes no attribute rather than an empty one.
+  if (attrValue(props.id) !== undefined) out.push(["id", String(props.id)]);
+  if (attrValue(props.test_id) !== undefined) out.push(["data-kumiki-test", String(props.test_id)]);
+  if (attrValue(props.role) !== undefined) out.push(["role", String(props.role)]);
+  // A map, or nothing: a `Text` here would spread into `aria-0` / `aria-1`,
+  // one attribute per character.
+  const aria = props.aria;
+  if (aria !== null && typeof aria === "object" && !Array.isArray(aria)) {
+    for (const [key, value] of Object.entries(aria as Record<string, unknown>)) {
+      if (value === undefined || value === null) continue;
+      // A key that cannot name an ARIA attribute is not one. This is also what
+      // catches a non-map `aria`: the compiler merges the two spellings by
+      // spreading, and spreading a `Text` yields `{0: "h", 1: "i"}` — one
+      // attribute per character.
+      if (!/^[a-zA-Z][\w-]*$/.test(key)) continue;
+      out.push([key.startsWith("aria-") ? key : `aria-${key}`, String(value)]);
     }
   }
+  return out;
+}
+
+/** A prop that becomes an attribute, or `undefined` when the tile did not say. */
+export function attrValue(v: unknown): string | number | undefined {
+  if (typeof v === "number") return v;
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/** The class tokens a decl list asks for, in order. */
+function classTokensOf(decls: AttrDecl[]): string[] {
+  const decl = decls.find(([name]) => name === "class");
+  return decl ? decl[1].split(/\s+/).filter((t) => t !== "") : [];
+}
+
+/**
+ * Move an element from the common props it was rendered with to the ones it
+ * has now. `before` is undefined on the create path, where there is nothing to
+ * take away.
+ *
+ * The patch path is why this is a diff rather than an apply: a reused element
+ * keeps whatever the last render put on it, so a `class` that flipped would
+ * otherwise accumulate both tokens and an `aria` key that disappeared would
+ * stay on the element forever.
+ *
+ * Removal is by attribute name, so a prop that stops being written also clears
+ * the value a renderer had put under the same name at create time — a `spinner`
+ * whose `aria` map loses its `label` is left with no `aria-label` rather than
+ * the renderer's "Loading". The alternative is to leave the author's stale
+ * value in place, which is worse: it says something untrue rather than nothing.
+ */
+/** The common props on a freshly rendered element. */
+export function applyCommonProps(el: HTMLElement, props?: TileProps): void {
+  patchCommonProps(el, undefined, props);
+}
+
+export function patchCommonProps(
+  el: HTMLElement,
+  before: TileProps | undefined,
+  after: TileProps | undefined,
+): void {
+  const was = commonAttrDecls(before);
+  const now = commonAttrDecls(after);
+  const wasClasses = classTokensOf(was);
+  const nowClasses = classTokensOf(now);
+  for (const token of wasClasses) {
+    if (!nowClasses.includes(token)) el.classList.remove(token);
+  }
+  for (const token of nowClasses) el.classList.add(token);
+  for (const [name] of was) {
+    if (name !== "class" && !now.some(([n]) => n === name)) el.removeAttribute(name);
+  }
+  for (const [name, value] of now) {
+    if (name !== "class") el.setAttribute(name, value);
+  }
+}
+
+export function applyContainerProps(el: HTMLElement, props?: TileProps, kind?: string): void {
+  if (!props) return;
+  setDecls(el, propStyleDecls(props, pickForViewport, kind));
+  applyStateStyles(el, props);
+  applyTransition(el, props);
 }
 
 export function ensureAnimationStyles(): void {
@@ -3747,7 +4547,7 @@ function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (typeof t !== "string") return;
   ensureAnimationStyles();
   el.classList.add("kumiki-anim", `kumiki-anim-${t}`);
-  const d = props["transition-duration"];
+  const d = props.transition_duration;
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
 }
 
@@ -3923,13 +4723,9 @@ function stateStyleDecls(sub: Record<string, unknown>): string {
   return decls.join("; ");
 }
 
-export function applyTextProps(el: HTMLElement, props?: TileProps): void {
+export function applyTextProps(el: HTMLElement, props?: TileProps, kind?: string): void {
   if (!props) return;
-  if (props.strike) el.style.textDecoration = "line-through";
-  if (typeof props.color === "string") el.style.color = mapColor(props.color as string);
-  if (typeof props.size === "string") el.style.fontSize = mapSize(props.size as string);
-  if (props.weight === "bold") el.style.fontWeight = "700";
-  applyStyleBlock(el, props.style);
+  setDecls(el, propStyleDecls(props, pickForViewport, kind));
   applyStateStyles(el, props);
 }
 
@@ -3938,27 +4734,44 @@ export function applyTextProps(el: HTMLElement, props?: TileProps): void {
 // share a NAME but differ in content will cache-hit each other and skip
 // re-injection — the shared style host keeps whichever applied last. That is
 // part of the style-root contention this registry deliberately does not solve
-// (see the multi-mount changeset); give co-mounted apps distinct theme names
+// (see `mountedShapes`, which refuses a per-view style root for the same
+// reason); give co-mounted apps distinct theme names
 // or isolate them in shadow roots.
 let lastAppliedThemeName: string | null = null;
-function maybeReapplyTheme(app: AppShape): void {
-  // Resolve the current theme name (could be slot-driven via `app.theme = slotName`).
-  let name = app.themeName;
-  if (
-    name &&
-    app.themes &&
-    !(name in app.themes) &&
-    app.live &&
-    typeof app.live[name] === "string"
-  ) {
-    name = app.live[name] as string;
+/**
+ * The theme name in force: `app.themeName`, or — when that names a slot rather
+ * than a theme, which is the `app.theme = <slot>` form — the name that slot
+ * currently holds.
+ */
+function resolvedThemeName(app: AppShape): string | undefined {
+  const name = app.themeName ?? undefined;
+  if (name && app.themes && !(name in app.themes) && typeof app.live?.[name] === "string") {
+    return app.live[name] as string;
   }
+  return name;
+}
+
+function maybeReapplyTheme(app: AppShape): void {
+  const name = resolvedThemeName(app);
   if (name === lastAppliedThemeName) return;
   lastAppliedThemeName = name ?? null;
   applyThemeDefaults(app);
 }
 
 function applyThemeDefaults(app: AppShape): void {
+  // The compiler resolves the NAME in `app.theme = X`, and deliberately not the
+  // value a slot behind it holds: an app that picks its theme on `app.start`
+  // starts that slot at a sentinel naming no theme, and a sentinel cannot be
+  // told from a misspelling without intent. So the misspelling surfaces here
+  // instead — otherwise the app renders with the built-in defaults and looks
+  // merely unstyled. Every caller reaches this once per name change.
+  const selected = resolvedThemeName(app);
+  if (selected && app.themes && !(selected in app.themes)) {
+    console.warn(
+      `Theme "${selected}" is not declared; rendering with the built-in defaults. ` +
+        `Declared themes: ${Object.keys(app.themes).join(", ") || "(none)"}`,
+    );
+  }
   const theme = currentThemeOf(app);
   if (!theme) return;
   const colors = (theme.colors ?? {}) as Record<string, ThemeValue>;
@@ -4067,13 +4880,7 @@ export function currentTheme(): Theme | null {
 
 function currentThemeOf(app: AppShape): Theme | null {
   if (!app.themes) return null;
-  let name = app.themeName;
-  // If `app.theme = someSlot` was used in source, app.themeName holds the slot
-  // NAME (e.g. "themeName"). Resolve through the live slot value so theme
-  // switching at runtime takes effect.
-  if (name && !(name in app.themes) && app.live && typeof app.live[name] === "string") {
-    name = app.live[name] as string;
-  }
+  let name = resolvedThemeName(app);
   if (!name) name = Object.keys(app.themes)[0];
   if (!name) return null;
   return app.themes[name] ?? null;
@@ -4107,6 +4914,43 @@ function mapToken(t: string): string {
       return t;
   }
 }
+/**
+ * One token lookup for every `theme` section that is a flat name-to-value map
+ * (`radius`, `shadow`). `fallback` carries the defaults style.md §4.2 prints,
+ * so a program with no `theme` definition still gets the documented scale.
+ * A name in neither is passed through as CSS, which is what lets
+ * `radius: "50%"` work.
+ */
+function mapThemeToken(section: string, name: string, fallback: Record<string, string>): string {
+  const theme = currentTheme();
+  const sec = theme?.[section];
+  if (sec && typeof sec === "object" && !Array.isArray(sec)) {
+    const v = (sec as Record<string, ThemeValue>)[name];
+    if (typeof v === "string") return v;
+    if (typeof v === "number") return `${v}px`;
+  }
+  return fallback[name] ?? name;
+}
+
+function mapRadius(r: string): string {
+  return mapThemeToken("radius", r, {
+    none: "0",
+    sm: "4px",
+    md: "8px",
+    lg: "16px",
+    pill: "999px",
+  });
+}
+
+function mapShadow(s: string): string {
+  return mapThemeToken("shadow", s, {
+    none: "none",
+    sm: "0 1px 2px rgba(0,0,0,0.1)",
+    md: "0 4px 8px rgba(0,0,0,0.1)",
+    lg: "0 8px 24px rgba(0,0,0,0.15)",
+  });
+}
+
 function mapAlign(a: string): string {
   switch (a) {
     case "start":

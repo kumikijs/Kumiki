@@ -1,0 +1,25 @@
+{
+  "effects": {
+    "loadUser": [{ "outcome": "ok", "value": { "id": "u-1", "name": "Ada" } }]
+  },
+  "steps": [
+    {
+      "label": "app.init runs loadUser, and its result lands in the user slot",
+      "expect": {
+        "noErrors": true,
+        "state": { "user": { "id": "u-1", "name": "Ada" }, "count": 0, "draft": "" },
+        "domIncludes": ["Hi Ada", "count: 0"]
+      }
+    },
+    {
+      "label": "post-hydration interaction still reaches the reducer",
+      "do": { "clickText": "+" },
+      "expect": { "noErrors": true, "state": { "count": 1 }, "domIncludes": ["count: 1"] }
+    },
+    {
+      "label": "the volatile slot takes input like any other — it is only absent from the SSR snapshot",
+      "do": { "fill": "input", "value": "not serialized" },
+      "expect": { "noErrors": true, "state": { "draft": "not serialized" } }
+    }
+  ]
+}

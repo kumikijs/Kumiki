@@ -108,16 +108,13 @@ describe("panicInfo", () => {
     // Verify by handing it an Error subclass whose `.message` / `.stack` /
     // `.cause` all detonate.
     class Hostile extends Error {
-      constructor() {
-        super();
-      }
       override get message(): string {
         throw new Error("hostile message getter");
       }
       override get stack(): string {
         throw new Error("hostile stack getter");
       }
-      get cause(): unknown {
+      override get cause(): unknown {
         throw new Error("hostile cause getter");
       }
     }
