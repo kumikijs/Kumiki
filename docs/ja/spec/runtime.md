@@ -4,31 +4,20 @@
 
 ## 10.1 コンパイルパイプライン
 
-```
-[CRDT graph store]
-    ↓ project (selector)
-[kumiki source (text view)]
-    ↓ parse
-[AST]
-    ↓ name resolution
-[resolved AST] ←─── error: undef-ref, dangling
-    ↓ type check
-[typed AST]   ←─── error: type-mismatch, refinement
-    ↓ effect analysis
-[effect-annotated AST] ←── error: cap-missing, direct-call
-    ↓ purity check
-[verified AST] ←── error: reducer-side-effect, tile-mutation
-    ↓ lower
-[IR (Kumiki Intermediate Representation)]
-    ↓ codegen
-[runtime artifacts]:
-    • signal graph (JS or WASM)
-    • effect dispatcher table
-    • episode logger
-    • dev-tool trace UI
-```
+8 つのフェーズがあり、それぞれが自分の担当するエラーを次へ渡さずに弾く:
 
-各フェーズは独立した検査を行う。エラーは [AI 編集](./ai-edit.md) の構造化エラーで返す。
+| フェーズ | 生成物 | 弾くもの |
+|---|---|---|
+| project (selector) | kumiki source — CRDT graph store のテキスト断面 | — |
+| parse | AST | — |
+| 名前解決 | resolved AST | `undef-ref`、dangling 参照 |
+| 型検査 | typed AST | `type-mismatch`、refinement 違反 |
+| effect 解析 | effect-annotated AST | `cap-missing`、直接呼び出し |
+| 純粋性検査 | verified AST | `reducer-side-effect`、`tile-mutation` |
+| lower | IR (Kumiki Intermediate Representation) | — |
+| codegen | ランタイム成果物 | — |
+
+codegen が出力する成果物は 4 つ: signal graph（JS または WASM）、effect dispatcher テーブル、episode logger、dev-tool trace UI。エラーは [AI 編集](./ai-edit.md) の構造化エラーで返す。
 
 ---
 
@@ -235,20 +224,20 @@ app App ... theme = themeName    # ← slot 名を渡す
 
 ### 10.3.9 focus 復元
 
-#190（要素同一性を保った reconciliation、§10.3.11）以降、runtime は同じ kind の
+#190（要素同一性を保った reconciliation、[§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190)）以降、runtime は同じ kind の
 タイルを data prop 変更時に「その場で patch」するので、mount 中の `<input>` /
 `<textarea>` / `<select>` は自然に browser focus を保つ。以下の snapshot / restore
 層は、**丸ごと DOM を swap するパス（reconcile bailout、panic recovery、
 focus 対象要素そのものを動かす keyed reorder）専用の fallback** として残す。
 並べ替えで動かなかった focus 中の子はそもそもこの fallback に届かない。keyed
-pass は動かす必要のある子だけを配置するので（§10.3.10）、カーソルはその要素を
+pass は動かす必要のある子だけを配置するので（[§10.3.10](#_10-3-10-安定タイル-identity)）、カーソルはその要素を
 離れない。
 
 再レンダリング後も入力中の input/textarea の focus とカーソル位置を維持する:
 - `bind=` がある要素: `data-kumiki-bind` 属性（nested path は full path 文字列）で再特定
 - `id=` がある要素: id で再特定
 - どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
-- `<select>` も snapshot 対象に含まれるので、reorder / bailout パスでもピッカーへの focus は復元される（open dropdown の状態は復元不能で、それは §10.3.11 の patch パス側の保証）
+- `<select>` も snapshot 対象に含まれるので、reorder / bailout パスでもピッカーへの focus は復元される（open dropdown の状態は復元不能で、それは [§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190) の patch パス側の保証）
 
 ### 10.3.10 安定タイル identity
 
@@ -273,8 +262,8 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   子リストの穴と、要素マッピングを持たない旧子 — は、**子を 1 件も適用する前に**
   リスト全体について決着させる。したがって親は「全ての子を reconcile する」か
   「1 件も触らずに再構築する」かのどちらかで、再構築が捨てるだけの中途半端な
-  適用を残さない。これが買うのは報告の正直さである: `binds-updated`（§10.3.11）
-  も診断（§10.3.12）も実際に起きたレンダを記述し、放棄されたサブツリーの
+  適用を残さない。これが買うのは報告の正直さである: `binds-updated`（[§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190)）
+  も診断（[§10.3.12](#_10-3-12-reconcile-の診断)）も実際に起きたレンダを記述し、放棄されたサブツリーの
   `newMap` エントリは書かれない。
 - **keyed pass は「要素マッピングの有無」を診断ではなく panic で答える。**
   要素マッピングを持たない旧子は keyed pass も止める。しかもリスト内の全ての子に
@@ -310,13 +299,13 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   検査からなる。問うている内容が違うからである:
   - **マウント済みの子がどこに居るか** は DOM から実測する。レンダラ所有の
     ラッパーの下にマウントされた子があれば pass は届かないので、reconciler は
-    辞退して `wrapped-children`（§10.3.12）を報告する。
+    辞退して `wrapped-children`（[§10.3.12](#_10-3-12-reconcile-の診断)）を報告する。
   - **新入りがどこへ行くか** はレンダラの宣言された配置から読む。まだ存在
     しないスロットは実測できないからである。`overlay` は最初の子を直下に置き
     残りを包むので、1 レイヤーの overlay は「全て直下」と実測される — 成長する
     その瞬間までは。そのまま keyed pass に入れば 2 番目のレイヤーは裸で
     append されてしまう。こうした親の下で keyed リストが要素を得たとき、
-    reconciler は辞退して `unplaceable-insert`（§10.3.12）を報告する。
+    reconciler は辞退して `unplaceable-insert`（[§10.3.12](#_10-3-12-reconcile-の診断)）を報告する。
     メンバーが変わらないレンダは置くものが無いので keyed パスのままである。
 
   現行の組み込みでは `overlay` が 2 番目以降の子を配置用レイヤーで包み、
@@ -342,7 +331,7 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   blur するので、動く理由の無かった子は focus・キャレット・開いている
   `<select>` のドロップダウン・変換中の IME を失う — keyed matching が守る
   ために存在する状態そのものである。したがって並べ替えで動かなかった
-  focus 中の子は、§10.3.9 の snapshot / restore fallback に頼らずネイティブに
+  focus 中の子は、[§10.3.9](#_10-3-9-focus-復元) の snapshot / restore fallback に頼らずネイティブに
   それらを保つ。配置は必ず既存ノードの**手前**に対して行う。アンカーは
   新しい並びでその子の次に来る子であり、次が無い最後の子については
   「マウント済み子リスト全体の直後にある兄弟」（無ければ親の末尾）である。
@@ -377,7 +366,7 @@ value / `<input>` focus と caret / event listener が insert/remove/reorder を
 
 ### 10.3.11 要素同一性を保った reconciliation (#190)
 
-Keyed diff（§10.3.10）は「データ prop が変わらなかった」タイルの DOM 同一性を
+Keyed diff（[§10.3.10](#_10-3-10-安定タイル-identity)）は「データ prop が変わらなかった」タイルの DOM 同一性を
 保つ。#190 はさらに「**データ prop が変わった**が in-place で更新できる」タイル
 まで保証範囲を広げ、browser 固有の状態（`<select>` の open dropdown、`<video>`
 の再生位置、`<details>` の open、contenteditable のキャレット/IME composition）
@@ -425,7 +414,7 @@ renderer が `WeakMap<HTMLElement, Handlers>` に現在の handler を格納し�
 `compositionend` の間は書き込み自体を skip する — JP/CN/KR IME で候補ウィンドウ
 表示中に上書きすると変換候補が中断され失われるため。slider は
 `activeElement === el` のときは skip（ドラッグ中ガード）。reducer が明示的に
-フィールドをクリアするケースは、外側の snapshot 層（§10.3.9）が patch 実行前に
+フィールドをクリアするケースは、外側の snapshot 層（[§10.3.9](#_10-3-9-focus-復元)）が patch 実行前に
 selection range を捕捉するので、そこで復元される。
 
 **episode log `binds-updated` への影響**  patch パスも subtree rebuild と同じ
@@ -435,12 +424,12 @@ rebuild/patch のどちらを通っても `signal-update.binds-updated`（#189�
 
 **載るのはそのレンダを生き延びたものだけ。** 親を諦めて再構築したレンダは
 その親だけを名指しし、配下は 1 つも載せない。walk は子を 1 件も適用する前に
-親の運命を決めるので（§10.3.10）、自分が記述する作業より長生きする識別子を
+親の運命を決めるので（[§10.3.10](#_10-3-10-安定タイル-identity)）、自分が記述する作業より長生きする識別子を
 残す「中途半端な適用」がそもそも存在しない。
 
 ### 10.3.12 reconcile の診断
 
-keyed diff（§10.3.10）も in-place patch（§10.3.11）も、**静かに劣化する**。
+keyed diff（[§10.3.10](#_10-3-10-安定タイル-identity)）も in-place patch（[§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190)）も、**静かに劣化する**。
 subtree の identity を保てないと判断したら reconciler は再構築するか、より弱い
 マッチング戦略に降りる — 常に正しく、例外も投げない。つまりアプリが毎レンダで
 全ツリーを再マウントしていても、外から見る限りは健全に見える。
@@ -473,22 +462,22 @@ throw が漏れれば `location: "reconcile"` の panic として記録されツ
 | reason | 証拠 | 失われたもの |
 |---|---|---|
 | `no-patcher` | — | タイルの data prop が変わったが、その kind に patcher が登録されていないため subtree ごと再構築した。その要素の focus / キャレット / `<select>` の open 状態 / `<video>` の再生位置が失われる。 |
-| `child-count-change` | `oldCount`, `newCount` | キーの無い兄弟リストの長さが変わったため親を再構築した。全ての子に `key` を付ける（§10.3.10）とこの制限は外れ、keyed matcher が insert / remove / reorder を越えて無関係な兄弟に触れずに済む。片側が空になる変化では出ない — その境界は key の有無に関係なく親を保つ（§10.3.10）。 |
-| `child-hole` | `index` | children 配列に空スロットがあった。Kumiki の codegen は nil を潰すので、これはホストが組んだタイルツリーからしか到達しない。兄弟を 1 件も適用する前に報告される（§10.3.10）ので、このレンダがしたことは親の再構築だけである。 |
+| `child-count-change` | `oldCount`, `newCount` | キーの無い兄弟リストの長さが変わったため親を再構築した。全ての子に `key` を付ける（[§10.3.10](#_10-3-10-安定タイル-identity)）とこの制限は外れ、keyed matcher が insert / remove / reorder を越えて無関係な兄弟に触れずに済む。片側が空になる変化では出ない — その境界は key の有無に関係なく親を保つ（[§10.3.10](#_10-3-10-安定タイル-identity)）。 |
+| `child-hole` | `index` | children 配列に空スロットがあった。Kumiki の codegen は nil を潰すので、これはホストが組んだタイルツリーからしか到達しない。兄弟を 1 件も適用する前に報告される（[§10.3.10](#_10-3-10-安定タイル-identity)）ので、このレンダがしたことは親の再構築だけである。 |
 | `child-unmapped` | `index`, `childKind` | 旧 child がノード → 要素マップに存在しなかった。つまり親のレンダラが `ctx.render` を通さずに子を組んでいる。見つからないものは再利用できないので、その親は毎レンダ再構築される。`child-hole` と同じく、兄弟を 1 件も適用する前に報告される。 |
-| `wrapped-children` | `index`, `childKind` | 全ての子が `key` を持っていたが、親のレンダラが子を直下に置かず包んでいる（§10.3.10）ため、keyed matcher が辞退して構造 diff が走った。それ自体は何も再構築せず、失われるのは subtree ではなく「並べ替えを越えた要素同一性」である。 |
-| `unplaceable-insert` | `index`, `childKind` | 全ての子が `key` を持ち、マウント済みの子は全て親の直下に居たが、`index` の新しい子は新入りで、この親のレンダラは全ての子を直下に置かない（§10.3.10）。keyed matcher が新入りをマウントできるスロットが無い。短いリストは成長するその瞬間まで「配置可能」と実測されるので、これは DOM ではなくレンダラ側から読む。それ自体は何も再構築せず、続く構造 diff が長さの変化を見れば `child-count-change` を出す。 |
+| `wrapped-children` | `index`, `childKind` | 全ての子が `key` を持っていたが、親のレンダラが子を直下に置かず包んでいる（[§10.3.10](#_10-3-10-安定タイル-identity)）ため、keyed matcher が辞退して構造 diff が走った。それ自体は何も再構築せず、失われるのは subtree ではなく「並べ替えを越えた要素同一性」である。 |
+| `unplaceable-insert` | `index`, `childKind` | 全ての子が `key` を持ち、マウント済みの子は全て親の直下に居たが、`index` の新しい子は新入りで、この親のレンダラは全ての子を直下に置かない（[§10.3.10](#_10-3-10-安定タイル-identity)）。keyed matcher が新入りをマウントできるスロットが無い。短いリストは成長するその瞬間まで「配置可能」と実測されるので、これは DOM ではなくレンダラ側から読む。それ自体は何も再構築せず、続く構造 diff が長さの変化を見れば `child-count-change` を出す。 |
 
 再構築パスのうち 2 つは**意図的に報告しない**。`kind` の変化はその位置に別のものが
 来たという意味なので、保つべき identity が無い。patcher が `PatchRequiresRebuild`
-（§10.3.11）で in-place を辞退するのも正常で期待された結果であり、そのセンチネルは
+（[§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190)）で in-place を辞退するのも正常で期待された結果であり、そのセンチネルは
 まさにログを汚さないために存在する。
 
 **再構築された親は自分の分しか報告しない。** 親を再構築する 4 つの理由 —
 `no-patcher` / `child-count-change` / `child-hole` / `child-unmapped` — はいずれも
-子を 1 件も reconcile する前に決まる（§10.3.10）ので、配下は検査されず、したがって
+子を 1 件も reconcile する前に決まる（[§10.3.10](#_10-3-10-安定タイル-identity)）ので、配下は検査されず、したがって
 そのレンダで配下から報告されるものは何も無い（`reconcile-fallback` も
-`never-equal-prop` も）。`binds-updated`（§10.3.11）と
+`never-equal-prop` も）。`binds-updated`（[§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190)）と
 同じ規則である — そのレンダが捨てたものは記述しない。（`wrapped-children` と `unplaceable-insert` は
 何も再構築しないので、続く構造 diff は通常どおり報告する。）
 
@@ -505,9 +494,9 @@ throw が漏れれば `location: "reconcile"` の panic として記録されツ
 そのまま再利用され、作成時の reducer へ dispatch し続けた — 無言で。
 
 そこで codegen は reducer リストごとに 1 つのクロージャをアプリインスタンス単位で
-memo 化し（§10.3.13）、カーネルは関数を他の値と同じように比較する。変わっていない
+memo 化し（[§10.3.13](#_10-3-13-data-prop-の等値判定)）、カーネルは関数を他の値と同じように比較する。変わっていない
 ハンドラは同一参照なので再利用パスをそのまま通り、変わったハンドラは差分になるので
-patcher が走って §10.3.11 の要素ごとのハンドラスロットを更新する。
+patcher が走って [§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190) の要素ごとのハンドラスロットを更新する。
 
 毎レンダ inline でハンドラを作り続けるホストレンダラは、自分自身とも等値にならない。
 それは無言で再利用されるのではなく、後述の `function-identity` として報告される。
@@ -521,8 +510,8 @@ degrade しない。したがって fallback は 1 件も報告されず、ア�
 
 | `cause` | ぶつかっている規則 |
 |---|---|
-| `non-plain-object` | `Date` / `Map` / `Set` / `RegExp` / DOM ノード / クラスインスタンス、および別 realm のオブジェクト。状態が自身の列挙可能キーの外にあるため、2 つを等値にできるのは `===` だけ（§10.3.13）— 毎レンダ作り直される値が満たすことはない。 |
-| `nan` | `NaN`。定義上、自分自身と等しくない（§10.3.13）。 |
+| `non-plain-object` | `Date` / `Map` / `Set` / `RegExp` / DOM ノード / クラスインスタンス、および別 realm のオブジェクト。状態が自身の列挙可能キーの外にあるため、2 つを等値にできるのは `===` だけ（[§10.3.13](#_10-3-13-data-prop-の等値判定)）— 毎レンダ作り直される値が満たすことはない。 |
+| `nan` | `NaN`。定義上、自分自身と等しくない（[§10.3.13](#_10-3-13-data-prop-の等値判定)）。 |
 | `function-identity` | identity が変わった関数。走査は履歴を持たないので、条件分岐が memo 済みハンドラ同士を 1 回入れ替えた場合も含め、異なるクロージャ 2 つに対して発火する。常に言えるのは「この 2 つは等値になり得なかった」ことだけで、繰り返すかどうかはホストが毎レンダ作り直しているかによる。直す価値があるのはその場合で、memo 化すれば止まる。 |
 
 対象範囲は `MountOptions.hostTileKinds` で決まり、パッケージエントリの `mount` は
@@ -548,7 +537,7 @@ degrade しない。したがって fallback は 1 件も報告されず、ア�
 なので、`kumiki dev` は両方を `console.warn` に振り分ける。
 
 **episode log との関係**  episode は「アプリが何をしたか」という作者向けの因果記録で、
-subtree が再レンダされた**こと自体**は既に `signal-update.binds-updated`（§10.3.11）に
+subtree が再レンダされた**こと自体**は既に `signal-update.binds-updated`（[§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190)）に
 載っている。diagnostic が伝えるのは再利用ではなく再構築を選んだ**理由** — フレームワーク
 内部の情報であり、アプリやホスト統合のチューニングには有用だが挙動トレースの中では
 ノイズになる。互いに補完的なチャネルなので、新しい episode step kind にはしていない。
@@ -562,16 +551,16 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
 
 ### 10.3.13 data prop の等値判定
 
-§10.3.10 も §10.3.11 も「タイルの data prop が変わっていない」を起点にしている。
+[§10.3.10](#_10-3-10-安定タイル-identity) も [§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190) も「タイルの data prop が変わっていない」を起点にしている。
 それを決めるのがこの規則であり、ランタイム唯一の再利用述語である。false positive は
 症状の出ないまま古い要素をマウントし続け、false negative は変わっていない subtree を
 再構築する。
 
 **範囲**  比較は `TileNode` 自身のフィールドのうち `kind` / `children` / `key` を
 *除いた*ものを走査する。`kind` は判別子であり、述語が走る前に決着している
-（§10.3.12）。`children` は walker 自身の担当で、子はそれぞれ独立に reconcile される
+（[§10.3.12](#_10-3-12-reconcile-の診断)）。`children` は walker 自身の担当で、子はそれぞれ独立に reconcile される
 ので、孫の変化が全ての祖先を再構築してはならない。`key` は keyed child matcher が
-消費する identity メタデータ（§10.3.10）で、ペアが述語に届く時点で既に「同じ
+消費する identity メタデータ（[§10.3.10](#_10-3-10-安定タイル-identity)）で、ペアが述語に届く時点で既に「同じ
 インスタンス」だと確定している。
 
 **値**  2 つの値が等値なのは次のいずれかのとき:
@@ -591,7 +580,7 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
 - **`NaN` は `NaN` と等値ではない。** それを持つタイルは毎レンダ再構築される。
   prop の中の `NaN` は既に計算が失敗しているという意味であり、再構築が安全側で、
   churn は凍り付いたタイルより見える症状である — ホストタイルであれば
-  §10.3.12 の `never-equal-prop` がフィールドを名指しする。patcher が登録されて
+  [§10.3.12](#_10-3-12-reconcile-の診断) の `never-equal-prop` がフィールドを名指しする。patcher が登録されて
   いれば churn は他のどのチャネルからも見えないからである。
 - **plain でないオブジェクトは自分自身以外の何とも等値にならない。** `Date` /
   `Map` / `Set` / `RegExp` / DOM ノード / クラスインスタンスは状態を自身の列挙可能
@@ -603,7 +592,7 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
   （`<iframe>`、`vm` コンテキスト）で作られたオブジェクトは exotic として扱われ
   再構築される。安全側であり、`toString` タグ検査に緩めない理由でもある。毎レンダ
   同じタイルに渡し続けるホストは、決して勝てない diff の代償を払う。それを報告する
-  のが `never-equal-prop`（§10.3.12）である。
+  のが `never-equal-prop`（[§10.3.12](#_10-3-12-reconcile-の診断)）である。
 
 - **関数は自分自身とのみ等値である。** ハンドラもここでは他の値と同じ値である。
   codegen は dispatch する reducer リストをキーにしたインスタンス単位の memo を通して
@@ -611,7 +600,7 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
   は再利用パスをそのまま通る。一方、ハンドラ**だけ**が異なる 2 つのインラインタイルを
   条件分岐で入れ替えたときのように本当に変わった場合は、walker が扱うべき差分になる。
   毎レンダ inline でハンドラを作るホストレンダラは自分自身とも等値にならず、毎レンダ
-  patch（patcher が無ければ再構築）を払う。それを `never-equal-prop`（§10.3.12）が
+  patch（patcher が無ければ再構築）を払う。それを `never-equal-prop`（[§10.3.12](#_10-3-12-reconcile-の診断)）が
   `function-identity` として報告する。
 
 循環は契約の外である。構造的に循環していて互いに別物の bag 2 つは、スタックが尽きる

@@ -20,7 +20,7 @@
     "codegen"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "bin": {
     "kumiki": "./dist/kumiki.js"

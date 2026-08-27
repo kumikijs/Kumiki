@@ -33,9 +33,9 @@ features:
     details: 機能別ミニマル例とサイズ順アプリを網羅。質問・バグは example と test を足して答える運用。
 ---
 
-## 同じUI、違う思想
+## 同じアプリを 2 通りで
 
-同じアプリを 2 つの世界で。左は Kumiki での [fetch example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki)、右はその慣用的な React 等価実装。
+取得して描くだけの画面を両方で書いた。左は Kumiki の [fetch example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki)、右はその慣用的な React 等価実装。
 
 <div class="home-compare">
 <div class="home-compare-col">
@@ -130,7 +130,7 @@ export function App() {
 
 書き換えて試したくなったら [Playground](/ja/guide/playground) へ。
 
-注目すべき点:
+この 3 つの差はどのアプリを書いても効いてくる:
 
 - **`policy=latest` はアノテーション 1 つ。** React で古いレスポンスを捨てるには `AbortController` の手書きの儀式が要る。まさに「テキストの外」にあって AI の編集で壊れる類の機構。
 - **副作用は隠さず宣言する。** `caps = [http.get]` はコンパイラが検査し、未宣言 capability の effect はコンパイルエラーになる。

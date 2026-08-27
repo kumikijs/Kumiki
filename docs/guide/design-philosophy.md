@@ -75,7 +75,3 @@ The non-goals above imply a positive principle: **the language itself never grow
 - **Build** — `@kumikijs/vite` lets any Vite project `import App from "./app.kumiki"`, with generated TS types for the providers.
 
 A `.kumiki` file means the same thing everywhere, because nothing host-specific can leak into it.
-
-## The operating model is part of the design
-
-The repository is run on the rule that **looking at it resolves every question**: questions and bugs are answered by adding working examples and tests, not prose; the spec is normative and every example must compile, build, and survive a smoke test in CI. A language designed for machine consumers needs documentation with the same property.

@@ -13,9 +13,9 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Float` | 64-bit floating point | `3.14`, `-0.5` |
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
-| `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see §2.2.10) |
+| `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see [§2.2.10](#_2-2-10-bytes)) |
 | `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse(text)` |
-| `EffectId` | opaque handle returned by `emit` (see §2.1.1.1) | no literal; `EffectId.none` |
+| `EffectId` | opaque handle returned by `emit` (see [§2.1.1.1](#_2-1-1-1-effectid)) | no literal; `EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
 
@@ -247,7 +247,7 @@ Every occurrence of a token is replaced, including one inside a word: `format("s
 
 The fields are **local** ones. The result carries no timezone in it, so it is read as the reader's wall clock; UTC fields would show the wrong day to every reader whose local date differs from the UTC one at that moment — after midnight east of Greenwich, and during the evening west of it.
 
-`Time.parse` yields the instant as a millisecond number, the same representation §2.2.9 gives every `Time`; text that names no instant — including the empty string — is `None`. A **date-only** string is read as **local** midnight, not the UTC midnight the platform's own parser gives it: `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string.
+`Time.parse` yields the instant as a millisecond number, the same representation [§2.2.9](#_2-2-9-duration) gives every `Time`; text that names no instant — including the empty string — is `None`. A **date-only** string is read as **local** midnight, not the UTC midnight the platform's own parser gives it: `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string.
 
 ### 2.2.9 Duration
 

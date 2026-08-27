@@ -316,9 +316,9 @@ A call `f(...)` names no function. The candidate set is the program's `fn` defin
 | Callee | Where it is specified |
 |---|---|
 | `now`, `random`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
-| `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), §2.4 |
-| `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
-| `file-url` | [Forms §5.10](./forms.md) |
+| `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), [§2.4](./stdlib.md#_2-4-built-in-functions) |
+| `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md#_6-1-4-the-decoder-type), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [Forms §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
 
 `run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
@@ -521,7 +521,7 @@ A reducer names a tile that has not been declared, in either of the two triggers
 
 ### E0212 `selector-id-mismatch` (opt-in via `--strict-selector-id`)
 
-A reducer's `ui.<ev>(Tile#id)` selector names an id that the target tile's literal `{id: "..."}` prop cannot produce. E0211 catches typos in the tile name; this catches typos in the `#id` fragment — e.g. `on=ui.submit(NewForm#nw)` against `tile NewForm = form(...) {id: "new"}`. The runtime `_dispatch` filter (spec §1.6.2) silently skips the mismatch, so without this check the reducer never fires and the developer sees no error. Opt in with `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
+A reducer's `ui.<ev>(Tile#id)` selector names an id that the target tile's literal `{id: "..."}` prop cannot produce. E0211 catches typos in the tile name; this catches typos in the `#id` fragment — e.g. `on=ui.submit(NewForm#nw)` against `tile NewForm = form(...) {id: "new"}`. The runtime `_dispatch` filter (spec [§1.6.2](./language.md#_1-6-2-selectors)) silently skips the mismatch, so without this check the reducer never fires and the developer sees no error. Opt in with `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
 
 > `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but tile "<Tile>" is declared with id "<actual>" — this selector can never match`
 
@@ -577,9 +577,9 @@ An application passes a different number of arguments than the thing it applies 
 
 The tile and effect forms are the ones that used to go unreported: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`; an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch; and a tile that declares no `in=` but is *given* an argument mounts and renders normally, silently dropping the value the caller meant to pass.
 
-A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP §6.1.4](./http.md)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail.
+A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail.
 
-`fmt` is the only builtin with a range. Its signature is `fmt(template, ...args)` ([Standard Library §2.4.5](./stdlib.md)), so the template is all that can be required, and its message names a minimum — `expects at least 1 argument(s) but got 0`. `now` is held to exactly none, but no call can break that: it is a keyword rather than a name, and the parser builds its zero-argument call itself, so `now(1)` is a parse error before any of this is reached.
+`fmt` is the only builtin with a range. Its signature is `fmt(template, ...args)` ([Standard Library §2.4.5](./stdlib.md#_2-4-5-string-formatting)), so the template is all that can be required, and its message names a minimum — `expects at least 1 argument(s) but got 0`. `now` is held to exactly none, but no call can break that: it is a keyword rather than a name, and the parser builds its zero-argument call itself, so `now(1)` is a parse error before any of this is reached.
 
 A **method** is checked when its lowering reads a fixed number of arguments — `t.format()` used to pass `check` and then kill `build` with a bare `TypeError` carrying no position. Only the minimum is enforced: `get-or` and `slice` branch on how many they were given.
 

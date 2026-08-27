@@ -1,5 +1,7 @@
 # Style, Layout, and Theme
 
+How a tile gets its appearance. You never write CSS: [§4.1](#_4-1-policy) says why, [§4.2](#_4-2-design-tokens) defines the design tokens an app draws from, and [§4.4](#_4-4-layout) covers the layout props tiles accept.
+
 ## 4.1 Policy
 
 Kumiki **does not let you write CSS directly**. CSS cascade, specificity, and inheritance are the biggest source of hidden dependencies for an AI, and they conflict with Kumiki's "statically trackable side effects" principle.
@@ -284,7 +286,7 @@ app App
 
 When you specify a slot as in `theme = themeName`, the theme switches whenever that value changes.
 
-The name in the clause is resolved by the compiler: it must be a declared `theme` or a declared slot, and anything else is [E0118](./errors.md#e0118-undef-theme). The *value* that slot holds is not. It should be one of the declared theme names — as it is in the example above — but it does not have to be at every moment: an app that picks its theme on `app.start` (§4.6.1) may start the slot at a sentinel that names no theme, precisely so that a helper which failed to run is visible. A sentinel and a misspelling are the same program, so telling them apart takes intent. A value that matches no theme renders with the built-in defaults.
+The name in the clause is resolved by the compiler: it must be a declared `theme` or a declared slot, and anything else is [E0118](./errors.md#e0118-undef-theme). The *value* that slot holds is not. It should be one of the declared theme names — as it is in the example above — but it does not have to be at every moment: an app that picks its theme on `app.start` ([§4.6.1](#_4-6-1-following-os-settings)) may start the slot at a sentinel that names no theme, precisely so that a helper which failed to run is visible. A sentinel and a misspelling are the same program, so telling them apart takes intent. A value that matches no theme renders with the built-in defaults.
 
 ### 4.6.1 Following OS Settings
 

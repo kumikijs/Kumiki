@@ -1,5 +1,7 @@
 # Lifecycle, Error Boundaries, and Suspense
 
+When the runtime hands a reducer control — startup, route changes, timers — and what the app does when something fails. [§7.1](#_7-1-list-of-lifecycle-events) lists every event you can react to; [§7.3](#_7-3-error-boundaries-per-tile) onward covers failure: per-tile boundaries, loading states, and the 404 page.
+
 ## 7.1 List of Lifecycle Events
 
 | Event | Timing |
@@ -155,7 +157,7 @@ type PanicInfo = {
 
 **Implementation gaps to close.** Today's runtime only populates `message`, `location`, and `category` on the `$event` payload. `episode-id` and `cause` are declared on the type for forward compatibility but are NOT supplied yet — reducers MUST treat both as `None`-equivalent. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime actually emits `reducer "foo"` / `render`. These are pre-existing gaps tracked separately from the panic-info wire-through work.
 
-The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` §10.5.1) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
+The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 
 ---
 

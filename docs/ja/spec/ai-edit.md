@@ -13,21 +13,13 @@ Kumiki のコードは物理ファイルではなく **content-addressable CRDT 
 
 ## 9.1 全体像
 
-```
-┌───────────────────────────────────────────────┐
-│              CRDT graph store                  │
-│  (definition の集合、各々が content-addressable) │
-└───────────────────────────────────────────────┘
-        ↑                          ↓
-        │                          │ kumiki view
-        │ kumiki op apply          │
-        │                          ↓
-┌───────────────┐            ┌──────────────────────┐
-│ AI エージェント │ ←─────── │ projection (text)    │
-└───────────────┘  edit op   └──────────────────────┘
-```
+編集は 3 つの地点を巡る:
 
-AI が見るのは graph からの **projection（テキスト断面）**。AI が出力するのは **op**（テキスト diff ではない）。
+1. **store** — CRDT graph。定義の集合を保持し、各定義は自身の本体のハッシュで参照される。
+2. **projection** — `kumiki view` が store から描き出すテキスト。エージェントが求めた定義だけを含む。
+3. **op** — エージェントが書き戻すもの。`kumiki op apply` が store に畳み込む。
+
+つまり AI が読むのは graph のテキスト断面であり、返すのは op であって、テキスト diff ではない。
 
 ---
 

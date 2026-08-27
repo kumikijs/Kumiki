@@ -1,5 +1,7 @@
 # Language Core Specification
 
+The seven kinds of definition a Kumiki program is made of, plus the expressions, statements and patterns they share. [§1.1](#_1-1-overall-program-structure) gives the shape of a whole program; after that, read the layer you are about to write.
+
 ## 1.1 Overall Program Structure
 
 A Kumiki program is a **set of 7 kinds of definitions**. There are no physical file boundaries; each definition is stored in a content-addressable graph as the following 4-tuple:
@@ -52,11 +54,21 @@ tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; the value a Tuple types
 comment     ::= '#' until-eol                    ; single-line comment only
 ```
 
-**`-` is both an identifier character and subtraction, and longest munch decides.** A `-` continues the identifier when an identifier character follows it, and ends it otherwise. So `page-size`, `base-url` and `on-401` are one name each — and so is `count-1`, which is why subtraction between a name and a literal is written `count - 1`. `count- 1` is also subtraction, because there the `-` has nothing to continue into; `count -1` is subtraction because the space ended the name before the `-` was reached at all. A name written `count-1` that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), and its message says so.
+**`-` is both an identifier character and subtraction, and longest munch decides.** `page-size`, `base-url`, `on-401` and `count-1` are one name each, which is why subtraction between a name and a literal is written `count - 1`.
 
-**A `#` with whitespace on either side of it always starts a comment.** It is the selector operator ([§1.6.1](#_1-6-1-syntax)) only when the character before it ends a value — an identifier character, or a closing `)` / `]` / `}` — *and* the character after it begins an identifier, as in `SaveBtn#new`. Everywhere else, including `#TODO` at the start of a line and `= 0# how many`, it runs to the end of the line. A `#id` fragment therefore begins with a letter or `_`, which is what `tile-ref` already required.
+::: details Every spacing of `count-1`, and what an unresolved one reports
+A `-` continues the identifier when an identifier character follows it, and ends it otherwise. `count- 1` is also subtraction, because there the `-` has nothing to continue into; `count -1` is subtraction because the space ended the name before the `-` was reached at all. A name written `count-1` that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), and its message says so.
+:::
 
-**Positions.** A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line. A column counts UTF-16 code units, so an astral character advances it by two — the same convention the Language Server Protocol uses, and the one every consumer of a Kumiki position needs, since a patch splices a source line at `column - 1`. A leading byte-order mark is whitespace for the same reason: it is not part of the text, but it is part of the string being spliced, so it takes a column.
+**A `#` with whitespace on either side of it always starts a comment.** It is the selector operator ([§1.6.1](#_1-6-1-syntax)) only in the tight form `SaveBtn#new`.
+
+::: details The exact condition, and where a `#` still comments
+A `#` is the selector operator only when the character before it ends a value — an identifier character, or a closing `)` / `]` / `}` — *and* the character after it begins an identifier. Everywhere else, including `#TODO` at the start of a line and `= 0# how many`, it runs to the end of the line. A `#id` fragment therefore begins with a letter or `_`, which is what `tile-ref` already required.
+:::
+
+::: details Positions — line terminators, UTF-16 columns, and the BOM
+A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line. A column counts UTF-16 code units, so an astral character advances it by two — the same convention the Language Server Protocol uses, and the one every consumer of a Kumiki position needs, since a patch splices a source line at `column - 1`. A leading byte-order mark is whitespace for the same reason: it is not part of the text, but it is part of the string being spliced, so it takes a column.
+:::
 
 ### 1.2.1 Operators
 
@@ -91,9 +103,13 @@ fresh  self  now  null
 - **Indentation-independent**: leading whitespace is ignored
 - **Newline is the statement separator**: only inside `do=` can `;` join multiple statements
 - **Identifiers are at most 32 characters**
-- **An expression, type, pattern or tile tree is at most 256 levels deep**: a construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream. Past the limit the parser reports a positioned error instead. Nothing written in practice comes near it: no program in the examples or benchmarks approaches the limit.
+- **An expression, type, pattern or tile tree is at most 256 levels deep**: past that the parser reports a positioned error. No program in the examples or benchmarks comes near it.
 - **Multi-line comments prohibited**
 - **Macros prohibited**
+
+::: details What the 256-level limit is measured against
+A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+:::
 
 ---
 
@@ -339,7 +355,7 @@ In other words, you can mix one-line layout and block layout. When writing in ne
 
 **Multiple subscriptions to the same event are allowed.** When two or more reducers
 declare the same `on=` pattern (e.g. both subscribe to `ui.click(SubmitBtn)`), all
-of them fire in definition order — see §1.6.4 Invariant 3.
+of them fire in definition order — see [§1.6.4](#_1-6-4-invariants) Invariant 3.
 
 ### 1.6.2 Selectors
 
@@ -371,7 +387,7 @@ reducer add  on=ui.submit(NewForm#new)   do= ...   # only the "new" form
 reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 ```
 
-The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from §1.6.4 Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
+The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from [§1.6.4](#_1-6-4-invariants) Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
 ### 1.6.3 lvalue Semantics
 
