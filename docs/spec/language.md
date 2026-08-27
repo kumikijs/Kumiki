@@ -182,6 +182,36 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 Structurally identical types have the same content-hash. Only `nominal` produces a new hash.
 
+A `nominal` type is identified by **the name it is declared under**, so two declarations over one base are two types even when their bodies are identical:
+
+```kumiki fragment
+type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+```
+
+`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
+
+A type that carries **no nominal name of its own** meets any nominal declared over it, in both directions. That is what makes `slot c : Cents = 1` legal without a construction form, and arithmetic yields the base ([§1.9](#_1-9-expression-language)), so `c := c + 1` stands.
+
+A nominal declared over another nominal is a **narrowing**, and goes one way only:
+
+```kumiki fragment
+type Deep = nominal Cents
+```
+
+Every `Deep` was declared a `Cents`, so a `Deep` is accepted where a `Cents` is required; a `Cents` where a `Deep` is required is [E0201](./errors.md#e0201-type-mismatch). `Int` still meets both.
+
+Converting between two unrelated nominals goes through the base they share, and a `fn` is where that is written down — the return type documents the destination, and the body has to have **reached the base**:
+
+```kumiki fragment
+fn toYen(c: Cents, rate: Int) -> Yen = c * rate
+fn toUser(p: PostId) -> UserId       = p + ""
+```
+
+The arithmetic in the first lands on `Int`; the `+ ""` in the second lands on `Text`. The identity body does not compile — `fn toUser(p: PostId) -> UserId = p` is E0201, because `p` is still a `PostId`. Nothing checks that such a `fn` converts anything; it records the intent, and the type of its body is all that is enforced.
+
+A `where` refinement carries no identity of its own — `type Positive = Int where positive` is `Int` — and remains a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)) rather than a compile-time one: on `type Volume = nominal Int where between(0, 11)`, `volume := 50` is well typed, and the range is what validation decides.
+
 ---
 
 ## 1.4 Store Layer (`slot`)

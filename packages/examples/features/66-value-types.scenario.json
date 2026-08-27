@@ -5,7 +5,7 @@
       "expect": {
         "noErrors": true,
         "state": { "status": { "_tag": "Idle" } },
-        "domIncludes": ["21°C = 69.8°F", "idle", "18°C", "21°C"]
+        "domIncludes": ["21°C = 69.8°F", "idle", "18°C", "21°C", "forecast 70°F"]
       }
     },
     {
@@ -18,6 +18,18 @@
           "status": { "_tag": "Done", "_0": 22 }
         },
         "domIncludes": ["22°C = 71.6°F", "done at 22", "outside"]
+      }
+    },
+    {
+      "label": "a Fahrenheit reaches a Celsius field only through the conversion, and arrives converted",
+      "do": { "clickText": "use forecast" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "reading": { "label": "forecast", "celsius": 21 },
+          "forecast": 70
+        },
+        "domIncludes": ["21°C = 69.8°F", "loading", "forecast 70°F"]
       }
     },
     {

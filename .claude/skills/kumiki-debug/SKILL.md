@@ -32,7 +32,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
 | `E0119` | `$route` in a reducer the runtime does not bind one in (anything but `route.enter` / `route.leave` / `route.error` and a link's prefetch target) | read the `route` slot instead; try `kumiki_fix` |
 | `E0120` | `route` or `$route` in an `app.init` argument — those are evaluated while the app object is built, before any mount installs a route | move the read into a `route.enter` reducer; reading the `route` slot does **not** help here |
-| `E0201` | a value does not have the type its position requires (slot init, assignment, `fn` argument / return, tile `in=`, operator operand) | correct the value, or widen the declared type |
+| `E0201` | a value does not have the type its position requires (slot init, assignment, `fn` argument / return, tile `in=`, operator operand) | correct the value, or widen the declared type. Two `nominal` types over one base are distinct, so a deliberate conversion goes through the **base**: `fn toUser(p: PostId) -> UserId = p + ""`, never `= p`, which is this same error |
 | `E0202` | an `emit` argument does not match the effect's `in=` | pass a value of the declared type |
 | `E0211` | a reducer's `ui.*` selector or `tile.mount` / `tile.unmount` names an undeclared tile | declare the tile or fix the name; try `kumiki_fix` |
 | `E0213` | wrong argument count: `fn` call, `emit`, user-tile call, or variant payload | pass the declared number |

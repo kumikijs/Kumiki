@@ -182,6 +182,36 @@ type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
 
 構造的に同一の型は同一 content-hash を持つ。`nominal` のみが新 hash を生む。
 
+`nominal` 型を同定するのは **宣言された名前** である。したがって同じ基底型に対する 2 つの宣言は、body が同一であっても 2 つの型である：
+
+```kumiki fragment
+type Cents = nominal Int where positive
+type Yen   = nominal Int where positive
+```
+
+`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
+
+**自身の nominal 名を持たない**型は、その上に宣言されたどの nominal とも双方向に受理し合う。これが `slot c : Cents = 1` を構築形式なしで成立させており、算術は基底型を返すので（[§1.9](#_1-9-式言語)）`c := c + 1` もそのまま通る。
+
+nominal の上に宣言された nominal は **narrowing** であり、一方向だけ通る：
+
+```kumiki fragment
+type Deep = nominal Cents
+```
+
+どの `Deep` も `Cents` として宣言されているので、`Cents` が要求される位置に `Deep` は入る。逆に `Deep` が要求される位置の `Cents` は [E0201](./errors.md#e0201-type-mismatch) である。`Int` は依然としてどちらとも通じる。
+
+無関係な 2 つの nominal 間の変換は、両者が共有する基底型を経由する。それを書き留める場所が `fn` であり、戻り型が行き先を表し、body は**基底型に到達していなければならない**：
+
+```kumiki fragment
+fn toYen(c: Cents, rate: Int) -> Yen = c * rate
+fn toUser(p: PostId) -> UserId       = p + ""
+```
+
+前者は算術が `Int` に、後者は `+ ""` が `Text` に着地する。恒等な body はコンパイルできない — `fn toUser(p: PostId) -> UserId = p` は E0201 である。`p` はまだ `PostId` だからである。この `fn` が実際に何かを変換していることは検査されない。記録されるのは意図であり、強制されるのは body の型だけである。
+
+`where` の refinement 自体は同定に寄与せず（`type Positive = Int where positive` は `Int` である）、compile 時ではなく runtime の検査のままである（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)）：`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` は型としては正しく、範囲を決めるのはバリデーションである。
+
 ---
 
 ## 1.4 ストアレイヤ (`slot`)
