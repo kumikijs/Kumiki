@@ -10,6 +10,39 @@ export function genTile(tile: TileDef, gen: GenCtx): string {
   return tileExprJs(tile.body, gen, ctx, tile.name);
 }
 
+/**
+ * The `try` / `catch` a tile's `error-boundary` lowers to — a panic while
+ * rendering under `def` produces the named fallback instead, with `PanicInfo`
+ * as its `$1` (lifecycle.md §7.3).
+ *
+ * Wraps `body` from the outside, so the fallback is not itself named: what the
+ * runtime diffs mount/unmount against is the tree that actually rendered.
+ */
+function boundaryJs(def: TileDef, body: string, gen: GenCtx): string {
+  if (!def.errorBoundary) return body;
+  const fb = gen.tiles.find((x) => x.name === def.errorBoundary);
+  if (!fb) return body;
+  const fbCtx = makeEvalCtx(gen, new Set(["$1"]));
+  const fbBody = tileExprJs(fb.body, gen, fbCtx, fb.name);
+  return `((() => { try { return ${body}; } catch (_err) { const ${jsBinding("$1")} = { message: String(_err && _err.message || _err), location: ${JSON.stringify(def.name)} }; return ${fbBody}; } })())`;
+}
+
+/**
+ * A tile lowered for the position a route names it in.
+ *
+ * A route target is a call site of that tile, so it gets what every other call
+ * site gets: the `_named(…)` marker the runtime diffs `tile.mount` /
+ * `tile.unmount` against (lifecycle.md §7.1.6), and its `error-boundary`
+ * (§7.3, which scopes the boundary to renders *under that tile* — a statement
+ * about the tile, not about where it was written).
+ *
+ * Separate from `genTile` because that has a third caller: the `_tilesById`
+ * table a `tile-test` compares against, which wants the bare tree.
+ */
+export function genRouteTile(tile: TileDef, gen: GenCtx): string {
+  return boundaryJs(tile, `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`, gen);
+}
+
 export function tileExprJs(
   t: TileExpr,
   gen: GenCtx,
@@ -129,14 +162,7 @@ function tileCallJs(
     if (!def) throw new Error(`Tile "${name}" not found`);
     const inner = makeEvalCtx(gen, ctx.localBinds);
     const arg1 = t.args[0];
-    const wrapBoundary = (body: string): string => {
-      if (!def.errorBoundary) return body;
-      const fb = gen.tiles.find((x) => x.name === def.errorBoundary);
-      if (!fb) return body;
-      const fbCtx = makeEvalCtx(gen, new Set(["$1"]));
-      const fbBody = tileExprJs(fb.body, gen, fbCtx, fb.name);
-      return `((() => { try { return ${body}; } catch (_err) { const ${jsBinding("$1")} = { message: String(_err && _err.message || _err), location: ${JSON.stringify(def.name)} }; return ${fbBody}; } })())`;
-    };
+    const wrapBoundary = (body: string): string => boundaryJs(def, body, gen);
     // Each user-tile call site wraps its rendered output with `_named(…, "X")`
     // so the runtime can diff `tile.mount(X)` / `tile.unmount(X)` against the
     // rendered tree (lifecycle.md §7.1.6). Builtin tiles are NOT named — only
