@@ -176,7 +176,9 @@ tile ErrorFallback
 
 `error-boundary = X` を tile 定義に書くと、その tile 配下の描画中 panic は X tile を `in=PanicInfo` で呼び出して fallback 表示する。
 
-> **実装ステータス.** live runtime は [エラー処理](#_7-2-error-handling) の panic モデルを実装する：reducer ディスパッチ中の panic はその episode の `slot` 変更を rollback し（部分書き込みなし）、検証 tier（`smoke` / scenario）へ surface し、`app.error` reducer（[app.error reducer](#_7-2-3-the-app-error-reducer)）を `PanicInfo` を `$event` として発火する。描画中の panic は最も近い `error-boundary` tile が捕捉する；囲う境界が**ない**描画 panic（例：ルート配下）は、イベントハンドラを未捕捉で突き抜ける代わりに組み込みのトップレベル panic 表示にフォールバックする。`panic(message)` と多相な `.get`（`None` / `Err` で panic、`.get-err` と整合）はこの同じ制御されたシグナルを送出する。
+境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
+
+> **実装ステータス.** live runtime は [エラー処理](#_7-2-error-handling) の panic モデルを実装する：reducer ディスパッチ中の panic はその episode の `slot` 変更を rollback し（部分書き込みなし）、検証 tier（`smoke` / scenario）へ surface し、`app.error` reducer（[app.error reducer](#_7-2-3-the-app-error-reducer)）を `PanicInfo` を `$event` として発火する。描画中の panic は最も近い `error-boundary` tile が捕捉する。これには route ターゲット自身が宣言した境界も含まれる。上に境界が**ない**描画 panic は、イベントハンドラを未捕捉で突き抜ける代わりに組み込みのトップレベル panic 表示にフォールバックする。`panic(message)` と多相な `.get`（`None` / `Err` で panic、`.get-err` と整合）はこの同じ制御されたシグナルを送出する。
 
 ---
 

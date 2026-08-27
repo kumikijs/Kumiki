@@ -1,0 +1,29 @@
+{
+  "steps": [
+    {
+      "label": "nothing has panicked yet, so the tile renders its own body",
+      "expect": {
+        "noErrors": true,
+        "state": { "reveal": false },
+        "domIncludes": ["Panic boundary demo", "status: ready"]
+      }
+    },
+    {
+      "label": "the read panics during render and the boundary shows the fallback instead",
+      "do": { "clickText": "reveal" },
+      "expect": {
+        "noErrors": true,
+        "state": { "reveal": true },
+        "domIncludes": ["recovered:"]
+      }
+    },
+    {
+      "label": "the same tile as the route root is protected by the same boundary",
+      "do": { "navigate": "/risky" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["recovered:"]
+      }
+    }
+  ]
+}
