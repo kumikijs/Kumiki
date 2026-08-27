@@ -197,7 +197,7 @@ reducer cancelSearch
         searchEffectId := EffectId.none
 ```
 
-`emit` used as an expression returns the dispatched effect's `EffectId` (see [stdlib [§2.1.1.1](./stdlib.md#_2-1-1-1-effectid)](./stdlib.md#_2-1-1-1-effectid)). The `EffectId.none` sentinel makes `emit cancel(EffectId.none)` a safe no-op.
+`emit` used as an expression returns the dispatched effect's `EffectId` (see [stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid)). The `EffectId.none` sentinel makes `emit cancel(EffectId.none)` a safe no-op.
 
 An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other shape is rejected at compile time ([E0303](./errors.md#e0303-invalid-cancel-target)).
 

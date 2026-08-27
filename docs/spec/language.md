@@ -411,7 +411,7 @@ issue.copy(status=Done, priority=High)
 | `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument) |
 | `$el` | the `{...}` props of the tile that fired the event |
 | `$event` | the event payload |
-| `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing [§3.4](./routing.md#_3-4-route-lifecycle)](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
+| `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
 | `$now` | the current time |
 
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
@@ -716,7 +716,7 @@ Every operator's operand and result types, which the compiler checks
 `/` is `Float` even between two `Int`s. It is JavaScript's `/` at runtime — `5 / 2`
 is `2.5`, not `2` — so an `Int` result type would be a promise the runtime does not
 keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
-[stdlib [§2.2.7](./stdlib.md#_2-2-7-int-float)](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
+[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
 declare the `Float`.
 
 `EffectId` is outside this table: only `==` and `!=` apply to it

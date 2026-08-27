@@ -27,7 +27,7 @@ let id = emit fetchQuote()
 
 `EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
 
-`EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP [§6.4](./http.md#_6-4-cancellation)](./http.md#_6-4-cancellation) 参照）。
+`EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP §6.4](./http.md#_6-4-cancellation) 参照）。
 
 ### 2.1.2 汎化型
 
@@ -50,7 +50,7 @@ let id = emit fetchQuote()
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (ナノ秒) |
-| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング [§3.2](./routing.md#_3-2-current-route-state)](./routing.md#_3-2-current-route-state) 参照 |
+| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
@@ -332,7 +332,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
 | `switch` | トグル | `value`, `onClick`, `onChange` |
 
-`button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く（[フォーム [§5.8](./forms.md#_5-8-ui-during-submission)](./forms.md#_5-8-ui-during-submission)）。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
+`button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く（[フォーム §5.8](./forms.md#_5-8-ui-during-submission)）。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
 
 ### 2.3.5 フォーム
 
@@ -359,12 +359,12 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 
 | 要素 | 役割 | 主な props |
 |---|---|---|
-| `overlay` | z 軸のスタック。最初の子がベース層、以降の子はその上に重ねて置かれる — この表の他が乗る土台（[スタイル [§4.4.3](./style.md#_4-4-3-stack)](./style.md#_4-4-3-stack)） | `align` |
+| `overlay` | z 軸のスタック。最初の子がベース層、以降の子はその上に重ねて置かれる — この表の他が乗る土台（[スタイル §4.4.3](./style.md#_4-4-3-stack)） | `align` |
 | `modal` | モーダル | `open`, `onClose`, `title` |
 | `drawer` | ドロワー | `open`, `onClose`, `side` |
 | `tooltip` | ツールチップ | `text`, `placement` |
 | `popover` | ポップオーバー | `open`, `onClose`, `placement` |
-| `toast` | トースト通知 | `kind`（info/success/warn/error — `data-level` として載るだけで、組み込みの見た目は持たない）、`text`、`duration`（kind 別のデフォルトは [ライフサイクル [§7.7](./lifecycle.md#_7-7-トースト)](./lifecycle.md#_7-7-トースト) 参照） |
+| `toast` | トースト通知 | `kind`（info/success/warn/error — `data-level` として載るだけで、組み込みの見た目は持たない）、`text`、`duration`（kind 別のデフォルトは [ライフサイクル §7.7](./lifecycle.md#_7-7-トースト) 参照） |
 | `details` | ネイティブの `<details>` 開閉（#190） — `summary` がヘッダのラベル、子要素が折りたたまれるパネルになる | `summary`, `open` |
 
 ### 2.3.8 フィードバック
@@ -397,12 +397,12 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `style` | `Map(Text, Text)` | インラインスタイル宣言。キーが CSS プロパティ名。略記のあとに適用されるので競合時はこちらが勝つ（最小限の使用を推奨） |
 | `aria` | `Map(Text, Text)` | エントリごとに `aria-*` 属性。すでに `aria-…` で始まるキーは二重に付けない |
 | `key` | `Text` | レンダーをまたいだ tile の同一性。props から引き上げられ、属性にはならない |
-| `test-id` | `Text` | `data-kumiki-test` 属性（[テスト [§8.8](./testing.md#_8-8-integration-tests-browser-driven)](./testing.md#_8-8-integration-tests-browser-driven)） |
+| `test-id` | `Text` | `data-kumiki-test` 属性（[テスト §8.8](./testing.md#_8-8-integration-tests-browser-driven)） |
 | `id` | `Text` | 要素の `id`。reducer セレクタの `#id` 部分でもある（[§1.6.2](./language.md#_1-6-2-セレクタ)） |
 | `role` | `Text` | `role` 属性。tile の種別が前提とする値を上書きする |
 | `aria-*` | `Text` | その ARIA 属性。`aria` マップを介さず単体で書く形 |
 
-`class` / `style` は [スタイル [§4.1](./style.md#_4-1-方針)](./style.md#_4-1-方針) が述べる逃げ道である。上記はすべて**どの種別にも**適用され、スタイルの略記（[§4.3.1](./style.md#_4-3-1-shorthand-properties)）とサイズの props（[§4.4.7](./style.md#_4-4-7-sizing)）も同様である——ランタイムはこれらを種別ごとのレンダラの外側で書くため、`image` の `max-w` も `button` の `bg` も届き、ホストが登録した tile（[§10.3.10](./runtime.md#_10-3-10-安定タイル-identity)）にも適用される。
+`class` / `style` は [スタイル §4.1](./style.md#_4-1-方針) が述べる逃げ道である。上記はすべて**どの種別にも**適用され、スタイルの略記（[§4.3.1](./style.md#_4-3-1-shorthand-properties)）とサイズの props（[§4.4.7](./style.md#_4-4-7-sizing)）も同様である——ランタイムはこれらを種別ごとのレンダラの外側で書くため、`image` の `max-w` も `button` の `bg` も届き、ホストが登録した tile（[§10.3.10](./runtime.md#_10-3-10-安定タイル-identity)）にも適用される。
 
 その prop を自分で写像する種別はそちらが優先する：`spinner` と `icon` の `size` はタイポグラフィトークンではなくそのものの大きさを選び、`skeleton` の `h` はプレースホルダの高さである。
 
@@ -545,7 +545,7 @@ effect log         cap=log.write    in={level: Text, message: Text, data: Map(Te
 effect scroll-to   in={x: Int, y: Int}  out=Unit
 ```
 
-ケイパビリティを要求しない唯一の標準 effect。ユーザーが既に見ているページのビューポートを動かすだけで、その外側には何も届かないからである。→ [ルーティング [§3.9](./routing.md#_3-9-スクロール復元)](./routing.md#_3-9-スクロール復元)。
+ケイパビリティを要求しない唯一の標準 effect。ユーザーが既に見ているページのビューポートを動かすだけで、その外側には何も届かないからである。→ [ルーティング §3.9](./routing.md#_3-9-スクロール復元)。
 
 ### 2.6.5 確認ダイアログ
 
@@ -553,7 +553,7 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
-ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル [§7.6](./lifecycle.md#_7-6-confirmation-dialogs)](./lifecycle.md#_7-6-confirmation-dialogs)。
+ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。
 
 ---
 

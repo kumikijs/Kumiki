@@ -253,7 +253,7 @@ A `recv.member` access where the **inferred type** of `recv` is known, but `memb
 
 ### E0110 `unknown-token-group`
 
-A `@<group>.<name>` theme-token reference ([Style [§4.3](./style.md#_4-3-token-references)](./style.md#_4-3-token-references)) names a `<group>` that is not one of the closed theme namespaces (`colors`, `spacing`, `radius`, `shadow`, `typography`, `breakpoints`).
+A `@<group>.<name>` theme-token reference ([Style §4.3](./style.md#_4-3-token-references)) names a `<group>` that is not one of the closed theme namespaces (`colors`, `spacing`, `radius`, `shadow`, `typography`, `breakpoints`).
 
 > `Unknown theme token group "@<group>" (allowed: …)`
 
@@ -315,13 +315,13 @@ A call `f(...)` names no function. The candidate set is the program's `fn` defin
 
 | Callee | Where it is specified |
 |---|---|
-| `now`, `random`, `fmt`, `panic` | [Standard Library [§2.4](./stdlib.md#_2-4-built-in-functions)](./stdlib.md#_2-4-built-in-functions) |
-| `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library [§2.2](./stdlib.md#_2-2-collection-methods)](./stdlib.md#_2-2-collection-methods), [§2.4](./stdlib.md#_2-4-built-in-functions) |
-| `Decoder.*`, `EffectId.none` | [HTTP / Storage [§6.1.4](./http.md#_6-1-4-the-decoder-type)](./http.md), [Standard Library [§2.1.1.1](./stdlib.md#_2-1-1-1-effectid)](./stdlib.md#_2-1-1-1-effectid) |
-| `file-url` | [Forms [§5.10](./forms.md#_5-10-file-upload)](./forms.md) |
-| `prefers-dark` | [Style [§4.6.1](./style.md#_4-6-1-following-os-settings)](./style.md#_4-6-1-following-os-settings) |
+| `now`, `random`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
+| `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), [§2.4](./stdlib.md#_2-4-built-in-functions) |
+| `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md#_6-1-4-the-decoder-type), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [Forms §5.10](./forms.md#_5-10-file-upload) |
+| `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
 
-`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing [§8.3](./testing.md#_8-3-property-tests)](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
+`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
 
 > `Call to "run-reducer" outside a property-test invariant`
 
@@ -351,7 +351,7 @@ A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show
 
 ### E0118 `undef-theme`
 
-`app.theme = <name>` where `<name>` is neither a `theme` definition nor a slot. Both are legal: a theme name selects that theme, and a slot selects whichever theme its value names, so the theme can change while the app runs ([Style [§4.6](./style.md#_4-6-dark-mode)](./style.md#_4-6-dark-mode)).
+`app.theme = <name>` where `<name>` is neither a `theme` definition nor a slot. Both are legal: a theme name selects that theme, and a slot selects whichever theme its value names, so the theme can change while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
 
 > `Reference to undefined theme "<name>"`
 
@@ -361,23 +361,23 @@ A name that resolves to neither leaves the runtime looking up a theme that was n
 
 ### E0119 `route-bind-out-of-scope`
 
-A reducer reads `$route`, but the runtime does not put one in that reducer's payload. `$route` is bound in a `route.enter` / `route.leave` / `route.error` reducer, and in the reducer a link names as its `prefetch` target — which fires with the same binding so one body can serve both the prefetch and the navigation ([Routing [§3.4](./routing.md#_3-4-route-lifecycle)](./routing.md#_3-4-route-lifecycle), [§3.8](./routing.md#_3-8-prefetch)). Every other trigger applies the reducer with a payload that has no route in it.
+A reducer reads `$route`, but the runtime does not put one in that reducer's payload. `$route` is bound in a `route.enter` / `route.leave` / `route.error` reducer, and in the reducer a link names as its `prefetch` target — which fires with the same binding so one body can serve both the prefetch and the navigation ([Routing §3.4](./routing.md#_3-4-route-lifecycle), [§3.8](./routing.md#_3-8-prefetch)). Every other trigger applies the reducer with a payload that has no route in it.
 
 > `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
 Without this check the read lowers to an empty object: `$route.params.get-or("id", "")` returns the fallback and `$route.pattern` returns `undefined`, so every comparison against them is false and the reducer's whole body quietly does nothing. A `fn` or a tile body is not applied with a payload at all, so `$route` there is an undefined name ([E0103](#e0103-undef-ref-undef-slot)) rather than this, and an `app.init` argument reports [E0120](#e0120-route-in-app-init) — which is what lets the message above promise the `route` slot without qualification: the one position where that advice would not hold never reaches this check. A name an enclosing `let` or pattern binds is that binding, not the payload, and is not reported at all.
 
-**Fix**: Read the `route` slot ([Routing [§3.2](./routing.md#_3-2-current-route-state)](./routing.md#_3-2-current-route-state)), which the runtime maintains and every layer can read. `kumiki fix` proposes the rewrite.
+**Fix**: Read the `route` slot ([Routing §3.2](./routing.md#_3-2-current-route-state)), which the runtime maintains and every layer can read. `kumiki fix` proposes the rewrite.
 
 ### E0120 `route-in-app-init`
 
-An `app.init` argument reads `route` or `$route`. Init arguments are evaluated **once**, while the app object is being constructed ([Language [§1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)](./language.md#_1-12-1-when-init-arguments-are-evaluated)); the runtime installs `app.live.route` during the mount that follows, so at the moment these arguments are captured there is no route to read.
+An `app.init` argument reads `route` or `$route`. Init arguments are evaluated **once**, while the app object is being constructed ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)); the runtime installs `app.live.route` during the mount that follows, so at the moment these arguments are captured there is no route to read.
 
 > `"<name>" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
 
 Without this check the argument lowers to `_live["route"]` and captures `undefined`, so `init = [load(route.path)]` compiles clean and throws `Cannot read properties of undefined (reading 'path')` at mount — the app never renders. `$route` is the same hole from the other side: nothing binds one here, and [E0119](#e0119-route-bind-out-of-scope)'s advice would send the author to the `route` spelling this check rejects.
 
-**Fix**: Take the route from a `route.enter` reducer ([Routing [§3.4](./routing.md#_3-4-route-lifecycle)](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is.
+**Fix**: Take the route from a `route.enter` reducer ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is.
 
 ## E02xx — Types
 
@@ -404,7 +404,7 @@ A consequence worth knowing: a reducer whose own name is capitalised cannot be b
 
 The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
-Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed. `nominal` and `where` wrappers are transparent to it: the refinement is a runtime check ([Forms [§5.6](./forms.md#_5-6-validation-strategy)](./forms.md#_5-6-validation-strategy)), and two nominals over the same base accept each other. That reads against [§1.3.5](./language.md#_1-3-5-type-canonicalization) and is tracked separately.
+Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed. `nominal` and `where` wrappers are transparent to it: the refinement is a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)), and two nominals over the same base accept each other. That reads against [§1.3.5](./language.md#_1-3-5-type-canonicalization) and is tracked separately.
 
 **The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result depends on its receiver, a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) remain the checks that a name exists at all.
 
@@ -435,7 +435,7 @@ A value of type `EffectId` is used in an operation that is not defined on it. Th
 
 ### E0205 `bind-on-file-input`
 
-`input(type="file")` cannot bind a slot via `bind=`. The `bind=` two-way binding table ([Forms [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind)](./forms.md#_5-1-1-elements-that-support-bind)) has no acceptable type for files — files are surfaced through the change event payload instead ([Forms [§5.10](./forms.md#_5-10-file-upload)](./forms.md#_5-10-file-upload)).
+`input(type="file")` cannot bind a slot via `bind=`. The `bind=` two-way binding table ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) has no acceptable type for files — files are surfaced through the change event payload instead ([Forms §5.10](./forms.md#_5-10-file-upload)).
 
 > `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
 
@@ -454,7 +454,7 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 ### E0206 `file-only-prop`
 
-The `accept` and `multiple` props on `input` apply only when `type="file"`. They are rendered onto the underlying `<input>` element, where they are valid HTML only for a file picker ([Forms [§5.10](./forms.md#_5-10-file-upload)](./forms.md#_5-10-file-upload)). Used on any other input type — or when `type` is omitted (it defaults to `"text"`) — they are invalid HTML and a latent bug. The diagnostic fires only when the type is statically known to not be `"file"`; a non-literal `type=` expression is left alone.
+The `accept` and `multiple` props on `input` apply only when `type="file"`. They are rendered onto the underlying `<input>` element, where they are valid HTML only for a file picker ([Forms §5.10](./forms.md#_5-10-file-upload)). Used on any other input type — or when `type` is omitted (it defaults to `"text"`) — they are invalid HTML and a latent bug. The diagnostic fires only when the type is statically known to not be `"file"`; a non-literal `type=` expression is left alone.
 
 > `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
 > `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
@@ -573,9 +573,9 @@ An application passes a different number of arguments than the thing it applies 
 
 The tile and effect forms are the ones that used to go unreported: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`; an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch; and a tile that declares no `in=` but is *given* an argument mounts and renders normally, silently dropping the value the caller meant to pass.
 
-A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP [§6.1.4](./http.md#_6-1-4-the-decoder-type)](./http.md)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail.
+A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail.
 
-`fmt` is the only builtin with a range. Its signature is `fmt(template, ...args)` ([Standard Library [§2.4.5](./stdlib.md#_2-4-5-string-formatting)](./stdlib.md)), so the template is all that can be required, and its message names a minimum — `expects at least 1 argument(s) but got 0`. `now` is held to exactly none, but no call can break that: it is a keyword rather than a name, and the parser builds its zero-argument call itself, so `now(1)` is a parse error before any of this is reached.
+`fmt` is the only builtin with a range. Its signature is `fmt(template, ...args)` ([Standard Library §2.4.5](./stdlib.md#_2-4-5-string-formatting)), so the template is all that can be required, and its message names a minimum — `expects at least 1 argument(s) but got 0`. `now` is held to exactly none, but no call can break that: it is a keyword rather than a name, and the parser builds its zero-argument call itself, so `now(1)` is a parse error before any of this is reached.
 
 A **method** is checked when its lowering reads a fixed number of arguments — `t.format()` used to pass `check` and then kill `build` with a bare `TypeError` carrying no position. Only the minimum is enforced: `get-or` and `slice` branch on how many they were given.
 
@@ -692,7 +692,7 @@ A `fn` (pure function) is reading a slot. A `fn` must depend only on its argumen
 
 **Fix**: Pass the required slot value as an argument.
 
-The same code covers the other side of purity: an `emit` written as an *expression* anywhere but a reducer body — a `fn`, a tile, a slot initializer, an `effect`'s `map-request`, an `app.init` argument ([Language [§1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)](./language.md#_1-12-1-when-init-arguments-are-evaluated)). None of them is evaluated with an effect queue around it, so the dispatch would have nowhere to go.
+The same code covers the other side of purity: an `emit` written as an *expression* anywhere but a reducer body — a `fn`, a tile, a slot initializer, an `effect`'s `map-request`, an `app.init` argument ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)). None of them is evaluated with an effect queue around it, so the dispatch would have nowhere to go.
 
 > `emit "<name>" used as an expression is only allowed inside a reducer body`
 
@@ -774,7 +774,7 @@ Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNa
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style [§4.8.4](./style.md#_4-8-4-strict-mode)](./style.md#_4-8-4-strict-mode)).
+A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
@@ -812,7 +812,7 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). A no-argument method may be written with or without `()` — [Standard Library [§2.2.3](./stdlib.md#_2-2-3-list-t)](./stdlib.md#_2-2-3-list-t) calls the bare form a shortcut, and both forms compile. For the list of standard library methods, see [Standard Library](./stdlib.md).
+**Note**: The set of implemented methods is solely authoritative in `@kumikijs/compiler`'s `KNOWN_METHODS` (kept in sync with code generation's `methodCallJs`). A no-argument method may be written with or without `()` — [Standard Library §2.2.3](./stdlib.md#_2-2-3-list-t) calls the bare form a shortcut, and both forms compile. For the list of standard library methods, see [Standard Library](./stdlib.md).
 
 **Fix**: Correct it to the right method name, or rewrite the operation using implemented means such as `match` / `fold`. If you need an unimplemented specification method, implement it in `packages/` and add a working example in `examples/`.
 
@@ -822,6 +822,6 @@ A call names a function this document describes but the toolchain does not lower
 
 > `Function "<name>" is documented but not implemented by the runtime`
 
-Currently one name is in this state: `trace(label, value)` ([Standard Library [§2.4.6](./stdlib.md#_2-4-6-debugging-aids)](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
+Currently one name is in this state: `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
 
 **Fix**: Remove the call. Nothing in the language is blocked on it — `trace` is a debugging aid.

@@ -27,7 +27,7 @@ let id = emit fetchQuote()
 
 The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
 
-`EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP [§6.4](./http.md#_6-4-cancellation)](./http.md#_6-4-cancellation)).
+`EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
 ### 2.1.2 Generic Types
 
@@ -50,7 +50,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (nanoseconds) |
-| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing [§3.2](./routing.md#_3-2-current-route-state)](./routing.md#_3-2-current-route-state) |
+| `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
@@ -335,7 +335,7 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
-`button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms [§5.8](./forms.md#_5-8-ui-during-submission)](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
+`button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
 
 ### 2.3.5 Forms
 
@@ -362,12 +362,12 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 | Element | Role | Main props |
 |---|---|---|
-| `overlay` | z-axis stack: the first child is the base layer, each later child is placed over it — the substrate the rest of this table is built on ([Style [§4.4.3](./style.md#_4-4-3-stack)](./style.md#_4-4-3-stack)) | `align` |
+| `overlay` | z-axis stack: the first child is the base layer, each later child is placed over it — the substrate the rest of this table is built on ([Style §4.4.3](./style.md#_4-4-3-stack)) | `align` |
 | `modal` | modal | `open`, `onClose`, `title` |
 | `drawer` | drawer | `open`, `onClose`, `side` |
 | `tooltip` | tooltip | `text`, `placement` |
 | `popover` | popover | `open`, `onClose`, `placement` |
-| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-level`, with no built-in appearance), `text`, `duration` (see [Lifecycle [§7.7](./lifecycle.md#_7-7-toasts)](./lifecycle.md#_7-7-toasts) for the per-kind defaults) |
+| `toast` | toast notification | `kind` (info/success/warn/error — carried as `data-level`, with no built-in appearance), `text`, `duration` (see [Lifecycle §7.7](./lifecycle.md#_7-7-toasts) for the per-kind defaults) |
 | `details` | native `<details>` disclosure (#190) — `summary` labels the header; children make up the collapsible panel | `summary`, `open` |
 
 ### 2.3.8 Feedback
@@ -400,12 +400,12 @@ Every tile accepts the following common props (built-in):
 | `style` | `Map(Text, Text)` | inline style declarations — each key is a CSS property, applied after the shorthands so it wins (minimal use recommended) |
 | `aria` | `Map(Text, Text)` | one `aria-*` attribute per entry; a key already spelled `aria-…` is not prefixed twice |
 | `key` | `Text` | tile identity across renders — lifted out of the props, never an attribute |
-| `test-id` | `Text` | the `data-kumiki-test` attribute ([Testing [§8.8](./testing.md#_8-8-integration-tests-browser-driven)](./testing.md#_8-8-integration-tests-browser-driven)) |
+| `test-id` | `Text` | the `data-kumiki-test` attribute ([Testing §8.8](./testing.md#_8-8-integration-tests-browser-driven)) |
 | `id` | `Text` | the element's `id`, and the `#id` half of a reducer's selector ([§1.6.2](./language.md#_1-6-2-selectors)) |
 | `role` | `Text` | the `role` attribute, replacing whatever the tile kind assumes |
 | `aria-*` | `Text` | that ARIA attribute, written on its own instead of through the `aria` map |
 
-`class` / `style` are the escape hatch [Style [§4.1](./style.md#_4-1-policy)](./style.md#_4-1-policy) describes. All of the above apply to **every kind**, and so do the style shorthands ([§4.3.1](./style.md#_4-3-1-shorthand-properties)) and the sizing props ([§4.4.7](./style.md#_4-4-7-sizing)): the runtime writes them outside the per-kind renderers, so a `max-w` on an `image` and a `bg` on a `button` land, and a tile a host registered ([Runtime [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity)](./runtime.md#_10-3-10-stable-tile-identity)) gets them too.
+`class` / `style` are the escape hatch [Style §4.1](./style.md#_4-1-policy) describes. All of the above apply to **every kind**, and so do the style shorthands ([§4.3.1](./style.md#_4-3-1-shorthand-properties)) and the sizing props ([§4.4.7](./style.md#_4-4-7-sizing)): the runtime writes them outside the per-kind renderers, so a `max-w` on an `image` and a `bg` on a `button` land, and a tile a host registered ([Runtime §10.3.10](./runtime.md#_10-3-10-stable-tile-identity)) gets them too.
 
 A kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size` picks the size of the thing rather than a typography token, and a `skeleton`'s `h` is its placeholder height.
 
@@ -577,7 +577,7 @@ effect log         cap=log.write    in={level: Text, message: Text, data: Map(Te
 effect scroll-to   in={x: Int, y: Int}  out=Unit
 ```
 
-The one standard effect with no capability: it moves the viewport of the page the user is already looking at, and reaches nothing outside it. → [Routing [§3.9](./routing.md#_3-9-scroll-restoration)](./routing.md#_3-9-scroll-restoration).
+The one standard effect with no capability: it moves the viewport of the page the user is already looking at, and reaches nothing outside it. → [Routing §3.9](./routing.md#_3-9-scroll-restoration).
 
 ### 2.6.5 Confirm
 
@@ -585,7 +585,7 @@ The one standard effect with no capability: it moves the viewport of the page th
 effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
-Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. → [Lifecycle [§7.6](./lifecycle.md#_7-6-confirmation-dialogs)](./lifecycle.md#_7-6-confirmation-dialogs).
+Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. → [Lifecycle §7.6](./lifecycle.md#_7-6-confirmation-dialogs).
 
 ---
 
