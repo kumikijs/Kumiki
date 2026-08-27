@@ -1,6 +1,6 @@
 # Language Core Specification
 
-The seven kinds of definition a Kumiki program is made of, plus the expressions, statements and patterns they share. §1.1 gives the shape of a whole program; after that, read the layer you are about to write.
+The seven kinds of definition a Kumiki program is made of, plus the expressions, statements and patterns they share. [§1.1](#_1-1-overall-program-structure) gives the shape of a whole program; after that, read the layer you are about to write.
 
 ## 1.1 Overall Program Structure
 
@@ -325,7 +325,7 @@ In other words, you can mix one-line layout and block layout. When writing in ne
 
 **Multiple subscriptions to the same event are allowed.** When two or more reducers
 declare the same `on=` pattern (e.g. both subscribe to `ui.click(SubmitBtn)`), all
-of them fire in definition order — see §1.6.4 Invariant 3.
+of them fire in definition order — see [§1.6.4](#_1-6-4-invariants) Invariant 3.
 
 ### 1.6.2 Selectors
 
@@ -357,7 +357,7 @@ reducer add  on=ui.submit(NewForm#new)   do= ...   # only the "new" form
 reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 ```
 
-The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from §1.6.4 Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
+The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from [§1.6.4](#_1-6-4-invariants) Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
 ### 1.6.3 lvalue Semantics
 
@@ -411,7 +411,7 @@ issue.copy(status=Done, priority=High)
 | `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument) |
 | `$el` | the `{...}` props of the tile that fired the event |
 | `$event` | the event payload |
-| `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
+| `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing [§3.4](./routing.md#_3-4-route-lifecycle)](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
 | `$now` | the current time |
 
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
@@ -716,7 +716,7 @@ Every operator's operand and result types, which the compiler checks
 `/` is `Float` even between two `Int`s. It is JavaScript's `/` at runtime — `5 / 2`
 is `2.5`, not `2` — so an `Int` result type would be a promise the runtime does not
 keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
-[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
+[stdlib [§2.2.7](./stdlib.md#_2-2-7-int-float)](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
 declare the `Float`.
 
 `EffectId` is outside this table: only `==` and `!=` apply to it

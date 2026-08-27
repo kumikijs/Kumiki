@@ -1,6 +1,6 @@
 # 言語コア仕様
 
-Kumiki プログラムを構成する 7 種類の定義と、それらが共有する式・文・パターン。まず §1.1 でプログラム全体の形を掴み、あとは今から書く層を読めばよい。
+Kumiki プログラムを構成する 7 種類の定義と、それらが共有する式・文・パターン。まず [§1.1](#_1-1-プログラムの全体構造) でプログラム全体の形を掴み、あとは今から書く層を読めばよい。
 
 ## 1.1 プログラムの全体構造
 
@@ -353,7 +353,7 @@ reducer add  on=ui.submit(NewForm#new)   do= ...   # "new" form のみ
 reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 ```
 
-`{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。§1.6.4 Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
+`{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。[§1.6.4](#_1-6-4-不変条件) Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
 
 ### 1.6.3 lvalue の意味論
 
@@ -407,7 +407,7 @@ issue.copy(status=Done, priority=High)
 | `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
-| `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
+| `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング [§3.4](./routing.md#_3-4-ルートライフサイクル)](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
 | `$now` | 現在時刻 |
 
 ### 1.6.6 例
@@ -699,7 +699,7 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 `/` は `Int` 同士でも `Float` である。runtime では JavaScript の `/` そのもので、`5 / 2`
 は `2` ではなく `2.5` になる — 結果型を `Int` と宣言することは runtime が守らない約束をす
 ることであり、`fn half(x: Int) -> Int = x / 2` は拒否される。整数が欲しい箇所では `.to-int`
-（切り捨て。[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)）を取るか、`Float` を宣言する。
+（切り捨て。[stdlib [§2.2.7](./stdlib.md#_2-2-7-int-float)](./stdlib.md#_2-2-7-int-float)）を取るか、`Float` を宣言する。
 
 `EffectId` はこの表の外にある：適用できるのは `==` と `!=` だけである
 （[E0204](./errors.md#e0204-effect-id-misuse)）。

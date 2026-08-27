@@ -224,7 +224,7 @@ app App ... theme = themeName    # ← pass the slot name
 
 ### 10.3.9 Focus Restoration
 
-Since #190 (identity-preserving reconciliation, §10.3.11) the runtime patches every
+Since #190 (identity-preserving reconciliation, [§10.3.11](#_10-3-11-identity-preserving-reconciliation-190)) the runtime patches every
 same-kind tile in place instead of tearing it down on a data-prop change, so the
 still-mounted `<input>` / `<textarea>` / `<select>` retains browser focus naturally.
 The snapshot/restore layer described below is retained as a **fallback for the
@@ -232,14 +232,14 @@ wholesale-swap paths** — reconcile bailout, panic recovery, and a keyed reorde
 that moves the focused element itself — where element identity is either lost or
 the element is physically moved and blurred by the browser. A focused child that
 a reorder leaves in place does not reach the fallback at all: the keyed pass
-places only the children that have to move (§10.3.10), so the cursor never
+places only the children that have to move ([§10.3.10](#_10-3-10-stable-tile-identity)), so the cursor never
 leaves.
 
 It maintains the focus and cursor position of an input/textarea being edited even after re-rendering:
 - Elements with `bind=`: re-identified by the `data-kumiki-bind` attribute (a nested path is a full path string)
 - Elements with `id=`: re-identified by id
 - Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
-- `<select>` is included in the snapshot set so the reorder / bailout paths can restore focus on the picker (its native open-dropdown state is unrecoverable here — that guarantee comes from the patch path in §10.3.11)
+- `<select>` is included in the snapshot set so the reorder / bailout paths can restore focus on the picker (its native open-dropdown state is unrecoverable here — that guarantee comes from the patch path in [§10.3.11](#_10-3-11-identity-preserving-reconciliation-190))
 
 ### 10.3.10 Stable tile identity
 
@@ -268,8 +268,8 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   element mapping — are decided for the whole list *before* any of it is
   applied. So a parent either reconciles every child or rebuilds without
   having touched one, and never leaves half a pass behind for the rebuild to
-  discard. What this buys is truthful reporting: `binds-updated` (§10.3.11)
-  and the diagnostics (§10.3.12) describe the render that happened, and no
+  discard. What this buys is truthful reporting: `binds-updated` ([§10.3.11](#_10-3-11-identity-preserving-reconciliation-190))
+  and the diagnostics ([§10.3.12](#_10-3-12-reconcile-diagnostics)) describe the render that happened, and no
   `newMap` entry is written for a subtree that was abandoned.
 - **The keyed pass answers the mapping question with a panic, not a
   diagnostic.** An old child with no element mapping stops that pass too, and
@@ -309,14 +309,14 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   answer different questions:
   - **Where the mounted children are** is measured from the DOM. A child
     mounted below a renderer-owned wrapper puts the pass out of reach; the
-    reconciler declines and reports `wrapped-children` (§10.3.12).
+    reconciler declines and reports `wrapped-children` ([§10.3.12](#_10-3-12-reconcile-diagnostics)).
   - **Where a newcomer would go** is read from the renderer's declared
     placement, because nothing can measure a slot that does not exist yet.
     `overlay` places its first child directly and wraps the rest, so a
     one-layer overlay measures as fully placeable right up until it grows —
     and the keyed pass would then append the second layer bare. When a keyed
     list under such a parent gains a member the reconciler declines and
-    reports `unplaceable-insert` (§10.3.12). A same-membership render has
+    reports `unplaceable-insert` ([§10.3.12](#_10-3-12-reconcile-diagnostics)). A same-membership render has
     nothing to place and still takes the keyed path.
 
   Of the current built-ins, `overlay` wraps every child after the first in a
@@ -345,7 +345,7 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
   node blurs it, so a child that is moved for no reason loses focus, the caret,
   an open `<select>` dropdown and an in-flight IME composition — the state keyed
   matching exists to keep. A focused child that a reorder leaves alone therefore
-  keeps it natively, without the snapshot/restore fallback of §10.3.9.
+  keeps it natively, without the snapshot/restore fallback of [§10.3.9](#_10-3-9-focus-restoration).
   Every placement is made *before* an existing node: the child that follows it
   in the new order, or — for the last child, which has no successor — the
   sibling that follows the whole mounted child list (the end of the parent when
@@ -383,7 +383,7 @@ both.
 
 ### 10.3.11 Identity-preserving reconciliation (#190)
 
-Keyed diff (§10.3.10) preserves DOM identity for tiles whose data props did
+Keyed diff ([§10.3.10](#_10-3-10-stable-tile-identity)) preserves DOM identity for tiles whose data props did
 **not** change. #190 extends the guarantee to tiles whose data props **did**
 change but which the runtime can update in place, so browser-owned state
 (`<select>` open dropdown, `<video>` playback position, `<details>` open,
@@ -437,7 +437,7 @@ skip it entirely while an IME composition is in flight (`compositionstart`
 → `compositionend`) so the browser's JP/CN/KR candidate window is not
 dismissed mid-glyph. Slider skips when `activeElement === el` (mid-drag
 guard). The reducer-driven "clear the field" case is picked up by the
-outer snapshot layer (§10.3.9), which captures selection ranges before the
+outer snapshot layer ([§10.3.9](#_10-3-9-focus-restoration)), which captures selection ranges before the
 patch runs.
 
 **Consequences for `binds-updated` (episode log).** The patch path pushes
@@ -448,12 +448,12 @@ regardless of whether reconcile ended up rebuilding or patching.
 
 **Only what survived the render is named.** A render that gave up on a parent
 and rebuilt it lists that parent and nothing under it — the walk decides the
-parent's fate before applying any of its children (§10.3.10), so there is no
+parent's fate before applying any of its children ([§10.3.10](#_10-3-10-stable-tile-identity)), so there is no
 partly-applied pass whose identifiers could outlive the work they describe.
 
 ### 10.3.12 Reconcile diagnostics
 
-Keyed diff (§10.3.10) and in-place patching (§10.3.11) both **degrade
+Keyed diff ([§10.3.10](#_10-3-10-stable-tile-identity)) and in-place patching ([§10.3.11](#_10-3-11-identity-preserving-reconciliation-190)) both **degrade
 silently**: when the reconciler cannot preserve a subtree's identity it
 rebuilds it, or drops to a weaker matching strategy — always correct, never
 throws. An app can therefore be re-mounting its whole tree on every render and
@@ -490,23 +490,23 @@ actionable without re-deriving it from the source:
 | reason | evidence | what was lost |
 |---|---|---|
 | `no-patcher` | — | The tile's data props changed and no patcher is registered for its kind, so the subtree was rebuilt — discarding focus, caret, `<select>` open state, `<video>` playback on that element. |
-| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` (§10.3.10) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. Never fires when one side of the change is empty — that boundary keeps the parent regardless of keys (§10.3.10). |
-| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. Reported before any sibling is applied (§10.3.10), so the parent's rebuild is the only thing this render did. |
+| `child-count-change` | `oldCount`, `newCount` | An unkeyed sibling list changed length, so the parent was rebuilt. Giving every child a `key` ([§10.3.10](#_10-3-10-stable-tile-identity)) lifts this: the keyed matcher then survives insert / remove / reorder without touching the untouched siblings. Never fires when one side of the change is empty — that boundary keeps the parent regardless of keys ([§10.3.10](#_10-3-10-stable-tile-identity)). |
+| `child-hole` | `index` | A children array had an empty slot. Kumiki codegen flattens nils away, so this only reaches the walker from a host-built tile tree. Reported before any sibling is applied ([§10.3.10](#_10-3-10-stable-tile-identity)), so the parent's rebuild is the only thing this render did. |
 | `child-unmapped` | `index`, `childKind` | An old child had no entry in the node → element map, meaning its parent's renderer built it without going through `ctx.render`. The walker cannot reuse what it cannot find, so that parent rebuilds on every render. Reported before any sibling is applied, same as `child-hole`. |
-| `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly (§10.3.10), so the keyed matcher stood down and the positional walk ran. Rebuilds nothing on its own: what is lost is reorder-stable element identity, not the subtree. |
-| `unplaceable-insert` | `index`, `childKind` | Every child carried a `key` and every mounted one sits directly under the parent — but the new child at `index` is a newcomer under a renderer that does not place every child directly (§10.3.10), so there is no slot the keyed matcher may mount it into. A short list measures as placeable right up until it grows, which is why this is read from the renderer rather than from the DOM. Rebuilds nothing on its own; the positional walk that follows reports `child-count-change` if the length changed. |
+| `wrapped-children` | `index`, `childKind` | Every child carried a `key`, but the parent's renderer wraps its children instead of placing them directly ([§10.3.10](#_10-3-10-stable-tile-identity)), so the keyed matcher stood down and the positional walk ran. Rebuilds nothing on its own: what is lost is reorder-stable element identity, not the subtree. |
+| `unplaceable-insert` | `index`, `childKind` | Every child carried a `key` and every mounted one sits directly under the parent — but the new child at `index` is a newcomer under a renderer that does not place every child directly ([§10.3.10](#_10-3-10-stable-tile-identity)), so there is no slot the keyed matcher may mount it into. A short list measures as placeable right up until it grows, which is why this is read from the renderer rather than from the DOM. Rebuilds nothing on its own; the positional walk that follows reports `child-count-change` if the length changed. |
 
 Two rebuild paths are deliberately **not** reported. A `kind` change means a
 different thing occupies that position, so there is no identity to preserve.
-And a patcher that declines in place via `PatchRequiresRebuild` (§10.3.11) is a
+And a patcher that declines in place via `PatchRequiresRebuild` ([§10.3.11](#_10-3-11-identity-preserving-reconciliation-190)) is a
 normal, expected outcome that the sentinel exists to keep out of the log.
 
 **A rebuilt parent reports for itself alone.** The four reasons that rebuild a
 parent — `no-patcher`, `child-count-change`, `child-hole`, `child-unmapped` —
-are all decided before any of its children are reconciled (§10.3.10), so
+are all decided before any of its children are reconciled ([§10.3.10](#_10-3-10-stable-tile-identity)), so
 nothing below it is examined and nothing below it is reported: no
 `reconcile-fallback` and no `never-equal-prop` from that subtree, on that
-render. Same rule `binds-updated` follows (§10.3.11) —
+render. Same rule `binds-updated` follows ([§10.3.11](#_10-3-11-identity-preserving-reconciliation-190)) —
 what the render discarded is not described. (`wrapped-children` and
 `unplaceable-insert` rebuild nothing, so the walk that follows them reports
 normally.)
@@ -525,10 +525,10 @@ two inline tiles that differ *only* in their handler compared equal, was reused
 untouched, and kept dispatching to the reducer it was created with — silently.
 
 Codegen therefore memoises one closure per reducer list, per app instance
-(§10.3.13), and the kernel compares functions like any other value. An
+([§10.3.13](#_10-3-13-data-prop-equality)), and the kernel compares functions like any other value. An
 unchanged handler is the same reference and still takes the reuse path; a
 changed one is a difference, so the patcher runs and refreshes the per-element
-handler slots of §10.3.11.
+handler slots of [§10.3.11](#_10-3-11-identity-preserving-reconciliation-190).
 
 A host renderer that still mints a handler inline on every render never
 compares equal to itself. That is reported — see `function-identity` below —
@@ -544,8 +544,8 @@ not have compared equal however identical the two renders were, and reported as
 
 | `cause` | the rule it runs into |
 |---|---|
-| `non-plain-object` | A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or a cross-realm object. Their state lives outside their own enumerable keys, so only `===` can make two of them equal (§10.3.13) — which a value rebuilt each render never is. |
-| `nan` | `NaN`, which is not equal to itself by definition (§10.3.13). |
+| `non-plain-object` | A `Date`, `Map`, `Set`, `RegExp`, DOM node, class instance, or a cross-realm object. Their state lives outside their own enumerable keys, so only `===` can make two of them equal ([§10.3.13](#_10-3-13-data-prop-equality)) — which a value rebuilt each render never is. |
+| `nan` | `NaN`, which is not equal to itself by definition ([§10.3.13](#_10-3-13-data-prop-equality)). |
 | `function-identity` | A function whose identity changed. The scan keeps no history, so this fires on any two distinct closures — including the one-off swap a conditional makes between two memoised handlers. What it always means is that the pair could not compare equal; whether it repeats depends on whether the host rebuilds the handler per render, which is the case worth fixing by memoising it. |
 
 The scope comes from `MountOptions.hostTileKinds`, which the package-entry
@@ -573,7 +573,7 @@ routes both to `console.warn`.
 
 **Relationship to the episode log.** An episode is the author-facing causal
 record of what the app did, and already reports *that* a subtree was
-re-rendered through `signal-update.binds-updated` (§10.3.11). A diagnostic
+re-rendered through `signal-update.binds-updated` ([§10.3.11](#_10-3-11-identity-preserving-reconciliation-190)). A diagnostic
 reports *why* the runtime chose to rebuild rather than reuse — framework
 internals, useful when tuning an app or a host integration, noise inside a
 behavioural trace. They are complementary channels, which is why this is not a
@@ -589,17 +589,17 @@ action triggered the re-render, and `kumiki run` prints them under that step.
 
 ### 10.3.13 Data-prop equality
 
-§10.3.10 and §10.3.11 both turn on "the tile's data props did not change".
+[§10.3.10](#_10-3-10-stable-tile-identity) and [§10.3.11](#_10-3-11-identity-preserving-reconciliation-190) both turn on "the tile's data props did not change".
 This is the rule that decides it. It is the runtime's single reuse predicate:
 a false positive keeps a stale element mounted with no symptom, a false
 negative rebuilds a subtree that did not change.
 
 **Scope.** The comparison walks a `TileNode`'s own fields *except* `kind`,
 `children`, and `key`. `kind` is the discriminant and is settled before the
-predicate runs (§10.3.12). `children` is the walker's own business — each
+predicate runs ([§10.3.12](#_10-3-12-reconcile-diagnostics)). `children` is the walker's own business — each
 child is reconciled on its own, so a changed grandchild must not rebuild every
 ancestor. `key` is identity metadata consumed by the keyed child matcher
-(§10.3.10); by the time a pair reaches the predicate they have already been
+([§10.3.10](#_10-3-10-stable-tile-identity)); by the time a pair reaches the predicate they have already been
 established as the same instance.
 
 **Values.** Two values are equal when:
@@ -619,7 +619,7 @@ Consequences worth stating outright:
 - **`NaN` is not equal to `NaN`.** A tile carrying one rebuilds on every
   render. `NaN` in a prop means a computation already failed; rebuilding is the
   safe side, and the churn is a visible symptom rather than a frozen tile — and
-  on a host tile the `never-equal-prop` diagnostic in §10.3.12 names the field,
+  on a host tile the `never-equal-prop` diagnostic in [§10.3.12](#_10-3-12-reconcile-diagnostics) names the field,
   since with a patcher registered the churn is otherwise invisible.
 - **A non-plain object is never equal to anything but itself.** `Date`, `Map`,
   `Set`, `RegExp`, DOM nodes, and class instances hold their state outside
@@ -632,7 +632,7 @@ Consequences worth stating outright:
   context) is treated as exotic and rebuilds — the safe direction, and the
   reason this is not relaxed into a `toString`-tag check. A host handing one to
   the same tile every render pays for a diff it can never win; that is what
-  `never-equal-prop` (§10.3.12) reports.
+  `never-equal-prop` ([§10.3.12](#_10-3-12-reconcile-diagnostics)) reports.
 
 - **A function is equal only to itself.** Handlers are values like any other
   here. Codegen emits every handler through a per-instance memo keyed by the
@@ -642,7 +642,7 @@ Consequences worth stating outright:
   that differ only in `onClick`, is a difference the walker acts on. A host
   renderer that mints a handler inline on every render never compares equal to
   itself; it pays a patch (or, with no patcher, a rebuild) every render, which
-  `never-equal-prop` (§10.3.12) reports as `function-identity`.
+  `never-equal-prop` ([§10.3.12](#_10-3-12-reconcile-diagnostics)) reports as `function-identity`.
 
 Cycles are outside the contract. Two structurally cyclic but distinct bags
 recurse until the stack runs out; the throw lands in the reconcile bailout,
@@ -745,13 +745,13 @@ A `panic` step additionally carries:
 
 `stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. `stack` / `cause` are dev-tooling — the runtime never splats them into user reducer `$event` payloads; only `message`, `location`, and `category` reach `app.error` / `route.error(<pattern>)`.
 
-Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see §10.6.2). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
+Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see [§10.6.2](#_10-6-2-hydration)). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
 **Deferred-policy effect attribution.** Effects emitted under `policy=debounce(d)` complete their `setTimeout` AFTER the triggering reducer's episode has nominally ended. The dispatcher therefore claims the `effect-start` step (and its episode-token) at *dispatch* time, not at the eventual `launch`, so the deferred `effect-end` and its `.ok` / `.err` reducer chain stay on the originating episode — the causal chain stays whole. A `debounce` timer that is replaced before it fires records an `effect-cancel` step (with `targetId = <effect-name>`) on its originating episode, which then commits as `status="completed"` with no `effect-end`. `policy=throttle(d)` launches synchronously on the leading edge (so the standard sync path attaches `effect-start`); subsequent dispatches within the window are silently suppressed — the originating reducer's `emits` list shows the suppressed effect name, but no `effect-start` follows.
 
 #### 10.5.1.1 Bootstrap episode (SSR hydration)
 
-The server-side `renderToString` pass collapses the entire `app.init` causal chain into a single bootstrap episode and ships it inside the SSR snapshot (§10.6.1). Its shape is just an Episode (above) with two additional contracts:
+The server-side `renderToString` pass collapses the entire `app.init` causal chain into a single bootstrap episode and ships it inside the SSR snapshot ([§10.6.1](#_10-6-1-ssr)). Its shape is just an Episode (above) with two additional contracts:
 
 - `trigger.kind = "ssr.hydrate"`, `trigger.target = <initial-route-path>`.
 - `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
@@ -778,7 +778,7 @@ Example:
 - The most recent M in localStorage (default 20, size limit 5MB)
 - During development, write to a file with `--episode-log /path/to/log.jsonl`
 
-The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for §10.6.2 verification).
+The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for [§10.6.2](#_10-6-2-hydration) verification).
 
 ### 10.5.3 replay
 
@@ -790,12 +790,12 @@ kumiki replay <input.kumiki> --from-log <log> \               # repeatable; each
 kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5th observed step
 ```
 
-- `--from-log` is currently required. The bare `kumiki replay <episode-id>` form (against the runtime's in-memory store, §10.5.2) needs a long-lived dev-server context and is out of scope for the CLI verb.
-- `--mock '<effect>: <spec>'` is repeatable. `<spec>` follows the same grammar as `episode-test.mocks` (§8.6): `from-log` | `ignore` | `ok(<json>)` | `err(<json>)`. The payload is parsed as JSON, so `ok({"id":"u1"})` works on the command line as-is.
+- `--from-log` is currently required. The bare `kumiki replay <episode-id>` form (against the runtime's in-memory store, [§10.5.2](#_10-5-2-episode-store)) needs a long-lived dev-server context and is out of scope for the CLI verb.
+- `--mock '<effect>: <spec>'` is repeatable. `<spec>` follows the same grammar as `episode-test.mocks` ([§8.6](./testing.md#_8-6-episode-replay)): `from-log` | `ignore` | `ok(<json>)` | `err(<json>)`. The payload is parsed as JSON, so `ok({"id":"u1"})` works on the command line as-is.
 - An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
 - `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
 - Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
-- A `panic` step (§10.5.1) is rendered as a multi-line block: header `[panic:<category>] <message>  <location>` followed by indented `.stack` lines and, for each `cause` link, a `Caused by: <message>` line with the link's own indented stack. The replay executor derives `category` for every observed panic (an older episode log missing the field still gets a category assigned when its reducer re-throws during replay), so the multi-line form is what the CLI normally shows. The formatter also accepts a minimal `{kind, message}` panic event and prints it as the single-line `[panic] <message>` fallback — this only surfaces if a caller feeds `formatEvent` a hand-authored event outside the normal replay pipeline.
+- A `panic` step ([§10.5.1](#_10-5-1-structure-of-an-episode)) is rendered as a multi-line block: header `[panic:<category>] <message>  <location>` followed by indented `.stack` lines and, for each `cause` link, a `Caused by: <message>` line with the link's own indented stack. The replay executor derives `category` for every observed panic (an older episode log missing the field still gets a category assigned when its reducer re-throws during replay), so the multi-line form is what the CLI normally shows. The formatter also accepts a minimal `{kind, message}` panic event and prints it as the single-line `[panic] <message>` fallback — this only surfaces if a caller feeds `formatEvent` a hand-authored event outside the normal replay pipeline.
 - Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
 ---
@@ -827,7 +827,7 @@ The snapshot envelope is versioned and self-describing:
 ```
 
 - `kumiki` is the snapshot schema version (current = `1`). A client whose runtime expects a different version MUST discard the snapshot and fall back to a full CSR boot — this keeps server / client out-of-sync deploys safe.
-- `slots` excludes every slot whose declaration carries the `volatile` modifier (§5 modifiers table): the runtime treats SSR snapshotting as the same serialisation boundary as persistence, so `volatile` slots are never written to the wire.
+- `slots` excludes every slot whose declaration carries the `volatile` modifier ([§1.4.1](./language.md#_1-4-1-syntax) modifiers table): the runtime treats SSR snapshotting as the same serialisation boundary as persistence, so `volatile` slots are never written to the wire.
 - `bootstrap.steps[].slot-diffs` use the same `volatile` filter, so a volatile slot never appears in either the `slots` map or the bootstrap diff.
 - `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
 

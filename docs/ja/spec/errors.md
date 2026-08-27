@@ -240,7 +240,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0110 `unknown-token-group`
 
-`@<group>.<name>` 形式のテーマトークン参照（[スタイル §4.3](./style.md#_4-3-トークン参照)）の `<group>` が、閉じたテーマ名前空間（`colors`・`spacing`・`radius`・`shadow`・`typography`・`breakpoints`）のいずれでもない。
+`@<group>.<name>` 形式のテーマトークン参照（[スタイル [§4.3](./style.md#_4-3-トークン参照)](./style.md#_4-3-トークン参照)）の `<group>` が、閉じたテーマ名前空間（`colors`・`spacing`・`radius`・`shadow`・`typography`・`breakpoints`）のいずれでもない。
 
 > `Unknown theme token group "@<group>" (allowed: …)`
 
@@ -302,11 +302,11 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 | callee | 規定箇所 |
 |---|---|
-| `now` / `random` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-ビルトイン関数) |
-| `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ §2.2](./stdlib.md#_2-2-コレクションメソッド)・§2.4 |
-| `Decoder.*` / `EffectId.none` | [HTTP / Storage §6.1.4](./http.md)・[標準ライブラリ §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
-| `file-url` | [フォーム §5.10](./forms.md) |
-| `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
+| `now` / `random` / `fmt` / `panic` | [標準ライブラリ [§2.4](./stdlib.md#_2-4-ビルトイン関数)](./stdlib.md#_2-4-ビルトイン関数) |
+| `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ [§2.2](./stdlib.md#_2-2-コレクションメソッド)](./stdlib.md#_2-2-コレクションメソッド)・[§2.4](./stdlib.md#_2-4-ビルトイン関数) |
+| `Decoder.*` / `EffectId.none` | [HTTP / Storage [§6.1.4](./http.md#_6-1-4-decoder-型)](./http.md)・[標準ライブラリ [§2.1.1.1](./stdlib.md#_2-1-1-1-effectid)](./stdlib.md#_2-1-1-1-effectid) |
+| `file-url` | [フォーム [§5.10](./forms.md#_5-10-file-upload)](./forms.md) |
+| `prefers-dark` | [スタイル [§4.6.1](./style.md#_4-6-1-os-設定への追従)](./style.md#_4-6-1-os-設定への追従) |
 
 `run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。それ以外の場所に書けば E0116 になる。テスト本体の中では専用の文面を持つ——誤っているのは名前ではなく位置だからである：
 
@@ -338,7 +338,7 @@ lowering が読む `_init` / `_event` は trial の中でしか束縛されな�
 
 ### E0118 `undef-theme`
 
-`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
+`app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル [§4.6](./style.md#_4-6-dark-mode)](./style.md#_4-6-dark-mode)）。
 
 > `Reference to undefined theme "<name>"`
 
@@ -348,23 +348,23 @@ lowering が読む `_init` / `_event` は trial の中でしか束縛されな�
 
 ### E0119 `route-bind-out-of-scope`
 
-reducer が `$route` を読んでいるが、その reducer のペイロードにランタイムはルートを入れない。`$route` が束縛されるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が `prefetch` に指名した reducer — プリフェッチと実際の遷移で 1 つの body を共有できるよう、後者は前者と同じ束縛で発火する（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)、[§3.8](./routing.md#_3-8-prefetch)）。それ以外のトリガは、ルートを含まないペイロードで reducer を適用する。
+reducer が `$route` を読んでいるが、その reducer のペイロードにランタイムはルートを入れない。`$route` が束縛されるのは `route.enter` / `route.leave` / `route.error` の reducer と、link が `prefetch` に指名した reducer — プリフェッチと実際の遷移で 1 つの body を共有できるよう、後者は前者と同じ束縛で発火する（[ルーティング [§3.4](./routing.md#_3-4-ルートライフサイクル)](./routing.md#_3-4-ルートライフサイクル)、[§3.8](./routing.md#_3-8-prefetch)）。それ以外のトリガは、ルートを含まないペイロードで reducer を適用する。
 
 > `"$route" is only bound in a route.enter / route.leave / route.error reducer and in a link's prefetch target; nothing binds one here, so every field off it reads undefined. Read the "route" slot instead — it holds the current route and is in scope everywhere`
 
 この検査がないと、読みは空オブジェクトに落ちる：`$route.params.get-or("id", "")` はフォールバックを返し、`$route.pattern` は `undefined` を返す。それらとの比較はすべて false になり、reducer の body 全体が黙って何もしない。`fn` や tile の body はそもそもペイロードで適用されないので、そこでの `$route` はこれではなく未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。`app.init` の引数は [E0120](#e0120-route-in-app-init) を報告する — 上のメッセージが `route` slot を無条件に薦められるのはそのためで、その助言が成り立たない唯一の位置はこの検査に到達しない。`let` やパターンが束縛した名前はその束縛であってペイロードではないので、そもそも報告されない。
 
-**修正**：`route` slot を読む（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
+**修正**：`route` slot を読む（[ルーティング [§3.2](./routing.md#_3-2-current-route-state)](./routing.md#_3-2-current-route-state)）。ランタイムが保守しており、どの層からも読める。`kumiki fix` が書き換えを提案する。
 
 ### E0120 `route-in-app-init`
 
-`app.init` の引数が `route` あるいは `$route` を読んでいる。init の引数が評価されるのは app オブジェクトの構築時に**一度だけ**であり（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）、ランタイムが `app.live.route` を用意するのはその後に続くマウントの中である。つまり引数が捕捉される時点に読めるルートは存在しない。
+`app.init` の引数が `route` あるいは `$route` を読んでいる。init の引数が評価されるのは app オブジェクトの構築時に**一度だけ**であり（[言語 [§1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)](./language.md#_1-12-1-when-init-arguments-are-evaluated)）、ランタイムが `app.live.route` を用意するのはその後に続くマウントの中である。つまり引数が捕捉される時点に読めるルートは存在しない。
 
 > `"<name>" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
 
 この検査がないと、引数は `_live["route"]` に落ちて `undefined` を捕捉する。`init = [load(route.path)]` は綺麗にコンパイルが通り、マウント時に `Cannot read properties of undefined (reading 'path')` を投げる — アプリは一度も描画されない。`$route` は同じ穴の裏側で、ここでは何もそれを束縛せず、[E0119](#e0119-route-bind-out-of-scope) の助言はこの検査が弾く `route` の綴りへ作者を送り込んでしまう。
 
-**修正**：`route.enter` reducer 側でルートを受け取る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。ランタイムはアプリが着地したルートで reducer を適用する。ルートを必要としない `init` エントリはそのままでよい。
+**修正**：`route.enter` reducer 側でルートを受け取る（[ルーティング [§3.4](./routing.md#_3-4-ルートライフサイクル)](./routing.md#_3-4-ルートライフサイクル)）。ランタイムはアプリが着地したルートで reducer を適用する。ルートを必要としない `init` エントリはそのままでよい。
 
 ## E02xx — 型
 
@@ -391,7 +391,7 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
-代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿る。`nominal` / `where` のラッパーは透過する：refinement は runtime の検査であり（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）、同じ基底型を持つ 2 つの nominal は互いを受理する。これは [§1.3.5](./language.md#_1-3-5-型の一意化) の記述とは逆向きであり、別途追跡している。
+代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿る。`nominal` / `where` のラッパーは透過する：refinement は runtime の検査であり（[Forms [§5.6](./forms.md#_5-6-バリデーション戦略)](./forms.md#_5-6-バリデーション戦略)を参照）、同じ基底型を持つ 2 つの nominal は互いを受理する。これは [§1.3.5](./language.md#_1-3-5-型の一意化) の記述とは逆向きであり、別途追跡している。
 
 **この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、レシーバ依存の結果型を持つメソッド、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) が担保する。
 
@@ -422,7 +422,7 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 ### E0205 `bind-on-file-input`
 
-`input(type="file")` には `bind=` でスロットを束ねられない。`bind=` の双方向束縛の互換型テーブル（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）にファイルを受け入れる型が無く、ファイルは change イベントの payload 経由でのみ受け取れる（[Forms §5.10](./forms.md#_5-10-file-upload)）。
+`input(type="file")` には `bind=` でスロットを束ねられない。`bind=` の双方向束縛の互換型テーブル（[Forms [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind)](./forms.md#_5-1-1-elements-that-support-bind)）にファイルを受け入れる型が無く、ファイルは change イベントの payload 経由でのみ受け取れる（[Forms [§5.10](./forms.md#_5-10-file-upload)](./forms.md#_5-10-file-upload)）。
 
 > `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
 
@@ -441,7 +441,7 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 ### E0206 `file-only-prop`
 
-`input` の `accept` / `multiple` prop は `type="file"` のときのみ有効。これらは下層の `<input>` 要素にそのまま流し込まれるため、HTML 仕様としてファイルピッカーに対してのみ意味を持つ（[Forms §5.10](./forms.md#_5-10-file-upload)）。他の `type` で使う場合 — あるいは `type` を省略した場合（デフォルトは `"text"`）— は無効な HTML となり、潜在バグになる。診断は `type` が静的に `"file"` でないと確定できる場合のみ発火し、非リテラルの `type=` 式には触らない。
+`input` の `accept` / `multiple` prop は `type="file"` のときのみ有効。これらは下層の `<input>` 要素にそのまま流し込まれるため、HTML 仕様としてファイルピッカーに対してのみ意味を持つ（[Forms [§5.10](./forms.md#_5-10-file-upload)](./forms.md#_5-10-file-upload)）。他の `type` で使う場合 — あるいは `type` を省略した場合（デフォルトは `"text"`）— は無効な HTML となり、潜在バグになる。診断は `type` が静的に `"file"` でないと確定できる場合のみ発火し、非リテラルの `type=` 式には触らない。
 
 > `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
 > `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
@@ -504,7 +504,7 @@ reducer が宣言されていない tile を指している。tile を名指す�
 
 ### E0212 `selector-id-mismatch`（`--strict-selector-id` で opt-in）
 
-reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、対象 tile のリテラル `{id: "..."}` prop がどう転んでも生成できない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec §1.6.2）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
+reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、対象 tile のリテラル `{id: "..."}` prop がどう転んでも生成できない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec [§1.6.2](./language.md#_1-6-2-セレクタ)）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
 
 > `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but tile "<Tile>" is declared with id "<actual>" — this selector can never match`
 
@@ -560,9 +560,9 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 tile と effect の形は、これまで報告されていなかったものである：`in=` の宣言する引数無しで呼ばれた tile は `$1` が束縛されないまま mount し `_d_1 is not defined` で死ぬ。入力無しで emit された effect は最初の dispatch で `Cannot destructure property … of 'input'` を投げる。そして `in=` を宣言していない tile に引数を*渡した*場合は、mount も描画も正常に通り、呼び出し側が渡したつもりの値だけが静かに捨てられる。
 
-組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は何も読まずセンチネルへ落ちる。引数の*型*も検査しない——センチネルはそれを無視する。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。
+組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は何も読まずセンチネルへ落ちる。引数の*型*も検査しない——センチネルはそれを無視する。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP [§6.1.4](./http.md#_6-1-4-decoder-型)](./http.md)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。
 
-範囲を持つ組み込みは `fmt` だけである。シグネチャが `fmt(template, ...args)`（[標準ライブラリ §2.4.5](./stdlib.md)）なので要求できるのはテンプレートだけで、メッセージは最小個数を名指す — `expects at least 1 argument(s) but got 0`。`now` は 0 個ちょうどに縛られているが、それを破る呼び出しは書けない：名前ではなくキーワードであり、0 引数の呼び出しを parser 自身が組み立てるため、`now(1)` はここに届く前に parse error になる。
+範囲を持つ組み込みは `fmt` だけである。シグネチャが `fmt(template, ...args)`（[標準ライブラリ [§2.4.5](./stdlib.md#_2-4-5-文字列フォーマット)](./stdlib.md)）なので要求できるのはテンプレートだけで、メッセージは最小個数を名指す — `expects at least 1 argument(s) but got 0`。`now` は 0 個ちょうどに縛られているが、それを破る呼び出しは書けない：名前ではなくキーワードであり、0 引数の呼び出しを parser 自身が組み立てるため、`now(1)` はここに届く前に parse error になる。
 
 **メソッド**は、lowering が決まった数の引数を読む場合に検査する — `t.format()` は以前 `check` を通り、位置情報を持たない素の `TypeError` で `build` を殺していた。強制するのは最小個数だけである：`get-or` と `slice` は渡された個数で分岐する。
 
@@ -679,7 +679,7 @@ slot の初期値がほかの slot——あるいは自分自身——を読み�
 
 **修正**：必要な slot 値を引数として渡す。
 
-同じコードは純粋性のもう一方も扱う：reducer の body **以外のどこか**に式として書かれた `emit` である — `fn`、tile、slot の初期値、`effect` の `map-request`、`app.init` の引数（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）。いずれも effect キューを持たない文脈で評価されるので、dispatch の行き先が無い。
+同じコードは純粋性のもう一方も扱う：reducer の body **以外のどこか**に式として書かれた `emit` である — `fn`、tile、slot の初期値、`effect` の `map-request`、`app.init` の引数（[言語 [§1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)](./language.md#_1-12-1-when-init-arguments-are-evaluated)）。いずれも effect キューを持たない文脈で評価されるので、dispatch の行き先が無い。
 
 > `emit "<name>" used as an expression is only allowed inside a reducer body`
 
@@ -761,7 +761,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
+リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル [§4.8.4](./style.md#_4-8-4-strict-mode)](./style.md#_4-8-4-strict-mode) 参照）。
 
 **修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
 
@@ -799,7 +799,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Method ".<name>" is not implemented by the runtime`
 
-**補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドは `()` 付きでも無しでも書ける — [標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が括弧なしをショートカットと呼んでおり、どちらの形もコンパイルできる。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
+**補足**：実装されているメソッド集合は `@kumikijs/compiler` の `KNOWN_METHODS`（コード生成の `methodCallJs` と同期）が唯一の正。引数なしメソッドは `()` 付きでも無しでも書ける — [標準ライブラリ [§2.2.3](./stdlib.md#_2-2-3-list-t)](./stdlib.md#_2-2-3-list-t) が括弧なしをショートカットと呼んでおり、どちらの形もコンパイルできる。標準ライブラリのメソッド一覧は [標準ライブラリ](./stdlib.md)。
 
 **修正**：正しいメソッド名に直すか、その操作を `match` / `fold` など実装済みの手段で書き換える。未実装の仕様メソッドが必要なら、`packages/` に実装して `examples/` に動く例を足す。
 
@@ -809,6 +809,6 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Function "<name>" is documented but not implemented by the runtime`
 
-現在この状態にあるのは `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-デバッグ補助)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
+現在この状態にあるのは `trace(label, value)`（[標準ライブラリ [§2.4.6](./stdlib.md#_2-4-6-デバッグ補助)](./stdlib.md#_2-4-6-デバッグ補助)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
 
 **修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。

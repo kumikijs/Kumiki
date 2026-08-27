@@ -197,7 +197,7 @@ reducer cancelSearch
         searchEffectId := EffectId.none
 ```
 
-`emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
+`emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib [§2.1.1.1](./stdlib.md#_2-1-1-1-effectid)](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
