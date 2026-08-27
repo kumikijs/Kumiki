@@ -319,6 +319,12 @@ export async function runScenario(
   // signal that explains why a subtree churned.
   const diagBuf: RuntimeDiagnostic[] = [];
 
+  // Torn down in the `finally` below. Without it the mount outlives the run:
+  // every `timer` reducer keeps its interval and renders into a document the
+  // host may already have torn down, and the shape stays registered as mounted,
+  // so the next run becomes another view of this one instead of its own mount.
+  let dispose: (() => void) | undefined;
+
   const mountOpts: {
     router?: "history" | "memory";
     initialPath?: string;
@@ -339,7 +345,7 @@ export async function runScenario(
       return finish();
     }
     try {
-      mount(app, root, mountOpts);
+      dispose = mount(app, root, mountOpts).dispose;
     } catch (e) {
       steps.push(mkStep(undefined, "mount", [`mount threw: ${errStr(e)}`], [], app, root, []));
       return finish();
@@ -396,6 +402,12 @@ export async function runScenario(
     }
     return finish();
   } finally {
+    try {
+      dispose?.();
+    } catch {
+      // The report is already built. A fault on the way out is worth less than
+      // the run it would replace, and the same choice `runSmoke` makes.
+    }
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
     w.removeEventListener?.("unhandledrejection", onRejection);
