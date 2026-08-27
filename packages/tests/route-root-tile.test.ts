@@ -178,6 +178,34 @@ app M caps=[] routes={"/" -> Panel, "/other" -> Other, "/404" -> Other} init=[]
     expect(live.mounts).toBe(2);
   });
 
+  it("fires no mount for a tile that is showing its fallback, in either position", async () => {
+    // The boundary wraps the marker from the outside, so a tile that panicked
+    // did not render and has nothing to diff against. That is a consequence of
+    // the wrap order rather than a decision, which is why it is pinned in both
+    // positions: whatever it is, a route root and a call site agree.
+    const src = `slot xs : List(Int) = []
+slot mounts : Int = 0
+reducer sawMount on=tile.mount(Boom) do= mounts := mounts + 1
+tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
+tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
+tile Host = column(Boom())
+`;
+    const asRoot = await start(
+      `${src}app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]\n`,
+    );
+    expect(mountedRoot?.textContent).toContain("caught:");
+    expect((asRoot.live as Record<string, unknown>).mounts).toBe(0);
+
+    disposeFn?.();
+    mountedRoot?.remove();
+
+    const asChild = await start(
+      `${src}app M caps=[] routes={"/" -> Host, "/404" -> Host} init=[]\n`,
+    );
+    expect(mountedRoot?.textContent).toContain("caught:");
+    expect((asChild.live as Record<string, unknown>).mounts).toBe(0);
+  });
+
   it("fires for a sub-route child, and for the parent that holds the outlet", async () => {
     const app = await start(`${MOUNTS}
 reducer sawShell on=tile.mount(Shell) do= mounts := mounts + 10

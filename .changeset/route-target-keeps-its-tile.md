@@ -36,7 +36,14 @@ where the tile was written.
 **Observable** for a program that already declared either: a `tile.mount` /
 `tile.unmount` reducer on a route target starts firing, and a route root's
 `error-boundary` starts catching where the panic used to escape to the built-in
-top-level display.
+top-level display. The third one is the headline: a route root whose render
+panics used to leave the app unmounted — `smoke` reported a failure and nothing
+rendered — and now mounts with the fallback in place.
+
+A tile that is showing its fallback fires no `tile.mount` for itself, because
+the boundary wraps the marker from the outside and the tile did not render.
+That was already true at a call site; it is now true at a route root too, which
+is the point — the two positions agree.
 
 `genTile`'s third caller — the `_tilesById` table a `tile-test` compares against
 — is deliberately unchanged: naming that tree would change what the test
