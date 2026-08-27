@@ -1,5 +1,7 @@
 # Style, Layout, and Theme
 
+How a tile gets its appearance. You never write CSS: §4.1 says why, §4.2 defines the design tokens an app draws from, and §4.4 covers the layout props tiles accept.
+
 ## 4.1 Policy
 
 Kumiki **does not let you write CSS directly**. CSS cascade, specificity, and inheritance are the biggest source of hidden dependencies for an AI, and they conflict with Kumiki's "statically trackable side effects" principle.

@@ -1,5 +1,7 @@
 # Lifecycle, Error Boundaries, and Suspense
 
+When the runtime hands a reducer control — startup, route changes, timers — and what the app does when something fails. §7.1 lists every event you can react to; §7.3 onward covers failure: per-tile boundaries, loading states, and the 404 page.
+
 ## 7.1 List of Lifecycle Events
 
 | Event | Timing |

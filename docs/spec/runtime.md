@@ -4,31 +4,20 @@ For runtime implementers, this defines the compilation pipeline and the executio
 
 ## 10.1 Compilation Pipeline
 
-```
-[CRDT graph store]
-    ↓ project (selector)
-[kumiki source (text view)]
-    ↓ parse
-[AST]
-    ↓ name resolution
-[resolved AST] ←─── error: undef-ref, dangling
-    ↓ type check
-[typed AST]   ←─── error: type-mismatch, refinement
-    ↓ effect analysis
-[effect-annotated AST] ←── error: cap-missing, direct-call
-    ↓ purity check
-[verified AST] ←── error: reducer-side-effect, tile-mutation
-    ↓ lower
-[IR (Kumiki Intermediate Representation)]
-    ↓ codegen
-[runtime artifacts]:
-    • signal graph (JS or WASM)
-    • effect dispatcher table
-    • episode logger
-    • dev-tool trace UI
-```
+Eight stages, each rejecting its own class of error before the next one runs:
 
-Each phase performs an independent check. Errors are returned as the structured errors of [AI Editing](./ai-edit.md).
+| Stage | Produces | Rejects |
+|---|---|---|
+| project (selector) | Kumiki source — a text view of the CRDT graph store | — |
+| parse | AST | — |
+| name resolution | resolved AST | `undef-ref`, dangling references |
+| type check | typed AST | `type-mismatch`, refinement violations |
+| effect analysis | effect-annotated AST | `cap-missing`, direct calls |
+| purity check | verified AST | `reducer-side-effect`, `tile-mutation` |
+| lower | IR (Kumiki Intermediate Representation) | — |
+| codegen | runtime artifacts | — |
+
+Codegen writes four artifacts: the signal graph (JS or WASM), the effect dispatcher table, the episode logger, and the dev-tool trace UI. Errors come back as the structured errors of [AI Editing](./ai-edit.md).
 
 ---
 

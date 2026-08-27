@@ -4,31 +4,20 @@
 
 ## 10.1 コンパイルパイプライン
 
-```
-[CRDT graph store]
-    ↓ project (selector)
-[kumiki source (text view)]
-    ↓ parse
-[AST]
-    ↓ name resolution
-[resolved AST] ←─── error: undef-ref, dangling
-    ↓ type check
-[typed AST]   ←─── error: type-mismatch, refinement
-    ↓ effect analysis
-[effect-annotated AST] ←── error: cap-missing, direct-call
-    ↓ purity check
-[verified AST] ←── error: reducer-side-effect, tile-mutation
-    ↓ lower
-[IR (Kumiki Intermediate Representation)]
-    ↓ codegen
-[runtime artifacts]:
-    • signal graph (JS or WASM)
-    • effect dispatcher table
-    • episode logger
-    • dev-tool trace UI
-```
+8 つのフェーズがあり、それぞれが自分の担当するエラーを次へ渡さずに弾く:
 
-各フェーズは独立した検査を行う。エラーは [AI 編集](./ai-edit.md) の構造化エラーで返す。
+| フェーズ | 生成物 | 弾くもの |
+|---|---|---|
+| project (selector) | kumiki source — CRDT graph store のテキスト断面 | — |
+| parse | AST | — |
+| 名前解決 | resolved AST | `undef-ref`、dangling 参照 |
+| 型検査 | typed AST | `type-mismatch`、refinement 違反 |
+| effect 解析 | effect-annotated AST | `cap-missing`、直接呼び出し |
+| 純粋性検査 | verified AST | `reducer-side-effect`、`tile-mutation` |
+| lower | IR (Kumiki Intermediate Representation) | — |
+| codegen | ランタイム成果物 | — |
+
+codegen が出力する成果物は 4 つ: signal graph（JS または WASM）、effect dispatcher テーブル、episode logger、dev-tool trace UI。エラーは [AI 編集](./ai-edit.md) の構造化エラーで返す。
 
 ---
 

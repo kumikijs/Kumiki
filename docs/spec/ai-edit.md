@@ -11,21 +11,13 @@ This provides:
 
 ## 9.1 Overview
 
-```
-┌─────────────────────────────────────────────────┐
-│                 CRDT graph store                  │
-│  (a set of definitions, each content-addressable) │
-└─────────────────────────────────────────────────┘
-        ↑                          ↓
-        │                          │ kumiki view
-        │ kumiki op apply          │
-        │                          ↓
-┌──────────────┐          ┌──────────────────────┐
-│   AI agent   │ ←─────── │ projection (text)    │
-└──────────────┘  edit op └──────────────────────┘
-```
+An edit travels a loop with three stops:
 
-What the AI sees is a **projection (a text cross-section)** of the graph. What the AI outputs is an **op** (not a text diff).
+1. **The store** — the CRDT graph, holding a set of definitions, each addressed by the hash of its own body.
+2. **The projection** — text that `kumiki view` renders out of the store, covering whichever definitions the agent asked for.
+3. **The op** — what the agent writes back, and what `kumiki op apply` folds into the store.
+
+So the AI reads a text cross-section of the graph and answers with an op, never with a text diff.
 
 ---
 
