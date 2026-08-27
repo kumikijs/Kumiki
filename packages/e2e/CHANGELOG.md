@@ -1,5 +1,23 @@
 # @kumikijs/e2e
 
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [82cfa6c]
+- Updated dependencies [3b1f5e8]
+- Updated dependencies [7cce9ce]
+- Updated dependencies [301b09a]
+- Updated dependencies [3e33233]
+- Updated dependencies [f04b1c5]
+- Updated dependencies [7a754ad]
+- Updated dependencies [c11152b]
+- Updated dependencies [d398cbc]
+- Updated dependencies [732cb16]
+- Updated dependencies [b8bd5d9]
+- Updated dependencies [db8e843]
+  - @kumikijs/compiler@0.13.0
+
 ## 0.1.13
 
 ### Patch Changes
