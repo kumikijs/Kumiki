@@ -6,7 +6,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runScenario } from "@kumikijs/runtime";
+import { mount, runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp } from "./helpers/load.ts";
 
@@ -47,11 +47,18 @@ describe("static TileName#id selector matching", () => {
     // Spec §1.6.2: `{id}` becomes the element's native `id` so CSS, a11y
     // tooling, and tests can find the element. This also drives selector
     // matching at dispatch time via the `el.id` payload.
+    // Mounted directly rather than through `runScenario`: this asserts on
+    // elements, and the runner disposes its mount on the way out, which empties
+    // the root it rendered into.
     const app = await loadApp(blockStyleApp);
     const root = freshRoot();
-    await runScenario(app, root, { steps: [{ expect: { noErrors: true } }] });
-    expect(root.querySelector("#new")?.tagName.toLowerCase()).toBe("button");
-    expect(root.querySelector("#edit")?.tagName.toLowerCase()).toBe("button");
+    const handle = mount(app, root);
+    try {
+      expect(root.querySelector("#new")?.tagName.toLowerCase()).toBe("button");
+      expect(root.querySelector("#edit")?.tagName.toLowerCase()).toBe("button");
+    } finally {
+      handle.dispose();
+    }
   });
 
   it('matches arg-style id (input(id="…")) the same as block-style {id: "…"}', async () => {
