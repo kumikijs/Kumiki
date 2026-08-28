@@ -17,6 +17,13 @@ editor in `03-blog` typed into a field nothing read back.
 the phantom `get` field, or that relied on the payload not changing, changes
 behaviour.
 
+**And a `bind=` through `.get` now panics while the value is empty.** It used
+to walk the path defensively and hand the control an empty string; it reads
+through the same unwrap as every other `.get` now, so `input(bind=draft.get.title)`
+with `draft = None` fails during the first render and the app does not mount.
+Reach the control through a `match` on the Option. This is the more disruptive
+half of the change for an app already written against the old behaviour.
+
 Both spellings are fixed together and now share one implementation: the
 assignment a reducer lowers to and a `bind=` path's write-back both call the
 runtime's setter, so they cannot disagree about what a path means. A `.get`

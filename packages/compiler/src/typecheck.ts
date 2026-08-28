@@ -1652,20 +1652,31 @@ function lvalueRoot(lv: Lvalue): string {
   return lv.name;
 }
 
-/** `.get` unwraps the payload of these, on the write side as on the read side. */
-const OPTIONAL_CONTAINERS = new Set(["Option", "Result"]);
-
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
   if (lv.kind === "LIndex") checkExpr(lv.index, sym, errors, ctx);
   else {
-    // Record the same decision `checkFieldAccess` records for a read, so
+    // Record the same decision `classifyFieldAccess` records for a read, so
     // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
-    // the base type is unknown — the name-based reading then stands.
+    // the base type is unknown, as it is there — the name-based reading then
+    // stands, on both sides alike.
     const base = unaliasType(lvalueType(lv.base, sym), sym);
-    if (base) {
-      lv.accessKind =
-        base.kind === "TypeRecord" && recordFieldType(base, lv.field) ? "field" : "shortcut";
+    if (base?.kind === "TypeRecord") {
+      const isField = recordFieldType(base, lv.field) !== null;
+      lv.accessKind = isField ? "field" : "shortcut";
+      if (!isField) {
+        // The read side's diagnostic, raised for a write. Without it the same
+        // expression was an error as an rvalue and silent as an lvalue, and
+        // the write landed on a key beside the data it meant to edit.
+        errors.push({
+          code: "E0108",
+          kind: "undef-member",
+          message: `Record type has no field or method ".${lv.field}"`,
+          pos: lv.pos,
+        });
+      }
+    } else if (base) {
+      lv.accessKind = "shortcut";
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
@@ -2557,6 +2568,17 @@ function checkVariantAgainst(
 }
 
 /**
+ * What `.get` unwraps a type to — `Option(T)` / `Result(T, E)` to `T`, and
+ * `null` for anything else. One resolver, read by the rvalue path and the
+ * lvalue one alike, so the two cannot come to disagree about what it reaches.
+ */
+function unwrappedType(t: TypeExpr): TypeExpr | null {
+  if (t.kind !== "TypeApp") return null;
+  if (t.name !== "Option" && t.name !== "Result") return null;
+  return t.args[0] ?? null;
+}
+
+/**
  * The declared type of an assignment target, walking `.field` and `[k]` through
  * the slot's type. `null` wherever the path leaves what the type system knows.
  */
@@ -2568,9 +2590,7 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     // A record's own field wins over the shortcut name (stdlib.md §2.2), which
     // is what keeps `get` writable as a field on a record that declares one.
     if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
-    if (lv.field === "get" && base.kind === "TypeApp" && OPTIONAL_CONTAINERS.has(base.name)) {
-      return base.args[0] ?? null;
-    }
+    if (lv.field === "get") return unwrappedType(base);
     return null;
   }
   if (base.kind === "TypeApp") {
@@ -2810,12 +2830,10 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         if (t) return t;
       }
       // `.get` unwraps Option(T) / Result(T,E) → T
-      if (
-        e.field === "get" &&
-        base.kind === "TypeApp" &&
-        (base.name === "Option" || base.name === "Result")
-      )
-        return base.args[0] ?? null;
+      if (e.field === "get") {
+        const inner = unwrappedType(base);
+        if (inner) return inner;
+      }
       // Paren-less method shortcut (`n.show`, `f.to-int`) — same table as the
       // called form, reached here because the parser produces a FieldAccess
       // for a member with no argument list.

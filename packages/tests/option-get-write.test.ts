@@ -12,6 +12,10 @@
 // which is why the same path reads correctly and wrote wrong. These tests hold
 // the two sides to the same decision — including the case that makes it a
 // decision rather than a keyword: a record whose field is literally `get`.
+//
+// This file is where the regression is pinned, not the example's scenario: a
+// scenario's `state` is a subset match, and the defect was an EXTRA key. The
+// scenario tier structurally cannot see one, whatever the app renders.
 
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -133,6 +137,22 @@ describe("a bind= path through .get", () => {
     `reducer seed on=app.start do= draft := Some({title: "a"})`,
     'tile App = column(input(bind=draft.get.title, id="t"))',
   );
+
+  it("panics while the Option is empty, the way every other .get read does", async () => {
+    // A decision this makes rather than inherits: the reader used to walk the
+    // path with `?? {}` and hand the control an empty string, so a `bind=`
+    // through `.get` was the one place `.get` did not mean `.get`. It panics
+    // now — during the first render, so the app does not mount at all — and
+    // an author reaches such a control through a `match` on the Option.
+    const shape = await loadSource(
+      app("Option({title: Text}) = None", "", "tile App = column(input(bind=draft.get.title))"),
+    );
+    const report = await runScenario(shape, freshRoot(), {
+      steps: [{ expect: { noErrors: true } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps.flatMap((st) => st.errors).join(" ")).toContain("get called on None");
+  });
 
   it("reads the payload and writes back into it", async () => {
     // `bind=` goes through its own path builder and its own setter, so the two

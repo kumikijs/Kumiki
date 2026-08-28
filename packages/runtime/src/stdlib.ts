@@ -6,9 +6,9 @@
 
 import {
   _setPathHelper,
-  type BindSegment,
   isPanic,
   KumikiPanic,
+  type PathSegment,
   panicInfo,
   type RefinementRejection,
   refinementRejectionOf,
@@ -322,7 +322,7 @@ export const _stdlibCore = {
    * with `bind=` write-back, so `draft.get.title := v` and
    * `bind=draft.get.title` mean the same thing.
    */
-  setPath(obj: unknown, path: readonly BindSegment[], value: unknown): unknown {
+  setPath(obj: unknown, path: readonly PathSegment[], value: unknown): unknown {
     return _setPathHelper(obj, path, value);
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */

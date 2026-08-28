@@ -397,6 +397,23 @@ app A
     expect(errors[0]?.message).toBe("Expected Text but got Int");
   });
 
+  it("reports a member the record does not have, as the read side does", () => {
+    // `rec.get.title := v` on a record with no `get` field used to be accepted
+    // and to land on `rec.title` — the same sibling-key defect under another
+    // name. The read side has always called it E0108.
+    const src = `slot rec : {title: Text} = {title: "a"}
+reducer bad on=app.start do= rec.get.title := "x"
+tile App = column(text(rec.title))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = check(parse(lex(src)));
+    expect(errors.map((e) => e.code)).toEqual(["E0108"]);
+    expect(errors[0]?.message).toBe('Record type has no field or method ".get"');
+  });
+
   it("keeps the name-based reading when codegen runs without check", () => {
     // The same back-compat the read side documents: absent an annotation,
     // `.get` is the unwrap. Two sides agreeing wrongly still beats them

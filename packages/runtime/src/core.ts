@@ -2674,38 +2674,55 @@ function elementAtPath(path: number[], root: Element): Element | null {
 }
 
 /**
- * One segment of a write path. A string is a record field or a container key;
- * `{get: true}` is `.get`, the polymorphic unwrap — encoded as data rather
- * than as a closure because a `bind=` path travels to the client as JSON
- * inside the TileNode.
+ * One segment of a write path. A string or number is a record field or a
+ * container key; `{get: true}` is `.get`, the polymorphic unwrap — encoded as
+ * data rather than as a closure because a `bind=` path travels to the client
+ * as JSON inside the TileNode.
+ *
+ * A reducer's assignment can index by an arbitrary expression, so the numeric
+ * (and, at runtime, any) case is reachable there. `bind=` resolves only static
+ * field chains, which is why its own alphabet is narrower.
  */
-export type BindSegment = string | { get: true };
+export type PathSegment = string | number | { get: true };
+
+/** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
+export type BindSegment = Extract<PathSegment, string | { get: true }>;
+
+/** `{get: true}` and nothing else. An index that happens to evaluate to an
+ * object is a key, not an unwrap. */
+function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
+  return typeof seg === "object" && seg !== null && seg.get === true;
+}
 
 /**
  * Immutably set a (possibly nested) path on a value. Shared by `bind=`
  * write-back and by the assignment a reducer lowers to, so the two ways to
  * write a slot cannot disagree about what a path means.
  *
- * At a `.get` segment this mirrors `_stdlibCore.unwrap` (stdlib.md §2.2) with
- * one deliberate difference: reading `.get` on a `None` panics, and writing
- * through one is a no-op (language.md §1.6.3). The no-op returns the value
- * itself, so a slot whose write was skipped keeps its identity too.
+ * A `.get` segment mirrors `_stdlibCore.unwrap` (stdlib.md §2.2) — `Some` /
+ * `Ok` reach the payload, any other variant and any plain value pass straight
+ * through — with the one difference language.md §1.6.3 states: writing through
+ * an empty value (`None` / `Err`) is a no-op rather than a panic.
  */
 export function _setPathHelper(
   obj: unknown,
-  path: readonly BindSegment[],
+  path: readonly PathSegment[],
   value: unknown,
 ): unknown {
-  const head = path[0];
-  if (head === undefined) return value;
+  // On `path.length`, not on the head: an index segment is whatever its
+  // expression evaluated to, and an `undefined` one read as "path exhausted"
+  // would put `value` where the whole slot was.
+  if (path.length === 0) return value;
+  const head = path[0] as PathSegment;
   const rest = path.slice(1);
-  if (typeof head === "object") {
+  if (isUnwrapSegment(head)) {
     if (obj && typeof obj === "object" && "_tag" in obj) {
       const o = obj as { _tag: string; _0?: unknown };
       if (o._tag === "None" || o._tag === "Err") return obj;
-      return { ...o, _0: _setPathHelper(o._0, rest, value) };
+      if (o._tag === "Some" || o._tag === "Ok") {
+        return { ...o, _0: _setPathHelper(o._0, rest, value) };
+      }
     }
-    // A plain value is its own payload, the way `unwrap` passes one through.
     return _setPathHelper(obj, rest, value);
   }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
@@ -2713,10 +2730,10 @@ export function _setPathHelper(
 }
 
 /**
- * The source spelling of a `bind=` target — `draft.get.title`. Used for the
- * `data-kumiki-bind` marker, the reconcile identity key, and the served
- * markup, which all need the path as one string and none of which should have
- * to know how a segment is encoded.
+ * The source spelling of a `bind=` target — `draft.get.title`. Written into
+ * the `data-kumiki-bind` marker by both renderers, and used as the id
+ * `tileTouchedId` reports on an episode's `signal-update.binds-updated`. One
+ * formatter, so none of those has to know how a segment is encoded.
  */
 export function bindLabel(bind: string, path?: readonly BindSegment[]): string {
   if (!path || path.length === 0) return bind;

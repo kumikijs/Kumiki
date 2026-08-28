@@ -13,6 +13,9 @@ export {
   parseCapabilityManifest,
   STANDARD_CAPABILITIES,
 } from "./capabilities.ts";
+// The write-path encoding the runtime decodes. Exported so the two
+// declarations can be checked against each other.
+export { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
 export {
   type CodegenOptions,
   type CodegenResult,

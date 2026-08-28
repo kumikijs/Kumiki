@@ -383,8 +383,9 @@ export type Lvalue =
       /**
        * The same dispatch decision `FieldAccess` carries, for the write side:
        * `"field"` means the base is a record that has this field, so the
-       * segment is a plain key. Absent — codegen running without `check()` —
-       * keeps the name-based reading, under which `.get` is the unwrap.
+       * segment is a plain key. Absent means the base type is unknown — also
+       * the case when codegen runs without `check()` — and keeps the
+       * name-based reading, under which `.get` is the unwrap.
        */
       accessKind?: "field" | "shortcut";
     };

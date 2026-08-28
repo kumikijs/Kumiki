@@ -3,6 +3,7 @@ import { assertNever } from "../ast.ts";
 import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
+import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 /**
  * Wrap a write to `slot` so the refinement is checked *as it happens*
@@ -345,11 +346,8 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   let cur: Lvalue = lv;
   while (cur.kind !== "LSlot") {
     if (cur.kind === "LField") {
-      // The read side's rule, applied to a write (stdlib.md §2.2): a record's
-      // own field wins, and otherwise `.get` is the polymorphic unwrap. Taking
-      // it as a plain key is what grew a sibling `get` beside `_tag` / `_0`.
       path.unshift(
-        cur.accessKind !== "field" && cur.field === "get"
+        isUnwrapStep(cur.field, cur.accessKind)
           ? { kind: "unwrap" }
           : { kind: "field", name: cur.field },
       );
@@ -366,11 +364,10 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   let pathExpr = "";
   for (const seg of path) {
     if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
-    else if (seg.kind === "unwrap") pathExpr += `, {"get":true}`;
+    else if (seg.kind === "unwrap") pathExpr += `, ${JSON.stringify(UNWRAP_SEGMENT)}`;
     else pathExpr += `, ${jsOfExpr(seg.expr, ctx)}`;
   }
-  // The runtime's setter, which `bind=` write-back also calls: one
-  // implementation, so the two ways to write a slot cannot disagree.
+  // The runtime's setter, which `bind=` write-back also calls.
   const updated = `_s.setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
   return `_next[${JSON.stringify(root)}] = ${slotWriteJs(root, updated, ctx.gen)};`;
 }

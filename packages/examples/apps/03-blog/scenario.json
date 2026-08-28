@@ -77,7 +77,7 @@
       }
     },
     {
-      "label": "typing in the editor edits the payload of the Some — this used to grow a sibling field named get, so the form showed the old title back",
+      "label": "typing in the editor edits the payload of the Some",
       "do": { "fill": "#title", "value": "Keys and identity, revised" },
       "expect": {
         "noErrors": true,
