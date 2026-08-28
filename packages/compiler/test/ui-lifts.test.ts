@@ -48,7 +48,7 @@ describe("UI_LIFTS", () => {
     expect(byEv.get("change")?.tiles).toEqual(
       new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
     );
-    expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea"]));
+    expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea", "editable"]));
     expect(byEv.get("key")?.tiles).toEqual(new Set(["input", "textarea", "button"]));
     expect(byEv.get("focus")?.tiles).toEqual(new Set(["input", "textarea", "button", "select"]));
     expect(byEv.get("blur")?.tiles).toEqual(new Set(["input", "textarea", "button", "select"]));
@@ -231,12 +231,20 @@ describe("HANDLER_PROP_TILES", () => {
     expect(missing).toEqual([]);
   });
 
-  it("keeps the click set in step with the lift table", () => {
-    // Derived rather than written out: the runtime wires `onClick` in exactly
-    // the renderers a `ui.click(Tile)` selector lands on.
-    expect([...(HANDLER_PROP_TILES.onClick ?? [])].sort()).toEqual(
-      [...(UI_EVENT_TILE_KINDS.click ?? [])].sort(),
-    );
+  it("keeps every constrained set in step with the lift table", () => {
+    // Derived rather than written out: the renderer that reads the prop is the
+    // one a selector lands on. `onInput` used to be a hand-written union,
+    // because the lift table omitted `editable` and the two questions had
+    // different answers for that one kind. Compared by reference, so a copy
+    // that happens to hold the same members today still fails.
+    for (const [handler, ev] of [
+      ["onClick", "click"],
+      ["onChange", "change"],
+      ["onSubmit", "submit"],
+      ["onInput", "input"],
+    ] as const) {
+      expect(HANDLER_PROP_TILES[handler], handler).toBe(UI_EVENT_TILE_KINDS[ev]);
+    }
   });
 
   it("marks the universally-wired handlers as unconstrained", () => {

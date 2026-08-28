@@ -210,6 +210,42 @@ describe("the browser-tier fixtures in the corpus are refused, not passed", () =
   }
 });
 
+// A verb aimed at something it cannot drive fails the step. Every action but
+// `fill` already did: `fill` wrote a property the element does not have,
+// dispatched two events nothing listens for, and passed — a step asserting
+// nothing, reported as coverage.
+describe("an action fails on a target it cannot drive", () => {
+  const FILLABLE = `slot note : Text = ""
+tile Box = box(text("not a field")) {id: "box"}
+tile Field = input(bind=note) {id: "field"}
+tile App = column(Box, Field, text("note: " + note))
+app Fillable
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("reports a fill whose selector holds no text, naming the element", async () => {
+    const app = await loadSource(FILLABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { fill: "#box", value: "hello" } }],
+    });
+    expect(report.ok).toBe(false);
+    const errors = report.steps.flatMap((st) => st.errors).join(" ");
+    expect(errors).toContain("#box matched <div>");
+    expect(errors).toContain("holds no text to fill");
+  });
+
+  it("still fills the control that does hold text", async () => {
+    const app = await loadSource(FILLABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { fill: "#field", value: "hello" }, expect: { state: { note: "hello" } } }],
+    });
+    expect(report.steps.flatMap((st) => st.failures)).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+});
+
 // Everything the runtime reported between `mount` and the first scripted action
 // used to be dropped: the step loop opened by clearing the buffer. An
 // `app.start` effect that failed with no `.err` reducer — the shape an

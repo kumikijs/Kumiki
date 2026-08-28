@@ -569,8 +569,32 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("fill" in a) {
-    const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(a.fill);
+    const el = root.querySelector<HTMLElement>(a.fill);
     if (!el) throw new Error(`no input matching selector ${a.fill}`);
+    // An `editable` holds its text in `textContent`, which is what its
+    // renderer reads back — a `value` write leaves it untouched, so the
+    // `input` the step dispatches carries the text the control held before it.
+    // The attribute rather than `isContentEditable`: a disabled or readonly
+    // editable carries `contenteditable="false"`, and routing that one to the
+    // `value` branch would put the stale-text bug straight back. The step
+    // fills it all the same — `fill` does not respect `disabled` on an
+    // `<input>` either. No `change` follows: the platform defines none for a
+    // contenteditable.
+    if (el.getAttribute("contenteditable") !== null) {
+      el.textContent = a.value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    // Every other action throws on a target it cannot drive. Without this the
+    // cast below is a claim rather than a narrowing: a selector matching a
+    // `div` would take an expando `value`, dispatch two events nothing hears,
+    // and report the step green.
+    if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+      throw new Error(
+        `${a.fill} matched <${el.tagName.toLowerCase()}>, which holds no text to fill — ` +
+          "fill targets input / textarea / editable",
+      );
+    }
     el.value = a.value;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));

@@ -50,9 +50,18 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "change",
     handler: "onChange",
+    // `editable` is absent because a `<div contenteditable>` fires no `change`
+    // event at all — the omission is the rule here, not a gap.
     tiles: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
   },
-  { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea"]) },
+  // An `editable` does fire `input`, and its renderer calls the tile's
+  // `onInput` from that listener, so a selector lands on it like any other
+  // text control.
+  { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
+  // `key` / `focus` / `blur` are the three the runtime attaches to whatever
+  // element a tile produced, so what these rows list is where a *selector*
+  // reaches — narrower than what fires the event. A kind missing from them is
+  // a gap in this table rather than a fact about the DOM.
   { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button"]) },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
   {
@@ -84,9 +93,9 @@ function liftTilesFor(handler: string): ReadonlySet<string> | null {
  *
  * Not the same question as `UI_EVENT_TILE_KINDS`, which answers where a
  * `ui.<ev>(Tile)` *selector* lands, so the sets are related but not equal:
- * `editable` reads `onInput` in its own renderer while no `ui.input` selector
- * lifts to it. Deriving an entry from the lift table imports that table's gaps,
- * so each one below says which it is.
+ * `onClose` is honoured by the overlay tiles and no ui-event lifts to it at
+ * all. Every entry below is therefore derived from the lift table except
+ * `onClose`, which the lift table cannot supply.
  *
  * The four `null`s are the handlers `applyUiEventHandlers` installs on
  * whatever element the tile produced. That is about the LISTENER, not about
@@ -99,10 +108,7 @@ export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
   onClick: liftTilesFor("onClick"),
   onChange: liftTilesFor("onChange"),
   onSubmit: liftTilesFor("onSubmit"),
-  // `editable` is an input tile (§2.3.4) whose renderer dispatches `onInput`
-  // itself; the lift table omits it because no `ui.input(Tile)` selector
-  // reaches it, which is a separate gap.
-  onInput: new Set([...(liftTilesFor("onInput") ?? []), "editable"]),
+  onInput: liftTilesFor("onInput"),
   onKeyDown: null,
   onMouseEnter: null,
   onFocus: null,
