@@ -38,6 +38,7 @@ import {
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
+  warnUndeclaredCapability,
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
@@ -208,14 +209,14 @@ async function dispatchEmit(
   // effect input (the compiler emits a single-value tuple even for unary
   // effects). Mirror that here so SSR and CSR share the same effect signature.
   const input = emit.args[0];
-  // Same gate as the live dispatcher's `launch` (§10.4.2): an effect whose
-  // capability is absent from `app.caps` is not executed. Empty cap = standard
-  // presentation effect (e.g. scroll-to); no permission gate. Claiming the
-  // start and cancelling it — the shape a policy-cancelled launch leaves —
-  // puts the emit that did not run into the bootstrap episode, which is the
-  // only account of the server pass the hydrated client can read.
+  // §10.4.2's gate, on the same terms as the live dispatcher's `launch` — see
+  // there for the empty-cap rule. The cancel is not decoration: a claimed
+  // start that never ends leaves the bootstrap episode uncommitted, and
+  // `renderToString` refuses to return one. Recording the pair also puts an
+  // emit that changed no slot into the record the client ingests, where the
+  // server's console cannot reach.
   if (effect.cap !== "" && !caps.has(effect.cap)) {
-    console.warn(`Capability "${effect.cap}" not declared in app.caps`);
+    warnUndeclaredCapability(effect.cap);
     logger.cancelPendingEffect(logger.recordEffectStart(emit.effect, input), emit.effect);
     return;
   }

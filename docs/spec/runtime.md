@@ -755,6 +755,7 @@ The server-side `renderToString` pass collapses the entire `app.init` causal cha
 
 - `trigger.kind = "ssr.hydrate"`, `trigger.target = <initial-route-path>`.
 - `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
+- The one emit that produces no pair is one the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start` followed by `effect-cancel` (`targetId = <effect-name>`) and runs nothing, the same shape a replaced `debounce` timer leaves. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run. The live dispatcher records no step at all for the same refusal under the default policy, because it returns before claiming a token: one refused emit therefore reads differently depending on which side refused it.
 
 Example:
 
@@ -829,7 +830,7 @@ The snapshot envelope is versioned and self-describing:
 - `kumiki` is the snapshot schema version (current = `1`). A client whose runtime expects a different version MUST discard the snapshot and fall back to a full CSR boot — this keeps server / client out-of-sync deploys safe.
 - `slots` excludes every slot whose declaration carries the `volatile` modifier ([§1.4.1](./language.md#_1-4-1-syntax) modifiers table): the runtime treats SSR snapshotting as the same serialisation boundary as persistence, so `volatile` slots are never written to the wire.
 - `bootstrap.steps[].slot-diffs` use the same `volatile` filter, so a volatile slot never appears in either the `slots` map or the bootstrap diff.
-- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
+- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update, plus effect-cancel for an emit the capability check refused — see [§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
 
 ### 10.6.2 Hydration
 

@@ -13,7 +13,18 @@ between a request issued from the prerender and no request at all.
 The server pass now applies the same rule as the live dispatcher, exempting
 standard presentation effects the same way (an empty `cap`), and consults the
 gate before any host provider so an undeclared capability cannot be answered by
-a host implementation. The skipped emit appears on the bootstrap episode as a
-start and a cancel — the shape a policy-cancelled launch already leaves — so
-the pass is accounted for in the record the hydrated client reads, not only in
-the server's console.
+a host implementation.
+
+**This changes what a deployed app renders** if its `caps` omits a capability
+the server pass had been honouring silently: slots that used to arrive
+prefilled now serve at their declared defaults, which is what the client
+already showed once hydration replaced them. Declaring the capability restores
+the old behaviour on both sides.
+
+A refused emit is recorded on the bootstrap episode as an `effect-start`
+followed by an `effect-cancel` — the shape a replaced `debounce` timer leaves —
+so the pass is accounted for in the record the hydrated client reads and not
+only in the server's console. The live path records nothing for the same
+refusal under the default policy, where the gate returns before any token is
+claimed; the two logs therefore describe one refusal differently, and
+`runtime.md` §10.5.1.1 now says so.
