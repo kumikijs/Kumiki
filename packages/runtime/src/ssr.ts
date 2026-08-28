@@ -38,6 +38,7 @@ import {
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
+  warnUndeclaredCapability,
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
@@ -208,6 +209,15 @@ async function dispatchEmit(
   // effect input (the compiler emits a single-value tuple even for unary
   // effects). Mirror that here so SSR and CSR share the same effect signature.
   const input = emit.args[0];
+  // §10.4.2's gate, on the same terms as the live dispatcher's `launch` — see
+  // there for the empty-cap rule. The cancel is not decoration: a claimed
+  // start that never ends leaves the bootstrap episode uncommitted, and
+  // `renderToString` refuses to return one.
+  if (effect.cap !== "" && !caps.has(effect.cap)) {
+    warnUndeclaredCapability(effect.cap);
+    logger.cancelPendingEffect(logger.recordEffectStart(emit.effect, input), emit.effect);
+    return;
+  }
   const token = logger.recordEffectStart(emit.effect, input);
   let result: EffectResult;
   try {

@@ -2339,6 +2339,16 @@ type Dispatcher = {
   dispose(): void;
 };
 
+/**
+ * The report a refused effect produces, on the live path and on the server
+ * render pass alike (§10.4.2). Shared rather than written twice, so the two
+ * gates cannot drift into two wordings — or, once the channel this belongs on
+ * is settled, into two channels.
+ */
+export function warnUndeclaredCapability(cap: string): void {
+  console.warn(`Capability "${cap}" not declared in app.caps`);
+}
+
 function makeEffectDispatcher(
   app: AppShape,
   caps: CapabilityRegistry,
@@ -2402,7 +2412,7 @@ function makeEffectDispatcher(
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
-      console.warn(`Capability "${eff.cap}" not declared in app.caps`);
+      warnUndeclaredCapability(eff.cap);
       // Deferred-policy dispatch (debounce) already recorded an effect-start
       // on the originating episode before the timer fired. Bailing out here
       // without releasing the token would strand that episode in
