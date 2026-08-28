@@ -212,9 +212,7 @@ async function dispatchEmit(
   // §10.4.2's gate, on the same terms as the live dispatcher's `launch` — see
   // there for the empty-cap rule. The cancel is not decoration: a claimed
   // start that never ends leaves the bootstrap episode uncommitted, and
-  // `renderToString` refuses to return one. Recording the pair also puts an
-  // emit that changed no slot into the record the client ingests, where the
-  // server's console cannot reach.
+  // `renderToString` refuses to return one.
   if (effect.cap !== "" && !caps.has(effect.cap)) {
     warnUndeclaredCapability(effect.cap);
     logger.cancelPendingEffect(logger.recordEffectStart(emit.effect, input), emit.effect);
