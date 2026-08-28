@@ -9,7 +9,7 @@
       }
     },
     {
-      "label": "typing into the editable writes the bind AND runs the ui.input reducer; before the lift table listed editable, only the bind half happened",
+      "label": "typing into the editable writes the bind AND runs the ui.input reducer",
       "do": { "fill": "#ed", "value": "hello" },
       "expect": {
         "noErrors": true,

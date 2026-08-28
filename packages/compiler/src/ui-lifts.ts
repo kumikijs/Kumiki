@@ -50,12 +50,18 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "change",
     handler: "onChange",
+    // `editable` is absent because a `<div contenteditable>` fires no `change`
+    // event at all — the omission is the rule here, not a gap.
     tiles: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
   },
-  // `editable` is a `<div contenteditable>`, which fires no `change` — but it
-  // does fire `input`, and its renderer calls the tile's `onInput` from that
-  // listener, so a selector lands on it like any other text control.
+  // An `editable` does fire `input`, and its renderer calls the tile's
+  // `onInput` from that listener, so a selector lands on it like any other
+  // text control.
   { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
+  // `key` / `focus` / `blur` are the three the runtime attaches to whatever
+  // element a tile produced, so what these rows list is where a *selector*
+  // reaches — narrower than what fires the event. A kind missing from them is
+  // a gap in this table rather than a fact about the DOM.
   { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button"]) },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
   {
@@ -88,8 +94,8 @@ function liftTilesFor(handler: string): ReadonlySet<string> | null {
  * Not the same question as `UI_EVENT_TILE_KINDS`, which answers where a
  * `ui.<ev>(Tile)` *selector* lands, so the sets are related but not equal:
  * `onClose` is honoured by the overlay tiles and no ui-event lifts to it at
- * all. Deriving an entry from the lift table imports that table's gaps, so
- * each one below says which it is.
+ * all. Every entry below is therefore derived from the lift table except
+ * `onClose`, which the lift table cannot supply.
  *
  * The four `null`s are the handlers `applyUiEventHandlers` installs on
  * whatever element the tile produced. That is about the LISTENER, not about

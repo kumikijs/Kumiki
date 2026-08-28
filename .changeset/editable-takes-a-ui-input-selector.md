@@ -24,3 +24,8 @@ The scenario runner's `fill` verb now writes an `editable` through
 `textContent`, the property its renderer reads back, and dispatches `input`
 alone. Filling one used to set a `value` the element does not read, so the
 event carried the text the control held *before* the step.
+
+`fill` also **fails the step** when its selector matches an element that holds
+no text — a `div`, a container — the way every other action already does with a
+target it cannot drive. Such a step used to set a property nothing reads,
+dispatch two events nothing hears, and pass.
