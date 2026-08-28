@@ -3,7 +3,7 @@
 // carry an index segment, which is an arbitrary runtime value — so the segments
 // this has to survive are not only the ones a compiler emits deliberately.
 
-import { _setPathHelper, type PathSegment } from "@kumikijs/runtime";
+import { _setPathHelper, bindLabel, type PathSegment } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 /** Written as `unknown[]` where a case is deliberately outside the type. */
@@ -100,5 +100,20 @@ describe("an unwrap segment", () => {
 
   it("passes a plain value through", () => {
     expect(_setPathHelper({ t: "a" }, [{ get: true }, "t"], "b")).toEqual({ t: "b" });
+  });
+});
+
+describe("the label a bind path renders as", () => {
+  // Written into `data-kumiki-bind` by both renderers and reported on an
+  // episode's `binds-updated`. Comparing the two renderers only says they
+  // agree; this says what they agree ON — the source spelling, not the
+  // encoding.
+  it("spells an unwrap segment the way the source does", () => {
+    expect(bindLabel("draft", [{ get: true }, "title"])).toBe("draft.get.title");
+  });
+
+  it("is the bind name alone when the path is empty or absent", () => {
+    expect(bindLabel("note")).toBe("note");
+    expect(bindLabel("note", [])).toBe("note");
   });
 });
