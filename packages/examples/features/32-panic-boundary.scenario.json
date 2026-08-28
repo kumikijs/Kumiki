@@ -22,7 +22,8 @@
       "do": { "navigate": "/risky" },
       "expect": {
         "noErrors": true,
-        "domIncludes": ["recovered:"]
+        "domIncludes": ["recovered:"],
+        "domExcludes": ["Panic boundary demo"]
       }
     }
   ]

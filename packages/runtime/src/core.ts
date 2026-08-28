@@ -43,7 +43,7 @@ export class KumikiPanic extends Error {
 }
 
 /** True for a KumikiPanic — also matches across realms where `instanceof` fails. */
-function isPanic(e: unknown): e is KumikiPanic {
+export function isPanic(e: unknown): e is KumikiPanic {
   return (
     e instanceof KumikiPanic ||
     (typeof e === "object" &&

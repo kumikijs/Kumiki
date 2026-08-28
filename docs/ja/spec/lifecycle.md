@@ -120,7 +120,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 
 `Result(T, E)` 型で表現する。effect の戻り値が `Result.Err` の場合は `effect-name.err($e, $k)` reducer に届く。
 
-### 7.2.2 想定外のエラー（panic）
+### 7.2.2 想定外のエラー（panic） {#_7-2-2-unexpected-errors-panic}
 
 - reducer 内での `Option.get` で None を取った
 - `List.get(i)` で範囲外
@@ -178,7 +178,9 @@ tile ErrorFallback
 
 境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
 
-> **実装ステータス.** live runtime は [エラー処理](#_7-2-error-handling) の panic モデルを実装する：reducer ディスパッチ中の panic はその episode の `slot` 変更を rollback し（部分書き込みなし）、検証 tier（`smoke` / scenario）へ surface し、`app.error` reducer（[app.error reducer](#_7-2-3-the-app-error-reducer)）を `PanicInfo` を `$event` として発火する。描画中の panic は最も近い `error-boundary` tile が捕捉する。これには route ターゲット自身が宣言した境界も含まれる。上に境界が**ない**描画 panic は、イベントハンドラを未捕捉で突き抜ける代わりに組み込みのトップレベル panic 表示にフォールバックする。`panic(message)` と多相な `.get`（`None` / `Err` で panic、`.get-err` と整合）はこの同じ制御されたシグナルを送出する。
+境界が受け取るのは **panic** —— [§7.2.2](#_7-2-2-unexpected-errors-panic) が定義する制御されたシグナル —— である。fallback に渡されるのは `{message, location, category}` であり、[§7.2.3](#_7-2-3-the-app-error-reducer) の `app.error` reducer が受け取るものと同じ payload である。それ以外のものが境界に到達した場合、それはプログラムのエラーではなく生成コードまたは runtime の欠陥であり、トップレベル表示のために再送出される：fallback がそれを吸収すると失敗が描画済みページに置き換わり、`smoke` / `scenario` はエラーチャネルで検証するため、見るべきものが何も残らなくなる。
+
+> **実装ステータス.** live runtime は [エラー処理](#_7-2-error-handling) の panic モデルを実装する：reducer ディスパッチ中の panic はその episode の `slot` 変更を rollback し（部分書き込みなし）、検証 tier（`smoke` / scenario）へ surface し、`app.error` reducer（[app.error reducer](#_7-2-3-the-app-error-reducer)）を `PanicInfo` を `$event` として発火する。描画中の panic は、それを起こした tile 自身に宣言された最も近い `error-boundary` が捕捉する。これには route ターゲットの境界も含まれる。既知の未修正の例外が 1 つある：親の `route-outlet` に注入された子は親の境界の外側で描画されるため、親にだけ宣言された境界は子を覆わない。上に境界が**ない**描画 panic は、イベントハンドラを未捕捉で突き抜ける代わりに組み込みのトップレベル panic 表示にフォールバックする。`panic(message)` と多相な `.get`（`None` / `Err` で panic、`.get-err` と整合）はこの同じ制御されたシグナルを送出する。
 
 ---
 

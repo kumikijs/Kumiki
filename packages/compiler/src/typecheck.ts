@@ -567,6 +567,18 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     ctx.localTypes.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
+  // `error-boundary` is a tile reference like any other, and was the only one
+  // nothing resolved: the lowering skipped a name it could not find and
+  // produced an unprotected tile with no diagnostic, so a misspelling cost the
+  // boundary and said nothing until something panicked.
+  if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
+    errors.push({
+      code: "E0105",
+      kind: "undef-tile",
+      message: `Tile "${tile.name}" declares error-boundary "${tile.errorBoundary}", which is not a tile`,
+      pos: tile.errorBoundaryPos ?? tile.pos,
+    });
+  }
   if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
 }
 
