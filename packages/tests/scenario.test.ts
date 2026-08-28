@@ -168,6 +168,27 @@ describe("scenario runner", () => {
     expect(report.steps[1]?.emits.some((e) => e.effect === "saveText")).toBe(true);
   });
 
+  // The same wiring on a `contenteditable` div, whose text is `textContent`
+  // rather than `value` — so `fill` has to write the one the renderer reads,
+  // and dispatch only `input` (the platform fires no `change` on one).
+  it("types into an editable and runs its ui.input reducer (78-editable-input-selector)", async () => {
+    const app = await loadApp(join(examples, "features", "78-editable-input-selector.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [
+        { expect: { noErrors: true, state: { note: "", edits: 0 } } },
+        {
+          do: { fill: "#ed", value: "hello" },
+          // The bind writeback alone would satisfy `note` — a `fill` that
+          // wrote `value` moves neither. `edits` is what only the reducer can
+          // move, and it is the half the selector form was missing.
+          expect: { noErrors: true, state: { note: "hello", edits: 1 } },
+        },
+      ],
+    });
+    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
   // M1 (#24): a render panic under an `error-boundary` is caught and the
   // fallback shown — cleanly, with no surfaced error (the boundary recovery is
   // silent). Clicking "reveal" makes a child tile read `.get` on a None, which

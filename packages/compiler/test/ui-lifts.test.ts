@@ -48,7 +48,7 @@ describe("UI_LIFTS", () => {
     expect(byEv.get("change")?.tiles).toEqual(
       new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
     );
-    expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea"]));
+    expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea", "editable"]));
     expect(byEv.get("key")?.tiles).toEqual(new Set(["input", "textarea", "button"]));
     expect(byEv.get("focus")?.tiles).toEqual(new Set(["input", "textarea", "button", "select"]));
     expect(byEv.get("blur")?.tiles).toEqual(new Set(["input", "textarea", "button", "select"]));
@@ -237,6 +237,17 @@ describe("HANDLER_PROP_TILES", () => {
     expect([...(HANDLER_PROP_TILES.onClick ?? [])].sort()).toEqual(
       [...(UI_EVENT_TILE_KINDS.click ?? [])].sort(),
     );
+  });
+
+  it("keeps the input set in step with the lift table", () => {
+    // `editable` used to be unioned in by hand here, because the lift table
+    // omitted it and the two questions had different answers for that one
+    // kind. They agree now: the renderer that reads the prop is the same one
+    // the selector lands on.
+    expect([...(HANDLER_PROP_TILES.onInput ?? [])].sort()).toEqual(
+      [...(UI_EVENT_TILE_KINDS.input ?? [])].sort(),
+    );
+    expect(HANDLER_PROP_TILES.onInput?.has("editable")).toBe(true);
   });
 
   it("marks the universally-wired handlers as unconstrained", () => {

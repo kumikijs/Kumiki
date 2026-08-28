@@ -274,9 +274,8 @@ tile InBtn = button(text="in", onClick=open)`;
   it("says nothing about the tiles that do fire it", () => {
     expect(diags('column(button(text="a", onClick=open))')).toEqual([]);
     expect(diags('column(check(label="a", onChange=open))')).toEqual([]);
-    // `editable` dispatches `onInput` from its own renderer. No `ui.input`
-    // selector reaches it, so deriving this entry from the lift table alone
-    // told the reader to delete working code.
+    // `editable` dispatches `onInput` from its own renderer, in both
+    // spellings — this one and the `ui.input(Ed)` selector below.
     expect(diags('column(editable(value="a", onInput=open))')).toEqual([]);
     // The overlay row is the one hand-written entry in the table.
     expect(diags('column(modal(text("a"), onClose=open))')).toEqual([]);
@@ -306,5 +305,37 @@ app A
     init   = []
 `;
     expect(codes(src)).toEqual([]);
+  });
+});
+
+// The selector half of the same wiring. `editable`'s renderer registers an
+// `input` listener and calls the tile's `onInput`, so `ui.input(Ed)` is a live
+// subscription — but the lift table listed only `input` / `textarea`, so
+// codegen emitted no handler and the checker reported a reason that was not
+// true: that the tile has no descendant which fires "input".
+describe("a ui.input selector reaches an editable", () => {
+  const source = (tile: string) => `slot note : Text = ""
+slot edits : Int = 0
+reducer edited on=ui.input(Ed) do= edits := edits + 1
+tile Ed = ${tile}
+tile App = column(Ed, text(edits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("says nothing about it", () => {
+    expect(codes(source("editable(bind=note)"))).toEqual([]);
+  });
+
+  it("emits the handler the subscription asked for", () => {
+    expect(build(source("editable(bind=note)"))).toContain('onInput: _h("edited")');
+  });
+
+  it("still reports a tile that fires no input event", () => {
+    // The control: without it, dropping the check entirely would pass the two
+    // above.
+    expect(codes(source("box(text(note))"))).toEqual(["W0212"]);
   });
 });

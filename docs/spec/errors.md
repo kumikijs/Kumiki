@@ -550,7 +550,7 @@ The allowed root builtins per event are (current toolchain coverage; the impleme
 | `click`  | `button`, `check`, `switch`, `radio` |
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
-| `input`  | `input`, `textarea` |
+| `input`  | `input`, `textarea`, `editable` |
 | `key`    | `input`, `textarea`, `button` |
 | `focus`  | `input`, `textarea`, `button`, `select` |
 | `blur`   | `input`, `textarea`, `button`, `select` |

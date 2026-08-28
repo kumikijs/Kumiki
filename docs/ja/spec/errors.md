@@ -537,7 +537,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | `click`  | `button`, `check`, `switch`, `radio` |
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
-| `input`  | `input`, `textarea` |
+| `input`  | `input`, `textarea`, `editable` |
 | `key`    | `input`, `textarea`, `button` |
 | `focus`  | `input`, `textarea`, `button`, `select` |
 | `blur`   | `input`, `textarea`, `button`, `select` |

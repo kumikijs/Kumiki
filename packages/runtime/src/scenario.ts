@@ -569,9 +569,18 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("fill" in a) {
-    const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(a.fill);
+    const el = root.querySelector<HTMLElement>(a.fill);
     if (!el) throw new Error(`no input matching selector ${a.fill}`);
-    el.value = a.value;
+    // An `editable` holds its text in `textContent`, which is what its
+    // renderer reads back — writing `value` on it would dispatch an `input`
+    // carrying the text the control had before the step. It fires no `change`
+    // either; the platform does not define one for a contenteditable.
+    if (el.getAttribute("contenteditable") !== null) {
+      el.textContent = a.value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    (el as HTMLInputElement | HTMLTextAreaElement).value = a.value;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return;
