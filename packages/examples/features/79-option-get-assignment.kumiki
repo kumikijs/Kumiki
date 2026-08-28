@@ -1,0 +1,53 @@
+# Feature (language.md §1.6.3): assignment through `.get` edits the payload of
+# a `Some` and leaves the tag alone, and the same write against a `None` is a
+# no-op rather than a panic. Both spellings are here — the reducer assignment
+# (`draft.get.title := …`) and the `bind=` path, which writes back through the
+# same setter.
+#
+# Note the asymmetry the spec draws: *assigning* through `.get` on a `None` is
+# safe, but *reading* one panics. `like` reads `draft.get.likes` on its right
+# hand side, so it is only dispatched while the draft exists.
+
+slot draft   : Option({title: Text, likes: Int}) = None
+slot touches : Int = 0
+
+reducer start on=ui.click(StartBtn) do= draft := Some({title: "untitled", likes: 0})
+reducer clear on=ui.click(ClearBtn) do= draft := None
+
+# Two writes in one batch. The `.get` one is skipped while `draft` is `None`;
+# the sibling slot still lands, because a skipped write is not a rejected one.
+reducer touch on=ui.click(TouchBtn)
+    do= draft.get.title := "touched"
+        touches := touches + 1
+
+reducer like on=ui.click(LikeBtn) do= draft.get.likes := draft.get.likes + 1
+
+tile StartBtn   = button(text="start")
+tile ClearBtn   = button(text="clear")
+tile TouchBtn   = button(text="touch")
+tile LikeBtn    = button(text="like")
+tile TitleInput = input(bind=draft.get.title, id="title")
+
+tile Editor
+    = column(
+        TitleInput,
+        LikeBtn,
+        text("title: " + draft.get.title),
+        text("likes: " + draft.get.likes.show))
+
+tile App
+    = column(
+        heading("assignment through .get"),
+        StartBtn,
+        ClearBtn,
+        TouchBtn,
+        text("touches: " + touches.show),
+        match draft with
+          | None    -> text("no draft")
+          | Some(_) -> Editor)
+      {pad: "lg", gap: "md"}
+
+app OptionGetAssignment
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

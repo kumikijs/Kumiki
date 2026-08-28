@@ -405,7 +405,9 @@ editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
 ```
 
-**Going via `.get` is safe**: assigning when the Option is `None` is a no-op (does not panic). If you want to explicitly panic, write `editor := Some(editor.get.copy(body="Body"))`.
+**Going via `.get` is safe**: assigning when the Option is `None` is a no-op (does not panic). If you want to explicitly panic, write `editor := Some(editor.get.copy(body="Body"))`. `.get` is the same polymorphic unwrap it is when read ([Standard Library §2.2.4](./stdlib.md#_2-2-4-option-t)), so a `Result` behaves alike: the write edits an `Ok` payload and skips an `Err`. Note that only the *assignment* is safe — a right-hand side that reads `editor.get` while the Option is `None` still panics.
+
+The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides of an assignment resolve `.get` the same way.
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 

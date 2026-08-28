@@ -70,7 +70,7 @@ export type TileNode = (
       kind: "input";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: string;
       type?: string;
       placeholder?: string;
@@ -84,7 +84,7 @@ export type TileNode = (
       kind: "textarea";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: string;
       rows?: number;
       placeholder?: string;
@@ -112,7 +112,7 @@ export type TileNode = (
       kind: "select";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: unknown;
       options?: Array<{ label: unknown; value: unknown }>;
       placeholder?: string;
@@ -155,7 +155,7 @@ export type TileNode = (
       kind: "slider";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: number;
       min?: number;
       max?: number;
@@ -194,7 +194,7 @@ export type TileNode = (
       text: string;
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       id?: string;
     }
 ) & {
@@ -2673,12 +2673,54 @@ function elementAtPath(path: number[], root: Element): Element | null {
   return cur;
 }
 
-/** Immutably set a (possibly nested) field path on a record — used by `bind=`. */
-export function _setPathHelper(obj: unknown, path: string[], value: unknown): unknown {
-  if (path.length === 0) return value;
-  const [head, ...rest] = path;
+/**
+ * One segment of a write path. A string is a record field or a container key;
+ * `{get: true}` is `.get`, the polymorphic unwrap — encoded as data rather
+ * than as a closure because a `bind=` path travels to the client as JSON
+ * inside the TileNode.
+ */
+export type BindSegment = string | { get: true };
+
+/**
+ * Immutably set a (possibly nested) path on a value. Shared by `bind=`
+ * write-back and by the assignment a reducer lowers to, so the two ways to
+ * write a slot cannot disagree about what a path means.
+ *
+ * At a `.get` segment this mirrors `_stdlibCore.unwrap` (stdlib.md §2.2) with
+ * one deliberate difference: reading `.get` on a `None` panics, and writing
+ * through one is a no-op (language.md §1.6.3). The no-op returns the value
+ * itself, so a slot whose write was skipped keeps its identity too.
+ */
+export function _setPathHelper(
+  obj: unknown,
+  path: readonly BindSegment[],
+  value: unknown,
+): unknown {
+  const head = path[0];
+  if (head === undefined) return value;
+  const rest = path.slice(1);
+  if (typeof head === "object") {
+    if (obj && typeof obj === "object" && "_tag" in obj) {
+      const o = obj as { _tag: string; _0?: unknown };
+      if (o._tag === "None" || o._tag === "Err") return obj;
+      return { ...o, _0: _setPathHelper(o._0, rest, value) };
+    }
+    // A plain value is its own payload, the way `unwrap` passes one through.
+    return _setPathHelper(obj, rest, value);
+  }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
-  return { ...cur, [head!]: _setPathHelper(cur[head!], rest, value) };
+  return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };
+}
+
+/**
+ * The source spelling of a `bind=` target — `draft.get.title`. Used for the
+ * `data-kumiki-bind` marker, the reconcile identity key, and the served
+ * markup, which all need the path as one string and none of which should have
+ * to know how a segment is encoded.
+ */
+export function bindLabel(bind: string, path?: readonly BindSegment[]): string {
+  if (!path || path.length === 0) return bind;
+  return [bind, ...path.map((seg) => (typeof seg === "string" ? seg : "get"))].join(".");
 }
 
 /**
@@ -3934,7 +3976,7 @@ function tileTouchedId(node: TileNode): string {
   if (typeof asBindable.bind === "string") {
     const bind = asBindable.bind;
     if (Array.isArray(asBindable.bindPath) && asBindable.bindPath.length > 0) {
-      return `${bind}.${(asBindable.bindPath as string[]).join(".")}`;
+      return bindLabel(bind, asBindable.bindPath as BindSegment[]);
     }
     return bind;
   }

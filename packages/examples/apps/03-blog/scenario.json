@@ -77,6 +77,16 @@
       }
     },
     {
+      "label": "typing in the editor edits the payload of the Some — this used to grow a sibling field named get, so the form showed the old title back",
+      "do": { "fill": "#title", "value": "Keys and identity, revised" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "editor": { "_tag": "Some", "_0": { "title": "Keys and identity, revised" } }
+        }
+      }
+    },
+    {
       "label": "saving reads the id off the route, so the put carries the post's own id and the reply lands under it",
       "do": { "clickText": "Save" },
       "expect": {

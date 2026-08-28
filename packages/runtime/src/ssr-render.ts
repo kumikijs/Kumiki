@@ -14,7 +14,7 @@
 // drift the parity test exists to catch.
 
 import type { StyleDecl, TileNode, TileProps } from "./core.ts";
-import { attrValue, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
+import { attrValue, bindLabel, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 
@@ -313,7 +313,7 @@ export function renderTileToString(node: TileNode): string {
     }
     case "input": {
       const bind = node.bindPath
-        ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
+        ? bindLabel(node.bind ?? "", node.bindPath)
         : (node.bind ?? undefined);
       return el(
         node,
@@ -335,7 +335,7 @@ export function renderTileToString(node: TileNode): string {
     }
     case "textarea": {
       const bind = node.bindPath
-        ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
+        ? bindLabel(node.bind ?? "", node.bindPath)
         : (node.bind ?? undefined);
       return el(
         node,
@@ -385,7 +385,7 @@ export function renderTileToString(node: TileNode): string {
     }
     case "select": {
       const bind = node.bindPath
-        ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
+        ? bindLabel(node.bind ?? "", node.bindPath)
         : (node.bind ?? undefined);
       const opts = (node.options ?? [])
         .map(
@@ -411,7 +411,7 @@ export function renderTileToString(node: TileNode): string {
     }
     case "slider": {
       const bind = node.bindPath
-        ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
+        ? bindLabel(node.bind ?? "", node.bindPath)
         : (node.bind ?? undefined);
       return el(
         node,
@@ -634,7 +634,7 @@ export function renderTileToString(node: TileNode): string {
       // textarea. The initial text is escaped verbatim; caret / selection
       // state is a client-only concern.
       const bind = node.bindPath
-        ? `${node.bind ?? ""}.${node.bindPath.join(".")}`
+        ? bindLabel(node.bind ?? "", node.bindPath)
         : (node.bind ?? undefined);
       return el(
         node,

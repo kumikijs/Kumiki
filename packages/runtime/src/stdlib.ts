@@ -5,6 +5,8 @@
 // never ships the test runners.
 
 import {
+  _setPathHelper,
+  type BindSegment,
   isPanic,
   KumikiPanic,
   panicInfo,
@@ -314,6 +316,14 @@ export const _stdlibCore = {
       if (o._tag === "Err") throw new KumikiPanic("get called on an Err value");
     }
     return opt;
+  },
+  /**
+   * The setter a reducer's assignment lowers to. Shares its implementation
+   * with `bind=` write-back, so `draft.get.title := v` and
+   * `bind=draft.get.title` mean the same thing.
+   */
+  setPath(obj: unknown, path: readonly BindSegment[], value: unknown): unknown {
+    return _setPathHelper(obj, path, value);
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */
   panic(message: unknown): never {

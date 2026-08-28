@@ -1652,9 +1652,22 @@ function lvalueRoot(lv: Lvalue): string {
   return lv.name;
 }
 
+/** `.get` unwraps the payload of these, on the write side as on the read side. */
+const OPTIONAL_CONTAINERS = new Set(["Option", "Result"]);
+
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
   if (lv.kind === "LIndex") checkExpr(lv.index, sym, errors, ctx);
+  else {
+    // Record the same decision `checkFieldAccess` records for a read, so
+    // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
+    // the base type is unknown — the name-based reading then stands.
+    const base = unaliasType(lvalueType(lv.base, sym), sym);
+    if (base) {
+      lv.accessKind =
+        base.kind === "TypeRecord" && recordFieldType(base, lv.field) ? "field" : "shortcut";
+    }
+  }
   checkLvalue(lv.base, sym, errors, ctx);
 }
 
@@ -2552,7 +2565,13 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
   const base = unaliasType(lvalueType(lv.base, sym), sym);
   if (!base) return null;
   if (lv.kind === "LField") {
-    return base.kind === "TypeRecord" ? recordFieldType(base, lv.field) : null;
+    // A record's own field wins over the shortcut name (stdlib.md §2.2), which
+    // is what keeps `get` writable as a field on a record that declares one.
+    if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
+    if (lv.field === "get" && base.kind === "TypeApp" && OPTIONAL_CONTAINERS.has(base.name)) {
+      return base.args[0] ?? null;
+    }
+    return null;
   }
   if (base.kind === "TypeApp") {
     if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
