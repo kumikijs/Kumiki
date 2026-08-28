@@ -339,7 +339,7 @@ export const _stdlibCore = {
    */
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
-    const rec = panicInfo(e, "render");
+    const rec = panicInfo(e, "tile-render");
     return { message: rec.message, location, category: rec.category };
   },
   optionGetOr(opt: unknown, def: unknown): unknown {

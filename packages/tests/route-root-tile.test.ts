@@ -215,7 +215,7 @@ tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
 tile Host = column(Boom())
 app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
 `);
-    expect(root.textContent).toContain("m=get called on None at=Boom cat=render");
+    expect(root.textContent).toContain("m=get called on None at=Boom cat=tile-render");
   });
 
   it("keeps an empty panic message empty", async () => {
