@@ -137,6 +137,25 @@ describe("typecheck", () => {
     expect(errors.some((e) => e.code === "E0105" && e.message.includes("Ghost"))).toBe(true);
   });
 
+  it("reports an error-boundary that names no tile (E0105)", () => {
+    // The only tile-name position nothing used to resolve. The lowering
+    // skipped a name it could not find, so a misspelling produced a tile with
+    // no boundary, no diagnostic, and no sign until something panicked.
+    const src = `
+      tile Fallback in=PanicInfo = column(text($1.message))
+      tile A error-boundary=Nope = column()
+      app App caps=[] routes={"/" -> A, "/404" -> A} init=[]
+    `;
+    const errors = checkSrc(src);
+    const found = errors.filter((e) => e.code === "E0105");
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toBe('Tile "A" declares error-boundary "Nope", which is not a tile');
+    // Reported at the clause rather than at the definition, so a tile with
+    // several of them is not ambiguous.
+    expect(found[0]?.pos.line).toBe(3);
+    expect(checkSrc(src.replace("Nope", "Fallback"))).toEqual([]);
+  });
+
   it("reports duplicate slot writes in one reducer (E0601)", () => {
     const src = `
       slot count : Int = 0

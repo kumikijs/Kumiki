@@ -4,7 +4,14 @@
 // into the classic `_stdlib` export by `index.ts`, so `kumiki build` output
 // never ships the test runners.
 
-import { KumikiPanic, type RefinementRejection, refinementRejectionOf, tokenRef } from "./core.ts";
+import {
+  isPanic,
+  KumikiPanic,
+  panicInfo,
+  type RefinementRejection,
+  refinementRejectionOf,
+  tokenRef,
+} from "./core.ts";
 
 /**
  * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
@@ -311,6 +318,29 @@ export const _stdlibCore = {
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */
   panic(message: unknown): never {
     throw new KumikiPanic(String(message));
+  },
+  /**
+   * What a tile's `error-boundary` hands its fallback — and what it refuses to
+   * take (lifecycle.md §7.3).
+   *
+   * A boundary catches a **panic**: the controlled signal §7.2.2 defines, which
+   * `panic(message)` and the polymorphic `.get` raise. Anything else reaching
+   * the `catch` is a defect in the generated code or in the runtime — a
+   * `ReferenceError` from a binding nothing supplied, `_wk`'s deliberate throw
+   * on a key that would collapse two tiles onto one identity — and a fallback
+   * that swallowed one would turn a failure into a rendered page: `smoke` and
+   * `scenario` verify through the error channel, so the defect would leave no
+   * trace at all. Those are re-thrown for the render bailout to report.
+   *
+   * The payload is the shape `app.error` already receives (`handleLivePanic`),
+   * built by the same `panicInfo`, so the two ways a panic reaches a program
+   * agree — and so an empty message stays empty instead of stringifying the
+   * error object.
+   */
+  boundaryPanic(e: unknown, location: string): Record<string, unknown> {
+    if (!isPanic(e)) throw e;
+    const rec = panicInfo(e, "tile-render");
+    return { message: rec.message, location, category: rec.category };
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {

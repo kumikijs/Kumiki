@@ -36,7 +36,7 @@ import { genFn } from "./codegen/emit-fn.ts";
 import { genReducer } from "./codegen/emit-reducer.ts";
 import { emitSlots } from "./codegen/emit-slot.ts";
 import { coverageJs, genTest } from "./codegen/emit-test.ts";
-import { genTile } from "./codegen/emit-tile.ts";
+import { genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
 
 export type CodegenOptions = {
@@ -198,7 +198,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
       const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
       if (tile.subRoutes && tile.subRoutes.length > 0) {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr}, subRoutes: [`,
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx)}${sr}, subRoutes: [`,
         );
         for (const subR of tile.subRoutes) {
           if (subR.tile.startsWith(">>")) {
@@ -213,14 +213,14 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
               );
             const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
             lines.push(
-              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genTile(childTile, ctx)}${csr} },`,
+              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genRouteTile(childTile, ctx)}${csr} },`,
             );
           }
         }
         lines.push(`  ] },`);
       } else {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr} },`,
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx)}${sr} },`,
         );
       }
     }
