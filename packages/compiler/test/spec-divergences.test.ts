@@ -380,6 +380,23 @@ app A
     );
   });
 
+  it("checks the value being written against the payload's field type", () => {
+    // Walking the type through `.get` is what makes the write's right-hand
+    // side checkable at all: the target used to resolve to nothing, so
+    // `checkAgainst` had no expectation to compare with.
+    const src = `slot draft : Option({title: Text}) = None
+reducer bad on=app.start do= draft.get.title := 3
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = check(parse(lex(src)));
+    expect(errors.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errors[0]?.message).toBe("Expected Text but got Int");
+  });
+
   it("keeps the name-based reading when codegen runs without check", () => {
     // The same back-compat the read side documents: absent an annotation,
     // `.get` is the unwrap. Two sides agreeing wrongly still beats them
