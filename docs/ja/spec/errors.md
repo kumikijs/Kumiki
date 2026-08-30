@@ -56,6 +56,7 @@ type KumikiError = {
 | `E0211` | あり | セレクタの対象について、宣言済み tile 名に対する近傍名の提案。 |
 | `E0216` | あり | 宣言された union の variant タグに対する近傍名の提案。解決方法はパターン側の E0209 と同じ。 |
 | `E0119` | あり | 報告位置の `$route` を `route` に書き換える — slot が現在のルートを保持し、どの reducer からも読める。 |
+| `E0121` | なし | 代わりの名前を選び、body 内のすべての読みを書き換えるのは作者の意図であり、静的修復の外。 |
 | `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
@@ -365,6 +366,18 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 この検査がないと、引数は `_live["route"]` に落ちて `undefined` を捕捉する。`init = [load(route.path)]` は綺麗にコンパイルが通り、マウント時に `Cannot read properties of undefined (reading 'path')` を投げる — アプリは一度も描画されない。`$route` は同じ穴の裏側で、ここでは何もそれを束縛せず、[E0119](#e0119-route-bind-out-of-scope) の助言はこの検査が弾く `route` の綴りへ作者を送り込んでしまう。
 
 **修正**：`route.enter` reducer 側でルートを受け取る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。ランタイムはアプリが着地したルートで reducer を適用する。ルートを必要としない `init` エントリはそのままでよい。
+
+### E0121 `reserved-bind-name`
+
+`effect-event` のトリガがペイロードの positional を `$el` / `$event` / `$route` に束縛している。この3つはランタイムが reducer 適用のたびに埋める [positional binding](./language.md#_1-6-5-positional-binding) であってプログラムが取れる名前ではない — body はランタイム側の値を読むことになり、束縛のほうはトリガが約束したペイロードを置く先を失う。
+
+> `"<name>" is a positional binding the runtime fills in on every reducer application, so an effect payload cannot be bound to it — the body would read the runtime's value and never this payload. Rename the bind`
+
+この検査がないと、reducer は同じ `const` を二度宣言する body に落ちる。モジュール全体がロード時に `SyntaxError: Identifier '<name>' has already been declared` を投げ、アプリは一度も描画されない — `check` も `build` も、出力されたソースの見た目も綺麗なままで。`$1` は報告されない（番号付きの束縛はペイロード自身のもので、他に宣言する者がいない）。`$now` も同様で、reducer のペイロードはそれを持たない。
+
+`$route` はこれだけを報告する。束縛は依然として reducer のスコープに入るので、body の読みはトリガのスコープ外のペイロードフィールドではなくその束縛に解決される — さもなければ [E0119](#e0119-route-bind-out-of-scope) が読みのたびに発火し、作者が自分で付けた名前について `route` slot へ誘導してしまう。
+
+**修正**：束縛の名前を変える。
 
 ## E02xx — 型
 

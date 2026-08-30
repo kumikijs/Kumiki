@@ -1,5 +1,6 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { assertNever } from "../ast.ts";
+import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
@@ -200,8 +201,9 @@ export function scanRunReducers(e: Expr | undefined, cb: (name: string) => void)
 }
 
 export function genReducer(r: ReducerDef, gen: GenCtx): string {
-  const locals = new Set<string>(["$el", "$event", "$route"]);
-  if (r.on.kind === "EffectEvent") for (const b of r.on.binds) if (b !== "_") locals.add(b);
+  const locals = new Set<string>(RESERVED_BIND_NAMES.keys());
+  if (r.on.kind === "EffectEvent")
+    for (const b of r.on.binds) if (b.name !== "_") locals.add(b.name);
   const ctx = makeEvalCtx(gen, locals, true);
 
   // event descriptor
@@ -228,14 +230,16 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
   // bind payload positional args. For effect events, $1, $2, etc. are payload props.
   if (r.on.kind === "EffectEvent") {
     for (let i = 0; i < r.on.binds.length; i++) {
-      const name = r.on.binds[i]!;
+      const name = r.on.binds[i]!.name;
       if (name === "_") continue;
       stmtLines.push(`const ${jsBinding(name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
     }
   }
-  stmtLines.push(`const ${jsBinding("$el")} = _payload.$el || {};`);
-  stmtLines.push(`const ${jsBinding("$event")} = _payload.$event || _payload || {};`);
-  stmtLines.push(`const ${jsBinding("$route")} = _payload.$route || {};`);
+  // Seeded from the table the checker reserves, so a bind can never collide
+  // with one of these declarations (E0121).
+  for (const [name, seed] of RESERVED_BIND_NAMES) {
+    stmtLines.push(`const ${jsBinding(name)} = ${seed};`);
+  }
 
   for (const st of r.do) stmtLines.push(genStatement(st, ctx));
 

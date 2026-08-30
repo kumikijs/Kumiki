@@ -312,7 +312,12 @@ export type EventPattern =
       kind: "EffectEvent";
       effect: string;
       outcome: "ok" | "err";
-      binds: string[];
+      /**
+       * The payload positionals this trigger binds, in order, each with the
+       * token it was written at — a bind that cannot be honoured is reported
+       * where the author wrote the name rather than at the effect it follows.
+       */
+      binds: { name: string; pos: Pos }[];
       /**
        * Where the effect name sits. Always the same token as `pos` here — the
        * pattern starts at the name — and named separately because that is a

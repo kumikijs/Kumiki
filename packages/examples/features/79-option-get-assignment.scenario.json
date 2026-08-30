@@ -23,7 +23,10 @@
       "do": { "clickText": "touch" },
       "expect": {
         "noErrors": true,
-        "state": { "draft": { "_tag": "Some", "_0": { "title": "touched", "likes": 0 } }, "touches": 2 },
+        "state": {
+          "draft": { "_tag": "Some", "_0": { "title": "touched", "likes": 0 } },
+          "touches": 2
+        },
         "domIncludes": ["title: touched"]
       }
     },

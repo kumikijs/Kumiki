@@ -50,6 +50,7 @@ import {
 } from "./codegen.ts";
 import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
+import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
@@ -1452,7 +1453,25 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
-    for (const b of r.on.binds) if (b !== "_") ctx.localBinds.add(b);
+    for (const b of r.on.binds) {
+      if (b.name === "_") continue;
+      // §1.6.5 — the positional bindings belong to the runtime. A bind that
+      // takes one still enters the scope: the body's reads are then that
+      // binding, which keeps this the one report rather than the first of two
+      // (a `$route` bind would otherwise also collect E0119 on every read).
+      if (RESERVED_BIND_NAMES.has(b.name)) {
+        errors.push({
+          code: "E0121",
+          kind: "reserved-bind-name",
+          message:
+            `"${b.name}" is a positional binding the runtime fills in on every reducer ` +
+            `application, so an effect payload cannot be bound to it — the body would read ` +
+            `the runtime's value and never this payload. Rename the bind`,
+          pos: b.pos,
+        });
+      }
+      ctx.localBinds.add(b.name);
+    }
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
     if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {
