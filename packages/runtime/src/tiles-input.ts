@@ -25,6 +25,8 @@ import type {
 import {
   _setPathHelper,
   attrValue,
+  type BindSegment,
+  bindLabel,
   ensureAnimationStyles,
   resolveApp,
   warnUnresolvedEvent,
@@ -40,7 +42,7 @@ function liveApp(el: Element): MountedApp | undefined {
 function writeBind(
   app: MountedApp,
   slotName: string,
-  bindPath: string[] | undefined,
+  bindPath: BindSegment[] | undefined,
   value: unknown,
 ): void {
   if (bindPath && bindPath.length > 0) {
@@ -51,9 +53,8 @@ function writeBind(
   }
 }
 
-function bindDataset(el: HTMLElement, bind: string, bindPath: string[] | undefined): void {
-  const fullPath = bindPath && bindPath.length > 0 ? `${bind}.${bindPath.join(".")}` : bind;
-  el.dataset.kumikiBind = fullPath;
+function bindDataset(el: HTMLElement, bind: string, bindPath: BindSegment[] | undefined): void {
+  el.dataset.kumikiBind = bindLabel(bind, bindPath);
 }
 
 /** Clear a bind marker set by a previous render whose new node dropped `bind`. */
@@ -80,7 +81,7 @@ function tileId(node: { id?: unknown; props?: unknown }): string | undefined {
 // require holding a listener reference on the element).
 type InputHandlers = {
   bind?: string;
-  bindPath?: string[];
+  bindPath?: BindSegment[];
   onInput?: EventHandler;
   onChange?: EventHandler;
   onClick?: EventHandler;
@@ -121,7 +122,7 @@ function setHandlers(el: HTMLElement, next: InputHandlers): void {
 
 function inputHandlers(node: {
   bind?: string;
-  bindPath?: string[];
+  bindPath?: BindSegment[];
   props?: TileProps;
 }): InputHandlers {
   // Build only with defined fields — `exactOptionalPropertyTypes: true` in
@@ -609,7 +610,7 @@ export const inputTiles: TileRenderers = {
 // dispatches to the *current* render's onSubmit closure.
 function formHandlers(node: {
   bind?: string;
-  bindPath?: string[];
+  bindPath?: BindSegment[];
   props?: TileProps;
 }): InputHandlers {
   const h: InputHandlers = inputHandlers(node);

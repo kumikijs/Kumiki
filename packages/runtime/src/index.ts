@@ -32,10 +32,13 @@ import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
 export {
+  _setPathHelper,
   type AppShape,
   applyContainerProps,
   applyTextProps,
+  type BindSegment,
   type BuiltinInstaller,
+  bindLabel,
   type CapabilityProvider,
   type CapabilityRegistry,
   currentTheme,
@@ -56,6 +59,7 @@ export {
   type PanicCauseLink,
   type PanicRecord,
   type ParsedRoute,
+  type PathSegment,
   panicInfo,
   type ReconcileFallback,
   type ReconcileFallbackReason,

@@ -70,7 +70,7 @@ export type TileNode = (
       kind: "input";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: string;
       type?: string;
       placeholder?: string;
@@ -84,7 +84,7 @@ export type TileNode = (
       kind: "textarea";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: string;
       rows?: number;
       placeholder?: string;
@@ -112,7 +112,7 @@ export type TileNode = (
       kind: "select";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: unknown;
       options?: Array<{ label: unknown; value: unknown }>;
       placeholder?: string;
@@ -155,7 +155,7 @@ export type TileNode = (
       kind: "slider";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: number;
       min?: number;
       max?: number;
@@ -194,7 +194,7 @@ export type TileNode = (
       text: string;
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       id?: string;
     }
 ) & {
@@ -2673,12 +2673,71 @@ function elementAtPath(path: number[], root: Element): Element | null {
   return cur;
 }
 
-/** Immutably set a (possibly nested) field path on a record — used by `bind=`. */
-export function _setPathHelper(obj: unknown, path: string[], value: unknown): unknown {
+/**
+ * One segment of a write path. A string or number is a record field or a
+ * container key; `{get: true}` is `.get`, the polymorphic unwrap — encoded as
+ * data rather than as a closure because a `bind=` path travels to the client
+ * as JSON inside the TileNode.
+ *
+ * A reducer's assignment can index by an arbitrary expression, so the numeric
+ * (and, at runtime, any) case is reachable there. `bind=` resolves only static
+ * field chains, which is why its own alphabet is narrower.
+ */
+export type PathSegment = string | number | { get: true };
+
+/** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
+export type BindSegment = Extract<PathSegment, string | { get: true }>;
+
+/** `{get: true}` and nothing else. An index that happens to evaluate to an
+ * object is a key, not an unwrap. */
+function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
+  return typeof seg === "object" && seg !== null && seg.get === true;
+}
+
+/**
+ * Immutably set a (possibly nested) path on a value. Shared by `bind=`
+ * write-back and by the assignment a reducer lowers to, so the two ways to
+ * write a slot cannot disagree about what a path means.
+ *
+ * A `.get` segment mirrors `_stdlibCore.unwrap` (stdlib.md §2.2) — `Some` /
+ * `Ok` reach the payload, any other variant and any plain value pass straight
+ * through — with the one difference language.md §1.6.3 states: writing through
+ * an empty value (`None` / `Err`) is a no-op rather than a panic.
+ */
+export function _setPathHelper(
+  obj: unknown,
+  path: readonly PathSegment[],
+  value: unknown,
+): unknown {
+  // On `path.length`, not on the head: an index segment is whatever its
+  // expression evaluated to, and an `undefined` one read as "path exhausted"
+  // would put `value` where the whole slot was.
   if (path.length === 0) return value;
-  const [head, ...rest] = path;
+  const head = path[0] as PathSegment;
+  const rest = path.slice(1);
+  if (isUnwrapSegment(head)) {
+    if (obj && typeof obj === "object" && "_tag" in obj) {
+      const o = obj as { _tag: string; _0?: unknown };
+      if (o._tag === "None" || o._tag === "Err") return obj;
+      if (o._tag === "Some" || o._tag === "Ok") {
+        return { ...o, _0: _setPathHelper(o._0, rest, value) };
+      }
+    }
+    return _setPathHelper(obj, rest, value);
+  }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
-  return { ...cur, [head!]: _setPathHelper(cur[head!], rest, value) };
+  return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };
+}
+
+/**
+ * The source spelling of a `bind=` target — `draft.get.title`. Written into
+ * the `data-kumiki-bind` marker by both renderers, and used as the id
+ * `tileTouchedId` reports on an episode's `signal-update.binds-updated`. One
+ * formatter, so none of those has to know how a segment is encoded.
+ */
+export function bindLabel(bind: string, path?: readonly BindSegment[]): string {
+  if (!path || path.length === 0) return bind;
+  return [bind, ...path.map((seg) => (typeof seg === "string" ? seg : "get"))].join(".");
 }
 
 /**
@@ -3934,7 +3993,7 @@ function tileTouchedId(node: TileNode): string {
   if (typeof asBindable.bind === "string") {
     const bind = asBindable.bind;
     if (Array.isArray(asBindable.bindPath) && asBindable.bindPath.length > 0) {
-      return `${bind}.${(asBindable.bindPath as string[]).join(".")}`;
+      return bindLabel(bind, asBindable.bindPath as BindSegment[]);
     }
     return bind;
   }

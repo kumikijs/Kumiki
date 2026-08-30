@@ -3,6 +3,7 @@ import { assertNever } from "../ast.ts";
 import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
+import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 /**
  * Wrap a write to `slot` so the refinement is checked *as it happens*
@@ -337,11 +338,20 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   // Build update for nested lvalue.
   // The root slot name + path → produce a new object.
   const root = lvalueRootName(lv);
-  const path: ({ kind: "field"; name: string } | { kind: "index"; expr: Expr })[] = [];
+  const path: (
+    | { kind: "field"; name: string }
+    | { kind: "unwrap" }
+    | { kind: "index"; expr: Expr }
+  )[] = [];
   let cur: Lvalue = lv;
   while (cur.kind !== "LSlot") {
-    if (cur.kind === "LField") path.unshift({ kind: "field", name: cur.field });
-    else path.unshift({ kind: "index", expr: cur.index });
+    if (cur.kind === "LField") {
+      path.unshift(
+        isUnwrapStep(cur.field, cur.accessKind)
+          ? { kind: "unwrap" }
+          : { kind: "field", name: cur.field },
+      );
+    } else path.unshift({ kind: "index", expr: cur.index });
     cur = cur.base;
   }
   // Generate an inline `setPath(root, path, value)` expression. Inside a reducer
@@ -354,9 +364,11 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   let pathExpr = "";
   for (const seg of path) {
     if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
+    else if (seg.kind === "unwrap") pathExpr += `, ${JSON.stringify(UNWRAP_SEGMENT)}`;
     else pathExpr += `, ${jsOfExpr(seg.expr, ctx)}`;
   }
-  const updated = `_setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
+  // The runtime's setter, which `bind=` write-back also calls.
+  const updated = `_s.setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
   return `_next[${JSON.stringify(root)}] = ${slotWriteJs(root, updated, ctx.gen)};`;
 }
 

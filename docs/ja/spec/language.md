@@ -401,7 +401,11 @@ editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
 ```
 
-**`.get` 経由は安全**: Option が `None` のときの代入は no-op（panic しない）。明示的に panic させたい場合は `editor := Some(editor.get.copy(body="Body"))` と書く。
+**`.get` 経由は安全**: Option が `None` のときの代入は no-op（panic しない）。明示的に panic させたい場合は `editor := Some(editor.get.copy(body="Body"))` と書く。`.get` は読み取り時と同じ多相 unwrap（[標準ライブラリ §2.2.4](./stdlib.md#_2-2-4-option-t)）であり、`Result` も同様に振る舞う — `Ok` の payload を書き換え、`Err` は素通りする。安全なのは*代入*だけである点に注意: 右辺が `None` の `editor.get` を読めば従来どおり panic する。
+
+この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
+
+`bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させること。
 
 **`.copy(field=value, ...)`**: record の immutable update を行うショートカット。method 呼び出しに見えるが、内部的には named-arg を集めて `recordCopy(rec, {field: value, ...})` に展開される。複数 field を 1 度に更新できる：
 

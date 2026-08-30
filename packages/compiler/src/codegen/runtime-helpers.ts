@@ -1,10 +1,4 @@
 export const RUNTIME_HELPERS = `
-function _setPath(obj, path, value) {
-  if (path.length === 0) return value;
-  const [head, ...rest] = path;
-  const cur = obj ?? {};
-  return { ...cur, [head]: _setPath(cur[head], rest, value) };
-}
 function _children(...xs) {
   const out = [];
   for (const x of xs) {

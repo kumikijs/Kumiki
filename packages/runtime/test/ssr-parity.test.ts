@@ -155,6 +155,13 @@ const NODES: [string, TileNode][] = [
   ["skeleton", { kind: "skeleton" }],
   ["skeleton (h)", { kind: "skeleton", props: { h: 120 } }],
   ["progress", { kind: "progress", value: 3, max: 10 }],
+  // `data-kumiki-bind` is the one attribute built from a path rather than
+  // copied from a field, and a `.get` segment is not a string — so the two
+  // renderers agree only as long as both go through `bindLabel`.
+  [
+    "input (bind through .get)",
+    { kind: "input", value: "v", bind: "draft", bindPath: [{ get: true }, "title"] },
+  ],
 ];
 
 describe("the server pass renders what the client renders", () => {

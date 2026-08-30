@@ -339,3 +339,87 @@ app A
     expect(codes(source("box(text(note))"))).toEqual(["W0212"]);
   });
 });
+
+// language.md §1.6.3: "Going via `.get` is safe: assigning when the Option is
+// `None` is a no-op". The lvalue was flattened into a plain field path, so the
+// write landed on a sibling field named `get` and never reached the payload.
+// The read side lowers `.get` through the polymorphic unwrap, and the write
+// side has to make the same call — including for the case that makes it a
+// call rather than a keyword: a record whose field is literally `get`.
+describe("assignment through .get is an unwrap, not a field named get", () => {
+  const source = (decl: string) => `slot draft : ${decl}
+reducer edit on=app.start do= draft.get.title := "b"
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /**
+   * `check` writes the dispatch decision onto the AST, so anything asking
+   * which way a segment resolved has to run it. `build` alone reaches codegen
+   * with no annotation at all, which is a different question — the last test
+   * here is the one that asks it.
+   */
+  function buildChecked(src: string): string {
+    const program = parse(lex(src));
+    check(program);
+    return codegen(program, { runtimeSpecifier: "./runtime.js" }).js;
+  }
+
+  it("lowers the segment as an unwrap when the receiver is an Option", () => {
+    expect(buildChecked(source("Option({title: Text}) = None"))).toContain(
+      '[{"get":true}, "title"]',
+    );
+  });
+
+  it("lowers it as a field when the receiver is a record that has one", () => {
+    expect(buildChecked(source('{get: {title: Text}} = {get: {title: "a"}}'))).toContain(
+      '["get", "title"]',
+    );
+  });
+
+  it("checks the value being written against the payload's field type", () => {
+    // Walking the type through `.get` is what makes the write's right-hand
+    // side checkable at all: the target used to resolve to nothing, so
+    // `checkAgainst` had no expectation to compare with.
+    const src = `slot draft : Option({title: Text}) = None
+reducer bad on=app.start do= draft.get.title := 3
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = check(parse(lex(src)));
+    expect(errors.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errors[0]?.message).toBe("Expected Text but got Int");
+  });
+
+  it("reports a member the record does not have, as the read side does", () => {
+    // `rec.get.title := v` on a record with no `get` field used to be accepted
+    // and to land on `rec.title` — the same sibling-key defect under another
+    // name. The read side has always called it E0108.
+    const src = `slot rec : {title: Text} = {title: "a"}
+reducer bad on=app.start do= rec.get.title := "x"
+tile App = column(text(rec.title))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = check(parse(lex(src)));
+    expect(errors.map((e) => e.code)).toEqual(["E0108"]);
+    expect(errors[0]?.message).toBe('Record type has no field or method ".get"');
+  });
+
+  it("keeps the name-based reading when codegen runs without check", () => {
+    // The same back-compat the read side documents: absent an annotation,
+    // `.get` is the unwrap. Two sides agreeing wrongly still beats them
+    // disagreeing, which is what produced the sibling field.
+    expect(build(source('{get: {title: Text}} = {get: {title: "a"}}'))).toContain(
+      '[{"get":true}, "title"]',
+    );
+  });
+});

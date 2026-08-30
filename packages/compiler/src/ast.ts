@@ -375,7 +375,20 @@ export type Statement =
 export type Lvalue =
   | { kind: "LSlot"; name: string; pos: Pos }
   | { kind: "LIndex"; base: Lvalue; index: Expr; pos: Pos }
-  | { kind: "LField"; base: Lvalue; field: string; pos: Pos };
+  | {
+      kind: "LField";
+      base: Lvalue;
+      field: string;
+      pos: Pos;
+      /**
+       * The same dispatch decision `FieldAccess` carries, for the write side:
+       * `"field"` means the base is a record that has this field, so the
+       * segment is a plain key. Absent means the base type is unknown — also
+       * the case when codegen runs without `check()` — and keeps the
+       * name-based reading, under which `.get` is the unwrap.
+       */
+      accessKind?: "field" | "shortcut";
+    };
 
 // ----- Expressions -----
 

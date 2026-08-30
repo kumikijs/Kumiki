@@ -3,6 +3,7 @@ import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import { addBind, type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, tupleArm } from "./expr.ts";
+import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 import { keyFor, propsFor } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
@@ -130,29 +131,33 @@ export function tileExprJs(
 }
 
 /**
- * For `bind=draft` or `bind=draft.title.deeper`, extract the root slot name,
- * the static path (string field names), and a JS expression to read the value.
+ * For `bind=draft` or `bind=draft.get.title`, extract the root slot name, the
+ * static path, and a JS expression to read the value.
  * Only static field-access paths are supported (no Index, no dynamic lookups).
  * Returns null if no `bind=` arg exists or the path isn't statically resolvable.
  */
 export function extractBindPath(
   args: { name?: string; value: unknown }[],
-): { root: string; path: string[]; readJs: string; readJsRaw: string } | null {
+): { root: string; path: BindSegment[]; readJs: string; readJsRaw: string } | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
   let cur = bindArg.value as Expr;
-  const reverseSegments: string[] = [];
+  const reverseSegments: BindSegment[] = [];
   while (cur.kind === "FieldAccess") {
-    reverseSegments.push((cur as Expr & { field: string }).field);
+    const fa = cur as Expr & { field: string; accessKind?: "field" | "shortcut" };
+    reverseSegments.push(isUnwrapStep(fa.field, fa.accessKind) ? UNWRAP_SEGMENT : fa.field);
     cur = (cur as Expr & { base: Expr }).base;
   }
   if (cur.kind !== "Ref") return null;
   const root = (cur as Expr & { name: string }).name;
   const path = reverseSegments.reverse();
-  // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...` then unwrap.
+  // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...`.
   let readRaw = `_live[${JSON.stringify(root)}]`;
   for (const seg of path) {
-    readRaw = `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`;
+    readRaw =
+      typeof seg === "string"
+        ? `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`
+        : `_s.unwrap(${readRaw})`;
   }
   return { root, path, readJs: readRaw, readJsRaw: readRaw };
 }

@@ -1,0 +1,58 @@
+{
+  "steps": [
+    {
+      "label": "no draft yet",
+      "expect": { "noErrors": true, "state": { "draft": { "_tag": "None" } } }
+    },
+    {
+      "label": "writing through .get on a None changes nothing and panics on nothing — and the sibling write in the same batch still commits",
+      "do": { "clickText": "touch" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "_tag": "None" }, "touches": 1 },
+        "domIncludes": ["no draft", "touches: 1"]
+      }
+    },
+    {
+      "label": "start the draft",
+      "do": { "clickText": "start" },
+      "expect": { "noErrors": true, "domIncludes": ["title: untitled", "likes: 0"] }
+    },
+    {
+      "label": "now the same write edits the payload, leaving the tag alone",
+      "do": { "clickText": "touch" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "_tag": "Some", "_0": { "title": "touched", "likes": 0 } }, "touches": 2 },
+        "domIncludes": ["title: touched"]
+      }
+    },
+    {
+      "label": "bind= writes back through the same path",
+      "do": { "fill": "#title", "value": "renamed" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "_tag": "Some", "_0": { "title": "renamed", "likes": 0 } } },
+        "domIncludes": ["title: renamed"]
+      }
+    },
+    {
+      "label": "a write whose right hand side reads through .get as well",
+      "do": { "clickText": "like" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "_tag": "Some", "_0": { "title": "renamed", "likes": 1 } } },
+        "domIncludes": ["likes: 1"]
+      }
+    },
+    {
+      "label": "clearing puts it back to None",
+      "do": { "clickText": "clear" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "_tag": "None" } },
+        "domIncludes": ["no draft"]
+      }
+    }
+  ]
+}
