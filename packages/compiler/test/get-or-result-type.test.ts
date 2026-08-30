@@ -1,14 +1,21 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// `.get-or(fallback)` unwraps: `Option(T)` and `Result(T, E)` answer `T`, and
-// `Map(K, V).get-or(k, fallback)` answers `V` (stdlib.md §2.2.1 / §2.2.4 /
-// §2.2.5). Nothing said so, so `opt := opt.get-or(x)` on an `Option(T)` slot
-// passed `check` and left the slot holding a bare `T` — `is-some` false on a
-// value that was there, and `match … with | Some(v)` taking the None arm.
+// `.get-or(fallback)` answers from its receiver's type argument: `Option(T)`
+// and `Result(T, E)` answer `T`, and `Map(K, V).get-or(k, fallback)` answers
+// `V` (stdlib.md §2.2.4 / §2.2.5 / §2.2.1). Nothing said so, so
+// `opt := opt.get-or(x)` on an `Option(T)` slot passed `check` and left the
+// slot holding a bare `T` — `is-some` and `is-none` both false on a value that
+// was there, so a `when(is-some, …)` / `when(is-none, …)` pair rendered
+// neither arm.
 //
 // The fallback is checked against the same type, which is the report that
 // names the mistake rather than its consequence.
+//
+// Every expectation here is the whole diagnostic list rather than a filtered
+// one: a stray extra report on a program this file calls clean is the thing
+// worth catching, and the argument-count cases are due to gain a diagnostic
+// under a code of their own.
 
 const errsOf = (src: string) => check(parse(lex(src)));
 const app = (defs: string): string =>
@@ -20,21 +27,18 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []`;
 
-const mismatches = (src: string) =>
-  errsOf(src)
-    .filter((e) => e.code === "E0201")
-    .map((e) => e.message);
+const diagnostics = (src: string) => errsOf(src).map((e) => `${e.code} ${e.message}`);
 
 describe("what .get-or answers", () => {
   it("assigning an unwrapped Option back to the Option slot is a mismatch", () => {
     expect(
-      mismatches(
+      diagnostics(
         app(`type S = {a: Text}
 slot opt : Option(S) = None
 slot fb : S = {a: ""}
 reducer keep on=ui.click(B) do= opt := opt.get-or(fb)`),
       ),
-    ).toEqual(["Expected Option(S) but got S"]);
+    ).toEqual(["E0201 Expected Option(S) but got S"]);
   });
 
   it("assigning it to a slot of the unwrapped type stays clean", () => {
@@ -50,11 +54,11 @@ reducer keep on=ui.click(B) do= cur := opt.get-or(cur)`),
 
   it("a Result unwraps to its ok type, and assigning it back is a mismatch", () => {
     expect(
-      mismatches(
+      diagnostics(
         app(`slot res : Result(Int, Text) = Ok(1)
 reducer keep on=ui.click(B) do= res := res.get-or(0)`),
       ),
-    ).toEqual(["Expected Result(Int, Text) but got Int"]);
+    ).toEqual(["E0201 Expected Result(Int, Text) but got Int"]);
   });
 
   it("a Result's unwrapped value lands in a slot of the ok type", () => {
@@ -68,13 +72,15 @@ reducer keep on=ui.click(B) do= n := res.get-or(0)`),
   });
 
   it("a Map answers its value type, not an Option of it", () => {
+    // `.get` on the same receiver answers `Option(Int)` — the fallback is what
+    // makes this one answer the value itself.
     expect(
-      mismatches(
+      diagnostics(
         app(`slot m : Map(Text, Int) = {}
 slot o : Option(Int) = None
 reducer keep on=ui.click(B) do= o := m.get-or("k", 0)`),
       ),
-    ).toEqual(["Expected Option(Int) but got Int"]);
+    ).toEqual(["E0201 Expected Option(Int) but got Int"]);
   });
 
   it("a Map lookup with a fallback lands in a slot of the value type", () => {
@@ -106,21 +112,24 @@ slot opt : Option(S) = None
 reducer keep on=ui.click(B) do= opt := opt.get-or(None)`),
     );
     // Two mistakes, not one report of two shapes: the fallback is not an `S`,
-    // and what the call answers is not an `Option(S)`. The argument's position
-    // is the inner one, so the two are distinguishable.
+    // and what the call answers is not an `Option(S)`.
     expect(errs.map((e) => `${e.code} ${e.message}`)).toEqual([
       'E0201 Expected S but got variant "None"',
       "E0201 Expected Option(S) but got S",
     ]);
+    // The argument sits inside the assignment it is reported alongside: one
+    // line, and further along it.
     const [atArg, atAssign] = errs;
+    expect(atArg?.pos.line).toBe(atAssign?.pos.line);
     expect(atArg?.pos.col).toBeGreaterThan(atAssign?.pos.col ?? 0);
   });
 
   it("inside an emit argument it is still E0201, not the effect's own code", () => {
     // The fallback is wrong against the method's signature, which is a
     // different statement from "this is not what the effect declared in=".
-    const errs = errsOf(
-      `slot m : Map(Text, Int) = {}
+    expect(
+      diagnostics(
+        `slot m : Map(Text, Int) = {}
 effect saveN cap=storage.write
              in=Int
              out=Result(Unit, Text)
@@ -132,34 +141,36 @@ app A
     caps   = [storage.write]
     routes = {"/" -> App, "/404" -> App}
     init   = []`,
-    );
-    expect(errs.map((e) => `${e.code} ${e.message}`)).toEqual(["E0201 Expected Int but got Text"]);
+      ),
+    ).toEqual(["E0201 Expected Int but got Text"]);
   });
 
   it("a fallback of the wrong primitive is reported", () => {
     expect(
-      mismatches(
+      diagnostics(
         app(`slot m : Map(Text, Int) = {}
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := m.get-or("k", "none")`),
       ),
-    ).toEqual(["Expected Int but got Text"]);
+    ).toEqual(["E0201 Expected Int but got Text"]);
   });
 });
 
 describe("what stays undecidable", () => {
   it("an argument count that does not fit the receiver says nothing", () => {
-    // The runtime picks the Map reading or the Option one by counting
-    // arguments, so neither call has a result type to check against.
+    // The lowering picks the Map reading or the unwrapping one by counting
+    // arguments, so neither call has a result type to check against here. Both
+    // are still lowered — to the reading their count names, on the receiver
+    // they were given — which is a defect of its own.
     expect(
-      mismatches(
+      errsOf(
         app(`slot opt : Option(Int) = None
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := opt.get-or("k", "none")`),
       ),
     ).toEqual([]);
     expect(
-      mismatches(
+      errsOf(
         app(`slot m : Map(Text, Int) = {}
 slot o : Option(Int) = None
 reducer keep on=ui.click(B) do= o := m.get-or("k")`),
@@ -181,6 +192,33 @@ reducer keep on=ui.click(B) do= n := let o = None in o.get-or("not an Int")`),
       errsOf(
         app(`slot n : Int = 0
 reducer keep on=ui.click(B) do= n := $event.get-or("not an Int")`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("an effect payload bind carries no type, so unwrapping one is not checked", () => {
+    // The shape this defect was found in: an `Option` restored from storage,
+    // unwrapped into the slot that declares it. `$s` is bound by the event and
+    // nothing gives it the effect's `out=` type, so the receiver decides
+    // nothing. A limit of how far the types reach, not a decision about
+    // `.get-or` — and the reason the fix does not reach the program that
+    // prompted it.
+    expect(
+      errsOf(
+        `type Session = {email: Text}
+slot session : Option(Session) = None
+effect loadSession cap=storage.read
+                   in=Unit
+                   out=Result(Option(Session), Text)
+                   map-request={key: "session", decode: Decoder.Json(Session)}
+reducer boot   on=app.start             do= emit loadSession()
+reducer sessIn on=loadSession.ok($s, _) do= session := $s.get-or(None)
+tile B = button(text="x")
+tile App = column(B)
+app A
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`,
       ),
     ).toEqual([]);
   });

@@ -2671,8 +2671,9 @@ function unwrappedType(t: TypeExpr): TypeExpr | null {
 
 /**
  * What `.get-or(…)` answers — `Option(T)` / `Result(T, E)` to `T`, `Map(K, V)`
- * to `V` (stdlib.md §2.2.1 / §2.2.4 / §2.2.5), and `null` for a receiver that
- * decides nothing.
+ * to `V` (stdlib.md §2.2.4 / §2.2.5 / §2.2.1), and `null` for a receiver that
+ * decides nothing. Separate from `unwrappedType` because a Map is not unwrapped
+ * by either member: `.get` on one *wraps*, into `Option(V)`.
  *
  * It is also the type the fallback must have, which is why one resolver serves
  * both readers: the fallback is what the call evaluates to when there is
@@ -2680,9 +2681,10 @@ function unwrappedType(t: TypeExpr): TypeExpr | null {
  * gets on the empty case. Two tables could disagree about that.
  *
  * The argument count is part of the question rather than a check beside it: the
- * runtime tells the Map reading from the Option one by counting arguments
- * (runtime.md §6), so a call whose count does not fit its receiver has no
- * result type to speak of and stays undecidable.
+ * lowering tells the Map reading from the unwrapping one by counting arguments
+ * (`codegen/expr.ts`, `case "get-or"`), so a call whose count does not fit its
+ * receiver has no result type to speak of and stays undecidable here — while
+ * still lowering to the reading its count names.
  */
 function getOrResultType(recv: TypeExpr | null, argCount: number): TypeExpr | null {
   if (recv?.kind !== "TypeApp") return null;
@@ -2972,9 +2974,9 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
           if (recv.name === "Option" || recv.name === "Result") return recv.args[0] ?? null;
         }
       }
-      // `.get-or(d)` unwraps the way `.get` does, and a Map lookup with a
-      // fallback answers V. Without this the unwrapped value was assignable to
-      // the container it came out of.
+      // `.get-or(d)` resolves from its receiver the way `.get` does, and a Map
+      // lookup with a fallback answers V. Without this the unwrapped value was
+      // assignable to the container it came out of.
       if (e.method === "get-or") {
         const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
         return getOrResultType(recv, e.args.length);
