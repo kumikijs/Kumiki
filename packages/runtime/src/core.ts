@@ -762,9 +762,10 @@ export interface Router {
 }
 
 /**
- * The route a mount starts from before any navigation — and, since the slot is
- * the runtime's rather than the program's, the one the test harness seeds too
- * (`_stdlibTest.resetLive`).
+ * The placeholder a mount holds until the router's first sync replaces it from
+ * `parseLocation`, and the route a routeless app keeps for good. Since the
+ * slot is the runtime's rather than the program's, it is also what the test
+ * harness seeds (testing.md §8.2.5).
  */
 export function emptyRoute(): ParsedRoute {
   return { path: "/", pattern: "/", params: {}, query: {}, hash: NONE };

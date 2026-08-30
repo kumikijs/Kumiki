@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "a fresh mount starts on the empty route — the same one the test harness seeds",
+      "label": "served at / the router parses the same record the harness seeds",
       "expect": { "noErrors": true, "domIncludes": ["at /"] }
     },
     {

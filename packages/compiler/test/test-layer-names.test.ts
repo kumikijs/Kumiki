@@ -175,6 +175,35 @@ describe("a slot key names a slot", () => {
   it("accepts the slots the program declares", () => {
     expect(codes(reducerTest(`{slots: {count: 0, label: "x"}}`, EXPECT))).toEqual([]);
   });
+
+  // `route` is the one slot a program cannot declare — the runtime maintains
+  // it — so a test naming it had nothing to name, and the reducer reading it
+  // had no writable test (testing.md §8.2.5).
+  it("accepts the route slot, which no program can declare", () => {
+    expect(codes(reducerTest(`{slots: {count: 0, route: {path: "/x"}}}`, EXPECT))).toEqual([]);
+    expect(
+      codes(reducerTest(GIVEN, `{slots: {count: 1, route: {path: "/x"}}, effects: []}`)),
+    ).toEqual([]);
+  });
+
+  it("accepts it in an episode-test's `slots-equal`", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {route: {path: "/x"}}, no-panics: true}`);
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("reports a field the route slot does not have", () => {
+    // The harness completes a partial route, so a typo'd field would be
+    // dropped in silence and the test would run against the empty route —
+    // green, and exercising the branch it meant to avoid.
+    expect(codes(reducerTest(`{slots: {route: {pathh: "/x"}}}`, EXPECT))).toEqual(["E0108"]);
+  });
+
+  it("reports a route seed that is not a record", () => {
+    expect(codes(reducerTest(`{slots: {route: "/x"}}`, EXPECT))).toEqual(["E0201"]);
+  });
 });
 
 describe("the other namespaces a test body names", () => {

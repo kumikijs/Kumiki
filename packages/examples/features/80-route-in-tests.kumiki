@@ -5,29 +5,45 @@
 
 slot seen  : Text = ""
 slot at    : Text = ""
+slot saved : Text = ""
+
+effect record cap=log.write
+              in=Text
+              out=Result(Unit, Text)
 
 reducer noticed  on=ui.click(Go) do= seen := route.path
 reducer patterned on=ui.click(Go) do= at := route.pattern + "#" + route.params.get-or("id", "-")
+reducer report   on=ui.click(Send) do= emit record(route.path)
+reducer reported on=record.ok(_, _)  do= saved := "sent " + seen
+# No provider is registered for `log.write` outside a test, so the click that
+# emits it fails at every other tier — an unconsumed effect error is reported
+# rather than swallowed (runtime.md §10.4.5), which is what this consumes.
+reducer failed   on=record.err(_, _) do= saved := "not sent"
 
 tile Go    = button(text="go")
+tile Send  = button(text="send")
 tile Where = text("at " + route.path)
 
 tile App
     = column(
         heading("the route slot in tests"),
         Go,
+        Send,
         Where,
         text("seen: " + seen),
-        text("at: " + at))
+        text("at: " + at),
+        text("saved: " + saved))
       {pad: "lg", gap: "md"}
 
 app RouteInTests
-    caps   = []
+    caps   = [log.write]
     routes = {"/" -> App, "/posts/:id" -> App, "/404" -> App}
     init   = []
 
-# Naming no route at all: the reducer runs against the same empty route a fresh
-# mount starts from, rather than panicking on an absent slot.
+# Naming no route at all: the reducer runs against the empty route rather than
+# panicking on an absent slot. That is the placeholder a mount holds before the
+# router's first sync — which, for an app served at "/", is what the router
+# then parses anyway.
 test route-defaults-to-empty =
     reducer-test noticed
         given  = {slots: {seen: ""}, event: {type: ui.click, target: Go}}
@@ -57,6 +73,30 @@ test seeded-route-is-comparable =
                   event: {type: ui.click, target: Go}}
         expect = {slots: {seen: "/posts/7", route: {path: "/posts/7", pattern: "/",
                                                     params: {}, query: {}, hash: None}}}
+
+# The seeded route is readable through a wildcard too, so a test can assert a
+# slot against it without repeating the value.
+test wildcard-reads-the-route =
+    reducer-test noticed
+        given  = {slots: {seen: "", route: {path: "/posts/7"}},
+                  event: {type: ui.click, target: Go}}
+        expect = {slots: {seen: <slots.seen>}}
+
+# The multi-step form shares the same seam: the emit carries the seeded route.
+test mocked-flow-sees-the-route =
+    reducer-test report
+        given  = {slots: {seen: "/posts/7", saved: "", route: {path: "/posts/7"}},
+                  event: {type: ui.click, target: Send},
+                  mocks: {record: ok(())}}
+        expect = {slots: {saved: "sent /posts/7"}, effects: []}
+
+# And the episode tier, which resets through its own path: a replayed reducer
+# reading the route used to panic there after the others had been fixed.
+test replay-reads-the-route =
+    episode-test
+        load   = "80-route-in-tests.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {seen: "/"}, no-panics: true}
 
 # The same seam serves a tile-test: the tile reads the slot, not an argument.
 test tile-reads-the-route =

@@ -47,6 +47,7 @@ export {
   type EffectSpec,
   type EmitSpec,
   type EventHandler,
+  emptyRoute,
   KumikiPanic,
   type LocationLike,
   type MountedApp,

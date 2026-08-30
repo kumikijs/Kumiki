@@ -522,13 +522,56 @@ const RESERVED_SLOT_NAMES: ReadonlyMap<string, string> = new Map([
 
 /**
  * A name a test's `given.slots` / `expect.slots` may carry: one the program
- * declared, or a reserved one the runtime maintains and the harness seeds the
- * way `mount` does. No program can declare a reserved name, so without this a
- * test naming `route` is an undefined slot — and the reducer reading it has no
- * writable test at all.
+ * declared, or a reserved one the runtime maintains and the harness seeds with
+ * the same empty route `mount` uses, completing a partial one. No program can
+ * declare a reserved name, so without this a test naming `route` is an
+ * undefined slot — and the reducer reading it has no writable test at all.
  */
 function isTestSlot(name: string, sym: SymbolTable): boolean {
   return sym.slots.has(name) || RESERVED_SLOT_NAMES.has(name);
+}
+
+/**
+ * The fields of the `route` slot (routing.md §3.2). A test may name any subset
+ * of them; anything else is a typo the harness would drop silently, leaving a
+ * green test that exercised the branch it meant to avoid. Checked here rather
+ * than at runtime so the report names the source position.
+ *
+ * Kept in step with the runtime's `emptyRoute` by a test in `@kumikijs/tests`.
+ */
+export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set([
+  "path",
+  "pattern",
+  "params",
+  "query",
+  "hash",
+]);
+
+/** Report a `route` seed that is not a record of route fields. */
+function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
+  if (value.kind !== "RecordLit") {
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message:
+        `The "route" slot takes a record of ` +
+        `${[...ROUTE_SLOT_FIELDS].map((f) => `"${f}"`).join(" / ")}, ` +
+        "naming as many of them as the test needs",
+      pos: value.pos,
+    });
+    return;
+  }
+  for (const f of value.fields) {
+    if (ROUTE_SLOT_FIELDS.has(f.name)) continue;
+    errors.push({
+      code: "E0108",
+      kind: "undef-member",
+      message:
+        `The "route" slot has no field "${f.name}" ` +
+        `(${[...ROUTE_SLOT_FIELDS].map((x) => `"${x}"`).join(" / ")})`,
+      pos: f.pos,
+    });
+  }
 }
 
 function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index: DefIndex): void {
@@ -3694,6 +3737,8 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
         message: `Reference to undefined slot "${f.name}"`,
         pos: f.pos,
       });
+    } else if (!sym.slots.has(f.name)) {
+      checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
   }

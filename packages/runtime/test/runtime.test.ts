@@ -692,9 +692,10 @@ describe("in-language test runner helpers", () => {
     const live: Record<string, unknown> = { stale: 1 };
     _stdlib.resetLive(live, { count: { value: 0 }, name: { value: "x" } }, { count: 5 });
     // `route` is there whether or not the program declares one — the harness
-    // seeds it the way `mount` does, so a reducer reading it is testable.
-    // What that seed holds is `test/testkit-route.test.ts`.
-    expect(live).toEqual({ count: 5, name: "x", route: live.route });
+    // seeds it the way `mount` does, so a reducer reading it is testable. This
+    // is the key set; what the seed holds is pinned in the route suite beside
+    // this one.
+    expect(live).toEqual({ count: 5, name: "x", route: expect.anything() });
     expect(live.route).toMatchObject({ path: "/", pattern: "/" });
   });
 

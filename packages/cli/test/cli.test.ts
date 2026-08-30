@@ -135,15 +135,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // uses `gap` and nothing else, and still ships the table — the alternative
     // is what this replaced, where an app wrote `max-w` or `class` and the
     // build was the same size because the prop did nothing at all.
-    // Bumped to 66KB when the empty route became a shared function
-    // (spec/testing.md §8.2.5): the test harness seeds `route` the way `mount`
-    // does, and an exported symbol is one the bundler keeps whole instead of
-    // inlining it into its call sites. A counter pays a few dozen bytes for a
-    // reducer-test tier that can drive a reducer reading the route at all.
+    // Bumped to 65.2KB when the empty route became a shared function
+    // (spec/testing.md §8.2.5): the test harness seeds `route` from the same
+    // function `mount` does, and an exported symbol is one the bundler keeps
+    // whole instead of inlining it into its call site. A counter pays a few
+    // dozen bytes (65,009 measured) for a reducer-test tier that can drive a
+    // reducer reading the route at all.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(66_000);
+    expect(total).toBeLessThan(65_200);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
@@ -678,9 +679,15 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("PASS  route-defaults-to-empty");
     expect(out).toContain("PASS  seeded-route-drives-reducer");
     expect(out).toContain("PASS  partial-route-takes-defaults");
+    expect(out).toContain("PASS  seeded-route-is-comparable");
+    expect(out).toContain("PASS  wildcard-reads-the-route");
+    expect(out).toContain("PASS  mocked-flow-sees-the-route");
+    // The tier that resets through its own path, and the one the checker's
+    // relaxation reaches: `slots-equal` may name `route` there too.
+    expect(out).toContain("PASS  replay-reads-the-route");
     expect(out).toContain("PASS  tile-reads-the-route");
     expect(out).toMatch(/PASS {2}run-reducer-sees-route \(100 cases, \d+ms\)/);
-    expect(out).toContain("6/6 passed");
+    expect(out).toContain("9/9 passed");
   });
 
   it("filters by a name prefix", { timeout: 30000 }, () => {
