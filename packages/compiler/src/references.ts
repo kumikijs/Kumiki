@@ -375,7 +375,7 @@ class Walker {
       this.add("tile", r.on.selector.tile, r.on.selector.tilePos);
     } else if (r.on.kind === "EffectEvent") {
       this.add("effect", r.on.effect, r.on.effectPos);
-      for (const b of r.on.binds) if (b !== "_") locals.add(b);
+      for (const b of r.on.binds) if (b.name !== "_") locals.add(b.name);
     } else if (r.on.kind === "LifecycleEvent" && r.on.tileTarget) {
       // `tile.mount(X)` folds the tile name into the event name, so the parser
       // keeps the name and where `X` sat alongside it. Reporting the pattern's

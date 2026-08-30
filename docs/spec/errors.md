@@ -63,6 +63,7 @@ typo` is caught rather than accepted).
 | `E0118` | yes | Close-name suggestion against declared theme names and slot names — the two namespaces `app.theme` accepts (scoped — a tile or reducer whose name is close is not a candidate). |
 | `E0216` | yes | Close-name suggestion against variant tags of the declared union, the same resolution E0209 uses on the pattern side. |
 | `E0119` | yes | Rewrite `$route` to `route` at the reported position — the slot holds the current route and is readable from every reducer. |
+| `E0121` | no | Choosing a replacement name, and rewriting every read of it in the body, is user intent. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
@@ -378,6 +379,20 @@ An `app.init` argument reads `route` or `$route`. Init arguments are evaluated *
 Without this check the argument lowers to `_live["route"]` and captures `undefined`, so `init = [load(route.path)]` compiles clean and throws `Cannot read properties of undefined (reading 'path')` at mount — the app never renders. `$route` is the same hole from the other side: nothing binds one here, and [E0119](#e0119-route-bind-out-of-scope)'s advice would send the author to the `route` spelling this check rejects.
 
 **Fix**: Take the route from a `route.enter` reducer ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is.
+
+### E0121 `reserved-bind-name`
+
+An `effect-event` trigger binds a payload positional to `$el`, `$event` or `$route`. Those three are the [positional bindings](./language.md#_1-6-5-positional-binding), and the compiler declares all three in every reducer body — seeded from whatever the trigger's payload carries, which for an effect event is `{$1, $2}` and so carries none of them. A bind that takes one of the names is therefore a second declaration of it.
+
+> `"<name>" is a positional binding the compiler declares in every reducer body, so an effect-event bind cannot also take the name — the two declarations collide and the module does not load. Rename the bind`
+
+Without this check the reducer lowers to a body that declares the same `const` twice, so the whole module throws `SyntaxError: Identifier '<name>' has already been declared` at load and the app never renders — with `check` and `build` clean, and the emitted source reading as if it were. A bind named `$1` is not reported, because nothing else declares one; the digit does not tie it to a position either way (`on=load.ok(_, $1)` binds the *second* positional to it). Neither is `$now` reported, which nothing declares at all.
+
+**Only an `effect-event` bind is checked.** A `let` in the body may still take one of the names — [E0119](#e0119-route-bind-out-of-scope) says an enclosing `let` binding wins over the payload, and match-arm patterns do shadow one correctly — but a top-level `let` lowers into the same scope as the declarations, so it collides the way a bind used to. That is a codegen scoping bug rather than a rule about names, and is tracked as its own defect.
+
+`$route` collects this and nothing else. The bind still enters the reducer's scope, so the body's reads resolve to it rather than to a payload field out of its trigger's scope — [E0119](#e0119-route-bind-out-of-scope) would otherwise fire on every one of them and send the author to the `route` slot for a name they chose themselves.
+
+**Fix**: Rename the bind.
 
 ## E02xx — Types
 

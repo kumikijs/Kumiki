@@ -684,7 +684,7 @@ class Parser {
       // effect-name.ok / .err
       if (sub === "ok" || sub === "err") {
         this.eat("op", "(");
-        const binds: string[] = [];
+        const binds: NamedRef[] = [];
         if (!this.matchOp(")")) {
           binds.push(this.readBind());
           while (this.matchOp(",")) {
@@ -708,21 +708,19 @@ class Parser {
     throw new ParseError("Expected event pattern", t.pos);
   }
 
-  private readBind(): string {
+  private readBind(): NamedRef {
     if (this.matchOp("_")) {
-      this.next();
-      return "_";
-    }
-    const t = this.peek();
-    if (t.kind === "op" && t.value === "$") {
-      // not actually used; binds in event are bare identifiers per spec
+      const tok = this.next();
+      return { name: "_", pos: tok.pos };
     }
     if (this.matchT("ident", "_")) {
-      this.next();
-      return "_";
+      const tok = this.next();
+      return { name: "_", pos: tok.pos };
     }
+    // `$el` and friends lex as one ident, so a positional name arrives here
+    // whole — the checker decides which of them a bind may take.
     const tok = this.eat("ident");
-    return tok.value;
+    return { name: tok.value, pos: tok.pos };
   }
 
   // ----- statements -----
