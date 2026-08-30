@@ -116,6 +116,26 @@ reducer keep on=ui.click(B) do= opt := opt.get-or(None)`),
     expect(atArg?.pos.col).toBeGreaterThan(atAssign?.pos.col ?? 0);
   });
 
+  it("inside an emit argument it is still E0201, not the effect's own code", () => {
+    // The fallback is wrong against the method's signature, which is a
+    // different statement from "this is not what the effect declared in=".
+    const errs = errsOf(
+      `slot m : Map(Text, Int) = {}
+effect saveN cap=storage.write
+             in=Int
+             out=Result(Unit, Text)
+             map-request={key: "n", value: $1}
+reducer keep on=ui.click(B) do= emit saveN(m.get-or("k", "wrong"))
+tile B = button(text="x")
+tile App = column(B)
+app A
+    caps   = [storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`,
+    );
+    expect(errs.map((e) => `${e.code} ${e.message}`)).toEqual(["E0201 Expected Int but got Text"]);
+  });
+
   it("a fallback of the wrong primitive is reported", () => {
     expect(
       mismatches(
