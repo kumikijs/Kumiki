@@ -99,6 +99,37 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
 });
 
 describe("a repair that leaves the file no cleaner still rolls back", () => {
+  it("when it rewords a diagnostic while another repair resolves one", () => {
+    // `E0211` rewrites the first match on the reducer's line, which here is the
+    // reducer's own name — so the selector stays undeclared and the diagnostic
+    // comes back saying `Reducer "Button"` instead of `Reducer "Bttn"`. The
+    // `$route` repair beside it is real, so the *counts* balance: one E0211
+    // before and after, one E0119 gone. A comparison keyed on the code alone
+    // reads that as a clean repair and writes a file whose reducer was renamed
+    // for nothing.
+    const file = fixture("kumiki-gate-reworded-", [
+      'slot seen : Text = ""',
+      'tile Button = button(text="go")',
+      "reducer Bttn on=ui.click(Bttn) do= seen := $route.path",
+      "tile App = column(Button, text(seen))",
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+    ]);
+    const before = readFileSync(file, "utf8");
+
+    const result = applyFixPlan(file, undefined);
+
+    expect(result.applied).toBe(0);
+    expect(result.blocked?.reason).toBe("introduced");
+    if (result.blocked?.reason === "introduced") {
+      expect(result.blocked.introduced.map((e) => e.code)).toEqual(["E0211"]);
+      expect(result.blocked.introduced[0]?.message).toContain('Reducer "Button"');
+    }
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
   it("when it swaps one diagnostic for another", () => {
     // `cap=lgo` is E0301; adding `lgo` to app.caps clears it and immediately
     // raises E0302 unknown-capability. The count is 1 either way — the thing

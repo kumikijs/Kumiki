@@ -50,9 +50,11 @@ compares the two sets as multisets. Position is deliberately not part of it: a
 rewrite shorter than what it replaced shifts every diagnostic to its right, and
 a repair that inserts lines shifts every diagnostic below it, so a
 position-keyed comparison reads an untouched diagnostic as one the repair
-created. The message is what tells two diagnostics of one code apart — on
-`n := countr + qqqqqqqqqq` both are `E0103` — and counting is what lets one of
-two identical ones count as resolved. A 1-for-1 swap like `E0301 → E0302 via a
+created. The message is what tells two diagnostics of one code apart, which matters
+when a second repair balances the per-code counts: reword one `E0211` and
+resolve one `E0119`, and counting codes alone reports a clean repair while the
+reworded diagnostic is still there. Counting rather than set membership is what
+lets one of two identical diagnostics count as resolved. A 1-for-1 swap like `E0301 → E0302 via a
 typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |

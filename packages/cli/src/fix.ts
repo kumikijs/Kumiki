@@ -929,9 +929,12 @@ export function applyFixPlan(
   //      both directions, deliberately: a repair that clears an error and
   //      reveals an advisory diagnostic is still a repair, and rolling it back
   //      would leave the file holding the error to avoid holding the warning.
-  //   3. Nothing from `before` was resolved — the patch either did nothing
-  //      (silent noop) or replaced one diagnostic with another (still a swap,
-  //      caught here even when both wear the same code).
+  //   3. Nothing from `before` was resolved — the composed source carries the
+  //      same diagnostics the original did, so the patches changed text and
+  //      improved nothing. A swap normally trips (2) instead, because the
+  //      diagnostic that replaced the old one is one `before` did not have;
+  //      this is the condition for a write with no diagnostic consequence at
+  //      all.
   // Invariant: "apply => file is either strictly cleaner or unchanged".
   // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
   // Parse and typecheck have distinct failure semantics: a parse-error is a
@@ -1097,10 +1100,12 @@ export type FixApplyResult = {
  * original did not — so the gate called an untouched diagnostic introduced and
  * rolled back a repair that was correct.
  *
- * The message is what distinguishes two diagnostics of one code, which is why
- * the code alone will not do: on `n := countr + qqqqqqqqqq` both are `E0103`,
- * and a comparison that cannot tell them apart cannot tell "repaired `countr`"
- * from "repaired `countr`, broke something else".
+ * The message is what distinguishes two diagnostics of one code. Counting
+ * codes alone is *nearly* enough — a swap within one code leaves the count
+ * unchanged, so the resolved-nothing condition below catches it — and it fails
+ * exactly when a second repair balances the books: reword one `E0211` and
+ * resolve one `E0119`, and the per-code counts say a clean repair happened
+ * while the reworded diagnostic is still in the file.
  *
  * Normalising positions through each patch's edit instead was the other
  * option. It loses because a region patch's delta is the whole file, so every

@@ -16,12 +16,12 @@ patch had touched:
   catalogue unusable on any file that also carried one unrepairable name.
 
 A diagnostic is now identified by its **code, kind and message**, and the two
-sets are compared as multisets. The code alone will not do — on
-`n := countr + qqqqqqqqqq` both are `E0103`, and a comparison that cannot tell
-them apart cannot tell "repaired `countr`" from "repaired `countr`, broke
-something else". A set rather than a multiset will not do either: a file
-holding two diagnostics with one key, one of them repaired, would compute
-"nothing resolved" and roll a real repair back.
+sets are compared as multisets. Counting codes alone is nearly enough and fails
+where a second repair balances the books — reword one `E0211` and resolve one
+`E0119` in the same plan, and the per-code counts report a clean repair while
+the reworded diagnostic is still in the file. A set rather than a multiset
+would compute "nothing resolved" for a file holding two diagnostics with one
+key where a repair cleared one of them, and roll a real repair back.
 
 A 1-for-1 swap (`E0301` → `E0302` via a typo) is still caught, and so is a
 repair that turns a name error into a type error at the same position.
