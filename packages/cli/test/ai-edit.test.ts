@@ -1934,7 +1934,7 @@ describe("applyFixPlan: regression gate", () => {
   });
 });
 
-// `writeFileSync` at three sites in fix.ts must not leak EACCES / ENOSPC /
+// `writeFileSync` at both sites in fix.ts must not leak EACCES / ENOSPC /
 // EBUSY as raw stacks. Callers of `applyFixPlan` and `runFixFromTest` should
 // observe I/O failure as structured return values — symmetric with the
 // existing `parseError` / `regressionBlocked` / `testRunError` paths — and

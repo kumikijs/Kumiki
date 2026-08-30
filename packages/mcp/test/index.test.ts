@@ -279,6 +279,58 @@ describe("kumiki_auto_patch", () => {
     expect(after).toContain("count := count + 1");
   });
 
+  it("serialises a gate refusal as compile-blocked, naming what the patch would have added", {
+    timeout: 30000,
+  }, async () => {
+    // `cnt` has one close name, `cn`, and `cn` is a `Text` in an `Int` sum —
+    // so the repair resolves the E0103 it was offered for and introduces an
+    // E0201. The gate refuses it; the wire has to say which of its conditions
+    // that was, because a client reading `reason` alone decides from it.
+    const file = join(workdir, "repair-introduces.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n  : Int  = 0",
+        'slot cn : Text = ""',
+        "reducer bump on=ui.click(Btn) do= n := cnt + 1",
+        'tile Btn  = button(text="go")',
+        "tile Page = column(Btn, text(n))",
+        "test bumps =",
+        "    reducer-test bump",
+        "        given  = {slots: {n: 0}, event: {type: ui.click, target: Btn}}",
+        "        expect = {slots: {n: 9}}",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> Page, "/404" -> Page}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const original = readFileSync(file, "utf8");
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_auto_patch", {
+        path: file,
+        testName: "bumps",
+        apply: true,
+      });
+      const parsed = JSON.parse(out) as {
+        status: string;
+        compileFixes?: number;
+        compileErrors?: { code: string }[];
+        blocked?: { reason: string; introduced?: { code: string }[] };
+      };
+      expect(parsed.status).toBe("compile-blocked");
+      expect(parsed.blocked?.reason).toBe("introduced");
+      expect(parsed.blocked?.introduced?.map((d) => d.code)).toEqual(["E0201"]);
+      // The file's own diagnostics, kept apart from what the refused patch
+      // would have added — a client that merged them would report a
+      // diagnostic that is not in the file.
+      expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+      expect(parsed.compileFixes).toBeUndefined();
+    });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
   it("dry-run reports 'proposed' (or already-pass) without writing", {
     timeout: 30000,
   }, async () => {

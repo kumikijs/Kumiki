@@ -175,22 +175,23 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
     case "compile-blocked":
       // `compileErrors` is the author's own set; `blocked` is what the refused
       // patch would have done. A client that merged the two would report a
-      // diagnostic that is not in the file.
+      // diagnostic that is not in the file. Each `reason` keeps its own
+      // payload, so reading `reason` alone is never misleading.
       return {
         ...base,
         compileErrors: toDiagnostics(o.compileErrors),
         blocked:
           o.blocked.reason === "introduced"
             ? { reason: o.blocked.reason, introduced: toDiagnostics(o.blocked.introduced) }
-            : { reason: o.blocked.reason },
-        ...(o.parseError ? { parseError: o.parseError } : {}),
+            : o.blocked.reason === "parse-error"
+              ? { reason: o.blocked.reason, message: o.blocked.message }
+              : { reason: o.blocked.reason },
       };
     case "compile-remaining":
       return {
         ...base,
         compileFixes: o.compileFixes,
         ...(o.compileErrors ? { compileErrors: toDiagnostics(o.compileErrors) } : {}),
-        ...(o.parseError ? { parseError: o.parseError } : {}),
       };
     case "not-found":
       return {
@@ -894,7 +895,7 @@ export function createServer(): McpServer {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked` says whether the patch would have introduced a diagnostic or resolved none. `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; nothing landed on disk.",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; nothing landed on disk.",
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),
