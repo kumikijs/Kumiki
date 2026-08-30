@@ -1934,7 +1934,7 @@ describe("applyFixPlan: regression gate", () => {
   });
 });
 
-// `writeFileSync` at three sites in fix.ts must not leak EACCES / ENOSPC /
+// `writeFileSync` at both sites in fix.ts must not leak EACCES / ENOSPC /
 // EBUSY as raw stacks. Callers of `applyFixPlan` and `runFixFromTest` should
 // observe I/O failure as structured return values — symmetric with the
 // existing `parseError` / `regressionBlocked` / `testRunError` paths — and
@@ -3304,9 +3304,9 @@ describe("planTestPatchExplained: skip-reason classification", () => {
 
 describe("FixFromTestOutcome.reason propagation and printer", () => {
   it("runFixFromTest: Tier-1 lands both repairs when one line holds two", async () => {
-    // The tier-1 loop composes the same plan `applyFixPlan` does, and writes
-    // without a regression gate — so a repair that moved another's column
-    // failed silently here instead of rolling back.
+    // A repair that moved another's column would leave the second declining
+    // silently. The count is the number that changed the source, so half a
+    // plan cannot be reported as a whole one.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-tier1-two-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -3330,7 +3330,7 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     const outcome = await runFixFromTest(file, "t", true);
     // Both, not one: a plan that lands half its patches leaves the file still
     // holding the diagnostic it reported as repaired.
-    expect(outcome.compileFixes).toBe(2);
+    expect(outcome).toHaveProperty("compileFixes", 2);
     expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
     rmSync(dir, { recursive: true, force: true });
   });

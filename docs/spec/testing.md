@@ -278,10 +278,12 @@ FAIL  counter-display
 
 `kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it and re-run (reporting whether the test now passes and whether any other test regressed). It repairs only what it can prove deterministically:
 
-- If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run.
+- If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run. **Through the same regression gate**: the composed source is re-parsed and re-typechecked, and the write is rolled back unless it resolves a reported diagnostic and introduces none — or does not parse at all, which is reported as what it is rather than as a pointless repair. A repair refused this way leaves the file byte-identical and says so — it is not "no patch available", and the diagnostics it then reports are the file's own, never the ones the refused patch would have added. The count it reports for a write is the number of patches that changed the source; a dry run reports what it proposes.
 - If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the [Output](#_8-7-1-output) snapshot case).
 
 Non-literal divergences (numeric slots, wrong operators, effect-list mismatches) are reported as a diff rather than guessed.
+
+A **warning is not a compile error** here. A file whose only diagnostic is a `W02xx` compiles, so the test runs and the behavioural repair is proposed with the warning listed under it.
 
 ## 8.8 Integration Tests (browser-driven)
 
