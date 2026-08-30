@@ -691,7 +691,11 @@ describe("in-language test runner helpers", () => {
   it("resetLive clears, seeds defaults, then applies given", () => {
     const live: Record<string, unknown> = { stale: 1 };
     _stdlib.resetLive(live, { count: { value: 0 }, name: { value: "x" } }, { count: 5 });
-    expect(live).toEqual({ count: 5, name: "x" });
+    // `route` is there whether or not the program declares one — the harness
+    // seeds it the way `mount` does, so a reducer reading it is testable.
+    // What that seed holds is `test/testkit-route.test.ts`.
+    expect(live).toEqual({ count: 5, name: "x", route: live.route });
+    expect(live.route).toMatchObject({ path: "/", pattern: "/" });
   });
 
   // M4b: the runner carries the scalar leaf values at the divergence point, so
