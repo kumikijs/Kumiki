@@ -82,6 +82,31 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
+### 8.2.5 route slot {#_8-2-5-the-route-slot}
+
+`route` はプログラムが宣言するものではなくランタイムが維持する slot であり（[§3.2](./routing.md#_3-2-current-route-state)）、`given.slots` が上書きすべき `slot route` は存在しない。そのためハーネスは slot テーブルをそれ無しで組み立ててしまい、`route.path` を読む reducer は slot 不在で panic していた。
+
+ハーネスは `mount` とまったく同じように seed する。route を書かないテストは空の route（`{path: "/", pattern: "/", params: {}, query: {}, hash: None}`）に対して走るので、現在の route を読む reducer も特別な作法なしにテストできる:
+
+```kumiki fragment
+test route-defaults-to-empty =
+    reducer-test noticed
+        given  = {slots: {seen: ""}, event: {type: ui.click, target: Go}}
+        expect = {slots: {seen: "/"}}
+```
+
+`given.slots` で `route` を指定すれば、現在の route で分岐する reducer を駆動できる。一部のフィールドだけを書いた route は、書かれなかったフィールドに空 route の値を取る — 省略記法が reducer に undefined を渡すことはない:
+
+```kumiki fragment
+test seeded-route-drives-reducer =
+    reducer-test patterned
+        given  = {slots: {at: "", route: {pattern: "/posts/:id", params: {"id": "7"}}},
+                  event: {type: ui.click, target: Go}}
+        expect = {slots: {at: "/posts/:id#7"}}
+```
+
+`expect.slots` は比較する slot を列挙するものであり、書かれなかった slot は比較されない。したがって seed した route を毎回書き直す必要はなく、テストの主題であるときは他の slot と同様に表明できる（列挙された各 slot の値は [§8.2.2](#_8-2-2-wildcards) のとおり厳密に照合される）。同じ seed は、slot を読む tile の `tile-test` と、`property-test` 中の `run-reducer` にも効く。
+
 ## 8.3 Property テスト {#_8-3-property-tests}
 
 ```kumiki fragment

@@ -107,6 +107,31 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
+### 8.2.5 The route slot
+
+`route` is maintained by the runtime rather than declared by a program ([§3.2](./routing.md#_3-2-current-route-state)), so there is no `slot route` for `given.slots` to override — and the harness would otherwise build its slot table without one, leaving a reducer that reads `route.path` to panic on an absent slot.
+
+The harness seeds it exactly as `mount` does. A test naming no route runs against the empty route (`{path: "/", pattern: "/", params: {}, query: {}, hash: None}`), so a reducer reading the current route is testable without ceremony:
+
+```kumiki fragment
+test route-defaults-to-empty =
+    reducer-test noticed
+        given  = {slots: {seen: ""}, event: {type: ui.click, target: Go}}
+        expect = {slots: {seen: "/"}}
+```
+
+`given.slots` may name `route` to drive a reducer that branches on the current one, and a route named in part takes the empty route's values for the fields it leaves out — an abbreviation cannot hand the reducer an undefined field:
+
+```kumiki fragment
+test seeded-route-drives-reducer =
+    reducer-test patterned
+        given  = {slots: {at: "", route: {pattern: "/posts/:id", params: {"id": "7"}}},
+                  event: {type: ui.click, target: Go}}
+        expect = {slots: {at: "/posts/:id#7"}}
+```
+
+`expect.slots` names the slots it compares; a slot it leaves out is not compared, so the seeded route never has to be repeated — and may be asserted like any other slot when it is what the test is about (each named slot's value is still matched exactly, per [§8.2.2](#_8-2-2-wildcards)). The same seeding serves a `tile-test` whose tile reads the slot, and `run-reducer` inside a `property-test`.
+
 ## 8.3 Property Tests
 
 ```kumiki fragment

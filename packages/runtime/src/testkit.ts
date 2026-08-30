@@ -6,6 +6,7 @@
 
 import {
   batchRejections,
+  emptyRoute,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
@@ -988,7 +989,17 @@ export const _stdlibTest = {
     return { name, pass: true, cases: count };
   },
   // ----- in-language test runner (`kumiki test`) -----
-  /** Reset live slot state to slot defaults, then apply the test's `given` slots. */
+  /**
+   * Reset live slot state to slot defaults, then apply the test's `given`
+   * slots.
+   *
+   * `route` is seeded between the two, exactly as `mount` seeds it (§3.2 makes
+   * it the runtime's slot, so no program declares one and the defaults loop
+   * cannot produce it). A `given.slots.route` still wins, and one naming only
+   * the fields it cares about takes the empty route's values for the rest —
+   * `route.params` reading `undefined` is the panic this seam exists to
+   * prevent, and an abbreviation should not reintroduce it.
+   */
   resetLive(
     live: Record<string, unknown>,
     slots: Record<string, { value: unknown }>,
@@ -996,7 +1007,12 @@ export const _stdlibTest = {
   ): void {
     for (const k of Object.keys(live)) delete live[k];
     for (const [k, v] of Object.entries(slots)) live[k] = v.value;
+    if (!("route" in live)) live.route = emptyRoute();
     Object.assign(live, given);
+    const seeded = given.route;
+    if (seeded && typeof seeded === "object" && !Array.isArray(seeded)) {
+      live.route = { ...emptyRoute(), ...(seeded as Record<string, unknown>) };
+    }
   },
   /**
    * Compare a reducer's resulting slots + emitted effects (or a panic) to

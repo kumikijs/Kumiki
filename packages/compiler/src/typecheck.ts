@@ -520,6 +520,17 @@ const RESERVED_SLOT_NAMES: ReadonlyMap<string, string> = new Map([
   ["route", "the router-maintained route slot"],
 ]);
 
+/**
+ * A name a test's `given.slots` / `expect.slots` may carry: one the program
+ * declared, or a reserved one the runtime maintains and the harness seeds the
+ * way `mount` does. No program can declare a reserved name, so without this a
+ * test naming `route` is an undefined slot — and the reducer reading it has no
+ * writable test at all.
+ */
+function isTestSlot(name: string, sym: SymbolTable): boolean {
+  return sym.slots.has(name) || RESERVED_SLOT_NAMES.has(name);
+}
+
 function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index: DefIndex): void {
   const reserved = RESERVED_SLOT_NAMES.get(slot.name);
   if (reserved !== undefined) {
@@ -3544,7 +3555,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
   if (t.testKind === "reducer-test") {
     // A reducer-test `expect` is always an Expr (a tile-test's is a TileExpr).
     walkExpr(t.expect as Expr, (n) => {
-      if (n.kind === "Wildcard" && n.wild === "slot" && !sym.slots.has(n.slot)) {
+      if (n.kind === "Wildcard" && n.wild === "slot" && !isTestSlot(n.slot, sym)) {
         errors.push({
           code: "E0103",
           kind: "undef-slot",
@@ -3676,7 +3687,7 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
     return;
   }
   for (const f of rec.fields) {
-    if (!sym.slots.has(f.name)) {
+    if (!isTestSlot(f.name, sym)) {
       errors.push({
         code: "E0103",
         kind: "undef-slot",

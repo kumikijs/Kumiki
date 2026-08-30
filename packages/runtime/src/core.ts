@@ -761,7 +761,12 @@ export interface Router {
   subscribe(cb: () => void): () => void;
 }
 
-function emptyRoute(): ParsedRoute {
+/**
+ * The route a mount starts from before any navigation — and, since the slot is
+ * the runtime's rather than the program's, the one the test harness seeds too
+ * (`_stdlibTest.resetLive`).
+ */
+export function emptyRoute(): ParsedRoute {
   return { path: "/", pattern: "/", params: {}, query: {}, hash: NONE };
 }
 

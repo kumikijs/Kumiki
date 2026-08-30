@@ -659,6 +659,25 @@ describe("kumiki test (in-language test runner)", () => {
     );
   });
 
+  // `route` is the runtime's slot: no program declares one, so the harness
+  // rebuilt its slot table without it and every reducer reading `route.path`
+  // panicked here — the tier that exists to test a reducer could not test that
+  // one at all.
+  it("runs a reducer that reads the route slot", { timeout: 30000 }, () => {
+    const file = resolve(here, "../../examples/features/80-route-in-tests.kumiki");
+    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", file], {
+      stdio: "pipe",
+      shell: true,
+      encoding: "utf8",
+    });
+    expect(out).toContain("PASS  route-defaults-to-empty");
+    expect(out).toContain("PASS  seeded-route-drives-reducer");
+    expect(out).toContain("PASS  partial-route-takes-defaults");
+    expect(out).toContain("PASS  tile-reads-the-route");
+    expect(out).toMatch(/PASS {2}run-reducer-sees-route \(100 cases, \d+ms\)/);
+    expect(out).toContain("6/6 passed");
+  });
+
   it("filters by a name prefix", { timeout: 30000 }, () => {
     const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS, "inc-i*"], {
       stdio: "pipe",

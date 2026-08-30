@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "a fresh mount starts on the empty route — the same one the test harness seeds",
+      "expect": { "noErrors": true, "domIncludes": ["at /"] }
+    },
+    {
+      "label": "the reducer reads the slot, not an event payload",
+      "do": { "clickText": "go" },
+      "expect": { "noErrors": true, "state": { "seen": "/", "at": "/#-" } }
+    },
+    {
+      "label": "after navigating, the same reducer sees the new path and params",
+      "do": { "navigate": "/posts/7" },
+      "expect": { "noErrors": true, "domIncludes": ["at /posts/7"] }
+    },
+    {
+      "do": { "clickText": "go" },
+      "expect": { "noErrors": true, "state": { "seen": "/posts/7", "at": "/posts/:id#7" } }
+    }
+  ]
+}
