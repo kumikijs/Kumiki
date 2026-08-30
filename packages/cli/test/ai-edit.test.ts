@@ -432,40 +432,6 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("names what the gate saw when a diagnostic it cannot repair simply moved", () => {
-    // The gate reads a diagnostic as `code@line:col`, so an unrepairable one to
-    // the right of a repair that lands looks introduced. Ordering cannot reach
-    // this — the message must at least say what it saw, because "it would have
-    // introduced new errors" is false here and sends the reader looking for an
-    // error that does not exist.
-    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-moved-"));
-    const file = join(dir, "moved.kumiki");
-    const source = `slot seen : Text = ""
-reducer clicked on=ui.click(B) do= seen := $route.path + qqqqqqqqqq
-tile B = button(text="go")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    writeFileSync(file, source);
-    const result = applyFixPlan(file, undefined);
-    expect(result.applied).toBe(0);
-    expect(readFileSync(file, "utf8")).toBe(source);
-    expect(result.blocked?.reason).toBe("introduced");
-    if (result.blocked?.reason === "introduced") {
-      // The same E0103 the file already had, one column to the left.
-      expect(result.blocked.introduced.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toEqual([
-        "E0103@2:57",
-      ]);
-      expect(result.remaining.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toContain(
-        "E0103@2:58",
-      );
-    }
-    rmSync(dir, { recursive: true, force: true });
-  });
-
   it("leaves the file's line endings alone", () => {
     // A repair used to round-trip the whole file through
     // `split(/\r?\n/).join("\n")`, so one token's rewrite silently rewrote every

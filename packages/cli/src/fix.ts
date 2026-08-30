@@ -917,24 +917,26 @@ export function applyFixPlan(
     return { ...nothingWritten(plan, before), remaining: plan.errors };
   }
   // Regression gate. Every path that would touch disk first re-parses and
-  // re-typechecks the composed source, then compares diagnostic *sets* (code
-  // + position) rather than counts. Rollback triggers when any of:
+  // re-typechecks the composed source, then compares the two diagnostic
+  // multisets by `diagnosticKey` rather than by count. Rollback triggers when
+  // any of:
   //   1. The composed source no longer parses at all — a *parse-error* is
   //      strictly worse than the original type errors, so we discard even
   //      though the pre-patch file had errors.
-  //   2. Any *error* exists in `after` but not `before` — introduced a
-  //      new failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
+  //   2. `after` holds a diagnostic `before` does not — introduced a new
+  //      failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
   //      count-only guard would miss. Warnings are outside the comparison in
   //      both directions, deliberately: a repair that clears an error and
   //      reveals an advisory diagnostic is still a repair, and rolling it back
   //      would leave the file holding the error to avoid holding the warning.
-  //   3. No diagnostic from `before` was resolved — the patch either did
-  //      nothing (silent noop) or replaced errors position-for-position
-  //      with different codes (still a swap).
+  //   3. Nothing from `before` was resolved — the composed source carries the
+  //      same diagnostics the original did, so the patches changed text and
+  //      improved nothing. A swap normally trips (2) instead, because the
+  //      diagnostic that replaced the old one is one `before` did not have;
+  //      this is the condition for a write with no diagnostic consequence at
+  //      all.
   // Invariant: "apply => file is either strictly cleaner or unchanged".
   // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
-  const key = (e: KumikiError): string => `${e.code}@${e.pos.line}:${e.pos.col}`;
-  const beforeSet = new Set(plan.errors.map(key));
   // Parse and typecheck have distinct failure semantics: a parse-error is a
   // rollback (case 1), a `check()` throw is an internal typechecker bug that
   // must surface, not be silently reported as `parseError`. Keep the catches
@@ -970,9 +972,8 @@ export function applyFixPlan(
   // not there before.
   const afterDiagnostics = check(parsed, { capabilities });
   const dryRemaining = repairable(afterDiagnostics);
-  const afterSet = new Set(dryRemaining.map(key));
-  const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
-  const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
+  const introduced = surplus(dryRemaining, plan.errors);
+  const resolved = surplus(plan.errors, dryRemaining);
   if (introduced.length > 0 || resolved.length === 0) {
     return {
       ...nothingWritten(plan, before),
@@ -1053,11 +1054,10 @@ export type FixApplyResult = {
    * Why the gate rolled back — one member per condition, so a reader never has
    * to consult a second field to learn which it was.
    *
-   * `introduced` carries the diagnostics the re-check reported that the
-   * original did not, which is not the same as "new failures": the gate reads a
-   * diagnostic's identity as `code@line:col`, so a diagnostic no patch repaired
-   * appears here when a patch to its left moved it. Naming them is what lets a
-   * reader tell the two apart.
+   * `introduced` carries the diagnostics the composed source has that the
+   * original did not, by `diagnosticKey` — so a diagnostic a repair only moved
+   * is not one of them, and what is listed here is a failure the repair would
+   * have created. Naming them is what lets a reader check that.
    *
    * `parse-error` is the composed source failing to lex or parse. It carries
    * its own message rather than deferring to `parseError`, because a consumer
@@ -1090,6 +1090,68 @@ export type FixApplyResult = {
 };
 
 /**
+ * What the regression gate reads a diagnostic as: its code, its kind, and its
+ * message — **not** where it sits.
+ *
+ * Position is what a repair moves. A rewrite shorter than what it replaced
+ * shifts every diagnostic to its right on that line, and a repair that inserts
+ * lines (`E0001` prepends a tile) shifts every diagnostic below it. Keyed on
+ * position, each of those reads as a diagnostic the composed source has and the
+ * original did not — so the gate called an untouched diagnostic introduced and
+ * rolled back a repair that was correct.
+ *
+ * The message is what distinguishes two diagnostics of one code. Counting
+ * codes alone is *nearly* enough — a swap within one code leaves the count
+ * unchanged, so the resolved-nothing condition below catches it — and it fails
+ * exactly when a second repair balances the books: reword one `E0211` and
+ * resolve one `E0119`, and the per-code counts say a clean repair happened
+ * while the reworded diagnostic is still in the file.
+ *
+ * Normalising positions through each patch's edit instead was the other
+ * option. It loses because a region patch's delta is the whole file, so every
+ * patch would have to declare the span it touches for the gate to undo it.
+ *
+ * What this accepts: a repair that resolves one diagnostic while moving and
+ * recreating another with the same wording elsewhere reads as no change at
+ * all. No repair branch can produce it — every one substitutes a name that is
+ * already declared, so none can mint a diagnostic with a message the file
+ * already had.
+ */
+function diagnosticKey(e: KumikiError): string {
+  return JSON.stringify([e.code, e.kind, e.message]);
+}
+
+/**
+ * The entries of `a` that `b` does not account for, compared as **multisets**.
+ *
+ * A set would answer "nothing was resolved" for a file holding two
+ * diagnostics with one key where a repair cleared one of them, and roll a real
+ * repair back. Counting is what makes one of two a difference.
+ *
+ * Returns real diagnostics rather than keys, because the printer reports an
+ * introduced one as `code@line:col` and the MCP wire serialises it whole. When
+ * a key is over-represented, the earliest entries account for `b` and the
+ * surplus is what is left at the end of `a`. Which of a set of identical
+ * diagnostics gets reported is arbitrary — only the count carries meaning —
+ * so the rule is stated rather than left to whichever way the loop runs.
+ */
+function surplus(a: readonly KumikiError[], b: readonly KumikiError[]): KumikiError[] {
+  const budget = new Map<string, number>();
+  for (const e of b) {
+    const k = diagnosticKey(e);
+    budget.set(k, (budget.get(k) ?? 0) + 1);
+  }
+  const extra: KumikiError[] = [];
+  for (const e of a) {
+    const k = diagnosticKey(e);
+    const left = budget.get(k) ?? 0;
+    if (left > 0) budget.set(k, left - 1);
+    else extra.push(e);
+  }
+  return extra;
+}
+
+/**
  * The one sentence describing a write this gate refused, for whichever verb is
  * printing. Two verbs cannot describe one rollback differently if only one of
  * them spells it.
@@ -1107,9 +1169,9 @@ function rollbackLine(r: {
     case "resolved-none":
       return "(auto-patch rolled back — it resolved none of the reported diagnostics)";
     case "introduced": {
-      // Named rather than summarised as "new errors": the commonest cause is a
-      // diagnostic no patch repaired that a repair to its left moved, and the
-      // position in this list is what shows that.
+      // Named rather than summarised as "new errors": these are diagnostics the
+      // file would have gained, and the position is where the repair would have
+      // put each one.
       const where = r.blocked.introduced
         .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
         .join(", ");
