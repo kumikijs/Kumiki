@@ -107,6 +107,33 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
+### 8.2.5 The route slot
+
+`route` is maintained by the runtime rather than declared by a program ([§3.2](./routing.md#_3-2-current-route-state)), so there is no `slot route` for `given.slots` to override — and the harness would otherwise build its slot table without one, leaving a reducer that reads `route.path` to panic on an absent slot.
+
+The harness seeds it from the same empty route `mount` starts from, in every tier — `reducer-test` and its multi-step form, `tile-test`, `run-reducer` inside a `property-test`, and the `episode-test` / `kumiki replay` path. A test naming no route runs against that route (`{path: "/", pattern: "/", params: {}, query: {}, hash: None}`), so a reducer reading the current route is testable without ceremony:
+
+```kumiki fragment
+test route-defaults-to-empty =
+    reducer-test noticed
+        given  = {slots: {seen: ""}, event: {type: ui.click, target: Go}}
+        expect = {slots: {seen: "/"}}
+```
+
+`given.slots` may name `route` to drive a reducer that branches on the current one. This is the one place the harness does *more* than `mount`: a route named in part takes the empty route's values for the fields it leaves out, so an abbreviation cannot hand the reducer an undefined field.
+
+```kumiki fragment
+test route-seeded-in-part =
+    reducer-test patterned
+        given  = {slots: {at: "", route: {pattern: "/posts/:id", params: {"id": "7"}}},
+                  event: {type: ui.click, target: Go}}
+        expect = {slots: {at: "/posts/:id#7"}}
+```
+
+A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid.
+
+`expect.slots` names the slots it compares; a slot it leaves out is not compared, so the seeded route never has to be repeated — and may be asserted like any other slot when it is what the test is about. A named slot's value is still matched exactly ([§8.2.2](#_8-2-2-wildcards)), so an `expect` naming `route` spells the whole record.
+
 ## 8.3 Property Tests
 
 ```kumiki fragment

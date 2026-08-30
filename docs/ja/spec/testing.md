@@ -82,6 +82,33 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
+### 8.2.5 route slot {#_8-2-5-the-route-slot}
+
+`route` はプログラムが宣言するものではなくランタイムが維持する slot であり（[§3.2](./routing.md#_3-2-current-route-state)）、`given.slots` が上書きすべき `slot route` は存在しない。ハーネスが slot テーブルを宣言済み slot と `given` だけから組み立てるなら、この slot は存在せず、`route.path` を読む reducer は slot 不在で panic することになる。
+
+ハーネスは `mount` が起点とするのと同じ空 route を、すべてのティアで seed する — `reducer-test` とその multi-step 形、`tile-test`、`property-test` 中の `run-reducer`、そして `episode-test` / `kumiki replay` の経路。route を書かないテストはその route（`{path: "/", pattern: "/", params: {}, query: {}, hash: None}`）に対して走るので、現在の route を読む reducer も特別な作法なしにテストできる:
+
+```kumiki fragment
+test route-defaults-to-empty =
+    reducer-test noticed
+        given  = {slots: {seen: ""}, event: {type: ui.click, target: Go}}
+        expect = {slots: {seen: "/"}}
+```
+
+`given.slots` で `route` を指定すれば、現在の route で分岐する reducer を駆動できる。ここはハーネスが `mount` より*多く*やる唯一の箇所である: 一部のフィールドだけを書いた route は、書かれなかったフィールドに空 route の値を取るので、省略記法が reducer に undefined を渡すことはない。
+
+```kumiki fragment
+test route-seeded-in-part =
+    reducer-test patterned
+        given  = {slots: {at: "", route: {pattern: "/posts/:id", params: {"id": "7"}}},
+                  event: {type: ui.click, target: Go}}
+        expect = {slots: {at: "/posts/:id#7"}}
+```
+
+route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は **E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。
+
+`expect.slots` は比較する slot を列挙するものであり、書かれなかった slot は比較されない。したがって seed した route を毎回書き直す必要はなく、テストの主題であるときは他の slot と同様に表明できる。ただし列挙された slot の値は**完全なキー集合で厳密に照合**される（[§8.2.2](#_8-2-2-wildcards)）ため、`expect` に `route` を書くときは record 全体を書く。
+
 ## 8.3 Property テスト {#_8-3-property-tests}
 
 ```kumiki fragment

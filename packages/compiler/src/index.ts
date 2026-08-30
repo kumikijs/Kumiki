@@ -52,4 +52,4 @@ export {
 // internal, and only the candidate-set question a repair asks is published.
 export { typeCandidates } from "./stdlib-types.ts";
 export { collectTimerNames, variantTagsOf } from "./symbols.ts";
-export { A11Y_CODES, check, type KumikiError } from "./typecheck.ts";
+export { A11Y_CODES, check, type KumikiError, ROUTE_SLOT_FIELDS } from "./typecheck.ts";

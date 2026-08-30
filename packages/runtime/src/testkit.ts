@@ -6,6 +6,7 @@
 
 import {
   batchRejections,
+  emptyRoute,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
@@ -576,10 +577,20 @@ export type ReplayReport = {
   finalSlots: Record<string, unknown>;
 };
 
+/**
+ * Seed the router-maintained `route` slot (testing.md §8.2.5). Seeded only
+ * when absent: no `.kumiki` can declare `route`, but a host-built slot table
+ * can carry one, and that one wins.
+ */
+function seedRoute(live: Record<string, unknown>): void {
+  if (!("route" in live)) live.route = emptyRoute();
+}
+
 /** Reset `app.live` to the slot defaults (hermetic start, §8.6). */
 function resetLiveFromSlots(app: ReplayApp): void {
   for (const k of Object.keys(app.live)) delete app.live[k];
   for (const [k, m] of Object.entries(app.slots)) app.live[k] = m.value;
+  seedRoute(app.live);
 }
 
 function executeEpisode(
@@ -988,7 +999,18 @@ export const _stdlibTest = {
     return { name, pass: true, cases: count };
   },
   // ----- in-language test runner (`kumiki test`) -----
-  /** Reset live slot state to slot defaults, then apply the test's `given` slots. */
+  /**
+   * Reset live slot state to slot defaults, seed `route`, then apply the
+   * test's `given` slots — with one further pass over `route`, because a
+   * `given` one names only the fields the test cares about and takes the empty
+   * route's values for the rest. `route.params` reading `undefined` is the
+   * panic this seam exists to prevent, and an abbreviation must not
+   * reintroduce it. The field names are checked when the program is checked.
+   *
+   * Shared by `reducer-test`, its multi-step form and `tile-test`, and by
+   * `run-reducer` inside a `property-test`; `episode-test` and `kumiki replay`
+   * reach the same seed through `resetLiveFromSlots`.
+   */
   resetLive(
     live: Record<string, unknown>,
     slots: Record<string, { value: unknown }>,
@@ -996,7 +1018,13 @@ export const _stdlibTest = {
   ): void {
     for (const k of Object.keys(live)) delete live[k];
     for (const [k, v] of Object.entries(slots)) live[k] = v.value;
+    seedRoute(live);
+    const base = live.route;
     Object.assign(live, given);
+    const seeded = given.route;
+    if (seeded && typeof seeded === "object" && !Array.isArray(seeded)) {
+      live.route = { ...(base as Record<string, unknown>), ...(seeded as Record<string, unknown>) };
+    }
   },
   /**
    * Compare a reducer's resulting slots + emitted effects (or a panic) to

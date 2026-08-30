@@ -1,0 +1,1 @@
+{"id":"ep_0001","trigger":{"kind":"ui.click","target":"Go","ts":1718700000001},"steps":[{"kind":"reducer","name":"noticed","slot-diffs":[{"name":"seen","before":"","after":"/"}],"emits":[],"ts":1718700000002},{"kind":"signal-update","dirty-slots":["seen"],"binds-updated":[],"ts":1718700000003}],"status":"completed"}
