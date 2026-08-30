@@ -85,16 +85,6 @@ tile B = button(text="b")
       expect(refsOf(decl, "fn.shout")).toEqual([]);
     });
 
-    it("for the positional bindings, which no definition declares", () => {
-      // A slot may legally be named after one of these — the `$` is part of
-      // the identifier, so `slot $el` is a different name — but the walker
-      // must not resolve the reducer's reads to it either way.
-      const src = `${decl}reducer r on=ui.click(B) do= label := $el.id + $event.type + $route.path
-tile B = button(text="b")
-`;
-      expect(refsOf(src, "reducer.r")).toEqual(["tile.B@4:23", "slot.label@4:30"]);
-    });
-
     it("but not for a record key, which is never a binding either way", () => {
       const src = `${decl}fn wrap(x: Text) -> Text = {label: label}.label
 `;

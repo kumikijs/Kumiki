@@ -9,13 +9,12 @@
  * lowers to a `const` in the same scope, and two declarations of one name make
  * a module that does not load (E0121).
  *
- * The gate and the seeds read the same keys, so neither can grow a name the
- * other does not know about. Two other places still spell a list of these
- * names for their own reasons — `checkReducer`'s `localBinds` seed, which
- * omits `$route` so the E0119 gate keeps working, and `references.ts`, which
- * adds the unseeded `$now`.
+ * The E0121 gate and the seeds read the same keys, so neither can grow a name
+ * the other does not know about. That is the whole of what this table covers:
+ * `checkReducer` seeds `localBinds` from its own two-name list, because
+ * `$route` must stay out of it for the E0119 gate to work.
  *
- * `$now` is absent here on purpose: nothing seeds one, so the name is free.
+ * `$now` is absent on purpose: nothing seeds one, so the name is free.
  */
 export const RESERVED_BIND_NAMES: ReadonlyMap<string, string> = new Map([
   ["$el", "_payload.$el || {}"],
