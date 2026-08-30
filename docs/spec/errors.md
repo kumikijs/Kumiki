@@ -41,10 +41,19 @@ The checker's codes come from `packages/compiler/src/typecheck.ts`; `E0000` is a
 `kumiki fix` (and `kumiki fix --apply`) rewrites source deterministically for a
 subset of diagnostics. All applied patches pass through a regression gate:
 the composed source is re-parsed and re-typechecked before the write commits,
-and the write is rolled back whenever the resulting diagnostic set introduces
-a new failure OR fails to resolve any pre-existing one (the comparison is by
-`code@line:col`, not raw count, so a 1-for-1 swap like `E0301 → E0302 via a
-typo` is caught rather than accepted).
+and the write is rolled back whenever the result introduces a new failure OR
+fails to resolve any pre-existing one.
+
+The gate asks whether a repair **introduced a failure**, not whether anything
+moved, so it identifies a diagnostic by its **code, kind and message** and
+compares the two sets as multisets. Position is deliberately not part of it: a
+rewrite shorter than what it replaced shifts every diagnostic to its right, and
+a repair that inserts lines shifts every diagnostic below it, so a
+position-keyed comparison reads an untouched diagnostic as one the repair
+created. The message is what tells two diagnostics of one code apart — on
+`n := countr + qqqqqqqqqq` both are `E0103` — and counting is what lets one of
+two identical ones count as resolved. A 1-for-1 swap like `E0301 → E0302 via a
+typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
