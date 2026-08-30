@@ -1130,21 +1130,25 @@ function diagnosticKey(e: KumikiError): string {
  *
  * Returns real diagnostics rather than keys, because the printer reports an
  * introduced one as `code@line:col` and the MCP wire serialises it whole. When
- * a key is over-represented, the surplus is taken from the end of `a` — the
- * pick is arbitrary and only the count is meaningful, so it is fixed rather
- * than left to iteration order.
+ * a key is over-represented, the earliest entries account for `b` and the
+ * surplus is what is left at the end of `a`. Which of a set of identical
+ * diagnostics gets reported is arbitrary — only the count carries meaning —
+ * so the rule is stated rather than left to whichever way the loop runs.
  */
 function surplus(a: readonly KumikiError[], b: readonly KumikiError[]): KumikiError[] {
   const budget = new Map<string, number>();
-  for (const e of b) budget.set(diagnosticKey(e), (budget.get(diagnosticKey(e)) ?? 0) + 1);
+  for (const e of b) {
+    const k = diagnosticKey(e);
+    budget.set(k, (budget.get(k) ?? 0) + 1);
+  }
   const extra: KumikiError[] = [];
-  for (const e of [...a].reverse()) {
+  for (const e of a) {
     const k = diagnosticKey(e);
     const left = budget.get(k) ?? 0;
     if (left > 0) budget.set(k, left - 1);
     else extra.push(e);
   }
-  return extra.reverse();
+  return extra;
 }
 
 /**
