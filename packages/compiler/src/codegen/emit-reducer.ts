@@ -235,8 +235,9 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
       stmtLines.push(`const ${jsBinding(name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
     }
   }
-  // Seeded from the table the checker reserves, so a bind can never collide
-  // with one of these declarations (E0121).
+  // Seeded from the table the checker's E0121 gate reads, so an effect-event
+  // bind can never be a second declaration of one of these names. A `let` in
+  // the body still can — see the shadowing note in docs/spec/errors.md.
   for (const [name, seed] of RESERVED_BIND_NAMES) {
     stmtLines.push(`const ${jsBinding(name)} = ${seed};`);
   }

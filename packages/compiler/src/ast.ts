@@ -313,11 +313,12 @@ export type EventPattern =
       effect: string;
       outcome: "ok" | "err";
       /**
-       * The payload positionals this trigger binds, in order, each with the
-       * token it was written at — a bind that cannot be honoured is reported
-       * where the author wrote the name rather than at the effect it follows.
+       * The payload positionals this trigger binds, in order. `_` is carried
+       * as a name, the way `PVariant.binds` carries it. The position is what
+       * lets a bind that cannot be honoured be reported where the author wrote
+       * the name rather than at the effect it follows.
        */
-      binds: { name: string; pos: Pos }[];
+      binds: NamedRef[];
       /**
        * Where the effect name sits. Always the same token as `pos` here — the
        * pattern starts at the name — and named separately because that is a

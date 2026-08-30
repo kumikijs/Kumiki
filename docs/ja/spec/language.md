@@ -444,7 +444,7 @@ issue.copy(status=Done, priority=High)
 | `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
 | `$now` | 現在時刻 |
 
-> **これらの名前はランタイムのものである。** `$el` / `$event` / `$route` はランタイムが reducer 適用のたびに埋めるペイロードのフィールドであり、body は束縛せずに読む。したがって `effect-event` のトリガはそれらを束縛できない：`on=load.ok($el, _)` は **E0121** である。番号付きの束縛はペイロード自身のものなので、これまでどおり束縛できる。
+> **`effect-event` のトリガはこれらの名前を束縛できない。** コンパイラは `$el` / `$event` / `$route` をどの reducer の body にも宣言し、種にはトリガのペイロードが持っている値を使う。したがってこの名前を取る束縛は同じ名前の2つ目の宣言になり、`on=load.ok($el, _)` は **E0121** である。番号付きの束縛はこれまでどおり束縛できる — 他に宣言する者がいないからである。
 
 ### 1.6.6 例
 

@@ -33,6 +33,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -370,7 +371,9 @@ class Walker {
   }
 
   reducer(r: ReducerDef): void {
-    const locals = new Set<string>(["$el", "$event", "$route", "$now"]);
+    // The declarations codegen makes, plus `$now`, which §1.6.5 lists as a
+    // positional binding and nothing seeds.
+    const locals = new Set<string>([...RESERVED_BIND_NAMES.keys(), "$now"]);
     if (r.on.kind === "UiEvent") {
       this.add("tile", r.on.selector.tile, r.on.selector.tilePos);
     } else if (r.on.kind === "EffectEvent") {

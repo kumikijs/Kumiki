@@ -369,11 +369,13 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 ### E0121 `reserved-bind-name`
 
-`effect-event` のトリガがペイロードの positional を `$el` / `$event` / `$route` に束縛している。この3つはランタイムが reducer 適用のたびに埋める [positional binding](./language.md#_1-6-5-positional-binding) であってプログラムが取れる名前ではない — body はランタイム側の値を読むことになり、束縛のほうはトリガが約束したペイロードを置く先を失う。
+`effect-event` のトリガがペイロードの positional を `$el` / `$event` / `$route` に束縛している。この3つは [positional binding](./language.md#_1-6-5-positional-binding) であり、コンパイラはそのすべてをどの reducer の body にも宣言する — 種になるのはトリガのペイロードが持っている値だけで、effect イベントのペイロードは `{$1, $2}` なので3つのどれも持たない。したがってこの名前を取る束縛は、同じ名前の2つ目の宣言になる。
 
-> `"<name>" is a positional binding the runtime fills in on every reducer application, so an effect payload cannot be bound to it — the body would read the runtime's value and never this payload. Rename the bind`
+> `"<name>" is a positional binding the compiler declares in every reducer body, so an effect-event bind cannot also take the name — the two declarations collide and the module does not load. Rename the bind`
 
-この検査がないと、reducer は同じ `const` を二度宣言する body に落ちる。モジュール全体がロード時に `SyntaxError: Identifier '<name>' has already been declared` を投げ、アプリは一度も描画されない — `check` も `build` も、出力されたソースの見た目も綺麗なままで。`$1` は報告されない（番号付きの束縛はペイロード自身のもので、他に宣言する者がいない）。`$now` も同様で、reducer のペイロードはそれを持たない。
+この検査がないと、reducer は同じ `const` を二度宣言する body に落ちる。モジュール全体がロード時に `SyntaxError: Identifier '<name>' has already been declared` を投げ、アプリは一度も描画されない — `check` も `build` も、出力されたソースの見た目も綺麗なままで。`$1` が報告されないのは、他に宣言する者がいないからである。数字が位置を決めるわけではない（`on=load.ok(_, $1)` は*2つ目*の positional をそれに束縛する）。`$now` も同様で、こちらはそもそも誰も宣言しない。
+
+**検査されるのは `effect-event` の束縛だけである。** body の `let` は依然としてこの名前を取れる — [E0119](#e0119-route-bind-out-of-scope) は外側の `let` 束縛がペイロードに勝つと述べており、match アームのパターンは実際に正しくシャドウする — が、トップレベルの `let` は宣言と同じスコープに落ちるため、かつての束縛と同じように衝突する。これは名前の規則ではなく codegen のスコープの不具合であり、別の欠陥として追跡されている。
 
 `$route` はこれだけを報告する。束縛は依然として reducer のスコープに入るので、body の読みはトリガのスコープ外のペイロードフィールドではなくその束縛に解決される — さもなければ [E0119](#e0119-route-bind-out-of-scope) が読みのたびに発火し、作者が自分で付けた名前について `route` slot へ誘導してしまう。
 

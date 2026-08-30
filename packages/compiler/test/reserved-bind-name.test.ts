@@ -1,8 +1,8 @@
-// `$el`, `$event` and `$route` are payload fields the runtime fills in on every
-// reducer application, so a reducer body reads them without binding them. An
-// effect-event bind that took one of those names emitted the same `const`
-// twice and the whole module threw `SyntaxError` before a line of it ran —
-// with `check` and `build` both clean.
+// Codegen declares `$el`, `$event` and `$route` in every reducer body, seeded
+// from whatever the trigger's payload carries — an effect-event payload is
+// `{$1, $2}` and carries none of them. An effect-event bind that took one of
+// those names was a second declaration of it, so the whole module threw
+// `SyntaxError` before a line of it ran, with `check` and `build` both clean.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -12,6 +12,8 @@ import { describe, expect, it } from "vitest";
 import { jsBinding } from "../src/codegen/context.ts";
 import { RESERVED_BIND_NAMES } from "../src/reserved-binds.ts";
 
+const RUNTIME = { runtimeSpecifier: "@kumikijs/runtime", exportApp: true } as const;
+
 const TMP_ROOT = resolve(__dirname, "test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
 
@@ -19,7 +21,7 @@ mkdirSync(TMP_ROOT, { recursive: true });
  * A program whose one reducer waits on an effect. `binds` is the whole bind
  * list, `body` the whole `do=` clause.
  */
-function program(binds: string, body: string): string {
+function program(binds: string, body: string, outcome: "ok" | "err" = "ok"): string {
   return `slot seen : Text = ""
 
 effect ping cap=log.write
@@ -28,7 +30,7 @@ effect ping cap=log.write
             map-request={level: "info", message: "ping"}
 
 reducer subject
-    on=ping.ok(${binds})
+    on=ping.${outcome}(${binds})
     do= ${body}
 
 tile Page = column(text(seen))
@@ -73,11 +75,15 @@ describe("an effect bind named after a positional binding", () => {
     });
   }
 
-  it("reports the same sentence whichever name it is", () => {
-    const said = [...RESERVED_BIND_NAMES.keys()].map((n) =>
-      diagnose(program(`${n}, _`, `seen := ${n}`))[0]?.message.replaceAll(n, "<name>"),
-    );
-    expect(new Set(said).size).toBe(1);
+  it("reads the same on an `.err` trigger", () => {
+    expect(codes(program("$event", "seen := $event", "err"))).toEqual(["E0121"]);
+  });
+
+  it("reaches a bind past the second position", () => {
+    const src = program("a, b, $el", 'seen := "x"');
+    const found = diagnose(src);
+    expect(found.map((e) => e.code)).toEqual(["E0121"]);
+    expect({ line: found[0]?.line, col: found[0]?.col }).toEqual(posOf(src, "$el"));
   });
 
   it("does not also report E0119 for $route", () => {
@@ -114,10 +120,11 @@ describe("the emitted module for ordinary binds", () => {
   it("declares every reserved binding exactly once and still loads", {
     timeout: 30_000,
   }, async () => {
-    const result = compile(program("payload, _", "seen := payload"), {
-      runtimeSpecifier: "@kumikijs/runtime",
-      exportApp: true,
-    });
+    // `compile`, not `check`: a regression that marked E0121 a warning would
+    // leave every assertion above green and ship the module that cannot load.
+    expect(compile(program("$el, _", 'seen := "x"'), RUNTIME).kind).toBe("fail");
+
+    const result = compile(program("payload, _", "seen := payload"), RUNTIME);
     if (result.kind !== "ok") expect.fail(result.errors.map((e) => e.code).join("\n"));
 
     for (const name of RESERVED_BIND_NAMES.keys()) {

@@ -1,14 +1,21 @@
 /**
- * The positional bindings the runtime fills in on every reducer application
- * (language.md §1.6.5), and the payload expression codegen seeds each one from.
+ * The positional bindings codegen declares in every reducer body
+ * (language.md §1.6.5), and the payload expression each declaration is seeded
+ * from. Only the trigger's own payload actually carries any of them — an
+ * effect-event payload is `{$1, $2}` and carries none — so the declaration is
+ * what exists everywhere, not the value.
  *
- * A reducer body reads these without binding them, so a bind that takes one of
- * the names has nowhere to put the field its trigger promised — and the emitted
- * reducer declares the same `const` twice, which throws before the module runs.
- * The checker reserves exactly these keys and codegen emits exactly these
- * seeds, so neither side can grow a name the other does not know about.
+ * That is what makes the names uninhabitable by an `effect-event` bind: a bind
+ * lowers to a `const` in the same scope, and two declarations of one name make
+ * a module that does not load (E0121).
  *
- * `$now` is absent on purpose: nothing seeds one, so the name is free.
+ * The gate and the seeds read the same keys, so neither can grow a name the
+ * other does not know about. Two other places still spell a list of these
+ * names for their own reasons — `checkReducer`'s `localBinds` seed, which
+ * omits `$route` so the E0119 gate keeps working, and `references.ts`, which
+ * adds the unseeded `$now`.
+ *
+ * `$now` is absent here on purpose: nothing seeds one, so the name is free.
  */
 export const RESERVED_BIND_NAMES: ReadonlyMap<string, string> = new Map([
   ["$el", "_payload.$el || {}"],

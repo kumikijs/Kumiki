@@ -448,7 +448,7 @@ issue.copy(status=Done, priority=High)
 | `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
 | `$now` | the current time |
 
-> **These names are the runtime's.** `$el`, `$event` and `$route` are payload fields the runtime fills in on every reducer application, so a body reads them without binding them and an `effect-event` trigger cannot bind one: `on=load.ok($el, _)` is **E0121**. The numbered binds are the payload's own and stay bindable.
+> **An `effect-event` trigger cannot bind these names.** The compiler declares `$el`, `$event` and `$route` in every reducer body, seeded from whatever the trigger's payload carries — so a bind that takes one of them is a second declaration of the same name, and `on=load.ok($el, _)` is **E0121**. The numbered binds stay bindable; nothing else declares one.
 
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 

@@ -684,7 +684,7 @@ class Parser {
       // effect-name.ok / .err
       if (sub === "ok" || sub === "err") {
         this.eat("op", "(");
-        const binds: { name: string; pos: Pos }[] = [];
+        const binds: NamedRef[] = [];
         if (!this.matchOp(")")) {
           binds.push(this.readBind());
           while (this.matchOp(",")) {
@@ -708,7 +708,7 @@ class Parser {
     throw new ParseError("Expected event pattern", t.pos);
   }
 
-  private readBind(): { name: string; pos: Pos } {
+  private readBind(): NamedRef {
     if (this.matchOp("_")) {
       const tok = this.next();
       return { name: "_", pos: tok.pos };

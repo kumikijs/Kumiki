@@ -1455,18 +1455,19 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   if (r.on.kind === "EffectEvent") {
     for (const b of r.on.binds) {
       if (b.name === "_") continue;
-      // §1.6.5 — the positional bindings belong to the runtime. A bind that
-      // takes one still enters the scope: the body's reads are then that
-      // binding, which keeps this the one report rather than the first of two
-      // (a `$route` bind would otherwise also collect E0119 on every read).
+      // §1.6.5 — codegen declares these three in every reducer body, whatever
+      // the trigger, so a bind that takes one is a second declaration of the
+      // same name. The bind still enters the scope: the body's reads are then
+      // that binding, which keeps this the one report rather than the first of
+      // two (a `$route` bind would otherwise also collect E0119 on every read).
       if (RESERVED_BIND_NAMES.has(b.name)) {
         errors.push({
           code: "E0121",
           kind: "reserved-bind-name",
           message:
-            `"${b.name}" is a positional binding the runtime fills in on every reducer ` +
-            `application, so an effect payload cannot be bound to it — the body would read ` +
-            `the runtime's value and never this payload. Rename the bind`,
+            `"${b.name}" is a positional binding the compiler declares in every reducer ` +
+            `body, so an effect-event bind cannot also take the name — the two declarations ` +
+            `collide and the module does not load. Rename the bind`,
           pos: b.pos,
         });
       }
@@ -1569,6 +1570,10 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       }
     }
   }
+  // Not derived from `RESERVED_BIND_NAMES`: `$route` is deliberately absent,
+  // because the E0119 gate reads `localBinds` to tell a payload field from a
+  // name something in the body bound. Seeding it here would answer that
+  // question "bound" for every reducer and retire the diagnostic.
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");
 
