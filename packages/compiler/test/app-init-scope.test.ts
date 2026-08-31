@@ -208,6 +208,24 @@ fn two() -> Text = route.pattern`,
     ).toEqual(["E0120", "E0120"]);
   });
 
+  it("points at the call rather than at the argument that contains it", () => {
+    // Two calls in one argument are two things to fix, so two reports at the
+    // argument's own position would be indistinguishable.
+    const errs = check(
+      parse(
+        lex(
+          appWith(
+            `fn one() -> Text = route.path
+fn two() -> Text = route.pattern`,
+            "load(one() + two())",
+          ),
+        ),
+      ),
+    );
+    const columns = errs.map((e) => e.pos.col);
+    expect(new Set(columns).size).toBe(2);
+  });
+
   it("reports the direct read and the hop separately when both are written", () => {
     expect(codesWith("fn here() -> Text = route.path", "load(route.path + here())")).toEqual([
       "E0120",
