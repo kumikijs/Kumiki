@@ -2181,6 +2181,19 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         bindLocal(inner, "$2", null);
         checkExpr(a, sym, errors, inner);
       }
+      if (e.method === "get-or") {
+        // The fallback is the value the call produces on the empty case, so it
+        // is checked against what the call answers. Reported under E0201
+        // whatever position the call sits in — including inside an `emit`
+        // argument, where the mismatch is against the method's own signature
+        // and not against the effect's `in=` type.
+        const want = getOrResultType(
+          unaliasType(inferType(e.receiver, sym, ctx), sym),
+          e.args.length,
+        );
+        const fallback = e.args.at(-1);
+        if (want !== null && fallback !== undefined) checkAgainst(fallback, want, sym, errors, ctx);
+      }
       return;
     case "Wildcard":
       // In the two positions `checkTest`'s dedicated passes walk — anywhere in
@@ -2657,6 +2670,29 @@ function unwrappedType(t: TypeExpr): TypeExpr | null {
 }
 
 /**
+ * What `.get-or(…)` answers — `Option(T)` / `Result(T, E)` to `T`, `Map(K, V)`
+ * to `V` (stdlib.md §2.2.4 / §2.2.5 / §2.2.1), and `null` for a receiver that
+ * decides nothing. Separate from `unwrappedType` because a Map is not unwrapped
+ * by either member: `.get` on one *wraps*, into `Option(V)`.
+ *
+ * It is also the type the fallback must have, which is why one resolver serves
+ * both readers: the fallback is what the call evaluates to when there is
+ * nothing to unwrap, so a fallback of another type *is* the value the program
+ * gets on the empty case. Two tables could disagree about that.
+ *
+ * The argument count is part of the question rather than a check beside it: the
+ * lowering tells the Map reading from the unwrapping one by counting arguments
+ * (`codegen/expr.ts`, `case "get-or"`), so a call whose count does not fit its
+ * receiver has no result type to speak of and stays undecidable here — while
+ * still lowering to the reading its count names.
+ */
+function getOrResultType(recv: TypeExpr | null, argCount: number): TypeExpr | null {
+  if (recv?.kind !== "TypeApp") return null;
+  if (recv.name === "Map") return argCount === 2 ? (recv.args[1] ?? null) : null;
+  return argCount === 1 ? unwrappedType(recv) : null;
+}
+
+/**
  * The declared type of an assignment target, walking `.field` and `[k]` through
  * the slot's type. `null` wherever the path leaves what the type system knows.
  */
@@ -2937,6 +2973,13 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
             return recv.args[1] ? container("Option", [recv.args[1]], e.pos) : null;
           if (recv.name === "Option" || recv.name === "Result") return recv.args[0] ?? null;
         }
+      }
+      // `.get-or(d)` resolves from its receiver the way `.get` does, and a Map
+      // lookup with a fallback answers V. Without this the unwrapped value was
+      // assignable to the container it came out of.
+      if (e.method === "get-or") {
+        const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
+        return getOrResultType(recv, e.args.length);
       }
       // `r.copy(f=v)` is record update — same type in, same type out.
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
