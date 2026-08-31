@@ -621,9 +621,9 @@ describe("every built-in is held to the count its lowering reads", () => {
 describe("codegen no longer supplies what the call omitted", () => {
   // The lowerings read `args[0]` and substituted `0` / `""` / `[]` / `undefined`
   // when it was absent, which is how a missing argument became a plausible
-  // value. `checkCallee` reports E0213 for those calls wherever `checkExpr`
-  // walks — which is not everywhere, so the throw is what an author actually
-  // meets in the positions the checker skips, and the last case here is one.
+  // value. `checkCallee` reports E0213 wherever `checkExpr` walks, and the
+  // throw is what remains for a caller that reaches codegen without it — every
+  // case below calls `codegen` directly, which is that path.
   //
   // The list is derived rather than written: a builtin that requires an
   // argument gets its check case from the tables above, and would otherwise
@@ -672,22 +672,29 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
   });
 
-  it("is what `build` does where `check` never walked the expression", () => {
-    // `app.http`'s fields are not walked by `checkExpr`, so `checkCallee` never
-    // sees this call: `check` reports ok and the throw is the whole of what the
-    // author gets. On the defaulting side it was worse — the app built, with a
-    // request timeout of zero.
-    const unwalked = `slot t : Text = ""
+  it("reaches an app.http field, which the checker used to walk past", () => {
+    // These four expressions went unwalked, so `checkCallee` never saw a call
+    // in one: `check` reported ok and the codegen throw was the whole of what
+    // the author got. On the defaulting side it was worse — the app built,
+    // with a request timeout of zero. They are walked now, so this is a
+    // diagnostic at the field like any other position.
+    const inHttpField = `slot t : Text = ""
 tile App = column(text(t))
 app A caps=[http.get]
     routes={"/" -> App, "/404" -> App}
     http={base-url: "https://x", timeout: Duration.s()}
     init=[]
 `;
-    expect(check(parse(lex(unwalked)))).toEqual([]);
-    expect(() => compile(unwalked, { runtimeSpecifier: "./runtime.js" })).toThrow(
-      /Duration\.s\(\) at 5:43 is missing/,
-    );
+    expect(check(parse(lex(inHttpField)))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "Duration.s" expects 1 argument(s) but got 0',
+        pos: { line: 5, col: 43 },
+      },
+    ]);
+    const result = compile(inHttpField, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
   });
 });
 

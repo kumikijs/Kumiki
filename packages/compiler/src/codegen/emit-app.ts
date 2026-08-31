@@ -9,19 +9,11 @@ export function httpConfigJs(http: AppDef["http"], gen: GenCtx): string {
   // generated body and out of reach from `_http`'s closures.
   const ctx = makeEvalCtx(gen, new Set(), false);
   const fields: string[] = [];
-  // Every field an author writes an expression for is deferred: `headers` as
-  // the thunk the runtime calls, the three scalars as getters the runtime
-  // reads. Both defer for the same reason — each is consulted when a request is
-  // made, so a slot reference answers with the value that request is made with
-  // rather than the default it was declared with.
-  //
-  // Deferring is also what keeps this config emittable before the slot table:
-  // a getter body runs when the field is read, and `_live` is built by then.
-  // As values, the three read a `const` that is still in its temporal dead zone
-  // and the module threw on import.
-  //
-  // The shape does not depend on what was written — a literal gets a getter
-  // too — so a program cannot be one that reads its config once.
+  // Every field written as an expression is deferred — `headers` as the thunk
+  // the runtime calls, the three scalars as getters it reads — so each answers
+  // with the value the request is made with, and the `_live` read happens after
+  // the slot table is built rather than before it. A literal is deferred the
+  // same way, so the shape never depends on what was written.
   if (http.baseUrl) fields.push(`get baseUrl() { return ${jsOfExpr(http.baseUrl, ctx)}; }`);
   if (http.headers) fields.push(`headers: () => (${jsOfExpr(http.headers, ctx)})`);
   if (http.timeout) fields.push(`get timeout() { return ${jsOfExpr(http.timeout, ctx)}; }`);

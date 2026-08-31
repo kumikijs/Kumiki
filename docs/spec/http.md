@@ -159,7 +159,7 @@ app App
 |---|---|---|
 | `base-url` | Base for relative URLs | per request |
 | `headers` | Applied to all requests | per request |
-| `timeout` | Default timeout | per request |
+| `timeout` | Default timeout (duration) | per request |
 | `credentials` | fetch credentials mode ([§6.9](#_6-9-default-settings)) | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
@@ -176,6 +176,11 @@ at mount.
 
 The three reducer names are the exception, and are not values at all: they are
 resolved once, by the compiler, against the `reducer` definitions.
+
+What is checked in the four expressions is the names: one that resolves to
+nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), reported where it is written. The
+**values** are not — nothing compares what a field is given against what it
+needs, so `timeout: "soon"` compiles and reaches `fetch`.
 
 ### 6.3.2 Global Handling of 401
 

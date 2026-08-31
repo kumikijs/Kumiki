@@ -1,6 +1,7 @@
-# Feature: app.http's base-url / timeout / credentials read live slots.
-# Each is evaluated per request, the way `headers` already was — clicking
-# "Use backup" sends the next request somewhere else without a remount.
+# Feature: every value field of app.http reads a live slot, and every one of
+# them is evaluated per request. "Use backup" changes where the next request
+# goes; "Tighten" changes what it carries and how long it waits. Neither needs
+# a remount.
 
 slot endpoint    : Text = "https://api.example.com"
 slot timeoutMs   : Int  = 5000
@@ -19,15 +20,19 @@ reducer loaded    on=fetchQuote.ok($q, _)    do= quote  := $q
                                                  status := "ready"
 reducer failed    on=fetchQuote.err($e, _)   do= status := "error"
 reducer useBackup on=ui.click(SwapBtn)       do= endpoint := "https://backup.example.com"
+reducer tighten   on=ui.click(TightenBtn)    do= timeoutMs   := 20
+                                                 sendCookies := "omit"
 
-tile LoadBtn = button(text="Load quote", onClick=load)
-tile SwapBtn = button(text="Use backup", onClick=useBackup)
+tile LoadBtn    = button(text="Load quote", onClick=load)
+tile SwapBtn    = button(text="Use backup", onClick=useBackup)
+tile TightenBtn = button(text="Tighten", onClick=tighten)
 
 tile App = column(
              text("endpoint: " + endpoint),
              text("status: " + status),
              LoadBtn,
              SwapBtn,
+             TightenBtn,
              text(quote))
            {pad: "lg", gap: "md"}
 
@@ -37,6 +42,7 @@ app HttpConfigFromSlots
     init   = []
     http   = {
         base-url:    endpoint,
+        headers:     { "X-Endpoint": endpoint },
         timeout:     timeoutMs,
         credentials: sendCookies
     }
