@@ -155,14 +155,27 @@ app App
     }
 ```
 
-| http field | Meaning |
-|---|---|
-| `base-url` | Base for relative URLs |
-| `headers` | Applied to all requests (expressions allowed, slot references allowed) |
-| `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) |
-| `on-403` | Reducer that receives a 403 (same) |
-| `on-5xx` | Reducer that receives a 5xx (same) |
-| `timeout` | Default timeout (duration) |
+| http field | Meaning | Evaluated |
+|---|---|---|
+| `base-url` | Base for relative URLs | per request |
+| `headers` | Applied to all requests | per request |
+| `timeout` | Default timeout | per request |
+| `credentials` | fetch credentials mode ([§6.9](#_6-9-default-settings)) | per request |
+| `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
+| `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
+| `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
+
+Every field that takes a value takes an **expression**, and may read a slot. All
+four are evaluated **when a request is made**, not when the app is built: a
+reducer that writes the slot changes what the next request is made with, and
+nothing has to be remounted for it to take effect. So `base-url: endpoint`
+switches host the moment `endpoint` is assigned, and
+`headers: {"Authorization": fmt("Bearer {0}", session.get-or("anon"))}` carries
+the session that is current at the request rather than the one that was current
+at mount.
+
+The three reducer names are the exception, and are not values at all: they are
+resolved once, by the compiler, against the `reducer` definitions.
 
 ### 6.3.2 Global Handling of 401
 

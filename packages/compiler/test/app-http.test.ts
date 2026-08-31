@@ -109,11 +109,15 @@ describe("codegen: app.http (#78)", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.js).toContain('baseUrl: "https://api.example.com"');
+    // Every field the author writes an expression for is deferred — the three
+    // scalars as getters, `headers` as the thunk the runtime calls — so each is
+    // read when a request is made. A literal is emitted the same way, so the
+    // shape never depends on what was written.
+    expect(result.js).toContain('get baseUrl() { return "https://api.example.com"; }');
     expect(result.js).toContain('on401: "handleUnauthorized"');
     expect(result.js).toContain("headers: () =>");
-    expect(result.js).toContain("timeout: 5000");
-    expect(result.js).toContain('credentials: "include"');
+    expect(result.js).toContain("get timeout() { return 5000; }");
+    expect(result.js).toContain('get credentials() { return "include"; }');
     expect(result.js).toContain("http: _http,");
     expect(result.js).toMatch(/httpFetch\("GET", \w+, _http, _signal\)/);
   });

@@ -205,5 +205,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `78-editable-input-selector.kumiki` | slot, reducer, tile | コア | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 | `79-option-get-assignment.kumiki` | slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `80-route-in-tests.kumiki` | slot, effect, reducer, tile | テスト | [§8.2.5](./testing.md#_8-2-5-the-route-slot) |
+| `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 <!-- examples:end -->
 :::

@@ -1,0 +1,42 @@
+# Feature: app.http's base-url / timeout / credentials read live slots.
+# Each is evaluated per request, the way `headers` already was — clicking
+# "Use backup" sends the next request somewhere else without a remount.
+
+slot endpoint    : Text = "https://api.example.com"
+slot timeoutMs   : Int  = 5000
+slot sendCookies : Text = "include"
+slot quote       : Text = ""
+slot status      : Text = "idle"
+
+effect fetchQuote cap=http.get
+                  in=Unit
+                  out=Result(Text, HttpError)
+                  map-request={url: "/quote", decode: Decoder.Text}
+
+reducer load      on=ui.click(LoadBtn)       do= status := "loading"
+                                                 emit fetchQuote()
+reducer loaded    on=fetchQuote.ok($q, _)    do= quote  := $q
+                                                 status := "ready"
+reducer failed    on=fetchQuote.err($e, _)   do= status := "error"
+reducer useBackup on=ui.click(SwapBtn)       do= endpoint := "https://backup.example.com"
+
+tile LoadBtn = button(text="Load quote", onClick=load)
+tile SwapBtn = button(text="Use backup", onClick=useBackup)
+
+tile App = column(
+             text("endpoint: " + endpoint),
+             text("status: " + status),
+             LoadBtn,
+             SwapBtn,
+             text(quote))
+           {pad: "lg", gap: "md"}
+
+app HttpConfigFromSlots
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    http   = {
+        base-url:    endpoint,
+        timeout:     timeoutMs,
+        credentials: sendCookies
+    }

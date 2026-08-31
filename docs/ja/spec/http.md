@@ -137,7 +137,7 @@ reducer added
 
 ## 6.3 認証
 
-### 6.3.1 グローバル header の注入
+### 6.3.1 グローバル header の注入 {#_6-3-1-injecting-global-headers}
 
 `app.http` で全 HTTP effect に自動付与する header を宣言できる：
 
@@ -155,14 +155,25 @@ app App
     }
 ```
 
-| http フィールド | 意味 |
-|---|---|
-| `base-url` | 相対 URL のベース |
-| `headers` | 全リクエストに付与（式可、slot 参照可） |
-| `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） |
-| `on-403` | 403 を受けた reducer（同上） |
-| `on-5xx` | 5xx を受けた reducer（同上） |
-| `timeout` | デフォルトタイムアウト（duration） |
+| http フィールド | 意味 | 評価タイミング |
+|---|---|---|
+| `base-url` | 相対 URL のベース | リクエストごと |
+| `headers` | 全リクエストに付与 | リクエストごと |
+| `timeout` | デフォルトタイムアウト | リクエストごと |
+| `credentials` | fetch の credentials モード（[§6.9](#_6-9-default-settings)） | リクエストごと |
+| `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
+| `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
+| `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
+
+値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
+アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の
+リクエストの内容を変え、そのために再マウントする必要はない。したがって
+`base-url: endpoint` は `endpoint` に代入した瞬間から接続先を切り替え、
+`headers: {"Authorization": fmt("Bearer {0}", session.get-or("anon"))}` は
+マウント時ではなくリクエスト時点のセッションを載せる。
+
+reducer 名の 3 つだけは例外で、そもそも値ではない：コンパイラが `reducer` 定義に
+対して一度だけ解決する。
 
 ### 6.3.2 401 のグローバル処理
 
@@ -394,7 +405,7 @@ reducer addErr
 
 ---
 
-## 6.9 デフォルト設定
+## 6.9 デフォルト設定 {#_6-9-default-settings}
 
 すべての HTTP effect のデフォルト：
 
