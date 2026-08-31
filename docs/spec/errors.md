@@ -383,13 +383,16 @@ Without this check the read lowers to an empty object: `$route.params.get-or("id
 
 ### E0120 `route-in-app-init`
 
-An `app.init` argument reads `route` or `$route`. Init arguments are evaluated **once**, while the app object is being constructed ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)); the runtime installs `app.live.route` during the mount that follows, so at the moment these arguments are captured there is no route to read.
+An `app.init` argument reads `route` or `$route`, or calls a `fn` that reads one. Init arguments are evaluated **once**, while the app object is being constructed ([Language §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)); the runtime installs `app.live.route` during the mount that follows, so at the moment these arguments are captured there is no route to read.
 
 > `"<name>" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+> `"<name>" is not available in an app.init argument through "<fn>" (<fn> → … → <name>): …`
 
 Without this check the argument lowers to `_live["route"]` and captures `undefined`, so `init = [load(route.path)]` compiles clean and throws `Cannot read properties of undefined (reading 'path')` at mount — the app never renders. `$route` is the same hole from the other side: nothing binds one here, and [E0119](#e0119-route-bind-out-of-scope)'s advice would send the author to the `route` spelling this check rejects.
 
-**Fix**: Take the route from a `route.enter` reducer ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is.
+**The restriction is on what the argument reaches, not on how it is spelled.** A `fn` that reads the route is correct — it is not in the slot table, so the purity rule does not see it, and every other caller runs after the mount that installs it. Only the call from `app.init` is wrong, and it is wrong more loudly than the direct read: the call lands in the app object literal, so the module throws while it is being *imported* and nothing loads at all. The call is followed through as many hops as it takes, and the chain that gets there is in the message, because a report naming only the called `fn` sends the author to a definition that is not itself wrong.
+
+**Fix**: Take the route from a `route.enter` reducer ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), which the runtime applies with the route the app landed on. An `init` entry that needs nothing from the route stays where it is; one that calls a `fn` for something else keeps that call.
 
 ### E0121 `reserved-bind-name`
 

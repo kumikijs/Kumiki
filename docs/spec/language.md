@@ -819,6 +819,8 @@ An `init` entry is an effect call, and its arguments are ordinary expressions �
 
 What a slot reference sees at that moment is its **declared default**. `route` is the exception — it is maintained by the runtime and does not exist yet, so `init = [load(route.path)]` is a compile error ([E0120](./errors.md#e0120-route-in-app-init)), as is `$route`, which the runtime does not bind here either. Take the route from a `route.enter` reducer instead.
 
+The restriction is on what an argument **reaches**, not on how it is written: `init = [load(here())]` where `fn here() -> Text = route.path` is the same error, reported at the call with the chain that gets to the route. A `fn` that reads the route stays legal everywhere else — a tile, a reducer and an effect's `map-request` all run after the mount that installs it.
+
 `now` is available and is captured the same way: it evaluates to the moment the app object was built, not to the moment the effect runs. An entry that needs the time of its own dispatch should take it in the reducer that handles the result.
 
 There is no reducer around these arguments either, so an `emit` expression is not available in one ([E0305](./errors.md#e0305-fn-impurity)): the entry itself is the dispatch.

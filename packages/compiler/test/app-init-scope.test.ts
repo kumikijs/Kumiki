@@ -28,18 +28,23 @@ import { check } from "../src/typecheck.ts";
  * can be written without a type error masking the report under test; `note`
  * takes an `EffectId` so an `emit` expression is well-typed in that position.
  */
-const app = (init: string) => `slot n : Int = 0
+const appWith = (defs: string, init: string) => `slot n : Int = 0
 slot key : Text = "k"
 effect load  cap=storage.read in=Text     out=Result(Text, Text)
 effect probe cap=storage.read in=Route    out=Result(Text, Text)
 effect note  cap=log.write    in=EffectId out=Unit
 reducer got on=load.ok(_, _) do= n := 1
+${defs}
 tile App = column(text(n.show))
 app A caps=[storage.read, log.write] routes={"/" -> App, "/404" -> App} init=[${init}]
 `;
 
+const app = (init: string) => appWith("", init);
+
 const diagnostics = (init: string) => check(parse(lex(app(init))));
 const codes = (init: string) => diagnostics(init).map((e) => e.code);
+const codesWith = (defs: string, init: string) =>
+  check(parse(lex(appWith(defs, init)))).map((e) => e.code);
 
 describe("route in an app.init argument", () => {
   it("is reported, and only once", () => {
@@ -156,5 +161,124 @@ describe("what a valid app.init lowers to", () => {
     if (result.kind !== "ok") return;
     const init = result.js.split(/\r?\n/).find((l) => l.includes("init: ["));
     expect(init).toContain("_s.now()");
+  });
+});
+
+describe("route reached through a fn call in an app.init argument", () => {
+  // `route` in a `fn` body is legal and stays legal: the `fn` is not in the
+  // slot table, so the purity check does not see it, and every other caller —
+  // a tile, a reducer, an effect's `map-request` — runs after the mount that
+  // installs it. What cannot stand is the call from `app.init`, and nothing in
+  // that position knows what the callee reads.
+  //
+  // The hop was worse than the direct read it replaces: a direct `route.path`
+  // throws at mount, while `function here() { return (_live["route"])["path"]; }`
+  // reached from `init:` throws while the module is still being imported, so
+  // nothing loads at all.
+
+  it("is reported at the call, with the chain that reaches the route", () => {
+    const errs = check(parse(lex(appWith("fn here() -> Text = route.path", "load(here())"))));
+    expect(errs.map((e) => e.code)).toEqual(["E0120"]);
+    expect(errs[0]?.message).toContain("here → route");
+  });
+
+  it("follows the chain through more than one hop", () => {
+    const errs = check(
+      parse(
+        lex(
+          appWith(
+            `fn outer() -> Text = inner()
+fn inner() -> Text = route.path`,
+            "load(outer())",
+          ),
+        ),
+      ),
+    );
+    expect(errs.map((e) => e.code)).toEqual(["E0120"]);
+    expect(errs[0]?.message).toContain("outer → inner → route");
+  });
+
+  it("reports each call that reaches it, since each is its own fix", () => {
+    expect(
+      codesWith(
+        `fn one() -> Text = route.path
+fn two() -> Text = route.pattern`,
+        "load(one() + two())",
+      ),
+    ).toEqual(["E0120", "E0120"]);
+  });
+
+  it("reports the direct read and the hop separately when both are written", () => {
+    expect(codesWith("fn here() -> Text = route.path", "load(route.path + here())")).toEqual([
+      "E0120",
+      "E0120",
+    ]);
+  });
+
+  it("leaves the same fn alone everywhere the route does exist", () => {
+    // The narrowing this rule needs: a `fn` that reads the route is correct,
+    // and only the init call site is wrong.
+    const src = `slot n : Int = 0
+effect load cap=storage.read in=Text out=Result(Text, Text)
+fn here() -> Text = route.path
+reducer go  on=ui.click(B) do= emit load(here())
+reducer got on=load.ok(_, _) do= n := 1
+tile B = button(text="go", onClick=go)
+tile App = column(B, text(here()))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src)))).toEqual([]);
+  });
+
+  it("leaves a `map-request` that calls the same fn alone", () => {
+    const src = `slot n : Int = 0
+fn here() -> Text = route.path
+effect load cap=storage.read in=Text out=Result(Text, Text) map-request={key: here()}
+reducer got on=load.ok(_, _) do= n := 1
+tile App = column(text(n.show))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src)))).toEqual([]);
+  });
+
+  it("honours a binding inside the fn that shadows the name", () => {
+    // The discriminator against a walk that matches the spelling: both of
+    // these compile and run, and rejecting them is the same checker/codegen
+    // disagreement this gate exists to close, pointed the other way.
+    expect(codesWith(`fn safe() -> Text = let route = "x" in route`, "load(safe())")).toEqual([]);
+    expect(codesWith("fn tail(route: Text) -> Text = route", "load(tail(key))")).toEqual([]);
+  });
+
+  it("terminates on a cycle, and still reports the route it reaches", () => {
+    // `E0006` rejects the cycle itself. This pass runs whether or not that
+    // report is there, so it has to stop on its own.
+    expect(
+      codesWith(
+        `fn a() -> Text = b()
+fn b() -> Text = a() + route.path`,
+        "load(a())",
+      ).sort(),
+    ).toEqual(["E0006", "E0120"]);
+  });
+
+  it("says nothing about a cycle that reaches no route", () => {
+    expect(
+      codesWith(
+        `fn a() -> Text = b()
+fn b() -> Text = a()`,
+        "load(a())",
+      ),
+    ).toEqual(["E0006"]);
+  });
+
+  it("covers `$route` in the chain, which the fn's own report already rejects", () => {
+    // `$route` in a `fn` body is E0103: there is no payload there to carry
+    // one. The chain report stands beside it rather than instead of it — the
+    // two name different mistakes, and the init call site is wrong even once
+    // the `fn` is fixed to read the slot.
+    expect(codesWith("fn here() -> Text = $route.path", "load(here())").sort()).toEqual([
+      "E0103",
+      "E0120",
+    ]);
   });
 });
