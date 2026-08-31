@@ -4008,7 +4008,7 @@ function checkApp(
     checkEmitTarget(e.callee, e.args, sym, errors, initCtx, e.pos);
     for (const a of e.args) checkExpr(a, sym, errors, initCtx);
   }
-  checkAppHttpHandlers(app, sym, errors);
+  checkAppHttp(app, sym, errors);
   checkAppTheme(app, sym, errors);
 }
 
@@ -4020,7 +4020,20 @@ function checkApp(
  * response with no handler, which looks exactly like a response the app chose
  * not to handle.
  */
-function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
+/**
+ * `app.http` has two kinds of field: three reducer names, resolved here, and
+ * four expressions, walked here.
+ *
+ * The expressions are checked in the position `slot-init` names — pure and
+ * payloadless, so `$route` is a name that does not exist rather than a bind
+ * read out of scope, and `emit` has no dispatch to reach. Nothing else looks
+ * at them, and codegen lowers each into a getter or a thunk read at request
+ * time, so a name that resolves to nothing would otherwise reach the runtime:
+ * the read throws inside the request, the dispatcher turns the throw into an
+ * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
+ * would pass check, build and smoke alike.
+ */
+function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
   if (!http) return;
   for (const handler of [http.on401, http.on403, http.on5xx]) {
@@ -4031,6 +4044,15 @@ function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError
       message: `Reference to undefined reducer "${handler.name}"`,
       pos: handler.pos,
     });
+  }
+  const fieldCtx: Ctx = {
+    kind: "slot-init",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+  };
+  for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
+    if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
 }
 

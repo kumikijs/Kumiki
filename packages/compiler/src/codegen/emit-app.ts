@@ -9,10 +9,16 @@ export function httpConfigJs(http: AppDef["http"], gen: GenCtx): string {
   // generated body and out of reach from `_http`'s closures.
   const ctx = makeEvalCtx(gen, new Set(), false);
   const fields: string[] = [];
-  if (http.baseUrl) fields.push(`baseUrl: ${jsOfExpr(http.baseUrl, ctx)}`);
+  // Every field written as an expression is deferred — `headers` as the thunk
+  // the runtime calls, the three scalars as getters it reads — so each answers
+  // with the value the request is made with, and the `_live` read happens after
+  // the slot table is built rather than before it. A literal is deferred the
+  // same way, so the shape never depends on what was written.
+  if (http.baseUrl) fields.push(`get baseUrl() { return ${jsOfExpr(http.baseUrl, ctx)}; }`);
   if (http.headers) fields.push(`headers: () => (${jsOfExpr(http.headers, ctx)})`);
-  if (http.timeout) fields.push(`timeout: ${jsOfExpr(http.timeout, ctx)}`);
-  if (http.credentials) fields.push(`credentials: ${jsOfExpr(http.credentials, ctx)}`);
+  if (http.timeout) fields.push(`get timeout() { return ${jsOfExpr(http.timeout, ctx)}; }`);
+  if (http.credentials)
+    fields.push(`get credentials() { return ${jsOfExpr(http.credentials, ctx)}; }`);
   if (http.on401) fields.push(`on401: ${JSON.stringify(http.on401.name)}`);
   if (http.on403) fields.push(`on403: ${JSON.stringify(http.on403.name)}`);
   if (http.on5xx) fields.push(`on5xx: ${JSON.stringify(http.on5xx.name)}`);
