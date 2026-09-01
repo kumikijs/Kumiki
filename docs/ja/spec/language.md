@@ -526,9 +526,9 @@ pattern      ::= identifier
 6. tile プロパティ `{...}` の値式中で **slot を読むのは可**（イベントハンドラ引数の固定キャプチャ用途）
 7. **`fn` 呼び出し可**
 
-### 1.7.3 イベントハンドラ props
+### 1.7.3 イベントハンドラ props {#_1-7-3-event-handler-props}
 
-イベントハンドラは **reducer 名を渡す**：
+イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノードにマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である（[W0213](./errors.md#w0213-handler-on-inert-tile-warning)）。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}

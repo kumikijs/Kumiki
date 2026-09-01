@@ -539,7 +539,7 @@ pattern      ::= identifier
 
 ### 1.7.3 Event Handler props
 
-An event handler **takes a reducer name**:
+An event handler **takes a reducer name**, and may be written on a user tile as well as on a builtin. On a user tile it is a prop like any other: it is merged onto the node that tile renders, so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are the same wiring, and whether it fires is a question about what `Btn` renders ([W0213](./errors.md#w0213-handler-on-inert-tile-warning)). A named argument is never the tile's input — that is the positional one — so a tile declaring `in=` still takes it: `Row(onClick=tap, label)` passes `label` as `$1`.
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}

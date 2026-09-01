@@ -206,5 +206,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `79-option-get-assignment.kumiki` | slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `80-route-in-tests.kumiki` | slot, effect, reducer, tile | testing | [§8.2.5](./testing.md#_8-2-5-the-route-slot) |
 | `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
+| `82-handler-on-a-user-tile.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 <!-- examples:end -->
 :::

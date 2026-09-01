@@ -1022,8 +1022,10 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
  * from the output with nothing said. The grammar has no children form; that
  * lowering is unspecified and now unreachable.
  *
- * Props (`{key: …}`) are not arguments and named args belong to the built-in
- * tiles, so only positional args count.
+ * Only positional arguments count. A named one is a prop wherever it is
+ * written — `Btn(onClick=tap)` and `Btn() {onClick: tap}` reach the tile's root
+ * node alike — and codegen reads the same set from the other side, so what is
+ * counted here is what is taken as the input.
  */
 function checkTileInput(
   t: TileExpr & { kind: "TileCall" },

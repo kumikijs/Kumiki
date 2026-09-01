@@ -179,7 +179,12 @@ function tileCallJs(
     const def = gen.tiles.find((x) => x.name === name);
     if (!def) throw new Error(`Tile "${name}" not found`);
     const inner = makeEvalCtx(gen, ctx.localBinds);
-    const arg1 = t.args[0];
+    // The tile's input is the first POSITIONAL argument, which is the set
+    // `checkTileInput` counts. Taking `args[0]` took a named one when it was
+    // written first, so a handler argument became the tile's `$1` — the
+    // checker saw a call with no input to a tile that wants none and said ok,
+    // while codegen bound `$1` to a bare reducer name nothing declares.
+    const arg1 = t.args.find((a) => a.name === undefined);
     const wrapBoundary = (body: string): string => boundaryJs(def, body, gen);
     // Each user-tile call site wraps its rendered output with `_named(…, "X")`
     // so the runtime can diff `tile.mount(X)` / `tile.unmount(X)` against the
