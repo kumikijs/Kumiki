@@ -28,18 +28,39 @@ import { check } from "../src/typecheck.ts";
  * can be written without a type error masking the report under test; `note`
  * takes an `EffectId` so an `emit` expression is well-typed in that position.
  */
-const app = (init: string) => `slot n : Int = 0
+const appWith = (defs: string, init: string) => `slot n : Int = 0
 slot key : Text = "k"
 effect load  cap=storage.read in=Text     out=Result(Text, Text)
 effect probe cap=storage.read in=Route    out=Result(Text, Text)
 effect note  cap=log.write    in=EffectId out=Unit
 reducer got on=load.ok(_, _) do= n := 1
+${defs}
 tile App = column(text(n.show))
 app A caps=[storage.read, log.write] routes={"/" -> App, "/404" -> App} init=[${init}]
 `;
 
+const app = (init: string) => appWith("", init);
+
+/**
+ * Where a call is written in the program under test. The positions the reports
+ * are checked against come out of the source, so a fixture edit cannot leave an
+ * assertion passing for a reason that has nothing to do with the rule.
+ */
+const callPosition = (src: string, call: string): { line: number; col: number } => {
+  const lines = src.split("\n");
+  // The `app` line, because a call written in the init list is usually spelled
+  // in a `fn` definition above it too, and the report under test is the one at
+  // the call site.
+  const line = lines.findIndex((l) => l.startsWith("app A"));
+  const col = (lines[line] ?? "").indexOf(call);
+  if (line < 0 || col < 0) throw new Error(`"${call}" is not in the app line`);
+  return { line: line + 1, col: col + 1 };
+};
+
 const diagnostics = (init: string) => check(parse(lex(app(init))));
 const codes = (init: string) => diagnostics(init).map((e) => e.code);
+const codesWith = (defs: string, init: string) =>
+  check(parse(lex(appWith(defs, init)))).map((e) => e.code);
 
 describe("route in an app.init argument", () => {
   it("is reported, and only once", () => {
@@ -156,5 +177,238 @@ describe("what a valid app.init lowers to", () => {
     if (result.kind !== "ok") return;
     const init = result.js.split(/\r?\n/).find((l) => l.includes("init: ["));
     expect(init).toContain("_s.now()");
+  });
+});
+
+describe("route reached through a fn call in an app.init argument", () => {
+  // `route` in a `fn` body is legal and stays legal: the `fn` is not in the
+  // slot table, so the purity check does not see it, and a tile, a reducer and
+  // an effect's `map-request` all run after the mount that installs it. What
+  // cannot stand is the call from `app.init`, and nothing in that position
+  // knows what the callee reads.
+  //
+  // The hop was worse than the direct read it replaces: a direct `route.path`
+  // throws at mount, while `function here() { return (_live["route"])["path"]; }`
+  // reached from `init:` throws while the module is still being imported, so
+  // nothing loads at all.
+
+  it("is reported at the call, with the chain that reaches the route", () => {
+    const errs = check(parse(lex(appWith("fn here() -> Text = route.path", "load(here())"))));
+    expect(errs.map((e) => e.code)).toEqual(["E0120"]);
+    expect(errs[0]?.message).toContain("here → route");
+  });
+
+  it("follows the chain through more than one hop", () => {
+    const src = appWith(
+      `fn outer() -> Text = inner()
+fn inner() -> Text = route.path`,
+      "load(outer())",
+    );
+    const errs = check(parse(lex(src)));
+    expect(errs.map((e) => e.code)).toEqual(["E0120"]);
+    expect(errs[0]?.message).toContain("outer → inner → route");
+    // On the call the author wrote, not on the read two definitions away: the
+    // `fn` that holds the read is not the one to change, and its line is not a
+    // place the author can act on.
+    expect(errs[0]?.pos).toEqual(callPosition(src, "outer()"));
+  });
+
+  it("names the whole chain, not its ends, however long it is", () => {
+    const errs = check(
+      parse(
+        lex(
+          appWith(
+            `fn a() -> Text = b()
+fn b() -> Text = c()
+fn c() -> Text = d()
+fn d() -> Text = route.path`,
+            "load(a())",
+          ),
+        ),
+      ),
+    );
+    expect(errs[0]?.message).toContain("a → b → c → d → route");
+  });
+
+  it("reports one fn reached from two separate init entries, twice", () => {
+    // Two call sites, one callee. The per-`fn` answer is memoised; a memo
+    // widened to "already reported for this app" would lose the second entry,
+    // and every other case in this file would stay green.
+    expect(codesWith("fn here() -> Text = route.path", "load(here()), load(here())")).toEqual([
+      "E0120",
+      "E0120",
+    ]);
+  });
+
+  it("finds a call nested inside another call's argument", () => {
+    // Only `inner` reads the route, and it is not the argument's head — the
+    // walk has to descend into a call's own arguments to see it.
+    const src = appWith(
+      `fn wrap(t: Text) -> Text = t
+fn inner() -> Text = route.path`,
+      "load(wrap(inner()))",
+    );
+    const errs = check(parse(lex(src)));
+    expect(errs.map((e) => e.code)).toEqual(["E0120"]);
+    expect(errs[0]?.pos).toEqual(callPosition(src, "inner()"));
+  });
+
+  it("finds a read nested inside the fn's own scopes", () => {
+    // The gate is asked about the body once, and the narrower scopes a `let`
+    // opens carry the answer back out by sharing it. A child scope built
+    // explicitly instead of by spreading its parent would drop this, with
+    // every other case in this file still green.
+    expect(
+      codesWith(
+        `fn nested() -> Text = let a = "x" in let b = "y" in route.path + a + b`,
+        "load(nested())",
+      ),
+    ).toEqual(["E0120"]);
+    expect(
+      codesWith(
+        "fn armed(t: Text) -> Text = match t with | k -> route.path + k",
+        "load(armed(key))",
+      ),
+    ).toEqual(["E0120"]);
+  });
+
+  it("reports each call that reaches it, since each is its own fix", () => {
+    expect(
+      codesWith(
+        `fn one() -> Text = route.path
+fn two() -> Text = route.pattern`,
+        "load(one() + two())",
+      ),
+    ).toEqual(["E0120", "E0120"]);
+  });
+
+  it("points at the call rather than at the argument that contains it", () => {
+    // Two calls in one argument are two things to fix, so two reports at the
+    // argument's own position would be indistinguishable. The positions are
+    // read out of the source rather than written down, so the assertion does
+    // not hold only because two `fn` names happen to be the same length.
+    const src = appWith(
+      `fn one() -> Text = route.path
+fn two() -> Text = route.pattern`,
+      "load(one() + two())",
+    );
+    const errs = check(parse(lex(src)));
+    expect(errs.map((e) => e.pos)).toEqual([
+      callPosition(src, "one()"),
+      callPosition(src, "two()"),
+    ]);
+  });
+
+  it("reports the direct read and the hop separately when both are written", () => {
+    expect(codesWith("fn here() -> Text = route.path", "load(route.path + here())")).toEqual([
+      "E0120",
+      "E0120",
+    ]);
+  });
+
+  it("emits the same module wherever the fn it walks into is written", () => {
+    // The pass re-checks a `fn` body to ask what it reads, and `checkExpr`
+    // writes `accessKind` onto field accesses for codegen to read. Definitions
+    // are checked in source order, so which of these two programs has the pass
+    // as the last writer differs.
+    //
+    // What that pins is that the second check cannot answer *differently* from
+    // the first. `.get` is the access whose reading is decided rather than
+    // obvious — a record field here, the unwrap on an Option receiver — so a
+    // probe built with the wrong parameter types classifies it the other way,
+    // and the emitted module starts depending on where the `fn` was written.
+    // A probe that merely knows *less* is invisible here: the classification
+    // is left alone when the base type is unknown, so `checkFn`'s answer
+    // stands whichever of the two ran last.
+    const head = `slot n : Int = 0
+type Box = {get: Text}
+slot b : Box = {get: "x"}
+effect load cap=storage.read in=Text out=Result(Text, Text)`;
+    const fnDef = "fn unwrap(x: Box) -> Text = x.get";
+    const tail = `reducer got on=load.ok(_, _) do= n := 1
+tile App = column(text(n.show))`;
+    const appLine =
+      'app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[load(unwrap(b))]';
+
+    const emitted = (src: string): string => {
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      if (result.kind !== "ok") expect.fail(JSON.stringify(result.errors));
+      return result.js;
+    };
+
+    expect(emitted(`${head}\n${fnDef}\n${tail}\n${appLine}\n`)).toBe(
+      emitted(`${head}\n${tail}\n${appLine}\n${fnDef}\n`),
+    );
+  });
+
+  it("leaves the same fn alone everywhere the route does exist", () => {
+    // The narrowing this rule needs: a `fn` that reads the route is correct,
+    // and only the init call site is wrong.
+    const src = `slot n : Int = 0
+effect load cap=storage.read in=Text out=Result(Text, Text)
+fn here() -> Text = route.path
+reducer go  on=ui.click(B) do= emit load(here())
+reducer got on=load.ok(_, _) do= n := 1
+tile B = button(text="go", onClick=go)
+tile App = column(B, text(here()))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src)))).toEqual([]);
+  });
+
+  it("leaves a `map-request` that calls the same fn alone, init included", () => {
+    // The combination worth pinning: the effect this `map-request` belongs to
+    // is the one `app.init` dispatches. It still stands, because a
+    // `map-request` runs when the effect is invoked and the runtime settles
+    // the route slot before it dispatches the init list.
+    const src = `slot n : Int = 0
+fn here() -> Text = route.path
+effect load cap=storage.read in=Unit out=Result(Text, Text) map-request={key: here()}
+reducer got on=load.ok(_, _) do= n := 1
+tile App = column(text(n.show))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[load()]
+`;
+    expect(check(parse(lex(src)))).toEqual([]);
+  });
+
+  it("honours a binding inside the fn that shadows the name", () => {
+    // The discriminator against a walk that matches the spelling: both of
+    // these compile and run, and rejecting them is the same checker/codegen
+    // disagreement this gate exists to close, pointed the other way.
+    expect(codesWith(`fn safe() -> Text = let route = "x" in route`, "load(safe())")).toEqual([]);
+    expect(codesWith("fn tail(route: Text) -> Text = route", "load(tail(key))")).toEqual([]);
+  });
+
+  it("terminates on a cycle, and still reports the route it reaches", () => {
+    // `E0006` rejects the cycle itself. This pass runs whether or not that
+    // report is there, so it has to stop on its own.
+    expect(
+      codesWith(
+        `fn a() -> Text = b()
+fn b() -> Text = a() + route.path`,
+        "load(a())",
+      ).sort(),
+    ).toEqual(["E0006", "E0120"]);
+  });
+
+  it("says nothing about a cycle that reaches no route", () => {
+    expect(
+      codesWith(
+        `fn a() -> Text = b()
+fn b() -> Text = a()`,
+        "load(a())",
+      ),
+    ).toEqual(["E0006"]);
+  });
+
+  it("covers `$route` in the chain, which the fn's own report already rejects", () => {
+    // `$route` in a `fn` body is E0103: there is no payload there to carry
+    // one. The chain report stands beside it rather than instead of it — the
+    // two name different mistakes, and the init call site is wrong even once
+    // the `fn` is fixed to read the slot.
+    expect(codesWith("fn here() -> Text = $route.path", "load(here())").sort()).toEqual([
+      "E0103",
+      "E0120",
+    ]);
   });
 });

@@ -801,6 +801,8 @@ app TodoApp
 
 その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` はコンパイルエラーになる（[E0120](./errors.md#e0120-route-in-app-init)）。`$route` も同様に、ここでは runtime が束縛しない。route が必要なら `route.enter` reducer 側で受け取ること。
 
+制約がかかるのは引数が**到達する先**であって、書き方ではない：`fn here() -> Text = route.path` に対する `init = [load(here())]` も同じエラーであり、呼び出し位置に、ルートまでの連鎖を添えて報告される。ルートを読む `fn` 自体は他のどの位置でも合法である — tile も reducer も effect の `map-request` も、ルートを用意するマウントの後に走る。
+
 `now` は使えるが、捕捉のされ方は同じ — app オブジェクトが構築された瞬間に評価され、effect が走る瞬間ではない。dispatch 時点の時刻が要るなら、結果を受ける reducer 側で取ること。
 
 引数の周りに reducer も無いので、`emit` 式もここでは使えない（[E0305](./errors.md#e0305-fn-impurity)）。エントリそのものが dispatch である。

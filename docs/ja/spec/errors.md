@@ -361,13 +361,16 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 ### E0120 `route-in-app-init`
 
-`app.init` の引数が `route` あるいは `$route` を読んでいる。init の引数が評価されるのは app オブジェクトの構築時に**一度だけ**であり（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）、ランタイムが `app.live.route` を用意するのはその後に続くマウントの中である。つまり引数が捕捉される時点に読めるルートは存在しない。
+`app.init` の引数が `route` あるいは `$route` を読んでいる、もしくはそれを読む `fn` を呼んでいる。init の引数が評価されるのは app オブジェクトの構築時に**一度だけ**であり（[言語 §1.12.1](./language.md#_1-12-1-when-init-arguments-are-evaluated)）、ランタイムが `app.live.route` を用意するのはその後に続くマウントの中である。つまり引数が捕捉される時点に読めるルートは存在しない。
 
 > `"<name>" is not available in an app.init argument: these arguments are evaluated once, while the app object is being built, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+> `"<name>" is not available in an app.init argument through "<fn>" (<fn> → … → <name>): …`
 
 この検査がないと、引数は `_live["route"]` に落ちて `undefined` を捕捉する。`init = [load(route.path)]` は綺麗にコンパイルが通り、マウント時に `Cannot read properties of undefined (reading 'path')` を投げる — アプリは一度も描画されない。`$route` は同じ穴の裏側で、ここでは何もそれを束縛せず、[E0119](#e0119-route-bind-out-of-scope) の助言はこの検査が弾く `route` の綴りへ作者を送り込んでしまう。
 
-**修正**：`route.enter` reducer 側でルートを受け取る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。ランタイムはアプリが着地したルートで reducer を適用する。ルートを必要としない `init` エントリはそのままでよい。
+**制約がかかるのは引数が到達する先であって、綴り方ではない。** ルートを読む `fn` 自体は正しい — slot テーブルに無いので純粋性の規則の対象にならず、他のどの呼び出し元もルートを用意するマウントの後に走る。誤っているのは `app.init` からの呼び出しだけであり、しかも直接読むより騒がしく壊れる：呼び出しは app オブジェクトのリテラルに落ちるので、モジュールは**インポート中**に例外を投げ、何一つロードされない。呼び出しは何段でも追跡し、到達までの連鎖をメッセージに載せる — 呼ばれた `fn` の名前だけを出す報告は、それ自体は誤っていない定義へ作者を送り込むからである。
+
+**修正**：`route.enter` reducer 側でルートを受け取る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。ランタイムはアプリが着地したルートで reducer を適用する。ルートを必要としない `init` エントリはそのままでよく、別の用途で `fn` を呼んでいるエントリはそのまま呼び続けてよい。
 
 ### E0121 `reserved-bind-name`
 
