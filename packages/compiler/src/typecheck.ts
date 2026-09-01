@@ -799,10 +799,16 @@ type Ctx = {
    */
   routeBind: "bound" | "unbound" | "no-payload";
   /**
-   * Where the E0120 gate records the names it reported, when a caller wants
+   * Where the E0120 gate records the names it matched, for a caller that wants
    * the answer rather than the diagnostic. Set only by the pass that asks
    * whether a `fn` body would read the route from an `app.init` position; a
-   * scope that leaves it unset behaves exactly as before.
+   * scope that leaves it unset is unaffected.
+   *
+   * A read nested inside a `let`, a `for` or a match arm reaches this array
+   * because every narrower scope is built by spreading the parent (`innerScope`
+   * and the `LetIn` branch), so the child holds the same array. Construct one
+   * of those explicitly and nested reads stop being found — silently, since
+   * every diagnostic the gate produces here is discarded.
    */
   routeNamesSeen?: string[];
 };
@@ -3964,16 +3970,19 @@ function routeInAppInitMessage(name: string, chain?: readonly string[]): string 
  * Would this `fn` body read the runtime's route if it were evaluated in an
  * `app.init` argument — and under which spelling?
  *
- * Asked of the gate itself, in that position, rather than by matching the name:
- * which `route` is the runtime's is decided by what encloses it, and the rules
- * for that (a `let`, a parameter, a `for` bind, a match arm) are written once,
- * in `checkExpr`. A walk of its own would be a second answer to that question,
- * and the two would come to disagree — on `let route = "x" in route`, which
- * compiles and runs, first.
+ * Asked of the gate itself, in that position, so that which `route` counts is
+ * decided in one place. The scope is `checkFn`'s, with the position swapped:
+ * `routeBind` is the `no-payload` a `fn` body really has, and says nothing
+ * either way here — the E0120 gate returns before the branch that reads it, so
+ * a `$route` in a `fn` collects E0120 from this probe and E0103 from `checkFn`,
+ * which is right: the call site is wrong even once the body is.
  *
- * The diagnostics it produces are discarded: this body is checked properly by
- * `checkFn`, and reporting a `fn`'s own mistakes a second time from its call
- * site is not this pass's business.
+ * Running `checkExpr` twice over one body is safe because `inferType` reads no
+ * field of the scope but `localTypes`, which this builds the way `checkFn`
+ * does. That matters beyond the diagnostics, which are discarded: `checkExpr`
+ * also writes `accessKind` onto field accesses for codegen, and definitions are
+ * checked in source order, so a decision that depended on anything else here
+ * would make the emitted module depend on where the `fn` was written.
  */
 function fnReadsRoute(fn: FnDef, sym: SymbolTable): string | null {
   const seen: string[] = [];
@@ -3981,7 +3990,7 @@ function fnReadsRoute(fn: FnDef, sym: SymbolTable): string | null {
     kind: "app-init",
     localBinds: new Set([...fn.params.map((p) => p.name), "$1", "$2"]),
     localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
-    routeBind: "unbound",
+    routeBind: "no-payload",
     routeNamesSeen: seen,
   };
   checkExpr(fn.body, sym, [], ctx);
@@ -3992,6 +4001,11 @@ function fnReadsRoute(fn: FnDef, sym: SymbolTable): string | null {
  * The `fn` definitions an expression calls, in the order they are written, each
  * positioned at the call rather than at the expression that contains it — two
  * calls in one argument are two things to fix.
+ *
+ * Deliberately narrower than the edges the cycle check follows: those come from
+ * `referencesIn`, which counts a bare `fn` name as a reference too. A bare name
+ * lowers to the function itself and is never applied, so nothing it mentions is
+ * evaluated — counting one here would report a call that does not happen.
  */
 function fnCallsIn(e: Expr, sym: SymbolTable): { name: string; pos: Pos }[] {
   const out: { name: string; pos: Pos }[] = [];
@@ -4011,9 +4025,9 @@ function fnCallsIn(e: Expr, sym: SymbolTable): { name: string; pos: Pos }[] {
  * has to terminate on its own. Re-entering a name cannot add reachability,
  * which is what makes the visited set safe to prune with.
  *
- * The per-`fn` answer is memoised across the app's arguments; the search is
- * not, because two arguments reaching the same `fn` are two call sites to
- * report.
+ * The per-`fn` answer is memoised across the app's arguments. The search is
+ * not: it is a walk over a graph the memo already answers for, and each call
+ * site is reported by the caller either way.
  */
 function routeChainResolver(
   sym: SymbolTable,
@@ -4033,7 +4047,10 @@ function routeChainResolver(
     const queue: string[] = [start];
     for (let i = 0; i < queue.length; i++) {
       const name = queue[i];
-      if (name === undefined) break;
+      // Unreachable — `i` is bounded by the queue's own length — and present
+      // for the index type. `continue` rather than `break` so that if it ever
+      // does fire it costs one entry rather than every chain left to find.
+      if (name === undefined) continue;
       const read = readsRoute(name);
       if (read !== null) {
         const chain: string[] = [];
@@ -4130,8 +4147,9 @@ function checkApp(
       checkExpr(a, sym, errors, initCtx);
       // A `fn` hop walks past the gate above: the spelling in the argument is
       // a call, and what it reads is in another definition. The `fn` itself is
-      // right — every other caller runs after the mount that installs the
-      // route — so the report belongs here, at the call.
+      // right — a tile, a reducer and an effect's `map-request` all run after
+      // the mount that installs the route — so the report belongs here, at the
+      // call.
       for (const call of fnCallsIn(a, sym)) {
         const reached = routeChain(call.name);
         if (reached === null) continue;
