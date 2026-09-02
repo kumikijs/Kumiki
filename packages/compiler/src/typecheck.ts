@@ -2037,8 +2037,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // below is the right one.
       //
       // An enclosing bind of the same name wins, for the reason the E0120 gate
-      // above gives: `let $route = … in $route` lowers to that binding, so the
-      // payload it does or does not carry decides nothing.
+      // above gives: `let $route = … in $route` lowers to that binding — codegen
+      // gives a declaration over a name already in scope an identifier of its
+      // own (`declareBind`), so the shadow is a shadow and not a collision — and
+      // the payload it does or does not carry decides nothing.
       if (e.name === "$route" && ctx.routeBind !== "no-payload" && !ctx.localBinds.has(e.name)) {
         if (ctx.routeBind === "unbound") {
           errors.push({

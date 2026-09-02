@@ -470,6 +470,24 @@ reducer editTitle
     do= editor.get.title := $event.value
 ```
 
+### 1.6.7 スコープとシャドーイング {#_1-6-7-scoping-and-shadowing}
+
+すでにスコープにある名前の上に宣言された名前は、それを**シャドーイング**する。宣言より下のすべての読みは内側の束縛であり、内側を宣言したスコープが終われば外側が戻る。束縛するすべての形がこの規則に従う — `let` 文、`for` の束縛、match のアームのパターン、そして `let … in` 式（[§1.9](#_1-9-式言語)）である。
+
+宣言の右辺は、それが宣言する名前がスコープに入る**前**に評価される。したがって `let n = n + 1` は、宣言しようとしている束縛ではなく、シャドーイングする側の束縛を読む。
+
+`let` は [positional binding](#_1-6-5-positional-binding) の名前を取ってよい。これらも他と変わらない宣言なので、`let` が下のすべての読みで勝つ — トリガが `$route` を束縛しない reducer での `$route` も含めて、それはペイロードの読みではなくその `let` の値である（[E0119](./errors.md#e0119-route-bind-out-of-scope)）。この名前を取れない唯一の位置が `effect-event` の束縛である（[E0121](./errors.md#e0121-reserved-bind-name)）。束縛リストはペイロードの positional に名前を与えるものなので、`$el` を取る束縛には、それが表す positional を置く場所が残らない。
+
+```kumiki fragment
+reducer shadowing
+    on=ui.click(Btn)
+    do= let $el   = "chosen"                # positional binding に勝つ
+        let label = "first"
+        let label = label + "+second"       # 右辺は上の `let` を読む
+        for label in tags { hits := hits + 1 }   # 束縛はループの内側だけ
+        note := label + "/" + $el           # "first+second/chosen"
+```
+
 ---
 
 ## 1.7 ビューレイヤ (`tile`)

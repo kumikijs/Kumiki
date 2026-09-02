@@ -1,7 +1,7 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { assertNever } from "../ast.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
+import { bindRef, declareBind, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
 import { refinementJs } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
 import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
@@ -232,14 +232,15 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
     for (let i = 0; i < r.on.binds.length; i++) {
       const name = r.on.binds[i]!.name;
       if (name === "_") continue;
-      stmtLines.push(`const ${jsBinding(name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
+      stmtLines.push(`const ${bindRef(ctx, name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
     }
   }
   // Seeded from the table the checker's E0121 gate reads, so an effect-event
   // bind can never be a second declaration of one of these names. A `let` in
-  // the body still can — see the shadowing note in docs/spec/errors.md.
+  // the body may still take one, and shadows it: `declareBind` gives the
+  // shadow an identifier of its own (language.md §1.6.7).
   for (const [name, seed] of RESERVED_BIND_NAMES) {
-    stmtLines.push(`const ${jsBinding(name)} = ${seed};`);
+    stmtLines.push(`const ${bindRef(ctx, name)} = ${seed};`);
   }
 
   for (const st of r.do) stmtLines.push(genStatement(st, ctx));
@@ -262,14 +263,20 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
   if (s.kind === "ForStmt") {
     const iter = jsOfExpr(s.iter, ctx);
     const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
-    inner.localBinds.add(s.bind);
+    const bind = declareBind(inner, s.bind);
     const body = s.body.map((b) => genStatement(b, inner)).join("\n  ");
-    return `for (const ${jsBinding(s.bind)} of ((${iter}) || [])) {\n  ${body}\n}`;
+    return `for (const ${bind} of ((${iter}) || [])) {\n  ${body}\n}`;
   }
   if (s.kind === "IfStmt") {
     const cond = jsOfExpr(s.cond, ctx);
-    const thenBody = s.consequent.map((b) => genStatement(b, ctx)).join("\n  ");
-    const elseBody = s.alternate.map((b) => genStatement(b, ctx)).join("\n  ");
+    // A branch is a block of its own, so a `let` in one is out of scope on the
+    // statement after the `if` — and in the other branch. Generating both
+    // against `ctx` let such a declaration rename the name for code that the
+    // declaration does not reach, which reads as `n$1 is not defined`.
+    const thenCtx = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+    const elseCtx = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+    const thenBody = s.consequent.map((b) => genStatement(b, thenCtx)).join("\n  ");
+    const elseBody = s.alternate.map((b) => genStatement(b, elseCtx)).join("\n  ");
     return `if (${cond}) {\n  ${thenBody}\n} else {\n  ${elseBody}\n}`;
   }
   if (s.kind === "MatchStmt") {
@@ -278,10 +285,9 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
       .map((arm) => {
         if (arm.pattern.kind === "PVariant") {
           const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
-          for (const b of arm.pattern.binds) if (b !== "_") inner.localBinds.add(b);
           const binds = arm.pattern.binds
             .map((b, i) =>
-              b !== "_" ? `const ${jsBinding(b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
+              b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
             )
             .join(" ");
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
@@ -289,16 +295,17 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
         }
         if (arm.pattern.kind === "PBind") {
           const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
-          inner.localBinds.add(arm.pattern.name);
+          const bind = declareBind(inner, arm.pattern.name);
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (true) { const ${jsBinding(arm.pattern.name)} = _v;\n  ${body}\n}`;
+          return `if (true) { const ${bind} = _v;\n  ${body}\n}`;
         }
         if (arm.pattern.kind === "PTuple") {
           const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (${guard}) { ${binds}\n  ${body}\n}`;
         }
-        const body = arm.body.map((b) => genStatement(b, ctx)).join("\n  ");
+        const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+        const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
         return `if (true) {\n  ${body}\n}`;
       })
       .join(" else ");
@@ -308,9 +315,14 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
     return `/* no-op */`;
   }
   if (s.kind === "LetStmt") {
+    // The right-hand side is generated before the name is declared, so `let x =
+    // x + 1` reads the binding it shadows. The declaration then takes an
+    // identifier of its own where a name is already in scope: a reducer's
+    // top-level `let` shares its JS block with the trigger's binds and the
+    // positional-binding declarations, so a second `const` under the same name
+    // is a module that does not load.
     const rhs = jsOfExpr(s.rhs, ctx);
-    ctx.localBinds.add(s.name);
-    return `const ${jsBinding(s.name)} = ${rhs};`;
+    return `const ${declareBind(ctx, s.name)} = ${rhs};`;
   }
   if (s.kind === "Emit") {
     // `confirm` (lifecycle §7.6) carries `onYes`/`onNo` reducer references —

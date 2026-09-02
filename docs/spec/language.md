@@ -476,6 +476,24 @@ reducer editTitle
     do= editor.get.title := $event.value
 ```
 
+### 1.6.7 Scoping and Shadowing
+
+A name declared over one already in scope **shadows** it: every read below the declaration is the inner binding, and the outer one is back once the scope that declared the inner one ends. Every declaring form binds this way — a `let` statement, a `for` bind, a match-arm pattern, and the `let … in` expression ([§1.9](#_1-9-expression-language)).
+
+A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
+
+A `let` may take one of the [positional bindings](#_1-6-5-positional-binding). Those are declarations like any other, so the `let` wins for every read below it — including a `$route` in a reducer whose trigger binds none, which is that `let`'s value and not a payload read ([E0119](./errors.md#e0119-route-bind-out-of-scope)). An `effect-event` bind is the one position that cannot take one of the names ([E0121](./errors.md#e0121-reserved-bind-name)): a bind list names the payload's positionals, so a bind that took `$el` would have nowhere left to put the positional it stands for.
+
+```kumiki fragment
+reducer shadowing
+    on=ui.click(Btn)
+    do= let $el   = "chosen"                # wins over the positional binding
+        let label = "first"
+        let label = label + "+second"       # the right-hand side reads the `let` above
+        for label in tags { hits := hits + 1 }   # binds inside the loop only
+        note := label + "/" + $el           # "first+second/chosen"
+```
+
 ---
 
 ## 1.7 View Layer (`tile`)
