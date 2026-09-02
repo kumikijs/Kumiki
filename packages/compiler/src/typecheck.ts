@@ -1022,10 +1022,13 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
  * from the output with nothing said. The grammar has no children form; that
  * lowering is unspecified and now unreachable.
  *
- * Only positional arguments count. A named one is a prop wherever it is
- * written — `Btn(onClick=tap)` and `Btn() {onClick: tap}` reach the tile's root
- * node alike — and codegen reads the same set from the other side, so what is
- * counted here is what is taken as the input.
+ * On a user-tile call, only positional arguments count: a named one is a prop
+ * wherever it is written — `Btn(onClick=tap)` and `Btn() {onClick: tap}` reach
+ * the tile's root node alike — and `tileCallJs` takes the input from the same
+ * set, so what is counted here is what is read there. A prop's value is not a
+ * tile, which is the one shape that has no consumer on either side and is
+ * reported below. The builtin call sites still take `args[0]` whatever its
+ * name; that half is its own defect.
  */
 function checkTileInput(
   t: TileExpr & { kind: "TileCall" },
@@ -1044,6 +1047,18 @@ function checkTileInput(
       pos: t.pos,
     });
     return;
+  }
+  for (const named of t.args) {
+    if (named.name === undefined || !isTileExpr(named.value)) continue;
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message:
+        `Named argument "${named.name}" on tile "${t.name}" is a prop, and a prop's value ` +
+        `cannot be a tile — nothing renders it. Pass the tile as the positional argument of ` +
+        `a tile that declares "in=", or write it as a child`,
+      pos: named.value.pos,
+    });
   }
   const arg = positional[0];
   if (!def.in || !arg) return;

@@ -30,9 +30,11 @@ app P
 
 /** A host program the user-tile cases are written against. */
 const HOST = `slot n : Int = 0
+slot draft : Text = ""
 reducer bump on=app.start do= n := n + 1
 tile Btn = button(text="go")
-tile Row in=Text = button(text=$1)`;
+tile Row in=Text = button(text=$1)
+tile Wrap in=Text = column(Row($1))`;
 
 /** The diagnostics of a program `emit` would refuse to compile. */
 function codesFor(tile: string, extra = ""): string[] {
@@ -114,19 +116,33 @@ describe("which argument a user tile takes as its input", () => {
   // The two halves count the same arguments now. What a named argument means
   // is unchanged: it is a prop, and it reaches the tile's root node.
 
-  /** The argument list the user-tile IIFE is applied to, or "" when there is none. */
-  const inputArg = (js: string): string => {
+  /**
+   * What one user tile's call site passes as its input, or `""` when it is
+   * rendered without one.
+   *
+   * Found by the name the call site closes with rather than by the first IIFE
+   * in the route: a tile whose body renders another user tile emits that one's
+   * IIFE first, so scanning forward from the header reads the inner call's
+   * argument and answers the same thing before and after this fix.
+   */
+  const inputArg = (js: string, tile: string): string => {
     const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
-    const at = route.indexOf("(_arg, _propsOuter) =>");
-    if (at === -1) return "";
-    const applied = route.indexOf("})(", at);
-    return route.slice(applied + 3, route.indexOf(", {", applied));
+    const applied = `, ${JSON.stringify(tile)}); })(`;
+    const at = route.indexOf(applied);
+    if (at === -1) {
+      if (!route.includes(`, ${JSON.stringify(tile)})`)) {
+        throw new Error(`tile "${tile}" is not rendered in the route`);
+      }
+      return "";
+    }
+    const from = at + applied.length;
+    return route.slice(from, route.indexOf(", {", from));
   };
 
   it("takes no input from a handler argument on a tile that declares none", () => {
     const js = emit("column(Btn(onClick=bump), text(n.show))", HOST);
     // No input to pass means no IIFE to pass it to.
-    expect(inputArg(js)).toBe("");
+    expect(inputArg(js, "Btn")).toBe("");
     expect(js).not.toContain("})(bump,");
   });
 
@@ -138,8 +154,37 @@ describe("which argument a user tile takes as its input", () => {
 
   it("takes the positional argument even when a named one is written first", () => {
     const js = emit('column(Row(onClick=bump, "hi"), text(n.show))', HOST);
-    expect(inputArg(js)).toBe('"hi"');
+    expect(inputArg(js, "Row")).toBe('"hi"');
     expect(js).toContain('onClick: _h("bump")');
+  });
+
+  it("takes the positional argument over a named one that is not a handler", () => {
+    // The quieter half of the same defect: a handler value is a `Ref`, so the
+    // old lowering emitted a bare reducer name and the mount died. A literal
+    // or a slot read was consumed as `$1` in silence — `bind` worse than the
+    // rest, since it is dropped from props as well, so the written argument
+    // vanished and `$1` became a slot read.
+    expect(inputArg(emit('column(Row(alt="x", "hi"), text(n.show))', HOST), "Row")).toBe('"hi"');
+    expect(inputArg(emit('column(Row(bind=draft, "hi"), text(n.show))', HOST), "Row")).toBe('"hi"');
+  });
+
+  it("reports a tile written as a named argument, which nothing renders", () => {
+    // It used to be inlined in place of the tile's body, which was wrong and
+    // visible. Taking the positional argument makes it invisible instead: a
+    // builtin container skips named arguments, the builtins that read one by
+    // name all want a value, and `propsFor` drops a tile-valued one — so the
+    // checker reports the shape rather than letting it disappear.
+    expect(codesFor('column(Btn(header=text("inner")), text(n.show))', HOST)).toEqual(["E0201"]);
+  });
+
+  it("reads the outer call's input when the tile renders another user tile", () => {
+    // `Wrap`'s body emits `Row`'s IIFE, so the inner application site comes
+    // first in the text. What is asserted here is the outer one — without
+    // that, a reading of these tests would answer `_d_1` and say the same
+    // thing before and after the fix.
+    const js = emit('column(Wrap(onClick=bump, "hi"), text(n.show))', HOST);
+    expect(inputArg(js, "Wrap")).toBe('"hi"');
+    expect(inputArg(js, "Row")).toBe("_d_1");
   });
 
   it("still reports the arity a tile declares", () => {
@@ -150,10 +195,11 @@ describe("which argument a user tile takes as its input", () => {
     expect(codesFor('column(Btn("x"), text(n.show))', HOST)).toEqual(["E0213"]);
   });
 
-  it("reports rather than throws when the arity is wrong", () => {
-    // The input is the first positional argument now, so a second one is past
-    // what codegen reads. `compile` has to answer with the diagnostic instead
-    // of running codegen over a call the checker rejected.
+  it("answers a wrong arity with the diagnostic, not with output", () => {
+    // Codegen is never reached for a call the checker rejected, and this is
+    // the lock on that: `compile` returns the diagnostics rather than an
+    // emitted module for a call whose second positional argument is past what
+    // the tile declares.
     const result = compile(
       `${HOST}
 tile Probe = column(Row("a", "b"), text(n.show))

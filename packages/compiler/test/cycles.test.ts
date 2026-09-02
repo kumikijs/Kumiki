@@ -73,12 +73,6 @@ tile B = column(text("b"), A())
 tile App = column(A())`,
       "1:23",
     ],
-    [
-      "a loop closed through a named argument, at the argument",
-      `tile Wrap = column(text("w"))
-tile App = column(Wrap(c=when(true, App())))`,
-      "2:37",
-    ],
   ];
   for (const [what, defs, at] of positions) {
     it(`points at ${what}`, () => {
@@ -218,15 +212,17 @@ ${TAIL}`;
     expect(err?.message).toContain("A → B → A");
   });
 
-  it("follows a tile passed as a named argument", () => {
-    // A named argument is a prop in a builtin container, but a user tile takes
-    // its first argument by name or by position alike and inlines a
-    // tile-valued one — so this crashed the build while the checker read the
-    // argument as a prop and saw no edge.
+  it("does not follow a tile passed as a named argument, which nothing renders", () => {
+    // This used to be an expansion edge because a user tile took its first
+    // argument by name or by position alike and inlined a tile-valued one.
+    // It takes the positional one now, a builtin container skips named
+    // arguments, and the builtins that read one by name all want a value — so
+    // no tile written as a named argument is rendered anywhere, and there is
+    // no loop here to close. The shape is reported for what it is instead.
     const src = `tile Wrap = column(text("w"))
 tile App = column(Wrap(c=when(true, App())))
 ${TAIL}`;
-    expect(codes(src)).toEqual(["E0005"]);
+    expect(codes(src)).toEqual(["E0201"]);
   });
 
   it("leaves an acyclic chain alone", () => {
