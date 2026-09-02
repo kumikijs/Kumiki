@@ -38,6 +38,19 @@ app TodoApp
 
 `/404` は **どのルートにもマッチしなかった場合**のフォールバック。`app.routes` に `/404 -> X` を含めるのは必須（未指定はコンパイルエラー）。
 
+### 3.1.4 ルートターゲットは引数を取らない {#_3-1-4-a-route-target-takes-no-argument}
+
+ルートのエントリは tile を指名するだけで何も渡さない。したがって**指名される tile は `in=` を宣言できない** — 宣言していればエントリの位置で [E0213](./errors.md#e0213-call-arity-mismatch) になる。
+
+```kumiki invalid
+tile Panel in=Text = column(text($1))
+app M caps=[] routes={"/" -> Panel, "/404" -> Panel} init=[]
+```
+
+サブルートのターゲット（[§3.6.2](#_3-6-2-child-route-map)）も同じであり、したがって `route-outlet` が描画するものも同じ規則に従う — outlet が映すのはマッチしたサブルートのターゲットであり、入り口は同じだからである。
+
+そもそも引数が要る場面がない。描画されているルートは標準 slot `route`（[§3.2](#_3-2-current-route-state)）にあり、どの tile からも読める。入力を取る tile が tile の本体から呼べることは変わらない — `column(Panel("a"))` は影響を受けず、何も渡さないのはルートの位置だけである。
+
 ---
 
 ## 3.2 現在のルート状態 {#_3-2-current-route-state}
@@ -201,7 +214,7 @@ app App
     }
 ```
 
-### 3.6.2 子ルートマップ
+### 3.6.2 子ルートマップ {#_3-6-2-child-route-map}
 
 子ルートマップは tile 定義に `sub-routes` で書く：
 

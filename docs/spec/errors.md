@@ -605,6 +605,9 @@ An application passes a different number of arguments than the thing it applies 
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| `"/p" -> T` in `app.routes` or `sub-routes` | no argument, so no `in=` | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |
+
+A **route entry** is the one application that cannot pass anything: it lowers to `tile: () => …`, so a target declaring `in=` left `$1` unbound and the mount died with `_d_1 is not defined` after `check` and `build` had both said ok. A sub-route entry — and therefore whatever `route-outlet` renders — is the same rule, named as `Sub-route "<path>" in tile "<parent>"`. The rule is stated in [Routing §3.1.4](./routing.md#_3-1-4-a-route-target-takes-no-argument), where the reason it costs nothing is too: the route being rendered is in the `route` slot, which every tile can read without an argument.
 
 The tile and effect forms are the ones that used to go unreported: a tile called without the argument its `in=` declares leaves `$1` unbound and the mount dies with `_d_1 is not defined`; an effect emitted without its input throws `Cannot destructure property … of 'input'` on the first dispatch; and a tile that declares no `in=` but is *given* an argument mounts and renders normally, silently dropping the value the caller meant to pass.
 

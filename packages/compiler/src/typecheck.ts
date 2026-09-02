@@ -637,6 +637,39 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
   if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
 }
 
+/**
+ * A route entry is a call site of the tile it names, and the only one that can
+ * pass nothing: the route table lowers to `tile: () => …` (`codegen.ts`), so a
+ * target that declares `in=` leaves `$1` unbound and the mount dies with
+ * `_d_1 is not defined` — `check` and `build` both say ok and the app renders
+ * nothing at all.
+ *
+ * There is no argument to give it. The route state a target would want needs
+ * none: every tile reads the standard `route` slot (routing.md §3.2).
+ *
+ * `where` names the entry — a route or a sub-route, which is what
+ * `route-outlet` renders — so the two positions read as one rule.
+ */
+function checkRouteTargetArity(
+  entry: { path: string; tile: string; tilePos?: Pos; pathPos: Pos },
+  where: string,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  // A redirect entry names a path rather than a tile, so the lookup answers
+  // nothing — as it does for an undefined target, whose report is E0105's.
+  // Neither has an `in=` to disagree with, and one mistake named twice reads
+  // as two.
+  const target = sym.tiles.get(entry.tile);
+  if (!target?.in) return;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `${where} targets tile "${entry.tile}", which expects 1 argument(s) — a route target is rendered with none`,
+    pos: entry.tilePos ?? entry.pathPos,
+  });
+}
+
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
@@ -651,6 +684,9 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
         pos: tile.pos,
       });
     }
+  }
+  for (const sr of subRoutes) {
+    checkRouteTargetArity(sr, `Sub-route "${sr.path}" in tile "${tile.name}"`, sym, errors);
   }
   // Duplicate sub-route paths within the same tile. `E0112` rather than
   // `E0008` because it came first and a code's meaning is permanent — but the
@@ -4116,6 +4152,7 @@ function checkApp(
         pos: app.pos,
       });
     }
+    checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
     if (r.path === "/404") saw404 = true;
   }
   if (!saw404) {

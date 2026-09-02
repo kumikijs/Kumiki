@@ -38,6 +38,19 @@ app TodoApp
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).
 
+### 3.1.4 A Route Target Takes No Argument
+
+A route entry names a tile and gives it nothing, so **the tile it names may not declare `in=`** — one that does is [E0213](./errors.md#e0213-call-arity-mismatch), reported at the entry.
+
+```kumiki invalid
+tile Panel in=Text = column(text($1))
+app M caps=[] routes={"/" -> Panel, "/404" -> Panel} init=[]
+```
+
+The same holds for a sub-route target ([§3.6.2](#_3-6-2-child-route-map)), and therefore for whatever `route-outlet` renders — the outlet shows the matched sub-route target, which is entered the same way.
+
+There is nothing a target would need the argument for: the route being rendered is in the standard `route` slot ([§3.2](#_3-2-current-route-state)), which every tile can read. A tile that takes an input stays callable from a tile body — `column(Panel("a"))` is unaffected; it is the route position alone that supplies none.
+
 ---
 
 ## 3.2 Current Route State

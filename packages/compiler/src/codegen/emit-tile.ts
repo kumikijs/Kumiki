@@ -52,8 +52,16 @@ function boundaryJs(def: TileDef, body: string, gen: GenCtx): string {
  * Separate from `genTile` because that has another caller: the `_tilesById`
  * table a `tile-test` compares against, which wants the bare tree — the
  * boundary would make a test on a panicking tile compare the fallback.
+ *
+ * It is the one call site that passes nothing, so the target may declare no
+ * `in=`: the entry lowers to `tile: () => …` and there is nothing to bind
+ * `$1` to.
  */
 export function genRouteTile(tile: TileDef, gen: GenCtx): string {
+  // Unreachable: E0213 refuses the entry. It used to lower anyway, and the
+  // mount died with `_d_1 is not defined` after `check` and `build` said ok.
+  if (tile.in)
+    throw new Error(`Tile "${tile.name}" declares in= and cannot be the target of a route`);
   return boundaryJs(tile, `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`, gen);
 }
 
