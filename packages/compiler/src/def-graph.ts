@@ -81,23 +81,19 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
       out.push({ to: t.name, pos: t.pos });
       for (const a of t.args) {
         const v = a.value;
-        // An event handler names a reducer, so it expands into nothing — and a
-        // capitalised name in that position parses as a tile call, so without
-        // this the handler looks like a child here. `onClick=App` inside `App`
-        // then reported the tile as expanding into itself.
+        // A named argument is a prop, and nothing renders a tile written as
+        // one: a builtin container skips named arguments, the builtins that
+        // read one by name all want a value, and a user tile takes its input
+        // from the positional argument. So there is no expansion edge here —
+        // and the shape is reported anyway, as E0201 on a user tile.
         //
-        // This drops a tile-shaped value as well as a reference, which is only
-        // safe because such a value is E0201: there is no expansion edge left
-        // to keep. A handler value that the typechecker accepted as a tile
-        // would be a child this search could no longer see.
-        if (a.name !== undefined && HANDLER_NAMES.has(a.name)) continue;
-        // A named argument is a prop rather than a child in a builtin
-        // container — but a user tile takes its first argument by position or
-        // by name alike, and inlines a tile-valued one. Following every
-        // argument covers both; an argument that is not a tile contributes
-        // nothing either way.
+        // An event handler is the same case with a second reason: it names a
+        // reducer, and a capitalised name in that position parses as a tile
+        // call, so `onClick=App` inside `App` reported the tile as expanding
+        // into itself.
+        if (a.name !== undefined) continue;
         if (isTileExpr(v)) walkTileBody(v, out);
-        else if (a.name === undefined && (v as Expr).kind === "Ref") {
+        else if ((v as Expr).kind === "Ref") {
           const ref = v as Expr & { kind: "Ref" };
           out.push({ to: ref.name, pos: ref.pos });
         }
