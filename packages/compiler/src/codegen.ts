@@ -194,11 +194,12 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
       );
     } else {
       const tile = tiles.find((t) => t.name === r.tile);
-      if (!tile) throw new Error(`Route ${r.path} targets undefined tile "${r.tile}"`);
+      const where = `Route ${r.path}`;
+      if (!tile) throw new Error(`${where} targets undefined tile "${r.tile}"`);
       const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
       if (tile.subRoutes && tile.subRoutes.length > 0) {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx)}${sr}, subRoutes: [`,
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx, where)}${sr}, subRoutes: [`,
         );
         for (const subR of tile.subRoutes) {
           if (subR.tile.startsWith(">>")) {
@@ -207,20 +208,18 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
             );
           } else {
             const childTile = tiles.find((t) => t.name === subR.tile);
-            if (!childTile)
-              throw new Error(
-                `Sub-route ${subR.path} in tile "${tile.name}" targets undefined tile "${subR.tile}"`,
-              );
+            const childWhere = `Sub-route ${subR.path} in tile "${tile.name}"`;
+            if (!childTile) throw new Error(`${childWhere} targets undefined tile "${subR.tile}"`);
             const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
             lines.push(
-              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genRouteTile(childTile, ctx)}${csr} },`,
+              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genRouteTile(childTile, ctx, childWhere)}${csr} },`,
             );
           }
         }
         lines.push(`  ] },`);
       } else {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx)}${sr} },`,
+          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx, where)}${sr} },`,
         );
       }
     }

@@ -15,7 +15,6 @@
 
 import type { Expr, Pos, TileDef, TileExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
-import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };

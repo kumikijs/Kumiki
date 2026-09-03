@@ -637,20 +637,58 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
   if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
 }
 
+/**
+ * A route entry applies the tile it names, and is the only application that
+ * cannot pass anything: the route table lowers to `tile: () => …`
+ * (`codegen.ts`), so a target that declares `in=` leaves `$1` unbound and the
+ * mount dies with `_d_1 is not defined` — `check` and `build` both say ok and
+ * the app renders nothing at all.
+ *
+ * There is no argument to give it. The route state a target would want needs
+ * none: every tile reads the standard `route` slot (routing.md §3.2).
+ *
+ * `where` names the entry — a route or a sub-route, which is what
+ * `route-outlet` renders — so the two positions read as one rule. A redirect
+ * is not an entry either caller brings here: it names a path, and both skip it
+ * before the target is looked up.
+ */
+function checkRouteTargetArity(
+  entry: { path: string; tile: string; tilePos?: Pos; pathPos: Pos },
+  where: string,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  // An undefined target has no `in=` to disagree with, and its report is
+  // E0105's — one mistake named twice reads as two.
+  const target = sym.tiles.get(entry.tile);
+  if (!target?.in) return;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `${where} targets tile "${entry.tile}", which expects 1 argument(s) — a route target is rendered with none`,
+    pos: entry.tilePos ?? entry.pathPos,
+  });
+}
+
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
-  // Each sub-route's target tile must exist (redirects skip).
+  // What a sub-route entry has to answer for: that its target exists, and that
+  // it takes no argument. One loop, so the redirect skip that guards the first
+  // question is the one that guards the second — two loops over the same array
+  // invite a merge that puts the second question behind the wrong guard.
   for (const sr of subRoutes) {
-    if (sr.tile.startsWith(">>")) continue;
+    if (sr.tile.startsWith(">>")) continue; // a redirect names a path, not a tile
+    const where = `Sub-route "${sr.path}" in tile "${tile.name}"`;
     if (!sym.tiles.has(sr.tile)) {
       errors.push({
         code: "E0105",
         kind: "undef-tile",
-        message: `Sub-route "${sr.path}" in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+        message: `${where} targets undefined tile "${sr.tile}"`,
         pos: tile.pos,
       });
     }
+    checkRouteTargetArity(sr, where, sym, errors);
   }
   // Duplicate sub-route paths within the same tile. `E0112` rather than
   // `E0008` because it came first and a code's meaning is permanent — but the
@@ -4116,6 +4154,7 @@ function checkApp(
         pos: app.pos,
       });
     }
+    checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
     if (r.path === "/404") saw404 = true;
   }
   if (!saw404) {
