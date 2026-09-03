@@ -1,0 +1,78 @@
+{
+  "steps": [
+    {
+      "label": "a `let … in` over a fn parameter reads the parameter on its right-hand side",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "note": "",
+          "branch": "",
+          "rounds": 0
+        },
+        "domIncludes": ["in!", "rounds: 0", "branch: "]
+      }
+    },
+    {
+      "label": "a top-level `let` wins over the positional binding of the same name",
+      "do": {
+        "clickText": "let over $el"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "note": "el: let"
+        }
+      }
+    },
+    {
+      "label": "a `let` over a `let` reads the one it shadows on its right-hand side",
+      "do": {
+        "clickText": "let over let"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "note": "let: first+second"
+        }
+      }
+    },
+    {
+      "label": "a `for` bind shadows inside the loop and gives the name back after it",
+      "do": {
+        "clickText": "for over let"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "note": "for: outer",
+          "rounds": 2
+        }
+      }
+    },
+    {
+      "label": "a match arm binds over the `let` for the arm's body",
+      "do": {
+        "clickText": "arm over let"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "note": "arm: arm"
+        }
+      }
+    },
+    {
+      "label": "an `if` branch is a scope of its own — the shadow ends with the branch",
+      "do": {
+        "clickText": "let in a branch"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "note": "if: outer",
+          "branch": "then"
+        }
+      }
+    }
+  ]
+}

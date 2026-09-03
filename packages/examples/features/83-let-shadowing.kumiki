@@ -1,0 +1,71 @@
+# Feature: a name declared over one already in scope shadows it, and the reads
+# that follow see the inner binding. The rule holds wherever a name is
+# declared — a reducer's top-level `let`, a `for` bind, an `if` branch, a match
+# arm and a `let … in` expression — and each declaration's own right-hand side
+# still reads the binding it shadows.
+
+slot note   : Text         = ""
+slot branch : Text         = ""
+slot rounds : Int          = 0
+slot ready  : Bool         = true
+slot items  : List(Text)   = ["a", "b"]
+slot picked : Option(Text) = Some("arm")
+
+# A top-level `let` may take one of the positional bindings ($el / $event /
+# $route): the compiler declares those in every reducer body, and this one
+# wins over the declaration for every read below it.
+reducer takeEl on=ui.click(ElBtn)
+    do= let $el = "let"
+        note := "el: " + $el
+
+# A `let` over an earlier `let`, whose right-hand side reads the one it shadows.
+reducer takeLet on=ui.click(LetBtn)
+    do= let label = "first"
+        let label = label + "+second"
+        note := "let: " + label
+
+# A `for` bind shadows only inside the loop — the name is the outer one again
+# on the statement after it.
+reducer takeLoop on=ui.click(LoopBtn)
+    do= let piece = "outer"
+        for piece in items { rounds := rounds + 1 }
+        note := "for: " + piece
+
+# An `if` branch is a scope of its own: the `let` in it shadows for that
+# branch only, and the name is the outer binding again after the `if`.
+reducer takeBranch on=ui.click(BranchBtn)
+    do= let piece = "outer"
+        if ready then { let piece = "then"
+                        branch := piece }
+                 else { branch := "else" }
+        note := "if: " + piece
+
+# A match arm binds the same way.
+reducer takeArm on=ui.click(ArmBtn)
+    do= let value = "outer"
+        match picked with
+          | Some(value) -> { note := "arm: " + value }
+          | None        -> { note := "arm: " + value }
+
+# The expression form: `let … in` over a fn parameter, reading the parameter
+# on its own right-hand side.
+fn shout(word: Text) -> Text = let word = word + "!" in word
+
+tile ElBtn   = button(text="let over $el",   onClick=takeEl)
+tile LetBtn  = button(text="let over let",   onClick=takeLet)
+tile LoopBtn = button(text="for over let",   onClick=takeLoop)
+tile ArmBtn  = button(text="arm over let",   onClick=takeArm)
+tile BranchBtn = button(text="let in a branch", onClick=takeBranch)
+
+tile App = column(
+             row(ElBtn, LetBtn, LoopBtn, ArmBtn, BranchBtn) {gap: "sm"},
+             text(note),
+             text("branch: " + branch),
+             text("rounds: " + rounds.show),
+             text(shout("in")))
+           {pad: "lg", gap: "md"}
+
+app LetShadowing
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

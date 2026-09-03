@@ -1036,6 +1036,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       const scrutType = inferType(t.scrutinee, sym, ctx);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
+        checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
       }
@@ -1690,6 +1691,7 @@ function checkStmt(
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
       const inner = innerScope(ctx);
+      checkPatternBindsAreDistinct(arm.pattern, errors);
       checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
@@ -2075,8 +2077,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // below is the right one.
       //
       // An enclosing bind of the same name wins, for the reason the E0120 gate
-      // above gives: `let $route = … in $route` lowers to that binding, so the
-      // payload it does or does not carry decides nothing.
+      // above gives: `let $route = … in $route` lowers to that binding — codegen
+      // gives a declaration over a name already in scope an identifier of its
+      // own (`declareBind`), so the shadow is a shadow and not a collision — and
+      // the payload it does or does not carry decides nothing.
       if (e.name === "$route" && ctx.routeBind !== "no-payload" && !ctx.localBinds.has(e.name)) {
         if (ctx.routeBind === "unbound") {
           errors.push({
@@ -2297,6 +2301,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       const scrutType = inferType(e.scrutinee, sym, ctx);
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
+        checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
       }
@@ -3344,6 +3349,66 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
 
 function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
+}
+
+/**
+ * Report a name that one pattern binds twice.
+ *
+ * The binds of a pattern are peers: nothing nests them, so there is no scope
+ * between them for the second to shadow the first — the same reason an
+ * `effect-event` bind list cannot take a positional binding's name
+ * ([E0121](../../../docs/spec/errors.md#e0121-reserved-bind-name)). Left to
+ * codegen's shadowing rule the repeat takes an identifier of its own and every
+ * read in the arm silently resolves to the *later* positional, with `check`
+ * and `smoke` both clean. Before that rule reached patterns it was a module
+ * that did not load, which is louder but no more useful: either way one of the
+ * two positionals the pattern names is unreadable.
+ *
+ * The whole pattern is one namespace, so a tuple's items are checked against
+ * each other too. `_` is exempt — it names nothing, and a pattern is expected
+ * to carry several.
+ */
+function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]): void {
+  const seen = new Set<string>();
+  const walk = (p: Pattern): void => {
+    switch (p.kind) {
+      case "PWildcard":
+        return;
+      case "PBind":
+        report(p.name, p.pos);
+        return;
+      case "PVariant":
+        // `PVariant.binds` are bare names with no position of their own, so the
+        // report lands on the pattern that wrote them and names the bind.
+        for (const b of p.binds) report(b, p.pos);
+        return;
+      case "PTuple":
+        for (const it of p.items) walk(it);
+        return;
+      default: {
+        const exhaustive: never = p;
+        void exhaustive;
+        return;
+      }
+    }
+  };
+  const report = (name: string, pos: Pos): void => {
+    if (name === "_") return;
+    if (seen.has(name)) {
+      errors.push({
+        code: "E0122",
+        kind: "duplicate-pattern-bind",
+        message:
+          `"${name}" is bound twice in this pattern. The two binds are peers — nothing ` +
+          `nests them, so the second does not shadow the first — and one of the two ` +
+          `values the pattern names would be unreadable. Rename one`,
+        pos,
+      });
+      return;
+    }
+    seen.add(name);
+  };
+  walk(pat);
 }
 
 /**

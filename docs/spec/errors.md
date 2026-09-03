@@ -75,6 +75,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0216` | yes | Close-name suggestion against variant tags of the declared union, the same resolution E0209 uses on the pattern side. |
 | `E0119` | yes | Rewrite `$route` to `route` at the reported position — the slot holds the current route and is readable from every reducer. |
 | `E0121` | no | Choosing a replacement name, and rewriting every read of it in the body, is user intent. |
+| `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
@@ -402,11 +403,23 @@ An `effect-event` trigger binds a payload positional to `$el`, `$event` or `$rou
 
 Without this check the reducer lowers to a body that declares the same `const` twice, so the whole module throws `SyntaxError: Identifier '<name>' has already been declared` at load and the app never renders — with `check` and `build` clean, and the emitted source reading as if it were. A bind named `$1` is not reported, because nothing else declares one; the digit does not tie it to a position either way (`on=load.ok(_, $1)` binds the *second* positional to it). Neither is `$now` reported, which nothing declares at all.
 
-**Only an `effect-event` bind is checked.** A `let` in the body may still take one of the names — [E0119](#e0119-route-bind-out-of-scope) says an enclosing `let` binding wins over the payload, and match-arm patterns do shadow one correctly — but a top-level `let` lowers into the same scope as the declarations, so it collides the way a bind used to. That is a codegen scoping bug rather than a rule about names, and is tracked as its own defect.
+**Only an `effect-event` bind is checked.** A `let` in the body may still take one of the names, and should: a name declared over one already in scope shadows it ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), so the `let` wins for every read below it and [E0119](#e0119-route-bind-out-of-scope) reports none of them. That is why the rule here is about the bind list and not about the names: a bind names the payload's positionals, so a bind that took `$el` would have nowhere left to put the positional it stands for, while a `let` has an outer binding to shadow and a value of its own to put there.
 
 `$route` collects this and nothing else. The bind still enters the reducer's scope, so the body's reads resolve to it rather than to a payload field out of its trigger's scope — [E0119](#e0119-route-bind-out-of-scope) would otherwise fire on every one of them and send the author to the `route` slot for a name they chose themselves.
 
 **Fix**: Rename the bind.
+
+### E0122 `duplicate-pattern-bind`
+
+One pattern binds a name twice — `Both(a, a)`, or `(dup, dup)`. The binds of a pattern are **peers**: nothing nests them, so there is no scope between them for the second to shadow the first ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and one of the two values the pattern names is left with no name to read it by. A whole pattern is one namespace, so a tuple's items are checked against each other as well.
+
+> `"<name>" is bound twice in this pattern. The two binds are peers — nothing nests them, so the second does not shadow the first — and one of the two values the pattern names would be unreadable. Rename one`
+
+Without this check the arm compiles: the second bind takes an identifier of its own and every read of the name in the body silently resolves to the *later* value, with `check` and `smoke` both clean. Before the shadowing rule reached patterns it was a module that threw `SyntaxError: Identifier '<name>' has already been declared` at load, which is louder and no more useful — either way the arm does not mean what it says. `_` is exempt, however many times it is written: it names nothing, and a pattern is expected to carry several.
+
+Two *arms* binding the same name are unaffected — they are alternatives, each with its own scope — and so is a bind that shadows a name from outside the pattern, which is the rule working as [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) states it.
+
+**Fix**: Rename one of the two binds, or write `_` for the value the arm does not read.
 
 ## E02xx — Types
 

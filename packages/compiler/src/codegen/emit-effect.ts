@@ -1,5 +1,5 @@
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
-import { type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
+import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -61,8 +61,9 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
 
   let invokeBody: string;
   if (eff.mapRequest) {
-    const mapJs = jsOfExpr(eff.mapRequest, makeEvalCtx(gen, new Set(["$1"])));
-    invokeBody = `async (${jsBinding("$1")}, _caps, _signal) => { const _req = ${mapJs}; ${tail} }`;
+    const inputCtx = makeEvalCtx(gen, ["$1"]);
+    const mapJs = jsOfExpr(eff.mapRequest, inputCtx);
+    invokeBody = `async (${bindRef(inputCtx, "$1")}, _caps, _signal) => { const _req = ${mapJs}; ${tail} }`;
   } else {
     invokeBody = `async (_input, _caps, _signal) => { ${tail} }`;
   }
@@ -95,8 +96,10 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   switch (p.kind) {
     case "PolLatest":
       return `{ kind: "latest" }`;
-    case "PolLatestKey":
-      return `{ kind: "latest-per-key", keyOf: ((${jsBinding("$1")}) => String(${jsOfExpr(p.key, makeEvalCtx(gen, new Set(["$1"])))})) }`;
+    case "PolLatestKey": {
+      const keyCtx = makeEvalCtx(gen, ["$1"]);
+      return `{ kind: "latest-per-key", keyOf: ((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(p.key, keyCtx)})) }`;
+    }
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":

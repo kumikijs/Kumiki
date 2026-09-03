@@ -19,21 +19,95 @@ export type GenCtx = {
   usedIcons: Set<string>;
 };
 
+/**
+ * The names in scope at one point in the emitted code, each mapped to the JS
+ * identifier a read of it resolves to. A `Set` was enough while one Kumiki name
+ * meant one JS name; it stopped being enough once a name could be declared
+ * twice — see {@link declareBind}.
+ */
+export type BindScope = Map<string, string>;
+
 export type EvalCtx = {
   gen: GenCtx;
-  localBinds: Set<string>;
+  localBinds: BindScope;
   /** When set, Ref(slot) reads from `_next` first, falling back to `_live`. */
   reducerScope?: boolean;
 };
 
-export function makeEvalCtx(gen: GenCtx, locals: Set<string>, reducerScope = false): EvalCtx {
-  return { gen, localBinds: new Set(locals), reducerScope };
+/**
+ * A scope holding `locals`. Pass a {@link BindScope} to continue an enclosing
+ * scope — the identifiers its shadowed names resolve to come along, which is
+ * what keeps a read inside a nested form pointing at the binding that is
+ * actually in scope there. Pass names to open a fresh one, where each is its
+ * own `jsBinding`.
+ */
+export function makeEvalCtx(
+  gen: GenCtx,
+  locals: Iterable<string> | BindScope,
+  reducerScope = false,
+): EvalCtx {
+  const localBinds: BindScope =
+    locals instanceof Map ? new Map(locals) : new Map([...locals].map((n) => [n, jsBinding(n)]));
+  return { gen, localBinds, reducerScope };
 }
 
+/** A copy of `ctx` with `name` declared in it — see {@link declareBind}. */
 export function addBind(ctx: EvalCtx, name: string): EvalCtx {
   const out = makeEvalCtx(ctx.gen, ctx.localBinds);
-  out.localBinds.add(name);
+  declareBind(out, name);
   return out;
+}
+
+/**
+ * Bring `name` into `ctx` and return the identifier to declare it under.
+ *
+ * A name declared over one already in scope shadows it (language.md §1.6.7),
+ * and a Kumiki scope is not always a JS one: a reducer's top-level `let` lands
+ * in the same JS block as the trigger's binds and the positional-binding
+ * declarations, so `let $route = …` there used to emit a second `const
+ * _d_route` and the module threw `SyntaxError` at load. The shadow takes an
+ * identifier of its own instead, which is what makes the rule hold in the one
+ * place the language's nesting does not reach.
+ *
+ * The declaration is what changes name; every read goes through
+ * {@link bindRef}, so the two sides cannot drift apart.
+ */
+export function declareBind(ctx: EvalCtx, name: string): string {
+  const js = freshBinding(ctx.localBinds, name);
+  ctx.localBinds.set(name, js);
+  return js;
+}
+
+/** The identifier a read of an in-scope `name` resolves to. */
+export function bindRef(ctx: EvalCtx, name: string): string {
+  return ctx.localBinds.get(name) ?? jsBinding(name);
+}
+
+/**
+ * An identifier for a declaration of `name` in `scope` that no live binding is
+ * already using.
+ *
+ * The `$<n>` suffix cannot be produced by {@link jsBinding} from any other
+ * Kumiki name, which is what keeps two distinct names from converging on one
+ * identifier. A `$` that `jsBinding` emits is either the second character of
+ * the `_$` escape for a user `_` or the marker on an unsafe name; the one here
+ * is followed by a digit, so it is not the marker, so it would have to be the
+ * escape — which needs a `_` before it, i.e. a `jsBinding` output ending in
+ * one. No output ends in `_`: a user `_` becomes `_$`, and the only other
+ * source of one is `-` / `.`, neither of which can end an identifier the lexer
+ * produces (`readIdentBody` continues a `-` only when an identifier character
+ * follows it). `packages/compiler/test/js-identifier-safety.test.ts` brute-forces
+ * the property over the identifiers the lexer accepts, because the argument
+ * rests on that rule and on `jsBinding`'s mapping rather than on anything local.
+ */
+function freshBinding(scope: BindScope, name: string): string {
+  const base = jsBinding(name);
+  if (!scope.has(name)) return base;
+  const taken = new Set(scope.values());
+  for (let n = 1; ; n++) {
+    const candidate = `${base}$${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 /**
