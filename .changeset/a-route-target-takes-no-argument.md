@@ -1,5 +1,5 @@
 ---
-"@kumikijs/compiler": patch
+"@kumikijs/compiler": minor
 ---
 
 Refuse a route target that declares `in=`

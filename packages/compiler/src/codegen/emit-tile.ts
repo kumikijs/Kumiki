@@ -53,15 +53,19 @@ function boundaryJs(def: TileDef, body: string, gen: GenCtx): string {
  * table a `tile-test` compares against, which wants the bare tree — the
  * boundary would make a test on a panicking tile compare the fallback.
  *
- * It is the one call site that passes nothing, so the target may declare no
- * `in=`: the entry lowers to `tile: () => …` and there is nothing to bind
- * `$1` to.
+ * It is the one application that cannot pass anything, so the target may
+ * declare no `in=`: the entry lowers to `tile: () => …` and there is nothing
+ * to bind `$1` to.
+ *
+ * `where` is the entry being lowered — `Route /x`, `Sub-route /x in tile "Y"`
+ * — so the refusal names it, as the undefined-target throws beside the call
+ * sites do. One `in=` tile can be named by several entries, and the throw is
+ * reported without its stack.
  */
-export function genRouteTile(tile: TileDef, gen: GenCtx): string {
+export function genRouteTile(tile: TileDef, gen: GenCtx, where: string): string {
   // Unreachable: E0213 refuses the entry. It used to lower anyway, and the
   // mount died with `_d_1 is not defined` after `check` and `build` said ok.
-  if (tile.in)
-    throw new Error(`Tile "${tile.name}" declares in= and cannot be the target of a route`);
+  if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
   return boundaryJs(tile, `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`, gen);
 }
 
