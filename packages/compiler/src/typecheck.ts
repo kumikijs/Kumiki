@@ -1522,14 +1522,23 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
-    for (const b of r.on.binds) {
-      if (b.name === "_") continue;
-      // §1.6.5 — codegen declares these three in every reducer body, whatever
-      // the trigger, so a bind that takes one is a second declaration of the
-      // same name. The bind still enters the scope: the body's reads are then
-      // that binding, which keeps this the one report rather than the first of
-      // two (a `$route` bind would otherwise also collect E0119 on every read).
+    // Which positional each name already holds. A bind list names the payload's
+    // positionals in order, so a bind's index *is* its position — `_` included,
+    // since it stands for a positional rather than skipping one.
+    //
+    // Both collisions a bind can have are asked here, in the walk that puts the
+    // names into scope, so the answer to one cannot drift from the answer to
+    // the other. Whichever fires, the name still enters the scope: the body's
+    // reads are then that binding, which keeps the report the one report rather
+    // than the first of many.
+    const boundAt = new Map<string, number>();
+    r.on.binds.forEach((b, i) => {
+      if (b.name === "_") return;
       if (RESERVED_BIND_NAMES.has(b.name)) {
+        // §1.6.5 — codegen declares these three in every reducer body, whatever
+        // the trigger, so a bind that takes one is a second declaration of the
+        // same name. Reported per bind, and never as a duplicate as well: this
+        // already says to rename the bind, and renaming it settles both.
         errors.push({
           code: "E0121",
           kind: "reserved-bind-name",
@@ -1539,9 +1548,23 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
             `collide and the module does not load. Rename the bind`,
           pos: b.pos,
         });
+      } else {
+        const first = boundAt.get(b.name);
+        if (first === undefined) boundAt.set(b.name, i + 1);
+        else
+          errors.push({
+            code: "E0123",
+            kind: "duplicate-effect-bind",
+            message:
+              `"${b.name}" is bound twice in this trigger: it names $${first} and then ` +
+              `$${i + 1}, so the two binds are peers — nothing nests them, the second does ` +
+              `not shadow the first, and $${first} has no name left to read it by. Rename ` +
+              `one, or write "_" for a positional the reducer does not read`,
+            pos: b.pos,
+          });
       }
       ctx.localBinds.add(b.name);
-    }
+    });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
     if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {

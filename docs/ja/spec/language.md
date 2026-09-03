@@ -446,6 +446,8 @@ issue.copy(status=Done, priority=High)
 
 > **`effect-event` のトリガはこれらの名前を束縛できない。** コンパイラは `$el` / `$event` / `$route` をどの reducer の body にも宣言し、種にはトリガのペイロードが持っている値を使う。したがってこの名前を取る束縛は同じ名前の2つ目の宣言になり、`on=load.ok($el, _)` は **E0121** である。番号付きの束縛はこれまでどおり束縛できる — 他に宣言する者がいないからである。
 
+> **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
+
 ### 1.6.6 例
 
 ```kumiki fragment

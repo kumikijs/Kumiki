@@ -399,6 +399,22 @@ reducer が `$route` を読んでいるが、その reducer のペイロード�
 
 **修正**：2つの束縛のどちらかの名前を変えるか、アームが読まない値には `_` を書く。
 
+### E0123 `duplicate-effect-bind`
+
+`effect-event` のトリガが、ペイロードの2つの positional をひとつの名前に束縛している — `on=load.ok(dup, dup)`。
+
+> `"<name>" is bound twice in this trigger: it names $<i> and then $<j>, so the two binds are peers — nothing nests them, the second does not shadow the first, and $<i> has no name left to read it by. Rename one, or write "_" for a positional the reducer does not read`
+
+これは [E0122](#e0122-duplicate-pattern-bind) の規則をパターンではなくトリガに適用したものであり、[E0121](#e0121-reserved-bind-name) と同じ衝突を反対側から見たものである：あちらは束縛がコンパイラの宣言する名前を取り、こちらは別の束縛が宣言した名前を取る。codegen は束縛ごとに `const` をひとつ出力するので、reducer の body は同じ名前を二度宣言し、モジュール全体がロード時に `SyntaxError: Identifier '<name>' has already been declared` を投げて何も描画されなかった — `check` も `build` も綺麗なまま、出力されたソースも正しそうに読めるままで。
+
+bind list はペイロードの positional を**順に**名指すので、2つの束縛が同じものを名指すことは何かの省略ではない：その名前がどちらの値に解決されようと、もう一方の positional は読む手段を失う。メッセージ中の番号は位置である — `_` は位置を飛ばすのではなく占めるので、`on=load.ok(_, x, x)` は `$2` と `$3` の衝突になる。
+
+`_` 自身は何度書かれても対象外である：何も名指ししないし、reducer が読まない positional のための綴りがそれだからである。
+
+**繰り返された名前が予約名でもある場合は E0121 だけになる。** `on=load.ok($el, $el)` は束縛ごとに E0121 を1件ずつ集め、E0123 は出ない：それらの報告が既に「束縛の名前を変えよ」と言っており、そうすれば重複も解消するので、3件目は別の誤りを名指すのではなくひとつの誤りを繰り返すだけになる。どちらの場合も束縛は reducer のスコープに入るので、body の読みはそこへ解決され、それ以上何も集めない。
+
+**修正**：2つの束縛のどちらかの名前を変えるか、reducer が読まない positional には `_` を書く。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`

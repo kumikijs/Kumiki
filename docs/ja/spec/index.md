@@ -80,6 +80,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | ルーティング |
 | [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | コア |
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | コア |
+| [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |

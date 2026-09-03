@@ -421,6 +421,22 @@ Two *arms* binding the same name are unaffected — they are alternatives, each 
 
 **Fix**: Rename one of the two binds, or write `_` for the value the arm does not read.
 
+### E0123 `duplicate-effect-bind`
+
+An `effect-event` trigger binds two of the payload's positionals to one name — `on=load.ok(dup, dup)`.
+
+> `"<name>" is bound twice in this trigger: it names $<i> and then $<j>, so the two binds are peers — nothing nests them, the second does not shadow the first, and $<i> has no name left to read it by. Rename one, or write "_" for a positional the reducer does not read`
+
+This is [E0122](#e0122-duplicate-pattern-bind)'s rule at the trigger rather than at a pattern, and the same collision as [E0121](#e0121-reserved-bind-name) from the other side: there a bind takes a name the compiler declares, here it takes a name another bind declares. Codegen emits one `const` per bind, so the reducer body declared the name twice and the whole module threw `SyntaxError: Identifier '<name>' has already been declared` at load — nothing rendered, with `check` and `build` clean and the emitted source reading as if it were.
+
+A bind list names the payload's positionals **in order**, so two binds naming one thing is not an abbreviation for anything: whichever value the name resolved to, the other positional would have no name to read it by. The index in the message is the position — `_` occupies one rather than skipping it, so `on=load.ok(_, x, x)` is a collision between `$2` and `$3`.
+
+`_` itself is exempt however often it is written: it names nothing, and it is the spelling for a positional the reducer does not read.
+
+**A repeated name that is also a reserved one is E0121 alone.** `on=load.ok($el, $el)` collects one E0121 per bind and no E0123: those reports already say to rename the bind, and renaming it settles the duplicate too, so a third would repeat one mistake rather than name another. The bind still enters the reducer's scope either way, so the body's reads resolve to it and collect nothing further.
+
+**Fix**: Rename one of the two binds, or write `_` for the positional the reducer does not read.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
