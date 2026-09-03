@@ -13,7 +13,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { compile } from "@kumikijs/compiler";
+import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { jsBinding } from "../src/codegen/context.ts";
 import { RESERVED_BIND_NAMES } from "../src/reserved-binds.ts";
@@ -229,5 +229,88 @@ describe("a binding declared inside a branch stays inside it", () => {
       'let n = "outer"\n        match Some("some") with\n          | Some(v) -> { seen := v }\n          | _       -> { let n = "inner"\n                         seen := n }\n        after := n',
     );
     expect(await apply(src)).toEqual({ seen: "some", after: "outer" });
+  });
+});
+
+/**
+ * A program whose one reducer's `do=` clause is `body`, with a union and a
+ * tuple in scope so a pattern's binds can be written out in full.
+ */
+function matching(body: string): string {
+  return `type Pair = Both(Text, Text) | Neither
+
+slot note : Text     = ""
+slot p    : Pair     = Both("first", "second")
+slot pair : Tuple(Text, Text) = ("a", "b")
+
+reducer subject on=app.start
+    do= ${body}
+
+tile Page = column(text(note))
+
+app A
+    caps   = []
+    routes = {"/" -> Page, "/404" -> Page}
+    init   = []
+`;
+}
+
+const codes = (source: string): string[] => check(parse(lex(source))).map((e) => e.code);
+
+describe("a pattern's binds are peers, not a shadowing pair", () => {
+  // Nothing nests two binds of one pattern, so there is no scope between them
+  // for the second to shadow the first — the same reason a bind list cannot
+  // take a positional binding's name (E0121). Left to `declareBind` the repeat
+  // would take an identifier of its own and the arm would silently read the
+  // second positional, with `check` and `smoke` both clean; before the
+  // shadowing rule reached patterns it was a module that did not load.
+  it("reports a name bound twice in one variant pattern", () => {
+    expect(
+      codes(
+        matching(`match p with
+          | Both(a, a) -> { note := a }
+          | Neither    -> { note := "none" }`),
+      ),
+    ).toEqual(["E0122"]);
+  });
+
+  it("reports one bound twice across a tuple pattern's items", () => {
+    expect(
+      codes(
+        matching(`match pair with
+          | (dup, dup) -> { note := dup }`),
+      ),
+    ).toEqual(["E0122"]);
+  });
+
+  it("leaves `_` alone, however many times it is written", () => {
+    expect(
+      codes(
+        matching(`match p with
+          | Both(_, _) -> { note := "both" }
+          | Neither    -> { note := "none" }`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("leaves a bind that shadows a name outside the pattern alone", () => {
+    expect(
+      codes(
+        matching(`let outer = "x"
+        match p with
+          | Both(outer, b) -> { note := outer + b }
+          | Neither        -> { note := "none" }`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("leaves two arms that bind the same name alone", () => {
+    expect(
+      codes(
+        matching(`match p with
+          | Both(a, _) -> { note := a }
+          | Neither    -> { note := "none" }`),
+      ),
+    ).toEqual([]);
   });
 });

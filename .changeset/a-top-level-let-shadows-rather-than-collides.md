@@ -34,3 +34,14 @@ A declaration's right-hand side is generated before the name enters scope, so
 form, where `let $m = $m + "!" in $m` used to throw
 `ReferenceError: Cannot access '_d_m' before initialization`: the shadow was
 declared inside the same closure that evaluated its own value.
+
+Shadowing stops at binds written side by side, which is the new **E0122**
+`duplicate-pattern-bind`: a pattern binding one name twice (`Both(a, a)`,
+`(dup, dup)`) is reported at the pattern. Nothing nests those two binds, so
+there is no scope between them for the second to shadow the first, and one of
+the two values the pattern names is left with no name to read it by. It used
+to be a module that threw `SyntaxError` at load with `check` clean; a shadowing
+rule that reached it would have made the arm read the *later* value in silence
+instead. `_` is exempt however many times it is written, two arms binding one
+name are unaffected, and a bind that shadows a name from outside the pattern is
+the rule working as intended.

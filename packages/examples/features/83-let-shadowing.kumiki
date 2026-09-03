@@ -1,11 +1,13 @@
 # Feature: a name declared over one already in scope shadows it, and the reads
 # that follow see the inner binding. The rule holds wherever a name is
-# declared — a reducer's top-level `let`, a `for` bind, a match arm and a
-# `let … in` expression — and each declaration's own right-hand side still
-# reads the binding it shadows.
+# declared — a reducer's top-level `let`, a `for` bind, an `if` branch, a match
+# arm and a `let … in` expression — and each declaration's own right-hand side
+# still reads the binding it shadows.
 
 slot note   : Text         = ""
+slot branch : Text         = ""
 slot rounds : Int          = 0
+slot ready  : Bool         = true
 slot items  : List(Text)   = ["a", "b"]
 slot picked : Option(Text) = Some("arm")
 
@@ -29,6 +31,15 @@ reducer takeLoop on=ui.click(LoopBtn)
         for piece in items { rounds := rounds + 1 }
         note := "for: " + piece
 
+# An `if` branch is a scope of its own: the `let` in it shadows for that
+# branch only, and the name is the outer binding again after the `if`.
+reducer takeBranch on=ui.click(BranchBtn)
+    do= let piece = "outer"
+        if ready then { let piece = "then"
+                        branch := piece }
+                 else { branch := "else" }
+        note := "if: " + piece
+
 # A match arm binds the same way.
 reducer takeArm on=ui.click(ArmBtn)
     do= let value = "outer"
@@ -44,10 +55,12 @@ tile ElBtn   = button(text="let over $el",   onClick=takeEl)
 tile LetBtn  = button(text="let over let",   onClick=takeLet)
 tile LoopBtn = button(text="for over let",   onClick=takeLoop)
 tile ArmBtn  = button(text="arm over let",   onClick=takeArm)
+tile BranchBtn = button(text="let in a branch", onClick=takeBranch)
 
 tile App = column(
-             row(ElBtn, LetBtn, LoopBtn, ArmBtn) {gap: "sm"},
+             row(ElBtn, LetBtn, LoopBtn, ArmBtn, BranchBtn) {gap: "sm"},
              text(note),
+             text("branch: " + branch),
              text("rounds: " + rounds.show),
              text(shout("in")))
            {pad: "lg", gap: "md"}

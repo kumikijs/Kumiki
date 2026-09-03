@@ -85,10 +85,20 @@ export function bindRef(ctx: EvalCtx, name: string): string {
 
 /**
  * An identifier for a declaration of `name` in `scope` that no live binding is
- * already using. The `$<n>` suffix cannot be produced by {@link jsBinding} from
- * any other Kumiki name — a `$` it emits is either the escape for a `_` or the
- * suffix on an unsafe name, so neither can be followed by a digit — which is
- * what keeps two distinct names from converging on one identifier.
+ * already using.
+ *
+ * The `$<n>` suffix cannot be produced by {@link jsBinding} from any other
+ * Kumiki name, which is what keeps two distinct names from converging on one
+ * identifier. A `$` that `jsBinding` emits is either the second character of
+ * the `_$` escape for a user `_` or the marker on an unsafe name; the one here
+ * is followed by a digit, so it is not the marker, so it would have to be the
+ * escape — which needs a `_` before it, i.e. a `jsBinding` output ending in
+ * one. No output ends in `_`: a user `_` becomes `_$`, and the only other
+ * source of one is `-` / `.`, neither of which can end an identifier the lexer
+ * produces (`readIdentBody` continues a `-` only when an identifier character
+ * follows it). `packages/compiler/test/js-identifier-safety.test.ts` brute-forces
+ * the property over the identifiers the lexer accepts, because the argument
+ * rests on that rule and on `jsBinding`'s mapping rather than on anything local.
  */
 function freshBinding(scope: BindScope, name: string): string {
   const base = jsBinding(name);
