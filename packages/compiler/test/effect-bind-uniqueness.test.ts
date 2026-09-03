@@ -92,6 +92,14 @@ describe("a bind list's names are distinct", () => {
     expect(codes(app("$el, $el"))).toEqual(["E0121", "E0121"]);
   });
 
+  it("counts the position a reserved bind holds, and does not count its name", () => {
+    // `$el` takes the E0121 path and never records a position of its own, so
+    // the repeat of `x` still names the place `$el` occupies between them.
+    const src = app("x, $el, x");
+    expect(codes(src)).toEqual(["E0121", "E0123"]);
+    expect(diagnose(src)[1]?.message).toContain("it names $1 and then $3");
+  });
+
   it("says nothing about a list of distinct names", () => {
     expect(diagnose(app("first, second"))).toEqual([]);
   });
