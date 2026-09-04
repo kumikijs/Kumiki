@@ -1522,15 +1522,17 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
+    // Both checks a bind is subject to today are asked here, in the walk that
+    // puts the names into scope, so the answer to one cannot drift from the
+    // answer to the other. Whichever of them fires, the name still enters the
+    // scope — that is what `ctx.localBinds.add` below the branch is for, and
+    // why it sits outside it: the body's reads are then that binding, so a
+    // `$route` bind does not also collect an E0119 apiece for every read.
+    //
     // Which positional each name already holds. A bind list names the payload's
     // positionals in order, so a bind's index *is* its position — `_` included,
-    // since it stands for a positional rather than skipping one.
-    //
-    // Both collisions a bind can have are asked here, in the walk that puts the
-    // names into scope, so the answer to one cannot drift from the answer to
-    // the other. Whichever fires, the name still enters the scope: the body's
-    // reads are then that binding, which keeps the report the one report rather
-    // than the first of many.
+    // since it stands for a positional rather than skipping one, which is the
+    // index `emit-reducer.ts` reads the payload at.
     const boundAt = new Map<string, number>();
     r.on.binds.forEach((b, i) => {
       if (b.name === "_") return;

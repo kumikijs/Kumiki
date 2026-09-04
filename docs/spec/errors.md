@@ -76,6 +76,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0119` | yes | Rewrite `$route` to `route` at the reported position — the slot holds the current route and is readable from every reducer. |
 | `E0121` | no | Choosing a replacement name, and rewriting every read of it in the body, is user intent. |
 | `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
+| `E0123` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent — as for E0122, whose rule this is at the trigger. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |

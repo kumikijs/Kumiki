@@ -480,7 +480,7 @@ reducer editTitle
 
 宣言の右辺は、それが宣言する名前がスコープに入る**前**に評価される。したがって `let n = n + 1` は、宣言しようとしている束縛ではなく、シャドーイングする側の束縛を読む。
 
-**横に並んだ**束縛どうしは、シャドーイングの関係ではなく対等である。入れ子にするものが何もないからである：ひとつのパターンの2つの束縛（`Both(a, a)`）は [E0122](./errors.md#e0122-duplicate-pattern-bind) であり、`effect-event` の束縛リストも同じ形である。そこで繰り返された名前はシャドーイングではなく、パターンやトリガが読めなくしてしまった値である。
+**横に並んだ**束縛どうしは、シャドーイングの関係ではなく対等である。入れ子にするものが何もないからである：ひとつのパターンの2つの束縛（`Both(a, a)`）は [E0122](./errors.md#e0122-duplicate-pattern-bind) であり、`effect-event` の束縛リストも同じ形である（[E0123](./errors.md#e0123-duplicate-effect-bind)）。そこで繰り返された名前はシャドーイングではなく、パターンやトリガが読めなくしてしまった値である。
 
 `let` は [positional binding](#_1-6-5-positional-binding) の名前を取ってよい。これらも他と変わらない宣言なので、`let` が下のすべての読みで勝つ — トリガが `$route` を束縛しない reducer での `$route` も含めて、それはペイロードの読みではなくその `let` の値である（[E0119](./errors.md#e0119-route-bind-out-of-scope)）。この名前を取れない唯一の位置が `effect-event` の束縛である（[E0121](./errors.md#e0121-reserved-bind-name)）。束縛リストはペイロードの positional に名前を与えるものなので、`$el` を取る束縛には、それが表す positional を置く場所が残らない。
 
