@@ -96,7 +96,7 @@ tile Nav = row(
 
 `link` automatically uses the `nav.push` capability (implicitly). Unlike `<a href>`, it does not trigger a full reload.
 
-`to` names a path **this app serves**. A target on another origin — `https://example.com/docs`, or a `mailto:` / `tel:` URL — is one the router cannot serve: only a same-origin URL can reach `history.pushState`. Such a link is not intercepted at all; the browser keeps the click and navigates it exactly as an `<a href>` would. `external` ([stdlib §2.3.2](./stdlib.md#_2-3-2-text-elements)) is how a link *says* it leaves the app, and additionally opens it in a new browsing context — it is not what makes an off-origin link work. An absolute URL to this origin (`http://localhost:3000/todos`) is same-origin, so it routes like `/todos`.
+`to` names a path **this app serves**. A target on another origin — `https://example.com/docs`, or a `mailto:` / `tel:` URL — is one the router cannot serve: only a same-origin URL can reach `history.pushState`. Such a link is not intercepted at all; the browser keeps the click and navigates it exactly as an `<a href>` would. `external` ([stdlib §2.3.2](./stdlib.md#_2-3-2-text-elements)) is how a link *says* it leaves the app, and additionally opens it in a new browsing context — it is not what makes an off-origin link work. An absolute URL to this origin (`http://localhost:3000/todos`) is same-origin, so the router takes it rather than the browser.
 
 ### 3.3.2 Writing It as an effect
 

@@ -535,25 +535,79 @@ app P
 });
 
 describe("an external link leaves the app (#251)", () => {
-  /** Click the link and report whether the runtime took the navigation over. */
-  async function clickIsIntercepted(to: string, props: string): Promise<boolean> {
-    const app = await loadSource(sourceOf(`column(link(to="${to}", text="docs") ${props})`));
+  /**
+   * A link source with a real second route, so a click that IS taken over can
+   * be checked by what renders rather than only by `defaultPrevented`.
+   */
+  function linkSource(to: string, props: string): string {
+    return [
+      `tile Home = column(link(to="${to}", text="docs") ${props})`,
+      'tile Next = text("arrived at next")',
+      "",
+      "app P",
+      "  caps   = []",
+      '  routes = {"/" -> Home, "/next" -> Next, "/404" -> Home}',
+      "  init   = []",
+      "",
+    ].join("\n");
+  }
+
+  type Clicked = { intercepted: boolean; html: string; warnings: string[] };
+
+  /**
+   * Click the link and report whether the runtime took the navigation over.
+   *
+   * The click is observed and then cancelled from a bubble-phase listener on
+   * `window`: happy-dom really does navigate an un-cancelled anchor click, and
+   * every test in this file shares one document. Letting one reach the browser
+   * moves `location` — to `https://example.com`, or for a `mailto:` to an
+   * opaque origin where `location.origin` reads `"null"` — for the rest of the
+   * file, which is how a same-origin case can end up asserting nothing.
+   */
+  async function click(
+    to: string,
+    props: string,
+    opts: { again?: boolean; router?: "history" | "memory" } = {},
+  ): Promise<Clicked> {
+    const app = await loadSource(linkSource(to, props));
     const target = document.createElement("div");
     document.body.appendChild(target);
-    mount(app, target);
+    mount(app, target, opts.router ? { router: opts.router } : {});
     const a = target.querySelector('[data-kumiki-tile="link"]') as HTMLElement;
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
-    a.dispatchEvent(click);
-    // The router takes a link over by preventing the browser's own navigation.
-    return click.defaultPrevented;
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]): void => {
+      warnings.push(args.map(String).join(" "));
+    };
+    let intercepted = false;
+    const guard = (e: Event): void => {
+      intercepted = e.defaultPrevented;
+      e.preventDefault();
+    };
+    window.addEventListener("click", guard);
+    try {
+      const fire = (): void =>
+        void a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      fire();
+      if (opts.again) fire();
+      return { intercepted, html: target.textContent ?? "", warnings };
+    } finally {
+      window.removeEventListener("click", guard);
+      console.warn = origWarn;
+      target.remove();
+      // Same-origin by construction now, so the reset actually lands.
+      window.history.replaceState(null, "", "/");
+    }
   }
 
   it("routes an ordinary link through the app", async () => {
-    expect(await clickIsIntercepted("/next", "{}")).toBe(true);
+    const r = await click("/next", "{}");
+    expect(r.intercepted).toBe(true);
+    expect(r.html).toContain("arrived at next");
   });
 
   it("leaves an external one to the browser", async () => {
-    expect(await clickIsIntercepted("https://example.com", "{external: true}")).toBe(false);
+    expect((await click("https://example.com", "{external: true}")).intercepted).toBe(false);
   });
 
   // #298: `external` is the documented way to leave the app, but forgetting it
@@ -562,19 +616,65 @@ describe("an external link leaves the app (#251)", () => {
   // refuses it with a SecurityError. The link was dead and the console said
   // nothing about the link. What the router cannot serve stays the browser's.
   it("leaves an off-origin target to the browser even without external", async () => {
-    expect(await clickIsIntercepted("https://example.com/docs", "{}")).toBe(false);
+    const r = await click("https://example.com/docs", "{}");
+    expect(r.intercepted).toBe(false);
+    expect(r.warnings.join("\n")).toContain("https://example.com/docs");
   });
 
   it("leaves a non-http scheme to the browser", async () => {
-    expect(await clickIsIntercepted("mailto:hi@example.com", "{}")).toBe(false);
+    expect((await click("mailto:hi@example.com", "{}")).intercepted).toBe(false);
+  });
+
+  // The interception used to be what kept a `javascript:` target from running:
+  // it was cancelled and then thrown out of `pushState`. Handing every target
+  // the router cannot serve back to the browser would have made it executable
+  // instead, so a scheme outside the navigable set is cancelled on its own.
+  it("cancels a javascript: target instead of handing it to the browser", async () => {
+    const r = await click("javascript:void 0", "{}");
+    expect(r.intercepted).toBe(true);
+    expect(r.html).not.toContain("arrived at next");
+    expect(r.warnings.join("\n")).toContain("does not navigate");
+  });
+
+  it("cancels it even when the link says external", async () => {
+    expect((await click("javascript:void 0", "{external: true}")).intercepted).toBe(true);
+  });
+
+  it("warns once per link, not once per click", async () => {
+    expect((await click("https://example.com/docs", "{}", { again: true })).warnings).toHaveLength(
+      1,
+    );
+  });
+
+  // A memory-router mount (a host embed, the playground) never calls
+  // `history.pushState`, so it never threw — but it has no route for another
+  // origin either, and swallowing the click into its own stack would render
+  // the 404 tile for a link that reads as a link out. The decision is the
+  // same one, and it is the ambient document that navigates.
+  describe("under a memory router", () => {
+    it("still leaves an off-origin target to the browser", async () => {
+      expect(
+        (await click("https://example.com/docs", "{}", { router: "memory" })).intercepted,
+      ).toBe(false);
+    });
+
+    it("still routes a relative one", async () => {
+      const r = await click("/next", "{}", { router: "memory" });
+      expect(r.intercepted).toBe(true);
+      expect(r.html).toContain("arrived at next");
+    });
   });
 
   it("routes an absolute URL to this origin", async () => {
-    expect(await clickIsIntercepted(`${location.origin}/next`, "{}")).toBe(true);
+    const r = await click(`${location.origin}/next`, "{}");
+    expect(r.intercepted).toBe(true);
+    expect(r.html).toContain("arrived at next");
   });
 
   it("routes a protocol-relative URL to this origin", async () => {
-    expect(await clickIsIntercepted(`//${location.host}/next`, "{}")).toBe(true);
+    const r = await click(`//${location.host}/next`, "{}");
+    expect(r.intercepted).toBe(true);
+    expect(r.html).toContain("arrived at next");
   });
 });
 

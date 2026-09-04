@@ -141,19 +141,21 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // whole instead of inlining it into its call site. A counter pays a few
     // dozen bytes (65,009 measured) for a reducer-test tier that can drive a
     // reducer reading the route at all.
-    // Bumped to 65.6KB when a link stopped throwing on an off-origin target
+    // Bumped to 66KB when a link stopped throwing on an off-origin target
     // (spec/routing.md §3.3.1, #298): the click handler asks whether the router
     // can serve the target at all before it cancels the browser's navigation,
-    // and says so on the console when it cannot. That is a `new URL` and one
-    // message in tiles-text.js, which every app with any text tile ships
-    // (65,415 measured). A counter has no link and still pays for it — the
-    // alternative is what this replaced, where forgetting `{external: true}`
-    // cancelled the navigation, threw `SecurityError` out of `pushState`, and
-    // left a dead link with nothing in the console naming it.
+    // and says so on the console when it cannot. That is a `new URL`, the set of
+    // schemes a click may be handed back to the browser for, and two messages in
+    // tiles-text.js, which every app with any text tile ships (65,748 measured).
+    // A counter has no link and still pays for it — the alternative is what this
+    // replaced, where forgetting `{external: true}` cancelled the navigation,
+    // threw `SecurityError` out of `pushState`, and left a dead link with
+    // nothing in the console naming it; and where the fix without the scheme
+    // set would have handed `javascript:` targets to the browser to execute.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(65_600);
+    expect(total).toBeLessThan(66_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

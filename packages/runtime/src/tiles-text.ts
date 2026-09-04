@@ -19,43 +19,80 @@ function isExternal(props?: TileProps): boolean {
   return props?.external === true;
 }
 
-// Once-per-element diagnostic for an off-origin target the router cannot serve
-// (#298). The link still works — the browser navigates it — but an author who
-// meant to route somewhere is better told than left wondering.
-const warnedOffOrigin = new WeakSet<Element>();
+/** What a link's click does with its target (#298). */
+type LinkDisposition =
+  /** This app's router can serve it: intercept the click and navigate. */
+  | "route"
+  /** Off-origin but an ordinary navigation: leave the click to the browser. */
+  | "browser"
+  /** Neither — a scheme this runtime does not hand out. Cancel and say so. */
+  | "unsafe";
 
 /**
- * Whether the router can serve `to` at all: only a same-origin target can reach
+ * The schemes a click may be handed back to the browser for. An allowlist
+ * rather than a `javascript:` blocklist: `to` is an arbitrary expression
+ * (codegen lowers it like any other), so a slot filled from an HTTP response
+ * can reach it, and "not routable" must never mean "hand the document a
+ * script URL to execute". Cancelling an unknown scheme costs a dead link that
+ * did not work before this either — it went to `pushState` and threw.
+ */
+const BROWSER_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:", "sms:"]);
+
+// Once-per-target diagnostic for a link the router does not serve (#298). The
+// link still works when the browser takes it — but an author who meant to route
+// somewhere is better told than left wondering. Keyed by the target rather than
+// the element alone: the message names one `to`, and a link tile reused across
+// a `to=` change (#190) is a different claim about a different URL.
+const warnedLink = new WeakMap<Element, string>();
+
+/**
+ * What to do with `to`. Only a same-origin target can reach
  * `history.pushState`, which refuses anything else with a `SecurityError`
  * (#298). Relative targets ("/next", "?q=1", "#top") resolve against this
  * document and are always ours; an absolute or protocol-relative URL is ours
- * only when its origin matches; a non-http scheme (`mailto:`, `tel:`) has an
- * opaque origin and never is.
+ * only when its origin matches.
  *
- * Without a document to compare against (no `location`) nothing here can be
- * decided, so the target is left to the router as before.
+ * The comparison is against `new URL(location.href).origin`, not
+ * `location.origin`: in an opaque-origin document (a sandboxed iframe, the
+ * host the memory router exists for) the latter is the string `"null"` while
+ * the document still resolves relative URLs against its real href — comparing
+ * to it would classify every link in the app as off-origin. `"null"` never
+ * counts as a match on either side, so a `javascript:` or `data:` target
+ * cannot pass as same-origin in a document that is itself opaque.
+ *
+ * Without a document to resolve against (no `location`), or with a target that
+ * will not parse even against one, nothing here can be decided and the target
+ * is left to the router as before.
  */
-function isRoutableTarget(to: string): boolean {
+function linkDisposition(to: string): LinkDisposition {
   const here = typeof location !== "undefined" ? location.href : "";
-  if (!here) return true;
+  if (!here) return "route";
+  let base: URL;
+  let target: URL;
   try {
-    return new URL(to, here).origin === location.origin;
+    base = new URL(here);
+    target = new URL(to, base);
   } catch {
-    // Unparseable even against a base — not a URL, so not off-origin either.
-    return true;
+    return "route";
   }
+  if (target.origin !== "null" && target.origin === base.origin) return "route";
+  return BROWSER_SCHEMES.has(target.protocol) ? "browser" : "unsafe";
 }
 
-function warnOffOrigin(a: HTMLAnchorElement, to: string): void {
-  if (warnedOffOrigin.has(a)) return;
-  warnedOffOrigin.add(a);
+function warnLink(a: HTMLAnchorElement, to: string, disposition: LinkDisposition): void {
+  if (warnedLink.get(a) === to) return;
+  warnedLink.set(a, to);
   // One line, and the element stays out of it: this fires under `kumiki run`
   // and `kumiki smoke`, whose transcripts are read as text, and a DOM node
   // logged there prints as pages of internal symbols. The link's own text is
   // what locates it in the source anyway.
+  const what =
+    disposition === "browser"
+      ? "is off-origin; the router cannot serve it, so the browser navigates it " +
+        "(add `{external: true}`)"
+      : "uses a scheme this runtime does not navigate to; the click was ignored";
   console.warn(
-    `kumiki: link ${JSON.stringify(a.textContent ?? "")} -> ${JSON.stringify(to)} is off-origin; ` +
-      "the router cannot serve it, so the browser navigates it (add `{external: true}`)",
+    `kumiki: link ${JSON.stringify(a.textContent ?? "")} -> ${JSON.stringify(to)} ${what}`,
   );
 }
 
@@ -146,17 +183,28 @@ export const textTiles: TileRenderers = {
     applyExternal(a, node.props);
     a.addEventListener("click", (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-      // An external link leaves the app (§3.8): the router has no route for
-      // where it goes, so it stays the browser's navigation.
-      if (LINK_STATE.get(a)?.external) return;
-      const to = LINK_STATE.get(a)?.to ?? node.to;
+      const state = LINK_STATE.get(a);
+      const to = state?.to ?? node.to;
       // Decided BEFORE preventDefault, like the unresolved-app case below: a
       // target off this origin is one the router cannot serve (#298). Handing
       // it to `history.pushState` throws `SecurityError`, and by then the
       // click is already cancelled — the link is dead and the console names
-      // the history API rather than the link. The browser keeps the click.
-      if (!isRoutableTarget(to)) {
-        warnOffOrigin(a, to);
+      // the history API rather than the link.
+      const disposition = linkDisposition(to);
+      // `javascript:` and friends are the one target that is neither ours nor
+      // the browser's to run. This branch is ahead of `external` on purpose:
+      // `{external: true}` says "another page owns this", not "execute this".
+      if (disposition === "unsafe") {
+        e.preventDefault();
+        warnLink(a, to, disposition);
+        return;
+      }
+      // An external link leaves the app (§3.8): the router has no route for
+      // where it goes, so it stays the browser's navigation.
+      if (state?.external) return;
+      // Nor does the router serve another origin — the browser keeps the click.
+      if (disposition === "browser") {
+        warnLink(a, to, disposition);
         return;
       }
       // Resolve BEFORE preventDefault: a link outside any live mount (stale
