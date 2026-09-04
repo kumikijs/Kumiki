@@ -76,6 +76,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0119` | yes | Rewrite `$route` to `route` at the reported position — the slot holds the current route and is readable from every reducer. |
 | `E0121` | no | Choosing a replacement name, and rewriting every read of it in the body, is user intent. |
 | `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
+| `E0123` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent — as for E0122, whose rule this is at the trigger. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
@@ -420,6 +421,22 @@ Without this check the arm compiles: the second bind takes an identifier of its 
 Two *arms* binding the same name are unaffected — they are alternatives, each with its own scope — and so is a bind that shadows a name from outside the pattern, which is the rule working as [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) states it.
 
 **Fix**: Rename one of the two binds, or write `_` for the value the arm does not read.
+
+### E0123 `duplicate-effect-bind`
+
+An `effect-event` trigger binds two of the payload's positionals to one name — `on=load.ok(dup, dup)`.
+
+> `"<name>" is bound twice in this trigger: it names $<i> and then $<j>, so the two binds are peers — nothing nests them, the second does not shadow the first, and $<i> has no name left to read it by. Rename one, or write "_" for a positional the reducer does not read`
+
+This is [E0122](#e0122-duplicate-pattern-bind)'s rule at the trigger rather than at a pattern, and the same collision as [E0121](#e0121-reserved-bind-name) from the other side: there a bind takes a name the compiler declares, here it takes a name another bind declares. Codegen emits one `const` per bind, so the reducer body declared the name twice and the whole module threw `SyntaxError: Identifier '<name>' has already been declared` at load — nothing rendered, with `check` and `build` clean and the emitted source reading as if it were.
+
+A bind list names the payload's positionals **in order**, so two binds naming one thing is not an abbreviation for anything: whichever value the name resolved to, the other positional would have no name to read it by. The index in the message is the position — `_` occupies one rather than skipping it, so `on=load.ok(_, x, x)` is a collision between `$2` and `$3`.
+
+`_` itself is exempt however often it is written: it names nothing, and it is the spelling for a positional the reducer does not read.
+
+**A repeated name that is also a reserved one is E0121 alone.** `on=load.ok($el, $el)` collects one E0121 per bind and no E0123: those reports already say to rename the bind, and renaming it settles the duplicate too, so a third would repeat one mistake rather than name another. The bind still enters the reducer's scope either way, so the body's reads resolve to it and collect nothing further.
+
+**Fix**: Rename one of the two binds, or write `_` for the positional the reducer does not read.
 
 ## E02xx — Types
 
