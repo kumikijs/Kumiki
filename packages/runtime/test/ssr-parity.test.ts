@@ -7,9 +7,32 @@
 // This file compares the two paths node by node rather than asserting a
 // hand-written HTML string, because the failure mode is drift: a renderer
 // gaining a style the server pass does not learn about.
+//
+// Two properties make the comparison mean what it says (#296):
+//
+//   * It is EXHAUSTIVE. The table is a `Record<TileNode["kind"], …>`, so a new
+//     kind fails the typecheck until it has a row, and `EVERY_TILE_KIND` below
+//     re-checks the same thing at runtime against the renderer registry. There
+//     is no longer a silent gap between "verified to agree" and "not looked
+//     at".
+//   * It compares the SUBTREE, not the root. A kind whose children differ —
+//     `markdown`'s paragraphs, `overlay`'s absolutely-positioned layers, a
+//     surface's content box — is a divergence a root-only comparison cannot
+//     see. Where a subtree legitimately differs, the kind's row says so in
+//     prose (`shallow` / `noText`) rather than by omission.
 
 import type { AppShape, TileNode } from "@kumikijs/runtime";
-import { mount, renderTileToString } from "@kumikijs/runtime";
+import {
+  collectionTiles,
+  inputTiles,
+  layoutTiles,
+  mediaTiles,
+  mount,
+  overlayTiles,
+  renderTileToString,
+  statusTiles,
+  textTiles,
+} from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -38,11 +61,28 @@ function clientElement(node: TileNode): HTMLElement {
   return el;
 }
 
+/**
+ * What a table part has to be parsed inside. The HTML parser drops a `<thead>`
+ * or a `<td>` that arrives with no table around it, so reading one back
+ * through `div.innerHTML` says the server rendered nothing when it rendered
+ * exactly the right element. A fact about this harness, not about either
+ * render path — the client builds its `<td>` with `createElement` and never
+ * meets the parser at all.
+ */
+const TABLE_PARTS: Record<string, { tag: string; wrap: (html: string) => string }> = {
+  "table-head": { tag: "thead", wrap: (h) => `<table>${h}</table>` },
+  "table-body": { tag: "tbody", wrap: (h) => `<table>${h}</table>` },
+  "table-row": { tag: "tr", wrap: (h) => `<table><tbody>${h}</tbody></table>` },
+  "table-cell": { tag: "td", wrap: (h) => `<table><tbody><tr>${h}</tr></tbody></table>` },
+};
+
 /** The server's element for the same node, parsed back into the DOM. */
 function serverElement(node: TileNode): HTMLElement {
   const host = document.createElement("div");
-  host.innerHTML = renderTileToString(node);
-  const el = host.firstElementChild as HTMLElement | null;
+  const html = renderTileToString(node);
+  const part = TABLE_PARTS[node.kind];
+  host.innerHTML = part ? part.wrap(html) : html;
+  const el = (part ? host.querySelector(part.tag) : host.firstElementChild) as HTMLElement | null;
   if (!el) throw new Error(`server rendered nothing for ${node.kind}`);
   return el;
 }
@@ -52,7 +92,7 @@ function serverElement(node: TileNode): HTMLElement {
  * sides so `#fff` vs `rgb(255, 255, 255)` and declaration order are not what
  * this test is about.
  */
-function styleOf(el: HTMLElement): Record<string, string> {
+function styleOf(el: Element): Record<string, string> {
   const probe = document.createElement("div");
   probe.setAttribute("style", el.getAttribute("style") ?? "");
   const out: Record<string, string> = {};
@@ -66,20 +106,61 @@ function styleOf(el: HTMLElement): Record<string, string> {
 /**
  * Attribute names the server must write and the client never does, because the
  * client sets the corresponding DOM *property*. Form state is not an attribute
- * once a document is live — `input.value = x` leaves the markup untouched — but
- * an attribute is the only way a served page can carry it, so this asymmetry is
- * the contract rather than a divergence.
+ * once a document is live — `input.value = x`, `input.disabled = true` and
+ * `option.selected = true` all leave the markup untouched — but an attribute is
+ * the only way a served page can carry it, so this asymmetry is the contract
+ * rather than a divergence.
  */
-const PROPERTY_ON_THE_CLIENT = new Set(["value", "max", "checked"]);
+const PROPERTY_ON_THE_CLIENT = new Set([
+  "value",
+  "max",
+  "checked",
+  "selected",
+  "disabled",
+  "readonly",
+  "open",
+]);
 
 /** Every attribute except `style`, which is compared through the CSSOM. */
-function attrsOf(el: HTMLElement): Record<string, string> {
+function attrsOf(el: Element): Record<string, string> {
   const out: Record<string, string> = {};
   for (const a of Array.from(el.attributes)) {
     if (a.name === "style" || PROPERTY_ON_THE_CLIENT.has(a.name)) continue;
     out[a.name] = a.value;
   }
   return out;
+}
+
+/** The text an element holds directly, i.e. not through a child element. */
+function ownText(el: Element): string {
+  let out = "";
+  for (const n of Array.from(el.childNodes)) {
+    if (n.nodeType === 3) out += n.nodeValue ?? "";
+  }
+  return out;
+}
+
+/**
+ * What the two paths are compared as: an element's tag, the attributes and
+ * style it carries, the text it holds itself, and the same for every element
+ * below it. Serialised into a plain object rather than asserted field by field
+ * so a failure names the path that differs and shows both sides.
+ */
+type Shape = {
+  tag: string;
+  attrs: Record<string, string>;
+  style: Record<string, string>;
+  text?: string;
+  children?: Shape[];
+};
+
+function shapeOf(el: Element, opts: { deep: boolean; text: boolean }): Shape {
+  const shape: Shape = { tag: el.tagName, attrs: attrsOf(el), style: styleOf(el) };
+  if (opts.text) shape.text = ownText(el);
+  if (opts.deep) {
+    shape.children = Array.from(el.children).map((c) => shapeOf(c, opts));
+  }
+  return shape;
 }
 
 // Prop names are the LOWERED form, which is the only spelling the runtime
@@ -108,70 +189,384 @@ const TEXT_PROPS = {
   style: { "text-transform": "uppercase" },
 };
 
+/** The common props every kind accepts (stdlib.md §2.3.10), on one node. */
+const COMMON_PROPS = {
+  class: "a b",
+  test_id: "t",
+  aria: { label: "Labelled" },
+};
+
+/** A child to hang under a container, so a container's subtree is not empty. */
+const CHILD: TileNode = { kind: "text", text: "child" };
+
+type ParityCase = [label: string, node: TileNode];
+
 /**
- * A node per kind this pair is claimed to agree on. NOT every kind
- * `renderTileToString` handles: `check` / `switch` / `radio` wrap their input
- * in a `<label>` on the client and do not on the server, `modal` / `drawer` /
- * `popover` differ on what a closed overlay even is, and `markdown` is raw text
- * on one side and parsed runs on the other. Those are divergences this table
- * does not yet watch rather than agreements it verifies — the harness also
- * compares the root element only, so a kind with children is checked shallowly.
+ * One kind's row. `cases` is what gets compared; the two prose fields are the
+ * only way to stop comparing something, and each has to say why — an omission
+ * cannot express "we did not look", which is what made the old table's silence
+ * unreadable.
  */
-const NODES: [string, TileNode][] = [
-  ["page", { kind: "page", children: [], props: CONTAINER_PROPS }],
-  ["column", { kind: "column", children: [], props: CONTAINER_PROPS }],
-  ["row", { kind: "row", children: [], props: CONTAINER_PROPS }],
-  ["card", { kind: "card", children: [], props: CONTAINER_PROPS }],
-  ["card (no pad)", { kind: "card", children: [] }],
-  ["box", { kind: "box", children: [], props: CONTAINER_PROPS }],
-  ["stack", { kind: "stack", children: [], props: CONTAINER_PROPS }],
-  ["scroll", { kind: "scroll", children: [], props: CONTAINER_PROPS }],
-  ["panel", { kind: "panel", children: [], props: CONTAINER_PROPS }],
-  ["fieldset", { kind: "fieldset", children: [], props: CONTAINER_PROPS }],
-  ["region", { kind: "region", children: [], props: CONTAINER_PROPS }],
-  ["grid", { kind: "grid", children: [], props: { ...CONTAINER_PROPS, cols: 4 } }],
-  ["grid (default cols)", { kind: "grid", children: [] }],
-  ["heading", { kind: "heading", text: "Title", props: TEXT_PROPS }],
-  ["text", { kind: "text", text: "body", props: TEXT_PROPS }],
-  ["label", { kind: "label", text: "Email", props: { for: "email" } }],
-  ["form", { kind: "form", children: [], props: CONTAINER_PROPS }],
-  ["list", { kind: "list", children: [], props: CONTAINER_PROPS }],
-  ["divider", { kind: "divider", props: CONTAINER_PROPS }],
-  ["overlay", { kind: "overlay", children: [], props: CONTAINER_PROPS }],
-  ["icon", { kind: "icon", name: "star", props: { ...TEXT_PROPS, size: "lg" } }],
-  ["button", { kind: "button", text: "Send", type: "submit" }],
-  ["input", { kind: "input", value: "v", placeholder: "p", id: "i", required: true }],
-  // The other form an id arrives in. `input(id=…)` sets the field, `{id: …}`
-  // sets the prop, and the renderers read both — the server read only the
-  // first, so `label(for=…)` pointed at nothing on a served page.
-  ["input (id in props)", { kind: "input", value: "", props: { id: "from-props" } }],
-  ["button (id in props)", { kind: "button", text: "Send", props: { id: "send" } }],
-  ["image", { kind: "image", src: "/a.png", props: { alt: "A cat", id: "pic" } }],
-  ["image (no alt)", { kind: "image", src: "/a.png" }],
-  ["spinner", { kind: "spinner" }],
-  // The two kinds whose base style reads a prop, which is the half of
-  // `baseDecls` a bare node leaves unexercised.
-  ["spinner (sized)", { kind: "spinner", props: { size: "lg" } }],
-  ["skeleton", { kind: "skeleton" }],
-  ["skeleton (h)", { kind: "skeleton", props: { h: 120 } }],
-  ["progress", { kind: "progress", value: 3, max: 10 }],
-  // `data-kumiki-bind` is the one attribute built from a path rather than
-  // copied from a field, and a `.get` segment is not a string — so the two
-  // renderers agree only as long as both go through `bindLabel`.
-  [
-    "input (bind through .get)",
-    { kind: "input", value: "v", bind: "draft", bindPath: [{ get: true }, "title"] },
-  ],
-];
+type KindRow = {
+  cases: [ParityCase, ...ParityCase[]];
+  /** Why the comparison stops at the root element instead of walking children. */
+  shallow?: string;
+  /** Why the text the two paths hold is not compared. */
+  noText?: string;
+};
+
+/**
+ * A node per kind, compared subtree-deep unless the row says otherwise.
+ *
+ * Typed as a total record over `TileNode["kind"]`: a kind added to the union
+ * without a row here does not typecheck, which is the half of exhaustiveness a
+ * runtime check cannot do (the union does not exist at runtime).
+ */
+const TABLE: Record<TileNode["kind"], KindRow> = {
+  page: {
+    cases: [
+      ["page", { kind: "page", children: [CHILD], props: CONTAINER_PROPS }],
+      ["page (common props)", { kind: "page", children: [], props: COMMON_PROPS }],
+    ],
+  },
+  column: { cases: [["column", { kind: "column", children: [CHILD], props: CONTAINER_PROPS }]] },
+  row: { cases: [["row", { kind: "row", children: [CHILD], props: CONTAINER_PROPS }]] },
+  card: {
+    cases: [
+      ["card", { kind: "card", children: [CHILD], props: CONTAINER_PROPS }],
+      ["card (no pad)", { kind: "card", children: [] }],
+    ],
+  },
+  box: { cases: [["box", { kind: "box", children: [CHILD], props: CONTAINER_PROPS }]] },
+  stack: { cases: [["stack", { kind: "stack", children: [CHILD], props: CONTAINER_PROPS }]] },
+  scroll: { cases: [["scroll", { kind: "scroll", children: [CHILD], props: CONTAINER_PROPS }]] },
+  panel: { cases: [["panel", { kind: "panel", children: [CHILD], props: CONTAINER_PROPS }]] },
+  fieldset: {
+    cases: [["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }]],
+  },
+  region: { cases: [["region", { kind: "region", children: [CHILD], props: CONTAINER_PROPS }]] },
+  grid: {
+    cases: [
+      ["grid", { kind: "grid", children: [CHILD], props: { ...CONTAINER_PROPS, cols: 4 } }],
+      ["grid (default cols)", { kind: "grid", children: [] }],
+      ["grid (rows)", { kind: "grid", children: [], props: { cols: "1fr auto", rows: 2 } }],
+    ],
+  },
+  overlay: {
+    cases: [
+      // Children `[1..]` are each wrapped in an absolutely-positioned layer on
+      // the client; the base child stays in flow. A root-only comparison saw
+      // none of that.
+      ["overlay", { kind: "overlay", children: [CHILD], props: CONTAINER_PROPS }],
+      [
+        "overlay (layers)",
+        {
+          kind: "overlay",
+          children: [CHILD, { kind: "text", text: "over" }, { kind: "text", text: "more" }],
+          props: { align: "top-right" },
+        },
+      ],
+      [
+        "overlay (default align)",
+        { kind: "overlay", children: [CHILD, { kind: "text", text: "over" }] },
+      ],
+    ],
+  },
+  "route-outlet": {
+    cases: [["route-outlet", { kind: "route-outlet", children: [CHILD], props: CONTAINER_PROPS }]],
+  },
+  heading: { cases: [["heading", { kind: "heading", text: "Title", props: TEXT_PROPS }]] },
+  text: { cases: [["text", { kind: "text", text: "body", props: TEXT_PROPS }]] },
+  label: { cases: [["label", { kind: "label", text: "Email", props: { for: "email" } }]] },
+  link: {
+    cases: [
+      ["link", { kind: "link", text: "Home", to: "/", props: TEXT_PROPS }],
+      [
+        "link (external)",
+        { kind: "link", text: "Docs", to: "https://x", props: { external: true } },
+      ],
+    ],
+  },
+  markdown: {
+    cases: [
+      ["markdown", { kind: "markdown", text: "one\ntwo\n\nthree", props: TEXT_PROPS }],
+      ["markdown (empty)", { kind: "markdown", text: "" }],
+    ],
+  },
+  code: {
+    cases: [
+      ["code", { kind: "code", text: "const a = 1", lang: "ts", props: CONTAINER_PROPS }],
+      ["code (no lang)", { kind: "code", text: "plain" }],
+    ],
+  },
+  icon: {
+    cases: [["icon", { kind: "icon", name: "star", props: { ...TEXT_PROPS, size: "lg" } }]],
+    noText:
+      "the client writes `[name]` while the icon is unresolved and an <svg> once it is; the " +
+      "server serves the empty placeholder either way (spec §10.6.1), so the two agree on the " +
+      "element and not on what is in it",
+  },
+  form: { cases: [["form", { kind: "form", children: [CHILD], props: CONTAINER_PROPS }]] },
+  button: {
+    cases: [
+      ["button", { kind: "button", text: "Send", type: "submit" }],
+      ["button (id in props)", { kind: "button", text: "Send", props: { id: "send" } }],
+      [
+        "button (loading)",
+        { kind: "button", text: "Save", props: { loading: true, variant: "primary" } },
+      ],
+    ],
+  },
+  input: {
+    cases: [
+      ["input", { kind: "input", value: "v", placeholder: "p", id: "i", required: true }],
+      // The other form an id arrives in. `input(id=…)` sets the field, `{id: …}`
+      // sets the prop, and the renderers read both — the server read only the
+      // first, so `label(for=…)` pointed at nothing on a served page.
+      ["input (id in props)", { kind: "input", value: "", props: { id: "from-props" } }],
+      [
+        "input (control state)",
+        { kind: "input", value: "", props: { disabled: true, auto_complete: "email" } },
+      ],
+      // `data-kumiki-bind` is the one attribute built from a path rather than
+      // copied from a field, and a `.get` segment is not a string — so the two
+      // renderers agree only as long as both go through `bindLabel`.
+      [
+        "input (bind through .get)",
+        { kind: "input", value: "v", bind: "draft", bindPath: [{ get: true }, "title"] },
+      ],
+    ],
+  },
+  textarea: {
+    cases: [
+      [
+        "textarea",
+        { kind: "textarea", value: "hello", rows: 4, placeholder: "p", id: "t", bind: "draft" },
+      ],
+    ],
+    noText:
+      "a textarea's value is its text on the server and its `.value` property on the client — " +
+      "the same asymmetry `PROPERTY_ON_THE_CLIENT` covers for an <input>, one node down",
+  },
+  check: {
+    cases: [
+      ["check", { kind: "check", checked: true }],
+      ["check (id, control state)", { kind: "check", checked: false, props: { id: "c" } }],
+    ],
+  },
+  switch: {
+    cases: [
+      ["switch", { kind: "switch", checked: true }],
+      ["switch (id)", { kind: "switch", checked: false, props: { id: "s" } }],
+    ],
+  },
+  radio: {
+    cases: [
+      [
+        "radio",
+        { kind: "radio", group: "plan", value: "pro", selected: true, props: { label: "Pro" } },
+      ],
+      ["radio (no label)", { kind: "radio", group: "plan", value: "free" }],
+    ],
+  },
+  select: {
+    cases: [
+      [
+        "select",
+        {
+          kind: "select",
+          value: "b",
+          options: [
+            { label: "A", value: "a" },
+            { label: "B", value: "b" },
+          ],
+          bind: "choice",
+          props: { id: "sel" },
+        },
+      ],
+      [
+        "select (placeholder, nothing chosen)",
+        {
+          kind: "select",
+          placeholder: "Pick one",
+          options: [{ label: "A", value: "a" }],
+        },
+      ],
+    ],
+  },
+  slider: {
+    cases: [
+      ["slider", { kind: "slider", value: 5, min: 0, max: 10, step: 2, bind: "vol" }],
+      ["slider (bare)", { kind: "slider" }],
+    ],
+  },
+  editable: {
+    cases: [
+      ["editable", { kind: "editable", text: "note", bind: "draft", props: { id: "e" } }],
+      ["editable (readonly)", { kind: "editable", text: "note", props: { readonly: true } }],
+    ],
+  },
+  image: {
+    cases: [
+      [
+        "image",
+        { kind: "image", src: "/a.png", props: { alt: "A cat", id: "pic", width: 40, height: 20 } },
+      ],
+      ["image (no alt)", { kind: "image", src: "/a.png" }],
+      ["image (lazy)", { kind: "image", src: "/a.png", props: { loading: "lazy" } }],
+    ],
+  },
+  video: {
+    cases: [
+      ["video", { kind: "video", src: "/a.mp4", controls: true, props: { id: "v" } }],
+      ["video (autoplay)", { kind: "video", autoplay: true }],
+    ],
+  },
+  divider: {
+    cases: [
+      ["divider", { kind: "divider", props: CONTAINER_PROPS }],
+      ["divider (vertical)", { kind: "divider", props: { orientation: "vertical" } }],
+    ],
+  },
+  spinner: {
+    cases: [
+      ["spinner", { kind: "spinner" }],
+      // The two kinds whose base style reads a prop, which is the half of
+      // `baseDecls` a bare node leaves unexercised.
+      ["spinner (sized)", { kind: "spinner", props: { size: "lg" } }],
+    ],
+  },
+  skeleton: {
+    cases: [
+      ["skeleton", { kind: "skeleton" }],
+      ["skeleton (h)", { kind: "skeleton", props: { h: 120 } }],
+    ],
+  },
+  progress: { cases: [["progress", { kind: "progress", value: 3, max: 10 }]] },
+  toast: {
+    cases: [
+      ["toast", { kind: "toast", text: "Saved", level: "info" }],
+      ["toast (no level)", { kind: "toast", text: "Saved" }],
+    ],
+  },
+  error: {
+    // The message itself is resolved from the slot's refinement at render time
+    // and the server has no live refinement result to resolve — with no slot
+    // behind the field both paths hold nothing, which is what this compares.
+    cases: [["error", { kind: "error", field: "email" }]],
+  },
+  tooltip: {
+    cases: [
+      [
+        "tooltip",
+        { kind: "tooltip", text: "Why", placement: "top", children: [CHILD], props: TEXT_PROPS },
+      ],
+      ["tooltip (no placement)", { kind: "tooltip", text: "Why", children: [] }],
+    ],
+  },
+  list: {
+    cases: [
+      ["list", { kind: "list", children: [{ kind: "list-item", children: [CHILD] }] }],
+      ["list (ordered)", { kind: "list", ordered: true, children: [], props: CONTAINER_PROPS }],
+    ],
+  },
+  "list-item": { cases: [["list-item", { kind: "list-item", children: [CHILD] }]] },
+  table: {
+    cases: [
+      [
+        "table",
+        {
+          kind: "table",
+          children: [
+            {
+              kind: "table-head",
+              children: [{ kind: "table-row", children: [{ kind: "table-cell", children: [] }] }],
+            },
+          ],
+          props: CONTAINER_PROPS,
+        },
+      ],
+    ],
+  },
+  "table-head": { cases: [["table-head", { kind: "table-head", children: [] }]] },
+  "table-body": { cases: [["table-body", { kind: "table-body", children: [] }]] },
+  "table-row": { cases: [["table-row", { kind: "table-row", children: [] }]] },
+  "table-cell": {
+    cases: [
+      ["table-cell", { kind: "table-cell", children: [CHILD], colspan: 2, rowspan: 3 }],
+      ["table-cell (no span)", { kind: "table-cell", children: [] }],
+    ],
+  },
+  modal: {
+    cases: [
+      [
+        "modal (open)",
+        { kind: "modal", open: true, title: "Confirm", children: [CHILD], props: CONTAINER_PROPS },
+      ],
+      // §10.6.1: a closed surface is served as the present-but-hidden host the
+      // client mounts, not as nothing — otherwise hydration replaces the whole
+      // subtree and a crawler never sees what is in it.
+      ["modal (closed)", { kind: "modal", open: false, children: [CHILD] }],
+      ["modal (no open field)", { kind: "modal", children: [] }],
+    ],
+  },
+  drawer: {
+    cases: [
+      ["drawer (open)", { kind: "drawer", open: true, title: "Menu", children: [CHILD] }],
+      ["drawer (right)", { kind: "drawer", side: "right", children: [] }],
+      ["drawer (closed)", { kind: "drawer", open: false, children: [CHILD] }],
+    ],
+  },
+  popover: {
+    cases: [
+      ["popover (open)", { kind: "popover", open: true, children: [CHILD] }],
+      ["popover (closed)", { kind: "popover", open: false, children: [CHILD] }],
+    ],
+  },
+  details: {
+    cases: [
+      [
+        "details (open)",
+        { kind: "details", summary: "More", open: true, children: [CHILD], props: { id: "d" } },
+      ],
+      ["details (closed)", { kind: "details", summary: "More", children: [CHILD] }],
+    ],
+  },
+};
+
+/**
+ * Every kind the runtime can render, from the registry the mount path is built
+ * from. The typed table above is the compile-time half of exhaustiveness; this
+ * is the runtime half, and it is not redundant — it catches a kind that reaches
+ * the registry through a source the union does not describe.
+ */
+const EVERY_TILE_KIND = Object.keys({
+  ...layoutTiles,
+  ...textTiles,
+  ...inputTiles,
+  ...collectionTiles,
+  ...overlayTiles,
+  ...mediaTiles,
+  ...statusTiles,
+}).sort();
 
 describe("the server pass renders what the client renders", () => {
-  for (const [label, node] of NODES) {
-    it(`agrees on ${label}`, () => {
-      const client = clientElement(node);
-      const server = serverElement(node);
-      expect(server.tagName, "tag").toBe(client.tagName);
-      expect(attrsOf(server), "attributes").toEqual(attrsOf(client));
-      expect(styleOf(server), "style").toEqual(styleOf(client));
+  it("compares every kind the runtime renders", () => {
+    // The boundary this test used to leave invisible: half the kinds had no row
+    // and nothing said so. Now a kind is either compared below or this fails.
+    expect(EVERY_TILE_KIND).toEqual(Object.keys(TABLE).sort());
+  });
+
+  for (const [kind, row] of Object.entries(TABLE)) {
+    const opts = { deep: row.shallow === undefined, text: row.noText === undefined };
+    describe(kind, () => {
+      for (const [label, node] of row.cases) {
+        it(`agrees on ${label}`, () => {
+          const client = clientElement(node);
+          const server = serverElement(node);
+          expect(shapeOf(server, opts)).toEqual(shapeOf(client, opts));
+        });
+      }
     });
   }
 
@@ -186,6 +581,25 @@ describe("the server pass renders what the client renders", () => {
     const img = serverElement({ kind: "image", src: "/a.png", props: { alt: '" onerror="boom' } });
     expect(img.getAttribute("alt")).toBe('" onerror="boom');
     expect(img.hasAttribute("onerror")).toBe(false);
+
+    const md = serverElement({ kind: "markdown", text: "<script>alert(1)</script>" });
+    expect(md.querySelector("script")).toBeNull();
+    expect(md.textContent).toBe("<script>alert(1)</script>");
+  });
+
+  it("serves a closed overlay as the hidden host the client mounts", () => {
+    // The divergence #296 left undecided, decided: the client renders a
+    // present-but-hidden host so opening a surface is a style flip rather than
+    // a mount, and the server has to serve that host — an empty string means
+    // hydration rebuilds the subtree and a crawler is served nothing at all.
+    const el = serverElement({
+      kind: "modal",
+      open: false,
+      title: "Confirm",
+      children: [{ kind: "text", text: "body" }],
+    });
+    expect(styleOf(el).display).toBe("none");
+    expect(el.textContent).toContain("body");
   });
 
   it("resolves a responsive value to its base, which is all a server can know", () => {

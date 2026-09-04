@@ -1372,6 +1372,30 @@ describe("runtime: identity-preserving patch (#190)", () => {
     dispose();
   });
 
+  it("select: carries its bind path as the marker focus restoration looks it up by", () => {
+    // §10.3.5 puts the full bind path on the element, and §10.3.9 re-identifies
+    // a focused `<select>` by that attribute after a wholesale swap. Only the
+    // SSR pass wrote it, so a picker fell back to positional restoration on the
+    // client — and the served page carried an attribute hydration removed.
+    const { app, dispose } = drive((s) => ({
+      kind: "column",
+      children: [
+        (s.n as number) === 0
+          ? { kind: "select", bind: "draft", bindPath: ["title"], options: [] }
+          : { kind: "select", options: [] },
+      ],
+    }));
+    const sel = defined(root.querySelector("select"), "the mounted select");
+    expect(sel.dataset.kumikiBind).toBe("draft.title");
+
+    // A render that drops `bind` takes the marker with it: the element is
+    // reused, and a stale path would restore focus onto the wrong control.
+    (app as unknown as { bump: () => void }).bump();
+    expect(defined(root.querySelector("select"), "the reused select")).toBe(sel);
+    expect(sel.dataset.kumikiBind).toBeUndefined();
+    dispose();
+  });
+
   it("input: element identity preserved on a value change; a stale-marker survives", () => {
     const { app, dispose } = drive((s) => ({
       kind: "input",
@@ -1967,6 +1991,42 @@ describe("runtime: child lists that are empty on one side", () => {
     expect(content.dataset.kumikiTile).toBe(`${kind}-content`);
     expect(surface.children.length).toBe(1);
     expect(Array.from(content.children).map((e) => e.textContent)).toEqual(["row a", "row b"]);
+    dispose();
+  });
+
+  /** A `modal` whose title the caller varies between renders. */
+  function surfaceApp(getTitle: () => string | undefined): AppShape {
+    return emptySideApp(() => {
+      const title = getTitle();
+      return {
+        kind: "modal",
+        open: true,
+        children: [],
+        ...(title === undefined ? {} : { title }),
+      } as TileNode;
+    });
+  }
+
+  it("announces a modal as the dialog it is, under the name its title gives it", () => {
+    // The served page already said both; only the mount path did not, so the
+    // first hydration took the role off the dialog and left it unnamed. A
+    // title that changes renames it, and one that goes away leaves no stale
+    // name behind.
+    let title: string | undefined = "Confirm";
+    const app = surfaceApp(() => title);
+    const { dispose } = mount(app, root);
+    const surface = defined(root.firstElementChild, "the mounted modal") as HTMLElement;
+    expect(surface.getAttribute("role")).toBe("dialog");
+    expect(surface.getAttribute("aria-label")).toBe("Confirm");
+
+    title = "Delete";
+    app._rerender?.();
+    expect(root.firstElementChild).toBe(surface);
+    expect(surface.getAttribute("aria-label")).toBe("Delete");
+
+    title = undefined;
+    app._rerender?.();
+    expect(surface.hasAttribute("aria-label")).toBe(false);
     dispose();
   });
 

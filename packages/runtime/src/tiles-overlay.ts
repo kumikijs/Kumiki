@@ -18,6 +18,21 @@ function appendChildren(el: HTMLElement, children: TileNode[], ctx: TileCtx): vo
 }
 
 /**
+ * Stretch a positioned element over the box it is positioned against. The four
+ * longhands rather than the `inset` shorthand: `inset` is dropped outright by
+ * DOM implementations that do not know it — `happy-dom`, which is the DOM
+ * `kumiki smoke` runs the runtime in, is one — so a layer written that way is
+ * not stretched over anything there, and the served style (which is parsed,
+ * not assigned, and so keeps the shorthand) stops matching the mounted one.
+ */
+function coverParent(el: HTMLElement): void {
+  el.style.top = "0";
+  el.style.right = "0";
+  el.style.bottom = "0";
+  el.style.left = "0";
+}
+
+/**
  * Place an overlay layer inside its `position: relative` container via flexbox.
  * The token combines a vertical part (`top` / `bottom`, default center) and a
  * horizontal part (`left` / `right`, default center), e.g. `top-left`,
@@ -64,7 +79,7 @@ export const overlayTiles: TileRenderers = {
       const layer = document.createElement("div");
       layer.dataset.kumikiTile = "overlay-layer";
       layer.style.position = "absolute";
-      layer.style.inset = "0";
+      coverParent(layer);
       layer.style.display = "flex";
       applyOverlayAlign(layer, align);
       layer.appendChild(ctx.render(child));
@@ -107,12 +122,18 @@ function renderSurface(
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.dataset.kumikiTile = node.kind;
+  // A modal is a dialog, and its `title` is the name it is announced under —
+  // the same two attributes the confirm effect's own overlay carries, and the
+  // ones the served page already had. Only the SSR pass wrote them, so the
+  // first hydration silently took the role off the dialog.
+  if (node.kind === "modal") wrap.setAttribute("role", "dialog");
+  applySurfaceLabel(wrap, node.title);
   // `open=false` renders a present-but-hidden host so toggling open/closed
   // is a style flip, not a mount/unmount — and smoke still "renders".
   applySurfaceOpen(wrap, node.kind, node.open);
   if (node.kind === "modal") {
     wrap.style.position = "fixed";
-    wrap.style.inset = "0";
+    coverParent(wrap);
     wrap.style.alignItems = "center";
     wrap.style.justifyContent = "center";
     wrap.style.background = "rgba(0,0,0,0.4)";
@@ -139,6 +160,16 @@ function renderSurface(
   appendChildren(inner, node.children, ctx);
   wrap.appendChild(inner);
   return wrap;
+}
+
+/**
+ * The surface's accessible name, from its `title`. A surface that stops
+ * carrying one loses the attribute rather than keeping the stale name — an
+ * `aria-label` that says something untrue is worse than none.
+ */
+function applySurfaceLabel(wrap: HTMLElement, title: string | undefined): void {
+  if (title) wrap.setAttribute("aria-label", title);
+  else wrap.removeAttribute("aria-label");
 }
 
 /** Apply the open/closed `display` flip. Split out so both create and patch use one source of truth. */
@@ -195,6 +226,7 @@ function patchSurface(
     wrap.style.right = "";
     wrap.style[newNode.side === "right" ? "right" : "left"] = "0";
   }
+  applySurfaceLabel(wrap, newNode.title);
   const inner = wrap.firstElementChild as HTMLElement | null;
   if (inner) reconcileSurfaceTitle(inner, newNode.title);
   SURFACE_STATE.set(wrap, surfaceHandlers(newNode));
