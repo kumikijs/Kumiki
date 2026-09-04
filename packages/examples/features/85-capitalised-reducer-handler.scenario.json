@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "label": "the app renders with every capitalised handler wired and none fired",
+      "expect": {
+        "noErrors": true,
+        "state": { "n": 0 },
+        "domIncludes": ["up (arg)", "up (prop)", "plus", "n: 0"]
+      }
+    },
+    {
+      "label": "the named-argument form, which parses the name as a tile call, fires",
+      "do": { "clickText": "up (arg)" },
+      "expect": { "noErrors": true, "state": { "n": 1 } }
+    },
+    {
+      "label": "the props-block form, which parses it as a variant tag, fires too",
+      "do": { "clickText": "up (prop)" },
+      "expect": { "noErrors": true, "state": { "n": 2 } }
+    },
+    {
+      "label": "and so does one written on a user tile",
+      "do": { "clickText": "plus" },
+      "expect": { "noErrors": true, "state": { "n": 0 } }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import type { UiEventKind } from "./ast.ts";
+import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
 
 /**
  * Source of truth for the ui-event ⇄ DOM-handler mapping.
@@ -129,3 +129,42 @@ export const HANDLER_NAMES: ReadonlySet<string> = new Set<string>([
   ...UI_LIFTS.map((l) => l.handler),
   "onClose",
 ]);
+
+/**
+ * The reducer a handler binding names, or `null` when the value is not a name.
+ *
+ * A handler position is resolved in the reducer namespace ([§1.6.4]), so what
+ * decides the value is the name written there — not the shape the parser gave
+ * it. Three shapes carry a bare name, and which one arrives is decided by
+ * capitalisation and by the tile it sits on, neither of which the author is
+ * saying anything with here:
+ *
+ *  - `Ref` — a lowercase name, in either form.
+ *  - `TileCall` with no arguments and no props — a capitalised name written as
+ *    a named argument of a builtin (`box(text("x"), onClick=Bump)`).
+ *  - `Variant` with an empty payload — a capitalised name everywhere else: a
+ *    props block, a value-arg builtin such as `link`, and a user tile.
+ *
+ * Anything else is not a name and answers `null`: `1`, a variant tag carrying
+ * a payload (`Some(1)`), and a tile call with arguments (`box(text("z"))`).
+ * The two payload/argument cases matter — dropping the emptiness test would
+ * take `onClick=Some(1)` for a reducer called `Some` and wire a listener for a
+ * reducer nobody named.
+ *
+ * One function rather than one shape test per consumer: the checker, codegen
+ * and the reference walker have to agree about what a handler names, and each
+ * deciding for itself is what left a capitalised reducer name accepted by one
+ * and invisible to the others.
+ */
+export function handlerReducerName(value: Expr | TileExpr): string | null {
+  switch (value.kind) {
+    case "Ref":
+      return value.name;
+    case "Variant":
+      return value.payload.length === 0 ? value.name : null;
+    case "TileCall":
+      return value.args.length === 0 && value.props.length === 0 ? value.name : null;
+    default:
+      return null;
+  }
+}

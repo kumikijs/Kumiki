@@ -571,6 +571,8 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1}` is delivered to the reducer as `$el.todoId`.
 
+The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. Capitalisation decides the shape the parser gives the name (a tile call as a named argument, a variant tag elsewhere) and nothing else; it is not a way to say which layer is meant.
+
 ### 1.7.4 Examples
 
 A tile that takes a positional argument declares its type with `in=` and reads

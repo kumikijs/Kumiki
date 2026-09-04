@@ -33,7 +33,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
-import { HANDLER_NAMES } from "./ui-lifts.ts";
+import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
 export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | "theme" | "motion";
@@ -403,9 +403,17 @@ class Walker {
           // Three props hold a definition NAME rather than a value expression.
           // Each mirrors a `typecheck` site that resolves the same way — see
           // `undef-reducer` for the first two and `undef-motion` for the third.
-          if (HANDLER_NAMES.has(p.name) && p.value.kind === "Ref") {
-            this.add("reducer", p.value.name, p.value.pos);
-            continue;
+          if (HANDLER_NAMES.has(p.name)) {
+            // A capitalised name here is a variant tag; `handlerReducerName`
+            // reads it as the reducer the checker resolved, so `rename` sees
+            // the same edge whichever way the name was spelled. A value that
+            // is no name at all (`{onClick: 1}`) is a diagnostic, and falls
+            // through to be walked as the expression it is.
+            const reducer = handlerReducerName(p.value);
+            if (reducer !== null) {
+              this.add("reducer", reducer, p.value.pos);
+              continue;
+            }
           }
           if (t.name === "link" && p.name === "prefetch") {
             // §3.8: a bare ident or a string literal, both naming a reducer.
@@ -461,14 +469,19 @@ class Walker {
    */
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
-    if (isTileExpr(v)) {
-      // A named handler passed positionally (`button("x", onClick=inc)` lifts
-      // through args too) still arrives as an Expr, so only real tiles land here.
-      this.tileExpr(v, locals);
-      return;
+    // Asked before the tile branch, because a capitalised name in a handler
+    // argument parses as an argument-less tile call. Walked as a tile it was
+    // recorded under the wrong layer — `refs` reported a tile `Bump` that no
+    // definition declares, and `rename` on the reducer left the wiring behind.
+    if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
+      const reducer = handlerReducerName(v);
+      if (reducer !== null) {
+        this.add("reducer", reducer, v.pos);
+        return;
+      }
     }
-    if (a.name !== undefined && HANDLER_NAMES.has(a.name) && v.kind === "Ref") {
-      this.add("reducer", v.name, v.pos);
+    if (isTileExpr(v)) {
+      this.tileExpr(v, locals);
       return;
     }
     this.expr(v, locals);

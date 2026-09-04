@@ -113,6 +113,7 @@ describe("every HANDLER_NAMES entry resolves as a reducer reference", () => {
 
   const source = (tile: string) => `slot n : Int = 0
 reducer bump on=app.start do= n := 1
+reducer Bump on=app.start do= n := 2
 tile T = ${tile}
 tile App = column(T, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -123,6 +124,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   /** The same fixture with a second tile beside `T`, for the cases that name one. */
   const neighbour = (tile: string) => `slot n : Int = 0
 reducer bump on=app.start do= n := 1
+reducer Bump on=app.start do= n := 2
 tile Other = box(text("y"))
 tile T = ${tile}
 tile App = column(T, Other, text(n.show))
@@ -171,24 +173,51 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         expect(codesFor(bind(handler, "1"))).toEqual([...inert, "E0201"]);
       });
 
-      // The two forms reach this from different shapes. As a named argument of
-      // a tile-taking builtin the capitalised name parses as a tile call, which
-      // is the regression: taken as a nested tile it drew no diagnostic and
-      // codegen wired no listener, so the tile rendered and the click did
-      // nothing. In the props block it parses as a variant tag — the same path
-      // as the `1` above, and already reported — so that half pins that the
-      // two forms keep answering alike.
-      it(`${handler} (${form}) = <tile> reports exactly E0201`, () => {
+      // A capitalised name is not a reference in either form — a tile call as
+      // a named argument, a variant tag in the props block — and the position
+      // resolves in the reducer namespace, so both read as the reducer they
+      // name. Written out as all three consumers, because the shape test used
+      // to live in each of them: the checker rejected the name outright, and
+      // fixing that alone would have left codegen wiring no listener and the
+      // reference walker recording a `tile` edge for a reducer.
+      it(`${handler} (${form}) = <capitalised reducer> resolves for all three consumers`, () => {
+        expect(codesFor(bind(handler, "Bump"))).toEqual(inert);
+        expect(jsFor(bind(handler, "Bump"))).toContain(`${handler}: _h("Bump")`);
+        expect(refsOf(bind(handler, "Bump"))).toEqual(["reducer.Bump"]);
+      });
+
+      // A capitalised name that names no reducer answers exactly as the
+      // lowercase `nope` above does — the handler position knows one
+      // namespace, and a tile of that name is not in it. E0201 would be the
+      // report that the shape is wrong, and the shape is no longer the
+      // question.
+      it(`${handler} (${form}) = <tile> reports exactly E0102`, () => {
         const errors = errorsForNeighbour(bind(handler, "Other"));
-        expect(errors.map((e) => e.code)).toEqual([...inert, "E0201"]);
-        // The form is the only caller-supplied value that differs between the
-        // two call sites, so the word is where a crossed wiring would show.
-        // Looked up by code rather than by position: a diagnostic added later
-        // in `checkTileCall` should not fail this.
-        expect(errors.find((e) => e.code === "E0201")?.message).toBe(
-          `Event handler ${form} "${handler}" must be a reducer name`,
+        expect(errors.map((e) => e.code)).toEqual([...inert, "E0102"]);
+        expect(errors.find((e) => e.code === "E0102")?.message).toBe(
+          `Reference to undefined reducer "Other"`,
         );
       });
+
+      // What is left of the shape test: a value carrying arguments is no name,
+      // whichever shape it arrives in. Dropping the emptiness check would read
+      // `Some(1)` as a reducer called `Some` and wire a listener for it.
+      for (const [what, value] of [
+        ["a variant tag with a payload", "Some(1)"],
+        ["a tile call with arguments", 'box(text("z"))'],
+      ] as const) {
+        it(`${handler} (${form}) = ${what} reports exactly E0201`, () => {
+          const errors = errorsForNeighbour(bind(handler, value));
+          expect(errors.map((e) => e.code)).toEqual([...inert, "E0201"]);
+          // The form is the only caller-supplied value that differs between
+          // the two call sites, so the word is where a crossed wiring would
+          // show. Looked up by code rather than by position: a diagnostic
+          // added later in `checkTileCall` should not fail this.
+          expect(errors.find((e) => e.code === "E0201")?.message).toBe(
+            `Event handler ${form} "${handler}" must be a reducer name`,
+          );
+        });
+      }
     }
   }
 
@@ -198,7 +227,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   // ("checkHandlerTarget ignores user tiles anyway, so only run the handler
   // branch for builtins") would put this case back to silence unnoticed.
   it("reports a handler bound to a tile on a user tile too, without W0213", () => {
-    expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["E0201"]);
+    expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["E0102"]);
   });
 
   it("leaves a handler bound to a reducer on a user tile alone", () => {
@@ -210,7 +239,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   // followed the same mis-parse and answered that the tile expanded into
   // itself, which is a sentence about a tile that is never rendered.
   it("reports only the binding when the handler names an enclosing tile", () => {
-    expect(codesFor('box(text("x"), onClick=App)')).toEqual(["W0213", "E0201"]);
+    expect(codesFor('box(text("x"), onClick=App)')).toEqual(["W0213", "E0102"]);
   });
 
   // The reason the handler branch has to be consulted first rather than the

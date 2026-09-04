@@ -560,6 +560,8 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
+名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形（名前付き引数なら tile call、それ以外なら variant タグ）だけであって、どの層を指しているかを言い分ける手段ではない。
+
 ### 1.7.4 例
 
 ```kumiki fragment

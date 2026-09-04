@@ -1,5 +1,5 @@
 import { type Expr, isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
-import { HANDLER_NAMES, UI_LIFTS } from "../ui-lifts.ts";
+import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
 import { type EvalCtx, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
@@ -89,9 +89,13 @@ export function propsFor(
   // reducer fires in definition order) holds even when explicit and implicit
   // both target the same handler.
   const explicitByHandler = new Map<string, string[]>();
-  const recordExplicit = (handlerName: string, value: Expr): void => {
-    if (value.kind !== "Ref") return;
-    const reducerName = (value as Expr & { name: string }).name;
+  // Whatever shape the parser gave the name — a reference, a variant tag, an
+  // argument-less tile call — `handlerReducerName` reads the reducer out of
+  // it, the same one the checker resolved. Deciding here on `kind === "Ref"`
+  // instead is what left a capitalised reducer name wired by neither.
+  const recordExplicit = (handlerName: string, value: Expr | TileExpr): void => {
+    const reducerName = handlerReducerName(value);
+    if (reducerName === null) return;
     const list = explicitByHandler.get(handlerName) ?? [];
     list.push(reducerName);
     explicitByHandler.set(handlerName, list);
@@ -100,12 +104,12 @@ export function propsFor(
   // event handler args (onClick=remove etc) attach as props for that tile.
   for (const a of t.args) {
     if (!a.name) continue;
-    if (HANDLER_NAMES.has(a.name)) recordExplicit(a.name, a.value as Expr);
+    if (HANDLER_NAMES.has(a.name)) recordExplicit(a.name, a.value);
   }
   // props block
   for (const p of t.props) {
     if (HANDLER_NAMES.has(p.name)) {
-      recordExplicit(p.name, p.value as Expr);
+      recordExplicit(p.name, p.value);
       continue;
     }
     if (isNotPropData(t.name, p.name)) continue;

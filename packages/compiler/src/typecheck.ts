@@ -57,7 +57,12 @@ import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
-import { HANDLER_NAMES, HANDLER_PROP_TILES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
+import {
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  handlerReducerName,
+  UI_EVENT_TILE_KINDS,
+} from "./ui-lifts.ts";
 import {
   describeDuplicate,
   duplicateSubRoutes,
@@ -1172,11 +1177,11 @@ function checkTileCall(
     const v = arg.value;
     // A named arg whose name is an event handler binds a reducer — asked before
     // the nested-tile branch below, because a capitalised name written as a
-    // named argument of a builtin that takes tiles parses as a tile call.
-    // Checked as one, `box(text("x"), onClick=Card)` drew no diagnostic and
-    // codegen captured no handler: the tile rendered and the click did nothing.
-    // The other positions parse it as a variant tag, which the shape check
-    // below rejects either way — this branch is what makes them agree.
+    // named argument of a builtin parses as a tile call. Checked as one,
+    // `box(text("x"), onClick=Card)` drew no diagnostic and codegen captured
+    // no handler: the tile rendered and the click did nothing. The other
+    // positions parse the same name as a variant tag; `checkHandlerBinding`
+    // reads the name out of either, which is what makes them agree.
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
@@ -1231,16 +1236,17 @@ function checkTileCall(
  * Check one handler binding, in either form: `f(onX=r)` and `f() {onX: r}`.
  *
  * A handler names a reducer: this is the one argument position resolved in the
- * reducer namespace. What arrives is not always shaped like a reference —
- * a capitalised name is a tile call as a named argument of a tile-taking
- * builtin and a variant tag everywhere else — and neither form has anything
- * more to say about that than the other, so both ask here rather than each
- * deciding for itself.
+ * reducer namespace. What arrives is not always shaped like a reference — a
+ * capitalised name is a tile call as a named argument and a variant tag
+ * everywhere else — and neither form has anything more to say about that than
+ * the other, so both ask here rather than each deciding for itself.
  *
- * Every non-reference is rejected, including a name that resolves to a
- * reducer: a capitalised reducer name cannot be bound to a handler at all,
- * because it never reaches here as a reference. The message says what the
- * position requires rather than what this value is.
+ * The shape is not the question: `handlerReducerName` reads the name out of
+ * whichever of the three the parser produced, so a reducer whose own name is
+ * capitalised binds like any other. What is left to report is what was always
+ * being reported — a value that is no name at all, and a name that names no
+ * reducer — and a capitalised name now answers each exactly as a lowercase one
+ * does.
  */
 function checkHandlerBinding(
   tileName: string,
@@ -1251,7 +1257,8 @@ function checkHandlerBinding(
   errors: KumikiError[],
 ): void {
   checkHandlerTarget(tileName, handler, value.pos, errors);
-  if (value.kind !== "Ref") {
+  const name = handlerReducerName(value);
+  if (name === null) {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
@@ -1260,11 +1267,11 @@ function checkHandlerBinding(
     });
     return;
   }
-  if (!sym.reducers.has(value.name)) {
+  if (!sym.reducers.has(name)) {
     errors.push({
       code: "E0102",
       kind: "undef-reducer",
-      message: `Reference to undefined reducer "${value.name}"`,
+      message: `Reference to undefined reducer "${name}"`,
       pos: value.pos,
     });
   }
