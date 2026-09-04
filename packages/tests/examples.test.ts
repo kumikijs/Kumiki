@@ -143,11 +143,22 @@ function listAppScenarios(): ScenarioCase[] {
     });
 }
 
+/** Where `kumiki run` starts, and where every scenario case is put back. */
+const SCENARIO_ORIGIN_ROOT = "http://localhost/";
+
 async function runScenarioCase(s: ScenarioCase): Promise<void> {
   // `kumiki run` is a fresh process at `http://localhost/`, and a scenario is
   // written against that. Here every scenario shares one document, so one that
   // navigates leaves the next one mounting at a path it has no route for —
-  // reset the history so both tiers start where the author assumed.
+  // reset the location so both tiers start where the author assumed.
+  //
+  // Assigning `href` rather than `replaceState`, because a scenario can move
+  // the ORIGIN too: an off-origin link the runtime hands back to the browser
+  // (#298) navigates this document, and `replaceState` cannot cross an origin
+  // — from `https://example.com/docs` it throws, and from an opaque one it
+  // lands on `about:blank`, leaving every later case running somewhere the
+  // comment above promises it is not.
+  if (location.href !== SCENARIO_ORIGIN_ROOT) location.href = SCENARIO_ORIGIN_ROOT;
   window.history.replaceState(null, "", "/");
   const app = await loadApp(s.kumiki);
   const root = document.createElement("div");

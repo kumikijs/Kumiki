@@ -311,6 +311,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 
 `link` `external` opens the link in a new browsing context (`target="_blank"`, with the `rel="noopener noreferrer"` that has to accompany it) and leaves it to the browser rather than the router.
 
+A `to` on another origin is left to the browser with or without it: the router can only serve a same-origin target ([routing §3.3.1](./routing.md#_3-3-1-the-link-element-recommended)). `external` chooses the new browsing context; it is not what makes such a link work.
+
 ### 2.3.3 Media Elements
 
 | Element | Role | Main props |
