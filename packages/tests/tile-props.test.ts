@@ -555,6 +555,27 @@ describe("an external link leaves the app (#251)", () => {
   it("leaves an external one to the browser", async () => {
     expect(await clickIsIntercepted("https://example.com", "{external: true}")).toBe(false);
   });
+
+  // #298: `external` is the documented way to leave the app, but forgetting it
+  // used to be fatal rather than merely unadorned — the handler cancelled the
+  // click and then handed an off-origin URL to `history.pushState`, which
+  // refuses it with a SecurityError. The link was dead and the console said
+  // nothing about the link. What the router cannot serve stays the browser's.
+  it("leaves an off-origin target to the browser even without external", async () => {
+    expect(await clickIsIntercepted("https://example.com/docs", "{}")).toBe(false);
+  });
+
+  it("leaves a non-http scheme to the browser", async () => {
+    expect(await clickIsIntercepted("mailto:hi@example.com", "{}")).toBe(false);
+  });
+
+  it("routes an absolute URL to this origin", async () => {
+    expect(await clickIsIntercepted(`${location.origin}/next`, "{}")).toBe(true);
+  });
+
+  it("routes a protocol-relative URL to this origin", async () => {
+    expect(await clickIsIntercepted(`//${location.host}/next`, "{}")).toBe(true);
+  });
 });
 
 describe("common props survive a re-render (#251)", () => {

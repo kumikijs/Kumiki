@@ -210,5 +210,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `82-handler-on-a-user-tile.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `83-let-shadowing.kumiki` | slot, reducer, fn, tile | core | [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) |
+| `84-off-origin-link.kumiki` | app, tile | routing | [§3.3.1](./routing.md#_3-3-1-the-link-element-recommended) |
 <!-- examples:end -->
 :::

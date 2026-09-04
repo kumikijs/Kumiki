@@ -19,6 +19,46 @@ function isExternal(props?: TileProps): boolean {
   return props?.external === true;
 }
 
+// Once-per-element diagnostic for an off-origin target the router cannot serve
+// (#298). The link still works — the browser navigates it — but an author who
+// meant to route somewhere is better told than left wondering.
+const warnedOffOrigin = new WeakSet<Element>();
+
+/**
+ * Whether the router can serve `to` at all: only a same-origin target can reach
+ * `history.pushState`, which refuses anything else with a `SecurityError`
+ * (#298). Relative targets ("/next", "?q=1", "#top") resolve against this
+ * document and are always ours; an absolute or protocol-relative URL is ours
+ * only when its origin matches; a non-http scheme (`mailto:`, `tel:`) has an
+ * opaque origin and never is.
+ *
+ * Without a document to compare against (no `location`) nothing here can be
+ * decided, so the target is left to the router as before.
+ */
+function isRoutableTarget(to: string): boolean {
+  const here = typeof location !== "undefined" ? location.href : "";
+  if (!here) return true;
+  try {
+    return new URL(to, here).origin === location.origin;
+  } catch {
+    // Unparseable even against a base — not a URL, so not off-origin either.
+    return true;
+  }
+}
+
+function warnOffOrigin(a: HTMLAnchorElement, to: string): void {
+  if (warnedOffOrigin.has(a)) return;
+  warnedOffOrigin.add(a);
+  // One line, and the element stays out of it: this fires under `kumiki run`
+  // and `kumiki smoke`, whose transcripts are read as text, and a DOM node
+  // logged there prints as pages of internal symbols. The link's own text is
+  // what locates it in the source anyway.
+  console.warn(
+    `kumiki: link ${JSON.stringify(a.textContent ?? "")} -> ${JSON.stringify(to)} is off-origin; ` +
+      "the router cannot serve it, so the browser navigates it (add `{external: true}`)",
+  );
+}
+
 /**
  * `external` on a link (stdlib.md §2.3.2). It opens in a new browsing context,
  * and `rel` goes with it: without `noopener` the page that opens gets a handle
@@ -109,6 +149,16 @@ export const textTiles: TileRenderers = {
       // An external link leaves the app (§3.8): the router has no route for
       // where it goes, so it stays the browser's navigation.
       if (LINK_STATE.get(a)?.external) return;
+      const to = LINK_STATE.get(a)?.to ?? node.to;
+      // Decided BEFORE preventDefault, like the unresolved-app case below: a
+      // target off this origin is one the router cannot serve (#298). Handing
+      // it to `history.pushState` throws `SecurityError`, and by then the
+      // click is already cancelled — the link is dead and the console names
+      // the history API rather than the link. The browser keeps the click.
+      if (!isRoutableTarget(to)) {
+        warnOffOrigin(a, to);
+        return;
+      }
       // Resolve BEFORE preventDefault: a link outside any live mount (stale
       // node, disposed app) degrades to the browser's native navigation via
       // `href` instead of becoming a dead link.
@@ -118,8 +168,7 @@ export const textTiles: TileRenderers = {
         return;
       }
       e.preventDefault();
-      const state = LINK_STATE.get(a);
-      app._navigate(state?.to ?? node.to, false);
+      app._navigate(to, false);
     });
     // §3.8 prefetch — fire the named reducer once the link enters the viewport.
     // Dedupe by `to` URL (kept on the app instance) so that re-renders triggered

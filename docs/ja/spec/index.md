@@ -210,5 +210,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `82-handler-on-a-user-tile.kumiki` | slot, reducer, tile | コア | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `83-let-shadowing.kumiki` | slot, reducer, fn, tile | コア | [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) |
+| `84-off-origin-link.kumiki` | app, tile | ルーティング | [§3.3.1](./routing.md#_3-3-1-link-要素-推奨) |
 <!-- examples:end -->
 :::
