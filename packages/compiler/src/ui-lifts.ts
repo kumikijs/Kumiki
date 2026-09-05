@@ -1,4 +1,4 @@
-import type { UiEventKind } from "./ast.ts";
+import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
 
 /**
  * Source of truth for the ui-event ⇄ DOM-handler mapping.
@@ -129,3 +129,55 @@ export const HANDLER_NAMES: ReadonlySet<string> = new Set<string>([
   ...UI_LIFTS.map((l) => l.handler),
   "onClose",
 ]);
+
+/**
+ * The reducer a handler binding names, or `null` when the value is not a name.
+ *
+ * A handler position is resolved in the reducer namespace (§1.7.3), so what
+ * decides the value is the name written there — not the shape the parser gave
+ * it. Which shape arrives is decided by capitalisation and by the tile the
+ * argument sits on (`parseArgValue` branches on `VALUE_ARG_BUILTINS`), neither
+ * of which the author is saying anything with in this position:
+ *
+ *  - `Ref` — a lowercase name, in either form.
+ *  - `TileCall` with no arguments and no props — a named argument of a builtin
+ *    that takes tiles (`box(text("x"), onClick=Bump)`). Capitalisation is not
+ *    what routes here: a lowercase builtin's name lands in this branch too,
+ *    and `onClick=divider()` answers `divider`, which resolves to no reducer.
+ *  - `Variant` with an empty payload — a capitalised name everywhere else: a
+ *    props block, a named argument of a value-arg builtin such as `link`, and
+ *    a named argument of a user tile.
+ *
+ * The call and brace forms are the same node as the bare name: the parser
+ * gives `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` one identical
+ * `TileCall`, and `Bump` / `Bump()` one identical `Variant`. Nothing here can
+ * tell them apart, so all of them name the reducer — which is what
+ * `docs/spec/language.md` §1.7.3 says.
+ *
+ * Anything else is not a name and answers `null`: `1`, a variant tag carrying
+ * a payload (`Some(1)`), and a tile call carrying arguments (`box(text("z"))`)
+ * or props (`Card {x: 1}`). Those emptiness tests are load-bearing in three
+ * files at once, and relaxing them fails silently in all three: the checker
+ * (`checkHandlerBinding`) would stop reporting a nested tile, codegen
+ * (`propsFor`'s `recordExplicit`) would swallow the value, and the reference
+ * walker (`tileArg`) would stop walking the subtree. Only the checker half is
+ * pinned by a test. Concretely: `onClick=Some(1)` would be read as a reducer
+ * called `Some`, and a listener wired for a reducer nobody named.
+ *
+ * One function rather than one shape test per consumer: the checker, codegen
+ * and the reference walker have to agree about what a handler names, and each
+ * deciding for itself is what left a capitalised reducer name accepted by one
+ * and invisible to the others.
+ */
+export function handlerReducerName(value: Expr | TileExpr): string | null {
+  switch (value.kind) {
+    case "Ref":
+      return value.name;
+    case "Variant":
+      return value.payload.length === 0 ? value.name : null;
+    case "TileCall":
+      return value.args.length === 0 && value.props.length === 0 ? value.name : null;
+    default:
+      return null;
+  }
+}

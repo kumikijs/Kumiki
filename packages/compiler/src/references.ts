@@ -33,7 +33,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
-import { HANDLER_NAMES } from "./ui-lifts.ts";
+import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
 export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | "theme" | "motion";
@@ -403,9 +403,17 @@ class Walker {
           // Three props hold a definition NAME rather than a value expression.
           // Each mirrors a `typecheck` site that resolves the same way — see
           // `undef-reducer` for the first two and `undef-motion` for the third.
-          if (HANDLER_NAMES.has(p.name) && p.value.kind === "Ref") {
-            this.add("reducer", p.value.name, p.value.pos);
-            continue;
+          if (HANDLER_NAMES.has(p.name)) {
+            // A capitalised name here is a variant tag; `handlerReducerName`
+            // reads it as the reducer the checker resolved, so `rename` sees
+            // the same edge whichever way the name was spelled. A value that
+            // is no name at all (`{onClick: 1}`) is a diagnostic, and falls
+            // through to be walked as the expression it is.
+            const reducer = handlerReducerName(p.value);
+            if (reducer !== null) {
+              this.add("reducer", reducer, p.value.pos);
+              continue;
+            }
           }
           if (t.name === "link" && p.name === "prefetch") {
             // §3.8: a bare ident or a string literal, both naming a reducer.
@@ -450,25 +458,33 @@ class Walker {
    * A tile argument is either a nested tile or a value expression, discriminated
    * only by its `kind` — the field is the same either way.
    *
-   * The shape is asked about before the handler name, which is the opposite of
-   * the order `typecheck` uses, and deliberately so. A handler bound to a tile
-   * name is a compile error, so the two only ever disagree about a program that
-   * does not compile — and on one of those this walk is still asked where a
-   * name is *written*, which is what `refs` reports. `rename` and
-   * `remove --cascade` validate before they write, so they never act on the
-   * answer; `refs` has no such gate, and a site it did not list would be a site
-   * a reader thinks is free.
+   * The handler name is asked about before the shape, matching the order
+   * `typecheck` uses, so this walk records the edge the checker resolved. It
+   * used to be the other way round, on the reasoning that the two could only
+   * ever disagree about a program that does not compile; a capitalised name in
+   * a handler argument parses as an argument-less tile call, so that walked
+   * `onClick=Bump` as a **tile** — `refs` reported a tile `Bump` that no
+   * definition declares, and `rename` on the reducer left the wiring behind.
+   * Since the checker resolves such a name to its reducer, the premise is gone
+   * as well as the conclusion: the shape-first order now disagrees about
+   * programs that compile.
+   *
+   * What survives from that reasoning is why being right here matters at all:
+   * `rename` and `remove --cascade` validate before they write, so they never
+   * act on the answer for a program that does not compile; `refs` has no such
+   * gate, and a site it did not list would be a site a reader thinks is free.
    */
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
-    if (isTileExpr(v)) {
-      // A named handler passed positionally (`button("x", onClick=inc)` lifts
-      // through args too) still arrives as an Expr, so only real tiles land here.
-      this.tileExpr(v, locals);
-      return;
+    if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
+      const reducer = handlerReducerName(v);
+      if (reducer !== null) {
+        this.add("reducer", reducer, v.pos);
+        return;
+      }
     }
-    if (a.name !== undefined && HANDLER_NAMES.has(a.name) && v.kind === "Ref") {
-      this.add("reducer", v.name, v.pos);
+    if (isTileExpr(v)) {
+      this.tileExpr(v, locals);
       return;
     }
     this.expr(v, locals);

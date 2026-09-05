@@ -560,6 +560,10 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
+名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。大文字始まりの名前は、tile を取る builtin（`box` / `button` / `input` / `modal` / `form`）の名前付き引数では *tile call* に、それ以外——props ブロック、`link` のような値引数 builtin の名前付き引数、user tile の名前付き引数——では variant タグになる。
+
+これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
+
 ### 1.7.4 例
 
 ```kumiki fragment
