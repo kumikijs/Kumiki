@@ -1260,7 +1260,7 @@ function checkHandlerBinding(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  checkHandlerTarget(tileName, handler, value.pos, errors);
+  checkHandlerTarget(tileName, handler, value.pos, sym, errors);
   const name = handlerReducerName(value);
   if (name === null) {
     errors.push({
@@ -1291,33 +1291,88 @@ function checkHandlerBinding(
  * situation, and the same reason to report it rather than break the build.
  * `W0212` cannot see this one — it asks about `ui.<ev>(Tile)` selectors, and a
  * container with any clickable descendant satisfies it.
+ *
+ * A user tile is the same failure, and is asked with `collectTileBuiltinKinds`
+ * — the walk W0212 already uses. Finding no kind that fires the handler
+ * anywhere in the render tree is the answer that reports.
+ *
+ * That under-reports rather than over-reports, deliberately: codegen merges
+ * these props onto the node the tile renders as its ROOT (`_attachProps`), so
+ * `Card = box(button(…))` drops the handler too and is not reported here,
+ * because the walk does not tell a root from a descendant. Every case it does
+ * report is a certain drop — a tree with no firing kind in it has no firing
+ * kind at its root — which is what keeps the warning off the working shapes.
+ * `spec-divergences.test.ts` pins the gap, so narrowing this to the root
+ * later is a visible change rather than a surprise.
  */
 function checkHandlerTarget(
   tileName: string,
   handler: string,
   pos: Pos,
+  sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  if (!BUILTIN_TILES.has(tileName)) return;
   const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null || allowed.has(tileName)) return;
-  errors.push({
+  if (allowed == null) return;
+  if (BUILTIN_TILES.has(tileName)) {
+    if (allowed.has(tileName)) return;
+    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+    return;
+  }
+  // An undeclared name is E0105's to report; guessing at what it renders would
+  // add a second diagnostic saying the same thing less precisely.
+  if (!sym.tiles.has(tileName)) return;
+  const kinds = collectTileBuiltinKinds(tileName, sym);
+  // Nothing was learned, so there is nothing to say: exactly how W0212 treats
+  // the same empty answer. Reached only when the unresolvable thing is the
+  // tile's own root (`tile Inner = Nope()`, `tile Inner = Inner()`) — one
+  // nested inside a resolvable body still leaves the kinds around it, and
+  // those are a true answer about the root, so the warning stands beside the
+  // E0105 / E0005 that names the unresolvable part.
+  if (kinds.size === 0) return;
+  if ([...kinds].some((k) => allowed.has(k))) return;
+  errors.push(
+    inertHandler(
+      tileName,
+      handler,
+      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
+      allowed,
+      pos,
+    ),
+  );
+}
+
+/** One W0213, whichever side — builtin or user tile — asked for it. */
+function inertHandler(
+  tileName: string,
+  handler: string,
+  because: string,
+  allowed: ReadonlySet<string>,
+  pos: Pos,
+): KumikiError {
+  return {
     code: "W0213",
     kind: "handler-on-inert-tile",
     severity: "warning",
-    message: `"${handler}" on ${tileName}() is dropped — ${tileName} does not fire it. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    message: `"${handler}" on ${tileName}() is dropped — ${because}. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
     pos,
-  });
+  };
 }
 
 /**
  * Collect every BUILTIN_TILES kind that may appear as a (descendant) part of
  * a named tile's render tree. Returns an empty set when nothing can be
  * statically inferred (cycle, undeclared name, or only dynamic bodies
- * without resolvable children). Used by the `W0212` check to suppress
- * cascade false positives — codegen propagates `ui.click(TodoRow)` down to
- * the `check` descendant of `TodoRow = row(check(...), …)`, so finding any
- * descendant in the allowed kind set means the subscription is wired.
+ * without resolvable children).
+ *
+ * Two checks read it, and a descendant match means opposite things to them —
+ * worth knowing before either is narrowed. For `W0212` a descendant is the
+ * true answer: codegen propagates `ui.click(TodoRow)` down to the `check` of
+ * `TodoRow = row(check(...), …)`, so finding one means the subscription is
+ * wired. For `W0213` it is deliberate under-reporting: an explicit handler
+ * prop lands on the ROOT node and nowhere else (`_attachProps`), so a firing
+ * descendant does NOT mean the handler is wired — only that this walk cannot
+ * prove it is dropped.
  */
 function collectTileBuiltinKinds(
   tileName: string,
