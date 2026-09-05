@@ -82,6 +82,7 @@ describe("scenario runner", () => {
       expect(last?.errors).toEqual([]);
       expect(last?.expectedErrors).toHaveLength(1);
       expect(last?.expectedErrors[0]).toContain("cannot hold 4 (between(0, 3))");
+      expect(last?.actionError).toBeUndefined();
     });
 
     it("fails when the named error is not reported", async () => {
@@ -609,10 +610,12 @@ describe("scenario runner", () => {
           steps: [{ do: action, expect: { noErrors: true } }],
         });
         expect(report.ok, JSON.stringify(action)).toBe(false);
-        expect(
-          report.steps[0]?.errors.some((e) => e.includes("no element matching selector")),
-          JSON.stringify(action),
-        ).toBe(true);
+        // On `actionError`, not `errors`: the app said nothing here — the step
+        // could not run. See `scenario-strictness.test.ts` for why the two are
+        // kept apart.
+        expect(report.steps[0]?.actionError, JSON.stringify(action)).toContain(
+          "no element matching selector",
+        );
       }
     });
 

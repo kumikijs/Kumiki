@@ -167,13 +167,20 @@ async function runScenarioCase(s: ScenarioCase): Promise<void> {
     const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Scenario;
     const report = await runScenario(app, root, scenario);
     if (report.ok) return;
+    // Selected by the step's own verdict, not by which named channel happens to
+    // be non-empty: the filter used to whitelist `errors=` / `failures=`, so
+    // when `actionError` arrived — a selector that drifted off a renamed tile
+    // is exactly how an example breaks — every failing step was dropped and
+    // this gate threw with an empty body.
     const detail = report.steps
-      .map((st, i) => {
+      .map((st, i) => ({ st, i }))
+      .filter(({ st }) => !st.ok)
+      .map(({ st, i }) => {
+        const fault = st.actionError ? ` action-failed=${st.actionError}` : "";
         const errs = st.errors.length ? ` errors=${st.errors.join("|")}` : "";
         const fails = st.failures.length ? ` failures=${st.failures.join("|")}` : "";
-        return `step ${i} (${st.label ?? st.action ?? "-"}):${errs}${fails}`;
+        return `step ${i} (${st.label ?? st.action ?? "-"}):${fault}${errs}${fails}`;
       })
-      .filter((l) => l.includes("errors=") || l.includes("failures="))
       .join("\n");
     throw new Error(`${s.label} did not pass its scenario:\n${detail}`);
   } finally {

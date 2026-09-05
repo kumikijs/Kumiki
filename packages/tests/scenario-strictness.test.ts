@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
-import { runScenario, type Scenario } from "@kumikijs/runtime";
+import { type Action, runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
@@ -231,9 +231,22 @@ app Fillable
       steps: [{ do: { fill: "#box", value: "hello" } }],
     });
     expect(report.ok).toBe(false);
-    const errors = report.steps.flatMap((st) => st.errors).join(" ");
-    expect(errors).toContain("#box matched <div>");
-    expect(errors).toContain("holds no text to fill");
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain("#box matched <div>");
+    expect(fault).toContain("holds no text to fill");
+  });
+
+  // The fault is the scenario's, not the app's, and the two are reported on
+  // different channels: an action that could not run never reaches `errors`, so
+  // it can neither be claimed by `errorIncludes` nor be mistaken for something
+  // the app said.
+  it("keeps the fault off the channel the app reports on", async () => {
+    const app = await loadSource(FILLABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { fill: "#box", value: "hello" } }],
+    });
+    expect(report.steps[0]?.errors).toEqual([]);
+    expect(report.steps[0]?.expectedErrors).toEqual([]);
   });
 
   it("still fills the control that does hold text", async () => {
@@ -243,6 +256,71 @@ app Fillable
     });
     expect(report.steps.flatMap((st) => st.failures)).toEqual([]);
     expect(report.ok).toBe(true);
+  });
+});
+
+// `errorIncludes` asserts that the *runtime* surfaced something — a reducer
+// batch a refinement rejected, an effect error no `.err` reducer consumes. A
+// step whose action could not run reported nothing about the app, so folding
+// the two together let a fixture assert that its own typo happened:
+// `{do: {key: "#typo", value: "Enter"}, expect: {errorIncludes: ["no element"]}}`
+// passed, having pressed nothing.
+describe("a broken selector cannot satisfy errorIncludes", () => {
+  const APP = `slot n : Int = 0
+reducer bump on=ui.click(Btn) do= n := n + 1
+tile Btn   = button(text="bump", onClick=bump) {id: "btn"}
+tile Field = input(placeholder="x") {id: "field"}
+tile App   = column(Btn, Field, text("n: " + n.show))
+app Selectors
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  const missing: Action[] = [
+    { click: "#typo" },
+    { focus: "#typo" },
+    { blur: "#typo" },
+    { hover: "#typo" },
+    { key: "#typo", value: "Enter" },
+    { fill: "#typo", value: "x" },
+    { choose: "#typo", value: "x" },
+    { submit: "#typo" },
+    { clickText: "no such button" },
+  ];
+
+  for (const action of missing) {
+    const kind = Object.keys(action)[0];
+    it(`fails the step for ${kind}, and refuses to call it a reported error`, async () => {
+      const app = await loadSource(APP);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: action, expect: { errorIncludes: ["no "] } }],
+      });
+      const step = report.steps[0];
+      expect(report.ok, JSON.stringify(action)).toBe(false);
+      // What went wrong, on its own channel...
+      expect(step?.actionError, JSON.stringify(action)).toBeTruthy();
+      // ...and nowhere else: neither claimable by `errorIncludes` nor countable
+      // as something the app said.
+      expect(step?.errors, JSON.stringify(action)).toEqual([]);
+      expect(step?.expectedErrors, JSON.stringify(action)).toEqual([]);
+      expect(step?.failures.join(" "), JSON.stringify(action)).toContain(
+        'expected an error including "no " but got: none',
+      );
+    });
+  }
+
+  // `noErrors` reads the same pool. A step whose action could not run fails on
+  // `actionError`, so `noErrors` must not be the thing that reports it — it
+  // would read as "the app raised an error", which is exactly backwards.
+  it("keeps a broken selector out of noErrors", async () => {
+    const app = await loadSource(APP);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { click: "#typo" }, expect: { noErrors: true } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toContain("no element matching selector #typo");
+    expect(report.steps[0]?.failures).toEqual([]);
   });
 });
 

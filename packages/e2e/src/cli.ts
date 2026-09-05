@@ -24,9 +24,10 @@ async function main(argv: string[]): Promise<void> {
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
-    const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
+    const status = s.ok ? "ok" : "FAIL";
     const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
     console.log(`[${status}] ${head}`);
+    if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
   }

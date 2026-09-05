@@ -286,8 +286,11 @@ export async function runCmd(
     const s = report.steps[i];
     if (!s) continue;
     const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
-    const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
-    console.log(`[${status}] ${head}`);
+    console.log(`[${s.ok ? "ok" : "FAIL"}] ${head}`);
+    // Printed first: the action did not run, so the `error:` and `diagnostic:`
+    // lines below it are what the app did on its own during this step's settle
+    // window — not a response to the action.
+    if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
