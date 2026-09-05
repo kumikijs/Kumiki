@@ -690,11 +690,17 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
+**user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗であり、`check` も `build` も通り、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
+
+> `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。報告するのは、そのツリーのどこにも発火する種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。逆に、報告するものはすべて確実に捨てられる。静的に解決できないツリー — 循環、どこにも宣言されていない名前、静的な要素を持たない body — も報告しない。W0212 が同じ不確かさを前にして黙るのと同じであり、それらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。
+
 `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付ける。ただしそれは「リスナが付く」ことであって「イベントが届く」ことではない — `focus` と `blur` はバブリングしないので、フォーカス可能でないコンテナでは発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — `<ev>` を発火できないタイルを対象にした `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
-**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
+**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む — user tile なら、呼び出し側でも、その tile の中で root が発火するタイルになるようにしてもよい。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
 
 ## E03xx — ケイパビリティと純粋性
 

@@ -121,13 +121,20 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   const codesFor = (tile: string) => check(parse(lex(source(tile)))).map((e) => e.code);
 
-  /** The same fixture with a second tile beside `T`, for the cases that name one. */
+  /**
+   * The same fixture with two more tiles beside `T`, for the cases that name
+   * one. `Other` renders nothing that fires a constrained handler and `Fires`
+   * does, so a handler written on a user tile can be asked both questions —
+   * whether the binding resolved, and whether the tile it landed on can fire
+   * it — without either answer standing in for the other.
+   */
   const neighbour = (tile: string) => `slot n : Int = 0
 reducer bump on=app.start do= n := 1
 reducer Bump on=app.start do= n := 2
 tile Other = box(text("y"))
+tile Fires = button(text="y")
 tile T = ${tile}
-tile App = column(T, Other, text(n.show))
+tile App = column(T, Other, Fires, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
@@ -272,18 +279,18 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     }
   }
 
-  // A handler on a user tile takes the same branch and reports the same code,
-  // with no W0213 — `checkHandlerTarget` has nothing to say about a tile whose
-  // renderer it does not own. Nothing pinned that, so the tempting tidy-up
-  // ("checkHandlerTarget ignores user tiles anyway, so only run the handler
-  // branch for builtins") would put this case back to silence unnoticed.
-  it("reports a handler bound to a tile on a user tile too, without W0213", () => {
-    expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["E0102"]);
+  // A handler on a user tile takes the same branch and reports the same
+  // binding code. Asked on `Fires`, so the binding answer arrives on its own:
+  // the tempting tidy-up ("checkHandlerTarget only reports builtins anyway, so
+  // only run the handler branch for them") would put this case back to silence
+  // unnoticed, and a W0213 riding along would hide it happening.
+  it("reports a handler bound to a tile on a user tile too", () => {
+    expect(codesForNeighbour("Fires(onClick=Other)")).toEqual(["E0102"]);
   });
 
-  it("leaves a handler bound to a reducer on a user tile alone", () => {
-    expect(codesForNeighbour("Other(onClick=bump)")).toEqual([]);
-    expect(codesForNeighbour("Other(onClick=Bump)")).toEqual([]);
+  it("leaves a handler bound to a reducer on a firing user tile alone", () => {
+    expect(codesForNeighbour("Fires(onClick=bump)")).toEqual([]);
+    expect(codesForNeighbour("Fires(onClick=Bump)")).toEqual([]);
   });
 
   // The matrix above binds through `box` throughout, and a named argument of a
@@ -355,6 +362,99 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   it("leaves a tile written as an ordinary argument alone", () => {
     expect(codesForNeighbour('box(text("x"), Other)')).toEqual([]);
     expect(codesForNeighbour('box(Other, text("x"))')).toEqual([]);
+  });
+});
+
+/**
+ * A handler on a USER tile that renders nothing able to fire it — issue #329.
+ *
+ * The drop is identical to the builtin case W0213 already reported, and used
+ * to be reported by nothing at all: `checkHandlerTarget` returned early for
+ * any name outside `BUILTIN_TILES`, which is a statement about where the
+ * answer is easy rather than about where the problem is. All three tiers pass
+ * on the fixture below — `check` says ok, `build` emits, `smoke` mounts and
+ * renders, and there is nothing to click — so the only tier that can name it
+ * is this one. That is the entire reason W0213 exists.
+ */
+describe("a handler on an inert user tile is W0213", () => {
+  const app = (tiles: string, call: string) => `slot n : Int = 0
+reducer bump on=app.start do= n := n + 1
+${tiles}
+tile App = column(${call}, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+  const diags = (tiles: string, call: string) => check(parse(lex(app(tiles, call))));
+  const codes = (tiles: string, call: string) => diags(tiles, call).map((e) => e.code);
+
+  const INERT = 'tile Inner = box(text("clickme"))';
+
+  // Both forms, because both are how the drop was written in the report and
+  // the two reach `checkHandlerBinding` down different branches of
+  // `checkTileCall` — a named argument and a props entry.
+  for (const [form, call] of [
+    ["prop", "Inner() {onClick: bump}"],
+    ["arg", "Inner(onClick=bump)"],
+  ] as const) {
+    it(`reports the ${form} form, as a warning`, () => {
+      const [d, ...rest] = diags(INERT, call);
+      expect(rest).toEqual([]);
+      expect(d?.code).toBe("W0213");
+      expect(d?.severity).toBe("warning");
+      // What the tile does render, and where the handler would work: without
+      // both, the reader is told "not here" and given nowhere to go.
+      expect(d?.message).toContain("observed in body: box, text");
+      expect(d?.message).toContain("button");
+    });
+  }
+
+  // The other side of the same check: a warning that also fires on the shape
+  // people write on purpose is noise, and noise is how a warning gets ignored.
+  it("says nothing when the tile's own root fires the handler", () => {
+    expect(codes('tile Inner = button(text="go")', "Inner() {onClick: bump}")).toEqual([]);
+    expect(codes('tile Inner = check(label="go")', "Inner() {onChange: bump}")).toEqual([]);
+    expect(codes('tile Inner = form(text("go"))', "Inner() {onSubmit: bump}")).toEqual([]);
+    // The overlay row of `HANDLER_PROP_TILES`, which no ui-event lifts to.
+    expect(codes('tile Inner = modal(text("go"))', "Inner() {onClose: bump}")).toEqual([]);
+  });
+
+  // The walk is `collectTileBuiltinKinds`, the one W0212 already uses, so a
+  // firing kind anywhere in the tree suppresses the warning — including one
+  // reached through another user tile. Deliberately conservative: codegen
+  // merges the prop onto the ROOT node, so `box(button(…))` drops the handler
+  // too. Reporting only what is certainly dropped is what keeps the warning
+  // off the shapes above; the nested case is a known gap, pinned here so a
+  // later narrowing to the root is a visible change rather than a surprise.
+  it("says nothing when a firing kind is nested, or reached through another tile", () => {
+    expect(codes('tile Inner = box(button(text="go"))', "Inner() {onClick: bump}")).toEqual([]);
+    expect(
+      codes('tile Deep = button(text="go")\ntile Inner = box(Deep)', "Inner() {onClick: bump}"),
+    ).toEqual([]);
+  });
+
+  // The four the runtime attaches to whatever element a tile produced are not
+  // this check's to answer, on a user tile no more than on a builtin.
+  it("says nothing about the handlers the runtime wires universally", () => {
+    for (const handler of ["onKeyDown", "onMouseEnter", "onFocus", "onBlur"]) {
+      expect(codes(INERT, `Inner() {${handler}: bump}`), handler).toEqual([]);
+    }
+  });
+
+  // An unresolvable tree is where W0212 declines to guess, and this declines
+  // in the same place and for the same reason: the empty set means "nothing
+  // was learned", not "nothing fires". Each case below already has a code
+  // that names it, and a second, vaguer diagnostic beside it helps nobody.
+  describe("says nothing about a tree it cannot resolve", () => {
+    it("a tile that is not declared at all", () => {
+      expect(codes(INERT, "Nope() {onClick: bump}")).toEqual(["E0105"]);
+    });
+
+    it("a tile whose body names one that is not declared", () => {
+      expect(codes("tile Inner = Nope()", "Inner() {onClick: bump}")).toEqual(["E0105"]);
+    });
+
+    it("a tile that expands into itself", () => {
+      expect(codes("tile Inner = Inner()", "Inner() {onClick: bump}")).toEqual(["E0005"]);
+    });
   });
 });
 

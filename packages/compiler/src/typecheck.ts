@@ -1260,7 +1260,7 @@ function checkHandlerBinding(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  checkHandlerTarget(tileName, handler, value.pos, errors);
+  checkHandlerTarget(tileName, handler, value.pos, sym, errors);
   const name = handlerReducerName(value);
   if (name === null) {
     errors.push({
@@ -1291,23 +1291,74 @@ function checkHandlerBinding(
  * situation, and the same reason to report it rather than break the build.
  * `W0212` cannot see this one — it asks about `ui.<ev>(Tile)` selectors, and a
  * container with any clickable descendant satisfies it.
+ *
+ * A user tile is the same failure and is reported the same way (#329). The
+ * gate used to be `BUILTIN_TILES.has(tileName)`, which is a statement about
+ * where the answer is *easy* — a builtin's renderer is known — rather than
+ * about where the problem is: `Inner() {onClick: bump}` over
+ * `tile Inner = box(text("clickme"))` renders, wires nothing, and drew no
+ * diagnostic at all, while the same binding written on the `box` itself drew
+ * this one. `smoke` cannot see either: the tile renders fine and there is
+ * nothing to click, which is the whole reason W0213 exists.
+ *
+ * What a user tile is asked is `collectTileBuiltinKinds` — the walk W0212
+ * already uses — and finding no kind that fires the handler anywhere in the
+ * render tree is the answer that reports. That under-reports rather than
+ * over-reports, and deliberately: codegen merges these props onto the node
+ * the tile renders as its ROOT (`_attachProps`), so `Card = box(button(…))`
+ * drops the handler too, and is not reported here because the walk cannot
+ * yet tell a root from a descendant. Every case it does report is a certain
+ * drop — a tree with no firing kind in it has no firing kind at its root —
+ * which is what keeps the warning off the working shapes.
  */
 function checkHandlerTarget(
   tileName: string,
   handler: string,
   pos: Pos,
+  sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  if (!BUILTIN_TILES.has(tileName)) return;
   const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null || allowed.has(tileName)) return;
-  errors.push({
+  if (allowed == null) return;
+  if (BUILTIN_TILES.has(tileName)) {
+    if (allowed.has(tileName)) return;
+    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+    return;
+  }
+  // An undeclared name is E0105's to report; guessing at what it renders would
+  // add a second diagnostic saying the same thing less precisely.
+  if (!sym.tiles.has(tileName)) return;
+  const kinds = collectTileBuiltinKinds(tileName, sym);
+  // Empty = unresolvable (cycle / undeclared child / dynamic-only body) →
+  // conservative skip, exactly as W0212 treats the same uncertainty.
+  if (kinds.size === 0) return;
+  if ([...kinds].some((k) => allowed.has(k))) return;
+  errors.push(
+    inertHandler(
+      tileName,
+      handler,
+      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
+      allowed,
+      pos,
+    ),
+  );
+}
+
+/** One W0213, whichever side — builtin or user tile — asked for it. */
+function inertHandler(
+  tileName: string,
+  handler: string,
+  because: string,
+  allowed: ReadonlySet<string>,
+  pos: Pos,
+): KumikiError {
+  return {
     code: "W0213",
     kind: "handler-on-inert-tile",
     severity: "warning",
-    message: `"${handler}" on ${tileName}() is dropped — ${tileName} does not fire it. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    message: `"${handler}" on ${tileName}() is dropped — ${because}. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
     pos,
-  });
+  };
 }
 
 /**
