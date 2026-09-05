@@ -788,6 +788,23 @@ describe("isError mirrors the CLI's exit code", () => {
     );
   });
 
+  // As at the CLI (`exit-codes.test.ts`): the marker and the reason line are
+  // what an agent reads, and `isError` alone would stay green if a reporter
+  // forgot the fault channel while the body still said `[ok]`.
+  it("marks a step whose action could not run as FAIL, and says why", async () => {
+    // No `expect`: the failed action is the only thing that can fail this step.
+    const scenario = { steps: [{ do: { click: "#typo" } }] };
+    expect(await flag("kumiki_run_scenario", { path: FIX_COUNTER_TESTS, scenario })).toBe(true);
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_run_scenario", {
+        path: FIX_COUNTER_TESTS,
+        scenario,
+      });
+      expect(out).toContain("[FAIL] step 0: click #typo");
+      expect(out).toContain("action failed: no element matching selector #typo");
+    });
+  });
+
   it("flags a fix that leaves the file with errors, in either mode", async () => {
     const file = join(workdir, "typo.kumiki");
     copyFileSync(FIX_COUNTER_TYPO, file);

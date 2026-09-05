@@ -198,10 +198,16 @@ export type StepResult = {
   label?: string;
   action?: string;
   /**
+   * Whether this step passed. A field rather than a predicate every consumer
+   * rebuilds — see the scenario tier's `StepResult.ok`.
+   */
+  ok: boolean;
+  /**
    * Why the step's action could not run — a selector matching nothing, a `fill`
-   * aimed at an element that holds no text. Kept off `errors` for the same
-   * reason the scenario tier keeps it off its own: nothing was observed about
-   * the app, and `noErrors` reads that list. It fails the step all the same.
+   * aimed at an element that holds no text. Kept off `errors` because every
+   * entry in that list is fatal *as a defect in the app* here (see the `ok`
+   * computation below), and a fixture's own broken selector is not one. It
+   * fails the step all the same, through this field.
    */
   actionError?: string;
   errors: string[];
@@ -370,7 +376,9 @@ export async function runMultiOnPage(
 function compileFailure(action: string, errors: string[]): BrowserReport {
   return {
     ok: false,
-    steps: [{ action, errors, state: {}, visibleText: "", failures: ["did not compile"] }],
+    steps: [
+      { ok: false, action, errors, state: {}, visibleText: "", failures: ["did not compile"] },
+    ],
   };
 }
 
@@ -419,6 +427,7 @@ async function serveScenario(
       ok: false,
       steps: [
         {
+          ok: false,
           label: "scenario document",
           errors: [],
           state: {},
@@ -452,7 +461,13 @@ async function serveScenario(
         .innerText()
         .catch(() => "");
       const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
-      const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
+      const r: StepResult = {
+        ok: errorBuf.length === 0 && failures.length === 0 && actionError === undefined,
+        errors: [...errorBuf],
+        state,
+        visibleText,
+        failures,
+      };
       if (actionError !== undefined) r.actionError = actionError;
       if (step.label !== undefined) r.label = step.label;
       if (actionDesc !== undefined) r.action = actionDesc;
@@ -469,10 +484,7 @@ async function serveScenario(
   // "green with warnings". `expect.noErrors` in a fixture is therefore
   // redundant here — accepted for scenario-format compatibility, but not
   // load-bearing.
-  const ok = steps.every(
-    (s) => s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined,
-  );
-  return { ok, steps };
+  return { ok: steps.every((s) => s.ok), steps };
 }
 
 // Serialized into the page to read sanitized slot state.
@@ -625,34 +637,38 @@ async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("fill" in a) {
-    // Named here rather than left to Playwright: its own refusal is an
-    // actionability check, so a selector that drifted onto a wrapper spends the
-    // timeout before reporting "not an <input>, <textarea> or [contenteditable]"
-    // without saying what it did match. The scenario tier answers with the tag
-    // it found; a fixture promoted from that tier reads the same message here.
-    const found = await page
-      .locator(a.fill)
-      .first()
-      .evaluate(
-        (el: Element) => ({
-          tag: el.tagName.toLowerCase(),
-          fillable:
-            el instanceof HTMLInputElement ||
-            el instanceof HTMLTextAreaElement ||
-            el.getAttribute("contenteditable") !== null,
-        }),
-        undefined,
-        // The same budget the `fill` below carries: a selector matching nothing
-        // must not spend the suite's default 30s to say so.
-        { timeout: 3000 },
-      );
+    // Playwright refuses a non-fillable element too, but says only that it was
+    // not an <input>, <textarea> or [contenteditable] — never what it did
+    // match. Probing first names the tag, so a selector that drifted onto its
+    // wrapper reads here the way it reads at the scenario tier. Only that case:
+    // what the probe accepts still goes to Playwright, which judges by
+    // `isContentEditable` and actionability, so a disabled or read-only control
+    // is refused in its words (and the scenario tier fills it).
+    //
+    // One locator for both calls: re-resolving would check one element and fill
+    // whatever a re-render put there afterwards, and would spend two 3s
+    // budgets where the comment promises one.
+    const target = page.locator(a.fill).first();
+    const found = await target.evaluate(
+      (el: Element) => ({
+        tag: el.tagName.toLowerCase(),
+        fillable:
+          el instanceof HTMLInputElement ||
+          el instanceof HTMLTextAreaElement ||
+          el.getAttribute("contenteditable") !== null,
+      }),
+      undefined,
+      // The budget `fill` would have carried: a selector matching nothing must
+      // not spend the suite's default 30s to say so.
+      { timeout: 3000 },
+    );
     if (!found.fillable) {
       throw new Error(
         `${a.fill} matched <${found.tag}>, which holds no text to fill — ` +
           "fill targets input / textarea / editable",
       );
     }
-    await page.locator(a.fill).first().fill(a.value, { timeout: 3000 });
+    await target.fill(a.value, { timeout: 3000 });
     return;
   }
   if ("setProperty" in a) {

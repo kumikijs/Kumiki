@@ -44,7 +44,8 @@ export type Expect = {
    *
    * A step whose action could not run is not one of those: it is a fault in the
    * scenario, reported on `StepResult.actionError`, and deliberately out of
-   * reach here. Otherwise `{do: {key: "#typo"}, errorIncludes: ["no element"]}`
+   * reach here. Otherwise
+   * `{do: {key: "#typo", value: "Enter"}, expect: {errorIncludes: ["no element"]}}`
    * passed, having pressed nothing — a fixture asserting that its own mistake
    * happened.
    */
@@ -227,6 +228,14 @@ export type Scenario = {
 export type StepResult = {
   label?: string;
   action?: string;
+  /**
+   * Whether this step passed: no unexpected error, no failed assertion, and an
+   * action that ran. A field rather than a predicate every consumer rebuilds —
+   * the run's `ok`, three reporters and the corpus gates all answer this same
+   * question, and each copy is a place a new channel can be forgotten (adding
+   * `actionError` did exactly that to two of them).
+   */
+  ok: boolean;
   /**
    * Errors reported during this step that no `errorIncludes` claimed. These are
    * what fail the run — an error the step asked for moves to `expectedErrors`.
@@ -416,8 +425,8 @@ export async function runScenario(
         evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
         [...diagBuf],
         expected,
+        actionError,
       );
-      if (actionError !== undefined) result.actionError = actionError;
       steps.push(result);
     }
     return finish();
@@ -434,10 +443,7 @@ export async function runScenario(
   }
 
   function finish(): ScenarioReport {
-    const ok = steps.every(
-      (s) => s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined,
-    );
-    return { ok, steps };
+    return { ok: steps.every((s) => s.ok), steps };
   }
 }
 
@@ -451,8 +457,10 @@ function mkStep(
   failures: string[],
   diagnostics: RuntimeDiagnostic[] = [],
   expectedErrors: string[] = [],
+  actionError?: string,
 ): StepResult {
   const step: StepResult = {
+    ok: errors.length === 0 && failures.length === 0 && actionError === undefined,
     errors,
     expectedErrors,
     emits,
@@ -463,6 +471,7 @@ function mkStep(
   };
   if (label !== undefined) step.label = label;
   if (action !== undefined) step.action = action;
+  if (actionError !== undefined) step.actionError = actionError;
   return step;
 }
 

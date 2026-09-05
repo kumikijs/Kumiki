@@ -464,6 +464,24 @@ app Demo
     expect(code).toBe(1);
   });
 
+  // The marker and the reason line are the whole point of the fault channel: an
+  // agent reads them, and nothing else pins them. Drop the `actionError` term
+  // from any reporter's verdict and this is what catches it — the step prints
+  // `[ok] step 0: click #typo` above `scenario FAILED`, which is the exact
+  // misreading the channel exists to prevent.
+  it("run marks a step whose action could not run as FAIL, and says why", SPAWN, () => {
+    // No `expect`: the failed action is the only thing that can fail this step.
+    const scenario = write(
+      "action-fault.json",
+      JSON.stringify({ steps: [{ do: { click: "#typo" } }] }),
+    );
+    const { stdout, code } = runCli(["run", write("run-fault.kumiki", CLEAN), scenario]);
+    expect(stdout).toContain("[FAIL] step 0: click #typo");
+    expect(stdout).toContain("action failed: no element matching selector #typo");
+    expect(stdout).toContain("scenario FAILED");
+    expect(code).toBe(1);
+  });
+
   it("test exits 1 when a test fails", SPAWN, () => {
     // Same file as the passing case with the expectation moved off by one, so
     // the difference between the two runs is the test result and nothing else.

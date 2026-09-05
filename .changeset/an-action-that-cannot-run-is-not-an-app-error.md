@@ -11,7 +11,7 @@ a refinement rejected, an effect error no `.err` reducer consumes. A failed
 action was reported through the same buffer, so it could satisfy the assertion:
 
 ```json
-{ "do": { "key": "#typo" }, "expect": { "errorIncludes": ["no element"] } }
+{ "do": { "key": "#typo", "value": "Enter" }, "expect": { "errorIncludes": ["no element"] } }
 ```
 
 ```
@@ -39,6 +39,6 @@ separately because they are different things:
 `@kumikijs/e2e` splits the same way. That tier refuses `errorIncludes` outright,
 but it treats every reported error as fatal, so a fixture's broken selector was
 reported as a defect in the app. Its `fill` also now names the element it
-matched — `#box matched <div>, which holds no text to fill` — rather than
-spending Playwright's actionability timeout to say the selector was not
-fillable, so a fixture promoted from the scenario tier reads the same message.
+matched — `#box matched <div>, which holds no text to fill` — which
+Playwright's own refusal does not, so a selector that drifted onto a wrapper
+reads the same message in both tiers.

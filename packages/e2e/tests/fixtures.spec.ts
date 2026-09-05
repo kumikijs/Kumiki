@@ -98,6 +98,11 @@ for (const fx of fixtures) {
         .map((s, i) => {
           const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
           const lines = [head];
+          // Without this a step that failed only on `actionError` — the whole
+          // reason a fixture's selector drift fails here — prints its heading
+          // and nothing under it, on the tier where reproducing locally costs a
+          // Chromium install.
+          if (s.actionError !== undefined) lines.push(`    action failed: ${s.actionError}`);
           for (const e of s.errors) lines.push(`    error: ${e}`);
           for (const f of s.failures) lines.push(`    assert: ${f}`);
           return lines.join("\n");

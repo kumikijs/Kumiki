@@ -263,8 +263,8 @@ app Fillable
 // batch a refinement rejected, an effect error no `.err` reducer consumes. A
 // step whose action could not run reported nothing about the app, so folding
 // the two together let a fixture assert that its own typo happened:
-// `{do: {key: "#typo"}, expect: {errorIncludes: ["no element"]}}` passed, having
-// pressed nothing.
+// `{do: {key: "#typo", value: "Enter"}, expect: {errorIncludes: ["no element"]}}`
+// passed, having pressed nothing.
 describe("a broken selector cannot satisfy errorIncludes", () => {
   const APP = `slot n : Int = 0
 reducer bump on=ui.click(Btn) do= n := n + 1

@@ -501,7 +501,7 @@ export function createServer(): McpServer {
     "kumiki_run_scenario",
     {
       title: "Run a scenario",
-      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).`,
+      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. A step whose action could not run — a selector matching nothing, a \`fill\` aimed at an element that holds no text — reports \`action failed:\` instead of an error, and fails: the action never ran, so that step's state is not a state the app reached through it, and \`errorIncludes\` cannot claim it. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -527,14 +527,12 @@ export function createServer(): McpServer {
         capsForInput(input),
       );
       const lines = report.steps.map((s, i) => {
-        const status =
-          s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined
-            ? "ok"
-            : "FAIL";
+        const status = s.ok ? "ok" : "FAIL";
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
-          // The step did nothing: an agent reading this must not diagnose the
-          // app from a state the action never reached.
+          // The action never ran: an agent reading this must not diagnose the
+          // app from a state it never reached — including the `final state:`
+          // line below, when this is the last step.
           ...(s.actionError !== undefined ? [`    action failed: ${s.actionError}`] : []),
           ...s.errors.map((e) => `    error: ${e}`),
           // An error the step's `errorIncludes` asked for is out of `errors`,
