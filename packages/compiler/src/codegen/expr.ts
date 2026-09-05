@@ -232,7 +232,10 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // `random()` — a Float in [0, 1). Non-deterministic like `now`, and
       // unrestricted for the same reason: a rule confining it to reducers would
       // be the only purity rule in the language that no other builtin has.
-      if (cn === "random") return "Math.random()";
+      // Through the runtime helper rather than inline `Math.random()`, because
+      // that is the seam the episode journal records at: an inline draw is
+      // invisible to the log, and a replay of the episode re-rolls it (#337).
+      if (cn === "random") return "_s.random()";
       // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.

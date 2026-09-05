@@ -6,7 +6,10 @@
 
 import {
   batchRejections,
+  beginEnvReplay,
+  type EnvRead,
   emptyRoute,
+  endEnvScope,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
@@ -26,6 +29,8 @@ type EpisodeReducerStep = {
   name: string;
   "slot-diffs"?: { name: string; before?: unknown; after: unknown }[];
   emits?: string[];
+  /** What the body read from the environment (§10.5.1). Absent in older logs. */
+  "env-reads"?: EnvRead[];
   ts?: number;
 };
 type EpisodeEffectEndStep = {
@@ -682,14 +687,39 @@ function executeEpisode(
 
   // Per-effect FIFO of recorded effect-end values for `from-log` mocks.
   const recordedResults: Record<string, { result: "ok" | "err"; value: unknown }[]> = {};
+  // Per-reducer FIFO of recorded environment reads (§10.5.1). Replay derives
+  // the reducer chain from the first recorded reducer rather than walking the
+  // log's steps, so the reads are matched by reducer NAME — the recorded
+  // reducers and the replayed ones line up per name even when the chain
+  // reaches them in a different order.
+  const recordedEnvReads: Record<string, EnvRead[][]> = {};
   for (const s of ep.steps) {
     if (s.kind === "effect-end") {
       const list = recordedResults[s.name] ?? [];
       list.push({ result: s.result, value: s.value });
       recordedResults[s.name] = list;
     }
+    if (s.kind === "reducer") {
+      const list = recordedEnvReads[s.name] ?? [];
+      list.push(s["env-reads"] ?? []);
+      recordedEnvReads[s.name] = list;
+    }
   }
   const cursors: Record<string, number> = {};
+  const envCursors: Record<string, number> = {};
+
+  /**
+   * Hand the reducer the environment it read when the episode was recorded.
+   * With nothing recorded for it — an older log, or a reducer the chain
+   * reached that the recording never logged — the scope is empty and every
+   * read falls through to the live source, which is the pre-#337 behaviour.
+   */
+  const takeEnvReads = (reducerName: string): EnvRead[] => {
+    const list = recordedEnvReads[reducerName] ?? [];
+    const idx = envCursors[reducerName] ?? 0;
+    envCursors[reducerName] = idx + 1;
+    return list[idx] ?? [];
+  };
 
   const triggerPayload = (ep.trigger.payload as Record<string, unknown> | undefined) ?? {};
   const queue: { reducer: ReducerSpec; payload: Record<string, unknown> }[] = [
@@ -703,9 +733,11 @@ function executeEpisode(
     const job = queue.shift();
     if (!job) break;
     let res: ReturnType<ReducerSpec["apply"]>;
+    beginEnvReplay(takeEnvReads(job.reducer.name));
     try {
       res = job.reducer.apply(app.live, job.payload);
     } catch (e) {
+      endEnvScope();
       // Derive the record via panicInfo so stack + Error.cause reach the
       // replay CLI unchanged. The runner treats this catch site as `reducer`
       // — it's replaying the initial reducer of a recorded episode. If the
@@ -740,6 +772,7 @@ function executeEpisode(
       }
       continue;
     }
+    endEnvScope();
     const written = writeSlots(job.reducer.name, res);
     const diffs = written ?? [];
     for (const d of diffs) dirtyForEpisode.add(d.name);

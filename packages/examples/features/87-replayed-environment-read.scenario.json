@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "nothing has read the environment yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "roll": 0, "stamped": "", "inRange": false },
+        "domIncludes": ["roll=0 inRange=false"]
+      }
+    },
+    {
+      "label": "a click reads random() and now — the range is what a live run can pin",
+      "do": { "clickText": "stamp" },
+      "expect": { "noErrors": true, "state": { "inRange": true } }
+    }
+  ]
+}

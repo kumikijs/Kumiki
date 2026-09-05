@@ -678,7 +678,8 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
   "id": "ep_01JC...",
   "trigger": {"kind": "ui.click", "target": "AddBtn", "payload": {...}, "ts": ...},
   "steps": [
-    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"], "ts": ...},
+    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"],
+     "env-reads": [{"kind": "now", "value": 1717900000000}], "ts": ...},
     {"kind": "effect-start", "name": "persist", "args": {...}, "ts": ...},
     {"kind": "effect-end", "name": "persist", "result": "ok", "value": "()", "ts": ...},
     {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...}
@@ -686,6 +687,14 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
   "status": "completed" | "panic" | "cancelled" | "ongoing"
 }
 ```
+
+`reducer` step は次も持つ：
+
+- `env-reads`: reducer 本体が実行中に**環境**から読んだ値を、読んだ順に並べたもの。各要素は `{kind, value}` で、`kind` は `now` / `random` / `fresh-id` / `prefers-dark` のいずれか — 答えがプログラムの外から来るビルトイン、すなわち slot の値からは決まらないものである。本体が何も読まなかった場合（大半の reducer がそうである）このフィールドは**省略される**。refinement がバッチを棄却した reducer（[§10.3.3](#_10-3-3-batching)）でも読みは記録する：本体は走ったのであり、それを再実行する replay が同じ答えを見なければ、そもそも棄却しないかもしれない。
+
+  `env-reads` があるからこそ replay は*同じ実行*になる。reducer が書いた結果だけを記録した episode は replay できない：`replay` は本体を再実行し、環境を読む本体はもう一度環境を読む — 新しいサイコロの目、後の時刻 — ので、replay された `slot-diffs` は記録されたものとは別の実行のものになる。`env-reads` は記録された実行の環境そのものであり、あとで返せるように保持される（[§10.5.3](#_10-5-3-replay)）。
+
+  このフィールドは前方互換のため**省略可能**である：古いランタイムが書いた episode ログは `env-reads` を持たず、それらは今も変わらず parse でき replay できなければならない。
 
 **遅延 policy effect の帰属。** `policy=debounce(d)` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に `setTimeout` が満了する。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、満了後の `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。`debounce` timer が発火前に置換された場合、元 episode に `effect-cancel` step (`targetId = <effect-name>`) を残し、その episode は `effect-end` なしで `status="completed"` として commit する。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
 
@@ -703,6 +712,11 @@ kumiki replay --from-log <file>             # ファイルから読み込んで�
 kumiki replay --mock 'loadUser: from-log'   # effect mock 指定
 kumiki replay --until-step 5                # 途中まで
 ```
+
+- **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-episode-の構造)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
+  - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
+  - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものであり、ログが持たない `slot-diff` としてトレースに現れる。
+  - 記録済み `env-reads` と replay 中の reducer は**名前で**対応付ける：replay はログの step を辿るのではなく reducer を再実行して連鎖を導くため、reducer `foo` の n 回目の実行が、記録された n 個目の `foo` step の読みを取る。
 
 ---
 
@@ -860,8 +874,8 @@ app.unmount()
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
 | `Option`, `Result` | パターンマッチ網羅検査 |
-| `now`, `random()` | 式が書ける場所ならどこでも呼べる。読んだ値は記録**されない**ため、それを読んだ episode の replay は新しい値を引く |
-| `*.fresh()` | UUIDv7 を生成 |
+| `now`, `random()` | 式が書ける場所ならどこでも呼べる。各読みが返した値は episode の `reducer` step に `env-reads` として記録される（[§10.5.1](#_10-5-1-episode-の構造)）ため、それを読んだ episode の replay は新しい値を引かずに同じ値を再現する |
+| `*.fresh()` | UUIDv7 を生成。`now` / `random()` と同様に `env-reads` として記録されるため、replay した episode は実行が実際に刻んだ ID を刻む |
 | `panic(message)` | episode を `panic` 状態にして slot をロールバック |
 
 ---

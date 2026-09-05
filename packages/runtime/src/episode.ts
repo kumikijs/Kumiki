@@ -28,6 +28,17 @@ export type EpisodeTrigger = {
 export type SlotDiff = { name: string; before: unknown; after: unknown };
 
 /**
+ * The builtins whose answer comes from outside the program (docs/spec/stdlib.md
+ * §2.4.4 / §2.2): the clock, the random source, the id generator, and the OS
+ * colour-scheme preference. Nothing a slot holds can derive one, which is why
+ * they are the reads an episode has to carry for a replay to be the same run.
+ */
+export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
+
+/** One environment read and what it answered (runtime.md §10.5.1). */
+export type EnvRead = { kind: EnvReadKind; value: unknown };
+
+/**
  * Where a caught throw originated in the runtime's staging (docs/spec/runtime.md
  * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, and `hydrate`;
  * `effect` / `capability` / `unknown` are reserved values so consumers can
@@ -54,6 +65,13 @@ export type EpisodeStep =
       name: string;
       "slot-diffs": SlotDiff[];
       emits: string[];
+      /**
+       * What the reducer body read from the environment while it ran, in the
+       * order it asked. Omitted when the body read nothing — which is most
+       * reducers, and keeps a log written before this field existed identical
+       * to one written now.
+       */
+      "env-reads"?: EnvRead[];
       ts: number;
     }
   | { kind: "effect-start"; name: string; args: unknown; ts: number }
@@ -144,8 +162,17 @@ export type EpisodeLogger = {
    * when its last `recordEffectEnd` fires.
    */
   endTrigger(): void;
-  /** Append a `{kind: "reducer", ...}` step to the open episode. */
-  recordReducer(name: string, slotDiffs: SlotDiff[], emits: string[]): void;
+  /**
+   * Append a `{kind: "reducer", ...}` step to the open episode. `envReads` is
+   * what the body read from the environment (§10.5.1); an empty or absent list
+   * writes no `env-reads` field.
+   */
+  recordReducer(
+    name: string,
+    slotDiffs: SlotDiff[],
+    emits: string[],
+    envReads?: readonly EnvRead[],
+  ): void;
   /**
    * Append a `{kind: "effect-start", ...}` step. The returned token lets the
    * caller hand the matching `effect-end` back to the SAME episode, even after
@@ -337,7 +364,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         commit(ep);
       }
     },
-    recordReducer(name, slotDiffs, emits) {
+    recordReducer(name, slotDiffs, emits, envReads) {
       const ep = topEpisode();
       if (!ep) return;
       ep.steps.push({
@@ -345,6 +372,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         name,
         "slot-diffs": slotDiffs,
         emits,
+        ...(envReads !== undefined && envReads.length > 0 ? { "env-reads": envReads.slice() } : {}),
         ts: now(),
       });
     },

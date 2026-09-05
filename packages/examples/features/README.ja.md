@@ -59,5 +59,6 @@
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |
 | [66-value-types](./66-value-types.kumiki) | 値レベルの型検査が受理する形と、それぞれが以前隠していた誤り |
+| [87-replayed-environment-read](./87-replayed-environment-read.kumiki) | `random()` / `now` が返した値を episode が記録し、replay が同じ実行を再現する |
 
 新しい質問・バグには、まずここへ最小再現例を足すことで答える。
