@@ -399,6 +399,8 @@ reducer typed on=ui.key(RefBox) do= ...          # どちらでも input に配�
 
 subscription が届く tile を決めるのは、その子孫が「どの経路で描画されたか」であって子孫そのものではない。`RefBox` の*隣*に描画された `Leaf` はその内側ではないので、ハンドラを受け取らない。1 つの子孫に対して複数の外側 tile が同じイベントを subscribe している場合は、通常どおり [§1.6.4](#_1-6-4-不変条件) Invariant 3 が適用され、マッチしたすべてが定義順で発火する。
 
+> **既知の未対応 ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: 同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は結合されずに**置き換えられる**ため、外側 tile の reducer が発火しない。修正されるまでは、1 つの要素に対してセレクタと明示ハンドラ prop を混在させず、両方の tile で `ui.<ev>(<Tile>)` を使うこと。
+
 ### 1.6.3 lvalue の意味論
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。

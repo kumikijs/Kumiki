@@ -403,6 +403,8 @@ reducer typed on=ui.key(RefBox) do= ...          # wired onto the input, both wa
 
 The tiles a subscription reaches are decided by the path a descendant is rendered under, not by the descendant alone: a `Leaf` rendered *beside* `RefBox` is not inside it and receives no handler from it. When several enclosing tiles subscribe to one event on one descendant, [§1.6.4](#_1-6-4-invariants) Invariant 3 applies as usual — every match fires, in definition order.
 
+> **Known gap ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: writing the handler for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) currently **replaces** the lifted subscriptions instead of joining them, so the enclosing tile's reducer does not fire. Until that is fixed, subscribe with `ui.<ev>(<Tile>)` on both tiles rather than mixing a selector with an explicit handler prop on one element.
+
 ### 1.6.3 lvalue Semantics
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.

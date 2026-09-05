@@ -102,7 +102,7 @@ tile App    = column(Outer, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
     expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
-    expect(src.length > 0 && jsOf(src)).toContain(`onKeyDown: _h("bump")`);
+    expect(jsOf(src)).toContain(`onKeyDown: _h("bump")`);
   });
 
   it("keeps a selector on the inner tile working alongside the outer one", () => {
@@ -151,5 +151,55 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
     expect(check(parse(lex(src))).map((e) => e.code)).toEqual(["W0212"]);
     expect(jsOf(src)).not.toContain("onKeyDown");
+  });
+  it("reaches an error-boundary fallback rendered where the panicking tile was", () => {
+    // The fallback renders in the panicking tile's place — inside `Outer` —
+    // so a selector on `Outer` reaches it, by the same "decided by the render
+    // path" rule. `Risky` is the one name that does not carry over: its tree,
+    // and its `_named` marker, is what the boundary discarded.
+    const src = `slot n : Int = 0
+reducer bump on=ui.key(Outer) do= n := n + 1
+tile Oops
+    in=PanicInfo
+    = input(placeholder=$1.message) {id: "oops"}
+tile Risky
+    error-boundary = Oops
+    = box(input(placeholder="risky") {id: "risky-in"}) {id: "risky"}
+tile Outer = box(Risky) {id: "outer"}
+tile App   = column(Outer, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
+    const js = jsOf(src);
+    // The `catch` half of the first route's boundary — everything the fallback
+    // lowered to. Sliced rather than counted so the assertion names the half it
+    // is about; a count alone would pass on two wirings in the `try` half.
+    const fallback = js.slice(js.indexOf("boundaryPanic"));
+    expect(fallback).toContain(`onKeyDown: _h("bump")`);
+    // Two routes, each wiring the risky input AND its fallback.
+    expect(js.split(`onKeyDown: _h("bump")`).length - 1).toBe(4);
+  });
+
+  // #333 fixed the chain; this is the boundary one file over that still drops
+  // it, pinned here so the gap is visible rather than folklore. `_attachProps`
+  // is a plain spread (`{...node.props, ...props}`), so a handler written on a
+  // user-tile CALL SITE replaces the one the body lifted through the chain
+  // instead of joining it. Tracked as #407 — when that lands, this expectation
+  // flips to the union and the `not.toContain` goes away.
+  it("KNOWN GAP (#407): a call-site handler still replaces the lifted one", () => {
+    const src = `slot n : Int = 0
+reducer rowClick on=ui.click(Row) do= n := n + 1
+reducer btnOwn   on=ui.click(Btn) do= n := n + 100
+tile Btn = button(text="x")
+tile Row = row(Btn {onClick: btnOwn})
+tile App = column(Row, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
+    const js = jsOf(src);
+    // The body lifts both, exactly as #333 intends…
+    expect(js).toContain(`onClick: _h("rowClick", "btnOwn")`);
+    // …and the call site's spread then overwrites it, so `rowClick` is dead.
+    expect(js).toContain(`onClick: _h("btnOwn")`);
   });
 });

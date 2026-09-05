@@ -20,6 +20,17 @@ export function genTile(tile: TileDef, gen: GenCtx): string {
 }
 
 /**
+ * The chain `name`'s body renders under. A name already in the chain is not
+ * appended again — a tile reached twice on one path (a self-referencing body,
+ * which `E0005` reports separately) would otherwise grow it without bound, and
+ * a repeated name answers no selector the first occurrence does not.
+ */
+function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles {
+  const outer = chain ?? [];
+  return outer.includes(name) ? outer : [...outer, name];
+}
+
+/**
  * The `try` / `catch` a tile's `error-boundary` lowers to — a panic while
  * rendering under `def` produces the named fallback instead, with `PanicInfo`
  * as its `$1` (lifecycle.md §7.3). What counts as a panic, and what is re-thrown
@@ -32,8 +43,20 @@ export function genTile(tile: TileDef, gen: GenCtx): string {
  *   mount / unmount against is the tree that actually rendered.
  * - The fallback is lowered here, not through a call site, so it carries no
  *   marker of its own either: `tile.mount(<the fallback>)` never fires.
+ *
+ * `enclosingTiles` is the chain the PANICKING tile's call site sits in, and
+ * `def` is deliberately not on it. The fallback renders where `def`'s tree
+ * would have been, so a selector on anything `def` was rendered under still
+ * reaches it — that is the §1.6.2 rule that the reach is decided by the path.
+ * `def` itself is the one name that does not carry over: its tree, and the
+ * `_named(…, def)` marker with it, is what was discarded.
  */
-function boundaryJs(def: TileDef, body: string, gen: GenCtx): string {
+function boundaryJs(
+  def: TileDef,
+  body: string,
+  gen: GenCtx,
+  enclosingTiles?: EnclosingTiles,
+): string {
   if (!def.errorBoundary) return body;
   const fb = gen.tiles.find((x) => x.name === def.errorBoundary);
   // Unreachable: E0105 refuses a boundary that names no tile. It used to
@@ -44,7 +67,7 @@ function boundaryJs(def: TileDef, body: string, gen: GenCtx): string {
       `Tile "${def.name}" declares error-boundary=${def.errorBoundary}, which is not a tile`,
     );
   const fbCtx = makeEvalCtx(gen, ["$1"]);
-  const fbBody = tileExprJs(fb.body, gen, fbCtx, [fb.name]);
+  const fbBody = tileExprJs(fb.body, gen, fbCtx, under(enclosingTiles, fb.name));
   return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${fbBody}; } })())`;
 }
 
@@ -75,17 +98,6 @@ export function genRouteTile(tile: TileDef, gen: GenCtx, where: string): string 
   // mount died with `_d_1 is not defined` after `check` and `build` said ok.
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
   return boundaryJs(tile, `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`, gen);
-}
-
-/**
- * The chain `name`'s body renders under. A name already in the chain is not
- * appended again — a tile reached twice on one path (a self-referencing body,
- * which `E0005` reports separately) would otherwise grow it without bound, and
- * a repeated name answers no selector the first occurrence does not.
- */
-function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles {
-  const outer = chain ?? [];
-  return outer.includes(name) ? outer : [...outer, name];
 }
 
 export function tileExprJs(
@@ -213,7 +225,7 @@ function tileCallJs(
     // the two have to read the same one, or a call the checker approved lowers
     // to something else. A named argument is a prop and goes to `propsFor`.
     const arg1 = t.args.find((a) => a.name === undefined);
-    const wrapBoundary = (body: string): string => boundaryJs(def, body, gen);
+    const wrapBoundary = (body: string): string => boundaryJs(def, body, gen, enclosingTiles);
     // Each user-tile call site wraps its rendered output with `_named(…, "X")`
     // so the runtime can diff `tile.mount(X)` / `tile.unmount(X)` against the
     // rendered tree (lifecycle.md §7.1.6). Builtin tiles are NOT named — only
