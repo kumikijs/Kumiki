@@ -24,13 +24,11 @@
 
 import {
   type AppShape,
-  beginEnvRecord,
   type CapabilityProvider,
   type CapabilityRegistry,
   computeSlotDiffs,
   type EffectResult,
   type EmitSpec,
-  endEnvScope,
   NONE,
   type ParsedRoute,
   panicInfo,
@@ -41,6 +39,7 @@ import {
   reportUnhandledEffectError,
   type SsrSnapshot,
   warnUndeclaredCapability,
+  withEnvRecord,
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
@@ -305,24 +304,27 @@ function applyReducerOnSsr(
   logger: EpisodeLogger,
   dirtyAcc: string[],
 ): { emits: EmitSpec[] } | null {
-  let applied: ReturnType<typeof r.apply>;
   // The bootstrap episode is an episode (§10.5.1.1), so its reducers journal
   // their environment reads the same way the live path's do — a replay of the
   // SSR chain reproduces the instants the server stamped.
-  beginEnvRecord();
-  try {
-    // `$2` is the dispatcher key on the live path; SSR has no per-emit key
-    // (no `latest-per-key` policy resolution), so we pass `undefined` for
-    // shape parity rather than omitting it.
-    applied = r.apply(live, { $1: value, $2: undefined });
-  } catch (e) {
-    endEnvScope();
+  //
+  // `$2` is the dispatcher key on the live path; SSR has no per-emit key
+  // (no `latest-per-key` policy resolution), so we pass `undefined` for
+  // shape parity rather than omitting it.
+  const outcome = withEnvRecord(() => r.apply(live, { $1: value, $2: undefined }));
+  const envReads = outcome.env.reads;
+  if (!outcome.ok) {
     // Route SSR panics through the same panicInfo pipeline as the live
     // path so stack + Error.cause survive into the bootstrap episode.
-    logger.recordPanic({ ...panicInfo(e, "hydrate"), location: `reducer "${r.name}"` });
+    logger.recordPanic({
+      ...panicInfo(outcome.error, "hydrate"),
+      location: `reducer "${r.name}"`,
+      name: r.name,
+      ...(envReads.length > 0 ? { envReads } : {}),
+    });
     return null;
   }
-  const envReads = endEnvScope();
+  const applied = outcome.value;
   const { diffs, dirty, rejected } = computeSlotDiffs(live, applied, slotMetas);
   if (rejected.length > 0) {
     // §10.3.3 all-or-nothing, on the server too: nothing was written, so the

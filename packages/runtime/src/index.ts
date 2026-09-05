@@ -50,6 +50,8 @@ export {
   type EmitSpec,
   type EnvRead,
   type EnvReadKind,
+  type EnvScopeOutcome,
+  type EnvScopeReport,
   type EventHandler,
   emptyRoute,
   endEnvScope,
@@ -89,6 +91,8 @@ export {
   type TileRenderer,
   type TileRenderers,
   tokenRef,
+  withEnvRecord,
+  withEnvReplay,
 } from "./core.ts";
 export { installConfirm } from "./effects-confirm.ts";
 export { httpFetch } from "./effects-http.ts";
@@ -156,6 +160,7 @@ export { renderTileToString } from "./ssr-render.ts";
 export { _stdlibCore } from "./stdlib.ts";
 export {
   _stdlibTest,
+  type EnvDrift,
   type EpisodeLogEntry,
   type EpisodeMockPolicy,
   type GenDesc,

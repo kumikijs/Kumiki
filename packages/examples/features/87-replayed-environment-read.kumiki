@@ -49,6 +49,10 @@ test roll-is-in-range =
 # The replay tier is where the value itself becomes assertable. The fixture's
 # `env-reads` are the run's environment; without them this expects 4 and gets
 # whatever the replay's own `Math.random()` said.
+#
+# CI does not run this block — `kumiki test` is driven against `28-tests.kumiki`
+# only — so what actually guards the fixture is the same assertion in
+# `packages/tests/episode-replay-env.test.ts`. Edit one and the other fails.
 test replay-reproduces-the-read =
     episode-test
         load   = "87-replayed-environment-read.fixture.jsonl"

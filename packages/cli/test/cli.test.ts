@@ -152,19 +152,23 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // threw `SecurityError` out of `pushState`, and left a dead link with
     // nothing in the console naming it; and where the fix without the scheme
     // set would have handed `javascript:` targets to the browser to execute.
-    // Bumped to 67KB when an episode started recording what the reducer read
-    // from the environment (spec/runtime.md §10.5.1, #337): the journal and its
-    // four cross-module entry points in core.js, and the `_s.now` / `_s.random`
-    // / `_s.freshId` / `_s.prefersDark` wrappers that go through it in
-    // stdlib.js (66,614 measured, from 65,814). A counter reads none of them
-    // and still ships it — the alternative is what this replaced, where the
-    // episode a bug report is most worth attaching, one whose reducer rolled a
-    // die or stamped a time, was the one `kumiki replay` could not reproduce:
-    // it re-ran the body, drew a new value, and reported a different run.
+    // Bumped to 68KB when an episode started recording what the reducer read
+    // from the environment (spec/runtime.md §10.5.1, #337). The rationale for
+    // the feature lives at the top of runtime/src/core.ts ("the environment
+    // journal") and is not repeated here; what a counter pays for it is the
+    // journal and its scope helpers in core.js, the `_s.now` / `_s.random` /
+    // `_s.freshId` / `_s.prefersDark` wrappers in stdlib.js, and the per-kind
+    // shape check that keeps a corrupt `--from-log` entry out of a reducer
+    // body (67,352 measured, from 65,814 — the 65,748 on the line above was
+    // measured before the PRs between the two landed). A counter reads none of
+    // the four and still ships it: the alternative is that the episode a bug
+    // report is most worth attaching, the one whose reducer rolled a die or
+    // stamped a time or crashed, stays the one `kumiki replay` cannot answer
+    // for.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(67_000);
+    expect(total).toBeLessThan(68_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

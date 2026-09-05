@@ -28,10 +28,12 @@ export type EpisodeTrigger = {
 export type SlotDiff = { name: string; before: unknown; after: unknown };
 
 /**
- * The builtins whose answer comes from outside the program (docs/spec/stdlib.md
- * §2.4.4 / §2.2): the clock, the random source, the id generator, and the OS
- * colour-scheme preference. Nothing a slot holds can derive one, which is why
- * they are the reads an episode has to carry for a replay to be the same run.
+ * The builtins whose answer comes from outside the program: the clock
+ * (`now`, stdlib.md §2.4.2), the random source (`random()`, §2.4.4), the id
+ * generator (`<T>.fresh()`, §2.4.1) and the OS colour-scheme preference
+ * (`prefers-dark()`, style.md §4.6.1). Nothing a slot holds can derive one,
+ * which is why they are the reads an episode has to carry for a replay to be
+ * the same run.
  */
 export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
 
@@ -94,6 +96,18 @@ export type EpisodeStep =
       message: string;
       /** Human-readable source label (`reducer "addTodo"`, `"render"`, ...). */
       location?: string;
+      /**
+       * The reducer whose body threw, when the throw came from one. Present so
+       * a replay can key the step's `env-reads` the same way it keys a
+       * completed `reducer` step's — a panic step's `location` is prose.
+       */
+      name?: string;
+      /**
+       * What that body read from the environment before it threw. Without it,
+       * the episode a user attaches to a bug report — the one that crashed —
+       * is the one a replay re-rolls its way past (§10.5.1).
+       */
+      "env-reads"?: EnvRead[];
       /** `Error.stack` of the caught throw, when available. */
       stack?: string;
       /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
@@ -230,6 +244,10 @@ export type EpisodeLogger = {
     stack?: string | undefined;
     cause?: PanicCauseLink[] | undefined;
     category?: PanicCategory | undefined;
+    /** The reducer that threw, when the throw came from a reducer body. */
+    name?: string | undefined;
+    /** What that body read from the environment before it threw (§10.5.1). */
+    envReads?: readonly EnvRead[] | undefined;
   }): void;
   /**
    * Inject an already-completed episode at the tail of the memory ring (and
@@ -445,6 +463,10 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       if (!ep) return;
       const step: EpisodeStep = { kind: "panic", message: info.message, ts: now() };
       if (info.location !== undefined) step.location = info.location;
+      if (info.name !== undefined) step.name = info.name;
+      if (info.envReads !== undefined && info.envReads.length > 0) {
+        step["env-reads"] = info.envReads.slice();
+      }
       if (info.stack !== undefined) step.stack = info.stack;
       if (info.cause !== undefined && info.cause.length > 0) step.cause = info.cause;
       if (info.category !== undefined) step.category = info.category;

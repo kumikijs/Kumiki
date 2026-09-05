@@ -6,16 +6,15 @@
 
 import {
   batchRejections,
-  beginEnvReplay,
   type EnvRead,
   emptyRoute,
-  endEnvScope,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
   type ReducerSpec,
   type RefinementRejection,
   reportRejectedBatch,
+  withEnvReplay,
 } from "./core.ts";
 
 /**
@@ -49,6 +48,10 @@ type EpisodeStepLite =
       kind: "panic";
       message: string;
       location?: string;
+      /** The reducer that threw, when the throw came from a reducer body. */
+      name?: string;
+      /** What that body read from the environment before it threw (§10.5.1). */
+      "env-reads"?: EnvRead[];
       /** Root-cause devtools trail — optional so older logs still parse. */
       stack?: string;
       cause?: PanicCauseLink[];
@@ -522,6 +525,12 @@ export type ReplayEvent =
       stepIndex: number;
       name: string;
       slotDiffs: { name: string; before: unknown; after: unknown }[];
+      /**
+       * Where this body's environment reads came from. Omitted when the log
+       * answered every one of them and the body asked for every one it
+       * carried — the case a reader does not need told about.
+       */
+      env?: EnvDrift;
     }
   | {
       kind: "effect-start";
@@ -561,6 +570,21 @@ export type ReplayEvent =
  */
 export type ReplayObserver = (event: ReplayEvent) => "continue" | "stop";
 
+/**
+ * Environment-read provenance for a replay (§10.5.3). A read the log could not
+ * answer was taken live, which is the one thing a replay cannot reproduce;
+ * without a count there is no way, after the fact, to tell that apart from a
+ * read that WAS answered from the log.
+ */
+export type EnvDrift = {
+  /** Reads with no recorded answer left; the live source was used instead. */
+  live: number;
+  /** Recorded answers the replayed bodies never asked for. */
+  unused: number;
+  /** Entries in the log that were not well-formed reads, and were rejected. */
+  malformed: number;
+};
+
 export type ReplayReport = {
   panics: {
     episodeId: string;
@@ -580,6 +604,8 @@ export type ReplayReport = {
   /** Step index at which `--until-step` interrupted the run, or `null` if all episodes finished. */
   stoppedAt: number | null;
   finalSlots: Record<string, unknown>;
+  /** Environment-read provenance, summed over every replayed reducer body. */
+  envDrift: EnvDrift;
 };
 
 /**
@@ -605,6 +631,9 @@ function executeEpisode(
   observer: ReplayObserver,
   stepCounter: { n: number },
   untilStep: number | undefined,
+  // Accumulated across episodes by the caller, for the same reason
+  // `stepCounter` is: every `return` below would otherwise have to carry it.
+  envDrift: EnvDrift,
 ): {
   panics: {
     message: string;
@@ -674,7 +703,15 @@ function executeEpisode(
     return { panics, unhandledErrors, stopped: true };
   }
 
-  const firstRed = ep.steps.find((s): s is EpisodeReducerStep => s.kind === "reducer");
+  // The episode's entry reducer. A reducer whose body threw wrote NO `reducer`
+  // step — only a `panic` one — so an episode that crashed on its first
+  // reducer would otherwise replay as an episode with nothing in it, and
+  // `kumiki replay` would exit 0 on a recorded crash. The panic step carries
+  // the reducer's name for exactly this.
+  const firstRed = ep.steps.find(
+    (s): s is EpisodeReducerStep | (EpisodeStepLite & { kind: "panic"; name: string }) =>
+      s.kind === "reducer" || (s.kind === "panic" && typeof s.name === "string"),
+  );
   if (!firstRed) {
     emit({ kind: "episode-end", episodeId: ep.id });
     return { panics, unhandledErrors, stopped: false };
@@ -688,22 +725,35 @@ function executeEpisode(
   // Per-effect FIFO of recorded effect-end values for `from-log` mocks.
   const recordedResults: Record<string, { result: "ok" | "err"; value: unknown }[]> = {};
   // Per-reducer FIFO of recorded environment reads (§10.5.1). Replay derives
-  // the reducer chain from the first recorded reducer rather than walking the
-  // log's steps, so the reads are matched by reducer NAME — the recorded
-  // reducers and the replayed ones line up per name even when the chain
-  // reaches them in a different order.
+  // the chain by re-executing reducers rather than walking the log's steps, so
+  // there is no step to read the reads off — they are keyed by reducer NAME,
+  // and the nth run of reducer `foo` takes the nth recorded `foo`.
+  //
+  // That is an ordering assumption, not an alignment guarantee. Replay walks
+  // `res.emits` in declaration order while the recording appended `.ok` / `.err`
+  // steps in effect-COMPLETION order, so a reducer reached twice by two
+  // effects that completed out of declaration order gets the two recorded read
+  // sets swapped. The failure is silent — crossed-over values, not a fallback
+  // — which is why the `live` count below cannot detect it and §10.5.3 names
+  // the case.
+  //
+  // A `panic` step is harvested on the same key: it carries the reducer's name
+  // for exactly this, so the episode that crashed replays the reads that
+  // crashed it.
   const recordedEnvReads: Record<string, EnvRead[][]> = {};
+  const harvestEnvReads = (name: string | undefined, reads: EnvRead[] | undefined): void => {
+    if (name === undefined) return;
+    const list = recordedEnvReads[name] ?? [];
+    list.push(reads ?? []);
+    recordedEnvReads[name] = list;
+  };
   for (const s of ep.steps) {
     if (s.kind === "effect-end") {
       const list = recordedResults[s.name] ?? [];
       list.push({ result: s.result, value: s.value });
       recordedResults[s.name] = list;
     }
-    if (s.kind === "reducer") {
-      const list = recordedEnvReads[s.name] ?? [];
-      list.push(s["env-reads"] ?? []);
-      recordedEnvReads[s.name] = list;
-    }
+    if (s.kind === "reducer" || s.kind === "panic") harvestEnvReads(s.name, s["env-reads"]);
   }
   const cursors: Record<string, number> = {};
   const envCursors: Record<string, number> = {};
@@ -732,12 +782,20 @@ function executeEpisode(
   while (queue.length > 0 && guard++ < 10000) {
     const job = queue.shift();
     if (!job) break;
-    let res: ReturnType<ReducerSpec["apply"]>;
-    beginEnvReplay(takeEnvReads(job.reducer.name));
-    try {
-      res = job.reducer.apply(app.live, job.payload);
-    } catch (e) {
-      endEnvScope();
+    const outcome = withEnvReplay(takeEnvReads(job.reducer.name), () =>
+      job.reducer.apply(app.live, job.payload),
+    );
+    const stepEnv: EnvDrift = {
+      live: outcome.env.live,
+      unused: outcome.env.unused,
+      malformed: outcome.env.malformed,
+    };
+    envDrift.live += stepEnv.live;
+    envDrift.unused += stepEnv.unused;
+    envDrift.malformed += stepEnv.malformed;
+    const envClean = stepEnv.live === 0 && stepEnv.unused === 0 && stepEnv.malformed === 0;
+    if (!outcome.ok) {
+      const e = outcome.error;
       // Derive the record via panicInfo so stack + Error.cause reach the
       // replay CLI unchanged. The runner treats this catch site as `reducer`
       // — it's replaying the initial reducer of a recorded episode. If the
@@ -772,7 +830,7 @@ function executeEpisode(
       }
       continue;
     }
-    endEnvScope();
+    const res = outcome.value;
     const written = writeSlots(job.reducer.name, res);
     const diffs = written ?? [];
     for (const d of diffs) dirtyForEpisode.add(d.name);
@@ -783,6 +841,7 @@ function executeEpisode(
         stepIndex: 0,
         name: job.reducer.name,
         slotDiffs: diffs,
+        ...(envClean ? {} : { env: stepEnv }),
       })
     ) {
       return { panics, unhandledErrors, stopped: true };
@@ -921,9 +980,10 @@ export function replayEpisodes(input: {
   const panics: { episodeId: string; message: string }[] = [];
   const unhandledErrors: { episodeId: string; effect: string }[] = [];
   const stepCounter = { n: 0 };
+  const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
   let stopped = false;
   for (const ep of episodes) {
-    const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep);
+    const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep, envDrift);
     for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
     for (const u of r.unhandledErrors) unhandledErrors.push({ episodeId: ep.id, effect: u.effect });
     if (r.stopped) {
@@ -938,6 +998,7 @@ export function replayEpisodes(input: {
     unhandledErrors,
     stoppedAt: stopped ? stepCounter.n : null,
     finalSlots,
+    envDrift,
   };
 }
 
@@ -1216,9 +1277,12 @@ export const _stdlibTest = {
     const unhandledErrors: string[] = [];
     const stepCounter = { n: 0 };
     const observer: ReplayObserver = () => "continue";
+    // `episode-test` asserts against slots, not provenance; the drift is still
+    // accumulated so the executor has one shape to write into.
+    const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
 
     for (const ep of episodes) {
-      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined);
+      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
       for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
       for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
     }

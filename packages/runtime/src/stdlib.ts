@@ -290,11 +290,7 @@ export const _stdlibCore = {
     }
     return false;
   },
-  /**
-   * `<T>.fresh()` — a new id. An environment read (#337): the value comes from
-   * the platform's generator, so the episode records it and a replay reproduces
-   * the id the run actually stamped.
-   */
+  /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {
     return readEnv("fresh-id", () => {
       const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -302,14 +298,14 @@ export const _stdlibCore = {
       return Math.random().toString(36).slice(2) + Date.now().toString(36);
     });
   },
-  /** `now` — the current instant, journalled so a replay lands on the same one. */
+  /** `now` — the current instant. Journalled (#337). */
   now(): number {
     return readEnv("now", () => Date.now());
   },
   /**
-   * `random()` — a Float in [0, 1) (stdlib.md §2.4.4). Journalled for the same
-   * reason as `now`: an episode whose reducer rolled a die is exactly the one
-   * worth replaying, and re-rolling on replay answers about a different run.
+   * `random()` — a Float in [0, 1) (stdlib.md §2.4.4). Journalled like the
+   * other three environment reads; why, and what a scope is, is written once
+   * at the top of `core.ts` ("the environment journal", #337).
    */
   random(): number {
     return readEnv("random", () => Math.random());
