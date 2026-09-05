@@ -5,9 +5,208 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
-import type { Episode, EpisodeLogger, PanicCategory, PanicCauseLink, SlotDiff } from "./episode.ts";
+import type {
+  EnvRead,
+  EnvReadKind,
+  Episode,
+  EpisodeLogger,
+  PanicCategory,
+  PanicCauseLink,
+  SlotDiff,
+} from "./episode.ts";
 
-export type { PanicCategory, PanicCauseLink } from "./episode.ts";
+export type { EnvRead, EnvReadKind, PanicCategory, PanicCauseLink } from "./episode.ts";
+
+// ----- The environment journal (#337, docs/spec/runtime.md §10.5.1) -----
+//
+// `now`, `random()`, `<T>.fresh()` and `prefers-dark()` are the builtins whose
+// answer comes from outside the program. An episode that only records what a
+// reducer WROTE cannot be replayed: the body runs again and reads the
+// environment again, so the replayed `slot-diffs` are a different run's. The
+// journal is the missing half — a scope the runtime opens around a reducer
+// body, recording what each read answered so a replay can hand the same
+// answers back.
+//
+// It is module state rather than a parameter because the reads happen inside
+// `_s.*` calls that codegen emits deep inside an expression; threading a
+// journal to them would mean giving every stdlib helper a context argument.
+//
+// The scope is therefore process-wide while it is open, which makes an
+// unbalanced OPEN the failure that matters: a frame left behind captures every
+// later read, in every runtime copy, and the episode it silently drains
+// records nothing. Nothing in the module prevents that by inspection, so the
+// only way to open one is `withEnvRecord` / `withEnvReplay` below, which close
+// on both exits of the body they take. The raw `beginEnv*` / `endEnvScope`
+// pair stays exported for a host that has to bracket across a boundary a
+// callback cannot span — it is on that caller to balance it.
+//
+// A stack rather than a single slot is not what keeps the balance; what it
+// buys is nesting: a replay scope opened inside a record scope restores the
+// recorder when it closes instead of clearing the journal.
+
+type EnvFrame =
+  | { mode: "record"; reads: EnvRead[] }
+  | { mode: "replay"; remaining: EnvRead[]; live: number; malformed: number };
+
+/**
+ * The stack is hung off `globalThis` rather than kept as a module-local,
+ * because the two halves of a journalled read do not always come from the same
+ * copy of the runtime. `kumiki run` / `kumiki replay` / the test suites drive
+ * an app compiled with `bundle: true` — which carries its own inlined runtime,
+ * and whose reducers therefore call THAT copy's `_s.random()` — using the
+ * tool's own `mount` / `replayEpisodes`. A module-local stack would leave the
+ * recorder opening a scope no read can see. There is one environment per
+ * process, so one journal per process is what describes it.
+ *
+ * A copy old enough not to know a kind simply finds no answer for it and reads
+ * live, which is the same degradation as an under-recorded episode.
+ */
+type EnvJournalHost = { __kumikiEnvJournal__?: EnvFrame[] };
+
+const envStack: EnvFrame[] = ((): EnvFrame[] => {
+  const host = globalThis as EnvJournalHost;
+  const existing = host.__kumikiEnvJournal__;
+  if (existing) return existing;
+  const created: EnvFrame[] = [];
+  host.__kumikiEnvJournal__ = created;
+  return created;
+})();
+
+/**
+ * What each kind's `value` has to be. A `--from-log` file is user-supplied, so
+ * an entry that passes the kind test but carries no usable value would be
+ * consumed and hand the reducer `undefined` — `now.show` renders "undefined"
+ * and the arithmetic goes NaN, without anything throwing. Entries that do not
+ * match are rejected at the scope boundary and counted as `malformed` instead.
+ */
+const ENV_VALUE_TYPE: Record<EnvReadKind, "number" | "string" | "boolean"> = {
+  now: "number",
+  random: "number",
+  "fresh-id": "string",
+  "prefers-dark": "boolean",
+};
+
+/**
+ * What a closed scope observed. `live` and `unused` are the drift between the
+ * recorded run and the replayed one — a read the log could not answer, and a
+ * recorded answer the body never asked for. Both are reported rather than
+ * inferred, because otherwise "returned the recorded value" and "read the
+ * clock again" are indistinguishable after the fact ([§10.5.3]).
+ */
+export type EnvScopeReport = {
+  /** What a record scope journalled, in the order the body asked. Empty for a replay scope. */
+  reads: EnvRead[];
+  /** Reads a replay scope had no recorded answer for, and took from the live source. */
+  live: number;
+  /** Recorded answers the replayed body never asked for. */
+  unused: number;
+  /** Entries rejected as malformed when the scope opened. */
+  malformed: number;
+};
+
+export type EnvScopeOutcome<T> =
+  | { ok: true; value: T; env: EnvScopeReport }
+  | { ok: false; error: unknown; env: EnvScopeReport };
+
+/** Open a scope that records every environment read until `endEnvScope`. */
+export function beginEnvRecord(): void {
+  envStack.push({ mode: "record", reads: [] });
+}
+
+/**
+ * Open a scope that answers environment reads from `reads` (an episode's
+ * recorded `env-reads`) instead of the live source. Takes `unknown` because
+ * the list comes straight out of a log file: anything that is not a
+ * well-formed entry is dropped here rather than reaching a reducer body.
+ */
+export function beginEnvReplay(reads: unknown): void {
+  const list = Array.isArray(reads) ? (reads as unknown[]) : [];
+  // A non-array that is not simply absent is itself one malformed input.
+  let malformed = Array.isArray(reads) || reads == null ? 0 : 1;
+  const remaining: EnvRead[] = [];
+  for (const entry of list) {
+    const read =
+      entry && typeof entry === "object"
+        ? (entry as { kind?: unknown; value?: unknown })
+        : { kind: undefined, value: undefined };
+    const want = ENV_VALUE_TYPE[read.kind as EnvReadKind];
+    if (want !== undefined && typeof read.value === want) {
+      remaining.push({ kind: read.kind as EnvReadKind, value: read.value });
+    } else {
+      malformed++;
+    }
+  }
+  envStack.push({ mode: "replay", remaining, live: 0, malformed });
+}
+
+/**
+ * Close the innermost scope and report what it observed. Safe to call with no
+ * scope open — it answers an empty report.
+ */
+export function endEnvScope(): EnvScopeReport {
+  const frame = envStack.pop();
+  if (!frame) return { reads: [], live: 0, unused: 0, malformed: 0 };
+  if (frame.mode === "record") return { reads: frame.reads, live: 0, unused: 0, malformed: 0 };
+  return {
+    reads: [],
+    live: frame.live,
+    unused: frame.remaining.length,
+    malformed: frame.malformed,
+  };
+}
+
+function withEnvScope<T>(body: () => T): EnvScopeOutcome<T> {
+  let value: T;
+  try {
+    value = body();
+  } catch (error) {
+    // The scope closes on the throwing path too — a reducer that panicked read
+    // the environment before it did, and that is the episode most worth
+    // replaying.
+    return { ok: false, error, env: endEnvScope() };
+  }
+  return { ok: true, value, env: endEnvScope() };
+}
+
+/** Run `body` inside a recording scope. The scope closes on both exits. */
+export function withEnvRecord<T>(body: () => T): EnvScopeOutcome<T> {
+  beginEnvRecord();
+  return withEnvScope(body);
+}
+
+/** Run `body` inside a replay scope seeded with `reads`. Closes on both exits. */
+export function withEnvReplay<T>(reads: unknown, body: () => T): EnvScopeOutcome<T> {
+  beginEnvReplay(reads);
+  return withEnvScope(body);
+}
+
+/**
+ * Read the environment through the journal. `live` is the real source, called
+ * when nothing is recording and when a replay has no unspent answer of this
+ * kind left — an episode that under-records degrades to today's behaviour
+ * (a fresh value) rather than to a throw, and the scope's report says how
+ * often that happened.
+ *
+ * A replay matches by kind rather than by position so an extra read of one
+ * builtin cannot shift another's answers; within one kind the recorded order
+ * is the order they are handed back.
+ */
+export function readEnv<T>(kind: EnvReadKind, live: () => T): T {
+  const frame = envStack[envStack.length - 1];
+  if (!frame) return live();
+  if (frame.mode === "record") {
+    const value = live();
+    frame.reads.push({ kind, value });
+    return value;
+  }
+  for (let i = 0; i < frame.remaining.length; i++) {
+    if (frame.remaining[i]?.kind !== kind) continue;
+    const [read] = frame.remaining.splice(i, 1);
+    return (read as EnvRead).value as T;
+  }
+  frame.live++;
+  return live();
+}
 
 /**
  * SSR slot snapshot — the non-`volatile` slot values an SSR pass produces.
@@ -1730,10 +1929,26 @@ export function mountCore(
    * surface it (console.error → smoke/scenario see it) and fire the `app.error`
    * reducer(s) with `$event = PanicInfo`, exactly as §7.2.3 specifies.
    */
-  function handleLivePanic(location: string, e: unknown): void {
+  /**
+   * `reducer` / `envReads` are passed when the throw came out of a reducer
+   * body: the panic step then carries which reducer it was and what that body
+   * read from the environment, so a replay can reproduce the crash rather than
+   * re-rolling its way past it (§10.5.1).
+   */
+  function handleLivePanic(
+    location: string,
+    e: unknown,
+    reducer?: string,
+    envReads?: readonly EnvRead[],
+  ): void {
     reportPanic(location, e);
     const rec = panicInfo(e, "reducer");
-    episode?.recordPanic({ ...rec, location });
+    episode?.recordPanic({
+      ...rec,
+      location,
+      ...(reducer !== undefined ? { name: reducer } : {}),
+      ...(envReads !== undefined && envReads.length > 0 ? { envReads } : {}),
+    });
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -1779,20 +1994,24 @@ export function mountCore(
       const t = triggerOfReducer(r);
       episode.beginTrigger({ kind: t.kind, target: t.target, payload });
     }
-    let result: ReturnType<ReducerSpec["apply"]>;
-    try {
-      result = r.apply(slotValues, payload);
-    } catch (e) {
+    // Journalled unconditionally rather than only when a logger is attached:
+    // the guard would be a second way for the scope to be open or not, and the
+    // balance of this one is what keeps every later read in the process
+    // attributed correctly. One frame per apply is what it costs.
+    const outcome = withEnvRecord(() => r.apply(slotValues, payload));
+    const envReads = outcome.env.reads;
+    if (!outcome.ok) {
       // A panic (or any throw) inside a reducer is caught here so it does not
       // escape the DOM event handler. The dispatch episode is rolled back —
       // `apply` returns the new slots and we only write them on success, so a
       // throw applies NO partial state. The app stays interactive (a later
       // dispatch still runs); the `app.error` reducer (if any) is fired with
       // PanicInfo. The reducer-test harness catches panics separately (#24).
-      handleLivePanic(`reducer "${r.name}"`, e);
+      handleLivePanic(`reducer "${r.name}"`, outcome.error, r.name, envReads);
       if (opened) episode?.endTrigger();
       return;
     }
+    const result = outcome.value;
     // Compute slot diffs (excluding `volatile` slots per language.md §1.4.1):
     // shared with the SSR pseudo-reducer pipeline so volatile semantics never
     // drift across the hydration boundary.
@@ -1804,7 +2023,9 @@ export function mountCore(
       // real. The reducer is still logged (it did run, and changed nothing) so
       // a replay does not show a trigger with no reducer under it.
       reportRejectedBatch(r.name, rejected);
-      episode?.recordReducer(r.name, [], []);
+      // The body still ran, and still read the environment. A replay that
+      // re-runs it has to see the same answers or it may not reject at all.
+      episode?.recordReducer(r.name, [], [], envReads);
       if (opened) episode?.endTrigger();
       return;
     }
@@ -1812,6 +2033,7 @@ export function mountCore(
       r.name,
       diffs,
       result.emits.map((e) => e.effect),
+      envReads,
     );
     for (const emit of result.emits) {
       if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;

@@ -213,5 +213,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `84-off-origin-link.kumiki` | app, tile | ルーティング | [§3.3.1](./routing.md#_3-3-1-link-要素-推奨) |
 | `85-capitalised-reducer-handler.kumiki` | slot, reducer, tile | コア | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `86-container-selector-through-reference.kumiki` | slot, reducer, tile | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
+| `87-replayed-environment-read.kumiki` | slot, reducer, tile | コア | [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode) |
 <!-- examples:end -->
 :::

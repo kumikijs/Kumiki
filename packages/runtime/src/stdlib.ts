@@ -11,6 +11,7 @@ import {
   type PathSegment,
   panicInfo,
   type RefinementRejection,
+  readEnv,
   refinementRejectionOf,
   tokenRef,
 } from "./core.ts";
@@ -289,13 +290,25 @@ export const _stdlibCore = {
     }
     return false;
   },
+  /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {
-    const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-    if (c?.randomUUID) return c.randomUUID();
-    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return readEnv("fresh-id", () => {
+      const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+      if (c?.randomUUID) return c.randomUUID();
+      return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    });
   },
+  /** `now` — the current instant. Journalled (#337). */
   now(): number {
-    return Date.now();
+    return readEnv("now", () => Date.now());
+  },
+  /**
+   * `random()` — a Float in [0, 1) (stdlib.md §2.4.4). Journalled like the
+   * other three environment reads; why, and what a scope is, is written once
+   * at the top of `core.ts` ("the environment journal", #337).
+   */
+  random(): number {
+    return readEnv("random", () => Math.random());
   },
   recordCopy(
     rec: Record<string, unknown>,
@@ -575,8 +588,10 @@ export const _stdlibCore = {
    * drives both branches by stubbing the media query.
    */
   prefersDark(): boolean {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return readEnv("prefers-dark", () => {
+      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    });
   },
 
   // ----- Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).

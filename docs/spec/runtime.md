@@ -719,7 +719,8 @@ The causal sequence derived from a single trigger is recorded as one **episode**
   "id": "ep_01JC...",
   "trigger": {"kind": "ui.click", "target": "AddBtn", "payload": {...}, "ts": ...},
   "steps": [
-    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"], "ts": ...},
+    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"],
+     "env-reads": [{"kind": "now", "value": 1717900000000}], "ts": ...},
     {"kind": "effect-start", "name": "persist", "args": {...}, "ts": ...},
     {"kind": "effect-end", "name": "persist", "result": "ok", "value": "()", "ts": ...},
     {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...},
@@ -737,7 +738,22 @@ The causal sequence derived from a single trigger is recorded as one **episode**
 }
 ```
 
+A `reducer` step additionally carries:
+
+- `env-reads`: what the reducer body read from the **environment** while it ran, in the order it asked. An entry is `{kind, value}`; `kind` is one of `now` / `random` / `fresh-id` / `prefers-dark` — the builtins whose answer comes from outside the program, so that nothing in the slots determines it. The field is **omitted** when the body read nothing, which is most reducers. A reducer whose batch a refinement rejected ([§10.3.3](#_10-3-3-batching)) still records its reads: the body ran, and a replay that re-runs it has to see the same answers or it may not reject at all.
+
+  The recorded scope is the **reducer body**, and only that. The same builtins are callable anywhere an expression is ([§10.10](#_10-10-implementation-responsibilities-of-the-standard-library)) — `now` in a tile expression, `prefers-dark()` during a render — and a read outside a reducer body is **not** recorded and not reproduced. Nothing replays a render, so there is nothing for such a read to be reproduced against.
+
+  What a read answers is journalled; what a value is later *formatted with* is not. `now.format(...)` and `Time.parse("yyyy-MM-dd")` resolve in the host's **local time zone** ([stdlib.md §2.4.2](./stdlib.md#_2-4-2-time)), which is not an `env-reads` kind, so an episode recorded in one zone and replayed in another reproduces the recorded instant and formats it differently. The guarantee below is over the four kinds, not over every value derived from them.
+
+  `env-reads` is why a replay is the *same run*. An episode that recorded only what a reducer wrote could not be replayed: `replay` re-executes the body, and a body that reads the environment reads it again — a new die roll, a later instant — so the replayed `slot-diffs` belong to a different run than the recorded ones. `env-reads` is the recorded run's environment, kept so it can be handed back ([§10.5.3](#_10-5-3-replay)).
+
+  Like `stack` / `cause` / `category` below, it is **optional** for forward compatibility: an episode log written by an older runtime carries no `env-reads` and MUST continue to parse and replay unchanged.
+
 A `panic` step additionally carries:
+
+- `name`: the reducer whose body threw, when the throw came from one (`location` is prose, and a replay needs a key). Absent for a `render` / `hydrate` panic.
+- `env-reads`: what that body read before it threw, in the same shape as a `reducer` step's. A reducer that threw wrote **no** `reducer` step, so without these two fields the episode a user attaches to a bug report — the one that crashed — is the one a replay cannot reproduce: it re-reads the environment, takes a different branch, and completes.
 
 - `stack`: the `Error.stack` of the caught throw, when available.
 - `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
@@ -796,6 +812,12 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 - An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
 - `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
 - Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
+- **An environment read is answered from the log, not from the environment.** Before a reducer body runs, replay installs that reducer's recorded `env-reads` ([§10.5.1](#_10-5-1-structure-of-an-episode)); `now`, `random()`, `<T>.fresh()` and `prefers-dark()` then return what they returned during the recording instead of reading the clock / the random source / the id generator / the OS preference again. Replaying an episode whose reducer read the environment therefore reproduces its recorded `slot-diffs` exactly, every time.
+  - Reads are matched to recorded answers **by kind**, in recorded order within a kind, so an extra read of one builtin cannot shift another's answers.
+  - A read with no recorded answer left — an older log, or a body that read more this time than it did when recorded — falls through to the live source rather than failing the replay. That read is the one thing a replay cannot reproduce, so it is **reported rather than inferred**: the step's trace line carries `(env: N read live)` and the run ends with an `environment reads:` summary. The same line reports recorded answers the replayed body never asked for (`N recorded unused`) and entries the log carried that were not well-formed (`N malformed`); a step with none of the three says nothing.
+  - An entry whose `value` is missing or is not the type its `kind` calls for (`now` / `random` are numbers, `fresh-id` a string, `prefers-dark` a boolean) is **rejected** when the scope opens rather than handed to the body. Consuming a malformed entry would return `undefined` — `now.show` renders `"undefined"`, arithmetic goes `NaN` — and nothing would throw to say why. A rejected entry is counted `malformed` and its read falls through to the live source.
+  - A recorded `panic` step replays like a `reducer` step: its `name` names the entry reducer and its `env-reads` are installed the same way, so a recorded crash crashes again.
+  - Recorded `env-reads` are matched to the replayed reducer **by name**: replay derives the chain by re-executing reducers rather than walking the log's steps, so the *n*th run of reducer `foo` takes the *n*th recorded `foo` step's reads. That is an ordering assumption, not an alignment guarantee — replay walks a reducer's emits in declaration order while the recording appended `.ok` / `.err` steps in effect-**completion** order, so one reducer reached twice by two effects that completed out of declaration order takes the two recorded read sets **swapped**. That failure is silent: the values are crossed over rather than absent, so it raises no `live` count.
 - A `panic` step ([§10.5.1](#_10-5-1-structure-of-an-episode)) is rendered as a multi-line block: header `[panic:<category>] <message>  <location>` followed by indented `.stack` lines and, for each `cause` link, a `Caused by: <message>` line with the link's own indented stack. The replay executor derives `category` for every observed panic (an older episode log missing the field still gets a category assigned when its reducer re-throws during replay), so the multi-line form is what the CLI normally shows. The formatter also accepts a minimal `{kind, message}` panic event and prints it as the single-line `[panic] <message>` fallback — this only surfaces if a caller feeds `formatEvent` a hand-authored event outside the normal replay pipeline.
 - Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
@@ -957,6 +979,19 @@ app.episodes                          // recent episodes
 app.unmount()
 ```
 
+A host that runs reducer bodies itself — a custom test harness, a replayer of its own — can bracket their environment reads with the same journal the runtime uses ([§10.5.1](#_10-5-1-structure-of-an-episode)):
+
+```ts
+import { withEnvRecord, withEnvReplay } from "@kumikijs/runtime";
+
+const run = withEnvRecord(() => reducer.apply(live, payload));
+run.env.reads;                                  // the `env-reads` to log
+const again = withEnvReplay(run.env.reads, () => reducer.apply(live, payload));
+again.env.live;                                 // reads the list could not answer
+```
+
+Both take the body as a callback because the scope is process-wide while it is open: a frame left behind captures every later read in the process, so the only balanced way to open one is to hand it the body. The raw `beginEnvRecord` / `beginEnvReplay` / `endEnvScope` are exported for a host that has to bracket across a boundary a callback cannot span, and balancing them is then the caller's job.
+
 ### 10.9.1 Web Component embedding (`defineKumikiElement`)
 
 The **outbound ecosystem seam**: wrap a compiled app as a standard custom element so it drops into any host page or framework (React/Vue/Svelte/plain HTML) without a Kumiki-specific integration. It bridges the host both ways and owns the mount lifecycle (mount on connect, dispose on disconnect).
@@ -1002,8 +1037,8 @@ For the built-ins enumerated in [Standard Library](./stdlib.md), the runtime imp
 |---|---|
 | `Map`, `Set`, `List` | pure (no in-place mutation) |
 | `Option`, `Result` | exhaustiveness check for pattern matching |
-| `now`, `random()` | callable wherever an expression is; the values they read are **not** recorded, so a replay of an episode that read one draws a new value |
-| `*.fresh()` | generates UUIDv7 |
+| `now`, `random()` | callable wherever an expression is. A read **inside a reducer body** has the value it returned recorded on that episode's step as `env-reads` ([§10.5.1](#_10-5-1-structure-of-an-episode)), so a replay reproduces it rather than drawing a new value; a read anywhere else (a tile expression, a render) is not recorded, and nothing replays those |
+| `*.fresh()` | generates UUIDv7; recorded as an `env-reads` entry like `now` / `random()` under the same reducer-body scope, so a replayed episode stamps the ids the run actually stamped |
 | `panic(message)` | puts the episode into the `panic` state and rolls back slots |
 
 ---

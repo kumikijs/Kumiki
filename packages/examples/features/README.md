@@ -59,5 +59,6 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |
 | [66-value-types](./66-value-types.kumiki) | the shapes value-level type checking accepts, and the mistake each one used to hide |
+| [87-replayed-environment-read](./87-replayed-environment-read.kumiki) | an episode records what `random()` / `now` answered, so replaying it reproduces the run |
 
 New questions and bugs are answered first by adding a minimal reproduction here.

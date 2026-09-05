@@ -223,7 +223,7 @@ describe("random", () => {
   });
 
   it("lowers to the platform's generator", () => {
-    expect(loweringOf("random()")).toContain("Math.random()");
+    expect(loweringOf("random()")).toContain("_s.random()");
   });
 
   // Unlike `now`, which the checker also accepts as a bare reference, `random`
