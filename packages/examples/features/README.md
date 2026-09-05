@@ -60,5 +60,6 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |
 | [66-value-types](./66-value-types.kumiki) | the shapes value-level type checking accepts, and the mistake each one used to hide |
 | [87-replayed-environment-read](./87-replayed-environment-read.kumiki) | an episode records what `random()` / `now` answered, so replaying it reproduces the run |
+| [88-string-formatting](./88-string-formatting.kumiki) | `fmt("{0}", …)` substitution — a repeated index, an index the arguments do not reach, and a `{` that opens no placeholder |
 
 New questions and bugs are answered first by adding a minimal reproduction here.

@@ -70,3 +70,55 @@ describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
     expect(xs).toEqual([3, 1, 2]);
   });
 });
+
+// Issue #340: `fmt` had no helper at all, so codegen's `_s.fmt ? … : template`
+// guard always took the else branch and every call returned its template with
+// the placeholders intact. The rules pinned here are the ones docs/spec/stdlib.md
+// §2.4.5 now states — including the two it used to leave open.
+describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
+  it("replaces each {n} with the argument at that index", () => {
+    expect(_stdlibCore.fmt("{0}-{1}", "a", "b")).toBe("a-b");
+    expect(_stdlibCore.fmt("Hello {0}, you have {1}", "Ada", 3)).toBe("Hello Ada, you have 3");
+  });
+
+  it("reuses an index as many times as the template names it, in any order", () => {
+    expect(_stdlibCore.fmt("{1} {0} {1}", "a", "b")).toBe("b a b");
+  });
+
+  it("renders an argument the way `+` does — through `show`", () => {
+    // `show`: a variant is its tag, a nullish is the empty string, everything
+    // else is `String(v)`. A `fmt` that stringified differently would make the
+    // same value read two ways in one sentence.
+    expect(_stdlibCore.fmt("{0}", { _tag: "None" })).toBe("None");
+    expect(_stdlibCore.fmt("[{0}]", null)).toBe("[]");
+    expect(_stdlibCore.fmt("{0}", true)).toBe("true");
+    expect(_stdlibCore.fmt("{0}", 1.5)).toBe("1.5");
+  });
+
+  it("leaves an index the arguments do not reach exactly as written", () => {
+    expect(_stdlibCore.fmt("{0} {1}", "a")).toBe("a {1}");
+    expect(_stdlibCore.fmt("{3}", "a")).toBe("{3}");
+    expect(_stdlibCore.fmt("{0}")).toBe("{0}");
+  });
+
+  it("copies through a `{` that opens no placeholder, with no escape", () => {
+    expect(_stdlibCore.fmt("{}", "a")).toBe("{}");
+    expect(_stdlibCore.fmt("{a}", "a")).toBe("{a}");
+    expect(_stdlibCore.fmt("{ 0 }", "a")).toBe("{ 0 }");
+    expect(_stdlibCore.fmt("{01", "a")).toBe("{01");
+    expect(_stdlibCore.fmt("0}", "a")).toBe("0}");
+    // No escape: the inner `{0}` is the placeholder and the outer braces are text.
+    expect(_stdlibCore.fmt("{{0}}", "a")).toBe("{a}");
+  });
+
+  it("does not re-scan what it substituted", () => {
+    // One left-to-right pass. Otherwise a formatted user string could reach
+    // back into the argument list and print an argument it was never given.
+    expect(_stdlibCore.fmt("{0}", "{1}", "secret")).toBe("{1}");
+  });
+
+  it("takes a nullish template as the empty string rather than throwing", () => {
+    expect(_stdlibCore.fmt(null, "a")).toBe("");
+    expect(_stdlibCore.fmt(undefined)).toBe("");
+  });
+});

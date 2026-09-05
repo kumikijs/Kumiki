@@ -483,3 +483,31 @@ app A
     );
   });
 });
+
+// stdlib.md §2.4.5: `fmt(template, ...args)` substitutes `{0}`…`{n}`. The
+// lowering was `_s.fmt ? _s.fmt(…) : template`, written for a runtime helper
+// that was never added — so every call took the else branch and evaluated to
+// its own template. The template is a `Text`, which is what a formatted result
+// is too, so nothing downstream could tell the two apart (#340).
+describe("fmt lowers to the runtime helper, unguarded", () => {
+  const source = `slot greeting : Text = ""
+reducer greet on=app.start do= greeting := fmt("Hello {0}, you have {1}", "Ada", 3)
+tile App = column(text(greeting))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("calls `_s.fmt` with the template and every argument after it", () => {
+    expect(build(source)).toContain('_s.fmt("Hello {0}, you have {1}", "Ada", 3)');
+  });
+
+  it("emits no fallback to the template", () => {
+    // The guard is what let the gap hide: with it, a build against a runtime
+    // missing the helper is not a crash but a program that silently formats
+    // nothing. Absent it, the same build fails where it can be seen.
+    const js = build(source);
+    expect(js).not.toContain("_s.fmt ?");
+  });
+});

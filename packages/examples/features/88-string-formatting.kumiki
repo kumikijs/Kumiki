@@ -1,0 +1,53 @@
+# Feature (spec/stdlib.md §2.4.5): `fmt(template, ...args)` substitutes
+# `{0}` … `{n}`.
+#
+# The substitution used to not happen at all: the runtime carried no `fmt`
+# helper, so codegen's `_s.fmt ? … : template` guard always took the else
+# branch and a call evaluated to its own template. `check`, `build` and
+# `smoke` were green throughout — a template is a `Text`, exactly like the
+# formatted result it was standing in for, so nothing downstream could tell
+# the two apart. Only a scenario that names the substituted string can.
+#
+# Each slot below pins one rule of §2.4.5, and the two the spec used to leave
+# open — an index the arguments do not reach, and a `{` that opens no
+# placeholder — are the last two.
+
+slot who      : Text = "Ada"
+slot unread   : Int  = 3
+
+slot greeting : Text = ""
+slot reordered: Text = ""
+slot rendered : Text = ""
+slot missing  : Text = ""
+slot literal  : Text = ""
+
+reducer render on=ui.click(RenderBtn)
+    do= greeting  := fmt("Hello {0}, you have {1}", who, unread)
+        # An index may repeat and may appear out of order.
+        reordered := fmt("{1} {0} {1}", "a", "b")
+        # An argument is rendered the way `+` renders it — the `show` equivalent.
+        rendered  := fmt("{0} and {1}", unread, true)
+        # `{1}` has no argument, so it stays as written rather than rendering
+        # empty: the reader can see which index went missing.
+        missing   := fmt("{0} {1}", "a")
+        # There is no escape. `{}` and `{a}` are text; in `{{0}}` the inner
+        # `{0}` is the placeholder and the braces around it are text.
+        literal   := fmt("{} {a} {{0}}", "x")
+
+tile RenderBtn = button(text="render", onClick=render)
+
+tile App
+    = column(
+        heading("string formatting"),
+        RenderBtn,
+        text("greeting=" + greeting),
+        text("reordered=" + reordered),
+        text("rendered=" + rendered),
+        text("missing=" + missing),
+        text("literal=" + literal))
+      {pad: "lg", gap: "md"}
+
+app StringFormatting
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
