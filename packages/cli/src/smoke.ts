@@ -286,8 +286,14 @@ export async function runCmd(
     const s = report.steps[i];
     if (!s) continue;
     const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
-    const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
+    const status =
+      s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined
+        ? "ok"
+        : "FAIL";
     console.log(`[${status}] ${head}`);
+    // First, and on its own line: the step did nothing, so everything below it
+    // describes the app as it was before the step rather than after.
+    if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);

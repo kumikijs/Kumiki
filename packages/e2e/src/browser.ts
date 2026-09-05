@@ -197,6 +197,13 @@ export function validateScenario(scenario: Scenario): string[] {
 export type StepResult = {
   label?: string;
   action?: string;
+  /**
+   * Why the step's action could not run — a selector matching nothing, a `fill`
+   * aimed at an element that holds no text. Kept off `errors` for the same
+   * reason the scenario tier keeps it off its own: nothing was observed about
+   * the app, and `noErrors` reads that list. It fails the step all the same.
+   */
+  actionError?: string;
   errors: string[];
   state: Record<string, unknown>;
   visibleText: string;
@@ -430,11 +437,12 @@ async function serveScenario(
     for (const step of scenario.steps) {
       errorBuf = [];
       const actionDesc = step.do ? describeAction(step.do) : undefined;
+      let actionError: string | undefined;
       if (step.do) {
         try {
           await performAction(page, step.do);
         } catch (e) {
-          errorBuf.push(`action failed: ${e instanceof Error ? e.message : String(e)}`);
+          actionError = e instanceof Error ? e.message : String(e);
         }
         await page.waitForTimeout(settleMs);
       }
@@ -445,6 +453,7 @@ async function serveScenario(
         .catch(() => "");
       const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
       const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
+      if (actionError !== undefined) r.actionError = actionError;
       if (step.label !== undefined) r.label = step.label;
       if (actionDesc !== undefined) r.action = actionDesc;
       steps.push(r);
@@ -460,7 +469,9 @@ async function serveScenario(
   // "green with warnings". `expect.noErrors` in a fixture is therefore
   // redundant here — accepted for scenario-format compatibility, but not
   // load-bearing.
-  const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);
+  const ok = steps.every(
+    (s) => s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined,
+  );
   return { ok, steps };
 }
 
@@ -614,6 +625,33 @@ async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("fill" in a) {
+    // Named here rather than left to Playwright: its own refusal is an
+    // actionability check, so a selector that drifted onto a wrapper spends the
+    // timeout before reporting "not an <input>, <textarea> or [contenteditable]"
+    // without saying what it did match. The scenario tier answers with the tag
+    // it found; a fixture promoted from that tier reads the same message here.
+    const found = await page
+      .locator(a.fill)
+      .first()
+      .evaluate(
+        (el: Element) => ({
+          tag: el.tagName.toLowerCase(),
+          fillable:
+            el instanceof HTMLInputElement ||
+            el instanceof HTMLTextAreaElement ||
+            el.getAttribute("contenteditable") !== null,
+        }),
+        undefined,
+        // The same budget the `fill` below carries: a selector matching nothing
+        // must not spend the suite's default 30s to say so.
+        { timeout: 3000 },
+      );
+    if (!found.fillable) {
+      throw new Error(
+        `${a.fill} matched <${found.tag}>, which holds no text to fill — ` +
+          "fill targets input / textarea / editable",
+      );
+    }
     await page.locator(a.fill).first().fill(a.value, { timeout: 3000 });
     return;
   }

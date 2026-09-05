@@ -35,11 +35,18 @@ export type Expect = {
   /** No runtime errors since the previous step. */
   noErrors?: boolean;
   /**
-   * Substrings that must each appear in some error reported since the previous
-   * step. The counterpart to `noErrors`: a contract whose whole point is that
-   * the runtime *reports* something (a rejected reducer batch, a dropped effect
-   * error) is otherwise unassertable at this tier, and an example demonstrating
-   * one would have to settle for "no error was raised about it".
+   * Substrings that must each appear in some error the *app* reported since the
+   * previous step. The counterpart to `noErrors`: a contract whose whole point
+   * is that the runtime *reports* something (a rejected reducer batch, a
+   * dropped effect error) is otherwise unassertable at this tier, and an
+   * example demonstrating one would have to settle for "no error was raised
+   * about it".
+   *
+   * A step whose action could not run is not one of those: it is a fault in the
+   * scenario, reported on `StepResult.actionError`, and deliberately out of
+   * reach here. Otherwise `{do: {key: "#typo"}, errorIncludes: ["no element"]}`
+   * passed, having pressed nothing — a fixture asserting that its own mistake
+   * happened.
    */
   errorIncludes?: string[];
   /** Partial match against the slot state (slot name → expected value). */
@@ -232,6 +239,14 @@ export type StepResult = {
    * that the run failed.
    */
   expectedErrors: string[];
+  /**
+   * Why the step's action could not run — a selector matching nothing, a `fill`
+   * aimed at an element that holds no text. Absent in the healthy case, and a
+   * channel of its own rather than an entry in `errors`: nothing was observed
+   * about the app, so `noErrors` and `errorIncludes` must not see it. It fails
+   * the step all the same.
+   */
+  actionError?: string;
   emits: { effect: string; args: unknown[] }[];
   state: Record<string, unknown>;
   domText: string;
@@ -372,11 +387,15 @@ export async function runScenario(
       emitBuf.length = 0;
       diagBuf.length = 0;
       const actionDesc = step.do ? describeAction(step.do) : undefined;
+      // Kept out of `errorBuf`, which is what the app reported. An action that
+      // could not run is the scenario's fault, and folding the two together let
+      // `errorIncludes` claim it — see `StepResult.actionError`.
+      let actionError: string | undefined;
       if (step.do) {
         try {
           performAction(step.do, root, dispatchable);
         } catch (e) {
-          errorBuf.push(`action threw: ${errStr(e)}`);
+          actionError = errStr(e);
         }
         // `wait` is the whole action: it adds its duration to the settle this
         // step would have had anyway, so a debounce window or a retry backoff
@@ -398,6 +417,7 @@ export async function runScenario(
         [...diagBuf],
         expected,
       );
+      if (actionError !== undefined) result.actionError = actionError;
       steps.push(result);
     }
     return finish();
@@ -414,7 +434,9 @@ export async function runScenario(
   }
 
   function finish(): ScenarioReport {
-    const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);
+    const ok = steps.every(
+      (s) => s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined,
+    );
     return { ok, steps };
   }
 }
@@ -624,8 +646,10 @@ function evaluateExpect(
 ): string[] {
   if (!expect) return [];
   const failures: string[] = [];
-  // `noErrors` means "nothing this step did not ask for", so it composes with
-  // `errorIncludes`: a step can require one report and forbid every other.
+  // `noErrors` means "nothing the app reported that this step did not ask for",
+  // so it composes with `errorIncludes`: a step can require one report and
+  // forbid every other. An action that could not run is neither — it is on
+  // `actionError`, and fails the step whatever this block decides.
   if (expect.noErrors && reported.unexpected.length > 0) {
     failures.push(`expected no errors but got: ${reported.unexpected.join("; ")}`);
   }

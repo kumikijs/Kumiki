@@ -527,9 +527,15 @@ export function createServer(): McpServer {
         capsForInput(input),
       );
       const lines = report.steps.map((s, i) => {
-        const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
+        const status =
+          s.errors.length === 0 && s.failures.length === 0 && s.actionError === undefined
+            ? "ok"
+            : "FAIL";
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
+          // The step did nothing: an agent reading this must not diagnose the
+          // app from a state the action never reached.
+          ...(s.actionError !== undefined ? [`    action failed: ${s.actionError}`] : []),
           ...s.errors.map((e) => `    error: ${e}`),
           // An error the step's `errorIncludes` asked for is out of `errors`,
           // so without this line the agent driving the fix loop reads a step

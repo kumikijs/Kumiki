@@ -35,7 +35,10 @@ are deterministic and hermetic.
    }
    ```
 5. **Run** — `kumiki run <file> <scenario.json>` (or `kumiki_run_scenario`). You get a
-   per-step trace: `state` (slot snapshot), `domText`, `errors`, `emits`, `failures`.
+   per-step trace: `state` (slot snapshot), `domText`, `errors`, `emits`, `failures`, and
+   `actionError` — printed as `action failed:`. That last one is a fault in **your scenario**
+   (a selector matching nothing, a `fill` aimed at a wrapper): the step did nothing, so the
+   state and DOM below it are from before the step. Fix the selector, don't diagnose the app.
 6. **Diagnose from the trace, not guesses.** Each failure says exactly what was
    expected vs. got. `errors` → a throw; `failures` with `state ...` → wrong behavior
    (the class a human would catch by clicking, e.g. a select that always yields the
@@ -55,6 +58,8 @@ are deterministic and hermetic.
   `errorIncludes` asserts an error **was** reported (each substring must appear in one) — for
   contracts whose point is that the runtime surfaces something, e.g. a reducer batch a
   refinement rejected. `noErrors` then means "nothing this step did not ask for", so both compose.
+  Neither sees an action that could not run: that is `actionError`, and no `errorIncludes` can
+  claim it — so a step cannot pass by asserting its own broken selector.
   `state` is a **partial** match; keys may be dotted paths (`issues.id-1.status`).
 - `effects`: per-effect queues of `{outcome, value}` returned in order — script HTTP/storage
   so the loop is deterministic and never hits the network.
