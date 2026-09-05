@@ -34,6 +34,9 @@ rather than over-reports: the prop lands on the tile's **root** node, so
 `box(button(…))` drops the handler too and stays silent, because the walk does
 not yet tell a root from a descendant. Everything it does report is a certain
 drop, so the working shape — a tile whose tree contains a firing kind — draws
-nothing and the warning does not become noise. A tree that cannot be resolved
-statically (a cycle, a name declared nowhere, a body with nothing static in it)
-is not reported either, matching how W0212 declines the same uncertainty.
+nothing and the warning does not become noise. When the walk finds no kind at
+all — the tile's own root is a name that resolves to neither a builtin nor a
+declared tile, or a cycle — nothing is reported, matching how W0212 declines
+the same empty answer; those shapes have E0105 / E0005 already. Nested, the
+kinds around the unresolvable part are still a true answer about the root, so
+the warning stands beside the code that names it.

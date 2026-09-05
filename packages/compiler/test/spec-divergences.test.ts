@@ -292,10 +292,12 @@ tile InBtn = button(text="in", onClick=open)`;
     expect(diags('row(text("card")) {onBlur: open}')).toEqual([]);
   });
 
-  it("leaves a handler on a user-defined tile alone", () => {
-    // Only the builtin renderers are known here. `Row {onClick: open}` names a
-    // user tile, whose body decides whether the handler lands — and that body
-    // is checked where it is written.
+  // A user tile is asked the same question now (#329), by walking its render
+  // tree — so this one is quiet because `InBtn` puts a `button` in the tree,
+  // not because user tiles go unexamined. The distinction is the whole subject
+  // of the divergence block below: a firing kind in the tree is not the same
+  // fact as a firing kind at the root.
+  it("says nothing about a user tile whose tree contains a firing kind", () => {
     const src = `${REDUCER}
 tile Row = row(text("x"), InBtn)
 tile App = column(Row {onClick: open}, text(n.show))
@@ -305,6 +307,64 @@ app A
     init   = []
 `;
     expect(codes(src)).toEqual([]);
+  });
+
+  it("reports a user tile whose tree contains none", () => {
+    const src = `${REDUCER}
+tile Row = row(text("x"))
+tile App = column(Row {onClick: open}, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual(["W0213"]);
+  });
+});
+
+// errors.md W0213: "the prop lands on the tile's ROOT node, so
+// `tile Card = box(button(...))` drops the handler too and is *not* reported,
+// because the walk does not distinguish a root from a descendant."
+//
+// The spec states the gap; this is the half that keeps it honest. Both
+// assertions below are FALSE NEGATIVES — a certain drop the checker stays
+// silent about — so a later narrowing of the walk to the root should fail
+// here and be read as the fix it is, rather than passing unnoticed in
+// `ui-lifts.test.ts` where a bare `toEqual([])` is indistinguishable from
+// legitimate suppression.
+describe("known gap: W0213 does not see a firing kind that is not the root", () => {
+  const REDUCER = `slot n : Int = 0
+reducer open on=app.start do= n := n + 1`;
+
+  const src = (tiles: string) => `${REDUCER}
+${tiles}
+tile App = column(Card {onClick: open}, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  // The premise, not an assumption: `_attachProps` merges the prop onto the
+  // node `Card` renders as its root, which is the `box`. Nothing puts it on
+  // the `button` inside, so the click really is dead — a scenario clicking
+  // the button never runs `open`.
+  it("codegen puts the handler on the root box, not on the button inside", () => {
+    const js = build(src('tile Card = box(button(text="go"))'));
+    // Counted rather than matched literally, because the fixture's two routes
+    // both name `App` and codegen inlines the tree once per route: what has to
+    // hold is that EVERY `onClick` in the output arrived through the root
+    // merge, so none of them is on the button.
+    const rootMerges = js.match(/_attachProps\(\(\{ kind: "box"/g) ?? [];
+    const handlers = js.match(/onClick:/g) ?? [];
+    expect(rootMerges.length).toBeGreaterThan(0);
+    expect(handlers).toHaveLength(rootMerges.length);
+    expect(js).toContain('{ onClick: _h("open") })');
+  });
+
+  it("and says nothing about it, nested or through another tile", () => {
+    expect(codes(src('tile Card = box(button(text="go"))'))).toEqual([]);
+    expect(codes(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
   });
 });
 

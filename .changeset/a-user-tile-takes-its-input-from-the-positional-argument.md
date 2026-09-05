@@ -23,10 +23,9 @@ and dropped `label`.
 The two halves read the same set now. What a named argument means is
 unchanged, and it is not an input: it is a prop, merged onto the node the tile
 renders, so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are one wiring.
-Whether it fires is a question about what the tile renders, and nothing asks it
-there yet — W0213 covers builtin call sites only, so a handler on a user tile
-whose root fires nothing is now dropped in silence where it used to take the
-mount down.
+Whether it fires is a question about what the tile renders, and W0213 asks it
+at a user-tile call site too — a handler on one that renders nothing able to
+fire it is reported rather than dropped in silence.
 
 A tile written as a *named* argument is reported (E0201) rather than dropped:
 a builtin container skips named arguments, the builtins that read one by name

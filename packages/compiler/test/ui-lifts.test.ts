@@ -293,6 +293,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(codesForNeighbour("Fires(onClick=Bump)")).toEqual([]);
   });
 
+  // The user-tile mirror of the builtin co-occurrence pinned at the matrix
+  // above: both codes, in that order. `checkHandlerTarget` runs before the
+  // name is resolved, and an inert target must not swallow the binding error
+  // (nor arrive after it) on either kind of tile.
+  it("reports the inert target and the undefined reducer together, in order", () => {
+    expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["W0213", "E0102"]);
+  });
+
   // The matrix above binds through `box` throughout, and a named argument of a
   // tile-taking builtin is the `TileCall` shape. `parseArgValue` branches on the
   // PARENT tile, not on argument-vs-prop, so a named argument of a value-arg
@@ -368,13 +376,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 /**
  * A handler on a USER tile that renders nothing able to fire it — issue #329.
  *
- * The drop is identical to the builtin case W0213 already reported, and used
- * to be reported by nothing at all: `checkHandlerTarget` returned early for
- * any name outside `BUILTIN_TILES`, which is a statement about where the
- * answer is easy rather than about where the problem is. All three tiers pass
- * on the fixture below — `check` says ok, `build` emits, `smoke` mounts and
- * renders, and there is nothing to click — so the only tier that can name it
- * is this one. That is the entire reason W0213 exists.
+ * No tier FAILS on the fixture below, which is why the warning has to say it:
+ * W0213 is non-fatal, so `check` exits 0 (`ok (1 warning)`) and `build` still
+ * emits, and `smoke` sees a tile that mounts and renders with nothing to
+ * click. Reported here or nowhere.
  */
 describe("a handler on an inert user tile is W0213", () => {
   const app = (tiles: string, call: string) => `slot n : Int = 0
@@ -399,6 +404,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       const [d, ...rest] = diags(INERT, call);
       expect(rest).toEqual([]);
       expect(d?.code).toBe("W0213");
+      // `kind` is what `kumiki fix` and the MCP tools read, and it is asserted
+      // nowhere else in the suite — so a typo in the one constructor that
+      // builds this diagnostic would reach them unnoticed.
+      expect(d?.kind).toBe("handler-on-inert-tile");
       expect(d?.severity).toBe("warning");
       // What the tile does render, and where the handler would work: without
       // both, the reader is told "not here" and given nowhere to go.
@@ -417,19 +426,23 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(codes('tile Inner = modal(text("go"))', "Inner() {onClose: bump}")).toEqual([]);
   });
 
-  // The walk is `collectTileBuiltinKinds`, the one W0212 already uses, so a
-  // firing kind anywhere in the tree suppresses the warning — including one
-  // reached through another user tile. Deliberately conservative: codegen
-  // merges the prop onto the ROOT node, so `box(button(…))` drops the handler
-  // too. Reporting only what is certainly dropped is what keeps the warning
-  // off the shapes above; the nested case is a known gap, pinned here so a
-  // later narrowing to the root is a visible change rather than a surprise.
-  it("says nothing when a firing kind is nested, or reached through another tile", () => {
-    expect(codes('tile Inner = box(button(text="go"))', "Inner() {onClick: bump}")).toEqual([]);
-    expect(
-      codes('tile Deep = button(text="go")\ntile Inner = box(Deep)', "Inner() {onClick: bump}"),
-    ).toEqual([]);
+  // The overlay row again, from the reporting side: it is the one entry the
+  // lift table cannot supply, so a user tile is the only place its two halves
+  // could come apart without the `onClick` cases noticing.
+  it("reports onClose on a user tile that renders no overlay", () => {
+    const [d, ...rest] = diags(INERT, "Inner() {onClose: bump}");
+    expect(rest).toEqual([]);
+    expect(d?.code).toBe("W0213");
+    expect(d?.message).toContain("drawer / modal / popover");
   });
+
+  // A firing kind that is NOT the root also suppresses the warning, and there
+  // the suppression is a false negative rather than a correct answer — the
+  // prop lands on the root and the handler is dropped anyway. That is a
+  // divergence from what the check ought to say, so it is pinned as one, in
+  // `spec-divergences.test.ts` ("known gap: W0213 does not see a firing kind
+  // that is not the root"), where a bare `toEqual([])` cannot be mistaken for
+  // the legitimate suppression above.
 
   // The four the runtime attaches to whatever element a tile produced are not
   // this check's to answer, on a user tile no more than on a builtin.
@@ -439,21 +452,48 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     }
   });
 
-  // An unresolvable tree is where W0212 declines to guess, and this declines
-  // in the same place and for the same reason: the empty set means "nothing
-  // was learned", not "nothing fires". Each case below already has a code
-  // that names it, and a second, vaguer diagnostic beside it helps nobody.
-  describe("says nothing about a tree it cannot resolve", () => {
+  // An empty answer is where W0212 declines to guess, and this declines in the
+  // same place and for the same reason: it means "nothing was learned", not
+  // "nothing fires". Each case below already has a code that names it, and a
+  // second, vaguer diagnostic beside it helps nobody.
+  describe("says nothing when the walk finds no kind at all", () => {
     it("a tile that is not declared at all", () => {
       expect(codes(INERT, "Nope() {onClick: bump}")).toEqual(["E0105"]);
     });
 
-    it("a tile whose body names one that is not declared", () => {
+    it("a tile whose own root names one that is not declared", () => {
       expect(codes("tile Inner = Nope()", "Inner() {onClick: bump}")).toEqual(["E0105"]);
     });
 
     it("a tile that expands into itself", () => {
       expect(codes("tile Inner = Inner()", "Inner() {onClick: bump}")).toEqual(["E0005"]);
+    });
+  });
+
+  // The reach of that skip, which is narrower than "an unresolvable tree":
+  // only the ROOT being unresolvable empties the set. Nested, the kinds around
+  // it are still a true answer about the root — the tile really does render a
+  // `box` there and the handler really is dropped — so the warning stands
+  // beside the code that names the unresolvable part rather than deferring to
+  // it. Pinned because the spec used to promise the wider skip.
+  describe("still reports when only a nested part is unresolvable", () => {
+    // The two orders differ, and the difference is where each error is found:
+    // E0105 comes from walking `Inner`'s own body, which happens before the
+    // `App` that calls it, while the cycle search is a whole-program pass that
+    // appends after. Written out rather than sorted, so a diagnostic moving
+    // between those phases shows up here.
+    it("an undeclared name inside a resolvable body", () => {
+      expect(codes("tile Inner = box(Nope())", "Inner() {onClick: bump}")).toEqual([
+        "E0105",
+        "W0213",
+      ]);
+    });
+
+    it("a cycle reached through a resolvable body", () => {
+      expect(codes("tile Inner = box(Inner())", "Inner() {onClick: bump}")).toEqual([
+        "W0213",
+        "E0005",
+      ]);
     });
   });
 });

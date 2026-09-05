@@ -41,7 +41,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
 | `E0218` | a `for` iterates a `Map` or a `Set` directly | iterate `m.keys` / `s.to-list`; `kumiki fix` appends it |
-| `W0213` | a handler prop sits on a tile that never fires it | move it onto the button / input, or subscribe with `on=ui.<ev>(<Tile>)` |
+| `W0213` | a handler prop sits on a tile that never fires it — a builtin (`row(onClick=r)`), or a user tile whose render tree has no firing kind (`Inner(onClick=r)` where `Inner = box(...)`, message: "renders nothing that fires it (observed in body: …)") | move it onto the button / input — inside the user tile, so its root is the firing one — or subscribe with `on=ui.<ev>(<Tile>)` |
 | `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
 | `E0304` | a slot's initial value reads a slot (its own or another's) | give it a standalone value and derive the rest in a `fn` |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
