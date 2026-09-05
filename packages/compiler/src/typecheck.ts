@@ -1951,11 +1951,13 @@ function checkCallee(
     });
     return;
   }
-  // A constant namespace has exactly the members `QUALIFIED_BUILTIN_CALLS`
-  // lists. Without this, `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show`
-  // on *any* capitalised qualifier, so `EffectId.fresh` passed and lowered to
+  // A listed namespace has exactly the members `QUALIFIED_BUILTIN_CALLS` lists.
+  // Without this, `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on
+  // *any* capitalised qualifier, so `EffectId.fresh` passed and lowered to
   // `_s.freshId()` — a real id minted where the author wrote the empty
-  // sentinel, which a later `http.cancel` then aims at nothing. Only the
+  // sentinel, which a later `http.cancel` then aims at nothing. It is also what
+  // answers a bare `Duration.nope`, which the parser now hands over as a
+  // zero-argument call rather than leaving as a field read. Only the
   // zero-argument form is refused: `EffectId.show(h)` is the qualified spelling
   // of `h.show` and means what it says.
   const dot = callee.indexOf(".");

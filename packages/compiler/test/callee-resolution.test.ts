@@ -374,7 +374,7 @@ describe("the checker accepts exactly what codegen lowers", () => {
   });
 });
 
-describe("a stdlib constant means the same thing without its parentheses", () => {
+describe("a qualified stdlib member is read the same way without its parentheses", () => {
   // `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
   // `Decoder.None` with no parentheses, and `stdlib.md` §2.1.1.1 writes
   // `EffectId.none` as a value. Only `EffectId.none` ever parsed that way — the
@@ -386,6 +386,11 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   // and a body meant to be discarded was parsed. This file pins the emitted
   // sentinel, which is the narrowest place to see it; `packages/tests` pins what
   // it did to a running app, and `kumiki smoke` on the example reports it too.
+  //
+  // Every qualifier is read this way now, `Duration` and `Bytes` included,
+  // which is why this block asserts two different things about the bare form:
+  // a member with no arguments is a value and lowers to its sentinel, and a
+  // member with arguments is a call that was given none.
   const SENTINEL: Record<string, string> = {
     "Decoder.Json": '"json"',
     "Decoder.Text": '"text"',
@@ -396,47 +401,75 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
 
   it("names every constant the parser reads without parentheses", () => {
     const listed = new Set(Object.keys(SENTINEL));
-    const declared = new Set(
-      [...QUALIFIED_BUILTIN_CALLS.keys()].filter((n) =>
-        CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
-      ),
-    );
-    expect([...listed].sort()).toEqual([...declared].sort());
-  });
-
-  it("gives a member a paren-less spelling exactly when it takes no arguments", () => {
-    // Reading `Q.m` without parentheses is reading it as a zero-argument call,
-    // so the two tables have to agree: a member of a listed namespace is
-    // writable bare exactly when its arity is 0. `Decoder.Json` is the one that
-    // is not, and it is spelled out here rather than skipped, so that adding a
-    // member with an argument to `Decoder` or `EffectId` is a decision and not
-    // an accident.
+    const inNamespace = (n: string) => CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf(".")));
+    // Nothing unpinned: a zero-argument member of a listed namespace is exactly
+    // what the parser reads as a value, so each one carries its sentinel here.
+    // A member that takes an argument does not — written bare it is a call
+    // missing an argument, which the two tests below pin instead.
     for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
-      if (!CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf(".")))) continue;
-      expect(arity.min, name).toBe(name === "Decoder.Json" ? 1 : 0);
+      if (!inNamespace(name) || arity.min > 0) continue;
+      expect(listed.has(name), name).toBe(true);
+    }
+    // Nothing stale, and the reverse direction is a containment rather than an
+    // equality because `Decoder.Json` lowers to a sentinel as well and is the
+    // one that takes an argument — pinned below in its parenthesised form.
+    for (const name of listed) {
+      expect(inNamespace(name) && QUALIFIED_BUILTIN_CALLS.has(name), name).toBe(true);
     }
   });
 
-  it("keeps the namespaces whose members all take one out of the table", () => {
-    // The other direction: `Duration` and `Bytes` are excluded, and every one
-    // of their members takes an argument. What the exclusion costs is the test
-    // two below — the bare spelling is a field read, not a short call.
-    const excluded = [...QUALIFIED_BUILTIN_CALLS].filter(
-      ([n]) => !CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
-    );
-    expect(excluded.length).toBeGreaterThan(0);
-    for (const [name, arity] of excluded) {
-      expect(arity.min, name).toBe(1);
+  it("leaves no qualifier codegen lowers out of the table", () => {
+    // Excluding a qualifier never made its bare spelling an error — it made it
+    // a field read on a freshly built variant. `Duration.s` was
+    // `{_tag: "Duration"}["s"]`, an `undefined` that nothing reported, and a
+    // `setTimeout(undefined)` is a `setTimeout(0)`: the failure the arity check
+    // exists for, reached by the spelling that skipped the check. Every
+    // qualifier codegen lowers is therefore listed, so that a bare member of
+    // one is read as a call and answered by name and by count.
+    for (const name of QUALIFIED_BUILTIN_CALLS.keys()) {
+      const qualifier = name.slice(0, name.indexOf("."));
+      expect(CONSTANT_NAMESPACES.has(qualifier), qualifier).toBe(true);
     }
   });
 
-  it("leaves an excluded namespace where it was, which is a gap and not a guard", () => {
-    // What excluding `Duration` actually buys: the bare form stays a field read
-    // on a variant tag no `type` declares, which nothing reports. Pinned so the
-    // cost of the exclusion is visible rather than implied, and so this turns
-    // red the day an undeclared tag is checked — when the rule can be revisited.
-    expect(codes(inReducer("a := (Duration.s).show"))).toEqual([]);
-    expect(loweringOf("Duration.s")).toContain('_tag: "Duration"');
+  it("reads a member that takes an argument, written bare, as a call with none", () => {
+    // The cost of listing a namespace whose members are not constants, which is
+    // the point of listing it: `Duration.s` is a zero-argument call to a member
+    // declared with one, so it is the same E0213 as `Duration.s()`. Every such
+    // member is checked rather than one, so `Decoder.Json` — the one member of
+    // an otherwise constant namespace that carries a payload type — is held to
+    // it too.
+    for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
+      if (arity.min === 0) continue;
+      expect(codes(inReducer(`t := (${name}).show`)), name).toEqual(["E0213"]);
+    }
+  });
+
+  it("claims the qualifier position and not the name", () => {
+    // The parser reads this set without consulting the type table, so listing
+    // `Duration` claims `Duration.<member>` in every position. What it does not
+    // claim is the name: a program that declares its own `type Duration` writes
+    // its tags as bare names, which is a different position, and reads its
+    // values through a lowercase receiver, which is postfix parsing. Pinned
+    // because a set the parser applies by spelling alone is the kind of change
+    // that takes a name away from the programs that already had it.
+    const src = `type Duration = Short | Long
+slot d : Duration = Short
+slot t : Text = ""
+reducer pick on=ui.click(B) do= d := Long
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("reports a bare member the namespace does not declare by name", () => {
+    // The other half of the promotion. As a field read this was `undefined`
+    // with no diagnostic at all; as a call it is a name that resolves to
+    // nothing, which is what E0116 says.
+    expect(codes(inReducer("t := (Duration.nope).show"))).toEqual(["E0116"]);
+    expect(codes(inReducer("t := (Bytes.from-json).show"))).toEqual(["E0116"]);
   });
 
   it("a member of a constant namespace is only what the table lists", () => {
