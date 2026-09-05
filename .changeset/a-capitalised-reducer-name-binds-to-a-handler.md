@@ -12,10 +12,11 @@ E0201 type-mismatch: Event handler arg "onClick" must be a reducer name
 ```
 
 `Bump` is exactly a reducer name. What was in the way is the shape the parser
-gives a capitalised one: a tile call as a named argument, a variant tag in a
-props block, on a value-arg builtin and on a user tile — never a reference,
-which is all the handler branch accepted. So a reducer whose own name was
-capitalised could not be bound to a handler at all.
+gives a capitalised one: a tile call as a named argument of a builtin that
+takes tiles, a variant tag in a props block, on a value-arg builtin such as
+`link` and on a user tile — never a reference, which is all the handler branch
+accepted. So a reducer whose own name was capitalised could not be bound to a
+handler at all.
 
 The handler position resolves in the reducer namespace, and capitalisation is
 not something the author is saying there, so all three shapes are now read as

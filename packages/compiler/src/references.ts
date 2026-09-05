@@ -458,21 +458,24 @@ class Walker {
    * A tile argument is either a nested tile or a value expression, discriminated
    * only by its `kind` — the field is the same either way.
    *
-   * The shape is asked about before the handler name, which is the opposite of
-   * the order `typecheck` uses, and deliberately so. A handler bound to a tile
-   * name is a compile error, so the two only ever disagree about a program that
-   * does not compile — and on one of those this walk is still asked where a
-   * name is *written*, which is what `refs` reports. `rename` and
-   * `remove --cascade` validate before they write, so they never act on the
-   * answer; `refs` has no such gate, and a site it did not list would be a site
-   * a reader thinks is free.
+   * The handler name is asked about before the shape, matching the order
+   * `typecheck` uses, so this walk records the edge the checker resolved. It
+   * used to be the other way round, on the reasoning that the two could only
+   * ever disagree about a program that does not compile; a capitalised name in
+   * a handler argument parses as an argument-less tile call, so that walked
+   * `onClick=Bump` as a **tile** — `refs` reported a tile `Bump` that no
+   * definition declares, and `rename` on the reducer left the wiring behind.
+   * Since the checker resolves such a name to its reducer, the premise is gone
+   * as well as the conclusion: the shape-first order now disagrees about
+   * programs that compile.
+   *
+   * What survives from that reasoning is why being right here matters at all:
+   * `rename` and `remove --cascade` validate before they write, so they never
+   * act on the answer for a program that does not compile; `refs` has no such
+   * gate, and a site it did not list would be a site a reader thinks is free.
    */
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
-    // Asked before the tile branch, because a capitalised name in a handler
-    // argument parses as an argument-less tile call. Walked as a tile it was
-    // recorded under the wrong layer — `refs` reported a tile `Bump` that no
-    // definition declares, and `rename` on the reducer left the wiring behind.
     if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
       const reducer = handlerReducerName(v);
       if (reducer !== null) {

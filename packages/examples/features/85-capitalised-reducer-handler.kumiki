@@ -1,9 +1,10 @@
 # Feature: a handler binds the reducer its name resolves to, whatever the
 # name's capitalisation. The handler position is the one argument position
 # resolved in the reducer namespace, and the shape the parser gives a
-# capitalised name there — a tile call as a named argument, a variant tag in a
-# props block or on a user tile — is decided by capitalisation, not by
-# anything the author is saying.
+# capitalised name there — a tile call as a named argument of a builtin that
+# takes tiles, a variant tag in a props block or on a user tile — is decided
+# by capitalisation and by which tile the argument sits on, not by anything
+# the author is saying.
 #
 # `Bump` and `Reset` are declared against `Sink`, which the scenario never
 # clicks: every count below is one the explicit wirings delivered.

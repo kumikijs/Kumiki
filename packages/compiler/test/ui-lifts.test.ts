@@ -150,6 +150,35 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     return referencesIn(def, buildDefIndex(program)).map((r) => `${r.layer}.${r.name}`);
   }
 
+  /**
+   * The same references, each rendered as the source text its recorded position
+   * actually points at.
+   *
+   * `refsOf` answers layer and name, which is what `refs` *prints* and not what
+   * `rename` *consumes*: `renameDef` rewrites at `r.pos`
+   * (`packages/cli/src/mutate.ts`). A correct layer paired with a drifted span
+   * rewrites the wrong bytes while every layer/name assertion above stays
+   * green, so the span is checked here against the token it claims to name —
+   * `reducer.Bump@Bump` reads "the reducer edge, recorded on the letters
+   * `Bump`". A reference with no position of its own renders as `@<none>`,
+   * which `rename` refuses rather than half-rewriting.
+   */
+  function refSitesOf(tile: string): string[] {
+    const src = source(tile);
+    const program = parse(lex(src));
+    const def = program.defs.find((d) => "name" in d && d.name === "T");
+    if (!def) throw new Error("fixture has no tile T");
+    const lines = src.split("\n");
+    return referencesIn(def, buildDefIndex(program)).map((r) => {
+      if (!r.pos) return `${r.layer}.${r.name}@<none>`;
+      const text = (lines[r.pos.line - 1] ?? "").slice(
+        r.pos.col - 1,
+        r.pos.col - 1 + r.name.length,
+      );
+      return `${r.layer}.${r.name}@${text}`;
+    });
+  }
+
   for (const handler of HANDLER_NAMES) {
     for (const { form, bind } of BINDINGS) {
       // A `box` honours the four the runtime attaches to any element and
@@ -184,6 +213,28 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         expect(codesFor(bind(handler, "Bump"))).toEqual(inert);
         expect(jsFor(bind(handler, "Bump"))).toContain(`${handler}: _h("Bump")`);
         expect(refsOf(bind(handler, "Bump"))).toEqual(["reducer.Bump"]);
+        // The layer alone is not enough for `rename` — see `refSitesOf`.
+        expect(refSitesOf(bind(handler, "Bump"))).toEqual(["reducer.Bump@Bump"]);
+      });
+
+      // The original defect was that the name RENDERED: taken as a nested tile
+      // it reached codegen as a child. `_h("Bump")` above says the listener is
+      // wired and says nothing about that, so the absence is asserted on its
+      // own — a future change that wires the handler and ALSO emits the child
+      // would keep every other assertion in this file green.
+      //
+      // Written as "take the handler wirings away and see what is left" rather
+      // than as a `not.toContain` of some rendering helper: the fixture
+      // legitimately renders `T` through `_named` and `_children`, so naming a
+      // helper would either match that or drift out of step with codegen. Nor
+      // a raw occurrence count — the tile body is inlined once per route, so
+      // that number tracks the fixture's route table rather than this.
+      it(`${handler} (${form}) = <capitalised reducer> is not also rendered`, () => {
+        const js = jsFor(bind(handler, "Bump"));
+        expect(js).toContain(`${handler}: _h("Bump")`);
+        // What remains is the reducer table's own `name: "Bump"`, once. A
+        // second survivor is the name used as something other than a handler.
+        expect(js.replace(/_h\("Bump"\)/g, "").match(/"Bump"/g)).toEqual([`"Bump"`]);
       });
 
       // A capitalised name that names no reducer answers exactly as the
@@ -232,6 +283,63 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   it("leaves a handler bound to a reducer on a user tile alone", () => {
     expect(codesForNeighbour("Other(onClick=bump)")).toEqual([]);
+    expect(codesForNeighbour("Other(onClick=Bump)")).toEqual([]);
+  });
+
+  // The matrix above binds through `box` throughout, and a named argument of a
+  // tile-taking builtin is the `TileCall` shape. `parseArgValue` branches on the
+  // PARENT tile, not on argument-vs-prop, so a named argument of a value-arg
+  // builtin or of a user tile is a `Variant` — the same shape the props block
+  // produces, reached by a path the matrix never walks. Both sit here so the
+  // arg form is not silently `TileCall`-only.
+  describe("the Variant-in-argument shape", () => {
+    const withTile = (tile: string) => `slot n : Int = 0
+reducer Bump on=app.start do= n := 1
+tile Plus = button(text="plus")
+tile T = ${tile}
+tile App = column(T, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    const codes = (tile: string) => check(parse(lex(withTile(tile)))).map((e) => e.code);
+    const js = (tile: string) => {
+      const r = compile(withTile(tile), { runtimeSpecifier: "./runtime.js" });
+      if (r.kind !== "ok")
+        throw new Error(`compile failed: ${r.errors.map((e) => e.code).join(", ")}`);
+      return r.js;
+    };
+
+    for (const [what, tile, expected] of [
+      // `link` fires no `onClick` (`HANDLER_PROP_TILES`), so W0213 rides along
+      // — the binding is still resolved and still wired, which is the point.
+      ["a value-arg builtin", 'link(text="go", to="/", onClick=Bump)', ["W0213"]],
+      ["a user tile", "Plus(onClick=Bump)", []],
+    ] as const) {
+      it(`binds a capitalised reducer written as a named argument of ${what}`, () => {
+        expect(codes(tile)).toEqual(expected);
+        expect(js(tile)).toContain(`onClick: _h("Bump")`);
+      });
+    }
+  });
+
+  // A tile and a reducer may share a name — `findDuplicateDefinitions` is per
+  // layer — so the handler position has to pick one, and §1.7.3 says which.
+  // Nothing would fail today if a later change made it fall back to the tile
+  // layer, which is exactly the silent rewiring this file exists to catch.
+  it("resolves a name shared by a tile and a reducer in the reducer layer", () => {
+    const src = `slot n : Int = 0
+reducer Bump on=app.start do= n := 1
+tile Bump = button(text="bump")
+tile T = box(text("x"), onClick=Bump)
+tile App = column(T, Bump, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(check(parse(lex(src))).map((e) => e.code)).toEqual(["W0213"]);
+    const program = parse(lex(src));
+    const def = program.defs.find((d) => d.kind === "TileDef" && d.name === "T");
+    if (!def) throw new Error("fixture has no tile T");
+    expect(referencesIn(def, buildDefIndex(program)).map((r) => `${r.layer}.${r.name}`)).toEqual([
+      "reducer.Bump",
+    ]);
   });
 
   // Every consumer that walks a tile body has to agree that a handler is not

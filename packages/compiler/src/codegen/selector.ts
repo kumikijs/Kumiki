@@ -92,7 +92,8 @@ export function propsFor(
   // Whatever shape the parser gave the name — a reference, a variant tag, an
   // argument-less tile call — `handlerReducerName` reads the reducer out of
   // it, the same one the checker resolved. Deciding here on `kind === "Ref"`
-  // instead is what left a capitalised reducer name wired by neither.
+  // instead is what left a capitalised reducer name rejected by the checker
+  // and wired by nobody.
   const recordExplicit = (handlerName: string, value: Expr | TileExpr): void => {
     const reducerName = handlerReducerName(value);
     if (reducerName === null) return;

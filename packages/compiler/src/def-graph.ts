@@ -84,12 +84,16 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
         // one: a builtin container skips named arguments, the builtins that
         // read one by name all want a value, and a user tile takes its input
         // from the positional argument. So there is no expansion edge here —
-        // and the shape is reported anyway, as E0201 on a user tile.
+        // and for a named argument that is not a handler, the shape is
+        // reported anyway, as E0201 on a user tile.
         //
         // An event handler is the same case with a second reason: it names a
         // reducer, and a capitalised name in that position parses as a tile
         // call, so `onClick=App` inside `App` reported the tile as expanding
-        // into itself.
+        // into itself. Since the handler position resolves in the reducer
+        // namespace, such a name is either a reducer (no diagnostic) or an
+        // undefined one (E0102) — never an expansion edge either way, which
+        // is why this `continue` needs no case of its own.
         if (a.name !== undefined) continue;
         if (isTileExpr(v)) walkTileBody(v, out);
         else if ((v as Expr).kind === "Ref") {

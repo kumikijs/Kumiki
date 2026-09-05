@@ -571,7 +571,9 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1}` is delivered to the reducer as `$el.todoId`.
 
-The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. Capitalisation decides the shape the parser gives the name (a tile call as a named argument, a variant tag elsewhere) and nothing else; it is not a way to say which layer is meant.
+The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name is a *tile call* when it is a named argument of a builtin that takes tiles (`box`, `button`, `input`, `modal`, `form`), and a variant tag everywhere else: in a props block, as a named argument of a value-arg builtin such as `link`, and as a named argument of a user tile.
+
+Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. A value that carries arguments is not a name and is [E0201](./errors.md#e0201-type-mismatch).
 
 ### 1.7.4 Examples
 

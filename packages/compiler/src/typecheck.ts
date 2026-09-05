@@ -1177,11 +1177,13 @@ function checkTileCall(
     const v = arg.value;
     // A named arg whose name is an event handler binds a reducer — asked before
     // the nested-tile branch below, because a capitalised name written as a
-    // named argument of a builtin parses as a tile call. Checked as one,
-    // `box(text("x"), onClick=Card)` drew no diagnostic and codegen captured
-    // no handler: the tile rendered and the click did nothing. The other
-    // positions parse the same name as a variant tag; `checkHandlerBinding`
-    // reads the name out of either, which is what makes them agree.
+    // named argument of a builtin that takes tiles parses as a tile call.
+    // Checked as one, `box(text("x"), onClick=Card)` drew no diagnostic and
+    // codegen captured no handler: the tile rendered and the click did
+    // nothing. The other positions — a props block, a value-arg builtin such
+    // as `link`, a user tile — parse the same name as a variant tag;
+    // `checkHandlerBinding` reads the name out of either, which is what makes
+    // them agree.
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
@@ -1237,9 +1239,11 @@ function checkTileCall(
  *
  * A handler names a reducer: this is the one argument position resolved in the
  * reducer namespace. What arrives is not always shaped like a reference — a
- * capitalised name is a tile call as a named argument and a variant tag
- * everywhere else — and neither form has anything more to say about that than
- * the other, so both ask here rather than each deciding for itself.
+ * capitalised name is a tile call as a named argument of a builtin that takes
+ * tiles, and a variant tag everywhere else (a props block, a value-arg builtin
+ * such as `link`, a user tile) — and neither binding form has anything more to
+ * say about that than the other, so both ask here rather than each deciding
+ * for itself.
  *
  * The shape is not the question: `handlerReducerName` reads the name out of
  * whichever of the three the parser produced, so a reducer whose own name is
