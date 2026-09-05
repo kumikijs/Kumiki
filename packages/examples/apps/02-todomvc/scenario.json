@@ -38,6 +38,21 @@
       "label": "and clearing completed removes it",
       "do": { "clickText": "Clear completed" },
       "expect": { "noErrors": true, "domExcludes": ["buy milk"] }
+    },
+    {
+      "label": "a second todo, to reach the row's own delete button",
+      "do": { "fill": "input[type='text']", "value": "walk dog" },
+      "expect": { "noErrors": true, "state": { "draft": "walk dog" } }
+    },
+    {
+      "label": "added",
+      "do": { "submit": "form" },
+      "expect": { "noErrors": true, "domIncludes": ["walk dog", "1 items left"] }
+    },
+    {
+      "label": "the row's x removes it — and it is inside TodoRow, so ui.click(TodoRow) sees the click too (#333)",
+      "do": { "clickText": "x" },
+      "expect": { "noErrors": true, "domExcludes": ["walk dog"], "domIncludes": ["0 items left"] }
     }
   ]
 }

@@ -212,5 +212,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `83-let-shadowing.kumiki` | slot, reducer, fn, tile | core | [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) |
 | `84-off-origin-link.kumiki` | app, tile | routing | [§3.3.1](./routing.md#_3-3-1-the-link-element-recommended) |
 | `85-capitalised-reducer-handler.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
+| `86-container-selector-through-reference.kumiki` | slot, reducer, tile | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 <!-- examples:end -->
 :::

@@ -54,6 +54,7 @@
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | JS の予約語（`new` / `class` / `var`）やランタイム内部名（`_live` / `_s`）と衝突する識別子 |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | ハンドラだけが異なる 2 つのインラインタイルを条件分岐で入れ替える |
 | [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | 後から分岐が `onFocus` / `onBlur` を*足す*ケース（renderer ではなく runtime が持ち上げる 4 種） |
+| [86-container-selector-through-reference](./86-container-selector-through-reference.kumiki) | 本体が tile 参照のコンテナに対する `ui.key` / `ui.focus` / `ui.blur` / `ui.hover`（同じ木のインライン形と並記） |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | refinement が reducer のバッチを丸ごと拒否する挙動と、代わりに書くべきガード |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |

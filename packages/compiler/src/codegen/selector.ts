@@ -1,6 +1,6 @@
 import { type Expr, isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
-import { type EvalCtx, handlerRef, jsProperty } from "./context.ts";
+import { type EnclosingTiles, type EvalCtx, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -77,7 +77,9 @@ function mergedAria(parts: AriaParts): string | null {
 export function propsFor(
   t: TileExpr & { kind: "TileCall" },
   ctx: EvalCtx,
-  enclosingTile?: string,
+  // Every user tile this call renders under, outermost first — a selector
+  // naming any of them reaches this node. See `EnclosingTiles`.
+  enclosingTiles?: EnclosingTiles,
 ): string {
   const entries: string[] = [];
   // `{aria: {...}}` and `{aria-label: "…"}` are one channel by the time they
@@ -118,7 +120,7 @@ export function propsFor(
     entries.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
 
-  // Combine explicit wirings with reducers subscribing to (enclosingTile, ev)
+  // Combine explicit wirings with reducers subscribing to (an enclosing tile, ev)
   // into a single chained handler. Explicit first (declared on the tile that
   // mounts the element), then implicit subscribers in their source order — so
   // adding a `reducer foo on=ui.click(B)` never silently shadows an existing
@@ -128,14 +130,17 @@ export function propsFor(
   const emittedHandlers = new Set<string>();
   const pushHandler = (ev: UiEventKind | null, handlerName: string): void => {
     const explicit = explicitByHandler.get(handlerName) ?? [];
+    // Filtered out of `gen.reducers` rather than gathered per enclosing tile,
+    // so several ancestors subscribing to one event still fire in DEFINITION
+    // order (§1.6.4) instead of in innermost-first order.
     const implicit: string[] =
-      ev !== null && enclosingTile
+      ev !== null && enclosingTiles !== undefined && enclosingTiles.length > 0
         ? ctx.gen.reducers
             .filter(
               (rr) =>
                 rr.on.kind === "UiEvent" &&
                 rr.on.ev === ev &&
-                rr.on.selector.tile === enclosingTile,
+                enclosingTiles.includes(rr.on.selector.tile),
             )
             .map((r) => r.name)
         : [];
