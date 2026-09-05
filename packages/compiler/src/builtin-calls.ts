@@ -79,29 +79,38 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Ma
 ]);
 
 /**
- * Qualifiers whose members are constants, so the parser reads
- * `Qualifier.member` as a zero-argument call even without parentheses — which
- * is how `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
- * `Decoder.None` and how `stdlib.md` §2.1.1.1 writes `EffectId.none`. Without
- * that, the paren-less form was a field read on a freshly built variant and
- * emitted `undefined`, which `check` had no reason to object to.
+ * Qualifiers the parser reads as the head of a call rather than as a value, so
+ * `Qualifier.member` written without parentheses is a zero-argument call —
+ * which is how `docs/spec/http.md` §6.1.4 writes `Decoder.Text` /
+ * `Decoder.Bytes` / `Decoder.None` and how `stdlib.md` §2.1.1.1 writes
+ * `EffectId.none`. Without that, the paren-less form was a field read on a
+ * freshly built variant and emitted `undefined`, which `check` had no reason to
+ * object to.
  *
- * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`. What excluding
- * one costs is that its bare spelling is not read as a call at all: `Duration.s`
- * is a field read on a freshly built variant, which emits `undefined` and draws
- * no diagnostic. The reason it was excluded — that a zero-argument
- * `Duration.s()` would be defaulted to `0`, so the choice was between two
- * silences — no longer holds, because the count is checked and the default is
- * gone. `Decoder.Json` is the other way round: it is a member of a namespace
- * listed here that takes an argument, so it is the one with no paren-less
- * spelling.
+ * Every qualifier `QUALIFIED_BUILTIN_CALLS` names is listed, which is not what
+ * the name of this set suggests: `Duration` and `Bytes` have no constant
+ * members at all. They are here because leaving a qualifier out never made its
+ * bare spelling an error, it made it that same field read — `Duration.s` was
+ * `{_tag: "Duration"}["s"]`, an `undefined` nothing reported, and a
+ * `setTimeout(undefined)` is a `setTimeout(0)`. The reason they were excluded
+ * was that reading them as calls turned that silence into another one, because
+ * a missing argument was defaulted to `0`; that reason is gone, so the bare
+ * spelling now answers by count (`Duration.s` is E0213) and by name
+ * (`Duration.nope` is E0116). `Decoder.Json` is the same rule from the other
+ * side: a member with an argument in an otherwise constant namespace, so it is
+ * the one `Decoder` member with no paren-less spelling.
  *
  * The membership rule is enforced by `checkCallee`, not by this table alone:
  * `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
  * qualifier, and without that check `EffectId.fresh` passed and minted an id
  * where the author wrote the empty sentinel.
  */
-export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "EffectId"]);
+export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set([
+  "Decoder",
+  "EffectId",
+  "Duration",
+  "Bytes",
+]);
 
 /**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,

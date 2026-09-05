@@ -315,6 +315,8 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 | `file-url` | [フォーム §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
 
+修飾付きメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——どちらの名前空間にも 0 引数のメンバは無いが——同じ読み方をする。したがって名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。
+
 `run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。それ以外の場所に書けば E0116 になる。テスト本体の中では専用の文面を持つ——誤っているのは名前ではなく位置だからである：
 
 > `Call to "run-reducer" outside a property-test invariant`
@@ -624,7 +626,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 tile と effect とルートの形は、これまで報告されていなかったものである：`in=` の宣言する引数無しで呼ばれた tile は `$1` が束縛されないまま mount し `_d_1 is not defined` で死ぬ。入力無しで emit された effect は最初の dispatch で `Cannot destructure property … of 'input'` を投げる。そして `in=` を宣言していない tile に引数を*渡した*場合は、mount も描画も正常に通り、呼び出し側が渡したつもりの値だけが静かに捨てられる。ルートのエントリは、どこにも呼び出しが書かれていないまま最初の死に方に到達する：ターゲットを適用するのはエントリ自身であり、それが何も渡せないからである。
 
-組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は何も読まずセンチネルへ落ちる。引数の*型*も検査しない——センチネルはそれを無視する。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。
+組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は何も読まずセンチネルへ落ちる。引数の*型*も検査しない——センチネルはそれを無視する。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。呼び出しにしているのは括弧ではなく、したがって数えられる理由も括弧ではない：括弧なしの `Duration.s` も同じ 0 引数の呼び出しであり同じ E0213 で、個数を強制した後もその timer に届いていた唯一の書き方がこれだった。
 
 範囲を持つ組み込みは `fmt` だけである。シグネチャが `fmt(template, ...args)`（[標準ライブラリ §2.4.5](./stdlib.md#_2-4-5-文字列フォーマット)）なので要求できるのはテンプレートだけで、メッセージは最小個数を名指す — `expects at least 1 argument(s) but got 0`。`now` は 0 個ちょうどに縛られているが、それを破る呼び出しは書けない：名前ではなくキーワードであり、0 引数の呼び出しを parser 自身が組み立てるため、`now(1)` はここに届く前に parse error になる。
 

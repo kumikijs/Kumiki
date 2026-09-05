@@ -1232,7 +1232,7 @@ class Parser {
       // capital-cased identifier; otherwise this is a method call on a value and
       // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
-      // A member of a constant namespace, written without parentheses:
+      // A member of a listed namespace, written without parentheses:
       // `EffectId.none` (stdlib §2.1.1.1), `Decoder.Text` / `Decoder.Bytes` /
       // `Decoder.None` (http §6.1.4). Read as a 0-arg Call so typecheck and
       // codegen handle it through the same builtin-call channel as
@@ -1240,6 +1240,13 @@ class Parser {
       // three. Left to postfix parsing it becomes a field read on a variant of
       // the qualifier's name, which emits `undefined` and which nothing objects
       // to; the member being wrong is then an E0116 rather than silence.
+      //
+      // `Duration` and `Bytes` are listed too, though neither has a constant
+      // member. Reading `Duration.s` as a call is how the missing argument gets
+      // reported at all: as a field read it was `undefined`, and a
+      // `setTimeout(undefined)` is a `setTimeout(0)` — so the spelling without
+      // parentheses reached the failure the arity check exists for, past the
+      // arity check. It is now the same E0213 as `Duration.s()`.
       //
       // `kw` is accepted alongside `ident` to mirror the parenthesised branch
       // below, which needs it — none of the constants named above lex as a
