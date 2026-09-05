@@ -54,6 +54,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | names that are JS reserved words (`new` / `class` / `var`) or look like runtime internals (`_live` / `_s`) |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | a conditional swapping two inline tiles that differ only in their handler |
 | [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | a conditional whose later branch *adds* `onFocus` / `onBlur`, which the runtime lifts rather than any renderer |
+| [86-container-selector-through-reference](./86-container-selector-through-reference.kumiki) | `ui.key` / `ui.focus` / `ui.blur` / `ui.hover` on a container whose body is a tile reference, beside the inline form of the same tree |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | a refinement rejects the whole reducer batch, and the guard to write instead |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |

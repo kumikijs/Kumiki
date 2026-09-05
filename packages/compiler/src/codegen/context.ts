@@ -359,3 +359,21 @@ export function jsBinding(name: string): string {
   // cannot be produced by any other input.
   return JS_UNSAFE_BINDINGS.has(mapped) ? `${mapped}$` : mapped;
 }
+
+/**
+ * The user tiles a node is being rendered *under*, outermost first — every
+ * name a `ui.<ev>(<Tile>)` selector can use to reach it.
+ *
+ * A chain rather than the innermost name alone (#333): the enclosing tile used
+ * to be replaced at each user-tile boundary, so `box(Inner)` lifted nothing a
+ * selector on the container asked for while the inline `box(input(...))`
+ * lifted it — the same program written two ways, wired one way. `W0212`
+ * resolves the reference when it looks for a descendant that fires the event
+ * (`collectTileBuiltinKinds` walks through it) and reported nothing, so both
+ * halves were silent about the same dropped handler.
+ *
+ * It is a property of the PATH a tile was reached by, not of the tile: a
+ * `Leaf` written beside its container is not inside it and collects no
+ * listener from it.
+ */
+export type EnclosingTiles = readonly string[];

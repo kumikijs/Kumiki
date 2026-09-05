@@ -389,6 +389,22 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 
 The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from [§1.6.4](#_1-6-4-invariants) Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
+**A selector on a container reaches the descendants that fire the event.** Most container kinds fire nothing themselves — a `box` has no `keydown`, no `focus` and no `submit` of its own — so `ui.<ev>(<Container>)` is wired onto every descendant whose kind is in the allowed set for `<ev>` ([§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) lists them). `ui.hover` is the unrestricted case: it is wired onto the container *and* onto each descendant, because `mouseenter` does not bubble.
+
+**How the descendant is written makes no difference.** A body that names a child tile is walked exactly as an inline one, to any depth, so these two are one program:
+
+```kumiki snippet
+tile Leaf   = input(placeholder="type")
+tile RefBox = box(Leaf)                          # a tile reference
+tile Inline = box(input(placeholder="type"))     # the same tree, spelled out
+
+reducer typed on=ui.key(RefBox) do= ...          # wired onto the input, both ways
+```
+
+The tiles a subscription reaches are decided by the path a descendant is rendered under, not by the descendant alone: a `Leaf` rendered *beside* `RefBox` is not inside it and receives no handler from it. When several enclosing tiles subscribe to one event on one descendant, [§1.6.4](#_1-6-4-invariants) Invariant 3 applies as usual — every match fires, in definition order.
+
+> **Known gap ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: writing the handler for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) currently **replaces** the lifted subscriptions instead of joining them, so the enclosing tile's reducer does not fire. Until that is fixed, subscribe with `ui.<ev>(<Tile>)` on both tiles rather than mixing a selector with an explicit handler prop on one element.
+
 ### 1.6.3 lvalue Semantics
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
