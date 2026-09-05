@@ -214,5 +214,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `85-capitalised-reducer-handler.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `86-container-selector-through-reference.kumiki` | slot, reducer, tile | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 | `87-replayed-environment-read.kumiki` | slot, reducer, tile | core | [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode) |
+| `88-string-formatting.kumiki` | slot, reducer, tile | stdlib | [§2.4.5](./stdlib.md#_2-4-5-string-formatting) |
 <!-- examples:end -->
 :::

@@ -212,14 +212,15 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Decoder.Bytes") return `"bytes"`;
       if (cn === "Decoder.None") return `"none"`;
       if (cn === "fmt") {
-        // `fmt(template, ...args)` — the runtime has no `fmt` helper, so this
-        // guard always takes the else branch and the template is returned with
-        // its `{0}` placeholders intact. The lowering is written as though the
-        // helper existed, and the arity follows the spec's signature rather
-        // than what the else branch reads.
+        // `fmt(template, ...args)` — the runtime helper substitutes `{0}`…`{n}`
+        // (stdlib.md §2.4.5). Called unguarded: a `_s.fmt ? … : template`
+        // fallback would answer a missing helper with the template, which is a
+        // `Text` and therefore indistinguishable downstream from a formatted
+        // one — the shape that let the substitution go missing while `check`,
+        // `build` and `smoke` all stayed green (#340).
         const template = requiredArg(cn, e.args, e.pos, ctx);
         const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
-        return `_s.fmt ? _s.fmt(${[template, ...rest].join(", ")}) : ${template}`;
+        return `_s.fmt(${[template, ...rest].join(", ")})`;
       }
       // `panic(message)` — Kumiki's controlled stop-the-program signal
       // (docs/spec/stdlib.md §2.2). Lowers to the runtime helper that throws a

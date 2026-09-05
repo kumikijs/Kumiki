@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been formatted yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "greeting": "", "reordered": "", "rendered": "", "missing": "", "literal": "" }
+      }
+    },
+    {
+      "label": "every placeholder the arguments reach is substituted, and the rest is copied through",
+      "do": { "clickText": "render" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "greeting": "Hello Ada, you have 3",
+          "reordered": "b a b",
+          "rendered": "3 and true",
+          "missing": "a {1}",
+          "literal": "{} {a} {x}"
+        },
+        "domIncludes": [
+          "greeting=Hello Ada, you have 3",
+          "reordered=b a b",
+          "rendered=3 and true",
+          "missing=a {1}",
+          "literal={} {a} {x}"
+        ]
+      }
+    }
+  ]
+}

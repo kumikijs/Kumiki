@@ -62,3 +62,64 @@ describe("app.http (#78) — end-to-end", () => {
     }
   });
 });
+
+// #340: `app.http.headers` may hold a `fmt` call, and the blog app's does —
+// `fmt("Bearer {0}", session.map($1.token).get-or(""))`. `fmt` substituted
+// nothing, so every request that app made carried the literal
+// `Authorization: Bearer {0}` and the token never left the browser. Nothing in
+// `check`, `build` or `smoke` could see it: a header is a `Text` either way,
+// and no tier read what the header said. This one reads it.
+const BLOG_EXAMPLE = join(here, "..", "examples", "apps", "03-blog", "app.kumiki");
+
+describe("the blog app's Authorization header (#340)", () => {
+  let double: FetchDouble | undefined;
+
+  afterEach(() => {
+    double?.restore();
+    double = undefined;
+    localStorage.removeItem("session");
+  });
+
+  it("carries the stored session's token, not the template", async () => {
+    const postId = "9f1c2a54-0e2b-4d6e-9a71-1b2c3d4e5f60";
+    const post = {
+      id: postId,
+      title: "Seven layers, one file",
+      body: "Every definition stands on its own.",
+      authorId: "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+      publishedAt: "2026-01-15T09:00:00.000Z",
+      tags: ["kumiki"],
+    };
+    // What `loadSession` reads at boot: the storage handler JSON.parses the
+    // entry and hands it back as `Some(...)`, which `sessIn` writes to `session`.
+    localStorage.setItem(
+      "session",
+      JSON.stringify({ userId: post.authorId, token: "session-token" }),
+    );
+    const app = await loadApp(BLOG_EXAMPLE);
+    double = stubFetch((call) =>
+      call.url.endsWith("/api/posts")
+        ? new Response(JSON.stringify([postId]))
+        : new Response(JSON.stringify(post)),
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const { dispose } = mount(app, root);
+      // Boot restores the session and loads the index; the index then fetches
+      // each post it named, and that request is the one made with a session in
+      // hand. Asserted on the last call rather than the first: the very first
+      // request races the storage read on purpose — an app that has not logged
+      // in yet sends `Bearer `, which is the empty-token case, not this one.
+      await tick(80);
+      const detail = double.calls.filter((c) => c.url.endsWith(`/api/posts/${postId}`));
+      expect(detail.length).toBeGreaterThan(0);
+      for (const call of detail) {
+        expect(readHeader(call.init.headers, "Authorization")).toBe("Bearer session-token");
+      }
+      dispose();
+    } finally {
+      root.remove();
+    }
+  });
+});

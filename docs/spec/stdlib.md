@@ -452,7 +452,14 @@ The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the nu
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-Substitution is **not implemented yet**: the runtime carries no `fmt` helper, so a `fmt` call evaluates to its template with the placeholders intact — `fmt("{0}-{1}", "a", "b")` is `"{0}-{1}"`. The call is still counted ([E0213](./errors.md#e0213-call-arity-mismatch)) against the signature above, not against that gap.
+A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (the `show` equivalent named below), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
+
+Two cases are decided here rather than left to the implementation:
+
+- **An index the arguments do not reach** — `fmt("{0} {1}", "a")` — leaves that placeholder as written: `"a {1}"`. It is neither an error nor the empty string. A template whose placeholders outran its arguments is a mistake, and the rendering that shows *which* index went missing is the one that puts the mistake where its author will see it.
+- **A `{` that does not open a placeholder** is copied through verbatim, and so is a `}` that closes nothing: `{}`, `{a}`, `{ 0 }` and `{01` are all literal text. There is **no escape**, the same way `Time.format` ([§2.2.8](#_2-2-8-time)) has none: `fmt("{{0}}", "a")` is `"{a}"`, because the inner `{0}` is a placeholder and the outer braces are text. A template that has to show a literal `{0}` builds it with `+`.
+
+The call is counted ([E0213](./errors.md#e0213-call-arity-mismatch)) against the signature above — the template is all that is required, because a template with no placeholders takes no arguments. Nothing counts placeholders against arguments: the template is an expression, so in general there is no placeholder count to check at compile time.
 
 When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically.
 

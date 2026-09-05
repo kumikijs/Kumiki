@@ -272,6 +272,29 @@ export const _stdlibCore = {
     }
     return String(v);
   },
+  /**
+   * `fmt(template, ...args)` (stdlib.md §2.4.5). A placeholder is `{`, decimal
+   * digits, `}`; each is replaced by the argument at that index, rendered
+   * through `show` so `fmt("{0}", v)` and `"" + v` never disagree about what a
+   * value looks like.
+   *
+   * One left-to-right pass, which is what a `/g` replace does: a `{0}` that
+   * arrives *inside* a substituted value is text, not a placeholder to fill
+   * again — otherwise a formatted user string could reach back into the
+   * argument list.
+   *
+   * An index the arguments do not reach keeps its placeholder verbatim rather
+   * than rendering empty: a template that outran its arguments is a mistake,
+   * and `"a {1}"` says which index went missing where its author will see it.
+   * Everything that is not `{<digits>}` is copied through, so there is nothing
+   * to escape — the same bargain `formatTime` makes with its own tokens.
+   */
+  fmt(template: unknown, ...args: unknown[]): string {
+    return _stdlibCore.show(template).replace(/\{(\d+)\}/g, (placeholder, digits: string) => {
+      const i = Number(digits);
+      return i < args.length ? _stdlibCore.show(args[i]) : placeholder;
+    });
+  },
   eq(a: unknown, b: unknown): boolean {
     if (a === b) return true;
     if (a == null || b == null) return false;
