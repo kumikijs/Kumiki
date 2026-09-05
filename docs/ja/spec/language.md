@@ -446,6 +446,8 @@ issue.copy(status=Done, priority=High)
 
 > **`effect-event` のトリガはこれらの名前を束縛できない。** コンパイラは `$el` / `$event` / `$route` をどの reducer の body にも宣言し、種にはトリガのペイロードが持っている値を使う。したがってこの名前を取る束縛は同じ名前の2つ目の宣言になり、`on=load.ok($el, _)` は **E0121** である。番号付きの束縛はこれまでどおり束縛できる — 他に宣言する者がいないからである。
 
+> **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
+
 ### 1.6.6 例
 
 ```kumiki fragment
@@ -478,7 +480,7 @@ reducer editTitle
 
 宣言の右辺は、それが宣言する名前がスコープに入る**前**に評価される。したがって `let n = n + 1` は、宣言しようとしている束縛ではなく、シャドーイングする側の束縛を読む。
 
-**横に並んだ**束縛どうしは、シャドーイングの関係ではなく対等である。入れ子にするものが何もないからである：ひとつのパターンの2つの束縛（`Both(a, a)`）は [E0122](./errors.md#e0122-duplicate-pattern-bind) であり、`effect-event` の束縛リストも同じ形である。そこで繰り返された名前はシャドーイングではなく、パターンやトリガが読めなくしてしまった値である。
+**横に並んだ**束縛どうしは、シャドーイングの関係ではなく対等である。入れ子にするものが何もないからである：ひとつのパターンの2つの束縛（`Both(a, a)`）は [E0122](./errors.md#e0122-duplicate-pattern-bind) であり、`effect-event` の束縛リストも同じ形である（[E0123](./errors.md#e0123-duplicate-effect-bind)）。そこで繰り返された名前はシャドーイングではなく、パターンやトリガが読めなくしてしまった値である。
 
 `let` は [positional binding](#_1-6-5-positional-binding) の名前を取ってよい。これらも他と変わらない宣言なので、`let` が下のすべての読みで勝つ — トリガが `$route` を束縛しない reducer での `$route` も含めて、それはペイロードの読みではなくその `let` の値である（[E0119](./errors.md#e0119-route-bind-out-of-scope)）。この名前を取れない唯一の位置が `effect-event` の束縛である（[E0121](./errors.md#e0121-reserved-bind-name)）。束縛リストはペイロードの positional に名前を与えるものなので、`$el` を取る束縛には、それが表す positional を置く場所が残らない。
 

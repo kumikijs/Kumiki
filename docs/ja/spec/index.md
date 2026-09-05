@@ -80,6 +80,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | ルーティング |
 | [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | コア |
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | コア |
+| [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -209,5 +210,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `82-handler-on-a-user-tile.kumiki` | slot, reducer, tile | コア | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `83-let-shadowing.kumiki` | slot, reducer, fn, tile | コア | [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) |
+| `84-off-origin-link.kumiki` | app, tile | ルーティング | [§3.3.1](./routing.md#_3-3-1-link-要素-推奨) |
 <!-- examples:end -->
 :::

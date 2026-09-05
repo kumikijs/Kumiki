@@ -80,6 +80,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | routing |
 | [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | core |
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
+| [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -209,5 +210,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `82-handler-on-a-user-tile.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `83-let-shadowing.kumiki` | slot, reducer, fn, tile | core | [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) |
+| `84-off-origin-link.kumiki` | app, tile | routing | [§3.3.1](./routing.md#_3-3-1-the-link-element-recommended) |
 <!-- examples:end -->
 :::

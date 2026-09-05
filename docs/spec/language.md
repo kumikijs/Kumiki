@@ -450,6 +450,8 @@ issue.copy(status=Done, priority=High)
 
 > **An `effect-event` trigger cannot bind these names.** The compiler declares `$el`, `$event` and `$route` in every reducer body, seeded from whatever the trigger's payload carries — so a bind that takes one of them is a second declaration of the same name, and `on=load.ok($el, _)` is **E0121**. The numbered binds stay bindable; nothing else declares one.
 
+> **A bind list's names must be distinct.** A bind list names the payload's positionals in order, so two binds naming one thing leaves the other positional with no name to read it by — `on=load.ok(dup, dup)` is **E0123**. `_` is exempt however often it is written, and occupies a position rather than skipping one: it is the spelling for a positional the reducer does not read.
+
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
 ### 1.6.6 Examples
@@ -484,7 +486,7 @@ The scopes are the reducer body and every nested statement body inside it: a `fo
 
 A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
 
-Binds written **side by side** are peers rather than a shadowing pair, because nothing nests them: two binds of one pattern (`Both(a, a)`) are [E0122](./errors.md#e0122-duplicate-pattern-bind), and an `effect-event` bind list is the same shape. A name repeated there is not a shadow — it is a value the pattern or the trigger has left with no name to read it by.
+Binds written **side by side** are peers rather than a shadowing pair, because nothing nests them: two binds of one pattern (`Both(a, a)`) are [E0122](./errors.md#e0122-duplicate-pattern-bind), and an `effect-event` bind list is the same shape ([E0123](./errors.md#e0123-duplicate-effect-bind)). A name repeated there is not a shadow — it is a value the pattern or the trigger has left with no name to read it by.
 
 A `let` may take one of the [positional bindings](#_1-6-5-positional-binding). Those are declarations like any other, so the `let` wins for every read below it — including a `$route` in a reducer whose trigger binds none, which is that `let`'s value and not a payload read ([E0119](./errors.md#e0119-route-bind-out-of-scope)). An `effect-event` bind is the one position that cannot take one of the names ([E0121](./errors.md#e0121-reserved-bind-name)): a bind list names the payload's positionals, so a bind that took `$el` would have nowhere left to put the positional it stands for.
 
