@@ -13,6 +13,7 @@ import type {
   ReducerSpec,
   TileCtx,
   TileNode,
+  TileProps,
   TileRenderer,
   TileRenderers,
 } from "@kumikijs/runtime";
@@ -2026,6 +2027,34 @@ describe("runtime: child lists that are empty on one side", () => {
 
     title = undefined;
     app._rerender?.();
+    expect(surface.hasAttribute("aria-label")).toBe(false);
+    dispose();
+  });
+
+  it("lets a modal's own role and aria win, and loses the renderer's with them", () => {
+    // The tradeoff `patchCommonProps` documents, now that a renderer writes
+    // under two of the names the common props also write. A tile that says
+    // `role` / `aria.label` wins on both paths — and a render that STOPS
+    // saying one removes the attribute by name, taking `role="dialog"` and the
+    // title's label with it. Pinned rather than fixed: removal-by-name is what
+    // stops a stale author value from outliving the render that set it.
+    let props: TileProps | undefined = { role: "alertdialog", aria: { label: "Careful" } };
+    const app = emptySideApp(
+      () => ({ kind: "modal", open: true, title: "Confirm", children: [], props }) as TileNode,
+    );
+    const { dispose } = mount(app, root);
+    const surface = defined(root.firstElementChild, "the mounted modal") as HTMLElement;
+    expect(surface.getAttribute("role")).toBe("alertdialog");
+    expect(surface.getAttribute("aria-label")).toBe("Careful");
+
+    // Both go: `patchCommonProps` removes by NAME, and the renderer wrote
+    // under the same two names. The title's own label does not survive the
+    // author's `aria` map disappearing either — a fresh mount would restore
+    // both, a patch cannot.
+    props = undefined;
+    app._rerender?.();
+    expect(root.firstElementChild).toBe(surface);
+    expect(surface.hasAttribute("role")).toBe(false);
     expect(surface.hasAttribute("aria-label")).toBe(false);
     dispose();
   });

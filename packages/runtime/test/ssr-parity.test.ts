@@ -19,7 +19,14 @@
 //     `markdown`'s paragraphs, `overlay`'s absolutely-positioned layers, a
 //     surface's content box — is a divergence a root-only comparison cannot
 //     see. Where a subtree legitimately differs, the kind's row says so in
-//     prose (`shallow` / `noText`) rather than by omission.
+//     prose (`noText`) rather than by omission.
+//
+// Being total over kinds is not being total over VALUES: the renderers gate on
+// truthiness (`if (node.text)`) where the server hands the field to
+// `serializeAttrs`, which drops only `undefined` / `null` / `false`. Every
+// fixture carrying a non-empty value would agree while an empty one served
+// `title=""` against no attribute at all, so the rows below carry the empty
+// string and the zero for each field a renderer gates on.
 
 import type { AppShape, TileNode } from "@kumikijs/runtime";
 import {
@@ -91,6 +98,12 @@ function serverElement(node: TileNode): HTMLElement {
  * A style attribute as a property→value map, normalised by the CSSOM on both
  * sides so `#fff` vs `rgb(255, 255, 255)` and declaration order are not what
  * this test is about.
+ *
+ * The blind spot worth knowing: a property `happy-dom` does not implement is
+ * dropped from BOTH maps and the two compare equal. `inset` was exactly that —
+ * assigned on the client it vanished, parsed from the server's attribute it
+ * survived, and the harness saw neither. A declaration this suite has never
+ * seen fail is worth checking by hand once.
  */
 function styleOf(el: Element): Record<string, string> {
   const probe = document.createElement("div");
@@ -104,22 +117,30 @@ function styleOf(el: Element): Record<string, string> {
 }
 
 /**
- * Attribute names the server must write and the client never does, because the
- * client sets the corresponding DOM *property*. Form state is not an attribute
- * once a document is live — `input.value = x`, `input.disabled = true` and
- * `option.selected = true` all leave the markup untouched — but an attribute is
- * the only way a served page can carry it, so this asymmetry is the contract
- * rather than a divergence.
+ * The three attributes the server must write and a mounted element cannot have,
+ * because the client sets a property that does NOT reflect: `input.value = x`,
+ * `input.checked = true` and `option.selected = true` all leave the markup
+ * untouched. An attribute is the only way a served page can carry them, so the
+ * asymmetry is the contract for these three.
+ *
+ * It is exactly three. `disabled`, `readonly`, `open` and `max` reflect — the
+ * property assignment writes the attribute — so they are compared like any
+ * other, and excluding them dropped `controlAttrs`, `<details open>` and a
+ * slider's `max` from a gate that claims to compare every kind subtree-deep.
+ *
+ * Dropping an attribute from BOTH shapes is the only way a subtree comparison
+ * can proceed, and it means the comparison says nothing about the server half.
+ * `carries the form state a live element cannot` below is where that half is
+ * asserted; without it, deleting `value` from `ssr-render.ts` was a silent,
+ * permanent regression.
+ *
+ * The set is by NAME, not by element, and `<option value>` is the one place
+ * that is wrong: an option's `value` DOES reflect, so the two paths disagree
+ * there (the client writes `valueKey`'s JSON, the server the plain string) and
+ * this exclusion hides it. Tracked in #404, which is where the encoding gets
+ * decided; the harness needs a per-element exclusion to compare it.
  */
-const PROPERTY_ON_THE_CLIENT = new Set([
-  "value",
-  "max",
-  "checked",
-  "selected",
-  "disabled",
-  "readonly",
-  "open",
-]);
+const PROPERTY_ON_THE_CLIENT = new Set(["value", "checked", "selected"]);
 
 /** Every attribute except `style`, which is compared through the CSSOM. */
 function attrsOf(el: Element): Record<string, string> {
@@ -202,15 +223,13 @@ const CHILD: TileNode = { kind: "text", text: "child" };
 type ParityCase = [label: string, node: TileNode];
 
 /**
- * One kind's row. `cases` is what gets compared; the two prose fields are the
- * only way to stop comparing something, and each has to say why — an omission
+ * One kind's row. `cases` is what gets compared, subtree-deep; `noText` is the
+ * only way to stop comparing something, and it has to say why — an omission
  * cannot express "we did not look", which is what made the old table's silence
  * unreadable.
  */
 type KindRow = {
   cases: [ParityCase, ...ParityCase[]];
-  /** Why the comparison stops at the root element instead of walking children. */
-  shallow?: string;
   /** Why the text the two paths hold is not compared. */
   noText?: string;
 };
@@ -270,6 +289,27 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         "overlay (default align)",
         { kind: "overlay", children: [CHILD, { kind: "text", text: "over" }] },
       ],
+      // The arms of the align mapping the other two rows leave unvisited. It is
+      // the one piece of logic this file has a second copy of, and with only
+      // `top-right` and the default compared, flipping `bottom` or `left` on
+      // one side alone kept the suite green.
+      [
+        "overlay (bottom-left)",
+        {
+          kind: "overlay",
+          children: [CHILD, { kind: "text", text: "over" }],
+          props: { align: "bottom-left" },
+        },
+      ],
+      // A `when` that renders nothing is a null child on both paths, and the
+      // layer index counts what survives it.
+      [
+        "overlay (hole where a child would be)",
+        {
+          kind: "overlay",
+          children: [CHILD, null as unknown as TileNode, { kind: "text", text: "over" }],
+        },
+      ],
     ],
   },
   "route-outlet": {
@@ -311,6 +351,8 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [
       ["button", { kind: "button", text: "Send", type: "submit" }],
       ["button (id in props)", { kind: "button", text: "Send", props: { id: "send" } }],
+      // FALSY: `if (node.type)` on the client against a raw field on the server.
+      ["button (empty type)", { kind: "button", text: "", type: "" }],
       [
         "button (loading)",
         { kind: "button", text: "Save", props: { loading: true, variant: "primary" } },
@@ -328,6 +370,20 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         "input (control state)",
         { kind: "input", value: "", props: { disabled: true, auto_complete: "email" } },
       ],
+      // FALSY: placeholder / id / accept / bind all sit behind `if (…)` in the
+      // renderer, and an empty one is a conditional's "not said" branch.
+      [
+        "input (every field empty)",
+        {
+          kind: "input",
+          value: "",
+          placeholder: "",
+          id: "",
+          accept: "",
+          bind: "",
+          props: { id: "" },
+        },
+      ],
       // `data-kumiki-bind` is the one attribute built from a path rather than
       // copied from a field, and a `.get` segment is not a string — so the two
       // renderers agree only as long as both go through `bindLabel`.
@@ -342,6 +398,11 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
       [
         "textarea",
         { kind: "textarea", value: "hello", rows: 4, placeholder: "p", id: "t", bind: "draft" },
+      ],
+      // FALSY: `rows: 0` is no rows, not a one-line box.
+      [
+        "textarea (empty fields)",
+        { kind: "textarea", value: "", rows: 0, placeholder: "", bind: "" },
       ],
     ],
     noText:
@@ -398,12 +459,15 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [
       ["slider", { kind: "slider", value: 5, min: 0, max: 10, step: 2, bind: "vol" }],
       ["slider (bare)", { kind: "slider" }],
+      // FALSY: `min: 0` IS a bound and stays; `bind: ""` is not one and goes.
+      ["slider (zero bounds, no bind)", { kind: "slider", value: 0, min: 0, step: 0, bind: "" }],
     ],
   },
   editable: {
     cases: [
       ["editable", { kind: "editable", text: "note", bind: "draft", props: { id: "e" } }],
       ["editable (readonly)", { kind: "editable", text: "note", props: { readonly: true } }],
+      ["editable (no bind)", { kind: "editable", text: "", bind: "" }],
     ],
   },
   image: {
@@ -420,6 +484,7 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [
       ["video", { kind: "video", src: "/a.mp4", controls: true, props: { id: "v" } }],
       ["video (autoplay)", { kind: "video", autoplay: true }],
+      ["video (empty src)", { kind: "video", src: "" }],
     ],
   },
   divider: {
@@ -447,6 +512,7 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [
       ["toast", { kind: "toast", text: "Saved", level: "info" }],
       ["toast (no level)", { kind: "toast", text: "Saved" }],
+      ["toast (empty level)", { kind: "toast", text: "", level: "" }],
     ],
   },
   error: {
@@ -462,6 +528,10 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         { kind: "tooltip", text: "Why", placement: "top", children: [CHILD], props: TEXT_PROPS },
       ],
       ["tooltip (no placement)", { kind: "tooltip", text: "Why", children: [] }],
+      [
+        "tooltip (empty text and placement)",
+        { kind: "tooltip", text: "", placement: "", children: [] },
+      ],
     ],
   },
   list: {
@@ -495,6 +565,9 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [
       ["table-cell", { kind: "table-cell", children: [CHILD], colspan: 2, rowspan: 3 }],
       ["table-cell (no span)", { kind: "table-cell", children: [] }],
+      // FALSY: a zero span is no span — `colspan="0"` means "to the end of the
+      // section", which is not what a tile that said nothing asked for.
+      ["table-cell (zero spans)", { kind: "table-cell", children: [], colspan: 0, rowspan: 0 }],
     ],
   },
   modal: {
@@ -537,8 +610,10 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
 /**
  * Every kind the runtime can render, from the registry the mount path is built
  * from. The typed table above is the compile-time half of exhaustiveness; this
- * is the runtime half, and it is not redundant — it catches a kind that reaches
- * the registry through a source the union does not describe.
+ * is the other direction. `TileRenderers` keys are optional
+ * (`{ [K in TileNode["kind"]]?: … }`), so the union cannot force a kind to have
+ * a renderer registered — a kind in the table that nothing renders, and a
+ * renderer whose kind nobody compares, both fail here.
  */
 const EVERY_TILE_KIND = Object.keys({
   ...layoutTiles,
@@ -558,7 +633,7 @@ describe("the server pass renders what the client renders", () => {
   });
 
   for (const [kind, row] of Object.entries(TABLE)) {
-    const opts = { deep: row.shallow === undefined, text: row.noText === undefined };
+    const opts = { deep: true, text: row.noText === undefined };
     describe(kind, () => {
       for (const [label, node] of row.cases) {
         it(`agrees on ${label}`, () => {
@@ -569,6 +644,51 @@ describe("the server pass renders what the client renders", () => {
       }
     });
   }
+
+  it("carries the form state a live element cannot", () => {
+    // The half of the contract `PROPERTY_ON_THE_CLIENT` takes out of the
+    // comparison. A served page carries what the user will see filled in, and
+    // the parity table cannot check it: an attribute dropped from both shapes
+    // compares equal whether the server wrote it or not. Deleting `value` from
+    // `ssr-render.ts` left the whole suite green until this existed.
+    const input = serverElement({ kind: "input", value: "typed", type: "email" });
+    expect(input.getAttribute("value")).toBe("typed");
+
+    const check = serverElement({ kind: "check", checked: true });
+    expect(check.querySelector("input")?.hasAttribute("checked")).toBe(true);
+    const unchecked = serverElement({ kind: "check", checked: false });
+    expect(unchecked.querySelector("input")?.hasAttribute("checked")).toBe(false);
+
+    const radio = serverElement({ kind: "radio", group: "plan", value: "pro", selected: true });
+    const radioInput = radio.querySelector("input");
+    expect(radioInput?.getAttribute("value")).toBe("pro");
+    expect(radioInput?.hasAttribute("checked")).toBe(true);
+
+    const select = serverElement({
+      kind: "select",
+      value: "b",
+      options: [
+        { label: "A", value: "a" },
+        { label: "B", value: "b" },
+      ],
+    });
+    const chosen = Array.from(select.querySelectorAll("option")).filter((o) =>
+      o.hasAttribute("selected"),
+    );
+    expect(chosen.map((o) => o.textContent)).toEqual(["B"]);
+
+    // A textarea's value is its text, which is why it is the one control whose
+    // state the harness excludes one node down rather than by attribute name.
+    expect(serverElement({ kind: "textarea", value: "note" }).textContent).toBe("note");
+
+    const slider = serverElement({ kind: "slider", value: 5, min: 0, max: 10, step: 2 });
+    expect(slider.getAttribute("value")).toBe("5");
+    expect(slider.getAttribute("max")).toBe("10");
+
+    const progress = serverElement({ kind: "progress", value: 3, max: 10 });
+    expect(progress.getAttribute("value")).toBe("3");
+    expect(progress.getAttribute("max")).toBe("10");
+  });
 
   it("escapes what it puts in text and in an attribute", () => {
     // The only defence in a string-concatenated HTML builder, and nothing was

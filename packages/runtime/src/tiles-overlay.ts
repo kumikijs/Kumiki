@@ -19,11 +19,12 @@ function appendChildren(el: HTMLElement, children: TileNode[], ctx: TileCtx): vo
 
 /**
  * Stretch a positioned element over the box it is positioned against. The four
- * longhands rather than the `inset` shorthand: `inset` is dropped outright by
- * DOM implementations that do not know it — `happy-dom`, which is the DOM
- * `kumiki smoke` runs the runtime in, is one — so a layer written that way is
- * not stretched over anything there, and the served style (which is parsed,
- * not assigned, and so keeps the shorthand) stops matching the mounted one.
+ * longhands rather than the `inset` shorthand, because a DOM implementation
+ * that does not know `inset` drops it on assignment while still keeping it in
+ * a style attribute it parses. `happy-dom` — the DOM `kumiki smoke` and the
+ * runtime's own suite run in — is one: written as the shorthand, a layer is
+ * stretched over nothing there, and the served style stops matching the
+ * mounted one for a reason that has nothing to do with either renderer.
  */
 function coverParent(el: HTMLElement): void {
   el.style.top = "0";
@@ -122,10 +123,16 @@ function renderSurface(
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.dataset.kumikiTile = node.kind;
-  // A modal is a dialog, and its `title` is the name it is announced under —
-  // the same two attributes the confirm effect's own overlay carries, and the
-  // ones the served page already had. Only the SSR pass wrote them, so the
-  // first hydration silently took the role off the dialog.
+  // A modal is a dialog, and its `title` is the name it is announced under.
+  // The served page already said both and the mounted one said neither, so the
+  // role and the name lasted exactly until the client's first render. (The
+  // confirm effect's own overlay carries `role="dialog"` too, with
+  // `aria-modal` rather than a name — see `effects-confirm.ts`.)
+  //
+  // Both land under names `applyCommonProps` also writes, so a tile that
+  // sets its own `role` or `aria.label` still wins — and a render that DROPS
+  // one takes the renderer's value with it, the removal-by-name tradeoff
+  // `patchCommonProps` documents.
   if (node.kind === "modal") wrap.setAttribute("role", "dialog");
   applySurfaceLabel(wrap, node.title);
   // `open=false` renders a present-but-hidden host so toggling open/closed
