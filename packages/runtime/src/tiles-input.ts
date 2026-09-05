@@ -499,6 +499,12 @@ export const inputTiles: TileRenderers = {
   select(node) {
     const sel = document.createElement("select");
     sel.dataset.kumikiTile = "select";
+    // §10.3.5 names `select` alongside `input` / `textarea` as a tile whose
+    // bind path goes on the element, and §10.3.9 re-identifies a focused
+    // `<select>` by that marker after a wholesale swap. Only the server pass
+    // wrote it, so a picker restored its focus positionally on the client and
+    // hydration met an attribute the client would not have produced.
+    if (node.bind) bindDataset(sel, node.bind, node.bindPath);
     const id = tileId(node);
     if (id) sel.id = id;
     const options = (node.options ?? []) as Array<{ label: unknown; value: unknown }>;
@@ -736,6 +742,8 @@ export const inputPatchers: TilePatchers = {
   select(el, _oldNode, newNode) {
     const sel = el as HTMLSelectElement;
     reconcileId(sel, newNode);
+    if (newNode.bind) bindDataset(sel, newNode.bind, newNode.bindPath);
+    else clearBindDataset(sel);
     const options = (newNode.options ?? []) as Array<{ label: unknown; value: unknown }>;
     reconcileSelectOptions(sel, newNode.placeholder, options, newNode.value);
     setHandlers(sel, { ...inputHandlers(newNode), selectOptions: options });

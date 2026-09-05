@@ -13,7 +13,7 @@
 // and the alternative is a second copy of the mapping, which is exactly the
 // drift the parity test exists to catch.
 
-import type { StyleDecl, TileNode, TileProps } from "./core.ts";
+import type { BindSegment, StyleDecl, TileNode, TileProps } from "./core.ts";
 import { attrValue, bindLabel, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
@@ -21,6 +21,19 @@ const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 /** The spinner a loading button carries, as the renderer builds it. */
 const BUTTON_SPINNER =
   '<span data-kumiki-tile="spinner" aria-hidden="true" style="margin-right: 0.4em"></span>';
+
+/**
+ * Stretching a positioned element over the box it is positioned against, as
+ * the renderer writes it: the four longhands, not the `inset` shorthand. See
+ * `coverParent` in `tiles-overlay.ts` for why the shorthand is the one
+ * declaration neither path can rely on.
+ */
+const COVER_PARENT: StyleDecl[] = [
+  ["top", "0"],
+  ["right", "0"],
+  ["bottom", "0"],
+  ["left", "0"],
+];
 
 /** What makes an `<hr>` vertical, as the renderer sets it. */
 const VERTICAL_DIVIDER_DECLS: StyleDecl[] = [
@@ -36,7 +49,13 @@ const VERTICAL_DIVIDER_DECLS: StyleDecl[] = [
  * served form whose fields look enabled but are not is worse than one that
  * looks the way it will behave once the page hydrates.
  */
-/** `attrValue` where the attribute is a string, not a number. */
+/**
+ * `attrValue` where the attribute is a string, not a number — and the guard
+ * every field a renderer writes under `if (field)` goes through. `serializeAttrs`
+ * drops only `undefined` / `null` / `false`, so without this an empty `text` or
+ * `placeholder` served `title=""` / `placeholder=""` where the mounted element
+ * has no attribute at all.
+ */
 function stringAttr(v: unknown): string | undefined {
   const value = attrValue(v);
   return value === undefined ? undefined : String(value);
@@ -124,6 +143,19 @@ function baseDecls(node: TileNode): StyleDecl[] {
     }
     case "overlay":
       return [["position", "relative"]];
+    case "modal":
+    case "drawer":
+    case "popover":
+      return surfaceDecls(node.kind, node.open, node.side);
+    case "toast":
+      return [
+        ["padding", "8px 12px"],
+        ["border-radius", "6px"],
+      ];
+    case "error":
+      // The colour is the whole of what says "this is an error" before the
+      // theme stylesheet arrives, and it is the renderer's own, not a prop's.
+      return [["color", "#c00"]];
     case "divider":
       // A vertical rule separates columns rather than rows: it takes its height
       // from the row it is in and draws on its left edge, an `<hr>`'s own
@@ -136,6 +168,62 @@ function baseDecls(node: TileNode): StyleDecl[] {
       // covers.
       return [];
   }
+}
+
+/**
+ * What a `modal` / `drawer` / `popover` host paints, as its renderer does.
+ *
+ * A CLOSED surface is served as the same host, hidden — not as nothing. The
+ * client mounts one either way so that opening a surface is a style flip
+ * rather than a mount, and a server that emitted `""` for it served a crawler
+ * a page with the dialog's content missing, and a first paint laid out as if
+ * the surface were not there (spec/runtime.md §10.6.1). Not a hydration
+ * argument: hydration replaces this DOM wholesale whatever shape it is in.
+ */
+function surfaceDecls(
+  kind: "modal" | "drawer" | "popover",
+  open: boolean | undefined,
+  side: string | undefined,
+): StyleDecl[] {
+  const closed = open === false;
+  if (kind === "modal") {
+    return [
+      ["display", closed ? "none" : "flex"],
+      ["position", "fixed"],
+      ...COVER_PARENT,
+      ["align-items", "center"],
+      ["justify-content", "center"],
+      ["background", "rgba(0,0,0,0.4)"],
+    ];
+  }
+  // A drawer / popover has no `display` of its own when it is open: the
+  // renderer clears the property rather than naming a value, so the element
+  // falls back to what the stylesheet computes for it.
+  const hidden: StyleDecl[] = closed ? [["display", "none"]] : [];
+  if (kind === "drawer") {
+    return [
+      ...hidden,
+      ["position", "fixed"],
+      ["top", "0"],
+      ["bottom", "0"],
+      [side === "right" ? "right" : "left", "0"],
+    ];
+  }
+  return hidden;
+}
+
+/** The absolutely-positioned layer an `overlay` wraps each child after the first in. */
+function overlayLayerStyle(align: string): string {
+  const parts = align.split("-");
+  const has = (k: string): boolean => parts.includes(k);
+  const decls: StyleDecl[] = [
+    ["position", "absolute"],
+    ...COVER_PARENT,
+    ["display", "flex"],
+    ["align-items", has("top") ? "flex-start" : has("bottom") ? "flex-end" : "center"],
+    ["justify-content", has("left") ? "flex-start" : has("right") ? "flex-end" : "center"],
+  ];
+  return decls.map(([k, v]) => `${k}: ${v}`).join("; ");
 }
 
 /** A grid track list: a count divides the axis equally, a string is CSS already. */
@@ -168,11 +256,26 @@ function styleAttr(node: TileNode): string | undefined {
  * The id a tile carries, from either form the renderers accept: a positional
  * argument (`input(id="x")`) or the props block (`{id: "x"}`). The server read
  * only the first, so a `label(for=…)` on a served page pointed at a control
- * with no id until hydration gave it one.
+ * with no id until the client gave it one.
+ *
+ * Through `attrValue`, so the empty string writes no attribute: it is what a
+ * conditional's "not said" branch produces, and the renderers all gate on
+ * `if (id)`. A served `id=""` is an id no `for=` can point at.
  */
 function tileIdOf(node: TileNode): string | undefined {
   const raw = (node as { id?: unknown }).id ?? (node as { props?: { id?: unknown } }).props?.id;
-  return raw == null ? undefined : String(raw);
+  const value = attrValue(raw);
+  return value === undefined ? undefined : String(value);
+}
+
+/**
+ * The `data-kumiki-bind` marker, or nothing when the tile carries no bind. The
+ * renderers write it under `if (node.bind)`, so a `bind=""` — the branch of a
+ * conditional that binds nothing — has to write no attribute here either.
+ */
+function bindAttr(node: { bind?: string; bindPath?: BindSegment[] }): string | undefined {
+  if (!node.bind) return undefined;
+  return node.bindPath ? bindLabel(node.bind, node.bindPath) : node.bind;
 }
 
 function escapeAttr(value: string): string {
@@ -227,22 +330,35 @@ function commonAttrs(node: TileNode): Record<string, string> {
   return Object.fromEntries(commonAttrDecls((node as { props?: TileProps }).props));
 }
 
+/**
+ * A child list, skipping the holes a conditional leaves. `when(cond, Tile())`
+ * lowers to a child that is `null` on the false branch, and the mount path's
+ * `appendChildren` filters for exactly that — a bare walk here throws on the
+ * first one and takes the whole page's HTML with it.
+ */
 function renderChildren(children: TileNode[]): string {
   let out = "";
-  for (const c of children) out += renderTileToString(c);
+  for (const c of children) {
+    if (c != null) out += renderTileToString(c);
+  }
   return out;
 }
 
 /**
  * Serialise one `TileNode` (plus its descendants) to an HTML string.
  *
- * The output mirrors the live renderers: same outer element, same
- * `data-kumiki-*` attributes, and the same inline style — the kind's own
- * layout plus whatever its props map to (`propStyleDecls` in core, the very
- * mapping the mount path applies to every element). The style
- * is the load-bearing half: without it the first paint lays every flex
- * container out as a block and the page reflows on hydration, which is the
- * shift SSR exists to remove.
+ * The output mirrors the live renderers: the same elements — the outer one and
+ * whatever the renderer nests inside it — the same `data-kumiki-*` attributes,
+ * and the same inline style, the kind's own layout plus whatever its props map
+ * to (`propStyleDecls` in core, the very mapping the mount path applies to
+ * every element). The style is the load-bearing half: without it the first
+ * paint lays every flex container out as a block and the page reflows on
+ * hydration, which is the shift SSR exists to remove.
+ *
+ * "Mirrors" is a claim about every kind in `TileNode["kind"]`, and
+ * `ssr-parity.test.ts` is where it is made good: the table there is total over
+ * the union and compares each kind's subtree, so a renderer that starts
+ * painting something this file does not fails rather than drifts (#296).
  *
  * It omits what the client owns and an attribute cannot carry: event handlers,
  * focus state, the class-backed layers (`transition`, the `hover:` / `focus:`
@@ -250,9 +366,10 @@ function renderChildren(children: TileNode[]): string {
  * `card`'s surface and shadow, the control rings) because the client injects
  * those rules at mount, and the resolved `icon` SVG — the placeholder is the
  * renderer's own element under the renderer's own attribute, but empty until
- * the path resolves. A responsive value collapses to its
- * base, because a breakpoint is a question about a viewport the server does
- * not have. The client mount replaces this DOM wholesale on its first
+ * the path resolves. Nor is a live-resolved message: an `error` tile is served
+ * as the `<span>` it will arrive in, empty. A responsive value collapses to
+ * its base, because a breakpoint is a question about a viewport the server
+ * does not have. The client mount replaces this DOM wholesale on its first
  * `render()` after hydration — node identity is NOT preserved on purpose.
  */
 export function renderTileToString(node: TileNode): string {
@@ -269,8 +386,27 @@ export function renderTileToString(node: TileNode): string {
     case "scroll":
     case "panel":
     case "fieldset":
-    case "overlay":
       return el(node, "div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
+    case "overlay": {
+      // The z-axis: the first child stays in normal flow and every later one
+      // gets its own absolutely-positioned layer, placed by `align`. Served
+      // flat, every layer is in flow and the first paint is a column — the
+      // stack appears only once the client has rendered.
+      const align = typeof node.props?.align === "string" ? node.props.align : "center";
+      const layer = overlayLayerStyle(align);
+      const inner = node.children
+        .filter((c): c is TileNode => c != null)
+        .map((child, i) =>
+          // The layer index counts the children that survive the filter, as the
+          // renderer's does: a `when` that renders nothing must not consume the
+          // base-layer slot.
+          i === 0
+            ? renderTileToString(child)
+            : `<div data-kumiki-tile="overlay-layer" style="${layer}">${renderTileToString(child)}</div>`,
+        )
+        .join("");
+      return el(node, "div", { "data-kumiki-tile": "overlay" }, inner);
+    }
     case "heading":
       return el(node, "h1", { "data-kumiki-tile": "heading" }, escapeText(node.text));
     case "text":
@@ -301,7 +437,7 @@ export function renderTileToString(node: TileNode): string {
           // What the tile said, or nothing — the same choice the client
           // renderer makes. Writing `button` here regardless meant the served
           // HTML did not submit and the hydrated page did.
-          type: node.type,
+          type: stringAttr(node.type),
           "data-kumiki-tile": "button",
           disabled: loading || node.props?.disabled === true,
           "aria-busy": loading ? "true" : undefined,
@@ -312,19 +448,17 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "input": {
-      const bind = node.bindPath
-        ? bindLabel(node.bind ?? "", node.bindPath)
-        : (node.bind ?? undefined);
+      const bind = bindAttr(node);
       return el(
         node,
         "input",
         {
           type: node.type ?? "text",
           value: node.value ?? "",
-          placeholder: node.placeholder,
+          placeholder: stringAttr(node.placeholder),
           required: node.required,
           id: tileIdOf(node),
-          accept: node.accept,
+          accept: stringAttr(node.accept),
           multiple: node.multiple,
           ...controlAttrs(node.props, true),
           "data-kumiki-tile": "input",
@@ -334,15 +468,13 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "textarea": {
-      const bind = node.bindPath
-        ? bindLabel(node.bind ?? "", node.bindPath)
-        : (node.bind ?? undefined);
+      const bind = bindAttr(node);
       return el(
         node,
         "textarea",
         {
-          rows: node.rows,
-          placeholder: node.placeholder,
+          rows: node.rows ? node.rows : undefined,
+          placeholder: stringAttr(node.placeholder),
           id: tileIdOf(node),
           ...controlAttrs(node.props, true),
           "data-kumiki-tile": "textarea",
@@ -384,9 +516,7 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "select": {
-      const bind = node.bindPath
-        ? bindLabel(node.bind ?? "", node.bindPath)
-        : (node.bind ?? undefined);
+      const bind = bindAttr(node);
       const opts = (node.options ?? [])
         .map(
           (o) =>
@@ -410,9 +540,7 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "slider": {
-      const bind = node.bindPath
-        ? bindLabel(node.bind ?? "", node.bindPath)
-        : (node.bind ?? undefined);
+      const bind = bindAttr(node);
       return el(
         node,
         "input",
@@ -446,12 +574,17 @@ export function renderTileToString(node: TileNode): string {
         escapeText(node.text),
       );
     }
-    case "markdown":
-      // Match the live renderer's safety posture: don't parse markdown on the
-      // server (it would diverge from whatever client-side markdown lib runs
-      // post-hydration). Surface the raw source as text so it is at least
-      // crawlable; the client replaces this on first render.
-      return el(node, "div", { "data-kumiki-tile": "markdown" }, escapeText(node.text));
+    case "markdown": {
+      // The same minimal markdown the renderer parses — a paragraph per blank
+      // line, `pre-wrap` so the single breaks inside one survive. Served as
+      // one text node instead, the first paint ran every line of the document
+      // together into a single block, and so did what a crawler read.
+      const inner = (node.text ?? "")
+        .split(/\n\s*\n/)
+        .map((para) => `<p style="white-space: pre-wrap">${escapeText(para.trim())}</p>`)
+        .join("");
+      return el(node, "div", { "data-kumiki-tile": "markdown" }, inner);
+    }
     case "image":
       // `alt` is read from the props, not hardcoded empty: a served page whose
       // stated purpose is that a screen reader and a crawler see something is
@@ -502,18 +635,20 @@ export function renderTileToString(node: TileNode): string {
         "",
       );
     case "code":
+      // `data-lang` belongs to the `<code>`, which is what the renderer marks
+      // and what its patcher reads.
       return el(
         node,
         "pre",
-        { "data-kumiki-tile": "code", "data-lang": node.lang || undefined },
-        `<code>${escapeText(node.text)}</code>`,
+        { "data-kumiki-tile": "code" },
+        `<code${serializeAttrs({ "data-lang": node.lang || undefined })}>${escapeText(node.text)}</code>`,
       );
     case "video":
       return el(
         node,
         "video",
         {
-          src: node.src,
+          src: stringAttr(node.src),
           controls: node.controls,
           autoplay: node.autoplay,
           "data-kumiki-tile": "video",
@@ -542,34 +677,45 @@ export function renderTileToString(node: TileNode): string {
         node,
         "td",
         {
-          colspan: node.colspan,
-          rowspan: node.rowspan,
+          colspan: node.colspan ? node.colspan : undefined,
+          rowspan: node.rowspan ? node.rowspan : undefined,
           "data-kumiki-tile": "table-cell",
         },
         renderChildren(node.children),
       );
     case "modal":
     case "drawer":
-    case "popover":
-      // Closed overlays render nothing on the server so the initial paint
-      // matches what the user sees before they trigger the overlay. The
-      // client takes ownership of focus + close handlers on hydration.
-      if (!node.open) return "";
+    case "popover": {
+      // A closed surface is served as the host the renderer builds, hidden —
+      // see `surfaceDecls`. The content box is its own element on the client
+      // and the title is an `<h2>` inside it, so serving the children bare put
+      // them in a box that paints differently. Focus and the close handler
+      // stay client-side.
+      const title = attrValue(node.title);
+      const inner =
+        `<div data-kumiki-tile="${node.kind}-content" style="background: #fff">` +
+        `${title === undefined ? "" : `<h2>${escapeText(String(title))}</h2>`}` +
+        `${renderChildren(node.children)}</div>`;
       return el(
         node,
         "div",
         {
           "data-kumiki-tile": node.kind,
           role: node.kind === "modal" ? "dialog" : undefined,
-          "aria-label": node.title,
+          "aria-label": title,
         },
-        renderChildren(node.children),
+        inner,
       );
+    }
     case "tooltip":
       return el(
         node,
         "span",
-        { "data-kumiki-tile": "tooltip", title: node.text },
+        {
+          "data-kumiki-tile": "tooltip",
+          title: stringAttr(node.text),
+          "data-placement": stringAttr(node.placement),
+        },
         renderChildren(node.children),
       );
     case "toast":
@@ -578,7 +724,7 @@ export function renderTileToString(node: TileNode): string {
         "div",
         {
           "data-kumiki-tile": "toast",
-          "data-level": node.level,
+          "data-level": stringAttr(node.level),
           role: "status",
           "aria-live": "polite",
         },
@@ -607,9 +753,12 @@ export function renderTileToString(node: TileNode): string {
     case "error":
       // Field-bound error messages depend on live refinement results — empty
       // on the server, the client renders the actual error on first render.
+      // The element is the renderer's `<span>`: a served `<div>` reserved a
+      // block where the client paints an inline box, so the message's arrival
+      // moved what sat beside it.
       return el(
         node,
-        "div",
+        "span",
         {
           "data-kumiki-tile": "error",
           "data-field": node.field,
@@ -633,9 +782,7 @@ export function renderTileToString(node: TileNode): string {
       // so the client picks up the same identity path used by input /
       // textarea. The initial text is escaped verbatim; caret / selection
       // state is a client-only concern.
-      const bind = node.bindPath
-        ? bindLabel(node.bind ?? "", node.bindPath)
-        : (node.bind ?? undefined);
+      const bind = bindAttr(node);
       return el(
         node,
         "div",
