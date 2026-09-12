@@ -438,6 +438,8 @@ TypeName.parse(text)       : Option(T)    ; string parsing of a nominal type
 TypeName.show(value)       : Text         ; the string representation of a value
 ```
 
+`TypeName.show(value)` is the qualified spelling of the `.show` method of [§2.2](#_2-2-collection-methods), and the qualifier is discarded: `Duration.show(d)` and `d.show` are the same expression and the same `Text`. That holds for every `TypeName`, [`Duration`](#_2-2-9-duration) and [`Bytes`](#_2-2-10-bytes) included — their other members are constructors, but `show` is not one of them, and reading it as one made a `Text` slot refuse the call with [E0201](./errors.md#e0201-type-mismatch). `parse` is the opposite case: its `Option(T)` *is* the qualifier's, which is why the two are written apart here.
+
 ### 2.4.4 Randomness
 
 ```

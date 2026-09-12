@@ -3299,9 +3299,23 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     case "Call": {
       const fixed = CALL_RESULT.get(e.callee);
       if (fixed) return prim(fixed, e.pos);
+      const dot = e.callee.indexOf(".");
+      const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;
+      // `T.show(v)` is the qualified spelling of `v.show`, and codegen lowers
+      // every capitalised `T` to the same `_s.show(v)` — one regex, one helper,
+      // always a `Text`. So the member decides this one and the qualifier does
+      // not enter into it. Answered by the qualifier below, `Duration.show(ms)`
+      // was a `Duration` and a `Text` slot refused it: E0201 on a program the
+      // runtime runs, with no other spelling left for the author to write, the
+      // method `ms.show` being a different expression (#344). The read is
+      // ordered the way the lowering is, which is what keeps the two agreeing.
+      //
+      // The other two members of `TYPE_MEMBER_CALLS` stay below deliberately:
+      // `fresh` and `parse` produce the qualifier's type, not a fixed one.
+      if (qualifier !== null && isQualifierName(qualifier) && e.callee.slice(dot + 1) === "show")
+        return prim("Text", e.pos);
       // `Duration.ms(500)` and friends build the standard library's `Duration`;
       // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10).
-      const qualifier = e.callee.includes(".") ? e.callee.slice(0, e.callee.indexOf(".")) : null;
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       return sym.fns.get(e.callee)?.ret ?? null;

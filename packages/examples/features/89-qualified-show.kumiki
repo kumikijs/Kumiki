@@ -1,0 +1,57 @@
+# Feature (spec/stdlib.md §2.2): `T.show(v)` is the qualified spelling of the
+# `v.show` method, and it is a `Text` for every capitalised `T`. Codegen says
+# so with one regex and one helper — `_s.show(v)`, the qualifier discarded —
+# and the checker has to say the same thing.
+#
+# It did not, for the two qualifiers that also name constructors. `Duration.*`
+# was answered with `Duration` and `Bytes.*` with `Bytes` before the member was
+# looked at, so `Duration.show(ms)` was a `Duration`:
+#
+#     E0201 type-mismatch: Expected Text but got Duration
+#
+# That is a working program refused, with nothing left to write instead — the
+# method spelling `ms.show` is a different expression, not a repair. Every
+# assignment below is into a `Text` slot, so the file is the check.
+
+type Label = Text
+
+slot seconds : Int   = 90
+slot name    : Label = "ada"
+
+slot from-duration : Text = ""
+slot from-bytes    : Text = ""
+slot from-int      : Text = ""
+slot from-user     : Text = ""
+slot from-method   : Text = ""
+
+reducer render on=ui.click(RenderBtn)
+    # A `Duration` is milliseconds at runtime, so showing one shows that number.
+    do= from-duration := Duration.show(Duration.s(seconds))
+        # The other qualifier that names a constructor. `Bytes` is a byte array,
+        # which `show` renders the way the language renders any value in a
+        # string — no special case, which is the point.
+        from-bytes    := Bytes.show(Bytes.from-text("hi"))
+        # The qualifiers that were already right, kept alongside so the file
+        # shows the four answers are the same answer.
+        from-int      := Int.show(seconds)
+        from-user     := Label.show(name)
+        # The method spelling, which was never in doubt.
+        from-method   := seconds.show
+
+tile RenderBtn = button(text="show", onClick=render)
+
+tile App
+    = column(
+        heading("qualified show"),
+        RenderBtn,
+        text("duration=" + from-duration),
+        text("bytes=" + from-bytes),
+        text("int=" + from-int),
+        text("user=" + from-user),
+        text("method=" + from-method))
+      {pad: "lg", gap: "md"}
+
+app QualifiedShow
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

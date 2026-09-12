@@ -437,6 +437,8 @@ TypeName.parse(text)       : Option(T)    ; nominal 型の文字列パース
 TypeName.show(value)       : Text         ; 値の文字列表現
 ```
 
+`TypeName.show(value)` は [§2.2](#_2-2-コレクションメソッド) の `.show` メソッドを修飾子付きで書いたものであり、修飾子は捨てられる。`Duration.show(d)` と `d.show` は同じ式であり、同じ `Text` である。これは [`Duration`](#_2-2-9-duration) や [`Bytes`](#_2-2-10-bytes) を含むすべての `TypeName` について成り立つ。これらの他のメンバはコンストラクタだが `show` はそうではなく、コンストラクタとして読んだために `Text` スロットへの代入が [E0201](./errors.md#e0201-type-mismatch) で拒否されていた。`parse` は逆で、その `Option(T)` は修飾子の型そのものである。両者を分けて書いているのはそのためである。
+
 ### 2.4.4 乱数
 
 ```

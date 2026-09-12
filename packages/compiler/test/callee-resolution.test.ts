@@ -935,3 +935,71 @@ describe("the qualifier of a type-member call", () => {
     expect(err?.message).toMatch(/^Reference to undefined type "[^"]+"$/);
   });
 });
+
+describe("the result type of a qualified `show`", () => {
+  // `T.show(v)` is the qualified spelling of `v.show`. Codegen lowers both to
+  // the same `_s.show(v)` for every capitalised `T` — one regex, one helper,
+  // always a `Text` — and `inferType` did not agree for every `T`: its `Call`
+  // case answered `Duration.*` with `Duration` and `Bytes.*` with `Bytes`
+  // before the member was consulted at all, so those two qualifiers returned
+  // the constructor's type for a call that constructs nothing.
+  //
+  //     shown := Duration.show(ms)
+  //     E0201 type-mismatch at 3:40: Expected Text but got Duration
+  //
+  // That is the expensive direction: a program the runtime runs, refused, with
+  // no spelling of it left for the author — `ms.show` is the method, not this.
+  // `fresh` and `parse` are deliberately not here: their result *is* the
+  // qualifier's, so the qualifier answering for them is correct (#344).
+  const QUALIFIERS = [
+    // The primitives, which never reach `sym.types`.
+    "Int",
+    "Float",
+    "Time",
+    "EffectId",
+    // The standard library's types, including the two the qualifier used to
+    // answer for.
+    "Duration",
+    "Bytes",
+    "Url",
+    // A type the program declares.
+    "Probe",
+  ];
+
+  it("is Text for every qualifier, so a Text target accepts it", () => {
+    for (const q of QUALIFIERS) {
+      expect(codes(inReducer(`t := ${q}.show(a)`)), q).toEqual([]);
+    }
+  });
+
+  it("is Text rather than undecidable, so a non-Text target still refuses it", () => {
+    // Without this the first assertion is satisfied by answering `null`, which
+    // is accepted against *every* target — trading a wrong diagnostic for no
+    // diagnostic at all. `a` is the `Int` slot.
+    for (const q of QUALIFIERS) {
+      expect(codes(inReducer(`a := ${q}.show(a)`)), q).toEqual(["E0201"]);
+    }
+  });
+
+  it("names Text in the diagnostic, whichever qualifier was written", () => {
+    for (const q of QUALIFIERS) {
+      const [err] = check(parse(lex(inReducer(`a := ${q}.show(a)`))));
+      expect(err?.message, q).toBe("Expected Int but got Text");
+    }
+  });
+
+  it("lowers to the one helper, whichever qualifier was written", () => {
+    // The checker's answer is only right because the lowering discards the
+    // qualifier. Pinned here so the two cannot drift apart silently.
+    for (const q of QUALIFIERS) {
+      expect(loweringOf(`${q}.show(1)`), q).toContain("_s.show(1)");
+    }
+  });
+
+  it("still answers a Duration / Bytes constructor with its own type", () => {
+    // The branches the fix reorders around: these *do* construct, and their
+    // result is the qualifier's.
+    expect(codes(inReducer("t := Duration.ms(500)"))).toEqual(["E0201"]);
+    expect(codes(inReducer("t := Bytes.from-text(t)"))).toEqual(["E0201"]);
+  });
+});
