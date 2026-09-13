@@ -40,7 +40,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     expect(existsSync(join(outDir, "app.js"))).toBe(true);
     // The monolithic runtime.js is gone — replaced by the pruned module set.
     expect(existsSync(join(outDir, "runtime.js"))).toBe(false);
-    const expected = ["core.js", "stdlib.js", "tiles-layout.js", "tiles-text.js", "tiles-input.js"];
+    // `layout` ships whole (its kinds share renderers); `text` and `input` ship
+    // per tile, so the counter gets the heading and the button and nothing else
+    // from those two families.
+    const expected = [
+      "core.js",
+      "stdlib.js",
+      "tiles-layout.js",
+      "tiles-text-heading.js",
+      "tiles-input-button.js",
+      "tiles-input-shared.js",
+    ];
     for (const f of expected) {
       expect(existsSync(join(outDir, "runtime", f)), `runtime/${f} missing`).toBe(true);
     }
@@ -52,6 +62,15 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
       "effects-http.js",
       "effects-toast.js",
       "effects-confirm.js",
+      // The siblings of the two tiles it does render (#71): the counter used
+      // to download the link tile's URL-disposition check and the select
+      // tile's option reconciler along with them.
+      "tiles-text.js",
+      "tiles-text-link.js",
+      "tiles-text-icon.js",
+      "tiles-input.js",
+      "tiles-input-select.js",
+      "tiles-input-textarea.js",
       "tiles-collection.js",
       "tiles-overlay.js",
       "tiles-media.js",

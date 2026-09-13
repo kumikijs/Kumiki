@@ -10,10 +10,11 @@
 // work with nothing to show for it.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -77,6 +78,53 @@ describe("kumiki build --minify", () => {
       expect(readFileSync(join(minDir, f), "utf8"), `${f} differs`).toBe(
         readFileSync(join(plainDir, f), "utf8"),
       );
+    }
+  });
+
+  it("--bundle writes one app.js and no runtime/", () => {
+    const out = build(minDir, "--bundle");
+    expect(out).toContain("bundled");
+    expect(existsSync(join(minDir, "app.js"))).toBe(true);
+    expect(existsSync(join(minDir, "index.html"))).toBe(true);
+    expect(existsSync(join(minDir, "runtime"))).toBe(false);
+    // The linked file carries no unresolved relative import — a leftover
+    // `./runtime/core.js` would 404 with `runtime/` gone.
+    expect(readFileSync(join(minDir, "app.js"), "utf8")).not.toContain("./runtime/");
+  });
+
+  it("--bundle is smaller than the modular build it replaces, raw and compressed", () => {
+    build(plainDir);
+    build(minDir, "--bundle");
+    const modularFiles = [
+      join(plainDir, "app.js"),
+      ...readdirSync(join(plainDir, "runtime")).map((f) => join(plainDir, "runtime", f)),
+    ];
+    const bundledFile = join(minDir, "app.js");
+    const raw = (fs: string[]): number => fs.reduce((n, f) => n + statSync(f).size, 0);
+    // Compressed separately per file, which is what the wire does: gzip and
+    // brotli build their dictionary per response, so eight small modules
+    // compress markedly worse than the same bytes linked together. That is
+    // most of why bundling wins by more after compression than before.
+    const gz = (fs: string[]): number =>
+      fs.reduce((n, f) => n + gzipSync(readFileSync(f), { level: 9 }).length, 0);
+    expect(raw([bundledFile])).toBeLessThan(raw(modularFiles) * 0.95);
+    expect(gz([bundledFile])).toBeLessThan(gz(modularFiles) * 0.9);
+  });
+
+  it("the bundled counter still mounts and survives a click", async () => {
+    build(minDir, "--bundle");
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    try {
+      await import(pathToFileURL(join(minDir, "app.js")).href);
+      expect(root.textContent).toContain("Count: 0");
+      const incBtn = [...root.querySelectorAll("button")].find((b) => b.textContent === "+");
+      incBtn?.click();
+      expect(root.textContent).toContain("Count: 1");
+      expect((globalThis as { __kumikiApp?: unknown }).__kumikiApp).toBeDefined();
+    } finally {
+      root.remove();
     }
   });
 

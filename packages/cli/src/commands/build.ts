@@ -1,15 +1,16 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
 import { minify } from "oxc-minify";
+import { rolldown } from "rolldown";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 
 const require = createRequire(import.meta.url);
 
-const USAGE = "Usage: kumiki build <input.kumiki> <outdir> [--minify]";
+const USAGE = "Usage: kumiki build <input.kumiki> <outdir> [--minify] [--bundle]";
 
 /**
  * Read one prebuilt (minified) runtime feature module. The modules are plain
@@ -55,6 +56,23 @@ export type BuildOptions = {
    * either way — those modules ship minified already.
    */
   minify?: boolean;
+  /**
+   * Link `app.js` and the runtime modules it imports into one minified file,
+   * and drop `runtime/`.
+   *
+   * Worth its own flag rather than being implied by `--minify` because the two
+   * optimise opposite things. The modular layout gives `runtime/core.js` a URL
+   * that does not change when the app does, so a returning visitor re-downloads
+   * only `app.js`. Bundling gives a first visitor one request and one
+   * compression stream over the whole payload, which is worth 20–30% on the
+   * examples — gzip and brotli build their dictionary per file, so twenty small
+   * modules compress markedly worse than the same bytes linked together.
+   *
+   * It also tree-shakes across the seam the module boundary hides: a tile
+   * module's renderer that the app's `_tiles` never names, a stdlib helper it
+   * never calls.
+   */
+  bundle?: boolean;
 };
 
 /**
@@ -71,6 +89,32 @@ async function minifyApp(js: string): Promise<string> {
     throw new Error(`kumiki build --minify: could not minify app.js\n${detail}`);
   }
   return result.code;
+}
+
+/**
+ * Link the written output into a single minified `app.js` and remove
+ * `runtime/`. Runs over the artifacts on disk rather than in memory, so what
+ * is bundled is exactly what the modular build produces — one code path, and
+ * `--bundle` cannot drift from the layout the other tiers test.
+ */
+async function bundleOutput(outdir: string): Promise<void> {
+  const entry = resolve(outdir, "app.js");
+  const build = await rolldown({ input: entry, platform: "browser" });
+  const { output } = await build.generate({ format: "esm", minify: true });
+  const chunks = output.filter((o) => o.type === "chunk");
+  if (chunks.length !== 1) {
+    // Every import the generated header emits is static and relative, so the
+    // graph has no split point. More than one chunk means something changed
+    // upstream, and silently writing the first would ship a broken app.
+    throw new Error(
+      `kumiki build --bundle: expected one chunk, got ${chunks.length} (${chunks
+        .map((c) => c.fileName)
+        .join(", ")})`,
+    );
+  }
+  await build.close();
+  writeFileSync(entry, chunks[0]?.code ?? "");
+  rmSync(resolve(outdir, "runtime"), { recursive: true, force: true });
 }
 
 export async function buildCmd(
@@ -116,7 +160,9 @@ export async function buildCmd(
       }
     }
   }
-  const appJs = options.minify ? await minifyApp(result.js) : result.js;
+  // `--bundle` minifies the linked output, so pre-minifying here would be the
+  // same work twice on a file that is about to be replaced.
+  const appJs = options.minify && !options.bundle ? await minifyApp(result.js) : result.js;
   mkdirSync(outdir, { recursive: true });
   writeFileSync(resolve(outdir, "app.js"), appJs);
   mkdirSync(resolve(outdir, "runtime"), { recursive: true });
@@ -124,6 +170,13 @@ export async function buildCmd(
     writeFileSync(resolve(outdir, "runtime", `${mod}.js`), readRuntimeModule(mod));
   }
   writeFileSync(resolve(outdir, "index.html"), buildHtml());
+  if (options.bundle) {
+    await bundleOutput(outdir);
+    console.log(
+      `Wrote ${outdir}/index.html, app.js (bundled, minified — ${result.runtimeModules.length} runtime modules linked in)`,
+    );
+    return;
+  }
   console.log(
     `Wrote ${outdir}/index.html, app.js${options.minify ? " (minified)" : ""}, runtime/ (${result.runtimeModules.join(", ")})`,
   );
@@ -136,18 +189,22 @@ export function registerBuild(program: Command): void {
     .argument("[input]", "input .kumiki file")
     .argument("[outdir]", "output directory")
     .option("--minify", "minify app.js (off by default — the debug loop reads it)")
+    .option("--bundle", "link app.js + runtime/ into one minified file (implies --minify)")
     .allowExcessArguments(false)
     .action(
       async (
         input: string | undefined,
         outdir: string | undefined,
-        options: { minify?: boolean },
+        options: { minify?: boolean; bundle?: boolean },
       ) => {
         if (!input || !outdir) {
           console.error(USAGE);
           process.exit(2);
         }
-        await buildCmd(input, outdir, { minify: options.minify === true });
+        await buildCmd(input, outdir, {
+          minify: options.minify === true,
+          bundle: options.bundle === true,
+        });
       },
     );
 }

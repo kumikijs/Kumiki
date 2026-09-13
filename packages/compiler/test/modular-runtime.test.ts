@@ -48,13 +48,21 @@ function modular(src: string) {
 }
 
 describe("modular runtime emission (#71)", () => {
-  it("counter imports only core + stdlib + its tile families", () => {
+  it("counter imports only core + stdlib + the tiles it renders", () => {
     const r = modular(COUNTER);
     expect(r.js).toContain('import { mountCore } from "./runtime/core.js"');
     expect(r.js).toContain('import { _stdlibCore } from "./runtime/stdlib.js"');
+    // `layout` ships whole — its thirteen kinds share five renderers, so there
+    // is nothing to split. `text` and `input` ship per tile.
     expect(r.js).toContain('from "./runtime/tiles-layout.js"');
-    expect(r.js).toContain('from "./runtime/tiles-text.js"');
-    expect(r.js).toContain('from "./runtime/tiles-input.js"');
+    expect(r.js).toContain('from "./runtime/tiles-text-heading.js"');
+    expect(r.js).toContain('from "./runtime/tiles-input-button.js"');
+    // The rest of those two families stays home: the counter renders neither a
+    // link (a URL-disposition check and an allowlist) nor a select (a 70-line
+    // option reconciler), and used to download both.
+    for (const unused of ["tiles-text-link", "tiles-text-icon", "tiles-input-select"]) {
+      expect(r.js, `${unused} should not ship`).not.toContain(unused);
+    }
     // counter neither routes nor uses effects/collections/overlays — none ship
     expect(r.js).not.toContain("router.js");
     expect(r.js).not.toContain("effects-");
@@ -65,8 +73,11 @@ describe("modular runtime emission (#71)", () => {
       "core",
       "stdlib",
       "tiles-layout",
-      "tiles-text",
-      "tiles-input",
+      "tiles-input-button",
+      "tiles-text-heading",
+      // The input tiles' shared module is copied, not imported by the header —
+      // `tiles-input-button.js` reaches it relatively.
+      "tiles-input-shared",
     ]);
     // mounts through the granular core with the assembled registry
     expect(r.js).toContain("const _s = _stdlibCore;");
@@ -86,9 +97,12 @@ describe("modular runtime emission (#71)", () => {
     expect(r.js).toContain(
       'import { layoutTiles, layoutPatchers } from "./runtime/tiles-layout.js"',
     );
-    expect(r.js).toContain('import { textTiles, textPatchers } from "./runtime/tiles-text.js"');
     expect(r.js).toContain(
-      "const _patchers = { ...layoutPatchers, ...textPatchers, ...inputPatchers };",
+      'import { headingTile, headingPatcher } from "./runtime/tiles-text-heading.js"',
+    );
+    // A whole family spreads in; a per-tile module lands under its own kind.
+    expect(r.js).toContain(
+      "const _patchers = { ...layoutPatchers, button: buttonPatcher, heading: headingPatcher };",
     );
     expect(r.js).toContain("tilePatchers: _patchers");
   });

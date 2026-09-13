@@ -796,7 +796,18 @@ kumiki build --target=edge          # Edge runtime
 kumiki build --target=static        # 静的サイト
 kumiki build --analyze              # bundle 分析
 kumiki build --minify               # 生成されたアプリモジュールを minify
+kumiki build --bundle               # アプリとランタイムを1ファイルに結合
 ```
+
+`--bundle` は、生成モジュールとそれが import するランタイムモジュールを 1 つの
+minify 済み `app.js` に結合し、`runtime/` を出力しない。`--minify` に含めず独立し
+たフラグにしてあるのは、2 つが逆方向を最適化するからである。モジュール構成は
+`runtime/core.js` にアプリの変更で変わらない URL を与えるので、再訪者は `app.js`
+だけを取り直せばよい。バンドルは初回訪問者にリクエスト 1 回と、ペイロード全体に対
+する圧縮ストリーム 1 本を与える — gzip も brotli も辞書をレスポンスごとに構築する
+ので、小さなモジュール 20 個は同じバイト列を結合したものより明確に圧縮率が悪い —
+さらに、モジュール境界が隠していた範囲を越えて tree-shake できる。サンプルアプリ
+では圧縮後のペイロードが 19〜28% 減る。
 
 `--minify` はオプトインであり、読める出力が既定であることには理由がある — 生成モ
 ジュールはスタックトレースが指す先そのものなので、求められてもいないのに minify す

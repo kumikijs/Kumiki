@@ -60,6 +60,7 @@
     "@kumikijs/vite": "workspace:*",
     "commander": "^15.0.0",
     "oxc-minify": "^0.149.0",
+    "rolldown": "^1.2.8",
     "vite": "catalog:"
   },
   "devDependencies": {

@@ -13,7 +13,14 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BUILTIN_TILES, compile, TILE_FAMILY } from "@kumikijs/compiler";
+import {
+  BUILTIN_TILES,
+  compile,
+  PER_TILE_FAMILIES,
+  PER_TILE_FAMILY_SHARED,
+  TILE_FAMILY,
+  tileModule,
+} from "@kumikijs/compiler";
 import { resolveCapabilities } from "@kumikijs/compiler/node";
 import {
   collectionTiles,
@@ -27,7 +34,8 @@ import {
 import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const examplesDir = join(here, "..", "examples");
+const packagesDir = join(here, "..");
+const examplesDir = join(packagesDir, "examples");
 
 const RUNTIME_FAMILIES = {
   layout: layoutTiles,
@@ -39,19 +47,18 @@ const RUNTIME_FAMILIES = {
   status: statusTiles,
 } as const;
 
-/** Every module file the runtime build emits to dist/modules (sans extension). */
-const AVAILABLE_MODULES = new Set([
-  "core",
-  "stdlib",
-  "testkit",
-  "router",
-  "effects-storage",
-  "effects-indexed",
-  "effects-http",
-  "effects-toast",
-  "effects-confirm",
-  ...Object.keys(RUNTIME_FAMILIES).map((f) => `tiles-${f}`),
-]);
+/**
+ * Every module file the runtime build emits to dist/modules (sans extension),
+ * read from the build rather than listed here: the set changed once already
+ * (families to per-tile modules, #71) and a hand-kept copy would have said the
+ * new names were unknown while the build was emitting them. `test` depends on
+ * `^build`, so this directory is the runtime's current output.
+ */
+const AVAILABLE_MODULES = new Set(
+  readdirSync(join(packagesDir, "runtime", "dist", "modules"))
+    .filter((f) => f.endsWith(".js"))
+    .map((f) => f.slice(0, -3)),
+);
 
 function listExamples(): string[] {
   const features = readdirSync(join(examplesDir, "features"))
@@ -79,6 +86,25 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
         Object.hasOwn(renderers, tile),
         `tile "${tile}" mapped to family "${family}" but tiles-${family}.ts has no renderer for it`,
       ).toBe(true);
+    }
+  });
+
+  it("gives every tile of a per-tile family its own built module", () => {
+    // The module name is derived from the kind (`tiles-text-link`), so a kind
+    // added to one of these families without a matching runtime entry compiles
+    // to an import of a file that was never built — a blank page, and `check`
+    // and `build` both pass.
+    for (const tile of BUILTIN_TILES) {
+      if (!PER_TILE_FAMILIES.includes(TILE_FAMILY[tile] as never)) continue;
+      const mod = tileModule(tile);
+      expect(mod, `no module name for "${tile}"`).toBeDefined();
+      expect(
+        AVAILABLE_MODULES.has(mod as string),
+        `tile "${tile}" needs dist/modules/${mod}.js, which the runtime build does not emit`,
+      ).toBe(true);
+    }
+    for (const shared of Object.values(PER_TILE_FAMILY_SHARED)) {
+      expect(AVAILABLE_MODULES.has(shared), `missing dist/modules/${shared}.js`).toBe(true);
     }
   });
 
@@ -110,11 +136,23 @@ describe("every example compiles in modular mode with resolvable imports (#71)",
       for (const mod of result.runtimeModules) {
         expect(AVAILABLE_MODULES.has(mod), `unknown runtime module "${mod}"`).toBe(true);
       }
-      // …and matches the imports the generated code actually contains.
-      const imported = [...result.js.matchAll(/from "\.\/runtime\/([\w-]+)\.js"/g)].map(
-        (m) => m[1],
+      // …and matches the imports the generated code actually contains, except
+      // for a per-tile family's shared module: the tile modules reach it
+      // relatively, so it is copied without appearing in the header. Anything
+      // else declared-but-unimported is a module shipped for no reason, and
+      // anything imported-but-undeclared is a dangling import at runtime.
+      const imported = new Set(
+        [...result.js.matchAll(/from "\.\/runtime\/([\w-]+)\.js"/g)].map((m) => m[1] as string),
       );
-      expect(new Set(imported)).toEqual(new Set(result.runtimeModules));
+      const declared = new Set(result.runtimeModules);
+      const shared = new Set(Object.values(PER_TILE_FAMILY_SHARED));
+      for (const mod of imported) {
+        expect(declared.has(mod), `imported "${mod}" but did not declare it`).toBe(true);
+      }
+      for (const mod of declared) {
+        if (imported.has(mod) || shared.has(mod)) continue;
+        throw new Error(`declared "${mod}" but nothing imports it`);
+      }
     });
   }
 });
