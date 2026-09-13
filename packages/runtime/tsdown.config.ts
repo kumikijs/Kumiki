@@ -1,5 +1,7 @@
 import { defineConfig } from "tsdown";
 
+import { publishedOutputOptions } from "../../tsdown.shared.ts";
+
 // @kumikijs/runtime has no runtime dependencies. Three artifact sets are built
 // from the same source:
 //
@@ -7,7 +9,9 @@ import { defineConfig } from "tsdown";
 //   and the `./bundle` export that codegen inlines into generated apps for
 //   smoke/run/test. It MUST stay unminified: `inlineRuntime` strips the
 //   `export { … }` line and relies on the top-level binding names matching the
-//   export names, and the AI debug loop reads its stack traces.
+//   export names, and the AI debug loop reads its stack traces. Its JSDoc is
+//   stripped all the same (`publishedOutputOptions`) — that costs neither
+//   guarantee, and it is 39% of this artifact gzipped.
 // - `bundle.min` — the same single file, minified ESM (`./bundle.min`). Kept
 //   for hosts that want the full runtime as one request.
 // - `dist/modules/*` — the granular feature modules (#71), minified. `kumiki
@@ -23,6 +27,7 @@ export default defineConfig([
     dts: true,
     // Emit .js/.d.ts (honors "type": "module") instead of tsdown's node-default .mjs.
     fixedExtension: false,
+    outputOptions: publishedOutputOptions,
   },
   {
     entry: { "bundle.min": "src/index.ts" },
@@ -32,6 +37,7 @@ export default defineConfig([
     minify: true,
     // The first config already cleaned dist/; cleaning here would race it.
     clean: false,
+    outputOptions: publishedOutputOptions,
   },
   {
     entry: {
@@ -58,5 +64,6 @@ export default defineConfig([
     fixedExtension: false,
     minify: true,
     clean: false,
+    outputOptions: publishedOutputOptions,
   },
 ]);
