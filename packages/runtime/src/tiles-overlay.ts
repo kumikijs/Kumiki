@@ -50,7 +50,7 @@ function applyOverlayAlign(layer: HTMLElement, align: string): void {
 // Per-surface handler slot (#190). Modal / drawer / popover / details store
 // their `onClose` (or details' click handler) here so the outer click / toggle
 // listener registered at create time dispatches through the *current* render's
-// callback after a patch. Same rationale as INPUT_STATE in tiles-input.ts.
+// callback after a patch. Same rationale as INPUT_STATE in tiles/input/_shared.ts.
 type SurfaceHandlers = { onClose?: EventHandler; el?: Record<string, unknown> };
 const SURFACE_STATE = new WeakMap<HTMLElement, SurfaceHandlers>();
 function surfaceHandlers(node: { props?: TileProps }): SurfaceHandlers {

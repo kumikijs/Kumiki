@@ -77,7 +77,7 @@ export const BUILTIN_TILES = new Set<string>([
 ]);
 
 /**
- * Which runtime feature module (`@kumikijs/runtime/modules/tiles-<family>.js`)
+ * Which runtime feature module (`@kumikijs/runtime/modules/tiles-*.js`)
  * renders each built-in tile (#71). Codegen uses this to import only the
  * families a compiled app touches; the mapping MUST match the runtime's
  * `tiles-*.ts` module contents (a cross-package test pins the two together).
@@ -90,6 +90,57 @@ export type TileFamily =
   | "overlay"
   | "media"
   | "status";
+
+/**
+ * Families whose tiles ship one runtime module EACH, rather than one module
+ * for the family (#71).
+ *
+ * A family is on this list when its tiles are genuinely separate code. `text`
+ * is: `link` carries a URL-disposition check, an allowlist and a
+ * once-per-target diagnostic, `icon` a theme-override lookup and a size scale,
+ * and `heading` is six lines — an app with a heading used to download all of
+ * it. `layout` is not, and must not be: of the thirteen kinds mapped to it,
+ * twelve are rendered by five functions (`page` and `column` are both
+ * `renderFlexColumn`; seven more — `card`, `box`, `panel`, `fieldset`,
+ * `stack`, `region`, `scroll` — are all `renderBox`), and the thirteenth,
+ * `route-outlet`, has no renderer of its own at all. Splitting it would ship
+ * the same bytes under more names.
+ *
+ * Every kind of a listed family must have its own module, because the module
+ * name is derived from the kind (`tiles-text-link`); a cross-package test pins
+ * that against what the runtime build emits.
+ */
+export const PER_TILE_FAMILIES: readonly TileFamily[] = ["text", "input"];
+
+/**
+ * Whether `family` — which may be `undefined`, because `TILE_FAMILY` does not
+ * know a user-defined tile — ships one module per tile. A predicate rather
+ * than an `includes` call at each site, so the narrowing is written once
+ * instead of as a cast at every caller.
+ */
+export function isPerTileFamily(family: TileFamily | undefined): family is TileFamily {
+  return family !== undefined && PER_TILE_FAMILIES.includes(family);
+}
+
+/**
+ * The module a per-tile family's tiles import in common, when it has one.
+ * Not imported by the generated header — the tile modules reference it
+ * relatively — but it has to be COPIED next to them, so it belongs in the
+ * module list `kumiki build` ships.
+ */
+export const PER_TILE_FAMILY_SHARED: Partial<Record<TileFamily, string>> = {
+  input: "tiles-input-shared",
+};
+
+/**
+ * The runtime module that renders `kind` — `tiles-text-link` for a tile that
+ * ships alone, `tiles-layout` for one that ships with its family.
+ */
+export function tileModule(kind: string): string | undefined {
+  const family = TILE_FAMILY[kind];
+  if (!family) return undefined;
+  return PER_TILE_FAMILIES.includes(family) ? `tiles-${family}-${kind}` : `tiles-${family}`;
+}
 
 export const TILE_FAMILY: Record<string, TileFamily> = {
   // tiles-layout

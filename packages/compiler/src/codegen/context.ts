@@ -1,5 +1,5 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
-import { TILE_FAMILY, type TileFamily } from "../builtins.ts";
+import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -152,6 +152,30 @@ export function tilePatcherFamilyVar(f: TileFamily): string {
 }
 
 /**
+ * The generated identifier holding one tile's renderer, for a tile that ships
+ * as its own runtime module (#71). Mirrors the runtime's export name, so the
+ * import needs no alias.
+ */
+export function tileVar(kind: string): string {
+  return `${camelKind(kind)}Tile`;
+}
+
+/** The patcher companion to {@link tileVar}. */
+export function tilePatcherVar(kind: string): string {
+  return `${camelKind(kind)}Patcher`;
+}
+
+/**
+ * A tile kind as a JS identifier stem — `route-outlet` would be `routeOutlet`.
+ * No kind of a per-tile family is hyphenated today, so the conversion never
+ * fires; it is here so that adding one is a table edit rather than a silent
+ * syntax error in generated code.
+ */
+function camelKind(kind: string): string {
+  return kind.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+}
+
+/**
  * Identifiers the emitted module binds at its own top level: the two it
  * declares, plus every name `emitImportHeader` can import. Names starting with
  * `_` are omitted — {@link jsBinding} already keeps user names out of that
@@ -176,6 +200,11 @@ export const EMITTED_MODULE_BINDINGS: readonly string[] = [
   ...new Set(
     Object.values(TILE_FAMILY).flatMap((f) => [tileFamilyVar(f), tilePatcherFamilyVar(f)]),
   ),
+  // The per-tile modules' exports (#71) — one pair per kind of a family on
+  // `PER_TILE_FAMILIES`, which the granular header imports by these names.
+  ...Object.keys(TILE_FAMILY)
+    .filter((k) => isPerTileFamily(TILE_FAMILY[k]))
+    .flatMap((k) => [tileVar(k), tilePatcherVar(k)]),
 ];
 
 /**

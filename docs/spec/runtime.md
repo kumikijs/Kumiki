@@ -909,7 +909,31 @@ kumiki build --target=ssr           # Node.js SSR
 kumiki build --target=edge          # Edge runtime
 kumiki build --target=static        # static site
 kumiki build --analyze              # bundle analysis
+kumiki build --minify               # minify the generated app module
+kumiki build --bundle               # link app + runtime into one file
 ```
+
+`--bundle` links the generated module and the runtime modules it imports
+into a single minified `app.js`, and emits no `runtime/`. It is worth its own
+flag rather than being implied by `--minify` because the two optimise opposite
+things. The modular layout gives `runtime/core.js` a URL that does not change
+when the app does, so a returning visitor re-downloads only `app.js`. Bundling
+gives a first visitor one request and one compression stream over the whole
+payload — gzip and brotli build their dictionary per response, so twenty small
+modules compress markedly worse than the same bytes linked together — and it
+tree-shakes across the seam a module boundary hides. On the example apps it is
+19–28% off the compressed payload.
+
+It is not the default for the same reason `--minify` is not: it implies
+minification, and a readable `app.js` is what the debug loop (§10.5) reads a
+stack trace out of. The `runtime/` layout it removes is a caching concern only
+— nothing else reads it.
+
+`--minify` is opt-in, and the readable default is the deliberate one: the
+generated module is what a stack trace points into, so a build that minified
+it unasked would cost the debug loop (§10.5) its most direct evidence. The
+runtime modules the build copies alongside it are minified either way — they
+ship that way from the runtime's own build.
 
 Output composition:
 

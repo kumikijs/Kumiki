@@ -5,7 +5,16 @@ export type * from "./ast.ts";
 // all), and freezing that split into the published API would make merging them
 // — into a single map carrying arity and lowering kind — a breaking change.
 export { calleeCandidates, isBuiltinCallee } from "./builtin-calls.ts";
-export { BUILTIN_TILES, TILE_FAMILY, type TileFamily, VALUE_ARG_BUILTINS } from "./builtins.ts";
+export {
+  BUILTIN_TILES,
+  isPerTileFamily,
+  PER_TILE_FAMILIES,
+  PER_TILE_FAMILY_SHARED,
+  TILE_FAMILY,
+  type TileFamily,
+  tileModule,
+  VALUE_ARG_BUILTINS,
+} from "./builtins.ts";
 export {
   BUILTIN_EFFECT_CAPS,
   type CapabilityManifest,

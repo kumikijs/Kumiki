@@ -1,5 +1,7 @@
 import { defineConfig } from "tsdown";
 
+import { publishedOutputOptions } from "../../tsdown.shared.ts";
+
 // @kumikijs/cli ships the programmatic API (`index`) plus the `kumiki` executable.
 // The kumiki.ts shebang (#!/usr/bin/env node) is preserved by tsdown.
 // Workspace deps (@kumikijs/compiler, @kumikijs/runtime) are auto-externalized.
@@ -13,4 +15,5 @@ export default defineConfig({
   // internal dev plugin (resolveId / load). They aren't imported by Node code,
   // so tsdown's tree-shaker would otherwise drop them — copy them as-is.
   copy: [{ from: "src/dev/", to: "dist/dev/" }],
+  outputOptions: publishedOutputOptions,
 });
