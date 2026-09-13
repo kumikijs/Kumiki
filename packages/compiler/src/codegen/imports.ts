@@ -1,6 +1,6 @@
 import type { AppDef, EffectDef, ReducerDef } from "../ast.ts";
 import {
-  PER_TILE_FAMILIES,
+  isPerTileFamily,
   PER_TILE_FAMILY_SHARED,
   TILE_FAMILY,
   type TileFamily,
@@ -70,14 +70,14 @@ export function analyzeRuntimeUsage(
 
   // A family is shipped whole only when it is not one of the per-tile ones;
   // its tiles are listed individually otherwise. `usedTiles` can name a tile
-  // the table does not know (a user-defined tile reaches codegen by name), so
-  // both lists are built from the table rather than from the set.
+  // the table does not know — a user-defined tile reaches codegen by name — and
+  // what keeps those out of the module list is the `TILE_FAMILY[t]` lookup
+  // returning `undefined`, which no family and no per-tile family matches.
+  // Neither filter may be dropped for being "obviously" total.
   const families = TILE_FAMILY_ORDER.filter(
-    (f) => !PER_TILE_FAMILIES.includes(f) && [...usedTiles].some((t) => TILE_FAMILY[t] === f),
+    (f) => !isPerTileFamily(f) && [...usedTiles].some((t) => TILE_FAMILY[t] === f),
   );
-  const tiles = [...usedTiles]
-    .filter((t) => PER_TILE_FAMILIES.includes(TILE_FAMILY[t] as TileFamily))
-    .sort();
+  const tiles = [...usedTiles].filter((t) => isPerTileFamily(TILE_FAMILY[t])).sort();
   const router =
     app.caps.some((c) => c.startsWith("nav.")) ||
     emits.has("navigate") ||

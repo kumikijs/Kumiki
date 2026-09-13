@@ -46,10 +46,31 @@ uncompressed-payload-for-payload even though their raw bytes drop. The default
 modular build therefore moves a little in both directions — counter −12.5%,
 issue-tracker +3.3% gzipped — and `--bundle` is where the win is.
 
-`--bundle` is opt-in rather than the default for the same reason `--minify` is:
-the modular layout gives `runtime/core.js` a URL that does not change when the
-app does, so a returning visitor re-downloads only `app.js`, and it is the
-layout the debug tiers read.
+**`--bundle` stays opt-in because it implies minification.** The cache
+granularity a modular layout buys — `runtime/core.js` keeping a URL that
+survives an app change — is the smaller half of the argument, and nothing
+outside HTTP caching depends on that layout: the e2e tier, the MCP server, the
+Vite plugin and smoke/run/test all take the `bundle: true` monolith path, and
+the emitted `index.html` never names `runtime/`. What is load-bearing is that
+`app.js` stays *readable*. The AI debug loop reads its stack traces, and three
+harnesses string-replace codegen's emitted lines verbatim. A default that
+minified would take both away, which is the same reason `--minify` is opt-in.
+
+**New dependency, and one module subpath goes away.** `@kumikijs/cli` now
+depends on `rolldown`, which serves both flags — `--minify` keeps `./runtime/*`
+external and minifies the app module alone, `--bundle` pulls them in. It is
+pinned to `1.0.3`, the exact version `vite` (already a CLI dependency) pins, so
+the two share one copy instead of shipping a second native toolchain; that pin
+should move only together with vite's. It is imported lazily, inside the two
+functions that use it, so `check` / `list` / `view` / `fix` and `@kumikijs/mcp`
+at startup do not pay to load a native addon for flags they never pass.
+
+`@kumikijs/runtime`'s `./modules/*` subpath no longer resolves
+`./modules/tiles-text.js` or `./modules/tiles-input.js` — those two families
+are now `tiles-text-<kind>` / `tiles-input-<kind>` plus `tiles-input-shared`.
+The subpath is there for `kumiki build` to copy from rather than as an API, and
+nothing in this repo deep-imports it, but a host that did will need the new
+names.
 
 Nothing about authoring changes. The monolith `mount()` still assembles every
 family, `textTiles` / `inputTiles` are still exported with the same contents,

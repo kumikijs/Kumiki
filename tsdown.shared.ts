@@ -19,6 +19,13 @@
  * This is not minification: identifiers, formatting and the `export { … }`
  * line are untouched, so `@kumikijs/runtime`'s `dist/index.js` stays readable
  * and inline-able (see that package's tsdown.config.ts).
+ *
+ * What reaches the output is narrower than this setting alone implies, and
+ * worth stating because the name says "jsdoc": rolldown already dropped
+ * authored `//` line comments before this option existed, so the only prose
+ * that ever survived to `dist` was the `/** … *\/` blocks, and after this
+ * none does. The 82 `//` lines left in `dist/index.js` are all rolldown's own
+ * `#region` markers. `packages/tests/dist-comments.test.ts` pins both halves.
  */
 export const publishedOutputOptions = {
   comments: { legal: true, annotation: true, jsdoc: false },

@@ -111,6 +111,20 @@ describe("kumiki build --minify", () => {
     expect(gz([bundledFile])).toBeLessThan(gz(modularFiles) * 0.9);
   });
 
+  it("--minify --bundle is --bundle — the flags do not fight", () => {
+    // `--bundle` implies minification, so the pair has to resolve to exactly
+    // the bundled artifact. Without this, inverting the precedence expression
+    // in `buildCmd` (minifying first and then linking the minified module, or
+    // skipping the link) fails nothing: both paths still emit an `app.js` that
+    // mounts, one of them just larger and with a stray `runtime/`.
+    build(plainDir, "--bundle");
+    build(minDir, "--minify", "--bundle");
+    expect(existsSync(join(minDir, "runtime"))).toBe(false);
+    expect(readFileSync(join(minDir, "app.js"), "utf8")).toBe(
+      readFileSync(join(plainDir, "app.js"), "utf8"),
+    );
+  });
+
   it("the bundled counter still mounts and survives a click", async () => {
     build(minDir, "--bundle");
     const root = document.createElement("div");

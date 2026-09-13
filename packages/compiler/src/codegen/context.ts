@@ -1,5 +1,5 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
-import { PER_TILE_FAMILIES, TILE_FAMILY, type TileFamily } from "../builtins.ts";
+import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -165,7 +165,12 @@ export function tilePatcherVar(kind: string): string {
   return `${camelKind(kind)}Patcher`;
 }
 
-/** `route-outlet` -> `routeOutlet`: a tile kind as a JS identifier stem. */
+/**
+ * A tile kind as a JS identifier stem — `route-outlet` would be `routeOutlet`.
+ * No kind of a per-tile family is hyphenated today, so the conversion never
+ * fires; it is here so that adding one is a table edit rather than a silent
+ * syntax error in generated code.
+ */
 function camelKind(kind: string): string {
   return kind.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
 }
@@ -198,7 +203,7 @@ export const EMITTED_MODULE_BINDINGS: readonly string[] = [
   // The per-tile modules' exports (#71) — one pair per kind of a family on
   // `PER_TILE_FAMILIES`, which the granular header imports by these names.
   ...Object.keys(TILE_FAMILY)
-    .filter((k) => PER_TILE_FAMILIES.includes(TILE_FAMILY[k] as TileFamily))
+    .filter((k) => isPerTileFamily(TILE_FAMILY[k]))
     .flatMap((k) => [tileVar(k), tilePatcherVar(k)]),
 ];
 

@@ -20,9 +20,13 @@ import { publishedOutputOptions } from "../../tsdown.shared.ts";
 //   `PER_TILE_FAMILIES` has one entry PER TILE (`tiles-text-link`) instead of
 //   one for the family, so an app with a heading does not download the link
 //   tile's URL-disposition check. `core`, `stdlib` and
-//   `testkit` are entries of the same build, so cross-module imports resolve
-//   to those entry chunks — no anonymous shared chunks may appear (the CLI
-//   tests assert the exact file set).
+//   `testkit` are entries of the same build — as is `tiles/input/_shared.ts`,
+//   which ten tile entries import — so cross-module imports resolve to those
+//   entry chunks and no anonymous shared chunk may appear. One would be fatal
+//   rather than merely untidy: `kumiki build` copies modules by NAME from the
+//   compiler's list, so a generated chunk name it cannot know ships as a
+//   dangling import. `packages/tests/modular-build.test.ts` compares this
+//   directory against the compiler's tables exactly, which is what catches it.
 export default defineConfig([
   {
     entry: { index: "src/index.ts" },

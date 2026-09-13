@@ -3534,7 +3534,7 @@ function reconcileNode(
       }
       // Reused elements must dispatch through their handler-slot lookups with
       // the *current* render's closures, not the create-time ones. INPUT_STATE
-      // (`tiles-input.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
+      // (`tiles/input/_shared.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
       // (`tiles-text.ts`) are refreshed by their per-kind patchers; the
       // universal onKeyDown / onFocus / onBlur / onMouseEnter handlers, which
       // `applyUiEventHandlers` lifts onto every tile kind via the create ctx,
@@ -4213,7 +4213,7 @@ function replaceWithFreshTile(
  * Identifier for a tile the reconcile diff freshly built (subtree rebuild or
  * keyed-diff insert). Consumed by episode `signal-update.binds-updated` (#189).
  * Priority: `bind` (with `bindPath` joined) → `key` → `kind`. The bind form
- * matches `data-kumiki-bind` in `tiles-input.ts` (`bindDataset`) so an authored
+ * matches `data-kumiki-bind` in `tiles/input/_shared.ts` (`bindDataset`) so an authored
  * `bind=todo.title` shows up as the same `"todo.title"` string in the log.
  */
 function tileTouchedId(node: TileNode): string {
@@ -4351,7 +4351,7 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
 
 // Per-element slot for the universally-lifted UI handlers (onKeyDown /
 // onMouseEnter / onFocus / onBlur). Same slot-dispatch shape as
-// tiles-input.ts INPUT_STATE and tiles-text.ts LINK_STATE: the native listener
+// tiles/input/_shared.ts INPUT_STATE and tiles/text/link.ts LINK_STATE: the native listener
 // reads the slot instead of closing over the create-time `props`, and
 // `refreshUiHandlerSlot` overwrites the slot when a patch runs so the new
 // node's handler + `el` payload reach subsequent events. Without it the patch

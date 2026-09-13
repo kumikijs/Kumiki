@@ -184,10 +184,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // report is most worth attaching, the one whose reducer rolled a die or
     // stamped a time or crashed, stays the one `kumiki replay` cannot answer
     // for.
+    //
+    // Down to 55,002 when tiles started shipping one module per tile instead
+    // of one per family (#71): the counter renders a heading and a button, and
+    // was downloading the other fifteen text and input tiles — the link tile's
+    // URL-disposition check, the select tile's option reconciler, the
+    // contenteditable IME guard. The budget follows the measurement down, or
+    // it stops being one: at 68,000 it had 13KB of slack and could not have
+    // failed for anything short of a doubling.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(68_000);
+    expect(total).toBeLessThan(56_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

@@ -25,7 +25,7 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *
  * Runtime-event ≠ emit-prop: for `check / radio / switch` the runtime
  * listens to the DOM `change` event but invokes `onClick` (see
- * `packages/runtime/src/tiles-input.ts`). The compile-time table only
+ * `packages/runtime/src/tiles/input/`). The compile-time table only
  * encodes (ev → emit-prop) + (ev → allowed tile-kinds); the runtime
  * renderers own the (tile, handler) → DOM-event resolution.
  */
@@ -42,7 +42,7 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
     // `link` is intentionally omitted even though `<a>` fires click natively:
     // the runtime's link renderer reserves the click event for navigation
     // interception and does not invoke user `onClick` reducers
-    // (`packages/runtime/src/tiles-text.ts`). Lifting that requires a separate
+    // (`packages/runtime/src/tiles/text/`). Lifting that requires a separate
     // runtime change.
     tiles: new Set(["button", "check", "switch", "radio"]),
   },

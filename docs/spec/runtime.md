@@ -924,6 +924,11 @@ modules compress markedly worse than the same bytes linked together — and it
 tree-shakes across the seam a module boundary hides. On the example apps it is
 19–28% off the compressed payload.
 
+It is not the default for the same reason `--minify` is not: it implies
+minification, and a readable `app.js` is what the debug loop (§10.5) reads a
+stack trace out of. The `runtime/` layout it removes is a caching concern only
+— nothing else reads it.
+
 `--minify` is opt-in, and the readable default is the deliberate one: the
 generated module is what a stack trace points into, so a build that minified
 it unasked would cost the debug loop (§10.5) its most direct evidence. The

@@ -12,13 +12,15 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   BUILTIN_TILES,
   compile,
+  isPerTileFamily,
   PER_TILE_FAMILIES,
   PER_TILE_FAMILY_SHARED,
   TILE_FAMILY,
+  type TileFamily,
   tileModule,
 } from "@kumikijs/compiler";
 import { resolveCapabilities } from "@kumikijs/compiler/node";
@@ -95,7 +97,7 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
     // to an import of a file that was never built — a blank page, and `check`
     // and `build` both pass.
     for (const tile of BUILTIN_TILES) {
-      if (!PER_TILE_FAMILIES.includes(TILE_FAMILY[tile] as never)) continue;
+      if (!isPerTileFamily(TILE_FAMILY[tile])) continue;
       const mod = tileModule(tile);
       expect(mod, `no module name for "${tile}"`).toBeDefined();
       expect(
@@ -105,6 +107,55 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
     }
     for (const shared of Object.values(PER_TILE_FAMILY_SHARED)) {
       expect(AVAILABLE_MODULES.has(shared), `missing dist/modules/${shared}.js`).toBe(true);
+    }
+  });
+
+  it("emits exactly the module set the compiler can ask for, and nothing else", async () => {
+    // The anonymous-chunk guard. `dist/modules` is built from 19 tile entries
+    // sharing `tiles/input/_shared.ts`; if that stopped resolving to its own
+    // entry chunk, rolldown would emit a shared chunk under a generated name,
+    // every tile module would import it, and `kumiki build` — which copies by
+    // NAME, from the compiler's list — would ship a dangling import. Presence
+    // checks cannot see that, because the named files it looks for are all
+    // still there. Only an exact comparison can.
+    const expected = new Set<string>([
+      "core",
+      "stdlib",
+      "testkit",
+      "router",
+      "effects-storage",
+      "effects-indexed",
+      "effects-http",
+      "effects-toast",
+      "effects-confirm",
+      ...Object.keys(RUNTIME_FAMILIES)
+        .filter((f) => !isPerTileFamily(f as TileFamily))
+        .map((f) => `tiles-${f}`),
+      ...[...BUILTIN_TILES]
+        .filter((t) => isPerTileFamily(TILE_FAMILY[t]))
+        .map((t) => tileModule(t) as string),
+      ...Object.values(PER_TILE_FAMILY_SHARED),
+    ]);
+    expect([...AVAILABLE_MODULES].sort()).toEqual([...expected].sort());
+  });
+
+  it("exports each per-tile module under the names codegen imports", async () => {
+    // Codegen writes `import { selectTile, selectPatcher } from
+    // "./runtime/tiles-input-select.js"` from `tileVar` / `tilePatcherVar`,
+    // which derive the names from the kind. Rename `selectTile` in the runtime
+    // and every tier stays green — typecheck never sees the generated import,
+    // and the family aggregate still re-exports under its own name — while a
+    // built app gets `undefined` in `_tiles` and renders a blank tile. That is
+    // the failure mode #71's own notes warn about; this is the guard.
+    const modulesDir = join(packagesDir, "runtime", "dist", "modules");
+    for (const tile of BUILTIN_TILES) {
+      if (!isPerTileFamily(TILE_FAMILY[tile])) continue;
+      const stem = tile.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+      const mod: Record<string, unknown> = await import(
+        /* @vite-ignore */ pathToFileURL(join(modulesDir, `${tileModule(tile)}.js`)).href
+      );
+      expect(typeof mod[`${stem}Tile`], `${tile}: missing ${stem}Tile`).toBe("function");
+      expect(typeof mod[`${stem}Patcher`], `${tile}: missing ${stem}Patcher`).toBe("function");
     }
   });
 

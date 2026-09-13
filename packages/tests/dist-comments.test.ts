@@ -30,7 +30,7 @@ function distJsFiles(pkg: string): string[] {
       if (e.isDirectory()) return walk(p);
       // `dist/dev/` is the CLI's dev-server client, copied verbatim rather than
       // built, so the comment policy does not reach it.
-      return e.name.endsWith(".js") && !e.name.endsWith(".d.ts") ? [p] : [];
+      return e.name.endsWith(".js") ? [p] : [];
     });
   return walk(dist).filter((p) => !p.includes(`${join("dist", "dev")}`));
 }
@@ -56,6 +56,19 @@ describe("published dist carries no JSDoc", () => {
       expect(offenders).toEqual([]);
     });
   }
+
+  it("ships no authored prose at all, not only no JSDoc", () => {
+    // The setting is named `jsdoc: false`, but rolldown drops authored `//`
+    // comments regardless — so "no JSDoc" understates what `dist` actually
+    // carries. Pin the stronger property, and pin that the `#region` markers
+    // the linker emits are what is left, so a future toolchain that started
+    // keeping prose again would fail here rather than quietly re-inflating
+    // every published bundle.
+    const bundle = readFileSync(join(packagesDir, "runtime", "dist", "index.js"), "utf8");
+    const lineComments = bundle.split("\n").filter((l) => /^\s*\/\//.test(l));
+    expect(lineComments.length).toBeGreaterThan(0);
+    expect(lineComments.filter((l) => !/#(end)?region/.test(l))).toEqual([]);
+  });
 
   it("keeps the JSDoc in the .d.ts, which is what editors read", () => {
     const dts = readFileSync(join(packagesDir, "runtime", "dist", "index.d.ts"), "utf8");

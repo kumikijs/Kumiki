@@ -249,7 +249,7 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     // If reconcile re-attached handlers to a reused element, addEventListener-
     // based handlers would accumulate and a single click would fire N reducers.
     // Prove the count stays at one. The path here is the button's own
-    // `INPUT_STATE` slot (`tiles-input.ts`), not the universal four — those
+    // `INPUT_STATE` slot (`tiles/input/_shared.ts`), not the universal four — those
     // register through `installUiEventListeners`, which is idempotent per
     // element, and `universal-handlers.test.ts` holds them to the same count.
     let clicks = 0;

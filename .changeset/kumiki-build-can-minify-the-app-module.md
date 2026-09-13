@@ -36,7 +36,9 @@ flag.
 
 A minifier error fails the build rather than falling back to the unminified
 source — under a flag that says `--minify`, a silent fallback would deploy the
-readable build.
+readable build. Nothing reaches the output directory until the minified module
+is in hand, either, so a failure leaves no complete-but-unminified build behind
+for a deploy step that missed the exit code to ship instead.
 
 `packages/cli/test/build-minify.test.ts` covers all four: the default still
 carries the spelling the harnesses patch, `--minify` is substantially smaller,

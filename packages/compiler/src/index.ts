@@ -7,6 +7,7 @@ export type * from "./ast.ts";
 export { calleeCandidates, isBuiltinCallee } from "./builtin-calls.ts";
 export {
   BUILTIN_TILES,
+  isPerTileFamily,
   PER_TILE_FAMILIES,
   PER_TILE_FAMILY_SHARED,
   TILE_FAMILY,

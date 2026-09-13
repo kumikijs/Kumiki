@@ -266,7 +266,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // Bake-only-what's-used built-in icon registry (#101). The toolchain passes
   // `opts.icons` (from @kumikijs/icons) on the second codegen pass; we emit
   // only the entries whose name appears in a literal `icon(name=...)` call.
-  // The runtime renderer (`tiles-text.ts#icon`) falls back through this map
+  // The runtime renderer (`tiles/text/icon.ts`) falls back through this map
   // when `theme.icons[name]` is unset.
   if (opts.icons && ctx.usedIcons.size > 0) {
     const entries: string[] = [];

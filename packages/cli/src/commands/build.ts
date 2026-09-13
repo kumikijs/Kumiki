@@ -1,11 +1,10 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
-import { minify } from "oxc-minify";
-import { rolldown } from "rolldown";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 
 const require = createRequire(import.meta.url);
@@ -46,7 +45,7 @@ function buildHtml(): string {
 
 export type BuildOptions = {
   /**
-   * Minify the generated `app.js`.
+   * Minify the generated `app.js`, keeping `runtime/` as separate modules.
    *
    * Off by default, and that default is the load-bearing one: the AI debug
    * loop reads `app.js` stack traces, and the harnesses patch two of its
@@ -58,15 +57,15 @@ export type BuildOptions = {
   minify?: boolean;
   /**
    * Link `app.js` and the runtime modules it imports into one minified file,
-   * and drop `runtime/`.
+   * and drop `runtime/`. Implies `minify`.
    *
    * Worth its own flag rather than being implied by `--minify` because the two
    * optimise opposite things. The modular layout gives `runtime/core.js` a URL
    * that does not change when the app does, so a returning visitor re-downloads
    * only `app.js`. Bundling gives a first visitor one request and one
    * compression stream over the whole payload, which is worth 20–30% on the
-   * examples — gzip and brotli build their dictionary per file, so twenty small
-   * modules compress markedly worse than the same bytes linked together.
+   * examples — gzip and brotli build their dictionary per response, so twenty
+   * small modules compress markedly worse than the same bytes linked together.
    *
    * It also tree-shakes across the seam the module boundary hides: a tile
    * module's renderer that the app's `_tiles` never names, a stdlib helper it
@@ -75,46 +74,66 @@ export type BuildOptions = {
   bundle?: boolean;
 };
 
-/**
- * Minify one generated module, or fail the build saying which construct broke.
- *
- * A minifier error means the output would be wrong, not merely large, so it
- * must not fall back to writing the unminified source under a flag that says
- * otherwise — a deploy would silently ship the readable build.
- */
-async function minifyApp(js: string): Promise<string> {
-  const result = await minify("app.js", js);
-  if (result.errors.length > 0) {
-    const detail = result.errors.map((e) => e.message).join("\n");
-    throw new Error(`kumiki build --minify: could not minify app.js\n${detail}`);
-  }
-  return result.code;
-}
+/** The files a build writes, as content — assembled before anything lands on disk. */
+type Artifacts = { appJs: string; modules: Map<string, string>; html: string };
 
 /**
- * Link the written output into a single minified `app.js` and remove
- * `runtime/`. Runs over the artifacts on disk rather than in memory, so what
- * is bundled is exactly what the modular build produces — one code path, and
- * `--bundle` cannot drift from the layout the other tiers test.
+ * Minify `app.js`, and with `bundle` also link the runtime modules into it.
+ *
+ * Both flags go through rolldown — the same linker `@kumikijs/vite` already
+ * depends on, pinned to the same version so one native toolchain ships rather
+ * than two. `external` is what separates them: keeping `./runtime/*` external
+ * minifies the app module alone and leaves the imports (and therefore the
+ * modular layout) intact; dropping it pulls them in.
+ *
+ * It runs over a staging copy on disk rather than in memory, so what is linked
+ * is exactly what the modular build produces — one code path, and the
+ * optimised output cannot drift from the layout the other tiers test. Nothing
+ * reaches `outdir` until this returns, so a linker error leaves no partial
+ * build behind for a deploy step to ship by mistake.
+ *
+ * rolldown is imported here rather than at module scope because it is a native
+ * addon and both flags are opt-in: `kumiki check` / `list` / `view` / `fix`,
+ * and `@kumikijs/mcp` at startup, would otherwise pay to load it.
  */
-async function bundleOutput(outdir: string): Promise<void> {
-  const entry = resolve(outdir, "app.js");
-  const build = await rolldown({ input: entry, platform: "browser" });
-  const { output } = await build.generate({ format: "esm", minify: true });
-  const chunks = output.filter((o) => o.type === "chunk");
-  if (chunks.length !== 1) {
-    // Every import the generated header emits is static and relative, so the
-    // graph has no split point. More than one chunk means something changed
-    // upstream, and silently writing the first would ship a broken app.
-    throw new Error(
-      `kumiki build --bundle: expected one chunk, got ${chunks.length} (${chunks
-        .map((c) => c.fileName)
-        .join(", ")})`,
-    );
+async function link(artifacts: Artifacts, bundle: boolean): Promise<Artifacts> {
+  const { rolldown } = await import("rolldown");
+  const stage = mkdtempSync(join(tmpdir(), "kumiki-link-"));
+  try {
+    writeFileSync(join(stage, "app.js"), artifacts.appJs);
+    mkdirSync(join(stage, "runtime"), { recursive: true });
+    for (const [name, code] of artifacts.modules) {
+      writeFileSync(join(stage, "runtime", `${name}.js`), code);
+    }
+    const build = await rolldown({
+      input: join(stage, "app.js"),
+      platform: "browser",
+      ...(bundle ? {} : { external: (id: string) => id.startsWith("./runtime/") }),
+    });
+    try {
+      const { output } = await build.generate({ format: "esm", minify: true });
+      const chunks = output.filter((o) => o.type === "chunk");
+      if (chunks.length !== 1) {
+        // Every import the generated header emits is static and relative, so
+        // the graph has no split point. More than one chunk means something
+        // changed upstream, and silently writing the first would ship a
+        // broken app.
+        const names = chunks.map((c) => c.fileName).join(", ");
+        throw new Error(`kumiki build: expected one chunk, got ${chunks.length} (${names})`);
+      }
+      const [chunk] = chunks;
+      if (!chunk) throw new Error("kumiki build: linker produced no chunk");
+      return {
+        appJs: chunk.code,
+        modules: bundle ? new Map() : artifacts.modules,
+        html: artifacts.html,
+      };
+    } finally {
+      await build.close();
+    }
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
   }
-  await build.close();
-  writeFileSync(entry, chunks[0]?.code ?? "");
-  rmSync(resolve(outdir, "runtime"), { recursive: true, force: true });
 }
 
 export async function buildCmd(
@@ -160,25 +179,30 @@ export async function buildCmd(
       }
     }
   }
-  // `--bundle` minifies the linked output, so pre-minifying here would be the
-  // same work twice on a file that is about to be replaced.
-  const appJs = options.minify && !options.bundle ? await minifyApp(result.js) : result.js;
-  mkdirSync(outdir, { recursive: true });
-  writeFileSync(resolve(outdir, "app.js"), appJs);
-  mkdirSync(resolve(outdir, "runtime"), { recursive: true });
-  for (const mod of result.runtimeModules) {
-    writeFileSync(resolve(outdir, "runtime", `${mod}.js`), readRuntimeModule(mod));
+  const linked = result.runtimeModules.length;
+  let artifacts: Artifacts = {
+    appJs: result.js,
+    modules: new Map(result.runtimeModules.map((m) => [m, readRuntimeModule(m)])),
+    html: buildHtml(),
+  };
+  if (options.minify || options.bundle) {
+    artifacts = await link(artifacts, options.bundle === true);
   }
-  writeFileSync(resolve(outdir, "index.html"), buildHtml());
-  if (options.bundle) {
-    await bundleOutput(outdir);
+  mkdirSync(outdir, { recursive: true });
+  writeFileSync(resolve(outdir, "app.js"), artifacts.appJs);
+  writeFileSync(resolve(outdir, "index.html"), artifacts.html);
+  if (artifacts.modules.size > 0) {
+    mkdirSync(resolve(outdir, "runtime"), { recursive: true });
+    for (const [name, code] of artifacts.modules) {
+      writeFileSync(resolve(outdir, "runtime", `${name}.js`), code);
+    }
     console.log(
-      `Wrote ${outdir}/index.html, app.js (bundled, minified — ${result.runtimeModules.length} runtime modules linked in)`,
+      `Wrote ${outdir}/index.html, app.js${options.minify ? " (minified)" : ""}, runtime/ (${[...artifacts.modules.keys()].join(", ")})`,
     );
     return;
   }
   console.log(
-    `Wrote ${outdir}/index.html, app.js${options.minify ? " (minified)" : ""}, runtime/ (${result.runtimeModules.join(", ")})`,
+    `Wrote ${outdir}/index.html, app.js (bundled, minified — ${linked} runtime modules linked in)`,
   );
 }
 

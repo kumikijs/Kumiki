@@ -77,7 +77,7 @@ export const BUILTIN_TILES = new Set<string>([
 ]);
 
 /**
- * Which runtime feature module (`@kumikijs/runtime/modules/tiles-<family>.js`)
+ * Which runtime feature module (`@kumikijs/runtime/modules/tiles-*.js`)
  * renders each built-in tile (#71). Codegen uses this to import only the
  * families a compiled app touches; the mapping MUST match the runtime's
  * `tiles-*.ts` module contents (a cross-package test pins the two together).
@@ -99,15 +99,28 @@ export type TileFamily =
  * is: `link` carries a URL-disposition check, an allowlist and a
  * once-per-target diagnostic, `icon` a theme-override lookup and a size scale,
  * and `heading` is six lines — an app with a heading used to download all of
- * it. `layout` is not, and must not be: its thirteen kinds share five
- * renderers (`page`/`column` are both `renderFlexColumn`, six more are
- * `renderBox`), so splitting it would ship the same bytes under more names.
+ * it. `layout` is not, and must not be: of the thirteen kinds mapped to it,
+ * twelve are rendered by five functions (`page` and `column` are both
+ * `renderFlexColumn`; seven more — `card`, `box`, `panel`, `fieldset`,
+ * `stack`, `region`, `scroll` — are all `renderBox`), and the thirteenth,
+ * `route-outlet`, has no renderer of its own at all. Splitting it would ship
+ * the same bytes under more names.
  *
  * Every kind of a listed family must have its own module, because the module
  * name is derived from the kind (`tiles-text-link`); a cross-package test pins
  * that against what the runtime build emits.
  */
 export const PER_TILE_FAMILIES: readonly TileFamily[] = ["text", "input"];
+
+/**
+ * Whether `family` — which may be `undefined`, because `TILE_FAMILY` does not
+ * know a user-defined tile — ships one module per tile. A predicate rather
+ * than an `includes` call at each site, so the narrowing is written once
+ * instead of as a cast at every caller.
+ */
+export function isPerTileFamily(family: TileFamily | undefined): family is TileFamily {
+  return family !== undefined && PER_TILE_FAMILIES.includes(family);
+}
 
 /**
  * The module a per-tile family's tiles import in common, when it has one.
