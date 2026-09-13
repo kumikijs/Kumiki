@@ -909,7 +909,14 @@ kumiki build --target=ssr           # Node.js SSR
 kumiki build --target=edge          # Edge runtime
 kumiki build --target=static        # static site
 kumiki build --analyze              # bundle analysis
+kumiki build --minify               # minify the generated app module
 ```
+
+`--minify` is opt-in, and the readable default is the deliberate one: the
+generated module is what a stack trace points into, so a build that minified
+it unasked would cost the debug loop (§10.5) its most direct evidence. The
+runtime modules the build copies alongside it are minified either way — they
+ship that way from the runtime's own build.
 
 Output composition:
 

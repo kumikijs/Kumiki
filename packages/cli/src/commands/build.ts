@@ -4,11 +4,12 @@ import { resolve } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
+import { minify } from "oxc-minify";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 
 const require = createRequire(import.meta.url);
 
-const USAGE = "Usage: kumiki build <input.kumiki> <outdir>";
+const USAGE = "Usage: kumiki build <input.kumiki> <outdir> [--minify]";
 
 /**
  * Read one prebuilt (minified) runtime feature module. The modules are plain
@@ -42,7 +43,41 @@ function buildHtml(): string {
 `;
 }
 
-export async function buildCmd(inputArg: string, outdirArg: string): Promise<void> {
+export type BuildOptions = {
+  /**
+   * Minify the generated `app.js`.
+   *
+   * Off by default, and that default is the load-bearing one: the AI debug
+   * loop reads `app.js` stack traces, and the harnesses patch two of its
+   * emitted lines by verbatim string replace (see codegen's note on
+   * `const App = createApp();`). Minifying renames every top-level binding, so
+   * a build that did it unasked would take both away. `runtime/` is untouched
+   * either way — those modules ship minified already.
+   */
+  minify?: boolean;
+};
+
+/**
+ * Minify one generated module, or fail the build saying which construct broke.
+ *
+ * A minifier error means the output would be wrong, not merely large, so it
+ * must not fall back to writing the unminified source under a flag that says
+ * otherwise — a deploy would silently ship the readable build.
+ */
+async function minifyApp(js: string): Promise<string> {
+  const result = await minify("app.js", js);
+  if (result.errors.length > 0) {
+    const detail = result.errors.map((e) => e.message).join("\n");
+    throw new Error(`kumiki build --minify: could not minify app.js\n${detail}`);
+  }
+  return result.code;
+}
+
+export async function buildCmd(
+  inputArg: string,
+  outdirArg: string,
+  options: BuildOptions = {},
+): Promise<void> {
   const inputPath = resolve(process.cwd(), inputArg);
   const outdir = resolve(process.cwd(), outdirArg);
   const source = readFileSync(inputPath, "utf8");
@@ -81,14 +116,17 @@ export async function buildCmd(inputArg: string, outdirArg: string): Promise<voi
       }
     }
   }
+  const appJs = options.minify ? await minifyApp(result.js) : result.js;
   mkdirSync(outdir, { recursive: true });
-  writeFileSync(resolve(outdir, "app.js"), result.js);
+  writeFileSync(resolve(outdir, "app.js"), appJs);
   mkdirSync(resolve(outdir, "runtime"), { recursive: true });
   for (const mod of result.runtimeModules) {
     writeFileSync(resolve(outdir, "runtime", `${mod}.js`), readRuntimeModule(mod));
   }
   writeFileSync(resolve(outdir, "index.html"), buildHtml());
-  console.log(`Wrote ${outdir}/index.html, app.js, runtime/ (${result.runtimeModules.join(", ")})`);
+  console.log(
+    `Wrote ${outdir}/index.html, app.js${options.minify ? " (minified)" : ""}, runtime/ (${result.runtimeModules.join(", ")})`,
+  );
 }
 
 export function registerBuild(program: Command): void {
@@ -97,12 +135,19 @@ export function registerBuild(program: Command): void {
     .description("Compile a .kumiki file and write app.js + runtime/ + index.html into <outdir>")
     .argument("[input]", "input .kumiki file")
     .argument("[outdir]", "output directory")
+    .option("--minify", "minify app.js (off by default — the debug loop reads it)")
     .allowExcessArguments(false)
-    .action(async (input: string | undefined, outdir: string | undefined) => {
-      if (!input || !outdir) {
-        console.error(USAGE);
-        process.exit(2);
-      }
-      await buildCmd(input, outdir);
-    });
+    .action(
+      async (
+        input: string | undefined,
+        outdir: string | undefined,
+        options: { minify?: boolean },
+      ) => {
+        if (!input || !outdir) {
+          console.error(USAGE);
+          process.exit(2);
+        }
+        await buildCmd(input, outdir, { minify: options.minify === true });
+      },
+    );
 }

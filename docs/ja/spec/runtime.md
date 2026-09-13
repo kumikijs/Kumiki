@@ -795,7 +795,14 @@ kumiki build --target=ssr           # Node.js SSR
 kumiki build --target=edge          # Edge runtime
 kumiki build --target=static        # 静的サイト
 kumiki build --analyze              # bundle 分析
+kumiki build --minify               # 生成されたアプリモジュールを minify
 ```
+
+`--minify` はオプトインであり、読める出力が既定であることには理由がある — 生成モ
+ジュールはスタックトレースが指す先そのものなので、求められてもいないのに minify す
+るビルドはデバッグループ（§10.5）から最も直接的な証拠を奪う。ビルドが併せてコピー
+するランタイムモジュールはどちらの場合も minify 済みである — ランタイム自身のビル
+ドがそう出力している。
 
 出力構成：
 
