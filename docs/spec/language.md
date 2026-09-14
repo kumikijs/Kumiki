@@ -189,7 +189,7 @@ type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```
 
-`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
+`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. **Comparing** them is the same mistake and the same error: `postId == userId` and `cents < yen` are both E0201 ([§1.9.4](#_1-9-4-operator-types)). An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
 
 A type that carries **no nominal name of its own** meets any nominal declared over it, in both directions. That is what makes `slot c : Cents = 1` legal without a construction form, and arithmetic yields the base ([§1.9](#_1-9-expression-language)), so `c := c + 1` stands.
 
@@ -794,7 +794,7 @@ Every operator's operand and result types, which the compiler checks
 | `/` | both numeric | **`Float`, always** |
 | `<` `>` `<=` `>=` | both numeric, both `Text`, or both `Time` | `Bool` |
 | `&` `\|` | both `Bool` | `Bool` |
-| `==` `!=` | any two values | `Bool` |
+| `==` `!=` | any two values, unless they carry two different nominal identities | `Bool` |
 | unary `-` | numeric | the operand's type |
 | unary `!` | `Bool` | `Bool` |
 
@@ -803,6 +803,21 @@ is `2.5`, not `2` — so an `Int` result type would be a promise the runtime doe
 keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
 [stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
 declare the `Float`.
+
+`==` is total over every *shape* — an `Int` and a `Text`, an `Option` and its
+`None` — and `nominal` is the one exception. Two declarations over one base are
+two types ([§1.3.5](#_1-3-5-type-canonicalization)), so comparing them is the
+same mistake as assigning one to the other and is the same error:
+`postId == userId` is [E0201](./errors.md#e0201-type-mismatch), exactly as
+`postId := userId` is. Ordering refuses the pair for that reason as well as for
+the family one — `cents < yen` shares the number family and is still E0201.
+
+The comparison is refused only when **both** sides carry a nominal name and
+neither was declared as the other, which is the assignment rule read
+symmetrically: a value with no identity of its own compares with any nominal
+over it, so `cents == 0` and `postId == ""` stand as the assignments do, and a
+`Deep` declared `nominal Cents` compares with a `Cents` in either order.
+Converting is the same `fn` through the shared base that an assignment needs.
 
 `EffectId` is outside this table: only `==` and `!=` apply to it
 ([E0204](./errors.md#e0204-effect-id-misuse)).

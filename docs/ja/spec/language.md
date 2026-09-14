@@ -189,7 +189,7 @@ type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```
 
-`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
+`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。**比較** も同じ誤りであり同じエラーになる：`postId == userId` も `cents < yen` も E0201 である（[§1.9.4](#_1-9-4-演算子の型)）。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
 
 **自身の nominal 名を持たない**型は、その上に宣言されたどの nominal とも双方向に受理し合う。これが `slot c : Cents = 1` を構築形式なしで成立させており、算術は基底型を返すので（[§1.9](#_1-9-式言語)）`c := c + 1` もそのまま通る。
 
@@ -777,7 +777,7 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 | `/` | 両方が数値 | **常に `Float`** |
 | `<` `>` `<=` `>=` | 両方が数値、両方が `Text`、または両方が `Time` | `Bool` |
 | `&` `\|` | 両方が `Bool` | `Bool` |
-| `==` `!=` | 任意の 2 値 | `Bool` |
+| `==` `!=` | 任意の 2 値。ただし互いに異なる nominal 同一性を持つ 2 値を除く | `Bool` |
 | 単項 `-` | 数値 | オペランドと同じ型 |
 | 単項 `!` | `Bool` | `Bool` |
 
@@ -785,6 +785,19 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 は `2` ではなく `2.5` になる — 結果型を `Int` と宣言することは runtime が守らない約束をす
 ることであり、`fn half(x: Int) -> Int = x / 2` は拒否される。整数が欲しい箇所では `.to-int`
 （切り捨て。[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)）を取るか、`Float` を宣言する。
+
+`==` はあらゆる *形* に対して全域である — `Int` と `Text`、`Option` とその `None` —
+が、`nominal` だけが例外である。1 つの基底型に対する 2 つの宣言は 2 つの型であり
+（[§1.3.5](#_1-3-5-型の一意化)）、それらを比較することは一方を他方に代入するのと同じ誤り
+で、同じエラーになる：`postId == userId` は `postId := userId` とまったく同様に
+[E0201](./errors.md#e0201-type-mismatch) である。順序比較は族の理由に加えてこの理由でも
+その組を拒否する — `cents < yen` は number 族を共有するがそれでも E0201 である。
+
+比較が拒否されるのは **両辺** が nominal 名を持ち、かつどちらも他方として宣言されていない
+場合だけである。これは代入の規則を対称に読んだものである：自身の同一性を持たない値はその
+上に宣言されたどの nominal とも比較でき、代入と同じく `cents == 0` と `postId == ""` は通
+り、`nominal Cents` として宣言された `Deep` は `Cents` とどちらの順でも比較できる。変換に
+必要なのは、代入の場合と同じ、共有する基底型を経由する `fn` である。
 
 `EffectId` はこの表の外にある：適用できるのは `==` と `!=` だけである
 （[E0204](./errors.md#e0204-effect-id-misuse)）。

@@ -374,21 +374,118 @@ slot q : Q = "b"`,
     ).toEqual(["E0117"]);
   });
 
-  it("does not reach the comparison operators", () => {
-    // `==` is defined on every type, and ordering asks `orderingFamily` rather
-    // than this relation — which answers by family, so two nominals over Int
-    // are both "number" and two over Text are both "text". Neither pair is
-    // reported; pinned so that changing it is a decision rather than a side
-    // effect of this rule.
-    expect(inReducer(MONEY, `n := if c == y then 1 else 2`)).toEqual([]);
-    expect(inReducer(MONEY, `n := if c < y then 1 else 2`)).toEqual([]);
+  it("reports a comparison across two nominals over one base", () => {
+    // The same mistake as `c := y`, in the spelling authors actually reach for:
+    // `t.id == selectedProjectId` is how a router and a lookup are written, so
+    // leaving `==` outside the rule left the check catching only the rarer
+    // half. Both operators report it (language.md §1.9.4).
+    for (const op of ["==", "!=", "<", "<=", ">", ">="]) {
+      const errs = check(
+        parse(
+          lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c ${op} y then 1 else 2\n${TAIL}`),
+        ),
+      );
+      expect(
+        errs.map((e) => e.code),
+        op,
+      ).toEqual(["E0201"]);
+      // The names as written, for the reason the assignment form names them:
+      // "cannot compare Int with Int" would read as a compiler bug.
+      expect(errs[0]?.message, op).toBe(`Operator "${op}" cannot compare Cents with Yen`);
+    }
     const IDS = `type PostId = nominal Text where uuid
 type UserId = nominal Text where uuid
 slot p : PostId = "a"
 slot u : UserId = "b"
 slot n : Int = 0`;
-    expect(inReducer(IDS, `n := if p == u then 1 else 2`)).toEqual([]);
-    expect(inReducer(IDS, `n := if p < u then 1 else 2`)).toEqual([]);
+    expect(inReducer(IDS, `n := if p == u then 1 else 2`)).toEqual(["E0201"]);
+    expect(inReducer(IDS, `n := if p < u then 1 else 2`)).toEqual(["E0201"]);
+  });
+
+  it("reports an equality where ordering already reports, at the comparison", () => {
+    // A comparison has no destination, so neither side alone is the wrong one
+    // — the pair is. Both operators therefore report at the comparison itself,
+    // where `<` already did, and not at one operand the way `c := y` reports
+    // at its value.
+    const at = (op: string) =>
+      check(
+        parse(
+          lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c ${op} y then 1 else 2\n${TAIL}`),
+        ),
+      )[0]?.pos;
+    expect(at("==")).toEqual({ line: 6, col: 38 });
+    expect(at("<")).toEqual(at("=="));
+  });
+
+  it("compares a nominal with its base, as it assigns", () => {
+    // The rule is the assignment rule read symmetrically: a type carrying no
+    // nominal name of its own meets any nominal over it, so the bare literal
+    // and the base slot both compare.
+    expect(inReducer(MONEY, `n := if c == 0 then 1 else 2`)).toEqual([]);
+    expect(inReducer(MONEY, `n := if 0 == c then 1 else 2`)).toEqual([]);
+    expect(inReducer(MONEY, `n := if c < n then 1 else 2`)).toEqual([]);
+    expect(inReducer(MONEY, `n := if c == c then 1 else 2`)).toEqual([]);
+    expect(
+      inReducer(
+        `type PostId = nominal Text where uuid\nslot p : PostId = "a"\nslot n : Int = 0`,
+        `n := if p == "" then 1 else 2`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("compares a nominal declared over another with the one it was declared as", () => {
+    // `nominalChain` is what assignment asks, and a comparison asks it from
+    // both sides: a `Deep` is a `Cents`, so either order compares — while a
+    // `Deep` and a `Yen` still do not.
+    const DEEP = `${MONEY}\ntype Deep = nominal Cents\nslot d : Deep = 4`;
+    expect(inReducer(DEEP, `n := if d == c then 1 else 2`)).toEqual([]);
+    expect(inReducer(DEEP, `n := if c == d then 1 else 2`)).toEqual([]);
+    expect(inReducer(DEEP, `n := if d == y then 1 else 2`)).toEqual(["E0201"]);
+  });
+
+  it("stays silent when either side of a comparison is undecidable", () => {
+    // An unresolved name has no nominal chain, and a silence here is the
+    // one-sided reading the whole relation keeps: the undefined name is the
+    // only thing wrong.
+    expect(inReducer(`${MONEY}\nslot q : Q = 1`, `n := if c == q then 1 else 2`)).toEqual([
+      "E0117",
+    ]);
+  });
+
+  it("leaves an unrelated pair of shapes to the operator that already judges it", () => {
+    // Nominal identity is the only thing this rule adds to the operators.
+    // `==` stays total across every shape that carries no nominal name —
+    // including an Option and its None — and ordering still answers by family.
+    expect(
+      inReducer(`slot o : Option(Int) = None\nslot n : Int = 0`, `n := if o == None then 1 else 2`),
+    ).toEqual([]);
+    expect(
+      inReducer(`slot t : Text = ""\nslot n : Int = 0`, `n := if t == 1 then 1 else 2`),
+    ).toEqual([]);
+    const errs = check(
+      parse(
+        lex(
+          `slot t : Text = ""\nslot n : Int = 0\nreducer r on=ui.click(B) do= n := if t < 1 then 1 else 2\n${TAIL}`,
+        ),
+      ),
+    );
+    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(`Operator "<" cannot compare Text with Int`);
+  });
+
+  it("reports a nominal over a base no ordering is defined on once", () => {
+    // Two reasons to refuse `<` — no shared family, and two identities — and
+    // one diagnostic, because the operator cannot be repaired twice.
+    const FLAGS = `type Flag = nominal Bool
+type Mark = nominal Bool
+slot f : Flag = true
+slot m : Mark = false
+slot n : Int = 0`;
+    const errs = check(
+      parse(lex(`${FLAGS}\nreducer r on=ui.click(B) do= n := if f < m then 1 else 2\n${TAIL}`)),
+    );
+    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(`Operator "<" cannot compare Flag with Mark`);
   });
 });
 
