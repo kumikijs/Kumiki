@@ -53,6 +53,7 @@ import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
+  type GivenSection,
   givenSection,
   isSectionName,
   nearestSection,
@@ -4039,15 +4040,25 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     return;
   }
   // tile-test
+  //
+  // The target is a tile the program defines. A built-in was exempted here as
+  // it is everywhere a tile is named — but `_tilesById` (`codegen.ts`) is built
+  // from the user tiles alone, so `tile-test text` was the one naming that
+  // could not work whatever it was given: `check` said ok and the generated
+  // module died with `App._tilesById.text is not a function`, taking every
+  // other test in the file with it (`cli/src/smoke.ts` runs them unguarded).
   const tileTarget = t.target ?? "";
-  if (!BUILTIN_TILES.has(tileTarget) && !sym.tiles.has(tileTarget)) {
+  if (!sym.tiles.has(tileTarget)) {
     errors.push({
       code: "E0105",
       kind: "undef-tile",
-      message: `Reference to undefined tile "${t.target}"`,
+      message: BUILTIN_TILES.has(tileTarget)
+        ? `Tile-test target "${tileTarget}" is a built-in tile — a tile-test can only name a tile the program defines`
+        : `Reference to undefined tile "${t.target}"`,
       pos: t.pos,
     });
   }
+  checkTileTestInput(t, sym, errors);
   // The `expect` is a tile expression — validate its tile references.
   checkTileExpr(t.expect as TileExpr, sym, errors, {
     kind: "tile",
@@ -4055,6 +4066,94 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     localTypes: new Map(),
     routeBind: "no-payload",
   });
+}
+
+/**
+ * A `tile-test` applies its target: the lowering applies
+ * `App._tilesById["<target>"]` to `given.in` (`codegen/emit-test.ts`), so
+ * `given.in` is the tile's single positional argument written as a section and
+ * the tile-call rule is its rule — the count (E0213, in the sentence that form
+ * already uses) and the comparison against `in=` (E0201) alike. A route entry
+ * and a sub-route entry are the other two appliers that are not tile
+ * expressions; this is the third.
+ *
+ * Both directions of the count went unreported. A target declaring `in=` and a
+ * `given` without one was applied to `undefined`, and the first read of it threw
+ * a bare `TypeError: Cannot read properties of undefined` — no test name, no
+ * position, no code. Nothing catches it: `cli/src/smoke.ts` calls `t.run()`
+ * unguarded, so the throw reaches the CLI, prints as `String(e)`, and every
+ * other test in the file loses its result with it (#428). The mirror case dropped the
+ * value, so the test asserted a render that never saw the input it was written
+ * for.
+ *
+ * The type is what separates a loud failure from a silent one, which is why the
+ * count alone was not enough. `show` renders an absent or wrongly typed value
+ * as the empty string (`runtime/src/stdlib.ts`), so an `in=Text` given nothing
+ * — or an `in=Int` given `"7"` — compares against something indistinguishable
+ * from an empty label and *passes*, asserting a shape no tile call can produce.
+ */
+function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
+  // A target that resolves to no definition has no `in=` to disagree with: an
+  // undefined one is E0105's — one mistake named twice reads as two — and a
+  // built-in declares nothing for a `given` to match.
+  const def = sym.tiles.get(t.target ?? "");
+  if (!def) return;
+  const written = givenField(t, "in");
+  const wants = def.in ? 1 : 0;
+  const got = written ? 1 : 0;
+  if (wants === got) {
+    // The counts agree, so there is an argument to compare — against the same
+    // `in=` a tile call's is compared with, through the same `checkAgainst`.
+    // The context is the one `checkTestNames` resolved the section's names in:
+    // a tile-test body has no local binds, and `checkTest` has already walked
+    // the whole `given` for wildcards.
+    if (written && def.in) {
+      checkAgainst(written.value, def.in, sym, errors, {
+        kind: "test",
+        localBinds: new Set(),
+        localTypes: new Map(),
+        routeBind: "no-payload",
+        wildcardsReportedElsewhere: true,
+      });
+    }
+    return;
+  }
+  // A section the vocabulary does not list is already an E0714, and it is where
+  // the missing argument went: `given = {slots: {}, input: "Ada"}` wrote the
+  // input under a name nothing reads. Counting it as absent as well is one
+  // mistake named twice, at a position that stops existing as soon as the first
+  // is fixed — so the count waits for a `given` every section of which was
+  // read. An `in` that *is* read is a written argument whatever else the given
+  // misspells, so the other direction is reported either way.
+  if (got === 0 && hasUnreadSection(t)) return;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `Tile "${def.name}" expects ${wants} argument(s) but got ${got}`,
+    // An `in` the target does not declare has a position of its own, and it is
+    // the text to delete. A missing one has none, so it is asked for at the
+    // test — where E0105 reports the target for the same reason.
+    pos: written?.pos ?? t.pos,
+  });
+}
+
+/** Whether a section of `t`'s `given` names none of a tile-test's, and so is an E0714. */
+function hasUnreadSection(t: TestDef): boolean {
+  return recordFieldsOf(t.given).some((f) => !isSectionName("tile-test", "given", f.name));
+}
+
+/**
+ * One section of a `tile-test`'s `given`, with the position the author wrote it
+ * at — `givenSection` answers the value alone, which is the whole of what the
+ * lowering needs and one field short of what a diagnostic about the section
+ * itself needs. The `name` type comes from the shared table, so a section a
+ * tile-test does not have cannot be asked for here.
+ */
+function givenField(
+  t: TestDef,
+  name: GivenSection<"tile-test">,
+): { name: string; value: Expr; pos: Pos } | undefined {
+  return recordFieldsOf(t.given).find((f) => f.name === name);
 }
 
 /**

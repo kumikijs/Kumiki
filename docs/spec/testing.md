@@ -215,13 +215,28 @@ Compare a tile's structure against an expected value:
 ```kumiki fragment
 test counter-display =
     tile-test App
-        given = {slots: {count: 5}, in: ()}
+        given = {slots: {count: 5}}
         expect = column(
                    heading("Count: 5"),
                    row(DecBtn, ResetBtn, IncBtn))
 ```
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
+
+`given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
+
+```kumiki fragment
+tile Greeting in=Text = heading("Hi, " + $1)
+
+test greeting-renders-input =
+    tile-test Greeting
+        given  = {slots: {}, in: "Ada"}
+        expect = heading("Hi, Ada")
+```
+
+A disagreement in the count is [E0213](./errors.md#e0213-call-arity-mismatch) — the same code, and the same sentence, a tile called with the wrong number of arguments gets, because this is one such call — and a value the declared type does not accept is [E0201](./errors.md#e0201-type-mismatch), at the value's own position, as it is at any other call site.
+
+Without them, a `tile-test` omitting the `in` its target declares applied the tile to `undefined`, and the first read of it threw a bare `TypeError` with no test name, no position and no code; nothing catches that, so the rest of the file's tests lost their results with it. An `in` given to a target declaring none was dropped, so the snapshot compared against a render that never saw it. A *mistyped* one was quieter still and is why the count alone was not enough: `show` renders it as the empty string, exactly as it renders an absent one, so the snapshot compared against something indistinguishable from an empty label and passed — asserting a shape no tile call can produce.
 
 ## 8.5 Effect mock
 

@@ -172,20 +172,35 @@ test foo =
         ...
 ```
 
-## 8.4 Tile snapshot テスト
+## 8.4 Tile snapshot テスト {#_8-4-tile-snapshot-tests}
 
 tile の構造を期待値と比較：
 
 ```kumiki fragment
 test counter-display =
     tile-test App
-        given = {slots: {count: 5}, in: ()}
+        given = {slots: {count: 5}}
         expect = column(
                    heading("Count: 5"),
                    row(DecBtn, ResetBtn, IncBtn))
 ```
 
 snapshot は深い構造比較。クラス名やスタイルは比較対象外（明示指定したものだけ）。
+
+`given.in` はターゲットの引数である。そしてターゲットはプログラムが定義した tile でなければならない——生成されるテストはターゲットに `App._tilesById` 経由で到達し、そこにはユーザ定義の tile しか入っていないので、組み込み tile はターゲットになれない（[E0105](./errors.md#e0105-undef-tile)）。`tile-test` はそのターゲットを tile 本体と同じように適用する——`App._tilesById["<T>"]` に `given.in` を渡す——ので、`in=` を宣言しているターゲットには 1 つ必要、宣言していないターゲットには渡してはならず、いずれの場合も値は宣言された型と照合される：
+
+```kumiki fragment
+tile Greeting in=Text = heading("Hi, " + $1)
+
+test greeting-renders-input =
+    tile-test Greeting
+        given  = {slots: {}, in: "Ada"}
+        expect = heading("Hi, Ada")
+```
+
+個数の不一致は [E0213](./errors.md#e0213-call-arity-mismatch) である——引数の個数を間違えて呼ばれた tile と同じ code、同じ文言であり、これもそういう呼び出しの 1 つだからである。宣言された型が受け付けない値は、他のどの呼び出し位置とも同じく、値自身の位置での [E0201](./errors.md#e0201-type-mismatch) である。
+
+これらの検査が無かったとき、ターゲットの宣言する `in` を省いた `tile-test` は tile を `undefined` に適用し、それを最初に読んだ時点でテスト名も位置も code も無い素の `TypeError` を投げていた。これを捕まえるものは無いので、同じファイルの他のテストも結果ごと失われた。`in=` を宣言していないターゲットに渡した `in` は捨てられ、snapshot はその値を一度も見ていない描画と比較していた。そして*型の違う* `in` はさらに静かで、個数だけでは足りなかった理由がこれである：`show` はそれを、値が無い場合とまったく同じく空文字列として描画するので、snapshot は「中身が空のラベル」と区別の付かないものと比較して通ってしまう——どの tile 呼び出しも作れない形を主張したまま。
 
 ## 8.5 Effect mock {#_8-5-effect-mock}
 
