@@ -53,6 +53,7 @@ import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
+  type GivenSection,
   givenSection,
   isSectionName,
   nearestSection,
@@ -4048,6 +4049,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
       pos: t.pos,
     });
   }
+  checkTileTestInput(t, sym, errors);
   // The `expect` is a tile expression — validate its tile references.
   checkTileExpr(t.expect as TileExpr, sym, errors, {
     kind: "tile",
@@ -4055,6 +4057,69 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     localTypes: new Map(),
     routeBind: "no-payload",
   });
+}
+
+/**
+ * A `tile-test` applies its target: the lowering calls
+ * `App._tilesById["<target>"](<given.in>)` (`codegen/emit-test.ts`), so
+ * `given.in` is the tile's single positional argument written as a section, and
+ * the tile-call rule is its rule too — the same E0213, with the same sentence,
+ * for the one caller that is not a tile expression.
+ *
+ * Both directions went unreported. A target declaring `in=` and a `given`
+ * without one was applied to `undefined`, and the first read of it threw a bare
+ * `TypeError: Cannot read properties of undefined` — no test name, no position,
+ * no code, which the runner's `catch` reports as "the test runner threw". An
+ * `in=Text` is quieter and no better: `$1` renders as `undefined` and the
+ * snapshot compares against it. The mirror case dropped the value, so the test
+ * asserted a render that never saw the input it was written for.
+ */
+function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
+  // A target that resolves to no definition has no `in=` to disagree with: an
+  // undefined one is E0105's — one mistake named twice reads as two — and a
+  // built-in declares nothing for a `given` to match.
+  const def = sym.tiles.get(t.target ?? "");
+  if (!def) return;
+  const written = givenField(t, "in");
+  const wants = def.in ? 1 : 0;
+  const got = written ? 1 : 0;
+  if (wants === got) return;
+  // A section the vocabulary does not list is already an E0714, and it is where
+  // the missing argument went: `given = {slots: {}, input: "Ada"}` wrote the
+  // input under a name nothing reads. Counting it as absent as well is one
+  // mistake named twice, at a position that stops existing as soon as the first
+  // is fixed — so the count waits for a `given` every section of which was
+  // read. An `in` that *is* read is a written argument whatever else the given
+  // misspells, so the other direction is reported either way.
+  if (got === 0 && hasUnreadSection(t)) return;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `Tile "${def.name}" expects ${wants} argument(s) but got ${got}`,
+    // An `in` the target does not declare has a position of its own, and it is
+    // the text to delete. A missing one has none, so it is asked for at the
+    // test — where E0105 reports the target for the same reason.
+    pos: written?.pos ?? t.pos,
+  });
+}
+
+/** Whether a section of `t`'s `given` names none of a tile-test's, and so is an E0714. */
+function hasUnreadSection(t: TestDef): boolean {
+  return recordFieldsOf(t.given).some((f) => !isSectionName("tile-test", "given", f.name));
+}
+
+/**
+ * One section of a `tile-test`'s `given`, with the position the author wrote it
+ * at — `givenSection` answers the value alone, which is the whole of what the
+ * lowering needs and one field short of what a diagnostic about the section
+ * itself needs. The `name` type comes from the shared table, so a section a
+ * tile-test does not have cannot be asked for here.
+ */
+function givenField(
+  t: TestDef,
+  name: GivenSection<"tile-test">,
+): { name: string; value: Expr; pos: Pos } | undefined {
+  return recordFieldsOf(t.given).find((f) => f.name === name);
 }
 
 /**

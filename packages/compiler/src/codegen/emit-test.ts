@@ -221,6 +221,25 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const slots = givenSection(t, "tile-test", "slots");
   const slotsJs = slots ? jsOfExpr(slots, ctx) : "({})";
   const inField = givenSection(t, "tile-test", "in");
+  // A tile-test applies its target, so `given.in` is that application's single
+  // argument and has to agree with the target's `in=`. Emitting the
+  // disagreement is what produced a `TypeError: Cannot read properties of
+  // undefined` with no test name, no position and no code — reported by the
+  // runner as "the test runner threw" — or, the other way, a snapshot compared
+  // against a render that silently never saw the value. E0213 refuses both at
+  // check time; the throw is for a caller that skipped `check`, as with
+  // `effectListJs` and `episodeMockJs`. A target with no definition is a
+  // built-in or undefined, and neither declares an `in=` to disagree with.
+  const target = gen.tiles.find((x) => x.name === t.target);
+  if (target) {
+    const wants = target.in ? 1 : 0;
+    const got = inField ? 1 : 0;
+    if (wants !== got) {
+      throw new Error(
+        `tile-test ${JSON.stringify(t.name)}: tile "${target.name}" expects ${wants} argument(s) but got ${got}`,
+      );
+    }
+  }
   const inJs = inField ? jsOfExpr(inField, ctx) : "undefined";
   const expectedJs = tileExprJs(t.expect as TileExpr, gen, ctx);
   return `  {

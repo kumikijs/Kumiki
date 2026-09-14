@@ -59,6 +59,11 @@ test app-renders-count =
                         row(button(text="-1", onClick=dec), button(text="+1", onClick=inc)),
                         form(input()))
 
+# `given.in` is the tile's argument (§8.4), so it has to agree with what the
+# target declares: `Greeting` declares `in=Text` and is given one, while the
+# `App` test above declares none and gives none. Either disagreement is E0213 —
+# the same code a tile call written with the wrong count gets. Omitting it used
+# to apply the tile to `undefined` and kill the runner with a bare TypeError.
 test greeting-renders-input =
     tile-test Greeting
         given  = {slots: {}, in: "Ada"}

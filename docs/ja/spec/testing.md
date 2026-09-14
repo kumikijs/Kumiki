@@ -179,13 +179,26 @@ tile の構造を期待値と比較：
 ```kumiki fragment
 test counter-display =
     tile-test App
-        given = {slots: {count: 5}, in: ()}
+        given = {slots: {count: 5}}
         expect = column(
                    heading("Count: 5"),
                    row(DecBtn, ResetBtn, IncBtn))
 ```
 
 snapshot は深い構造比較。クラス名やスタイルは比較対象外（明示指定したものだけ）。
+
+`given.in` はターゲットの引数である。`tile-test` はターゲットを tile 本体と同じように適用する——`App._tilesById["<T>"]` に `given.in` を渡す——ので、`in=` を宣言しているターゲットには 1 つ必要であり、宣言していないターゲットには渡してはならない：
+
+```kumiki fragment
+tile Greeting in=Text = heading("Hi, " + $1)
+
+test greeting-renders-input =
+    tile-test Greeting
+        given  = {slots: {}, in: "Ada"}
+        expect = heading("Hi, Ada")
+```
+
+どちらの不一致も [E0213](./errors.md#e0213-call-arity-mismatch) である——引数の個数を間違えて呼ばれた tile と同じ code、同じ文言であり、これもそういう呼び出しの 1 つだからである。この検査が無かったとき、ターゲットの宣言する `in` を省いた `tile-test` は tile を `undefined` に適用し、それを最初に読んだ時点で素の `TypeError` を投げていた——runner はこれをテスト名も位置も code も無い「the test runner threw」として報告する。逆に `in=` を宣言していないターゲットに渡した `in` は捨てられ、snapshot はその値を一度も見ていない描画と比較していた。
 
 ## 8.5 Effect mock {#_8-5-effect-mock}
 

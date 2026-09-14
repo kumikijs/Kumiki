@@ -215,13 +215,26 @@ Compare a tile's structure against an expected value:
 ```kumiki fragment
 test counter-display =
     tile-test App
-        given = {slots: {count: 5}, in: ()}
+        given = {slots: {count: 5}}
         expect = column(
                    heading("Count: 5"),
                    row(DecBtn, ResetBtn, IncBtn))
 ```
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
+
+`given.in` is the target's argument. A `tile-test` applies its target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, and a target that declares none must not be given one:
+
+```kumiki fragment
+tile Greeting in=Text = heading("Hi, " + $1)
+
+test greeting-renders-input =
+    tile-test Greeting
+        given  = {slots: {}, in: "Ada"}
+        expect = heading("Hi, Ada")
+```
+
+Either disagreement is [E0213](./errors.md#e0213-call-arity-mismatch) — the same code, and the same sentence, a tile called with the wrong number of arguments gets, because this is one such call. Without it, a `tile-test` omitting the `in` its target declares applied the tile to `undefined`, and the first read of it threw a bare `TypeError` the runner reported as "the test runner threw" — no test name, no position, no code; while an `in` given to a target declaring none was dropped, so the snapshot compared against a render that never saw it.
 
 ## 8.5 Effect mock
 
