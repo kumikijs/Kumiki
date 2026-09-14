@@ -60,10 +60,12 @@ test app-renders-count =
                         form(input()))
 
 # `given.in` is the tile's argument (§8.4), so it has to agree with what the
-# target declares: `Greeting` declares `in=Text` and is given one, while the
-# `App` test above declares none and gives none. Either disagreement is E0213 —
-# the same code a tile call written with the wrong count gets. Omitting it used
-# to apply the tile to `undefined` and kill the runner with a bare TypeError.
+# target declares: `Greeting` declares `in=Text` and its test gives one, while
+# `App` declares no `in=` and the test above gives none. A wrong count is E0213
+# — the same code a tile call written with the wrong count gets — and a value
+# the declared type does not accept is E0201, as at any other call site.
+# Omitting it used to apply the tile to `undefined` and kill the runner with a
+# bare TypeError, taking the other tests in this file down with it.
 test greeting-renders-input =
     tile-test Greeting
         given  = {slots: {}, in: "Ada"}

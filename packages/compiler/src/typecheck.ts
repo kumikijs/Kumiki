@@ -4040,12 +4040,21 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     return;
   }
   // tile-test
+  //
+  // The target is a tile the program defines. A built-in was exempted here as
+  // it is everywhere a tile is named — but `_tilesById` (`codegen.ts`) is built
+  // from the user tiles alone, so `tile-test text` was the one naming that
+  // could not work whatever it was given: `check` said ok and the generated
+  // module died with `App._tilesById.text is not a function`, taking every
+  // other test in the file with it (`cli/src/smoke.ts` runs them unguarded).
   const tileTarget = t.target ?? "";
-  if (!BUILTIN_TILES.has(tileTarget) && !sym.tiles.has(tileTarget)) {
+  if (!sym.tiles.has(tileTarget)) {
     errors.push({
       code: "E0105",
       kind: "undef-tile",
-      message: `Reference to undefined tile "${t.target}"`,
+      message: BUILTIN_TILES.has(tileTarget)
+        ? `Tile-test target "${tileTarget}" is a built-in tile — a tile-test can only name a tile the program defines`
+        : `Reference to undefined tile "${t.target}"`,
       pos: t.pos,
     });
   }
@@ -4060,19 +4069,28 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
 }
 
 /**
- * A `tile-test` applies its target: the lowering calls
- * `App._tilesById["<target>"](<given.in>)` (`codegen/emit-test.ts`), so
- * `given.in` is the tile's single positional argument written as a section, and
- * the tile-call rule is its rule too — the same E0213, with the same sentence,
- * for the one caller that is not a tile expression.
+ * A `tile-test` applies its target: the lowering applies
+ * `App._tilesById["<target>"]` to `given.in` (`codegen/emit-test.ts`), so
+ * `given.in` is the tile's single positional argument written as a section and
+ * the tile-call rule is its rule — the count (E0213, in the sentence that form
+ * already uses) and the comparison against `in=` (E0201) alike. A route entry
+ * and a sub-route entry are the other two appliers that are not tile
+ * expressions; this is the third.
  *
- * Both directions went unreported. A target declaring `in=` and a `given`
- * without one was applied to `undefined`, and the first read of it threw a bare
- * `TypeError: Cannot read properties of undefined` — no test name, no position,
- * no code, which the runner's `catch` reports as "the test runner threw". An
- * `in=Text` is quieter and no better: `$1` renders as `undefined` and the
- * snapshot compares against it. The mirror case dropped the value, so the test
- * asserted a render that never saw the input it was written for.
+ * Both directions of the count went unreported. A target declaring `in=` and a
+ * `given` without one was applied to `undefined`, and the first read of it threw
+ * a bare `TypeError: Cannot read properties of undefined` — no test name, no
+ * position, no code. Nothing catches it: `cli/src/smoke.ts` calls `t.run()`
+ * unguarded, so the throw reaches the CLI, prints as `String(e)`, and every
+ * other test in the file loses its result with it (#428). The mirror case dropped the
+ * value, so the test asserted a render that never saw the input it was written
+ * for.
+ *
+ * The type is what separates a loud failure from a silent one, which is why the
+ * count alone was not enough. `show` renders an absent or wrongly typed value
+ * as the empty string (`runtime/src/stdlib.ts`), so an `in=Text` given nothing
+ * — or an `in=Int` given `"7"` — compares against something indistinguishable
+ * from an empty label and *passes*, asserting a shape no tile call can produce.
  */
 function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
   // A target that resolves to no definition has no `in=` to disagree with: an
@@ -4083,7 +4101,23 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
   const written = givenField(t, "in");
   const wants = def.in ? 1 : 0;
   const got = written ? 1 : 0;
-  if (wants === got) return;
+  if (wants === got) {
+    // The counts agree, so there is an argument to compare — against the same
+    // `in=` a tile call's is compared with, through the same `checkAgainst`.
+    // The context is the one `checkTestNames` resolved the section's names in:
+    // a tile-test body has no local binds, and `checkTest` has already walked
+    // the whole `given` for wildcards.
+    if (written && def.in) {
+      checkAgainst(written.value, def.in, sym, errors, {
+        kind: "test",
+        localBinds: new Set(),
+        localTypes: new Map(),
+        routeBind: "no-payload",
+        wildcardsReportedElsewhere: true,
+      });
+    }
+    return;
+  }
   // A section the vocabulary does not list is already an E0714, and it is where
   // the missing argument went: `given = {slots: {}, input: "Ada"}` wrote the
   // input under a name nothing reads. Counting it as absent as well is one

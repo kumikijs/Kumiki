@@ -1,17 +1,21 @@
-// A `tile-test` applies its target: the lowering calls
-// `App._tilesById[<target>](<given.in>)`. Nothing checked that the one
+// A `tile-test` applies its target: the lowering applies
+// `App._tilesById[<target>]` to `given.in`. Nothing checked that the one
 // argument matched the target's declaration, so a test that omitted the `in`
 // its tile declares passed `undefined` and `kumiki test` died with a bare
 //
 //     TypeError: Cannot read properties of undefined (reading 'label')
 //
-// — no test name, no position, no code, reported by the runner as "the test
-// runner threw". The mirror case was quieter and no better: an `in` given to a
-// tile that declares none was dropped, and the snapshot compared against a
-// render that never saw it.
+// — no test name, no position, no code, and nothing catches it, so the rest of
+// the file's tests lost their results with it. The mirror case was quieter and
+// no better: an `in` given to a tile that declares none was dropped, and the
+// snapshot compared against a render that never saw it.
 //
-// It is the tile-call rule (E0213) applied to the one caller that is not a
-// tile expression, so the message is the tile form's.
+// It is the tile-call rule applied to an applier that is not a tile expression
+// (a route entry and a sub-route entry are the other two), so the messages are
+// the tile form's: E0213 for the count, E0201 for the value against `in=`. The
+// type half is not a refinement of the first — `show` renders an absent or
+// wrongly typed value as `""`, so a mistyped `in` passes vacuously rather than
+// announcing itself, one read short of the same TypeError.
 
 import { check, codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -107,7 +111,7 @@ test without-in =
     ).toEqual([]);
   });
 
-  it("reports the record in= of the issue, whose $1 read is the TypeError", () => {
+  it("reports a record-typed in= whose $1.label read is the TypeError", () => {
     const src = app(
       `test t =
     tile-test Card
@@ -154,15 +158,32 @@ tile Host = column(Card({label: "x"}))`,
     ).toEqual(["E0105"]);
   });
 
-  it("does not accuse a built-in target, which declares no in= to disagree with", () => {
-    expect(
-      diagnose(
-        app(`test t =
+  it("refuses a built-in target, which the generated test cannot apply at all", () => {
+    // `_tilesById` is built from the user tiles alone, so this passed `check`
+    // and then died with `App._tilesById.text is not a function` — and the
+    // throw is unguarded, so the other tests in the file lost their results
+    // too. The count is not what is wrong with it, so E0105 says what is.
+    const src = app(`test t =
     tile-test text
         given  = {slots: {}}
+        expect = text("x")`);
+    expect(codes(src)).toEqual(["E0105"]);
+    expect(messages(src)).toEqual([
+      `Tile-test target "text" is a built-in tile — a tile-test can only name a tile the program defines`,
+    ]);
+  });
+
+  it("says nothing more about a built-in target that is also given an `in`", () => {
+    // One naming, one diagnostic: a built-in has no `in=` for a count to
+    // disagree with, and E0105 is what the author has to fix either way.
+    expect(
+      codes(
+        app(`test t =
+    tile-test text
+        given  = {slots: {}, in: "x"}
         expect = text("x")`),
       ),
-    ).toEqual([]);
+    ).toEqual(["E0105"]);
   });
 
   it("names a `given` whose section nothing reads once — the E0714 is the mistake", () => {
@@ -183,6 +204,32 @@ tile Host = column(Card({label: "x"}))`,
         given  = {slotz: {}, in: "x"}
         expect = column(text("x"))`);
     expect(codes(src).sort()).toEqual(["E0213", "E0714"]);
+  });
+
+  it("still reports when the given is not a record at all", () => {
+    // Nothing is read out of it, so the argument is as absent as the slots the
+    // author meant to seed. Only the count is this rule's to answer.
+    expect(
+      messages(
+        app(`test t =
+    tile-test Card
+        given  = 42
+        expect = text("x")`),
+      ),
+    ).toEqual([`Tile "Card" expects 1 argument(s) but got 0`]);
+  });
+
+  it("says nothing about a non-record given to a target that declares no in=", () => {
+    // The count agrees — none wanted, none written. That the `slots` setup is
+    // dropped with it is a `given` shape question, and not this rule's.
+    expect(
+      diagnose(
+        app(`test t =
+    tile-test Host
+        given  = 42
+        expect = column(text("x"))`),
+      ),
+    ).toEqual([]);
   });
 
   it("checks a reducer-test's target with none of this — it has no in= to declare", () => {
@@ -207,6 +254,100 @@ test t =
   });
 });
 
+describe("the `in` is compared with what the target declares", () => {
+  // The count agreeing is not the argument being right. `show` renders a
+  // wrongly typed value as `""` just as it renders an absent one, so before
+  // this the snapshot compared against an empty string that looks like an
+  // empty label — a test that passes while asserting a shape no tile call can
+  // produce, `Card(42)` being an E0201 three lines away.
+  it("refuses a value the target's in= does not accept", () => {
+    const src = app(`test t =
+    tile-test Card
+        given  = {slots: {}, in: 42}
+        expect = text("42")`);
+    expect(codes(src)).toEqual(["E0201"]);
+  });
+
+  it("reports it at the value, which is the text to change", () => {
+    const src = app(`test t =
+    tile-test Card
+        given  = {slots: {}, in: 42}
+        expect = text("42")`);
+    const d = diagnose(src)[0];
+    expect(d && textAt(src, d)).toMatch(/^42/);
+  });
+
+  it("reads a record in= field by field, as a tile call's argument is read", () => {
+    // `checkAgainst` is the whole of the rule, so a record answers with the
+    // field codes rather than one blanket mismatch: the declared field that is
+    // missing (E0214) and the written one that is not declared (E0215).
+    const src = app(
+      `test t =
+    tile-test Card
+        given  = {slots: {}, in: {name: "Ada"}}
+        expect = text("Ada")`,
+      `slot count : Int = 0
+
+tile Card in={label: Text} = text($1.label)
+tile Host = column(Card({label: "x"}))`,
+    );
+    expect(codes(src).sort()).toEqual(["E0214", "E0215"]);
+  });
+
+  it("accepts the value the target's in= does accept", () => {
+    expect(
+      diagnose(
+        app(`test t =
+    tile-test Card
+        given  = {slots: {}, in: "Ada"}
+        expect = text("Ada")`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("says nothing about a value a target declaring no in= was never given", () => {
+    expect(
+      diagnose(
+        app(`test t =
+    tile-test Host
+        given  = {slots: {}}
+        expect = column(text("x"))`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("lets a `()` through, as every other call site does — known gap, see #427", () => {
+    // `checkAgainst` accepts the unit literal against any declared type, so
+    // this one value reaches the runtime and the `$1.label` read throws the
+    // bare TypeError with no position. It is not a tile-test defect: the same
+    // `()` written as the tile call `Card(())` passes `check` too and dies on
+    // mount, which `kumiki smoke` catches. Pinned so the day #427 closes, this
+    // is the test that says the tile-test path came with it.
+    const src = app(
+      `test t =
+    tile-test Card
+        given  = {slots: {}, in: ()}
+        expect = text("a")`,
+      `slot count : Int = 0
+
+tile Card in={label: Text} = text($1.label)
+tile Host = column(Card({label: "x"}))`,
+    );
+    expect(diagnose(src)).toEqual([]);
+  });
+
+  it("leaves the count to E0213 rather than typing an argument that is not there", () => {
+    expect(
+      codes(
+        app(`test t =
+    tile-test Card
+        given  = {slots: {}}
+        expect = text("x")`),
+      ),
+    ).toEqual(["E0213"]);
+  });
+});
+
 describe("codegen refuses what check refuses", () => {
   // The lowering used to emit `…_tilesById["Card"](undefined)`, which is the
   // TypeError with no name and no position. A caller that skipped `check` gets
@@ -220,7 +361,7 @@ describe("codegen refuses what check refuses", () => {
   it("throws rather than passing undefined as the tile's input", () => {
     expect(() =>
       codegen(parse(lex(src)), { runtimeSpecifier: "@kumikijs/runtime", includeTests: true }),
-    ).toThrow(/tile-test "t": tile "Card" expects 1 argument\(s\) but got 0/);
+    ).toThrow(/E0213 tile-test "t": Tile "Card" expects 1 argument\(s\) but got 0/);
   });
 
   it("throws on the `in` a target does not declare, too", () => {
@@ -230,7 +371,7 @@ describe("codegen refuses what check refuses", () => {
         expect = column(text("x"))`);
     expect(() =>
       codegen(parse(lex(extra)), { runtimeSpecifier: "@kumikijs/runtime", includeTests: true }),
-    ).toThrow(/tile-test "t": tile "Host" expects 0 argument\(s\) but got 1/);
+    ).toThrow(/E0213 tile-test "t": Tile "Host" expects 0 argument\(s\) but got 1/);
   });
 
   it("lowers the agreeing pairings", () => {
@@ -238,8 +379,11 @@ describe("codegen refuses what check refuses", () => {
     tile-test Card
         given  = {slots: {}, in: "x"}
         expect = text("x")`);
+    // With the argument: `_tilesById["Card"](undefined)` contains the bare
+    // call too, so the substring the buggy lowering also emitted guards
+    // nothing — and the argument is the whole of what this change is about.
     expect(
       codegen(parse(lex(ok)), { runtimeSpecifier: "@kumikijs/runtime", includeTests: true }).js,
-    ).toContain(`_tilesById["Card"]`);
+    ).toContain(`_tilesById["Card"]("x")`);
   });
 });

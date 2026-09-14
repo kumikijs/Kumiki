@@ -3381,9 +3381,9 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     // throws instead of reporting. Reaching it through a *program* means
     // relying on something the checker does not catch — this test used to use
     // an unbound identifier in a test body, which is E0103 now, and the next
-    // candidate (a tile-test that omits the `in` its tile declares) is itself
-    // filed as a gap. So the throw comes from the runner rather than from a
-    // program, and no future check can take it away.
+    // candidate (a tile-test that omits the `in` its tile declares) is E0213
+    // now too. So the throw comes from the runner rather than from a program,
+    // and no future check can take it away.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-runner-throw-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
