@@ -35,18 +35,31 @@ E0201 type-mismatch at 7:31: Expected Option(PostId) but got Option(UserId)
 The qualifier is **resolved** rather than matched. A primitive answers as a
 `TypePrim`, a `type` definition that needs no arguments as a `TypeRef`, and
 anything else — a name with no definition, or a constructor still wanting its
-arguments like `List` or a `type Box(T)` — answers nothing at all. An
-unresolvable qualifier is [E0117](docs/spec/errors.md#e0117-undef-type) and
-stays that one report: an inferred reference to a name that does not exist would
-be compared as a type and reported a second time.
+arguments like `List` or a `type Box(T)` — answers nothing at all. The arity
+half is the load-bearing one: an unapplied `TypeRef` to `Box` unaliases into an
+unsubstituted body and mismatches against real types, so it would report a type
+nobody wrote. An unresolvable name costs nothing by comparison — the relation
+short-circuits on a `TypeRef` it cannot unalias — and
+[E0117](https://kumiki.dev/spec/errors#e0117-undef-type) is the single report
+there either way.
+
+`fresh` is narrower still, because its lowering discards the qualifier: every
+`T.fresh()` is the same `_s.freshId()`, a uuid `Text`. So it answers only for a
+type a `Text` inhabits, which is what §2.4.1 scopes `fresh` to. Read without
+that test the inference asserted types the lowering never produces —
+`slot s : Text = Int.fresh()` became E0201 on a program whose value really is a
+`Text`, a record type was believed of a string, and a `nominal Int` id answered
+its own base. All three answer nothing, exactly as before this change.
 
 `Duration` and `Bytes` keep their own answers, ahead of this rule: their members
-are constructors rather than these two. The one spelling they share with it,
-`Duration.parse(t)`, still answers a bare `Duration` where the spec gives it
-`Option(Duration)` — a separate defect (#424), left as it was rather than
-widened into this fix, and now pinned by a test so it cannot drift further. The
-qualified `show` is unchanged: it is `v.show` under another spelling and always
-a `Text`.
+are constructors rather than these two. `parse` is the one spelling they share
+with it, and both get it wrong the same way — `Duration.parse(t)` and
+`Bytes.parse(t)` answer a bare `Duration` / `Bytes` where the spec gives them
+`Option(…)`, so writing the call as documented is E0201 and writing it wrongly
+is clean. That is #424, left as it was rather than widened into this fix and now
+pinned in both directions in `spec-divergences.test.ts`, so a fix that moves only
+one of them is caught. The qualified `show` is unchanged: it is `v.show` under
+another spelling and always a `Text`.
 
 The corpus was measured rather than assumed. Every `.kumiki` file under
 `packages/` and `docs/` — 126 of them, the examples, the benchmarks, and the

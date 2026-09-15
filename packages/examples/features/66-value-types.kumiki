@@ -16,10 +16,10 @@ type Fahrenheit = nominal Int where between(-130, 140)
 # Two id types over one base, which is the shape `nominal` is most often written
 # in. `TypeName.fresh()` is a `TypeName` and `TypeName.parse(t)` an
 # `Option(TypeName)` (stdlib §2.4.1 / §2.4.3), so the call that *mints* an id is
-# judged like every other expression: `readingId := SampleId.fresh()` is E0201
-# naming both types, and `slot found : Option(ReadingId) = SampleId.parse(t)` is
-# the same mistake one level in. Both used to compile — the qualifier was read
-# by the lowering and by nothing else.
+# judged like every other expression rather than being the one position the
+# identity could not reach. Both spellings used to compile — the qualifier was
+# read by the lowering and by nothing else. The rejected forms are named at the
+# `latestId` slot and the `remint` reducer below, where the names exist.
 type ReadingId = nominal Text where uuid
 type SampleId  = nominal Text where uuid
 
@@ -63,7 +63,8 @@ fn shortId(id: ReadingId) -> Text = id.slice(0, 8)
 slot reading : Reading      = {label: "outside", celsius: 21, id: "00000000-0000-7000-8000-000000000000"}
 # A fresh id of the slot's own type; `SampleId.fresh()` here is E0201.
 slot latestId : ReadingId   = ReadingId.fresh()
-# What `readingIdOf` answers, at the type it answers with.
+# What `readingIdOf` answers, at the type it answers with — one level in,
+# `SampleId.parse("a")` here is E0201 naming both `Option` types.
 slot found   : Option(ReadingId) = None
 # A union slot takes one of its own tags; `Warming` would be E0216.
 slot status  : Status       = Idle
@@ -120,10 +121,15 @@ tile App = column(
                     | Done(n)    -> "done at " + n.show),
              row(for s in samples Sample(s)) {gap: "sm"},
              text("forecast " + forecast.show + "°F"),
-             text("id " + shortId(reading.id) + " · parsed " +
-                  (match found with
-                     | Some(id) -> shortId(id)
-                     | None     -> "none")) {color: "muted"},
+             # Rendered as relations rather than as the ids themselves: a uuid
+             # is different every run, so "same" / "len" are what a scenario can
+             # assert. `latestId == reading.id` is also the comparison half of
+             # the identity (§1.9.4) reading two minted `ReadingId`s.
+             text("same " + (latestId == reading.id).show) {color: "muted"},
+             text("len " + shortId(reading.id).length.show) {color: "muted"},
+             text("parsed " + (match found with
+                                 | Some(id) -> shortId(id).length.show
+                                 | None     -> "none")) {color: "muted"},
              text(if forecastMatches(reading, forecast) then "matches the forecast"
                   else if isFreezing(reading.celsius) then "freezing"
                   else "above freezing") {color: "muted"},
