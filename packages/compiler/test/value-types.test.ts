@@ -402,19 +402,43 @@ slot n : Int = 0`;
     expect(inReducer(IDS, `n := if p < u then 1 else 2`)).toEqual(["E0201"]);
   });
 
-  it("reports an equality where ordering already reports, at the comparison", () => {
+  it("reports an equality once, where ordering already reported", () => {
     // A comparison has no destination, so neither side alone is the wrong one
-    // — the pair is. Both operators therefore report at the comparison itself,
-    // where `<` already did, and not at one operand the way `c := y` reports
-    // at its value.
+    // — the pair is. So one diagnostic naming both types, where `requireNumeric`
+    // would give one per offending side. The position is the `BinOp`'s, which
+    // the parser builds as its *left operand's* — column 38 is `c`, not the
+    // operator at 40 — so what `==` gains is the report, at the place `<` was
+    // already reporting.
     const at = (op: string) =>
       check(
         parse(
           lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c ${op} y then 1 else 2\n${TAIL}`),
         ),
       )[0]?.pos;
-    expect(at("==")).toEqual({ line: 6, col: 38 });
+    // Derived, not written: the reducer is the line after MONEY, and hardcoding
+    // that turns "MONEY grew a line" into a position mismatch rather than the
+    // real failure.
+    const reducerLine = MONEY.split("\n").length + 1;
+    expect(at("==")).toEqual({ line: reducerLine, col: 38 });
     expect(at("<")).toEqual(at("=="));
+    // One, not one per side — the half of this that is not the column.
+    expect(
+      check(
+        parse(lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c == y then 1 else 2\n${TAIL}`)),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not read the identity below the top level, as an assignment does", () => {
+    // `nominalChain` answers about the type as a whole, so a nominal buried in
+    // a type argument is invisible to it — while `relate` descends into the
+    // argument and reports the assignment. The asymmetry is a missing
+    // diagnostic rather than a wrong one, which is the reading the whole
+    // relation keeps, and language.md §1.9.4 states it rather than leaving it
+    // to be found.
+    const LISTS = `${MONEY}\nslot lc : List(Cents) = []\nslot ly : List(Yen) = []`;
+    expect(inReducer(LISTS, `n := if lc == ly then 1 else 2`)).toEqual([]);
+    expect(inReducer(LISTS, `lc := ly`)).toEqual(["E0201"]);
   });
 
   it("compares a nominal with its base, as it assigns", () => {

@@ -2601,9 +2601,12 @@ function checkBinOpOperands(
     }
     return;
   }
-  // Neither operand is the wrong one — the pair is — so this reports at the
-  // operator, and once: an ordering whose sides share no family *and* carry
-  // two identities is still one thing to repair.
+  // Neither operand is the wrong one — the pair is — so this reports once,
+  // naming both types, where `requireNumeric` reports once per offending side.
+  // An ordering whose sides share no family *and* carries two identities is
+  // still one thing to repair. The position is the `BinOp`'s, which the parser
+  // builds as its left operand's (`parser.ts`), so what is new here is the
+  // count and the message, not the column.
   const incomparable = (): void => {
     errors.push({
       code: "E0201",

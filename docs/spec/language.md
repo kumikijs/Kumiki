@@ -819,6 +819,13 @@ over it, so `cents == 0` and `postId == ""` stand as the assignments do, and a
 `Deep` declared `nominal Cents` compares with a `Cents` in either order.
 Converting is the same `fn` through the shared base that an assignment needs.
 
+The identity is read at the **top level** of each operand only. A nominal inside
+a type argument, a container or a record field is invisible here, which is where
+the operators and assignment part company: `List(Cents) := List(Yen)` is
+[E0201](./errors.md#e0201-type-mismatch), and `lc == ly` on the same pair is not
+reported. That silence is a missing diagnostic rather than a wrong one, which is
+the reading every rule in the check keeps.
+
 `EffectId` is outside this table: only `==` and `!=` apply to it
 ([E0204](./errors.md#e0204-effect-id-misuse)).
 
