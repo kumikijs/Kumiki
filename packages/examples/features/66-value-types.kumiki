@@ -28,6 +28,17 @@ fn toCelsius(f: Fahrenheit) -> Celsius = ((f - 32) * 5 / 9).round
 # `-> Int` here is E0201 — and used to render `69.8` from a whole-number promise.
 fn toFahrenheit(c: Celsius) -> Float = c * 9 / 5 + 32
 
+# The identity reaches the comparison operators, not only assignment (§1.9.4):
+# `r.celsius == f` and `r.celsius < f` are both E0201, the same mistake as
+# `r.celsius := f` in the spelling a lookup or a router is written in. So the
+# forecast goes through the same conversion the `adopt` reducer uses, and what
+# is compared is two `Celsius`.
+fn forecastMatches(r: Reading, f: Fahrenheit) -> Bool = r.celsius == toCelsius(f)
+
+# A nominal compares with the base it is declared over, exactly as it assigns —
+# so a bare literal needs no wrapping here either.
+fn isFreezing(c: Celsius) -> Bool = c <= 0
+
 # A record literal must name every declared field and no others: a missing one
 # is E0214, an extra one E0215, a mistyped one E0201.
 slot reading : Reading      = {label: "outside", celsius: 21}
@@ -77,6 +88,9 @@ tile App = column(
                     | Done(n)    -> "done at " + n.show),
              row(for s in samples Sample(s)) {gap: "sm"},
              text("forecast " + forecast.show + "°F"),
+             text(if forecastMatches(reading, forecast) then "matches the forecast"
+                  else if isFreezing(reading.celsius) then "freezing"
+                  else "above freezing") {color: "muted"},
              row(WarmBtn, AdoptBtn, ResetBtn) {gap: "sm"})
 
 app ValueTypes

@@ -4,6 +4,7 @@ import {
   elementType,
   isKnownTypeName,
   isOpaque,
+  nominallyComparable,
   paramSubstitution,
   recordFieldType,
   substituteType,
@@ -2600,19 +2601,39 @@ function checkBinOpOperands(
     }
     return;
   }
-  if (COMPARISON_OPS.has(e.op)) {
-    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return;
-    const lf = orderingFamily(lt, sym);
-    if (lf !== null && lf === orderingFamily(rt, sym)) return;
+  // Neither operand is the wrong one — the pair is — so this reports once,
+  // naming both types, where `requireNumeric` reports once per offending side.
+  // An ordering whose sides share no family *and* carries two identities is
+  // still one thing to repair. The position is the `BinOp`'s, which the parser
+  // builds as its left operand's (`parser.ts`), so what is new here is the
+  // count and the message, not the column.
+  const incomparable = (): void => {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
       message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}`,
       pos: e.pos,
     });
+  };
+
+  if (COMPARISON_OPS.has(e.op)) {
+    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return;
+    const lf = orderingFamily(lt, sym);
+    // `orderingFamily` unaliases, so two nominals over one base land in one
+    // family and agree; the identity is the question it cannot ask.
+    if (lf !== null && lf === orderingFamily(rt, sym) && nominallyComparable(lt, rt, sym)) return;
+    incomparable();
+    return;
   }
-  // `==` / `!=` are defined on every type, including across an Option and its
-  // None, so there is nothing here to reject.
+  if (EQUALITY_OPS.has(e.op)) {
+    // `==` / `!=` are defined on every *shape*, including across an Option and
+    // its None, and that is left alone. A nominal identity is not a shape
+    // question: `p == u` is the same mistake as `p := u`, and it is the
+    // spelling a router or a lookup is written in, so the totality in
+    // language.md §1.9.4 excepts it rather than the rule excepting the
+    // operators.
+    if (!nominallyComparable(lt, rt, sym)) incomparable();
+  }
 }
 
 /** A condition — `if`, `when`, `!` — must be a `Bool` when its type is known. */

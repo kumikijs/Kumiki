@@ -156,6 +156,31 @@ function nominalChain(t: TypeExpr | null, env: TypeEnv): string[] {
   }
 }
 
+/**
+ * May two types be compared — `==`, `!=`, `<`, … — as far as nominal identity
+ * goes?
+ *
+ * `relate`'s nominal rule read symmetrically. A comparison has no destination,
+ * so there is no side to call the actual one: either type standing in for the
+ * other is enough. So a type carrying no nominal name of its own compares with
+ * any nominal over it (`cents == 0`, `postId == ""`, exactly as they assign),
+ * a `Deep` declared `nominal Cents` compares with a `Cents` in both
+ * directions, and two declarations over one base are what this refuses.
+ *
+ * This is the whole of what nominality says about an operator. Whether the
+ * operator is defined on the base the two share is a separate question, asked
+ * by the ordering families in `typecheck.ts`, and `==` stays total over every
+ * shape that carries no nominal name.
+ */
+export function nominallyComparable(a: TypeExpr | null, b: TypeExpr | null, env: TypeEnv): boolean {
+  const [an, bn] = [nominalChain(a, env), nominalChain(b, env)];
+  const [aName, bName] = [an[0], bn[0]];
+  // One side with no identity of its own meets the other's, as in an
+  // assignment — which is also how an undecidable type stays silent here.
+  if (aName === undefined || bName === undefined) return true;
+  return an.includes(bName) || bn.includes(aName);
+}
+
 export function paramSubstitution(params: string[], args: TypeExpr[]): Map<string, TypeExpr> {
   const sub = new Map<string, TypeExpr>();
   params.forEach((p, i) => {
