@@ -5,7 +5,15 @@
       "expect": {
         "noErrors": true,
         "state": { "status": { "_tag": "Idle" } },
-        "domIncludes": ["21°C = 69.8°F", "idle", "18°C", "21°C", "forecast 70°F"]
+        "domIncludes": [
+          "21°C = 69.8°F",
+          "idle",
+          "18°C",
+          "21°C",
+          "forecast 70°F",
+          "id 00000000",
+          "parsed none"
+        ]
       }
     },
     {
@@ -42,6 +50,15 @@
           "lastRun": { "_tag": "Some", "_0": 9007199254740991 }
         },
         "domIncludes": ["21°C = 69.8°F", "idle"]
+      }
+    },
+    {
+      "label": "a fresh id is minted at the slot's own type, parsed back through Option(ReadingId), and reaches every ReadingId position",
+      "do": { "clickText": "new id" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["id ", " · parsed "],
+        "domExcludes": ["parsed none", "id 00000000"]
       }
     }
   ]

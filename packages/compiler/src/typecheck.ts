@@ -3177,6 +3177,28 @@ function arithmeticResult(
   return prim(float ? "Float" : "Int", pos);
 }
 
+/**
+ * The type a call's qualifier names, or `null` when it names none — including
+ * when the call has no qualifier at all.
+ *
+ * A primitive is answered first because the grammar resolves those itself — a
+ * `TypePrim`, never a symbol-table entry — so `sym.types` has no `Int`. A
+ * definition answers only when it is complete on its own: `type Box(T) = …`
+ * needs an argument, and a `TypeRef` to `Box` without one would be compared
+ * against a real type and mismatch every one of them, so a parameterised name
+ * says nothing here. That covers `List` and the rest of
+ * `BUILTIN_TYPE_CONSTRUCTORS` too, which is why `isKnownTypeName` — the
+ * resolution rule E0117 applies — is deliberately not the rule applied here:
+ * naming a type is what makes a qualifier legal, and *being* one is what lets
+ * it answer.
+ */
+function qualifiedType(name: string | null, pos: Pos, sym: SymbolTable): TypeExpr | null {
+  if (name === null) return null;
+  if (isPrimTypeName(name)) return prim(name, pos);
+  const def = sym.types.get(name);
+  return def !== undefined && def.params.length === 0 ? { kind: "TypeRef", name, pos } : null;
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -3332,19 +3354,36 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // method `ms.show` being a different expression (#344). The read is
       // ordered the way the lowering is, which is what keeps the two agreeing.
       //
-      // The other two members of `TYPE_MEMBER_CALLS` stay below. For `fresh`
-      // that is the right answer: it produces the qualifier's own type. For
-      // `parse` it is not — the spec gives it `Option(T)` of the qualifier
-      // (stdlib §2.4.3) and the branch returns a bare `T`, so an
-      // `Option(Duration)` target refuses `Duration.parse(t)` and a `Duration`
-      // one accepts it. That is a separate defect, #424, left as it was rather
-      // than widened into this fix.
-      if (qualifier !== null && isQualifierName(qualifier) && e.callee.slice(dot + 1) === "show")
-        return prim("Text", e.pos);
+      // The other two members of `TYPE_MEMBER_CALLS` are answered by the
+      // qualifier, below — `fresh` produces it and `parse` an `Option` of it.
+      // All three are read through the one spelling rule codegen and
+      // `builtinArity` apply, so a name a hyphen disqualifies as a qualifier
+      // (`Othe-Id.fresh()`) is not a type-member call here either.
+      const member =
+        qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
+      if (member === "show") return prim("Text", e.pos);
       // `Duration.ms(500)` and friends build the standard library's `Duration`;
-      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10).
+      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10). Both keep the
+      // whole qualifier, ahead of the type-member rule: their members are
+      // constructors rather than `fresh` / `parse`, and the one spelling they
+      // share with it, `Duration.parse(t)`, answers a bare `Duration` where the
+      // spec gives it `Option(Duration)` — a separate defect, #424, left as it
+      // was rather than widened into this fix.
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
+      // `TypeName.fresh()` is a `T` and `TypeName.parse(t)` an `Option(T)`
+      // (stdlib §2.4.1 / §2.4.3). Without this the call that *mints* an id was
+      // the one expression the nominal rule could not judge: `slot p : PostId`
+      // took a `UserId.fresh()` in silence, which is the mistake `nominal`
+      // exists to catch (#348). The qualifier is resolved rather than matched,
+      // so a name that is no type answers nothing at all — E0117 already
+      // reports that one (#276), and a `TypeRef` to a name with no definition
+      // would be compared as a type and report it a second time.
+      if (member === "fresh" || member === "parse") {
+        const named = qualifiedType(qualifier, e.pos, sym);
+        if (named === null) return null;
+        return member === "fresh" ? named : container("Option", [named], e.pos);
+      }
       return sym.fns.get(e.callee)?.ret ?? null;
     }
     default:

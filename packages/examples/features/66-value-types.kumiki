@@ -13,7 +13,17 @@ type Status  = Idle | Loading | Done(Int)
 type Celsius    = nominal Int where between(-90, 60)
 type Fahrenheit = nominal Int where between(-130, 140)
 
-type Reading = {label: Text, celsius: Celsius}
+# Two id types over one base, which is the shape `nominal` is most often written
+# in. `TypeName.fresh()` is a `TypeName` and `TypeName.parse(t)` an
+# `Option(TypeName)` (stdlib §2.4.1 / §2.4.3), so the call that *mints* an id is
+# judged like every other expression: `readingId := SampleId.fresh()` is E0201
+# naming both types, and `slot found : Option(ReadingId) = SampleId.parse(t)` is
+# the same mistake one level in. Both used to compile — the qualifier was read
+# by the lowering and by nothing else.
+type ReadingId = nominal Text where uuid
+type SampleId  = nominal Text where uuid
+
+type Reading = {label: Text, celsius: Celsius, id: ReadingId}
 
 # The shared base is the bridge, so no cast form is needed: a base value goes
 # into any nominal over it, which is why `slot forecast : Fahrenheit = 70` needs
@@ -39,9 +49,22 @@ fn forecastMatches(r: Reading, f: Fahrenheit) -> Bool = r.celsius == toCelsius(f
 # so a bare literal needs no wrapping here either.
 fn isFreezing(c: Celsius) -> Bool = c <= 0
 
+# `.parse` carries the qualifier's type through the `Option`, so the declared
+# return type is what holds it: writing `-> Option(SampleId)` on this body is
+# E0201, and so is `-> ReadingId` for the unwrapped shape.
+fn readingIdOf(t: Text) -> Option(ReadingId) = ReadingId.parse(t)
+
+# The base is still the bridge one level down: a `ReadingId` renders through the
+# `Text` its declaration is over, with nothing to unwrap.
+fn shortId(id: ReadingId) -> Text = id.slice(0, 8)
+
 # A record literal must name every declared field and no others: a missing one
 # is E0214, an extra one E0215, a mistyped one E0201.
-slot reading : Reading      = {label: "outside", celsius: 21}
+slot reading : Reading      = {label: "outside", celsius: 21, id: "00000000-0000-7000-8000-000000000000"}
+# A fresh id of the slot's own type; `SampleId.fresh()` here is E0201.
+slot latestId : ReadingId   = ReadingId.fresh()
+# What `readingIdOf` answers, at the type it answers with.
+slot found   : Option(ReadingId) = None
 # A union slot takes one of its own tags; `Warming` would be E0216.
 slot status  : Status       = Idle
 # `Option(Int)` takes `None` / `Some(n)`, never a bare `n` (E0201).
@@ -66,18 +89,27 @@ reducer adopt on=ui.click(AdoptBtn)
         status  := Loading
 
 reducer reset on=ui.click(ResetBtn)
-    do= reading := {label: "outside", celsius: 21}
+    do= reading := {label: "outside", celsius: 21, id: latestId}
         status  := Idle
         lastRun := Some(budget)
+
+# Minting an id is the position the identity matters most in, and the one that
+# used to be unchecked: `latestId := SampleId.fresh()` is E0201 here.
+reducer remint on=ui.click(RemintBtn)
+    do= let next = ReadingId.fresh()
+        latestId := next
+        found    := readingIdOf(next)
+        reading  := reading.copy(id=next)
 
 # A tile that declares `in=` is applied like a one-parameter function. Calling
 # `Sample` with no argument is E0213 — and used to die at mount with
 # `_d_1 is not defined`.
 tile Sample in=Int = text($1.show + "°C") {color: "muted"}
 
-tile WarmBtn  = button(text="+1°C", onClick=warmer)
-tile AdoptBtn = button(text="use forecast", onClick=adopt)
-tile ResetBtn = button(text="reset", onClick=reset)
+tile WarmBtn   = button(text="+1°C", onClick=warmer)
+tile AdoptBtn  = button(text="use forecast", onClick=adopt)
+tile ResetBtn  = button(text="reset", onClick=reset)
+tile RemintBtn = button(text="new id", onClick=remint)
 
 tile App = column(
              heading(reading.label),
@@ -88,10 +120,14 @@ tile App = column(
                     | Done(n)    -> "done at " + n.show),
              row(for s in samples Sample(s)) {gap: "sm"},
              text("forecast " + forecast.show + "°F"),
+             text("id " + shortId(reading.id) + " · parsed " +
+                  (match found with
+                     | Some(id) -> shortId(id)
+                     | None     -> "none")) {color: "muted"},
              text(if forecastMatches(reading, forecast) then "matches the forecast"
                   else if isFreezing(reading.celsius) then "freezing"
                   else "above freezing") {color: "muted"},
-             row(WarmBtn, AdoptBtn, ResetBtn) {gap: "sm"})
+             row(WarmBtn, AdoptBtn, ResetBtn, RemintBtn) {gap: "sm"})
 
 app ValueTypes
     caps   = []

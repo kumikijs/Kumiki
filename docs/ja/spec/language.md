@@ -191,6 +191,8 @@ type Yen   = nominal Int where positive
 
 `Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。**比較** も同じ誤りであり同じエラーになる：`postId == userId` も `cents < yen` も E0201 である（[§1.9.4](#_1-9-4-演算子の型)）。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
 
+この同定は、id を**生成する**呼び出しにも及ぶ。id の出所は通常そこだからである：`TypeName.fresh()` は `TypeName` であり、`TypeName.parse(t)` は `Option(TypeName)` である（[stdlib §2.4.1](./stdlib.md#_2-4-1-id-生成) / [§2.4.3](./stdlib.md#_2-4-3-型変換)）。したがって `postId := UserId.fresh()` は両方の型名を挙げる E0201 であり、`slot found : Option(PostId) = UserId.parse(t)` も同様である。型を指さない qualifier は代わりに [E0117](./errors.md#e0117-undef-type) であり、値については何も言わない。
+
 **自身の nominal 名を持たない**型は、その上に宣言されたどの nominal とも双方向に受理し合う。これが `slot c : Cents = 1` を構築形式なしで成立させており、算術は基底型を返すので（[§1.9](#_1-9-式言語)）`c := c + 1` もそのまま通る。
 
 nominal の上に宣言された nominal は **narrowing** であり、一方向だけ通る：
