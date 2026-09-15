@@ -174,18 +174,32 @@ describe("where the minted type is read", () => {
     expect(inReducer(IDS, `let id = PostId.fresh(); p := id`)).toEqual([]);
   });
 
-  it("known gap: a match binder drops it, so the Option is opened untyped", () => {
+  it("known gap: a match used as a value has no type, so the arm value is unchecked", () => {
     // `match` is the idiomatic way to open the `Option` that `parse` now
-    // produces, and it is the one position of the four that loses the type: a
-    // `match` arm builds its scope without the `bindLocal` that `let` does, so
-    // `id` has no type and nothing downstream can be checked.
+    // produces, and it is the one position of the four that loses the type.
     //
-    // Not this rule's doing — an `Option(UserId)` slot shows the same silence,
-    // where `ou.get-or(p)` on that slot reports — and not this PR's to fix.
-    // #435 carries it; both lines below change when it lands.
+    // The binder is not what loses it — `checkExpr`'s `MatchExpr` case infers
+    // the scrutinee and binds the payload, so `| Some(id) -> p := id` and
+    // `| Some(id) -> takesPost(id)` both report. What is missing is a
+    // `MatchExpr` case in `inferType`: a `match` in value position falls to
+    // `default: return null`, so the destination has nothing to compare the arm
+    // against. `p := ou.get-or(p)` reports because `getOrResultType` gives that
+    // expression a type and a `match` has none.
+    //
+    // Not this rule's doing — an `Option(UserId)` slot shows the same silence —
+    // and not this PR's to fix. #435 carries it; both lines change when it
+    // lands.
     const body = (q: string) => `p := match ${q}.parse("a") with | Some(id) -> id | None -> p`;
     expect(inReducer(IDS, body("UserId"))).toEqual([]);
     expect(inReducer(IDS, body("PostId"))).toEqual([]);
+    // The binder itself is typed, which is what scopes the gap to the value
+    // position — this half reports today.
+    expect(
+      inReducer(
+        `${IDS}\nslot hit : Bool = false`,
+        `match UserId.parse("a") with | Some(id) -> p := id | None -> hit := true`,
+      ),
+    ).toEqual(["E0201 Expected PostId but got UserId"]);
   });
 
   it("is checked against a fn's declared return type", () => {
