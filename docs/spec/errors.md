@@ -985,3 +985,26 @@ A call names a function this document describes but the toolchain does not lower
 Currently one name is in this state: `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
 
 **Fix**: Remove the call. Nothing in the language is blocked on it — `trace` is a debugging aid.
+
+### E0803 `unimplemented-refinement`
+
+A `where` refinement names a predicate [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates) registers and the toolchain does not lower to a runtime check. The companion to `E0802`, one layer down: the name is right, and the gap is on the implementation side.
+
+> `Refinement "<pred>" is documented but not enforced by the runtime`
+
+**No predicate is in this state.** The check exists because of what the alternative was: `refinementToJs` used to end in a `default` arm that lowered anything it did not implement to `(_v) => true`, so seven of the twelve registered predicates reached the runtime as a check that cannot fail — `slot n : Int where positive` accepted `-7`, and `error(field=n)` on it rendered nothing. A refinement is specified as a check the value passes on its way into the slot ([Forms §5.6](./forms.md#_5-6-validation-strategy), [Runtime §10.3.3](./runtime.md#_10-3-3-batching)), so a predicate with no lowering is the document promising something the program does not do — and nothing said so. The parser accepts exactly the names the lowering table holds, which is what makes this unreachable from source today; a predicate added to §1.3.3 without one lands here, at build time, instead.
+
+**Fix**: Implement the lowering, or use a predicate that has one. A refinement is a guarantee the runtime keeps, so there is no third option — reaching for a predicate the toolchain cannot check means the value has to be validated where it enters the program (a `fn` over the parsed input, a reducer guard) instead.
+
+### E0804 `refinement-args-invalid`
+
+A registered predicate is written with arguments it cannot be built into a check from.
+
+> `Refinement "<pred>" takes <n> argument(s) but got <m>`
+> `Refinement "<pred>" takes <what> but argument <i> is <given>`
+> `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
+> `Refinement regex("<p>") is not a pattern: <reason>`
+
+The arity and the shape of each argument are in the table at [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates). A refinement **no** value can satisfy is the same defect as one **every** value satisfies — both take the slot's guarantee away from the program that relies on it — so `between(5, 1)`, `len-eq(2.5)` and `len-gt(-1)` are reported here rather than accepted as checks that always refuse. `between(0, "x")` is the sharpest case: the emitted check used to read `v >= x`, which is not a comparison against a bound but a reference to a name nothing declares, and the module threw at load.
+
+**Fix**: Write the arguments the predicate takes — numeric bounds for `between`, a whole non-negative count for the `len-*` family, a pattern that compiles for `regex`, at least one literal for `one-of`.

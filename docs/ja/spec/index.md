@@ -121,6 +121,8 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
+| [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | コア |
+| [E0804](./errors.md#e0804-refinement-args-invalid) | `refinement-args-invalid` | type | コア |
 <!-- codes:end -->
 :::
 
@@ -219,5 +221,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `87-replayed-environment-read.kumiki` | slot, reducer, tile | コア | [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode) |
 | `88-string-formatting.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.4.5](./stdlib.md#_2-4-5-文字列フォーマット) |
 | `89-qualified-show.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |
+| `90-refinement-validation.kumiki` | type, slot, reducer | フォーム | [§5.6](./forms.md#_5-6-バリデーション戦略) |
 <!-- examples:end -->
 :::

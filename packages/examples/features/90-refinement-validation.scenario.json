@@ -1,0 +1,137 @@
+{
+  "steps": [
+    {
+      "label": "a pristine slot may hold a value its own refinement rejects, and error() says so",
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "" },
+        "domIncludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "bind is quiet about a half-typed address: the slot keeps what it had",
+      "do": { "fill": "#contact", "value": "ada@" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "" },
+        "domIncludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "and takes it once it is an address, which clears the message",
+      "do": { "fill": "#contact", "value": "ada@example.com" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "ada@example.com" },
+        "domExcludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "email: the reducer path refuses the same value, loudly — the batch is discarded",
+      "do": { "clickText": "contact" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "ada@example.com" },
+        "errorIncludes": [
+          "reducer \"setContact\" was rejected: slot \"contact\" cannot hold \"not-an-email\" (email)"
+        ]
+      }
+    },
+    {
+      "label": "url: an absolute address commits",
+      "do": { "clickText": "site" },
+      "expect": { "noErrors": true, "state": { "site": "https://kumiki.dev/docs" } }
+    },
+    {
+      "label": "url: a bare host is not somewhere to go",
+      "do": { "clickText": "site" },
+      "expect": {
+        "noErrors": true,
+        "state": { "site": "https://kumiki.dev/docs" },
+        "errorIncludes": ["slot \"site\" cannot hold \"kumiki.dev\" (url)"]
+      }
+    },
+    {
+      "label": "uuid: the 8-4-4-4-12 shape commits",
+      "do": { "clickText": "token" },
+      "expect": { "noErrors": true, "state": { "token": "6ba7b810-9dad-11d1-80b4-00c04fd430c8" } }
+    },
+    {
+      "label": "uuid: anything else does not",
+      "do": { "clickText": "token" },
+      "expect": {
+        "noErrors": true,
+        "state": { "token": "6ba7b810-9dad-11d1-80b4-00c04fd430c8" },
+        "errorIncludes": ["slot \"token\" cannot hold \"not-a-uuid\" (uuid)"]
+      }
+    },
+    {
+      "label": "positive: 2 commits",
+      "do": { "clickText": "qty" },
+      "expect": { "noErrors": true, "state": { "qty": 2 } }
+    },
+    {
+      "label": "positive: zero is not positive",
+      "do": { "clickText": "qty" },
+      "expect": {
+        "noErrors": true,
+        "state": { "qty": 2 },
+        "errorIncludes": ["slot \"qty\" cannot hold 0 (positive)"]
+      }
+    },
+    {
+      "label": "negative: -2 commits",
+      "do": { "clickText": "owed" },
+      "expect": { "noErrors": true, "state": { "owed": -2 } }
+    },
+    {
+      "label": "negative: nor is zero negative",
+      "do": { "clickText": "owed" },
+      "expect": {
+        "noErrors": true,
+        "state": { "owed": -2 },
+        "errorIncludes": ["slot \"owed\" cannot hold 0 (negative)"]
+      }
+    },
+    {
+      "label": "regex: a second slug matches the pattern",
+      "do": { "clickText": "slug" },
+      "expect": { "noErrors": true, "state": { "slug": "second-post" } }
+    },
+    {
+      "label": "regex: the pattern describes the whole value, spaces and capitals included",
+      "do": { "clickText": "slug" },
+      "expect": {
+        "noErrors": true,
+        "state": { "slug": "second-post" },
+        "errorIncludes": ["slot \"slug\" cannot hold \"Not A Slug\" (regex([a-z]+(-[a-z]+)*))"]
+      }
+    },
+    {
+      "label": "one-of: a size from the set commits",
+      "do": { "clickText": "size" },
+      "expect": { "noErrors": true, "state": { "size": "lg" } }
+    },
+    {
+      "label": "one-of: and one outside it does not",
+      "do": { "clickText": "size" },
+      "expect": {
+        "noErrors": true,
+        "state": { "size": "lg" },
+        "errorIncludes": ["slot \"size\" cannot hold \"xl\" (one-of(sm, md, lg))"]
+      }
+    },
+    {
+      "label": "every refusal left the app live, and nothing else moved",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "contact=ada@example.com",
+          "site=https://kumiki.dev/docs",
+          "qty=2 owed=-2",
+          "slug=second-post size=lg"
+        ]
+      }
+    }
+  ]
+}

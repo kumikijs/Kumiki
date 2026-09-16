@@ -56,6 +56,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | a conditional whose later branch *adds* `onFocus` / `onBlur`, which the runtime lifts rather than any renderer |
 | [86-container-selector-through-reference](./86-container-selector-through-reference.kumiki) | `ui.key` / `ui.focus` / `ui.blur` / `ui.hover` on a container whose body is a tile reference, beside the inline form of the same tree |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | a refinement rejects the whole reducer batch, and the guard to write instead |
+| [90-refinement-validation](./90-refinement-validation.kumiki) | every registered predicate as a runtime check — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`, and the standard library's refined nominals |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |
 | [66-value-types](./66-value-types.kumiki) | the shapes value-level type checking accepts, and the mistake each one used to hide |

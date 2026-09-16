@@ -335,9 +335,16 @@ function compareReducerExpect(
 
 /** A type's generation recipe, emitted by codegen from the `for-all` types. */
 export type GenDesc =
-  | { t: "Int"; min?: number; max?: number }
-  | { t: "Float"; min?: number; max?: number }
-  | { t: "Text"; minLen?: number; maxLen?: number }
+  | { t: "Int"; min?: number; max?: number; oneOf?: (number | string)[] }
+  | { t: "Float"; min?: number; max?: number; oneOf?: (number | string)[] }
+  | {
+      t: "Text";
+      minLen?: number;
+      maxLen?: number;
+      /** A refined shape to build an instance of, rather than free text. */
+      form?: "email" | "url" | "uuid";
+      oneOf?: (number | string)[];
+    }
   | { t: "Bool" }
   | { t: "List"; elem: GenDesc }
   | { t: "Set"; elem: GenDesc }
@@ -370,7 +377,29 @@ function _hashStr(s: string): number {
 
 const _GEN_ASCII = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
 
+/** A value of one of the shapes `email` / `url` / `uuid` refine to (#352). */
+function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
+  const hex = (n: number): string => {
+    let s = "";
+    for (let i = 0; i < n; i++) s += "0123456789abcdef"[Math.floor(rng() * 16)];
+    return s;
+  };
+  const word = (n: number): string => {
+    let s = "";
+    for (let i = 0; i < n; i++) s += "abcdefghijklmnopqrstuvwxyz"[Math.floor(rng() * 26)];
+    return s;
+  };
+  if (form === "uuid") return `${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`;
+  if (form === "email") return `${word(6)}@${word(6)}.example.com`;
+  return `https://${word(6)}.example.com/${word(4)}`;
+}
+
 function genValue(desc: GenDesc, rng: () => number): unknown {
+  // `one-of` names the whole domain, whatever the base type is, so it is
+  // answered ahead of the type it refines.
+  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
+    return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
+  }
   switch (desc.t) {
     case "Int": {
       const lo = desc.min ?? -1000;
@@ -383,6 +412,7 @@ function genValue(desc: GenDesc, rng: () => number): unknown {
       return lo + rng() * (hi - lo);
     }
     case "Text": {
+      if (desc.form) return genForm(desc.form, rng);
       const minLen = desc.minLen ?? 0;
       const maxLen = desc.maxLen ?? 50;
       const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));

@@ -238,6 +238,15 @@ Kumiki validation has **three layers**:
 | refinement | Runtime | `age : Int where between(0, 120)` |
 | Cross-form | reducer / fn | "password and password-confirm match" |
 
+The refinement layer covers **every** predicate [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates) registers, including the ones the standard library's domain types are declared with — `Email`, `Url`, `Uuid` and `HttpStatus` are refined nominals ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot declared with one is checked exactly as a slot written `Text where email` is. A predicate the toolchain cannot lower to a check is a build error ([E0803](./errors.md#e0803-unimplemented-refinement)), never a check that passes.
+
+The two write paths differ in how loud they are, not in what they check:
+
+- **Assignment** (`age := …` in a reducer) discards the whole batch and reports it — no slot written, no effect emitted ([Runtime §10.3.3](./runtime.md#_10-3-3-batching)).
+- **`bind`** refuses the value for that field alone and says nothing, because a half-typed value is expected rather than a defect ([§5.1.2](#_5-1-2-handling-of-refinement)).
+
+Neither gates the **declared default**: `slot email : Email = ""` starts out holding a value its own refinement rejects, which is what puts a message on a pristine form ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)).
+
 ### 5.6.1 Cross-Form Example
 
 ```kumiki snippet
@@ -279,7 +288,7 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` is a built-in tile that renders the target slot's current validation error.
+`error(field=...)` is a built-in tile that renders the target slot's current validation error: it reads the predicate off the slot and renders the message for it whenever the slot's **current** value fails, and nothing otherwise. A slot whose type carries no refinement therefore has no message to show — which is a statement about the slot, not about the value in it.
 
 ### 5.7.2 Standard Messages
 
@@ -287,10 +296,12 @@ error(field=email)
 |---|---|
 | `email` | "Invalid email format" |
 | `url` | "Invalid URL" |
+| `uuid` | "Invalid identifier" |
 | `nonempty` | "Required" |
 | `len-eq(N)` | "Must be exactly N characters" |
 | `len-lt(N)` / `len-gt(N)` | "Must be less than / more than N characters" |
 | `between(A, B)` | "Must be between A and B" |
+| `positive` / `negative` | "Must be positive" / "Must be negative" |
 | `regex(P)` | "Does not match pattern" |
 | `one-of(...)` | "Must be one of: ..." |
 

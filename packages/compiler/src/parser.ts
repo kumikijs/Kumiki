@@ -39,6 +39,7 @@ import type {
 } from "./ast.ts";
 import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
+import { REFINEMENT_PREDS } from "./refinements.ts";
 
 export class ParseError extends Error {
   constructor(
@@ -135,20 +136,6 @@ const VALUE_NAMED_ARGS = new Set([
   "rows",
   "cols",
   "aspect",
-]);
-const REFINE_PREDS = new Set([
-  "between",
-  "nonempty",
-  "len-eq",
-  "len-lt",
-  "len-gt",
-  "positive",
-  "negative",
-  "email",
-  "url",
-  "uuid",
-  "regex",
-  "one-of",
 ]);
 
 class Parser {
@@ -477,7 +464,7 @@ class Parser {
   private parseRefinement(): Refinement {
     const t = this.eat("ident");
     const name = t.value;
-    if (!REFINE_PREDS.has(name)) {
+    if (!REFINEMENT_PREDS.has(name)) {
       throw new ParseError(`Unknown refinement predicate "${name}"`, t.pos);
     }
     const args: (number | string)[] = [];

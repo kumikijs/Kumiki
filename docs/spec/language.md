@@ -164,6 +164,24 @@ regex("pattern")
 one-of(v1, v2, ...)
 ```
 
+Every one of them is a **runtime check**: the value is tested on its way into the slot, and a write that fails it is refused ([Forms §5.6](./forms.md#_5-6-validation-strategy), [Runtime §10.3.3](./runtime.md#_10-3-3-batching)). What each one tests:
+
+| Predicate | Holds when | Arguments |
+|---|---|---|
+| `nonempty` | the value is text with at least one character | — |
+| `len-eq(N)` / `len-lt(N)` / `len-gt(N)` | the text's length is `= N` / `< N` / `> N` | one whole number, zero or more |
+| `between(A, B)` | the value is a number and `A <= v <= B`, both ends included | two numbers, `A` not above `B` |
+| `positive` / `negative` | the value is a number and `v > 0` / `v < 0` — zero is neither | — |
+| `email` | the text is `local@host`, the host carries a dot, and neither part holds a space or a second `@` | — |
+| `url` | the text is absolute — a scheme, `://`, then a host: `https://kumiki.dev`, not `kumiki.dev` | — |
+| `uuid` | the text is the 8-4-4-4-12 hexadecimal shape, any version, either case | — |
+| `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
+| `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
+
+A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number.
+
+The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional length, a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
+
 Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to write proofs, the debugging loop breaks down.
 
 ### 1.3.4 Examples

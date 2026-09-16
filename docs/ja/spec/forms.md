@@ -238,6 +238,15 @@ Kumiki のバリデーションは **3 層**：
 | refinement | ランタイム | `age : Int where between(0, 120)` |
 | フォーム横断 | reducer / fn | 「password と password-confirm が一致」 |
 
+refinement 層は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) が登録する**すべて**の述語を対象とする。標準ライブラリのドメイン型が宣言に使っている述語も含まれる — `Email`、`Url`、`Uuid`、`HttpStatus` は refinement 付きの nominal（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）なので、これらで宣言された slot は `Text where email` と書かれた slot とまったく同じように検査される。ツールチェーンがチェックへ lowering できない述語は、黙って通るチェックではなくビルドエラー（[E0803](./errors.md#e0803-unimplemented-refinement)）になる。
+
+2 つの書き込み経路は、検査内容ではなく報告の大きさが異なる：
+
+- **代入**（reducer 内の `age := …`）はバッチ全体を破棄し、報告する — slot は書かれず、effect も発行されない（[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）。
+- **`bind`** はそのフィールドの値だけを受け取らず、何も言わない。入力途中の値は欠陥ではなく想定内だからである（[§5.1.2](#_5-1-2-refinement-の扱い)）。
+
+どちらも**宣言時の初期値**は通さない： `slot email : Email = ""` は自分自身の refinement が拒否する値から始まり、それが未入力のフォームにメッセージを出す仕組みである（[§5.7.1](#_5-7-1-個別フィールドの-refinement-違反)）。
+
 ### 5.6.1 フォーム横断の例
 
 ```kumiki snippet
@@ -279,7 +288,7 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` は対象 slot の現在の検査エラーをレンダリングする組み込み tile。
+`error(field=...)` は対象 slot の現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、slot の**現在の**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。したがって型に refinement を持たない slot には表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。
 
 ### 5.7.2 標準メッセージ
 
@@ -287,10 +296,12 @@ error(field=email)
 |---|---|
 | `email` | "Invalid email format" |
 | `url` | "Invalid URL" |
+| `uuid` | "Invalid identifier" |
 | `nonempty` | "Required" |
 | `len-eq(N)` | "Must be exactly N characters" |
 | `len-lt(N)` / `len-gt(N)` | "Must be less than / more than N characters" |
 | `between(A, B)` | "Must be between A and B" |
+| `positive` / `negative` | "Must be positive" / "Must be negative" |
 | `regex(P)` | "Does not match pattern" |
 | `one-of(...)` | "Must be one of: ..." |
 

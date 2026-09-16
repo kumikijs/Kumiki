@@ -1,0 +1,103 @@
+# Feature: a refinement predicate is a check the value must pass on its way
+# into the slot (language.md §1.3.3, forms.md §5.6, runtime.md §10.3.3).
+#
+# Seven of the twelve predicates used to reach the runtime as `(_v) => true`,
+# and the standard library's refined nominals (`Email`, `Url`, `Uuid`) carried
+# no check at all — so `email := "not-an-email"` landed and `error(field=email)`
+# rendered nothing. This example drives each of those families from the reducer
+# side; `between` / `nonempty` / `len-*` were the three already enforced, and
+# 63-reducer-batch-atomicity and 34-builtin-tiles cover them.
+#
+# Every button writes a value its predicate ACCEPTS the first time it is
+# clicked and one it REFUSES from then on. That shape is what lets both
+# verification tiers drive the same app: `smoke` clicks each button once and
+# treats any console.error as fatal, while the scenario beside this file clicks
+# twice and asserts the refusal (`errorIncludes`) — a rejection is reported,
+# not silent, and the batch is discarded whole.
+
+# The standard library's refined nominals (stdlib.md §2.1.3). `contact` starts
+# on a value its own refinement rejects, which is legal and deliberate: it is
+# what makes `error(field=contact)` show a message on a pristine form.
+slot contact : Email = ""
+slot site    : Url   = "https://kumiki.dev"
+slot token   : Uuid  = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+# The predicates written inline, one per remaining family.
+slot qty   : Int where positive                    = 1
+slot owed  : Int where negative                    = -1
+slot slug  : Text where regex("[a-z]+(-[a-z]+)*")  = "first-post"
+slot size  : Text where one-of("sm", "md", "lg")   = "md"
+
+reducer setContact on=ui.click(ContactBtn)
+    do= contact := if contact == "" then "ada@example.com" else "not-an-email"
+
+reducer setSite on=ui.click(SiteBtn)
+    do= site := if site == "https://kumiki.dev" then "https://kumiki.dev/docs" else "kumiki.dev"
+
+reducer setToken on=ui.click(TokenBtn)
+    do= token := if token == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+                 then "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+                 else "not-a-uuid"
+
+reducer setQty on=ui.click(QtyBtn)
+    do= qty := if qty == 1 then 2 else 0
+
+reducer setOwed on=ui.click(OwedBtn)
+    do= owed := if owed == -1 then -2 else 0
+
+reducer setSlug on=ui.click(SlugBtn)
+    do= slug := if slug == "first-post" then "second-post" else "Not A Slug"
+
+reducer setSize on=ui.click(SizeBtn)
+    do= size := if size == "md" then "lg" else "xl"
+
+tile ContactBtn = button(text="contact", onClick=setContact)
+tile SiteBtn    = button(text="site",    onClick=setSite)
+tile TokenBtn   = button(text="token",   onClick=setToken)
+tile QtyBtn     = button(text="qty",     onClick=setQty)
+tile OwedBtn    = button(text="owed",    onClick=setOwed)
+tile SlugBtn    = button(text="slug",    onClick=setSlug)
+tile SizeBtn    = button(text="size",    onClick=setSize)
+
+# The form path, which is the other half of the guarantee: `bind` checks the
+# same predicate and is deliberately quiet about a value it refuses (a
+# half-typed address is expected, not a defect — forms.md §5.1.2), while
+# `error` reads the predicate off the slot and renders the message for it.
+tile ContactField = column(
+                      label(text="Contact") {for: "contact"},
+                      input(bind=contact, id="contact", placeholder="you@example.com"),
+                      error(field=contact))
+
+tile State = column(
+               text("contact=" + contact),
+               text("site=" + site),
+               text("token=" + token),
+               text("qty=" + qty.show + " owed=" + owed.show),
+               text("slug=" + slug + " size=" + size))
+
+tile App = column(
+             heading("Refinement validation"),
+             ContactField,
+             row(ContactBtn, SiteBtn, TokenBtn) {gap: "sm"},
+             row(QtyBtn, OwedBtn, SlugBtn, SizeBtn) {gap: "sm"},
+             State)
+           {pad: "lg", gap: "md"}
+
+app RefinementValidation
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+# The reducer-test tier applies the same rule with no DOM in sight: a refused
+# write leaves every slot at its `given` value (testing.md §8.1).
+
+test contact-accepts-an-address =
+    reducer-test setContact
+        given  = {slots: {contact: ""}, event: {type: ui.click, target: ContactBtn}}
+        expect = {slots: {contact: "ada@example.com"}, effects: []}
+
+test contact-refuses-a-non-address =
+    reducer-test setContact
+        given  = {slots: {contact: "ada@example.com"},
+                  event: {type: ui.click, target: ContactBtn}}
+        expect = {slots: {contact: "ada@example.com"}, effects: []}

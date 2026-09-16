@@ -1,4 +1,5 @@
 import type { Refinement, TypeExpr } from "../ast.ts";
+import { refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
@@ -56,7 +57,21 @@ export function primGenDesc(name: string): GenDescData {
   return { t: "Unknown" };
 }
 
-/** Fold a refinement into a base descriptor so generation respects it (§8.3.2). */
+/**
+ * Fold a refinement into a base descriptor so generation respects it (§8.3.2).
+ *
+ * Every predicate the runtime enforces belongs here, because the two answer
+ * the same question from opposite ends: a generator that ignores a refinement
+ * produces values the slot it is generating for would refuse, so the property
+ * under test is run on states the app can never be in. While `email` / `url` /
+ * `uuid` lowered to `(_v) => true` this was harmless and the descriptor
+ * ignored them; enforcing them (#352) is what makes the omission visible.
+ *
+ * `regex` is the one predicate with no constraint to fold: generating from an
+ * arbitrary pattern is a different problem from checking against one. §8.3.2
+ * says so, and a `for-all` over a `regex`-refined type is a case to write by
+ * hand.
+ */
 export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDescData {
   if (!r) return desc;
   const num = (i: number): number => (typeof r.args[i] === "number" ? (r.args[i] as number) : 0);
@@ -65,7 +80,13 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Int" || desc.t === "Float" ? { ...desc, min: num(0), max: num(1) } : desc;
     case "positive":
       if (desc.t === "Int") return { ...desc, min: 1 };
-      if (desc.t === "Float") return { ...desc, min: 0 };
+      // The smallest Float above zero, because `positive` is `v > 0` and a
+      // generator bounded at 0 can hand the check the one value it refuses.
+      if (desc.t === "Float") return { ...desc, min: Number.EPSILON };
+      return desc;
+    case "negative":
+      if (desc.t === "Int") return { ...desc, max: -1 };
+      if (desc.t === "Float") return { ...desc, max: -Number.EPSILON };
       return desc;
     case "nonempty":
       return desc.t === "Text" ? { ...desc, minLen: 1 } : desc;
@@ -75,55 +96,65 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Text" ? { ...desc, minLen: num(0) + 1 } : desc;
     case "len-lt":
       return desc.t === "Text" ? { ...desc, maxLen: Math.max(0, num(0) - 1) } : desc;
+    case "email":
+    case "url":
+    case "uuid":
+      // A shape rather than a length: the generator builds an instance of the
+      // form, so the value passes the same check the runtime applies.
+      return desc.t === "Text" ? { ...desc, form: r.pred } : desc;
+    case "one-of":
+      // Independent of the base type — the choices *are* the domain.
+      return { ...desc, oneOf: [...r.args] };
     default:
       return desc;
   }
 }
 
+/**
+ * Follow `t` to the type expression that carries its refinement.
+ *
+ * Through names, not just one of them: `type Handle = Email` is the type it
+ * names, so a slot declared with it is refined by `email` exactly as one
+ * declared `Email` is. `gen.types` holds the standard library's definitions as
+ * well as the program's (see `codegen`), which is what makes `Email`, `Url`,
+ * `Uuid` and `HttpStatus` refine at all — they are synthesised in
+ * `stdlib-types.ts` and a lookup that only saw the program's `type` definitions
+ * returned `undefined` for every one of them (#352).
+ *
+ * The `seen` set is not defensive: `type A = A` and `type A = B; type B = A`
+ * are reported by the checker (E0219) but still reach codegen in a `check`
+ * that is not fatal, and a walk without it would not return.
+ */
+function refinedTarget(t: TypeExpr, gen: GenCtx): TypeExpr | undefined {
+  let target = t;
+  const seen = new Set<string>();
+  while (target.kind === "TypeRef") {
+    if (seen.has(target.name)) return undefined;
+    seen.add(target.name);
+    const def = gen.types.get(target.name);
+    if (!def) return undefined;
+    target = def.body;
+  }
+  return target;
+}
+
 /** Resolve a slot/type's refinement (through a TypeRef), for the `error` tile. */
 export function slotRefinement(t: TypeExpr, gen: GenCtx): Refinement | undefined {
-  let target = t;
-  if (t.kind === "TypeRef") {
-    const def = gen.types.get(t.name);
-    if (!def) return undefined;
-    target = def.body;
-  }
-  if (target.kind === "TypeNominal" || target.kind === "TypeRefinement") {
-    return (target as { refinement?: Refinement }).refinement;
+  const target = refinedTarget(t, gen);
+  if (target?.kind === "TypeNominal" || target?.kind === "TypeRefinement") {
+    return target.refinement;
   }
   return undefined;
 }
 
+/**
+ * The JS predicate a slot of type `t` is checked by, or `undefined` when the
+ * type carries no refinement — or carries one nothing lowers, which the
+ * checker has already reported as E0803. Emitting nothing is the point: a
+ * slot with no `refine` is one the runtime does not gate, where a `refine`
+ * that answers `true` to everything reads as a gate and is not one.
+ */
 export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
-  let target = t;
-  if (t.kind === "TypeRef") {
-    const def = gen.types.get(t.name);
-    if (!def) return undefined;
-    target = def.body;
-  }
-  if (target.kind === "TypeNominal" || target.kind === "TypeRefinement") {
-    const r = (target as { refinement?: Refinement }).refinement;
-    if (r) return refinementToJs(r);
-  }
-  return undefined;
-}
-
-export function refinementToJs(r: Refinement): string | undefined {
-  switch (r.pred) {
-    case "between": {
-      const a = r.args[0] as number;
-      const b = r.args[1] as number;
-      return `(v) => typeof v === "number" && v >= ${a} && v <= ${b}`;
-    }
-    case "nonempty":
-      return `(v) => typeof v === "string" && v.length > 0`;
-    case "len-lt":
-      return `(v) => typeof v === "string" && v.length < ${r.args[0] as number}`;
-    case "len-gt":
-      return `(v) => typeof v === "string" && v.length > ${r.args[0] as number}`;
-    case "len-eq":
-      return `(v) => typeof v === "string" && v.length === ${r.args[0] as number}`;
-    default:
-      return `(_v) => true`;
-  }
+  const r = slotRefinement(t, gen);
+  return r ? refinementToJs(r) : undefined;
 }
