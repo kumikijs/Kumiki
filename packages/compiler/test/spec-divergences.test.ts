@@ -515,3 +515,47 @@ app A
     expect(js).not.toContain("_s.fmt ?");
   });
 });
+
+// stdlib.md §2.4.3: `TypeName.parse(text)` is an `Option(T)`, and §2.4.3 says
+// in so many words that "its `Option(T)` *is* the qualifier's". Two qualifiers
+// do not meet that. `Duration` and `Bytes` are read by `inferType` as whole
+// namespaces — their other members are constructors, and answering the
+// qualifier is what makes `Duration.ms(500)` a `Duration` — so `parse` is
+// caught by the same branch and answers a bare `Duration` / `Bytes`.
+//
+// The result is inverted: writing the call the way the spec documents is
+// E0201, and writing it the way the spec does not is clean. The lowering is
+// the `Option` in both cases, so the clean spelling is the broken one —
+// `slot b : Bytes = Bytes.parse("hello")` then reading `b.size` answers 2, the
+// `Some` wrapper's field count rather than the bytes.
+//
+// Both directions are asserted, which is what makes this a pin rather than a
+// snapshot: #424 flips the two, and a fix that moves only one is caught here.
+describe("known gap: Duration.parse and Bytes.parse answer T, not Option(T)", () => {
+  const app = (defs: string) => `${defs}
+tile B = button(text="b")
+tile App = column(B)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("accepts the bare type, which the spec does not give it", () => {
+    expect(codes(app(`slot d : Duration = Duration.parse("1")`))).toEqual([]);
+    expect(codes(app(`slot b : Bytes = Bytes.parse("x")`))).toEqual([]);
+  });
+
+  it("reports the Option the spec does give it", () => {
+    expect(codes(app(`slot d : Option(Duration) = Duration.parse("1")`))).toEqual(["E0201"]);
+    expect(codes(app(`slot b : Option(Bytes) = Bytes.parse("x")`))).toEqual(["E0201"]);
+  });
+
+  it("is the qualifier's doing, not the member's — every other type answers Option", () => {
+    // The same call on a qualifier outside the two namespaces, so the
+    // divergence reads as scoped rather than as how `parse` behaves.
+    const ids = `type PostId = nominal Text where uuid`;
+    expect(codes(app(`${ids}\nslot o : Option(PostId) = PostId.parse("a")`))).toEqual([]);
+    expect(codes(app(`${ids}\nslot p : PostId = PostId.parse("a")`))).toEqual(["E0201"]);
+  });
+});

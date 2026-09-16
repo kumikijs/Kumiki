@@ -149,8 +149,11 @@ const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
  * Whether `name` is a primitive type name. Separate from the symbol table
  * because the grammar resolves these itself: a primitive is a `TypePrim`, so
  * asking `sym.types` about `Int` answers no.
+ *
+ * Narrows, because a caller that resolves a name to a type has to build the
+ * `TypePrim` afterwards and the `Set` is the only thing that knows the answer.
  */
-export function isPrimTypeName(name: string): boolean {
+export function isPrimTypeName(name: string): name is PrimName {
   return PRIM_TYPE_NAME_SET.has(name);
 }
 
