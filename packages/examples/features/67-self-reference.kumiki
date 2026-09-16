@@ -4,16 +4,21 @@
 # a `type` that resolves to itself is E0009, and a slot whose initial value
 # reads a slot is E0304 (spec/errors.md). Each shape below is the accepted form
 # of one of those mistakes — the rejected forms used to crash the compiler, run
-# against the invariant, or break the mounted app.
+# against the invariant, break the mounted app, or, for the type, be accepted
+# outright: it built and it ran, with the slot declared by it never checked
+# against anything.
 
 type Node = {label: Text, depth: Int}
 
-# E0009: `type Thread = Thread` — and the pair `type A = B` / `type B = A` —
-# comes back to a name already on the alias chain with no body ever reached, so
-# it denotes nothing. A type that names itself *through a record* is the
-# accepted form and stays legal: the field is where the chain stops, so every
-# value of `Thread` is finite and comparing two of them terminates. This is the
-# one of the four shapes where the self-reference is kept rather than replaced.
+# E0009: `type Thread = Thread` — and the pair `type A = B` / `type B = A`, and
+# `type Alias(T) = T` with `type Thread = Alias(Thread)` — comes back to a name
+# already on the alias chain with no body ever reached, so it denotes nothing.
+# A type that names itself *through a record* is the accepted form and stays
+# legal: the record is where the chain stops. Comparing two of them terminates
+# because the relation is read over the types as written, not because their
+# values are finite — `type Node = {value: Int, next: Node}` has none at all
+# and is legal too (language.md §1.3.6, inv. 4). This is the one of the four
+# shapes where the self-reference is kept rather than replaced.
 type Thread = {label: Text, replies: List(Thread)}
 
 # E0304: `slot total : Int = nodes.length` reads a slot. Derived values belong
@@ -30,7 +35,7 @@ slot thread : Thread = {
     label:   "why a recursive type is fine",
     replies: [
         {label: "the record is where the chain stops", replies: []},
-        {label: "so the value is finite",              replies: []}
+        {label: "so comparing two terminates",        replies: []}
     ]
 }
 

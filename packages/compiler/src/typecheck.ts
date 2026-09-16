@@ -410,13 +410,18 @@ function checkCycles(
   }
 
   const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
+  const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
   const typeEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.types.get(name);
+    const def = typeOf(name);
     if (!def) return [];
-    const target = aliasTarget(def);
-    // A stdlib constructor and a name that denotes nothing both terminate the
-    // chain — neither has a body to come back along, and an undeclared name is
-    // E0117's to report rather than a second name for one mistake.
+    const target = aliasTarget(def, typeOf);
+    // `sym.types` holds the program's definitions over the standard library's
+    // (`STDLIB_TYPES`), so a stdlib *domain* type — `Route`, `HttpError` — is
+    // followed like any other definition, and a program that redeclares one
+    // closes a loop through its own. What is not in the table is a generic
+    // constructor (`List`, `Option`, `Map`), which has no body to come back
+    // along, and a name that denotes nothing at all, which is E0117's to
+    // report rather than a second name for one mistake.
     return target && sym.types.has(target.to) ? [target] : [];
   };
   for (const cycle of findCycles(

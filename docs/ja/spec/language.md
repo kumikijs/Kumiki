@@ -214,6 +214,24 @@ fn toUser(p: PostId) -> UserId       = p + ""
 
 `where` の refinement 自体は同定に寄与せず（`type Positive = Int where positive` は `Int` である）、compile 時ではなく runtime の検査のままである（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)）：`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` は型としては正しく、範囲を決めるのはバリデーションである。
 
+
+### 1.3.6 不変条件
+
+1. **`type` はその body を指す。** 別名（`type A = B`）、`nominal` の被せ、`where` refinement はいずれも下にある型の代わりに立つものであり、たどった先には body が無ければならない。
+2. **別名の連鎖は自分自身へ戻ってはならない。** 定義から次の名前へ — 別名、`nominal`、`where`、あるいは型引数をそのまま返す汎化型（`type Alias(T) = T`）を経由して — たどっていったとき、連鎖上にすでに現れた名前へ到達してはならない。`type A = A` および `type A = B` / `type B = A` の組は何も指していない。たどり着く body が無いからである。[E0009](./errors.md#e0009-type-cycle)。
+3. **連鎖は構造的な型で終わる。** レコード・ユニオン・コンテナ・プリミティブはそれ自体が型であるため、その内側に書かれたものが連鎖を続けることはない。
+4. **再帰型は合法である。** これが、自分自身を用いて書かれた型の受理される形である：
+
+```kumiki fragment
+type Node  = {value: Int, next: Node}
+type Tree  = {children: List(Tree)}
+type Shape = Leaf | Branch(Shape, Shape)
+```
+
+いずれも不変条件 3 により、自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して**余帰納的**に読まれるからである：比較の途中で同じ組へ再入したら「はい」と答える。これは、比較の有限な部分が下りの途中ですでに検査済みであることから健全である。停止性は値が有限であることには依存しない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、それでも合法な型である。
+
+5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
+
 ---
 
 ## 1.4 ストアレイヤ (`slot`)

@@ -196,7 +196,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `64-init-slot-argument.kumiki` | app, effect | コア | [§1.12](./language.md#_1-12-アプリエントリ-app) |
 | `65-prefers-dark.kumiki` | app, reducer | スタイル | [§4.6.1](./style.md#_4-6-1-os-設定への追従) |
 | `66-value-types.kumiki` | type, slot, fn | コア | [§1.9.4](./language.md#_1-9-4-演算子の型) |
-| `67-self-reference.kumiki` | type, slot, tile, fn | コア | [§1.7.2](./language.md#_1-7-2-不変条件) |
+| `67-self-reference.kumiki` | type, slot, tile, fn | コア | [§1.3.6](./language.md#_1-3-6-不変条件) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | コア | [§1.2](./language.md#_1-2-字句) |

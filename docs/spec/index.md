@@ -196,7 +196,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
 | `65-prefers-dark.kumiki` | app, reducer | style | [§4.6.1](./style.md#_4-6-1-following-os-settings) |
 | `66-value-types.kumiki` | type, slot, fn | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
-| `67-self-reference.kumiki` | type, slot, tile, fn | core | [§1.7.2](./language.md#_1-7-2-invariants) |
+| `67-self-reference.kumiki` | type, slot, tile, fn | core | [§1.3.6](./language.md#_1-3-6-invariants) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |

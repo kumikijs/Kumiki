@@ -2,10 +2,11 @@
 // which is the seam the CLI's `build` and the Vite plugin both go through.
 //
 // A unit test over `check` proves a diagnostic is produced. It does not prove
-// the pipeline stops there, and for two of these four that is the whole point:
-// a tile cycle crashed code generation with a `RangeError` and a derived slot
-// produced an artifact that threw on mount. Each case below asserts both — the
-// diagnostic, and that nothing is emitted to run.
+// the pipeline stops there, and for three of these four that is the whole
+// point: a tile cycle crashed code generation with a `RangeError`, a derived
+// slot produced an artifact that threw on mount, and a type that resolved to
+// itself produced one that built and ran with nothing checked against it. Each
+// case below asserts both — the diagnostic, and that nothing is emitted to run.
 
 import { type CompileResult, compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
