@@ -24,6 +24,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0006` | a `fn` calls itself, directly or through other functions | rewrite as `fold` / `map` / `filter` over the data |
 | `E0007` | two definitions of one layer share a name — only one of them takes effect | delete or rename one |
 | `E0008` | a name written twice inside one construct (app/effect/tile clause, record key or field, map key, tile argument or prop, fn/type parameter, `for-all` generator, union tag, route pattern) | delete the later one |
+| `E0009` | a `type` resolves to itself — the alias chain returns to a name on it without reaching a record, union, container or primitive | give one name on the chain a body; a recursive type wants a record or union where it names itself |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
 | `E0103` | undefined name / slot | declare it, or fix the spelling |
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |

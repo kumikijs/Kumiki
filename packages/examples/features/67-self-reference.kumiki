@@ -1,12 +1,20 @@
 # Feature: what a definition written in terms of itself looks like instead.
 #
 # A tile that expands into itself is E0005, a `fn` that calls itself is E0006,
-# and a slot whose initial value reads a slot is E0304 (spec/errors.md). Each
-# shape below is the accepted form of one of those mistakes — the rejected
-# forms used to crash the compiler, run against the invariant, or break the
-# mounted app.
+# a `type` that resolves to itself is E0009, and a slot whose initial value
+# reads a slot is E0304 (spec/errors.md). Each shape below is the accepted form
+# of one of those mistakes — the rejected forms used to crash the compiler, run
+# against the invariant, or break the mounted app.
 
 type Node = {label: Text, depth: Int}
+
+# E0009: `type Thread = Thread` — and the pair `type A = B` / `type B = A` —
+# comes back to a name already on the alias chain with no body ever reached, so
+# it denotes nothing. A type that names itself *through a record* is the
+# accepted form and stays legal: the field is where the chain stops, so every
+# value of `Thread` is finite and comparing two of them terminates. This is the
+# one of the four shapes where the self-reference is kept rather than replaced.
+type Thread = {label: Text, replies: List(Thread)}
 
 # E0304: `slot total : Int = nodes.length` reads a slot. Derived values belong
 # in the fn layer — a slot read in an initial value is emitted as a lookup in
@@ -17,6 +25,14 @@ slot nodes : List(Node) = [
     {label: "leaf",   depth: 2}
 ]
 slot picked : Int = 0
+
+slot thread : Thread = {
+    label:   "why a recursive type is fine",
+    replies: [
+        {label: "the record is where the chain stops", replies: []},
+        {label: "so the value is finite",              replies: []}
+    ]
+}
 
 # E0006: `fn depthOf(n: Int) -> Int = if n <= 0 then 0 else depthOf(n - 1) + 1`
 # is direct recursion. Folding over the data terminates by construction, which
@@ -38,12 +54,18 @@ tile NextBtn = button(text="next", onClick=advance)
 reducer advance on=ui.click(NextBtn)
     do= picked := (picked + 1) % nodes.length
 
+# A `Thread` is drawn one level at a time, because the tile that drew it at
+# every depth would be E0005 and the `fn` that flattened it would be E0006.
+tile ReplyRow in=Thread = text("- " + $1.label)
+
 tile App = column(
              heading("nodes"),
              column(for n in nodes NodeRow(n) {key: n.label}) {gap: "xs"},
              text("deepest: " + deepest(nodes).show),
              text("picked: " + labelAt(nodes, picked)),
-             NextBtn)
+             NextBtn,
+             heading(thread.label),
+             column(for r in thread.replies ReplyRow(r) {key: r.label}) {gap: "xs"})
            {pad: "lg", gap: "md"}
 
 app SelfReference

@@ -49,7 +49,13 @@ import {
   METHOD_MIN_ARGS,
   NUMERIC_MEMBERS,
 } from "./codegen.ts";
-import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
+import {
+  aliasTarget,
+  boundaryTarget,
+  expansionTargets,
+  findCycles,
+  type GraphEdge,
+} from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
@@ -345,12 +351,13 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
 }
 
 /**
- * A tile that expands into itself and a `fn` that calls itself.
+ * A tile that expands into itself, a `fn` that calls itself, and a `type` whose
+ * alias chain returns to itself.
  *
- * The two are checked together because the question is the same one — does the
- * definition graph close a loop — and only the edges differ. Slots are absent:
- * an initializer may not read another slot at all (`E0304`), which leaves a
- * slot loop unreachable.
+ * The three are checked together because the question is the same one — does
+ * the definition graph close a loop — and only the edges differ. Slots are
+ * absent: an initializer may not read another slot at all (`E0304`), which
+ * leaves a slot loop unreachable.
  */
 function checkCycles(
   program: Program,
@@ -398,6 +405,28 @@ function checkCycles(
       code: "E0006",
       kind: "fn-cycle",
       message: `fn "${cycle.path[0]}" calls itself (${cycle.path.join(" → ")})`,
+      pos: cycle.pos,
+    });
+  }
+
+  const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
+  const typeEdges = (name: string): readonly GraphEdge[] => {
+    const def = sym.types.get(name);
+    if (!def) return [];
+    const target = aliasTarget(def);
+    // A stdlib constructor and a name that denotes nothing both terminate the
+    // chain — neither has a body to come back along, and an undeclared name is
+    // E0117's to report rather than a second name for one mistake.
+    return target && sym.types.has(target.to) ? [target] : [];
+  };
+  for (const cycle of findCycles(
+    types.map((t) => t.name),
+    typeEdges,
+  )) {
+    errors.push({
+      code: "E0009",
+      kind: "type-cycle",
+      message: `type "${cycle.path[0]}" resolves to itself (${cycle.path.join(" → ")})`,
       pos: cycle.pos,
     });
   }

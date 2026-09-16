@@ -191,10 +191,16 @@ slot k : Kept  = 3`;
     // green for the wrong reason. Two routes, so that a change to either one
     // cannot quietly stop exercising the guard: `commonType` over a list
     // literal's items, and a record field compared against its declared type.
+    //
+    // The cycle itself is `E0009`, and that is the whole report: the guards are
+    // what let the walks answer "undecidable" and carry on, so nothing below
+    // the cycle turns into a second, value-level finding. The guards stay
+    // whether or not the diagnostic does — normalisation has to terminate on a
+    // program the checker is still in the middle of reporting.
     const src = `type A = B\ntype B = A\nslot x : A = 1\nslot n : Int = 0`;
-    expect(inReducer(src, `n := [x, x].length`)).toEqual([]);
+    expect(inReducer(src, `n := [x, x].length`)).toEqual(["E0009"]);
     const rec = `${src}\ntype R = {v: Int}\nslot r : R = {v: 0}`;
-    expect(inReducer(rec, `r := {v: x}`)).toEqual([]);
+    expect(inReducer(rec, `r := {v: x}`)).toEqual(["E0009"]);
 
     // The chain walk needs a guard of its own for the same reason, and its
     // failure is a hang rather than a `RangeError`: it is a loop, so each turn
@@ -204,7 +210,7 @@ type B2 = nominal A2
 slot p : A2 = 1
 slot q : B2 = 2
 slot n : Int = 0`;
-    expect(inReducer(nominalCycle, `n := [p, q].length`)).toEqual([]);
+    expect(inReducer(nominalCycle, `n := [p, q].length`)).toEqual(["E0009"]);
   });
 
   it("resolves a generic alias with its argument, not with a name that shadows it", () => {

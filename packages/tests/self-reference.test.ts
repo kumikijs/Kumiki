@@ -2,7 +2,7 @@
 // which is the seam the CLI's `build` and the Vite plugin both go through.
 //
 // A unit test over `check` proves a diagnostic is produced. It does not prove
-// the pipeline stops there, and for two of these three that is the whole point:
+// the pipeline stops there, and for two of these four that is the whole point:
 // a tile cycle crashed code generation with a `RangeError` and a derived slot
 // produced an artifact that threw on mount. Each case below asserts both — the
 // diagnostic, and that nothing is emitted to run.
@@ -47,6 +47,25 @@ slot a : Int = b + 1
 tile App = column(text(a.show))
 ${TAIL}`,
   },
+  {
+    what: "a type that resolves to itself",
+    code: "E0009",
+    // This one built an artifact and ran: the type denotes nothing, so the
+    // slot declared with it was never checked against anything at all.
+    source: `type A = A
+slot x : A = 1
+tile App = column(text("a"))
+${TAIL}`,
+  },
+  {
+    what: "two types that resolve to each other",
+    code: "E0009",
+    source: `type A = B
+type B = A
+slot x : A = 1
+tile App = column(text("a"))
+${TAIL}`,
+  },
 ];
 
 describe("a definition written in terms of itself never reaches code generation", () => {
@@ -65,14 +84,17 @@ describe("a definition written in terms of itself never reaches code generation"
     });
   }
 
-  it("builds the accepted forms of all three", () => {
-    // The same three shapes written the way the language provides for:
-    // repetition through `for`, derivation through `fn`, and a slot that
-    // stands on its own.
-    const source = `slot xs : List(Int) = [1, 2, 3]
+  it("builds the accepted forms of all four", () => {
+    // The same four shapes written the way the language provides for:
+    // repetition through `for`, derivation through `fn`, a slot that stands on
+    // its own, and a type that reaches a record before it reaches itself —
+    // the one of the four where the self-reference is kept, not replaced.
+    const source = `type Thread = {label: Text, replies: List(Thread)}
+slot xs : List(Int) = [1, 2, 3]
+slot t : Thread = {label: "root", replies: [{label: "reply", replies: []}]}
 fn total(ns: List(Int)) -> Int = ns.fold(0, $1 + $2)
 tile Item in=Int = text($1.show)
-tile App = column(for x in xs Item(x) {key: x.show}, text(total(xs).show))
+tile App = column(for x in xs Item(x) {key: x.show}, text(total(xs).show), text(t.label))
 ${TAIL}`;
     expect(outcome(source).kind).toBe("ok");
   });

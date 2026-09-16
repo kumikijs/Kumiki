@@ -85,6 +85,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0006` | no | Rewriting recursion as a fold over data is a change of algorithm, not a substitution. |
 | `E0007` | no | Which of the two definitions is the intended one is user intent — and deleting the wrong one silently changes behaviour. |
 | `E0008` | no | Same: which occurrence to keep is user intent, and for `caps` the choice is a capability decision. |
+| `E0009` | no | Which name on the chain should have been a record, a union or a primitive — and what its body should be — is user intent. |
 | `E0304` | no | Where the derived value should be computed — a `fn`, or a reducer that runs once on entry — is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
@@ -200,6 +201,26 @@ The search is structural: it descends every definition into every expression, ty
 A computed map key is not compared: whether two of them collide is the runtime's question, and the answer is not available here.
 
 **Fix**: Delete the later one, or rename it if both were meant.
+
+### E0009 `type-cycle`
+
+A `type` resolves to itself: following its body from one definition to the next returns to a name already on the chain without ever reaching a body — a record, a union, a container or a primitive ([Type Layer](./language.md#_1-3-type-layer-type)). `type A = A` and the pair `type A = B` / `type B = A` are the two shapes. Such a definition denotes nothing — there is no body to reach — so a slot declared with it silently got no type at all and every value-level check on it went quiet, which is the same silence a misspelled type name produced before [E0117](#e0117-undef-type). Reported once per cycle, at the first edge of it — inside the definition the message names.
+
+> `type "<name>" resolves to itself (<A> → <B> → <A>)`
+
+The chain is the one normalization follows, and it stops where normalization stops. An alias (`type A = B`), a `nominal` wrapper and a `where` refinement all lead straight on to the next name; a **record, a union, a primitive and a container** are types in their own right, so no name written inside one is an edge. That is what keeps **recursive types legal**, and they must stay so:
+
+```kumiki fragment
+type Node    = {value: Int, next: Node}
+type Tree    = {children: List(Tree)}
+type Shape   = Leaf | Branch(Shape, Shape)
+```
+
+Each reaches a structural type before it reaches itself, which is the co-inductive reading that makes comparing one terminate ([§1.3.5](./language.md#_1-3-5-type-canonicalization)). `type A = Option(A)` is legal for the same reason — the container is the type.
+
+A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor has no body to come back along, and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A generic's own parameters are not edges either — `type Alias(Cents) = Cents` resolves to its argument, not to a global of that spelling.
+
+**Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
 ## E01xx — Name Resolution
 

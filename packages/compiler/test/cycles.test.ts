@@ -365,3 +365,129 @@ ${TAIL}`;
     expect(codes(src)).toEqual([]);
   });
 });
+
+describe("a type that resolves to itself", () => {
+  // The two cycle codes above are about definitions with bodies to run. A
+  // `type` has no body to reach at all when its alias chain comes back to a
+  // name already on it, so a slot declared with one silently got no type and
+  // every value-level check on it went quiet — the same silence a misspelled
+  // type name produced before E0117.
+  const TILE = `tile App = column(text("x"))\n`;
+  const typeDiags = (defs: string) => diags(`${defs}\n${TILE}${TAIL}`);
+  const typeCodes = (defs: string) => typeDiags(defs).map((e) => e.code);
+
+  it("reports a type whose body is its own name", () => {
+    const [err, ...rest] = typeDiags(`type A = A\nslot x : A = 1`);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0009");
+    expect(err?.kind).toBe("type-cycle");
+    expect(err?.message).toContain("A → A");
+    // The reference in the body, which is the name to change.
+    expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:10");
+  });
+
+  it("reports a mutual alias, at the first edge", () => {
+    const [err, ...rest] = typeDiags(`type A = B\ntype B = A\nslot x : A = 1`);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0009");
+    expect(err?.message).toContain("A → B → A");
+    // A's reference to B, not B's closing reference to A — as for E0005, the
+    // message and the position have to name the same definition.
+    expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:10");
+  });
+
+  it("reports a three-type loop", () => {
+    const [err, ...rest] = typeDiags(`type A = B\ntype B = C\ntype C = A\nslot x : A = 1`);
+    expect(rest).toEqual([]);
+    expect(err?.message).toContain("A → B → C → A");
+  });
+
+  // Every wrapper the chain passes through on its way to the next name. Each
+  // is a node `unaliasType` steps over rather than stopping at, so each hides
+  // a loop that has no more meaning than the bare one.
+  const wrappers: [string, string][] = [
+    ["nominal", `type A = nominal B\ntype B = nominal A`],
+    ["a refinement", `type A = B where positive\ntype B = A`],
+    ["nominal with a refinement", `type A = nominal B where positive\ntype B = A`],
+  ];
+  for (const [what, defs] of wrappers) {
+    it(`follows the chain through ${what}`, () => {
+      expect(typeCodes(`${defs}\nslot x : A = 1`)).toEqual(["E0009"]);
+    });
+  }
+
+  it("follows a generic named with its arguments", () => {
+    // `unaliasType` expands a `TypeApp` whose name has a definition, so the
+    // application is an alias step like a bare name is.
+    expect(typeCodes(`type A = B(Int)\ntype B(T) = A\nslot x : A = 1`)).toEqual(["E0009"]);
+  });
+
+  it("reports a cycle once however many types lead into it", () => {
+    expect(
+      typeCodes(`type A = B
+type B = A
+type C = A
+type D = B
+slot x : C = 1
+slot y : D = 2`),
+    ).toEqual(["E0009"]);
+  });
+
+  it("reports two independent cycles separately", () => {
+    expect(
+      typeCodes(`type A = B
+type B = A
+type C = D
+type D = C
+slot x : A = 1
+slot y : C = 2`),
+    ).toEqual(["E0009", "E0009"]);
+  });
+
+  it("reports a cycle no other definition names", () => {
+    // A type nothing uses is still a definition with no meaning, and the tile
+    // and fn passes report an unused cycle the same way.
+    expect(typeCodes(`type A = A`)).toEqual(["E0009"]);
+  });
+
+  // A structural node is where normalisation stops, so the name inside one is
+  // reached through a value that exists — this is the co-inductive reading
+  // `assignable.ts#relate` is written against, and it must stay legal.
+  const recursive: [string, string][] = [
+    ["a record naming itself", `type Node = {value: Int, next: Node}`],
+    ["a record reaching itself through a container", `type Tree = {children: List(Tree)}`],
+    ["two records naming each other", `type A = {b: B}\ntype B = {a: A}`],
+    ["a union naming itself", `type T = Leaf | Branch(T, T)`],
+    ["an alias through a container", `type A = Option(A)`],
+    ["an alias whose chain ends in a record", `type A = {v: B}\ntype B = A`],
+    ["an alias chain that ends in a primitive", `type A = Int\ntype B = A`],
+  ];
+  for (const [what, defs] of recursive) {
+    it(`leaves ${what} alone`, () => {
+      expect(typeCodes(defs)).toEqual([]);
+    });
+  }
+
+  it("does not read a parameter that shadows a type name as an edge", () => {
+    // `type Alias(Cents) = Cents` resolves to its argument, not to the global
+    // of that spelling — the reason `nominalDecl` substitutes before it walks.
+    expect(
+      typeCodes(`type Cents = nominal Int where positive
+type Alias(Cents) = Cents
+slot c : Alias(Int) = 1`),
+    ).toEqual([]);
+  });
+
+  it("does not read an unresolvable name as an edge", () => {
+    // `Nope` names nothing, so there is no chain to come back along — E0117
+    // is what reports it, and reporting a cycle as well would be two names
+    // for one mistake.
+    expect(typeCodes(`type A = Nope\nslot x : A = 1`)).toEqual(["E0117"]);
+  });
+
+  it("does not silence the rest of the check", () => {
+    // The cycle makes its own type meaningless; every other definition is
+    // still checked against the types it does have.
+    expect(typeCodes(`type A = A\nslot x : A = 1\nslot n : Int = "x"`)).toEqual(["E0201", "E0009"]);
+  });
+});

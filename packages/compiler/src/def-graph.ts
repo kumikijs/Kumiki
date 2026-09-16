@@ -13,7 +13,7 @@
 // body does recurse, which is safe for a different reason: a body is bounded by
 // the parser's nesting limit, and nothing bounds the graph between definitions.
 
-import type { Expr, Pos, TileDef, TileExpr } from "./ast.ts";
+import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
@@ -61,6 +61,59 @@ export function expansionTargets(body: TileExpr): readonly GraphEdge[] {
 export function boundaryTarget(def: TileDef): GraphEdge | null {
   if (!def.errorBoundary) return null;
   return { to: def.errorBoundary, pos: def.errorBoundaryPos ?? def.pos };
+}
+
+/**
+ * The type a `type` definition is an alias *for* — the one edge
+ * `assignable.ts#unaliasType` follows when it normalises the body — or `null`
+ * when the body is a type in its own right.
+ *
+ * An alias (`type A = B`), and a `nominal` / `where` wrapper around one, has no
+ * meaning until the definition it names is reached. A record, a union, a
+ * primitive and a container are where normalisation stops, so no name written
+ * *inside* one is an edge: `type Node = {value: Int, next: Node}` reaches a
+ * record before it reaches itself, which is the co-inductive reading the
+ * relation is written against and must stay legal. That is also why there is at
+ * most one edge — an alias chain has one successor, unlike a tile body, which
+ * expands into every child it names.
+ *
+ * A `TypeApp` to a user definition is an alias step like a bare name is, since
+ * `unaliasType` instantiates and keeps going; its arguments are not followed,
+ * for the same reason a record's fields are not.
+ *
+ * The definition's own parameters are excluded: a parameter may be spelled like
+ * a top-level definition, and `type Alias(Cents) = Cents` resolves to the
+ * argument rather than to the global — the reason `nominalDecl` substitutes
+ * before it walks. Names that turn out to denote a stdlib constructor, or
+ * nothing at all, are returned: the caller knows which table to resolve them
+ * against, as for tiles.
+ */
+export function aliasTarget(def: TypeDef): GraphEdge | null {
+  const params = new Set(def.params);
+  let t: TypeExpr = def.body;
+  for (;;) {
+    switch (t.kind) {
+      case "TypeNominal":
+      case "TypeRefinement":
+        t = t.inner;
+        continue;
+      case "TypeRef":
+      case "TypeApp":
+        return params.has(t.name) ? null : { to: t.name, pos: t.pos };
+      case "TypePrim":
+      case "TypeRecord":
+      case "TypeUnion":
+        return null;
+      default: {
+        // A new `TypeExpr` kind must be classified here rather than silently
+        // ending the chain — one that wraps another type and is missed is a
+        // cycle the search cannot see, exactly as in `walkTileBody`.
+        const exhaustive: never = t;
+        void exhaustive;
+        return null;
+      }
+    }
+  }
 }
 
 function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
