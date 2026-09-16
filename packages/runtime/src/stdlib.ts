@@ -10,6 +10,7 @@ import {
   KumikiPanic,
   type PathSegment,
   panicInfo,
+  type RefinementNaming,
   type RefinementRejection,
   readEnv,
   refinementRejectionOf,
@@ -45,10 +46,7 @@ export const _stdlibCore = {
    * is already doomed and nothing it produces will be applied.
    */
   slotWrite(
-    metas: Record<
-      string,
-      { refine?: (v: unknown) => boolean; refineKind?: string; refineArgs?: unknown }
-    >,
+    metas: Record<string, { refine?: (v: unknown) => boolean } & RefinementNaming>,
     rejected: RefinementRejection[],
     name: string,
     value: unknown,

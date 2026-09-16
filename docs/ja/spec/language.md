@@ -141,6 +141,16 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
+`refinement-type` は再帰的なので、1 つの型が `where` を **2 つ以上**持てる。そのとき述語は**連言**であり、すべてが成り立つ値だけが受理される。
+
+```kumiki fragment
+type Handle = nominal Text where len-gt(3) where len-lt(7)
+```
+
+`Handle` は 3 文字より長く、**かつ** 7 文字より短い。述語は型が指す連鎖をたどって読まれるので（[§1.3.6](#_1-3-6-不変条件) 不変条件 1）、1 つの型式の上だけでなく名前をまたいでも積み上がる：`type Short = Text where len-lt(7)` に対する `type Handle = nominal Short where len-gt(3)` は両方を持つ。
+
+違反した値は、書かれた順で**最初に失敗した述語**に対して報告される。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-エラー表示)）。
+
 ### 1.3.2 ビルトイン汎化型
 
 ```

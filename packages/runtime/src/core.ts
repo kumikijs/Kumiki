@@ -421,6 +421,16 @@ export type TileProps = Record<string, unknown> & {
   el?: Record<string, unknown>;
 };
 
+/**
+ * One predicate of a slot's type, kept apart from the others so a report can
+ * name the one that refused a value.
+ */
+export type RefinementPart = {
+  kind: string;
+  args?: (number | string)[];
+  refine: RefinementCheck;
+};
+
 export type SlotMeta = {
   value: unknown;
   refine?: RefinementCheck;
@@ -428,7 +438,42 @@ export type SlotMeta = {
   /** Refinement predicate name + args — drives the `error` tile's message. */
   refineKind?: string;
   refineArgs?: (number | string)[];
+  /**
+   * Every predicate the slot's type carries, in the order they are written,
+   * when it carries more than one (`Text where nonempty where len-lt(9)`).
+   * `refine` above stays the single authority on whether a value is accepted —
+   * it is the conjunction of these — and this only decides *which* predicate a
+   * rejected value is reported against. Absent for a type with one predicate,
+   * where `refineKind`/`refineArgs` already name it.
+   */
+  refineAll?: RefinementPart[];
 };
+
+/** The slot fields that name a refusal, as every reader of them takes them. */
+export type RefinementNaming = {
+  refineKind?: string;
+  refineArgs?: unknown;
+  refineAll?: RefinementPart[];
+};
+
+/**
+ * The predicate a value fails, out of the ones its slot's type carries: the
+ * first in source order that refuses it, falling back to the slot's single
+ * named predicate. A conjunction's own test cannot answer this — it is one
+ * function that returns false — so a message built from `refineKind` alone
+ * used to name the outermost predicate whichever one actually refused.
+ */
+export function failedRefinement(
+  value: unknown,
+  meta: RefinementNaming | undefined,
+): { kind?: string; args?: (number | string)[] } {
+  const part = meta?.refineAll?.find((p) => !p.refine(value));
+  if (part) return { kind: part.kind, args: part.args ?? [] };
+  const named: { kind?: string; args?: (number | string)[] } = {};
+  if (meta?.refineKind !== undefined) named.kind = meta.refineKind;
+  if (Array.isArray(meta?.refineArgs)) named.args = meta.refineArgs as (number | string)[];
+  return named;
+}
 
 export type ReducerSpec = {
   name: string;
@@ -1036,15 +1081,20 @@ export type RefinementRejection = {
   args?: (number | string)[];
 };
 
-/** Describe one rejected write, carrying the predicate when the slot names it. */
+/**
+ * Describe one rejected write, carrying the predicate when the slot names it —
+ * the one the value actually fails, where the type carries several
+ * ({@link failedRefinement}).
+ */
 export function refinementRejectionOf(
   slot: string,
   value: unknown,
-  meta: { refineKind?: string; refineArgs?: unknown },
+  meta: RefinementNaming,
 ): RefinementRejection {
   const rejection: RefinementRejection = { slot, value };
-  if (meta.refineKind !== undefined) rejection.kind = meta.refineKind;
-  if (Array.isArray(meta.refineArgs)) rejection.args = meta.refineArgs as (number | string)[];
+  const { kind, args } = failedRefinement(value, meta);
+  if (kind !== undefined) rejection.kind = kind;
+  if (args !== undefined) rejection.args = args;
   return rejection;
 }
 
@@ -1064,10 +1114,7 @@ export function refinementRejectionOf(
  */
 export function refinementRejections(
   next: Record<string, unknown>,
-  slotMetas: Record<
-    string,
-    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
-  >,
+  slotMetas: Record<string, { refine?: RefinementCheck } & RefinementNaming>,
 ): RefinementRejection[] {
   const out: RefinementRejection[] = [];
   for (const [k, v] of Object.entries(next)) {
@@ -1092,10 +1139,7 @@ export function refinementRejections(
  */
 export function batchRejections(
   result: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | null | undefined,
-  slotMetas: Record<
-    string,
-    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
-  >,
+  slotMetas: Record<string, { refine?: RefinementCheck } & RefinementNaming>,
 ): RefinementRejection[] {
   const out: RefinementRejection[] = [];
   const seen = new Set<string>();

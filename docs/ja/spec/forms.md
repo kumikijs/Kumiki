@@ -281,6 +281,8 @@ error(field=email)
 
 `error(field=...)` は対象 slot の現在の検査エラーをレンダリングする組み込み tile。
 
+述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
+
 ### 5.7.2 標準メッセージ
 
 | 述語 | デフォルト |

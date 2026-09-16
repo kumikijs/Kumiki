@@ -141,6 +141,16 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
+`refinement-type` is recursive, so a type may carry **more than one** `where`, and the predicates **conjoin**: a value is accepted only when every one of them holds.
+
+```kumiki fragment
+type Handle = nominal Text where len-gt(3) where len-lt(7)
+```
+
+A `Handle` is longer than 3 characters **and** shorter than 7. The predicates are read through the chain a type denotes ([§1.3.6](#_1-3-6-invariants), inv. 1), so they accumulate over a name as well as over one expression: on `type Short = Text where len-lt(7)`, `type Handle = nominal Short where len-gt(3)` carries both.
+
+A value that fails is reported against the **first predicate it fails**, in the order they are written. That is the predicate the rejection names when a write discards a reducer's batch ([batching](./runtime.md#a-batch-commits-all-or-nothing)) and the one whose message the `error` tile renders ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
 ### 1.3.2 Built-in Generic Types
 
 ```
