@@ -214,6 +214,24 @@ The arithmetic in the first lands on `Int`; the `+ ""` in the second lands on `T
 
 A `where` refinement carries no identity of its own — `type Positive = Int where positive` is `Int` — and remains a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)) rather than a compile-time one: on `type Volume = nominal Int where between(0, 11)`, `volume := 50` is well typed, and the range is what validation decides.
 
+
+### 1.3.6 Invariants
+
+1. **A `type` denotes its body.** An alias (`type A = B`), a `nominal` wrapper and a `where` refinement each stand for the type underneath, so following one has to arrive at a body.
+2. **An alias chain must not return to itself.** Following a definition to the next name — through an alias, a `nominal`, a `where`, or a generic that hands one of its parameters straight back (`type Alias(T) = T`) — must not reach a name already on the chain. `type A = A`, and the pair `type A = B` / `type B = A`, denote nothing: there is no body to reach. [E0009](./errors.md#e0009-type-cycle).
+3. **The chain ends at a structural type.** A record, a union, a container and a primitive are types in their own right, so nothing written inside one continues the chain.
+4. **A recursive type is legal**, and is the accepted form of a type written in terms of itself:
+
+```kumiki fragment
+type Node  = {value: Int, next: Node}
+type Tree  = {children: List(Tree)}
+type Shape = Leaf | Branch(Shape, Shape)
+```
+
+Each reaches a structural type before it reaches itself, by invariant 3. Comparing two of them terminates because the relation is read **co-inductively** over the types *as written*: re-entering a pair already being compared answers yes, which is sound because the finite part of the comparison has been checked on the way down. Termination does not depend on the values being finite — `Node` above has none, its `next` being neither optional nor a container — and it is still a legal type.
+
+5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
+
 ---
 
 ## 1.4 Store Layer (`slot`)

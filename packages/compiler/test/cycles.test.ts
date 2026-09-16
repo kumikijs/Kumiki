@@ -1,4 +1,4 @@
-// Three definitions that are defined in terms of themselves, and what each one
+// Four definitions that are defined in terms of themselves, and what each one
 // used to do instead of reporting.
 //
 // A tile cycle crashed `codegen` with a bare `RangeError` and no position — the
@@ -6,7 +6,9 @@
 // initializer that reads another slot broke the mounted app with
 // `ReferenceError: Cannot access '_live' before initialization`, cycle or not:
 // the lowered read names `_live`, which is declared after the slot table. A
-// recursive `fn` ran fine but is prohibited by the language.
+// recursive `fn` ran fine but is prohibited by the language. A `type` whose
+// alias chain returned to itself was accepted outright: it built and it ran,
+// with the slot declared by it never checked against anything.
 
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -363,5 +365,216 @@ fn use(twice: Int) -> Int = twice + 1
 tile App = column(text(use(1).show))
 ${TAIL}`;
     expect(codes(src)).toEqual([]);
+  });
+});
+
+describe("a type that resolves to itself", () => {
+  // The two cycle codes above are about definitions with bodies to run. A
+  // `type` has no body to reach at all when its alias chain comes back to a
+  // name already on it, so a slot declared with one silently got no type and
+  // every value-level check on it went quiet — the same silence a misspelled
+  // type name produced before E0117.
+  const TILE = `tile App = column(text("x"))\n`;
+  const typeDiags = (defs: string) => diags(`${defs}\n${TILE}${TAIL}`);
+  const typeCodes = (defs: string) => typeDiags(defs).map((e) => e.code);
+
+  it("reports a type whose body is its own name", () => {
+    const [err, ...rest] = typeDiags(`type A = A\nslot x : A = 1`);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0009");
+    expect(err?.kind).toBe("type-cycle");
+    expect(err?.message).toContain("A → A");
+    // The reference in the body, which is the name to change.
+    expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:10");
+  });
+
+  it("reports a mutual alias, at the first edge", () => {
+    const [err, ...rest] = typeDiags(`type A = B\ntype B = A\nslot x : A = 1`);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0009");
+    expect(err?.message).toContain("A → B → A");
+    // A's reference to B, not B's closing reference to A — as for E0005, the
+    // message and the position have to name the same definition.
+    expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:10");
+  });
+
+  it("reports a three-type loop", () => {
+    const [err, ...rest] = typeDiags(`type A = B\ntype B = C\ntype C = A\nslot x : A = 1`);
+    expect(rest).toEqual([]);
+    expect(err?.message).toContain("A → B → C → A");
+  });
+
+  // Every wrapper the chain passes through on its way to the next name. Each
+  // is a node `unaliasType` steps over rather than stopping at, so each hides
+  // a loop that has no more meaning than the bare one.
+  const wrappers: [string, string][] = [
+    ["nominal", `type A = nominal B\ntype B = nominal A`],
+    ["a refinement", `type A = B where positive\ntype B = A`],
+    ["nominal with a refinement", `type A = nominal B where positive\ntype B = A`],
+  ];
+  for (const [what, defs] of wrappers) {
+    it(`follows the chain through ${what}`, () => {
+      expect(typeCodes(`${defs}\nslot x : A = 1`)).toEqual(["E0009"]);
+    });
+  }
+
+  it("follows a generic named with its arguments", () => {
+    // `unaliasType` expands a `TypeApp` whose name has a definition, so the
+    // application is an alias step like a bare name is.
+    expect(typeCodes(`type A = B(Int)\ntype B(T) = A\nslot x : A = 1`)).toEqual(["E0009"]);
+  });
+
+  it("reports a cycle once however many types lead into it", () => {
+    expect(
+      typeCodes(`type A = B
+type B = A
+type C = A
+type D = B
+slot x : C = 1
+slot y : D = 2`),
+    ).toEqual(["E0009"]);
+  });
+
+  it("reports two independent cycles separately", () => {
+    expect(
+      typeCodes(`type A = B
+type B = A
+type C = D
+type D = C
+slot x : A = 1
+slot y : C = 2`),
+    ).toEqual(["E0009", "E0009"]);
+  });
+
+  it("reports a cycle no other definition names", () => {
+    // A type nothing uses is still a definition with no meaning, and the tile
+    // and fn passes report an unused cycle the same way.
+    expect(typeCodes(`type A = A`)).toEqual(["E0009"]);
+  });
+
+  // A structural node is where normalisation stops, so the name inside one is
+  // never reached by the chain. Each of these stays legal, and comparing two of
+  // them terminates — not because their values are finite (`type Node = {value:
+  // Int, next: Node}` has none at all, its `next` being neither optional nor a
+  // container) but because `relate` keys `seen` on the types **as written**
+  // (`assignable.ts:276-289`), which is finite either way.
+  const recursive: [string, string][] = [
+    ["a record naming itself", `type Node = {value: Int, next: Node}`],
+    ["a record reaching itself through a container", `type Tree = {children: List(Tree)}`],
+    ["two records naming each other", `type A = {b: B}\ntype B = {a: A}`],
+    ["a union naming itself", `type T = Leaf | Branch(T, T)`],
+    ["an alias through a container", `type A = Option(A)`],
+    ["an alias whose chain ends in a record", `type A = {v: B}\ntype B = A`],
+    ["an alias chain that ends in a primitive", `type A = Int\ntype B = A`],
+  ];
+  for (const [what, defs] of recursive) {
+    it(`leaves ${what} alone`, () => {
+      expect(typeCodes(defs)).toEqual([]);
+    });
+  }
+
+  it("reads a parameter as the parameter, not as the global that shares its name", () => {
+    // `type Alias(Cents) = Cents` hands back its argument. It must not resolve
+    // to the global `Cents`, which is the mistake `nominalDecl` substitutes to
+    // avoid — and here the argument is `Int`, so there is no chain at all.
+    expect(
+      typeCodes(`type Cents = nominal Int where positive
+type Alias(Cents) = Cents
+slot c : Alias(Int) = 1`),
+    ).toEqual([]);
+  });
+
+  // A generic that hands a parameter straight back is transparent: `unaliasType`
+  // substitutes the argument into the body and keeps going, so the chain runs
+  // through it into whatever was written at that position. Each of these was
+  // `ok` — built and ran — until the edge relation followed the argument.
+  const forwarding: [string, string, string][] = [
+    ["an identity generic", `type Alias(T) = T\ntype A = Alias(A)`, "A → A"],
+    ["a nominal generic", `type Tag(T) = nominal T\ntype A = Tag(A)`, "A → A"],
+    ["a refinement generic", `type Pos(T) = T where positive\ntype A = Pos(A)`, "A → A"],
+    ["a generic that drops an argument", `type First(P, Q) = P\ntype X = First(X, Int)`, "X → X"],
+    [
+      "a mutual pair written through one",
+      `type Alias(T) = T\ntype A = Alias(B)\ntype B = Alias(A)`,
+      "A → B → A",
+    ],
+    [
+      "a generic that forwards through another generic",
+      `type Alias(T) = T\ntype Outer(U) = Alias(U)\ntype A = Outer(A)`,
+      "A → A",
+    ],
+    ["an argument under a wrapper", `type Alias(T) = T\ntype A = Alias(nominal A)`, "A → A"],
+  ];
+  for (const [what, defs, path] of forwarding) {
+    it(`follows the argument through ${what}`, () => {
+      const [err, ...rest] = typeDiags(defs);
+      expect(rest).toEqual([]);
+      expect(err?.code).toBe("E0009");
+      expect(err?.message).toContain(path);
+    });
+  }
+
+  // The same generic applied to something that is a type of its own. The
+  // argument is followed only as far as normalisation follows it, so a
+  // container, a record and a concrete type each end the chain.
+  const forwardingClean: [string, string][] = [
+    ["a container", `type Alias(T) = T\ntype A = Alias(Option(A))`],
+    ["a record", `type Alias(T) = T\ntype A = Alias({v: Int})`],
+    ["a primitive", `type Alias(T) = T\ntype A = Alias(Int)`],
+    ["a record that names the alias back", `type Alias(T) = T\ntype A = Alias({v: A})`],
+    ["a generic whose body is a type of its own", `type Box(T) = {v: T}\ntype A = Box(A)`],
+  ];
+  for (const [what, defs] of forwardingClean) {
+    it(`stops at ${what} written as the argument`, () => {
+      expect(typeCodes(defs)).toEqual([]);
+    });
+  }
+
+  it("reports a generic that forwards to itself", () => {
+    // `type Loop(T) = Loop(T)` has no body to reach either — the argument it
+    // hands on is its own parameter, so the chain never leaves the definition.
+    expect(typeCodes(`type Loop(T) = Loop(T)`)).toEqual(["E0009"]);
+  });
+
+  it("reports a program that redeclares a standard library type as its own cycle", () => {
+    // `sym.types` holds a program's definitions over `STDLIB_TYPES`, so a
+    // stdlib domain type is in the table and is followed like any other. The
+    // names that are not in it are the generic constructors.
+    expect(typeCodes(`type Route = Route`)).toEqual(["E0009"]);
+    // An alias *to* one is an ordinary chain that ends at its record.
+    expect(typeCodes(`type A = HttpError`)).toEqual([]);
+  });
+
+  // Every layer that can name a type. The cycle is the type's, so it is
+  // reported once wherever the name is used and nothing downstream doubles it.
+  const usedFrom: [string, string][] = [
+    ["a fn parameter", `type A = A\nfn f(a: A) -> Int = 1`],
+    ["a fn return type", `type A = A\nfn f(n: Int) -> A = n`],
+    ["a tile input", `type A = A\ntile Row in=A = text("r")`],
+    ["an effect in and out", `type A = A\neffect e cap=storage.write in=A out=Result(A, Text)`],
+  ];
+  for (const [where, defs] of usedFrom) {
+    it(`reports it once when the type is named from ${where}`, () => {
+      expect(typeCodes(defs).filter((c) => c === "E0009")).toEqual(["E0009"]);
+    });
+  }
+
+  it("does not read an unresolvable name as an edge", () => {
+    // `Nope` names nothing, so there is no chain to come back along — E0117
+    // is what reports it, and reporting a cycle as well would be two names
+    // for one mistake.
+    expect(typeCodes(`type A = Nope\nslot x : A = 1`)).toEqual(["E0117"]);
+  });
+
+  it("does not silence the rest of the check", () => {
+    // The cycle makes its own type meaningless; every other definition is
+    // still checked against the types it does have. Stated as a count plus a
+    // membership rather than a list: nothing sorts diagnostics today, so a
+    // list would pin the order the passes happen to run in as if it were the
+    // claim.
+    const found = typeCodes(`type A = A\nslot x : A = 1\nslot n : Int = "x"`);
+    expect(found).toHaveLength(2);
+    expect(found).toContain("E0009");
+    expect(found).toContain("E0201");
   });
 });

@@ -72,7 +72,14 @@ export function unaliasType(
     const def = env.types.get(t.name);
     // A stdlib constructor (`List`, `Option`, …) has no definition to expand
     // into and is already in its comparison form.
-    if (!def || seen.has(t.name)) return t;
+    if (!def) return t;
+    // Re-entry is the `TypeRef` case, and answers the same `null`: the chain
+    // has closed on itself, so there is no normal form to compare against.
+    // Returning the application instead handed comparisons a type that looks
+    // usable and is not — `type A = Alias(B)` / `type B = Alias(A)` reported
+    // `Expected A but got Int` on the literal, blaming the value for a type
+    // with no body. E0009 is what names that.
+    if (seen.has(t.name)) return null;
     const body = substituteType(def.body, paramSubstitution(def.params, t.args));
     return unaliasType(body, env, new Set([...seen, t.name]));
   }
