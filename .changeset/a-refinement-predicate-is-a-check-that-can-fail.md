@@ -70,12 +70,17 @@ family from a reducer and its scenario asserts the refusal — the batch is
 discarded whole, the rejection is reported, and `error(field=…)` on a pristine
 `Email` slot renders its message.
 
-Named here rather than fixed here, from the review of this PR: a predicate on a
-base type it cannot test (`Text where positive`) refuses every write with no
-diagnostic, `len-lt(0)` does the same with well-formed arguments, shrinking a
-property-test counterexample ignores the descriptor the generator honoured, and
-the refinements `stdlib-types.ts` declares never pass through the checker that
-would report them. Each is filed.
+Named here rather than fixed here, from the review of this PR. A predicate over
+a base type it cannot test (`Text where positive`) refuses every write with no
+diagnostic, and `len-lt(0)` does the same through well-formed arguments (#440).
+Shrinking a property-test counterexample ignores the descriptor the generator
+honoured, so a minimised case can sit outside the domain `for-all` declares
+(#441). The refinements `stdlib-types.ts` declares never pass through the
+checker that would report them (#442). A `bind` the predicate refuses leaves the
+input and the slot disagreeing with no message, and the `strict` prop the spec
+offers as the escape hatch is unimplemented (#443). A refinement written inside
+a record, a union or a container gates nothing (#444). The generation descriptor
+is one wire format with two unrelated types (#445).
 
 **A program can stop working**, and it was already not doing what it said: a
 write these predicates refuse used to land silently, and now discards its
