@@ -129,7 +129,7 @@ All slot changes within a single reducer execution are treated as **one batch**.
 
 #### A batch commits all-or-nothing
 
-**Every write** is checked against the target slot's refinement ([Registered Refinement Predicates](./language.md#_1-3-3-registered-refinement-predicates)) — not just the value the slot ends the batch on. If **any** write is rejected, the whole reducer application is discarded: no slot is written, no `emit` is dispatched, no `stop-timer` runs, and no re-render is triggered.
+**Every write** is checked against the target slot's refinement ([Registered Refinement Predicates](./language.md#_1-3-3-registered-refinement-predicates)) — not just the value the slot ends the batch on. A type carrying several predicates is checked against all of them, and the rejection names the first one the value fails, in the order §1.3.1 gives them ([§1.3.1](./language.md#_1-3-1-syntax)). If **any** write is rejected, the whole reducer application is discarded: no slot is written, no `emit` is dispatched, no `stop-timer` runs, and no re-render is triggered.
 
 Per-write rather than per-batch, because a batch is a map and only remembers the last value assigned to each slot. A `for` loop that leaves the slot's range and comes back would end on a legal value, and the illegal one it passed through — readable by every later statement, as below — would never be seen:
 

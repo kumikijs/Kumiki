@@ -2,7 +2,7 @@
 // inline toast tile, and the validation `error` tile.
 
 import type { TilePatchers, TileRenderers } from "./core.ts";
-import { currentTheme, ensureAnimationStyles, getRenderingApp } from "./core.ts";
+import { currentTheme, ensureAnimationStyles, failedRefinement, getRenderingApp } from "./core.ts";
 
 /**
  * Resolve the current validation message for a slot, for the `error` tile.
@@ -19,8 +19,11 @@ function resolveFieldError(field: string): string {
   if (!meta?.refine) return "";
   const value = app.live?.[field] ?? meta.value;
   if (meta.refine(value)) return "";
-  const pred = meta.refineKind ?? "";
-  const args = meta.refineArgs ?? [];
+  // The message names the predicate the value fails, which for a type carrying
+  // several is not necessarily the one `refineKind` holds.
+  const failed = failedRefinement(value, meta);
+  const pred = failed.kind ?? "";
+  const args = failed.args ?? [];
   const theme = currentTheme();
   const overrides = theme?.errors as Record<string, string> | undefined;
   return overrides?.[pred] ?? defaultFieldError(pred, args);

@@ -1,4 +1,4 @@
-import type { Refinement, TypeExpr } from "../ast.ts";
+import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
@@ -80,50 +80,114 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
   }
 }
 
-/** Resolve a slot/type's refinement (through a TypeRef), for the `error` tile. */
-export function slotRefinement(t: TypeExpr, gen: GenCtx): Refinement | undefined {
-  let target = t;
-  if (t.kind === "TypeRef") {
-    const def = gen.types.get(t.name);
-    if (!def) return undefined;
-    target = def.body;
+/**
+ * Every refinement a type carries, base outward.
+ *
+ * A type may be written with more than one `where` (spec/language.md §1.3.1),
+ * and the predicates conjoin. The parser folds the first onto a `nominal` node
+ * as a property and wraps each one after it, so the predicates sit on nested
+ * nodes rather than in a list — and a named type reached through a `TypeRef`
+ * hides its own underneath that. Reading exactly one layer, which is what this
+ * module used to do, emitted the outermost predicate and dropped every other
+ * (#353): `nominal Text where len-gt(3) where nonempty` accepted `"ab"`.
+ *
+ * The order is the one the chain the type denotes is read in, from the base
+ * outward (§1.3.6, inv. 1). Inside a single type expression that is the order
+ * the predicates are written in; across names it is not, and it does not depend
+ * on which definition was declared first — on `type Handle = nominal Short
+ * where len-gt(3)` over `type Short = Text where len-lt(9)`, `len-lt` comes
+ * first wherever the two definitions sit in the file, because `Short` is what
+ * `Handle` is declared over. It is the order a failed predicate is named in.
+ *
+ * The edges are an alias, a `nominal` wrapper and a `where`, and the walk stops
+ * at a structural type: nothing written inside a record, a union or a container
+ * is a refinement of the type itself. It is **not** yet every edge normalization
+ * follows — a generic that hands a parameter back (`type NonEmpty(T) = T where
+ * nonempty`) is one, and its refinement is still dropped here (#439). `seen` is
+ * what makes a name written in terms of itself terminate; the cycle is E0009's
+ * to report, and this walk still has to end on the way there.
+ */
+export function refinementsOf(
+  t: TypeExpr,
+  gen: GenCtx,
+  seen: ReadonlySet<string> = new Set(),
+): Refinement[] {
+  switch (t.kind) {
+    case "TypeRef": {
+      if (seen.has(t.name)) return [];
+      const def = gen.types.get(t.name);
+      if (!def) return [];
+      const next = new Set(seen);
+      next.add(t.name);
+      return refinementsOf(def.body, gen, next);
+    }
+    case "TypeNominal":
+    case "TypeRefinement": {
+      const inner = refinementsOf(t.inner, gen, seen);
+      return t.refinement ? [...inner, t.refinement] : inner;
+    }
+    // A type in its own right, or (`TypeApp`) an edge this walk does not follow
+    // yet. Listed rather than defaulted so `assertNever` reports the next node
+    // kind added to `TypeExpr` instead of silently losing its refinements.
+    case "TypePrim":
+    case "TypeApp":
+    case "TypeRecord":
+    case "TypeUnion":
+      return [];
+    default:
+      assertNever(t);
+      return [];
   }
-  if (target.kind === "TypeNominal" || target.kind === "TypeRefinement") {
-    return (target as { refinement?: Refinement }).refinement;
-  }
-  return undefined;
 }
 
+/**
+ * The runtime test for a slot's type: every predicate it carries, conjoined.
+ * `undefined` when the type carries none — the slot then has no `refine` at
+ * all, which is what the runtime reads to mean "unrefined".
+ */
 export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
-  let target = t;
-  if (t.kind === "TypeRef") {
-    const def = gen.types.get(t.name);
-    if (!def) return undefined;
-    target = def.body;
-  }
-  if (target.kind === "TypeNominal" || target.kind === "TypeRefinement") {
-    const r = (target as { refinement?: Refinement }).refinement;
-    if (r) return refinementToJs(r);
-  }
-  return undefined;
+  const rs = refinementsOf(t, gen);
+  if (rs.length === 0) return undefined;
+  const bodies = rs.map(refinementBodyJs).filter((b): b is string => b !== undefined);
+  // Every predicate this type carries is one `refinementBodyJs` has no lowering
+  // for. `uuid` / `email` / `url` are recorded as unenforced at runtime
+  // (spec/testing.md §8.3.2); `regex` / `one-of` / `positive` / `negative` are
+  // not documented that way anywhere and simply have no lowering — #438 is
+  // where all twelve become a check that can fail. The type still carries a
+  // refinement, so the descriptor still gets the tautology `dev` emitted for
+  // it: what the slot accepts does not change here.
+  if (bodies.length === 0) return `(_v) => true`;
+  if (bodies.length === 1) return `(v) => ${bodies[0]}`;
+  return `(v) => ${bodies.map((b) => `(${b})`).join(" && ")}`;
 }
 
-export function refinementToJs(r: Refinement): string | undefined {
+/** One predicate's test, for the per-predicate entries the `error` tile reads. */
+export function refinementToJs(r: Refinement): string {
+  const body = refinementBodyJs(r);
+  return body === undefined ? `(_v) => true` : `(v) => ${body}`;
+}
+
+/**
+ * A predicate's condition over `v`, or `undefined` for one with no runtime
+ * test. Kept separate from the arrow around it so predicates can be conjoined
+ * without nesting a call per layer.
+ */
+function refinementBodyJs(r: Refinement): string | undefined {
   switch (r.pred) {
     case "between": {
       const a = r.args[0] as number;
       const b = r.args[1] as number;
-      return `(v) => typeof v === "number" && v >= ${a} && v <= ${b}`;
+      return `typeof v === "number" && v >= ${a} && v <= ${b}`;
     }
     case "nonempty":
-      return `(v) => typeof v === "string" && v.length > 0`;
+      return `typeof v === "string" && v.length > 0`;
     case "len-lt":
-      return `(v) => typeof v === "string" && v.length < ${r.args[0] as number}`;
+      return `typeof v === "string" && v.length < ${r.args[0] as number}`;
     case "len-gt":
-      return `(v) => typeof v === "string" && v.length > ${r.args[0] as number}`;
+      return `typeof v === "string" && v.length > ${r.args[0] as number}`;
     case "len-eq":
-      return `(v) => typeof v === "string" && v.length === ${r.args[0] as number}`;
+      return `typeof v === "string" && v.length === ${r.args[0] as number}`;
     default:
-      return `(_v) => true`;
+      return undefined;
   }
 }

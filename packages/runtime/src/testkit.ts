@@ -12,6 +12,7 @@ import {
   type PanicCauseLink,
   panicInfo,
   type ReducerSpec,
+  type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
   withEnvReplay,
@@ -499,10 +500,20 @@ function shrinkCounterexample(
 // single implementation keeps `from-log` cursor / refine ward / unhandled-err
 // accounting from drifting between the test runner and the CLI replay verb.
 
+/**
+ * The slot descriptor every harness in this file reads: the value, its
+ * refinement, and the fields that say which predicate refused a write. The
+ * naming fields are load-bearing rather than decorative — `batchRejections`
+ * resolves the failed predicate from `refineAll` (core.ts), so a shape that
+ * left them out would have this tier name a different predicate than the live
+ * mount for the same rejected value.
+ */
+type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
+
 /** The minimum app shape `executeEpisode` / `replayEpisodes` consume. */
 export type ReplayApp = {
   live: Record<string, unknown>;
-  slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+  slots: Record<string, SlotMetaLike>;
   reducers: ReducerSpec[];
 };
 
@@ -1028,7 +1039,7 @@ export const _stdlibTest = {
   runReducerStep(
     app: {
       live: Record<string, unknown>;
-      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      slots: Record<string, SlotMetaLike>;
       reducers: ReducerSpec[];
     },
     state: { slots?: Record<string, unknown> } | undefined,
@@ -1130,7 +1141,7 @@ export const _stdlibTest = {
     name: string;
     target: string;
     givenSlots: Record<string, unknown>;
-    slotMetas: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+    slotMetas: Record<string, SlotMetaLike>;
     result: {
       slots: Record<string, unknown>;
       emits: { effect: string; args: unknown[] }[];
@@ -1169,7 +1180,7 @@ export const _stdlibTest = {
     name: string;
     app: {
       live: Record<string, unknown>;
-      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      slots: Record<string, SlotMetaLike>;
       reducers: ReducerSpec[];
     };
     target: string;
@@ -1257,7 +1268,7 @@ export const _stdlibTest = {
     name: string;
     app: {
       live: Record<string, unknown>;
-      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      slots: Record<string, SlotMetaLike>;
       reducers: ReducerSpec[];
     };
     episodes: EpisodeLogEntry[];
