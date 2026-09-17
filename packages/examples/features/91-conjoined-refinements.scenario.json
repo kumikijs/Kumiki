@@ -1,20 +1,21 @@
 {
   "steps": [
     {
-      "label": "a pristine field is refused by the FIRST of its two predicates",
+      "label": "each pristine field names the predicate ITS value fails, first or second",
       "expect": {
         "noErrors": true,
-        "state": { "handle": "kumik", "draft": "" },
-        "domIncludes": ["handle: kumik", "Required"]
+        "state": { "handle": "kumik", "draft": "", "tag": "kumiki" },
+        "domIncludes": ["handle: kumik", "Required", "Must be less than 5 characters"]
       }
     },
     {
-      "label": "a value both predicates accept clears the message",
+      "label": "a value both predicates accept clears that field's message, and only it",
       "do": { "fill": "#draft", "value": "kumi" },
       "expect": {
         "noErrors": true,
         "state": { "draft": "kumi" },
-        "domExcludes": ["Required"]
+        "domExcludes": ["Required"],
+        "domIncludes": ["Must be less than 5 characters"]
       }
     },
     {

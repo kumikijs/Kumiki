@@ -12,8 +12,11 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
     const rs = refinementsOf(s.type, gen);
     const first = rs[0];
     const init = jsOfExpr(s.init, makeEvalCtx(gen, new Set()));
-    // `refineKind`/`refineArgs` let the `error` tile resolve the failed
-    // predicate's message at runtime (default text + `theme.errors` override).
+    // `refineKind`/`refineArgs` name one predicate — the first of the chain,
+    // read from the base outward. They are what a reader falls back to when the
+    // slot carries no `refineAll` (a single-predicate type, or a hand-written
+    // `AppShape`); `failedRefinement` in the runtime is what actually resolves
+    // the failed predicate's message (default text + `theme.errors` override).
     const meta = [`value: ${init}`];
     if (refine) meta.push(`refine: ${refine}`);
     if (first) {
@@ -23,10 +26,11 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
     // A type may carry several predicates (language.md §1.3.1), and `refine`
     // above is their conjunction — which cannot say *which* one refused a
     // value. `refineAll` keeps them separate so the rejection report and the
-    // `error` tile name the first one the value fails, in the order they are
-    // written. Emitted only when there is more than one: a single predicate is
-    // already named by the two fields above, and every reader falls back to
-    // them.
+    // `error` tile name the first one the value fails, in the order
+    // `refinementsOf` collects them. Emitted only when there is more than one:
+    // a single predicate is already named by the two fields above, every reader
+    // falls back to them, and a one-predicate slot's descriptor then stays
+    // byte-identical to what it was before #353.
     if (rs.length > 1) {
       const parts = rs.map(
         (r) =>
@@ -35,7 +39,7 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
       );
       meta.push(`refineAll: [${parts.join(", ")}]`);
     }
-    // `volatile` (language.md §175): excludes the slot from SlotDiff records
+    // `volatile` (language.md §1.4.1): excludes the slot from SlotDiff records
     // and from SSR snapshots (runtime.md §10.6.1). The runtime reads this off
     // SlotMeta.volatile — emit it so the live mount and `renderToString`
     // agree on the exact set of persisted slots.

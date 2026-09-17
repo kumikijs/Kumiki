@@ -5,9 +5,10 @@
 // the runtime reports for a discarded batch (spec/runtime.md §10.3.3) and the
 // `error` tile's message (spec/forms.md §5.7.1).
 //
-// Without it both named `refineKind`, which codegen fills from the first
-// predicate — so a value refused by the second was reported against a bound it
-// was nowhere near.
+// Without it both named `refineKind`, which holds one predicate of the chain —
+// so a value refused by any of the others was reported against a bound it was
+// nowhere near. Removing `refineAll` from a slot below puts each case back to
+// that behaviour, which is what these assert against.
 
 import type { AppShape, MountedApp } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
@@ -41,6 +42,11 @@ function makeApp(overrides: Partial<AppShape> = {}): AppShape {
         name: "long",
         event: { kind: "ui", ev: "click" },
         apply: () => ({ slots: { handle: "kumikijs!" }, emits: [] }),
+      },
+      {
+        name: "empty",
+        event: { kind: "ui", ev: "click" },
+        apply: () => ({ slots: { handle: "" }, emits: [] }),
       },
     ],
     root: () => ({ kind: "text", text: "app" }),
@@ -82,6 +88,17 @@ describe("a rejection names the predicate that refused the value", () => {
     app._dispatch("long", {});
     expect(app.live.handle).toBe("kumiki");
     expect(errors.join("\n")).toContain('slot "handle" cannot hold "kumikijs!" (len-lt(9))');
+  });
+
+  it("names the first of the ones a value fails, not merely one of them", () => {
+    // `""` is refused by BOTH predicates of a `len-gt(3)` / `len-lt(9)` type:
+    // too short, and (vacuously) short enough. Only the order decides which is
+    // named, so this is the case that tells `find` from `findLast`.
+    const app = mountApp(makeApp());
+    app._dispatch("empty", {});
+    expect(app.live.handle).toBe("kumiki");
+    expect(errors.join("\n")).toContain('slot "handle" cannot hold "" (len-gt(3))');
+    expect(errors.join("\n")).not.toContain("len-lt");
   });
 
   it("still names the single predicate of a slot that carries one", () => {

@@ -439,29 +439,36 @@ export type SlotMeta = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   /**
-   * Every predicate the slot's type carries, in the order they are written,
-   * when it carries more than one (`Text where nonempty where len-lt(9)`).
-   * `refine` above stays the single authority on whether a value is accepted —
-   * it is the conjunction of these — and this only decides *which* predicate a
-   * rejected value is reported against. Absent for a type with one predicate,
-   * where `refineKind`/`refineArgs` already name it.
+   * Every predicate the slot's type carries, when it carries more than one
+   * (`Text where nonempty where len-lt(9)`), ordered as the chain the type
+   * denotes is read — from the base outward, which inside one type expression
+   * is the order they are written. `refine` above stays the single authority on
+   * whether a value is accepted — it is the conjunction of these — and this
+   * only decides *which* predicate a rejected value is reported against. Absent
+   * for a type with one predicate, where `refineKind`/`refineArgs` name it.
    */
   refineAll?: RefinementPart[];
 };
 
-/** The slot fields that name a refusal, as every reader of them takes them. */
+/**
+ * The slot fields that name a refusal, as every reader of them takes them.
+ * Package-internal, like the rejection helpers that read it: `index.ts` exports
+ * `SlotMeta` (and the `RefinementPart` it is written in terms of), which is the
+ * shape a host outside this package builds.
+ */
 export type RefinementNaming = {
   refineKind?: string;
-  refineArgs?: unknown;
+  refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
 };
 
 /**
  * The predicate a value fails, out of the ones its slot's type carries: the
- * first in source order that refuses it, falling back to the slot's single
+ * first the chain reaches that refuses it, falling back to the slot's single
  * named predicate. A conjunction's own test cannot answer this — it is one
  * function that returns false — so a message built from `refineKind` alone
- * used to name the outermost predicate whichever one actually refused.
+ * names whichever predicate that field happens to hold, right only while a type
+ * carries exactly one.
  */
 export function failedRefinement(
   value: unknown,
@@ -471,7 +478,7 @@ export function failedRefinement(
   if (part) return { kind: part.kind, args: part.args ?? [] };
   const named: { kind?: string; args?: (number | string)[] } = {};
   if (meta?.refineKind !== undefined) named.kind = meta.refineKind;
-  if (Array.isArray(meta?.refineArgs)) named.args = meta.refineArgs as (number | string)[];
+  if (meta?.refineArgs) named.args = meta.refineArgs;
   return named;
 }
 

@@ -219,6 +219,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `87-replayed-environment-read.kumiki` | slot, reducer, tile | コア | [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode) |
 | `88-string-formatting.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.4.5](./stdlib.md#_2-4-5-文字列フォーマット) |
 | `89-qualified-show.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |
-| `90-conjoined-refinements.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
+| `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 <!-- examples:end -->
 :::

@@ -1,4 +1,4 @@
-import type { Refinement, TypeExpr } from "../ast.ts";
+import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
@@ -81,7 +81,7 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
 }
 
 /**
- * Every refinement a type carries, in source order.
+ * Every refinement a type carries, base outward.
  *
  * A type may be written with more than one `where` (spec/language.md §1.3.1),
  * and the predicates conjoin. The parser folds the first onto a `nominal` node
@@ -91,14 +91,21 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
  * module used to do, emitted the outermost predicate and dropped every other
  * (#353): `nominal Text where len-gt(3) where nonempty` accepted `"ab"`.
  *
- * The walk follows the same edges normalization does — an alias, a `nominal`
- * wrapper, a `where` — and stops where it stops: nothing written inside a
- * record, a union or a container is a refinement of the type itself. `seen`
- * is what makes a name written in terms of itself terminate; the cycle is
- * E0009's to report, and this walk still has to end on the way there.
+ * The order is the one the chain the type denotes is read in, from the base
+ * outward (§1.3.6, inv. 1). Inside a single type expression that is the order
+ * the predicates are written in; across names it is not, and it does not depend
+ * on which definition was declared first — on `type Handle = nominal Short
+ * where len-gt(3)` over `type Short = Text where len-lt(9)`, `len-lt` comes
+ * first wherever the two definitions sit in the file, because `Short` is what
+ * `Handle` is declared over. It is the order a failed predicate is named in.
  *
- * Inner layers come first because that is the order they are written in, which
- * is the order the runtime names a failed predicate in.
+ * The edges are an alias, a `nominal` wrapper and a `where`, and the walk stops
+ * at a structural type: nothing written inside a record, a union or a container
+ * is a refinement of the type itself. It is **not** yet every edge normalization
+ * follows — a generic that hands a parameter back (`type NonEmpty(T) = T where
+ * nonempty`) is one, and its refinement is still dropped here (#439). `seen` is
+ * what makes a name written in terms of itself terminate; the cycle is E0009's
+ * to report, and this walk still has to end on the way there.
  */
 export function refinementsOf(
   t: TypeExpr,
@@ -117,10 +124,18 @@ export function refinementsOf(
     case "TypeNominal":
     case "TypeRefinement": {
       const inner = refinementsOf(t.inner, gen, seen);
-      const own = (t as { refinement?: Refinement }).refinement;
-      return own ? [...inner, own] : inner;
+      return t.refinement ? [...inner, t.refinement] : inner;
     }
+    // A type in its own right, or (`TypeApp`) an edge this walk does not follow
+    // yet. Listed rather than defaulted so `assertNever` reports the next node
+    // kind added to `TypeExpr` instead of silently losing its refinements.
+    case "TypePrim":
+    case "TypeApp":
+    case "TypeRecord":
+    case "TypeUnion":
+      return [];
     default:
+      assertNever(t);
       return [];
   }
 }
@@ -134,10 +149,13 @@ export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
   const rs = refinementsOf(t, gen);
   if (rs.length === 0) return undefined;
   const bodies = rs.map(refinementBodyJs).filter((b): b is string => b !== undefined);
-  // Every predicate is unenforced (`email` / `uuid` / `url` / `regex` /
-  // `one-of` / `positive` / `negative`, spec/testing.md §8.3). The type still
-  // carries a refinement, so the descriptor still gets one — the `error` tile
-  // renders a message from a predicate whether or not it has a test.
+  // Every predicate this type carries is one `refinementBodyJs` has no lowering
+  // for. `uuid` / `email` / `url` are recorded as unenforced at runtime
+  // (spec/testing.md §8.3.2); `regex` / `one-of` / `positive` / `negative` are
+  // not documented that way anywhere and simply have no lowering — #438 is
+  // where all twelve become a check that can fail. The type still carries a
+  // refinement, so the descriptor still gets the tautology `dev` emitted for
+  // it: what the slot accepts does not change here.
   if (bodies.length === 0) return `(_v) => true`;
   if (bodies.length === 1) return `(v) => ${bodies[0]}`;
   return `(v) => ${bodies.map((b) => `(${b})`).join(" && ")}`;

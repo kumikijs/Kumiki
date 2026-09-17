@@ -20,10 +20,13 @@ type Handle = nominal Text where len-gt(3) where len-lt(7)
 slot handle : Handle = "kumik"
 
 # The same shape on a bound field. The declared default violates its own
-# refinement, which is what makes `error(field=draft)` speak on a pristine form
-# (spec/forms.md §5.7.1) — and "" is refused by `nonempty`, the FIRST predicate,
-# while `len-lt(7)` is the one a reader of the outermost layer alone would name.
+# refinement, which is what makes `error(field=…)` speak on a pristine form
+# (spec/forms.md §5.7.1). These two are the message's two directions: `""` is
+# refused by `nonempty`, the FIRST predicate the chain reaches, and "kumiki" by
+# `len-lt(5)`, the second. The tile renders the predicate the value actually
+# fails, so the pair also says the rule is "first FAILING", not "first".
 slot draft : Text where nonempty where len-lt(7) = ""
+slot tag   : Text where nonempty where len-lt(5) = "kumiki"
 
 reducer grow   on=ui.click(GrowBtn)   do= handle := handle + "!"
 reducer shrink on=ui.click(ShrinkBtn) do= handle := handle.slice(0, handle.length - 1)
@@ -37,10 +40,17 @@ tile DraftField = column(
                     error(field=draft))
                   {gap: "xs"}
 
+tile TagField = column(
+                  label(text="Tag") {for: "tag"},
+                  input(bind=tag, id="tag", placeholder="1-4 characters"),
+                  error(field=tag))
+                {gap: "xs"}
+
 tile App = column(
              heading("handle: " + handle),
              row(ShrinkBtn, GrowBtn) {gap: "sm"},
-             DraftField)
+             DraftField,
+             TagField)
            {pad: "lg", gap: "md"}
 
 app ConjoinedRefinements

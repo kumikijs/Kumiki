@@ -224,6 +224,16 @@ ${APP}`,
     clean(`type Sign = nominal Int where one-of(-1, 0, 1)${APP}`);
   });
 
+  it("chains `where` without a bound, as `refinement-type` being recursive says", () => {
+    // §1.3.1's `refinement-type ::= type-expr 'where' pred-expr` is recursive,
+    // and the parser used to test for `where` twice with no loop — so a third
+    // one was a parse error against a grammar that admits any number, and the
+    // predicates a type could carry were silently capped at two (#353).
+    clean(`type Handle = nominal Text where len-gt(3) where len-lt(9) where nonempty${APP}`);
+    clean(`type Bare = Text where len-gt(3) where len-lt(9) where nonempty${APP}`);
+    clean(`type Rec = {tag: Text where nonempty where len-lt(9) where len-gt(1)}${APP}`);
+  });
+
   it("reads a signed literal in a retry policy, then rejects the count for what it is", () => {
     // `Expected num, got op(-)` described the tokens. A negative retry count
     // is not a shorter policy, it is one that cannot run, and that is what the

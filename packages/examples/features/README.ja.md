@@ -12,7 +12,7 @@
 |---|---|
 | [01-slot-and-reducer](./01-slot-and-reducer.kumiki) | slot（状態）+ reducer（更新）+ tile（描画）の基本サイクル |
 | [02-nominal-type](./02-nominal-type.kumiki) | nominal 型と `between` リファインメント |
-| [90-conjoined-refinements](./90-conjoined-refinements.kumiki) | 1 つの型に複数の `where` 述語、拒否が名指すのはどれか |
+| [91-conjoined-refinements](./91-conjoined-refinements.kumiki) | 1 つの型に複数の `where` 述語、拒否が名指すのはどれか |
 | [03-union-and-match](./03-union-and-match.kumiki) | union 型と `match` 式 |
 | [04-record-and-copy](./04-record-and-copy.kumiki) | レコード型と `.copy(field=value)` 不変更新 |
 | [05-pure-fn](./05-pure-fn.kumiki) | 純粋関数 `fn`（slot を読まない） |
