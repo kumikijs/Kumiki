@@ -50,10 +50,14 @@ predicate with no lowering is **E0803** `unimplemented-refinement` at build time
 (nothing is in that state — it is the guard for the next predicate added to
 §1.3.3). Arguments are checked too, as **E0804** `refinement-args-invalid`: a
 refinement no value can satisfy is the same defect as one every value satisfies,
-so `between(5, 1)`, `len-eq(2.5)`, `len-gt(-1)`, `regex("(")` and `one-of()` are
-reported rather than lowered. `between(0, "x")` is the sharpest of them — the
-emitted check read `v >= x`, a reference to a name nothing declares, and the
-module threw at load.
+and an argument the predicate does not take produces one or the other —
+`between(5, 1)` and `len-eq(2.5)` refuse everything, `len-gt(-1)` accepts
+everything, `one-of()` has nothing to admit, and `regex("(")` is not a pattern.
+`between(0, "x")` is the sharpest of them: the emitted check read
+`v >= 0 && v <= x`, whose second half is a reference to a name nothing declares,
+so the first write threw a `ReferenceError`. A `regex` pattern is compiled twice
+— as written, then anchored — so one whose own parentheses would close the
+anchor group (`a)|(b`) is reported rather than lowered unanchored.
 
 Property-test generation moves with the runtime, since the two answer the same
 question from opposite ends: `email` / `url` / `uuid` generate an instance of
@@ -65,6 +69,13 @@ refuses to be in. `regex` has no constraint to fold and §8.3.2 now says so.
 family from a reducer and its scenario asserts the refusal — the batch is
 discarded whole, the rejection is reported, and `error(field=…)` on a pristine
 `Email` slot renders its message.
+
+Named here rather than fixed here, from the review of this PR: a predicate on a
+base type it cannot test (`Text where positive`) refuses every write with no
+diagnostic, `len-lt(0)` does the same with well-formed arguments, shrinking a
+property-test counterexample ignores the descriptor the generator honoured, and
+the refinements `stdlib-types.ts` declares never pass through the checker that
+would report them. Each is filed.
 
 **A program can stop working**, and it was already not doing what it said: a
 write these predicates refuse used to land silently, and now discards its

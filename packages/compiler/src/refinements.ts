@@ -21,15 +21,16 @@
 
 import type { Refinement } from "./ast.ts";
 
-/** A literal a refinement can be written with (language.md §1.3.2). */
+/** A literal a refinement can be written with (language.md §1.3.1). */
 export type RefinementArg = number | string;
 
 /**
  * What one argument position accepts.
  *
  * `count` is a number that counts characters, so it is also a whole
- * non-negative one: `len-eq(2.5)` and `len-gt(-1)` are checks no `Text` can
- * satisfy, which is the same defect as one that everything satisfies.
+ * non-negative one. An argument that is neither lands on one side or the other
+ * of the same defect: `len-eq(2.5)` is a check no `Text` can satisfy, and
+ * `len-gt(-1)` one that every `Text` satisfies, the empty one included.
  */
 type ArgKind = "number" | "count" | "text" | "literal";
 
@@ -59,8 +60,10 @@ type RefinementEntry = {
 const NUM = `typeof v === "number"`;
 const STR = `typeof v === "string"`;
 
-// Patterns are written once here and emitted as regex literals, so the check
-// costs no `RegExp` construction per write.
+// The three constants below are emitted as regex literals, so those checks
+// cost no `RegExp` construction per write. A `regex(…)` predicate cannot be:
+// its pattern comes from the program, so it lowers to `new RegExp(…)` inside
+// the check and is built on each call.
 //
 // Each is deliberately shape-only and permissive about what lives inside the
 // shape: a refinement decides whether a value can be a slot's, not whether the
@@ -71,8 +74,8 @@ const STR = `typeof v === "string"`;
 const EMAIL_RE = String.raw`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`;
 /** Absolute, with a scheme and an authority: a `Url` is somewhere to go. */
 const URL_RE = String.raw`/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/?#]+\S*$/`;
-/** The 8-4-4-4-12 shape, any version, either case. */
-const UUID_RE = String.raw`/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/`;
+/** The 8-4-4-4-12 shape, any version, either case. No escape to keep raw. */
+const UUID_RE = "/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/";
 
 /** `args[i]` as a number, for an entry the checker has already validated. */
 const num = (args: readonly RefinementArg[], i: number): number => Number(args[i]);
@@ -80,9 +83,13 @@ const num = (args: readonly RefinementArg[], i: number): number => Number(args[i
 /**
  * A user pattern as an anchored JS one. Anchored because a refinement
  * describes the whole value: `regex("[0-9]{4}")` on a postcode field must not
- * accept `"AB1234 "`. A pattern that anchors itself is unharmed — `^(?:^x$)$`
- * matches exactly what `^x$` does — and the non-capturing group keeps an
- * alternation (`a|b`) from binding looser than the anchors.
+ * accept `"AB1234 "`. A pattern already anchored at **both** ends is unharmed
+ * — `^(?:^x$)$` matches exactly what `^x$` does — while one anchored at a
+ * single end is not, and is not meant to be: `^a|b` matches `"ax"` and
+ * `^(?:^a|b)$` does not, which is the promise §1.3.3 makes. The non-capturing
+ * group is what keeps a top-level alternation from binding looser than the
+ * anchors, and {@link REFINEMENTS} compiles the pattern as written before
+ * wrapping it, so one that closes this group cannot escape them.
  */
 const anchored = (pattern: string): string => `^(?:${pattern})$`;
 
@@ -112,6 +119,17 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
     {
       params: { fixed: ["text"] },
       combined: (a) => {
+        // The pattern as written, and only then the anchored form. Compiling
+        // the wrapped one alone let a pattern escape its own anchors: `a)|(b`
+        // does not compile, but `^(?:a)|(b)$` does — as `^(?:a)` OR `(b)$`,
+        // which matches `"axxx"`. The author's parentheses would have closed
+        // the group this adds, so the value would be tested against a pattern
+        // nobody wrote, unanchored, and §1.3.3 promises the opposite.
+        try {
+          new RegExp(String(a[0]));
+        } catch (e) {
+          return `regex(${JSON.stringify(a[0])}) is not a pattern: ${(e as Error).message}`;
+        }
         try {
           new RegExp(anchored(String(a[0])));
           return undefined;

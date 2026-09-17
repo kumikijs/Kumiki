@@ -80,8 +80,11 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Int" || desc.t === "Float" ? { ...desc, min: num(0), max: num(1) } : desc;
     case "positive":
       if (desc.t === "Int") return { ...desc, min: 1 };
-      // The smallest Float above zero, because `positive` is `v > 0` and a
-      // generator bounded at 0 can hand the check the one value it refuses.
+      // Strictly above zero, because `positive` is `v > 0` and a generator
+      // bounded at 0 can hand the check the one value it refuses. `EPSILON`
+      // rather than `MIN_VALUE` (the smallest Float above zero): the bound is
+      // the low end of a range the generator then samples, and a denormal one
+      // buys nothing a representable gap does not.
       if (desc.t === "Float") return { ...desc, min: Number.EPSILON };
       return desc;
     case "negative":

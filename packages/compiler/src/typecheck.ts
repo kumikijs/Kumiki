@@ -4970,10 +4970,11 @@ function resolveType(
  *    every value, which is a promise the runtime does not keep and nothing
  *    reports.
  *  - E0804, arguments no check can be built from: a bound that is text, a
- *    fractional length, a pattern that does not compile, a range with nothing
- *    in it. These are reachable, and each used to reach the runtime — as a
- *    `ReferenceError` at load (`v >= x` from `between(0, "x")`), or as a check
- *    that refuses everything.
+ *    fractional or negative length, a pattern that does not compile, a range
+ *    with nothing in it. These are reachable, and each used to reach the
+ *    runtime — as a check that refuses every value, one that accepts every
+ *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
+ *    `v <= x` half of what `between(0, "x")` lowered to.
  */
 function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void {
   if (!r) return;

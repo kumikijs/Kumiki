@@ -182,7 +182,7 @@ Every one of them is a **runtime check**: the value is tested on its way into th
 | `len-eq(N)` / `len-lt(N)` / `len-gt(N)` | the text's length is `= N` / `< N` / `> N` | one whole number, zero or more |
 | `between(A, B)` | the value is a number and `A <= v <= B`, both ends included | two numbers, `A` not above `B` |
 | `positive` / `negative` | the value is a number and `v > 0` / `v < 0` — zero is neither | — |
-| `email` | the text is `local@host`, the host carries a dot, and neither part holds a space or a second `@` | — |
+| `email` | the text is `local@host`, the host carries a dot, and neither part holds whitespace or a second `@` | — |
 | `url` | the text is absolute — a scheme, `://`, then a host: `https://kumiki.dev`, not `kumiki.dev` | — |
 | `uuid` | the text is the 8-4-4-4-12 hexadecimal shape, any version, either case | — |
 | `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |

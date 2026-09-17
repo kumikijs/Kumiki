@@ -18,22 +18,25 @@ const SOURCE = `
 # check — resolution has to follow the name, not stop at the first hop.
 type Handle = Email
 
-slot contact : Email  = ""
-slot handle  : Handle = "ada@example.com"
-slot key     : Uuid   = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+slot contact : Email      = ""
+slot handle  : Handle     = "ada@example.com"
+slot key     : Uuid       = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+slot code    : HttpStatus = 200
 
 reducer breakContact on=ui.click(BreakContactBtn) do= contact := "not-an-email"
 reducer fixContact   on=ui.click(FixContactBtn)   do= contact := "grace@example.com"
 reducer breakHandle  on=ui.click(BreakHandleBtn)  do= handle  := "nope"
 reducer breakKey     on=ui.click(BreakKeyBtn)     do= key     := "not-a-uuid"
+reducer breakCode    on=ui.click(BreakCodeBtn)    do= code    := 42
 
 tile BreakContactBtn = button(text="break-contact", onClick=breakContact)
 tile FixContactBtn   = button(text="fix-contact", onClick=fixContact)
 tile BreakHandleBtn  = button(text="break-handle", onClick=breakHandle)
 tile BreakKeyBtn     = button(text="break-key", onClick=breakKey)
+tile BreakCodeBtn    = button(text="break-code", onClick=breakCode)
 
 tile App = column(
-             BreakContactBtn, FixContactBtn, BreakHandleBtn, BreakKeyBtn,
+             BreakContactBtn, FixContactBtn, BreakHandleBtn, BreakKeyBtn, BreakCodeBtn,
              error(field=contact))
 
 app StdlibNominalRefinements
@@ -100,6 +103,17 @@ describe("a slot typed with a stdlib nominal is checked by that nominal's predic
 
     expect(app.live?.handle).toBe("ada@example.com");
     expect(errors[0]).toContain('slot "handle" cannot hold "nope" (email)');
+  });
+
+  // The one numeric nominal of the four, and the only one whose refinement is
+  // `between` — so the stdlib table's non-Text entry is driven too.
+  it("gates HttpStatus by the range the standard library declares", async () => {
+    const { app, root } = await mounted();
+
+    click(root, "break-code");
+
+    expect(app.live?.code).toBe(200);
+    expect(errors[0]).toContain('slot "code" cannot hold 42 (between(100, 599))');
   });
 
   it("checks uuid by shape", async () => {

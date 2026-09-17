@@ -129,7 +129,7 @@ on reducer execution:
 
 #### バッチは全部通るか全部通らないかのどちらか {#a-batch-commits-all-or-nothing}
 
-**書き込みごとに**、対象 slot の refinement（[登録済み refinement 述語](./language.md#_1-3-3-登録済み-refinement-述語)）に照らして検査する。バッチ最終値だけではない。検査に使う refinement は slot の*型*が持つものであり、宣言に使われた名前をたどって解決される：`Email` は標準ライブラリが宣言する refinement 付き nominal（[ドメイン型](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）なので、`slot e : Email` は `slot e : Text where email` とまったく同じように `email` で検査される。述語を複数持つ型はそのすべてに照らして検査され、拒否が名指すのは、§1.3.1 が与える順で値が最初に失敗した述語である（[§1.3.1](./language.md#_1-3-1-構文)）。**いずれか 1 つの書き込みでも**拒否された場合、その reducer 適用は丸ごと破棄される。slot は 1 つも書かれず、`emit` は 1 つも発行されず、`stop-timer` も走らず、再レンダリングも起きない。
+**書き込みごとに**、対象 slot の refinement（[登録済み refinement 述語](./language.md#_1-3-3-登録済み-refinement-述語)）に照らして検査する。バッチ最終値だけではない。検査に使う refinement は、slot の*型*が表す連鎖 — 別名・`nominal` ラッパー・`where` — に沿って持たれているものであり、標準ライブラリ自身の宣言も含まれる：`Email` は標準ライブラリが宣言する refinement 付き nominal（[ドメイン型](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）なので、`slot e : Email` は `slot e : Text where email` とまったく同じように `email` で検査される。連鎖は正規化が止まるところで止まるので、レコード・union・コンテナの**内側**に書かれた refinement はその対象ではない — `slot form : {email: Text where email}` は何も検査せず、フィールドの検証はプログラム自身が行うことになる。型引数をそのまま返すジェネリックは本来たどるべき辺だが、まだたどっていない（[#439](https://github.com/kumikijs/Kumiki/issues/439)）。述語を複数持つ型はそのすべてに照らして検査され、拒否が名指すのは、§1.3.1 が与える順で値が最初に失敗した述語である（[§1.3.1](./language.md#_1-3-1-構文)）。**いずれか 1 つの書き込みでも**拒否された場合、その reducer 適用は丸ごと破棄される。slot は 1 つも書かれず、`emit` は 1 つも発行されず、`stop-timer` も走らず、再レンダリングも起きない。
 
 バッチ単位ではなく書き込み単位なのは、バッチが map であり各 slot について最後に代入された値しか覚えていないからである。slot の範囲から出て戻ってくる `for` ループは合法な値で終わり、途中で通過した非合法な値 — 下記のとおり後続のすべての文から読める — は一度も検査されない:
 

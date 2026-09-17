@@ -147,7 +147,7 @@ describe("a predicate with no lowering is a diagnostic, not a pass", () => {
   it("reports E0803 when the checker meets one", () => {
     const program = parse(lex(`slot n : Int where positive = 1\n${TAIL}`));
     const slot = program.defs.find((d): d is SlotDef => d.kind === "SlotDef");
-    if (!slot || slot.type.kind !== "TypeRefinement") throw new Error("expected a refined slot");
+    if (slot?.type.kind !== "TypeRefinement") throw new Error("expected a refined slot");
     (slot.type.refinement as { pred: string }).pred = "cube-free";
     expect(check(program).map((e) => [e.code, e.kind])).toContainEqual([
       "E0803",
@@ -167,6 +167,14 @@ describe("arguments a predicate cannot be built from are reported", () => {
     ["a length that is text", `slot s : Text where len-lt("3") = "ab"`],
     ["a pattern that is a number", `slot s : Text where regex(3) = "a"`],
     ["a pattern that does not compile", `slot s : Text where regex("(") = "a"`],
+    // A pattern that fails on its own and parses once wrapped: `^(?:a)|(b)$`
+    // is `^(?:a)` OR `(b)$`, so the value would be matched unanchored against
+    // a pattern the author did not write.
+    ["a pattern that escapes the anchors", `slot s : Text where regex("a)|(b") = "a"`],
+    [
+      "a pattern whose parentheses close the anchor group",
+      `slot s : Text where regex("a)(b") = "a"`,
+    ],
     ["one-of with nothing to choose from", `slot s : Text where one-of() = "a"`],
     ["an argument to a predicate that takes none", `slot s : Text where nonempty(1) = "a"`],
   ];
@@ -176,6 +184,31 @@ describe("arguments a predicate cannot be built from are reported", () => {
       expect(codes(src)).toContain("E0804");
     });
   }
+
+  // errors.md quotes these, and a message that drifts from the catalogue is a
+  // diagnostic whose documentation answers a different question than the tool.
+  it("emits the messages errors.md documents", () => {
+    const messageFor = (src: string): string =>
+      check(parse(lex(`${src}\n${TAIL}`)))
+        .filter((e) => e.code === "E0804")
+        .map((e) => e.message)
+        .join("");
+    expect(messageFor(`slot n : Int where between(0) = 1`)).toBe(
+      'Refinement "between" takes 2 argument(s) but got 1',
+    );
+    expect(messageFor(`slot n : Int where between(0, "x") = 1`)).toBe(
+      'Refinement "between" takes a number but argument 2 is "x"',
+    );
+    expect(messageFor(`slot s : Text where one-of() = "a"`)).toBe(
+      'Refinement "one-of" needs at least 1 value(s) but got 0',
+    );
+    expect(messageFor(`slot n : Int where between(5, 1) = 1`)).toBe(
+      "Refinement between(5, 1) has a lower bound above its upper bound, so no value satisfies it",
+    );
+    expect(messageFor(`slot s : Text where regex("(") = "a"`)).toMatch(
+      /^Refinement regex\("\("\) is not a pattern: /,
+    );
+  });
 
   it("pairs E0804 with its kind", () => {
     const errors = check(parse(lex(`slot n : Int where between(0) = 1\n${TAIL}`)));

@@ -5,8 +5,9 @@
 # and the standard library's refined nominals (`Email`, `Url`, `Uuid`) carried
 # no check at all — so `email := "not-an-email"` landed and `error(field=email)`
 # rendered nothing. This example drives each of those families from the reducer
-# side; `between` / `nonempty` / `len-*` were the three already enforced, and
-# 63-reducer-batch-atomicity and 34-builtin-tiles cover them.
+# side; `between`, `nonempty` and the `len-*` family were the three families
+# already enforced, and 63-reducer-batch-atomicity and 34-builtin-tiles cover
+# them.
 #
 # Every button writes a value its predicate ACCEPTS the first time it is
 # clicked and one it REFUSES from then on. That shape is what lets both
