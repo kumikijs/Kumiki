@@ -290,6 +290,8 @@ error(field=email)
 
 `error(field=...)` is a built-in tile that renders the target slot's current validation error: it reads the predicate off the slot and renders the message for it whenever the slot's **current** value fails, and nothing otherwise. A slot whose type carries no refinement therefore has no message to show — which is a statement about the slot, not about the value in it.
 
+A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) renders the message of the **first one the current value fails**, in the order §1.3.1 gives them. On `slot draft : Text where nonempty where len-lt(7) = ""` a pristine field reads "Required", not a bound the empty value is well inside.
+
 ### 5.7.2 Standard Messages
 
 | Predicate | Default |

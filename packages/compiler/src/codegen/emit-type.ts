@@ -1,5 +1,5 @@
-import type { Refinement, TypeExpr } from "../ast.ts";
-import { refinementToJs } from "../refinements.ts";
+import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
+import { refinementBodyJs, refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
@@ -111,50 +111,87 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
 }
 
 /**
- * Follow `t` to the type expression that carries its refinement.
+ * Every refinement a type carries, base outward.
  *
- * Through names, not just one of them: `type Handle = Email` is the type it
- * names, so a slot declared with it is refined by `email` exactly as one
- * declared `Email` is. `gen.types` holds the standard library's definitions as
- * well as the program's (see `codegen`), which is what makes `Email`, `Url`,
- * `Uuid` and `HttpStatus` refine at all — they are synthesised in
- * `stdlib-types.ts` and a lookup that only saw the program's `type` definitions
- * returned `undefined` for every one of them (#352).
+ * A type may be written with more than one `where` (spec/language.md §1.3.1),
+ * and the predicates conjoin. The parser folds the first onto a `nominal` node
+ * as a property and wraps each one after it, so the predicates sit on nested
+ * nodes rather than in a list — and a named type reached through a `TypeRef`
+ * hides its own underneath that. Reading exactly one layer, which is what this
+ * module used to do, emitted the outermost predicate and dropped every other
+ * (#353): `nominal Text where len-gt(3) where nonempty` accepted `"ab"`.
  *
- * The `seen` set is not defensive: `type A = A` and `type A = B; type B = A`
- * are reported by the checker (E0219) but still reach codegen in a `check`
- * that is not fatal, and a walk without it would not return.
+ * The order is the one the chain the type denotes is read in, from the base
+ * outward (§1.3.6, inv. 1). Inside a single type expression that is the order
+ * the predicates are written in; across names it is not, and it does not depend
+ * on which definition was declared first — on `type Handle = nominal Short
+ * where len-gt(3)` over `type Short = Text where len-lt(9)`, `len-lt` comes
+ * first wherever the two definitions sit in the file, because `Short` is what
+ * `Handle` is declared over. It is the order a failed predicate is named in.
+ *
+ * The edges are an alias, a `nominal` wrapper and a `where`, and the walk stops
+ * at a structural type: nothing written inside a record, a union or a container
+ * is a refinement of the type itself. It is **not** yet every edge normalization
+ * follows — a generic that hands a parameter back (`type NonEmpty(T) = T where
+ * nonempty`) is one, and its refinement is still dropped here (#439). `seen` is
+ * what makes a name written in terms of itself terminate; the cycle is E0009's
+ * to report, and this walk still has to end on the way there.
  */
-function refinedTarget(t: TypeExpr, gen: GenCtx): TypeExpr | undefined {
-  let target = t;
-  const seen = new Set<string>();
-  while (target.kind === "TypeRef") {
-    if (seen.has(target.name)) return undefined;
-    seen.add(target.name);
-    const def = gen.types.get(target.name);
-    if (!def) return undefined;
-    target = def.body;
+export function refinementsOf(
+  t: TypeExpr,
+  gen: GenCtx,
+  seen: ReadonlySet<string> = new Set(),
+): Refinement[] {
+  switch (t.kind) {
+    case "TypeRef": {
+      if (seen.has(t.name)) return [];
+      const def = gen.types.get(t.name);
+      if (!def) return [];
+      const next = new Set(seen);
+      next.add(t.name);
+      return refinementsOf(def.body, gen, next);
+    }
+    case "TypeNominal":
+    case "TypeRefinement": {
+      const inner = refinementsOf(t.inner, gen, seen);
+      return t.refinement ? [...inner, t.refinement] : inner;
+    }
+    // A type in its own right, or (`TypeApp`) an edge this walk does not follow
+    // yet. Listed rather than defaulted so `assertNever` reports the next node
+    // kind added to `TypeExpr` instead of silently losing its refinements.
+    case "TypePrim":
+    case "TypeApp":
+    case "TypeRecord":
+    case "TypeUnion":
+      return [];
+    default:
+      assertNever(t);
+      return [];
   }
-  return target;
-}
-
-/** Resolve a slot/type's refinement (through a TypeRef), for the `error` tile. */
-export function slotRefinement(t: TypeExpr, gen: GenCtx): Refinement | undefined {
-  const target = refinedTarget(t, gen);
-  if (target?.kind === "TypeNominal" || target?.kind === "TypeRefinement") {
-    return target.refinement;
-  }
-  return undefined;
 }
 
 /**
- * The JS predicate a slot of type `t` is checked by, or `undefined` when the
- * type carries no refinement — or carries one nothing lowers, which the
- * checker has already reported as E0803. Emitting nothing is the point: a
- * slot with no `refine` is one the runtime does not gate, where a `refine`
- * that answers `true` to everything reads as a gate and is not one.
+ * The runtime test for a slot's type: every predicate it carries, conjoined.
+ * `undefined` when the type carries none — the slot then has no `refine` at
+ * all, which is what the runtime reads to mean "unrefined".
  */
 export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
-  const r = slotRefinement(t, gen);
-  return r ? refinementToJs(r) : undefined;
+  const rs = refinementsOf(t, gen);
+  if (rs.length === 0) return undefined;
+  const bodies = rs.map(refinementBodyJs).filter((b): b is string => b !== undefined);
+  // Every predicate this type carries is one the table has no lowering for —
+  // which E0803 has already reported, because the parser accepts exactly the
+  // names that table holds and every one of them lowers (#352). Emitting
+  // nothing rather than the `(_v) => true` that used to stand here is the
+  // point: a slot with no `refine` is one the runtime does not gate, where a
+  // `refine` that answers `true` to every value reads as a gate and is not one.
+  if (bodies.length === 0) return undefined;
+  if (bodies.length === 1) return `(v) => ${bodies[0]}`;
+  return `(v) => ${bodies.map((b) => `(${b})`).join(" && ")}`;
 }
+
+/**
+ * One predicate's test, for the per-predicate entries the `error` tile reads.
+ * `undefined` for a predicate with no lowering, as above.
+ */
+export { refinementToJs };

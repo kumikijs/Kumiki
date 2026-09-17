@@ -39,10 +39,10 @@ case, `regex` is anchored so the pattern describes the **whole** value, and
 `one-of` is membership. A value of the wrong shape answers `false` rather than
 throwing.
 
-Codegen resolves a slot's refinement through the standard library's definitions
-as well as the program's, and follows a chain of names rather than one hop, so
-`slot e : Email`, `type Handle = Email` and `slot e : Text where email` are one
-guarantee written three ways.
+Codegen's type table is seeded with the standard library's definitions as well
+as the program's, which is what lets the walk over a type's `where` clauses
+reach them at all — so `slot e : Email`, `type Handle = Email` and
+`slot e : Text where email` are one guarantee written three ways.
 
 The `default` arm is gone in both directions. One table now holds the names the
 parser accepts and the lowering each has, so the two cannot drift; a registered

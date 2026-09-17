@@ -222,5 +222,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `88-string-formatting.kumiki` | slot, reducer, tile | stdlib | [§2.4.5](./stdlib.md#_2-4-5-string-formatting) |
 | `89-qualified-show.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
 | `90-refinement-validation.kumiki` | type, slot, reducer | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
+| `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 <!-- examples:end -->
 :::

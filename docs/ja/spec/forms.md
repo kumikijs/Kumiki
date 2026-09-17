@@ -245,7 +245,7 @@ refinement 層は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)
 - **代入**（reducer 内の `age := …`）はバッチ全体を破棄し、報告する — slot は書かれず、effect も発行されない（[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）。
 - **`bind`** はそのフィールドの値だけを受け取らず、何も言わない。入力途中の値は欠陥ではなく想定内だからである（[§5.1.2](#_5-1-2-refinement-の扱い)）。
 
-どちらも**宣言時の初期値**は通さない： `slot email : Email = ""` は自分自身の refinement が拒否する値から始まり、それが未入力のフォームにメッセージを出す仕組みである（[§5.7.1](#_5-7-1-個別フィールドの-refinement-違反)）。
+どちらも**宣言時の初期値**は通さない： `slot email : Email = ""` は自分自身の refinement が拒否する値から始まり、それが未入力のフォームにメッセージを出す仕組みである（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）。
 
 ### 5.6.1 フォーム横断の例
 
@@ -279,7 +279,7 @@ reducer doSignup on=ui.submit(SignupForm) do= ...
 
 ## 5.7 エラー表示
 
-### 5.7.1 個別フィールドの refinement 違反
+### 5.7.1 個別フィールドの refinement 違反 {#_5-7-1-refinement-violation-of-an-individual-field}
 
 `error` 要素で表示：
 
@@ -289,6 +289,8 @@ error(field=email)
 ```
 
 `error(field=...)` は対象 slot の現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、slot の**現在の**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。したがって型に refinement を持たない slot には表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。
+
+述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、§1.3.1 が与える順で、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
 
 ### 5.7.2 標準メッセージ
 

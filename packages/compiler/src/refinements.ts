@@ -15,7 +15,7 @@
 //
 // One table closes that: `REFINEMENT_PREDS` is what the parser accepts and is
 // derived from the same entries that carry the lowering, so a name cannot be
-// accepted by one side and unknown to the other. An entry with no `lower` is
+// accepted by one side and unknown to the other. An entry with no `body` is
 // E0803 at build time — the honest answer, and the same reasoning as E0802 for
 // a documented function the toolchain does not lower.
 
@@ -47,11 +47,13 @@ type RefinementEntry = {
    */
   readonly combined?: (args: readonly RefinementArg[]) => string | undefined;
   /**
-   * The JS predicate the slot's `refine` is set to. Absent means the predicate
-   * is registered and not lowered, which is {@link refinementProblem}'s
+   * The predicate's condition over `v`, without the arrow around it: a type may
+   * carry several `where` clauses and they conjoin (#353), so the bodies are
+   * what `refinementJs` joins with `&&`. Absent means the predicate is
+   * registered and not lowered, which is {@link refinementProblem}'s
    * `unimplemented-refinement` — never a check that passes.
    */
-  readonly lower?: (args: readonly RefinementArg[]) => string;
+  readonly body?: (args: readonly RefinementArg[]) => string;
 };
 
 const NUM = `typeof v === "number"`;
@@ -93,27 +95,18 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
         num(a, 0) > num(a, 1)
           ? `between(${a[0]}, ${a[1]}) has a lower bound above its upper bound, so no value satisfies it`
           : undefined,
-      lower: (a) => `(v) => ${NUM} && v >= ${num(a, 0)} && v <= ${num(a, 1)}`,
+      body: (a) => `${NUM} && v >= ${num(a, 0)} && v <= ${num(a, 1)}`,
     },
   ],
-  ["nonempty", { params: { fixed: [] }, lower: () => `(v) => ${STR} && v.length > 0` }],
-  [
-    "len-eq",
-    { params: { fixed: ["count"] }, lower: (a) => `(v) => ${STR} && v.length === ${num(a, 0)}` },
-  ],
-  [
-    "len-lt",
-    { params: { fixed: ["count"] }, lower: (a) => `(v) => ${STR} && v.length < ${num(a, 0)}` },
-  ],
-  [
-    "len-gt",
-    { params: { fixed: ["count"] }, lower: (a) => `(v) => ${STR} && v.length > ${num(a, 0)}` },
-  ],
-  ["positive", { params: { fixed: [] }, lower: () => `(v) => ${NUM} && v > 0` }],
-  ["negative", { params: { fixed: [] }, lower: () => `(v) => ${NUM} && v < 0` }],
-  ["email", { params: { fixed: [] }, lower: () => `(v) => ${STR} && ${EMAIL_RE}.test(v)` }],
-  ["url", { params: { fixed: [] }, lower: () => `(v) => ${STR} && ${URL_RE}.test(v)` }],
-  ["uuid", { params: { fixed: [] }, lower: () => `(v) => ${STR} && ${UUID_RE}.test(v)` }],
+  ["nonempty", { params: { fixed: [] }, body: () => `${STR} && v.length > 0` }],
+  ["len-eq", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length === ${num(a, 0)}` }],
+  ["len-lt", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length < ${num(a, 0)}` }],
+  ["len-gt", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length > ${num(a, 0)}` }],
+  ["positive", { params: { fixed: [] }, body: () => `${NUM} && v > 0` }],
+  ["negative", { params: { fixed: [] }, body: () => `${NUM} && v < 0` }],
+  ["email", { params: { fixed: [] }, body: () => `${STR} && ${EMAIL_RE}.test(v)` }],
+  ["url", { params: { fixed: [] }, body: () => `${STR} && ${URL_RE}.test(v)` }],
+  ["uuid", { params: { fixed: [] }, body: () => `${STR} && ${UUID_RE}.test(v)` }],
   [
     "regex",
     {
@@ -126,15 +119,14 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
           return `regex(${JSON.stringify(a[0])}) is not a pattern: ${(e as Error).message}`;
         }
       },
-      lower: (a) =>
-        `(v) => ${STR} && new RegExp(${JSON.stringify(anchored(String(a[0])))}).test(v)`,
+      body: (a) => `${STR} && new RegExp(${JSON.stringify(anchored(String(a[0])))}).test(v)`,
     },
   ],
   [
     "one-of",
     {
       params: { rest: "literal", min: 1 },
-      lower: (a) => `(v) => ${JSON.stringify(a)}.includes(v)`,
+      body: (a) => `${JSON.stringify(a)}.includes(v)`,
     },
   ],
 ]);
@@ -143,13 +135,23 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
 export const REFINEMENT_PREDS: ReadonlySet<string> = new Set(REFINEMENTS.keys());
 
 /**
- * The JS predicate for `r`, or `undefined` when nothing lowers it. The caller
- * reports that rather than emitting a check in its place: a slot with no
- * `refine` is one the runtime does not gate, which is visibly different from a
- * slot whose gate lets everything through.
+ * `r`'s condition over `v`, or `undefined` when nothing lowers it. Several of
+ * these conjoin into one slot's check, which is why the arrow is not part of
+ * them.
+ */
+export function refinementBodyJs(r: Refinement): string | undefined {
+  return REFINEMENTS.get(r.pred)?.body?.(r.args);
+}
+
+/**
+ * The JS predicate for `r` on its own, or `undefined` when nothing lowers it.
+ * The caller emits nothing in that case rather than a check in its place: a
+ * slot with no `refine` is one the runtime does not gate, which is visibly
+ * different from a slot whose gate lets everything through.
  */
 export function refinementToJs(r: Refinement): string | undefined {
-  return REFINEMENTS.get(r.pred)?.lower?.(r.args);
+  const body = refinementBodyJs(r);
+  return body === undefined ? undefined : `(v) => ${body}`;
 }
 
 /** Why a refinement cannot become a runtime check, for the checker to code. */
@@ -200,7 +202,7 @@ export function refinementProblem(r: Refinement): RefinementProblem | undefined 
   if (arity) return { kind: "refinement-args-invalid", message: arity };
   const combined = entry.combined?.(r.args);
   if (combined) return { kind: "refinement-args-invalid", message: `Refinement ${combined}` };
-  if (!entry.lower) {
+  if (!entry.body) {
     return {
       kind: "unimplemented-refinement",
       message: `Refinement "${r.pred}" is documented but not enforced by the runtime`,

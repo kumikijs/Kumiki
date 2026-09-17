@@ -378,13 +378,20 @@ class Parser {
       }
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
-    // Refinement
-    if (this.matchKw("where")) {
+    // Refinement. `refinement-type ::= type-expr 'where' pred-expr` is recursive
+    // (§1.3.1), so the `where`s chain without a bound and every predicate the
+    // type collects has to hold. Read as a loop rather than by recursing:
+    // `parseTypeUnionAtom` above has already taken the first one — folded onto
+    // the `nominal` node as a property, or wrapping a bare atom — and a second
+    // `if` here is what used to cap the form at two, with a third reported as a
+    // parse error while the grammar said otherwise.
+    let refined = first;
+    while (this.matchKw("where")) {
       this.next();
       const ref = this.parseRefinement();
-      return { kind: "TypeRefinement", inner: first, refinement: ref, pos: first.pos };
+      refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
     }
-    return first;
+    return refined;
   }
 
   private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
