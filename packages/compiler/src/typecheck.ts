@@ -22,6 +22,7 @@ import type {
   Pos,
   Program,
   ReducerDef,
+  Refinement,
   SlotDef,
   Statement,
   TestDef,
@@ -57,6 +58,7 @@ import {
   type GraphEdge,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
+import { refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
@@ -4943,12 +4945,59 @@ function resolveType(
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
+      checkRefinement(t.refinement, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
     case "TypeRefinement":
+      checkRefinement(t.refinement, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
+}
+
+/**
+ * Report a refinement that cannot become a runtime check.
+ *
+ * The documents present a refinement as a check the value passes on its way
+ * into the slot ([forms.md §5.6], [runtime.md §10.3.3]), so the two ways of
+ * failing to build one are reported here rather than lowered to something that
+ * looks like a check and is not (#352):
+ *
+ *  - E0803, a registered predicate the toolchain does not lower. Unreachable
+ *    from source today — the parser accepts exactly the names the table holds,
+ *    and every one of them lowers — and kept because the alternative for the
+ *    next predicate added to §1.3.3 is `refinementToJs` answering `true` to
+ *    every value, which is a promise the runtime does not keep and nothing
+ *    reports.
+ *  - E0804, arguments no check can be built from: a bound that is text, a
+ *    fractional or negative length, a pattern that does not compile, a range
+ *    with nothing in it. These are reachable, and each used to reach the
+ *    runtime — as a check that refuses every value, one that accepts every
+ *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
+ *    `v <= x` half of what `between(0, "x")` lowered to.
+ */
+function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void {
+  if (!r) return;
+  const problem = refinementProblem(r);
+  if (!problem) return;
+  // Written out rather than looked up: `spec-drift.test.ts` reads the codes
+  // this file emits off `code: "E…"`, so a code assembled anywhere but at the
+  // push site is one errors.md is never required to document.
+  if (problem.kind === "unimplemented-refinement") {
+    errors.push({
+      code: "E0803",
+      kind: "unimplemented-refinement",
+      message: problem.message,
+      pos: r.pos,
+    });
+    return;
+  }
+  errors.push({
+    code: "E0804",
+    kind: "refinement-args-invalid",
+    message: problem.message,
+    pos: r.pos,
+  });
 }
 
 /**

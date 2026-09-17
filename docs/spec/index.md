@@ -121,6 +121,8 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
+| [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | core |
+| [E0804](./errors.md#e0804-refinement-args-invalid) | `refinement-args-invalid` | type | core |
 <!-- codes:end -->
 :::
 
@@ -219,6 +221,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `87-replayed-environment-read.kumiki` | slot, reducer, tile | core | [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode) |
 | `88-string-formatting.kumiki` | slot, reducer, tile | stdlib | [§2.4.5](./stdlib.md#_2-4-5-string-formatting) |
 | `89-qualified-show.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
+| `90-refinement-validation.kumiki` | type, slot, reducer | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
 | `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 <!-- examples:end -->
 :::

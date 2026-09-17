@@ -22,6 +22,12 @@ export {
   parseCapabilityManifest,
   STANDARD_CAPABILITIES,
 } from "./capabilities.ts";
+// The two halves of a refinement, for the same reason: `applyRefine` folds a
+// predicate into a property-test generator's descriptor and `refinementToJs`
+// lowers the same predicate to the runtime's check, in two packages. A
+// generated value has to pass the check the runtime applies to a write
+// (testing.md §8.3.2), which is a property neither side can state alone.
+export { applyRefine, type GenDescData } from "./codegen/emit-type.ts";
 // The write-path encoding the runtime decodes. Exported so the two
 // declarations can be checked against each other.
 export { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
@@ -57,6 +63,7 @@ export {
   type RefLayer,
   referencesIn,
 } from "./references.ts";
+export { refinementToJs } from "./refinements.ts";
 // Same reasoning as the call tables above: the definitions themselves stay
 // internal, and only the candidate-set question a repair asks is published.
 export { typeCandidates } from "./stdlib-types.ts";

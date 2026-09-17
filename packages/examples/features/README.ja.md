@@ -57,6 +57,7 @@
 | [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | 後から分岐が `onFocus` / `onBlur` を*足す*ケース（renderer ではなく runtime が持ち上げる 4 種） |
 | [86-container-selector-through-reference](./86-container-selector-through-reference.kumiki) | 本体が tile 参照のコンテナに対する `ui.key` / `ui.focus` / `ui.blur` / `ui.hover`（同じ木のインライン形と並記） |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | refinement が reducer のバッチを丸ごと拒否する挙動と、代わりに書くべきガード |
+| [90-refinement-validation](./90-refinement-validation.kumiki) | 登録済み述語がすべて実行時チェックであること — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`、および標準ライブラリの refinement 付き nominal |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |
 | [66-value-types](./66-value-types.kumiki) | 値レベルの型検査が受理する形と、それぞれが以前隠していた誤り |

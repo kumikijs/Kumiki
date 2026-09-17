@@ -31,12 +31,21 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
     // a single predicate is already named by the two fields above, every reader
     // falls back to them, and a one-predicate slot's descriptor then stays
     // byte-identical to what it was before #353.
-    if (rs.length > 1) {
-      const parts = rs.map(
-        (r) =>
-          `{ kind: ${JSON.stringify(r.pred)}, args: ${JSON.stringify(r.args)}, ` +
-          `refine: ${refinementToJs(r)} }`,
-      );
+    //
+    // A predicate with no lowering contributes no entry, for the same reason it
+    // contributes no conjunct to `refine` above: it is E0803 at build time, and
+    // an entry whose `refine` answered `true` to everything would name it as
+    // the predicate a value failed to fail (#352).
+    const parts = rs.flatMap((r) => {
+      const js = refinementToJs(r);
+      return js === undefined
+        ? []
+        : [
+            `{ kind: ${JSON.stringify(r.pred)}, args: ${JSON.stringify(r.args)}, ` +
+              `refine: ${js} }`,
+          ];
+    });
+    if (parts.length > 1) {
       meta.push(`refineAll: [${parts.join(", ")}]`);
     }
     // `volatile` (language.md §1.4.1): excludes the slot from SlotDiff records

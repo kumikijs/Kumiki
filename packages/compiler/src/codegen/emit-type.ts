@@ -1,4 +1,5 @@
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
+import { refinementBodyJs, refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
@@ -56,7 +57,21 @@ export function primGenDesc(name: string): GenDescData {
   return { t: "Unknown" };
 }
 
-/** Fold a refinement into a base descriptor so generation respects it (§8.3.2). */
+/**
+ * Fold a refinement into a base descriptor so generation respects it (§8.3.2).
+ *
+ * Every predicate the runtime enforces belongs here, because the two answer
+ * the same question from opposite ends: a generator that ignores a refinement
+ * produces values the slot it is generating for would refuse, so the property
+ * under test is run on states the app can never be in. While `email` / `url` /
+ * `uuid` lowered to `(_v) => true` this was harmless and the descriptor
+ * ignored them; enforcing them (#352) is what makes the omission visible.
+ *
+ * `regex` is the one predicate with no constraint to fold: generating from an
+ * arbitrary pattern is a different problem from checking against one. §8.3.2
+ * says so, and a `for-all` over a `regex`-refined type is a case to write by
+ * hand.
+ */
 export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDescData {
   if (!r) return desc;
   const num = (i: number): number => (typeof r.args[i] === "number" ? (r.args[i] as number) : 0);
@@ -65,7 +80,16 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Int" || desc.t === "Float" ? { ...desc, min: num(0), max: num(1) } : desc;
     case "positive":
       if (desc.t === "Int") return { ...desc, min: 1 };
-      if (desc.t === "Float") return { ...desc, min: 0 };
+      // Strictly above zero, because `positive` is `v > 0` and a generator
+      // bounded at 0 can hand the check the one value it refuses. `EPSILON`
+      // rather than `MIN_VALUE` (the smallest Float above zero): the bound is
+      // the low end of a range the generator then samples, and a denormal one
+      // buys nothing a representable gap does not.
+      if (desc.t === "Float") return { ...desc, min: Number.EPSILON };
+      return desc;
+    case "negative":
+      if (desc.t === "Int") return { ...desc, max: -1 };
+      if (desc.t === "Float") return { ...desc, max: -Number.EPSILON };
       return desc;
     case "nonempty":
       return desc.t === "Text" ? { ...desc, minLen: 1 } : desc;
@@ -75,6 +99,15 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Text" ? { ...desc, minLen: num(0) + 1 } : desc;
     case "len-lt":
       return desc.t === "Text" ? { ...desc, maxLen: Math.max(0, num(0) - 1) } : desc;
+    case "email":
+    case "url":
+    case "uuid":
+      // A shape rather than a length: the generator builds an instance of the
+      // form, so the value passes the same check the runtime applies.
+      return desc.t === "Text" ? { ...desc, form: r.pred } : desc;
+    case "one-of":
+      // Independent of the base type — the choices *are* the domain.
+      return { ...desc, oneOf: [...r.args] };
     default:
       return desc;
   }
@@ -149,45 +182,19 @@ export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
   const rs = refinementsOf(t, gen);
   if (rs.length === 0) return undefined;
   const bodies = rs.map(refinementBodyJs).filter((b): b is string => b !== undefined);
-  // Every predicate this type carries is one `refinementBodyJs` has no lowering
-  // for. `uuid` / `email` / `url` are recorded as unenforced at runtime
-  // (spec/testing.md §8.3.2); `regex` / `one-of` / `positive` / `negative` are
-  // not documented that way anywhere and simply have no lowering — #438 is
-  // where all twelve become a check that can fail. The type still carries a
-  // refinement, so the descriptor still gets the tautology `dev` emitted for
-  // it: what the slot accepts does not change here.
-  if (bodies.length === 0) return `(_v) => true`;
+  // Every predicate this type carries is one the table has no lowering for —
+  // which E0803 has already reported, because the parser accepts exactly the
+  // names that table holds and every one of them lowers (#352). Emitting
+  // nothing rather than the `(_v) => true` that used to stand here is the
+  // point: a slot with no `refine` is one the runtime does not gate, where a
+  // `refine` that answers `true` to every value reads as a gate and is not one.
+  if (bodies.length === 0) return undefined;
   if (bodies.length === 1) return `(v) => ${bodies[0]}`;
   return `(v) => ${bodies.map((b) => `(${b})`).join(" && ")}`;
 }
 
-/** One predicate's test, for the per-predicate entries the `error` tile reads. */
-export function refinementToJs(r: Refinement): string {
-  const body = refinementBodyJs(r);
-  return body === undefined ? `(_v) => true` : `(v) => ${body}`;
-}
-
 /**
- * A predicate's condition over `v`, or `undefined` for one with no runtime
- * test. Kept separate from the arrow around it so predicates can be conjoined
- * without nesting a call per layer.
+ * One predicate's test, for the per-predicate entries the `error` tile reads.
+ * `undefined` for a predicate with no lowering, as above.
  */
-function refinementBodyJs(r: Refinement): string | undefined {
-  switch (r.pred) {
-    case "between": {
-      const a = r.args[0] as number;
-      const b = r.args[1] as number;
-      return `typeof v === "number" && v >= ${a} && v <= ${b}`;
-    }
-    case "nonempty":
-      return `typeof v === "string" && v.length > 0`;
-    case "len-lt":
-      return `typeof v === "string" && v.length < ${r.args[0] as number}`;
-    case "len-gt":
-      return `typeof v === "string" && v.length > ${r.args[0] as number}`;
-    case "len-eq":
-      return `typeof v === "string" && v.length === ${r.args[0] as number}`;
-    default:
-      return undefined;
-  }
-}
+export { refinementToJs };

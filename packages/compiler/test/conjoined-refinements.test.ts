@@ -150,24 +150,31 @@ describe("a type's predicates conjoin", () => {
     expect(meta("n").refineAll).toBeUndefined();
   });
 
-  it("keeps a predicate with no runtime test from swallowing one that has it", () => {
-    // `uuid` / `email` / `url` are recorded as unenforced at runtime
-    // (spec/testing.md §8.3.2), so the conjunction is the `nonempty` test alone
-    // — but both predicates are still named, and the unenforced one answers
-    // `true` rather than being absent, so it is never the predicate a report
-    // picks. (#438 is where all twelve become a check that can fail.)
+  it("makes every predicate in the chain a test of its own", () => {
+    // `email` had no lowering while this was written, so the conjunction was
+    // the `nonempty` test alone and `a := "not-an-address"` landed on a type
+    // that says otherwise. All twelve predicates lower now (#352), so the
+    // conjunction refuses a value failing either one — and `refineAll` still
+    // names them in chain order, each entry testing its own predicate.
     const refine = refineOf("a");
-    expect(refine("")).toBe(false);
-    expect(refine("not-an-address")).toBe(true);
+    expect(refine("")).toBe(false); // nonempty (and email)
+    expect(refine("not-an-address")).toBe(false); // email
+    expect(refine("ada@example.com")).toBe(true);
     const parts = defined(meta("a").refineAll, "a's predicates");
     expect(parts.map((r) => r.kind)).toEqual(["nonempty", "email"]);
-    expect(defined(parts[1], "the email entry").refine("")).toBe(true);
+    expect(defined(parts[1], "the email entry").refine("")).toBe(false);
   });
 
-  it("emits the tautology `dev` emitted when no predicate has a test", () => {
-    // Nothing the slot can hold is refused, exactly as before — what changes is
-    // that the descriptor keeps naming both predicates.
-    expect(refineOf("o")("")).toBe(true);
+  it("refuses every value when the predicates it conjoins share none", () => {
+    // `email where uuid` is legal and satisfied by nothing — a uuid carries no
+    // `@`. It used to emit a tautology, so the slot took anything; a
+    // conjunction of two real tests means it now takes nothing, and the
+    // descriptor still names both. A type no value inhabits is the author's to
+    // fix, and reading it off the descriptor is how they see it.
+    const refine = refineOf("o");
+    expect(refine("")).toBe(false);
+    expect(refine("ada@example.com")).toBe(false);
+    expect(refine("3f2504e0-4f89-11d3-9a0c-0305e82c3301")).toBe(false);
     expect(meta("o").refineAll?.map((r) => r.kind)).toEqual(["email", "uuid"]);
   });
 

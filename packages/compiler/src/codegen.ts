@@ -38,6 +38,7 @@ import { emitSlots } from "./codegen/emit-slot.ts";
 import { coverageJs, genTest } from "./codegen/emit-test.ts";
 import { genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
+import { STDLIB_TYPES } from "./stdlib-types.ts";
 
 export type CodegenOptions = {
   runtimeSpecifier: string;
@@ -100,9 +101,15 @@ export type CodegenResult = {
 };
 
 export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
-  const types = new Map(
-    program.defs.filter((d): d is TypeDef => d.kind === "TypeDef").map((d) => [d.name, d]),
-  );
+  // The standard library's definitions first, the program's over them — the
+  // order `check` seeds its own table in, so a program that declares its own
+  // `type Route = …` shadows the entry here on both sides. Codegen used to see
+  // the program's alone, which is why `slot e : Email` reached the runtime
+  // with no `refine` at all: `Email` is synthesised, not declared (#352).
+  const types = new Map<string, TypeDef>(STDLIB_TYPES.map((d) => [d.name, d]));
+  for (const d of program.defs) {
+    if (d.kind === "TypeDef") types.set(d.name, d);
+  }
   const slots = program.defs.filter((d): d is SlotDef => d.kind === "SlotDef");
   const effects = program.defs.filter((d): d is EffectDef => d.kind === "EffectDef");
   const reducers = program.defs.filter((d): d is ReducerDef => d.kind === "ReducerDef");

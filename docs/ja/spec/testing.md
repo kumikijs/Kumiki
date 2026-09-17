@@ -161,7 +161,9 @@ property-test ::= 'property-test'
 | `Option(T)` | 50% None / 50% Some |
 | `Result(T, E)` | 50% Ok / 50% Err |
 | `nominal T` | T の生成器 |
-| `refinement T where p` | T を生成して p を満たすまで rejection |
+| `refinement T where p` | p に制約された T を生成する |
+
+refinement は棄却サンプリングではなく基底の生成器への制約として畳み込まれる。`between(a, b)` は数値範囲を、`nonempty` / `len-*` は文字列長を、`positive` / `negative` は符号を制約する。`email` / `url` / `uuid` は**形**として畳み込まれ、生成器はその形の実例を組み立てる。したがって生成された値は、ランタイムが書き込みに対して適用するのと同じチェックを通る（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)） — これらを無視する生成器は、アプリが取り得ない状態の上で性質を検査してしまう。`one-of` は列挙されたリテラルから生成する。畳み込める制約がない唯一の述語が `regex` である。任意のパターンから生成することは、パターンに照らして検査することとは別の問題だからである：`regex` で refine された型に対する `for-all` は基底型を無制約に生成するので、カスタム生成器を与えるか、ケースを手で書く。生成は**シード付き**であり（既定値はテスト名のハッシュ）、失敗したケースは実行をまたいで正確に再現する。失敗時、反例は**縮小**され（`shrink = false` で無効化）、最小の値へ向かう（数値 → 0、文字列 → ""、コレクション → 要素数を減らす）。`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し次の状態を返すので、手順を連鎖できる（`run-reducer(toggle).run-reducer(toggle).slots.todos`）。
 
 カスタム生成器：
 

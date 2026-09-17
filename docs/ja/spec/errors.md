@@ -963,3 +963,30 @@ test typo-section =
 現在この状態にあるのは `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-デバッグ補助)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
 
 **修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。
+
+### E0803 `unimplemented-refinement`
+
+`where` refinement が、[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) に登録されているがツールチェーンが実行時チェックへ lowering していない述語を指している。`E0802` の 1 つ下の層にある対応物で、名前は正しく、欠けているのは実装側である。
+
+> `Refinement "<pred>" is documented but not enforced by the runtime`
+> `Refinement "<pred>" is not a registered predicate`
+
+2 つ目のメッセージは、表がそもそも持っていない述語に対するもの。その名前はチェッカーへ届く前にパーサが弾くので、ここへ到達するのは手で組み立てた AST 経由だけである — コンパイラ自身のテストはその経路でこの診断を駆動している。
+
+**現在この状態にある述語はない。** このチェックが存在するのは、代わりに何が起きていたかによる: `refinementToJs` は実装していないものをすべて `(_v) => true` へ lowering する `default` 分岐で終わっていたため、登録済み 12 述語のうち 7 つが「決して失敗しないチェック」としてランタイムへ届いていた — `slot n : Int where positive` は `-7` を受け入れ、その slot に対する `error(field=n)` は何も表示しなかった。refinement は値が slot へ入る際に通るチェックとして規定されている（[フォーム §5.6](./forms.md#_5-6-バリデーション戦略)、[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）ので、lowering のない述語はドキュメントがプログラムの実際の挙動と異なる約束をしている状態であり、しかもそれを誰も報告しなかった。パーサが受け付ける名前は lowering テーブルの名前とちょうど一致するため、今日のソースからこの診断へ到達することはない。lowering を伴わずに §1.3.3 へ述語を追加した場合に、実行時ではなくビルド時にここへ落ちる。
+
+**修正**：lowering を実装するか、lowering のある述語を使う。refinement はランタイムが守る保証なので第三の選択肢はない — ツールチェーンが検査できない述語が必要な場合は、値がプログラムへ入る場所（パース結果を受け取る `fn`、reducer のガード）で検証する。
+
+### E0804 `refinement-args-invalid`
+
+登録済み述語が、チェックを組み立てられない引数とともに書かれている。
+
+> `Refinement "<pred>" takes <n> argument(s) but got <m>`
+> `Refinement "<pred>" takes <what> but argument <i> is <given>`
+> `Refinement "<pred>" needs at least <min> value(s) but got <n>`
+> `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
+> `Refinement regex("<p>") is not a pattern: <reason>`
+
+各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。
+
+**修正**：述語が取る引数を書く — `between` には数値の境界、`len-*` 系には 0 以上の整数、`regex` にはコンパイルできるパターン、`one-of` には 1 個以上のリテラル。
