@@ -10,13 +10,13 @@
       }
     },
     {
-      "label": "the child panics and the shell's boundary shows its fallback in place of the section",
+      "label": "the child panics and the shell's boundary shows its fallback in place of the section, naming the route target rather than the tile inside it",
       "do": { "clickText": "break" },
       "expect": {
         "noErrors": true,
         "state": { "reveal": true },
-        "domIncludes": ["section fallback: get called on None at Report"],
-        "domExcludes": ["Section", "report: ready"]
+        "domIncludes": ["shell caught: get called on None at Report"],
+        "domExcludes": ["Section", "report: ready", "at ReportBody"]
       }
     },
     {
@@ -24,8 +24,8 @@
       "do": { "navigate": "/section/guarded" },
       "expect": {
         "noErrors": true,
-        "domIncludes": ["Section", "guarded fallback: get called on None at Guarded"],
-        "domExcludes": ["section fallback"]
+        "domIncludes": ["Section", "guarded caught: get called on None at Guarded"],
+        "domExcludes": ["shell caught"]
       }
     }
   ]

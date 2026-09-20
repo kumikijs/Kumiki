@@ -17,7 +17,7 @@
 // These run the real pipeline and the real runtime, because every guarantee
 // here is runtime-truth: `check` and `build` were green throughout.
 
-import { mount } from "@kumikijs/runtime";
+import { mount, renderToString, routing } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
 
@@ -177,9 +177,11 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
  *
  * Two things follow and are pinned beside it: the nearest boundary wins (a
  * child's own comes first, being inner), and `PanicInfo.location` names the
- * tile that panicked rather than the one that declared the boundary — the
- * child is the one position where the two differ and the runtime knows which
- * tile was being built.
+ * route target whose build raised the panic rather than the tile that declared
+ * the boundary — the outlet child is the one position where they differ *and*
+ * the runtime has a name for the inner one. A tile the target renders inside
+ * its own body is not distinguished from the target: the runtime has no name
+ * for it.
  */
 describe("a boundary on a sub-routes parent covers the child in its outlet", () => {
   let disposeFn: (() => void) | undefined;
@@ -320,6 +322,113 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
     await tick();
     expect(root.textContent).toContain("caught: x");
     expect(live.unmounts).toBe(1);
+    expect(live.mounts).toBe(1);
+  });
+
+  it("names the route target, not a tile it renders inside its own body", async () => {
+    // The runtime has a name for a route target and for nothing under it, so
+    // the attribution stops at the target. Pinned so §7.3's "not distinguished
+    // from the target" is a measured limit rather than a caveat.
+    const { root } = await at(
+      `slot xs : List(Int) = []
+tile Fallback in=PanicInfo = column(text("caught at " + $1.location))
+tile NotFound = column(text("nf"))
+tile Inner = column(text(xs.head.get.show))
+tile Boom = column(Inner)
+tile Shell error-boundary=Fallback sub-routes={"/shell/a" -> Boom} = column(route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect(root.textContent).toContain("caught at Boom");
+    expect(root.textContent).not.toContain("Inner");
+  });
+
+  it("hands route.error the same attribution when no boundary catches it", async () => {
+    // `route.error`'s `$event.location` used to be absent for a render panic;
+    // it is the route target now, the same name the built-in display carries.
+    const { app } = await at(
+      `slot xs : List(Int) = []
+slot site : Text = "unset"
+reducer sawErr on=route.error("/shell/*") do= site := $event.location
+tile NotFound = column(text("nf"))
+tile Boom = column(text(xs.head.get.show))
+tile Shell sub-routes={"/shell/a" -> Boom} = column(route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect((app.live as Record<string, unknown>).site).toBe("Boom");
+  });
+
+  it("serves the parent's fallback from renderToString too", async () => {
+    // `renderToString` picks the tree through the same `pickRootTile`, with no
+    // try / catch of its own: the child's panic used to escape it as a throw,
+    // and now comes back as the fallback the client would show — SSR produces
+    // the tree CSR would.
+    const app = await loadSource(SHELL);
+    const rendered = await renderToString(app, { route: "/shell/a", routing });
+    expect(rendered.html).toContain("caught: get called on None at Boom");
+    expect(rendered.html).not.toContain("frame");
+  });
+});
+
+/**
+ * Where a panic is attributed once the route target is what the runtime
+ * names. `data-kumiki-panic` on the built-in display carries the attribution,
+ * so it is the probe for every path that has no boundary to show it in.
+ */
+describe("a panic is attributed to the route target being built", () => {
+  let disposeFn: (() => void) | undefined;
+  let mountedRoot: HTMLElement | undefined;
+  afterEach(() => {
+    disposeFn?.();
+    disposeFn = undefined;
+    mountedRoot?.remove();
+    mountedRoot = undefined;
+  });
+
+  const at = async (src: string, path = "/") => {
+    const app = await loadSource(src);
+    mountedRoot = freshRoot();
+    const { dispose } = mount(app, mountedRoot, { router: "memory", initialPath: path });
+    disposeFn = dispose;
+    await tick();
+    return mountedRoot;
+  };
+
+  it("names a route root that panics with no boundary", async () => {
+    const root = await at(`slot xs : List(Int) = []
+tile Bare = column(text(xs.head.get.show))
+app M caps=[] routes={"/" -> Bare, "/404" -> Bare} init=[]
+`);
+    expect(root.querySelector('[data-kumiki-panic="Bare"][role="alert"]')).not.toBeNull();
+  });
+
+  it("names the /404 tile, which pickRootTile reaches by its own branch", async () => {
+    const root = await at(
+      `slot xs : List(Int) = []
+tile Home = column(text("home"))
+tile Missing = column(text(xs.head.get.show))
+app M caps=[] routes={"/" -> Home, "/404" -> Missing} init=[]
+`,
+      "/no-such-path",
+    );
+    expect(root.querySelector('[data-kumiki-panic="Missing"][role="alert"]')).not.toBeNull();
+  });
+
+  it("names the declaring tile when its own fallback panics", async () => {
+    // The fallback is lowered inside the boundary's catch, so a panic in it
+    // leaves the factory the way an unguarded one would, and takes the same
+    // attribution path: the route target is `Boom`, the fallback has no name.
+    const root = await at(`slot xs : List(Int) = []
+tile Fallback in=PanicInfo = column(text(xs.head.get.show))
+tile Boom error-boundary=Fallback = column(text(panic("first")))
+tile Host = column(text("host"))
+app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
+`);
+    expect(root.textContent).toContain("Something went wrong: get called on None");
+    expect(root.querySelector('[data-kumiki-panic="Boom"][role="alert"]')).not.toBeNull();
   });
 });
 

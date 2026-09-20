@@ -85,7 +85,9 @@ function boundaryJs(
  * boundary would make a test on a panicking tile compare the fallback.
  *
  * It is the one application that cannot pass anything, so the target may
- * declare no `in=`: the entry lowers to `tile: () => …` and there is nothing
+ * declare no `in=`: the entry lowers to `tile: () => …` — a `sub-routes`
+ * parent to `tile: (_fill) => …`, whose one parameter is the outlet fill
+ * described below, not an argument the target can read — and there is nothing
  * to bind `$1` to.
  *
  * `where` is the entry being lowered — `Route /x`, `Sub-route /x in tile "Y"`

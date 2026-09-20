@@ -231,12 +231,14 @@ export type EventHandler = (el: Record<string, unknown>) => void;
 export class KumikiPanic extends Error {
   readonly isKumikiPanic = true as const;
   /**
-   * The tile the panic is attributed to, when one is known. Raised without one
-   * (`panic(message)`, `.get` on `None`) and filled in by the nearest frame
-   * that knows which tile it was building — `pickRootTile` for a route target —
-   * so a boundary or the top-level display can name the tile that panicked
-   * rather than the one that caught it (lifecycle.md §7.3). Set at most once:
-   * the innermost attribution is the accurate one.
+   * The tile — or, when a caller supplies one directly, the site — a panic is
+   * attributed to. Raised without one (`panic(message)`, `.get` on `None`) and
+   * filled in by the nearest frame that knows which route target it was
+   * building (`routeTree`), so a boundary or the top-level display can name
+   * that target rather than the tile that caught the panic (lifecycle.md
+   * §7.3). Mutable for that reason alone: `routeTree` writes it only while it
+   * is still empty, so the innermost attribution stands and nothing else
+   * should write it.
    */
   location: string | undefined;
   constructor(message: string, location?: string, options?: { cause?: unknown }) {
@@ -896,10 +898,14 @@ export type MountOptions = {
 
 /**
  * Fills the `route-outlet` of a tree a route target's factory just built, and
- * hands the tree back. `pickRootTile` passes one to every factory; a parent that
- * declares `sub-routes` calls it around its own tree from inside its
- * `error-boundary`, so the child it injects is built under the parent's
- * `try` / `catch` (lifecycle.md §7.3). A factory that has no outlet may ignore it.
+ * hands the tree back. `pickRootTile` passes one to every route-entry factory
+ * (the routeless `app.root` gets none); a parent that declares `sub-routes`
+ * calls it around its own tree from inside its `error-boundary`, so the child
+ * it injects is built under the parent's `try` / `catch` (lifecycle.md §7.3).
+ * A factory that has no outlet may ignore it, and so may one built before the
+ * fill existed: a parent that declares no parameter has its outlet filled
+ * after it returns — outside its boundary, which is the behaviour it was
+ * written for.
  */
 export type OutletFill = (tree: TileNode) => TileNode;
 
@@ -907,12 +913,17 @@ export type RouteEntry = {
   pattern: string;
   /**
    * The name of the tile this entry targets. A panic raised while building it
-   * carries no tile of its own, and this is what `pickRootTile` attributes it
-   * to (see `KumikiPanic.location`).
+   * is attributed to this name when it carries none yet; one a nearer frame
+   * already named keeps that name (see `KumikiPanic.location`).
    */
   name?: string;
-  /** Returns the TileNode for this route given the current state. */
-  tile: (fill: OutletFill) => TileNode;
+  /**
+   * Returns the TileNode for this route given the current state. `fill` is
+   * always passed; a factory that declares no parameter (`tile.length === 0`)
+   * is the pre-fill shape `OutletFill` describes, and is filled after it
+   * returns.
+   */
+  tile: (fill?: OutletFill) => TileNode;
   /**
    * Nested route table for parent routes that delegate to a `route-outlet`
    * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
@@ -1093,13 +1104,28 @@ export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>)
                 (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
               )
             : undefined;
-        const fill: OutletFill = childEntry
-          ? (tree) => {
-              injectRouteOutlet(tree, routeTree(childEntry, keepTree));
-              return tree;
-            }
-          : keepTree;
-        return routeTree(r, fill);
+        if (!childEntry) return routeTree(r, keepTree);
+        const fill: OutletFill = (tree) => {
+          if (!injectRouteOutlet(tree, routeTree(childEntry, keepTree))) {
+            // E0113 refuses a `sub-routes` tile whose body never calls
+            // `route-outlet`, but one under `when` / `if` / `match` passes it
+            // and can be absent at runtime. The child was built for nothing,
+            // and a panic in it was the parent's boundary's to catch — loud,
+            // so the smoke / scenario tiers see the outlet that was not there.
+            console.error(
+              `[kumiki] route "${r.pattern}" matched sub-route "${childEntry.pattern}" but tile "${r.name ?? r.pattern}" rendered no route-outlet — the child was discarded`,
+            );
+          }
+          return tree;
+        };
+        // A factory from before the fill existed (or a hand-built one) declares
+        // no parameter and so cannot call it: fill the outlet after the fact,
+        // as the runtime always did. Decided by the declared arity rather than
+        // by whether the fill ran, because a factory that takes it and whose
+        // boundary caught its own body's panic never reached it either — and
+        // there the fallback has replaced the section, child included.
+        const root = routeTree(r, fill);
+        return r.tile.length === 0 ? fill(root) : root;
       }
     }
     // 404 fallback tile
@@ -1120,13 +1146,25 @@ const keepTree: OutletFill = (tree) => tree;
  * fallback's `PanicInfo.location` should name the child that panicked, not the
  * parent that declared the boundary (#363). A panic already attributed — by a
  * frame further in — keeps its attribution.
+ *
+ * `isPanic` accepts a duck-typed panic from another realm or a second copy of
+ * the runtime, so the object written to here is not always one this runtime
+ * built. A frozen one, or a `location` with no setter, would turn the write
+ * into a `TypeError` that replaced the panic — and a boundary re-throws what
+ * is not a panic. Attribution is best-effort for the same reason
+ * `safeErrorField` exists: nothing thrown from inside a panic catch may
+ * displace the panic.
  */
 function routeTree(entry: RouteEntry, fill: OutletFill): TileNode {
   try {
     return entry.tile(fill);
   } catch (e) {
-    if (isPanic(e) && e.location === undefined && entry.name !== undefined) {
-      e.location = entry.name;
+    if (isPanic(e) && entry.name !== undefined) {
+      try {
+        if (e.location === undefined) e.location = entry.name;
+      } catch {
+        // host-frozen panic: attribution is best-effort
+      }
     }
     throw e;
   }

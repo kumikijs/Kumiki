@@ -9,17 +9,23 @@
 # wins: `Guarded` declares its own, so a panic there shows `GuardedFallback`
 # inside the outlet and the shell's frame stays up.
 #
-# `PanicInfo.location` names the tile that panicked (`Report`, `Guarded`),
-# not the tile whose boundary caught it.
+# `PanicInfo.location` names the route target the runtime was building when
+# a boundary further out catches the panic: the shell's fallback reads
+# `Report`, even though the read that panics is in `ReportBody` — a tile the
+# target renders inside its own body is not distinguished from the target.
+# A boundary the target declares itself names the target for the other
+# reason: `Guarded` is the tile that declares `GuardedFallback`.
 
 slot secret : Option(Text) = None
 slot reveal : Bool         = false
 
 tile NotFound = column(text("not found"))
 
+tile ReportBody = column(when(reveal, text("secret: " + secret.get)))
+
 tile Report = column(
     text("report: ready"),
-    when(reveal, text("secret: " + secret.get)))
+    ReportBody)
 
 tile Guarded
     error-boundary = GuardedFallback
@@ -29,11 +35,11 @@ tile Guarded
 
 tile SectionFallback
     in=PanicInfo
-    = text("section fallback: " + $1.message + " at " + $1.location) {color: "danger"}
+    = text("shell caught: " + $1.message + " at " + $1.location) {color: "danger"}
 
 tile GuardedFallback
     in=PanicInfo
-    = text("guarded fallback: " + $1.message + " at " + $1.location) {color: "danger"}
+    = text("guarded caught: " + $1.message + " at " + $1.location) {color: "danger"}
 
 tile BreakBtn = button(text="break", onClick=doBreak)
 

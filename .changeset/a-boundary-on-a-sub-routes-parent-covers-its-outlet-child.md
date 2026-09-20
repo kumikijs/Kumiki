@@ -37,6 +37,17 @@ its implementation status carried is gone. Routing §3.6.3 names the case.
 `packages/examples/features/92-outlet-error-boundary.kumiki` is the section
 with one fallback and a child that keeps its own, and its scenario asserts both.
 
-`RouteEntry.tile` takes an `OutletFill` (new export) — a hand-built entry that
-ignores it keeps working, and a hand-built `sub-routes` parent that never calls
-it renders an empty outlet.
+`route.error`'s `$event.location` moves with it: for a render panic it was
+absent, and it is the route target's name now — the same attribution the
+built-in display carries. `app.error` and the episode log are unchanged; both
+set `location` themselves.
+
+`RouteEntry.tile` takes an optional `OutletFill` (new export). The runtime
+always passes one, so an entry written as `tile: () => …` — a host's, or one a
+runtime bundle from before this change emitted — still type-checks on both
+sides and still renders its child: a parent that declares no parameter has
+its outlet filled after it returns, outside its boundary, which is the
+behaviour that factory was written for. A parent whose matched child finds no
+`route-outlet` in the rendered tree (one under `when` / `if` / `match` that is
+absent at runtime — E0113 accepts it) now reports the discarded child on
+`console.error`, where the smoke and scenario tiers listen.
