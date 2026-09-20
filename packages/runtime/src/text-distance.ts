@@ -1,9 +1,14 @@
 /**
  * Levenshtein edit distance, the one every did-you-mean in this repo measures
- * with. It lived twice — here and in `kumiki fix` — character for character
- * including its comment, so a change to one was a change to half the
- * suggestions. `@kumikijs/cli` depends on this package, so the copy lives here
- * and the CLI imports it.
+ * with. It lived twice — in the compiler and in `kumiki fix` — character for
+ * character including its comment, so a change to one was a change to half the
+ * suggestions. It lives here because this is the package everything else
+ * depends on: `@kumikijs/compiler` re-exports it, `@kumikijs/cli` imports that,
+ * and the scenario runner's unknown-reducer message reaches it without the
+ * runtime depending on the compiler (which depends on the runtime).
+ *
+ * Pure — no DOM, no Node. It is bundled only where it is used: `scenario.ts` is
+ * its one runtime caller, so the granular `dist/modules/*` build never sees it.
  *
  * The threshold is deliberately not here: what counts as "close enough"
  * belongs to the candidate set being searched, which is a closed vocabulary of

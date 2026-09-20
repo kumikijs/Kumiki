@@ -1,5 +1,5 @@
+import { levenshtein } from "@kumikijs/runtime";
 import { type Expr, isTileExpr, type TestDef, type TileExpr } from "./ast.ts";
-import { levenshtein } from "./text-distance.ts";
 
 /**
  * The section vocabulary of a test body, per test kind (spec §8.1.1).

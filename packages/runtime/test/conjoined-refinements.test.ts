@@ -132,7 +132,7 @@ describe("the error tile renders the failed predicate's message", () => {
     });
 
   it("reads the first predicate's message when it is the one that fails", () => {
-    const app = mountApp(withError("ab"));
+    mountApp(withError("ab"));
     expect(document.body.textContent).toContain("Must be more than 3 characters");
   });
 

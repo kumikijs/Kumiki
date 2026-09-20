@@ -173,6 +173,11 @@ export {
   replayEpisodes,
   type TestResult,
 } from "./testkit.ts";
+// The edit distance every did-you-mean in this repo measures with. It lives in
+// this package because this is the one below all the others: `@kumikijs/compiler`
+// re-exports it for `kumiki fix`, and the scenario runner here ranks reducer
+// names with it without the runtime depending on the compiler.
+export { levenshtein } from "./text-distance.ts";
 export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
 export { inputPatchers, inputTiles } from "./tiles-input.ts";
 export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";

@@ -1,4 +1,12 @@
 // Public API of @kumikijs/compiler.
+
+// The distance every did-you-mean measures with. Published because
+// `kumiki fix` ranks its own candidate sets with it, and two copies of one
+// metric is two answers to "which name did they mean". It is implemented in
+// `@kumikijs/runtime`, the package below both this one and the scenario runner
+// that also ranks names with it — re-exported here so the CLI's import is
+// unchanged.
+export { levenshtein } from "@kumikijs/runtime";
 export type * from "./ast.ts";
 // The name tables themselves stay internal: splitting them three ways is an
 // implementation choice (one lowers by full name, one by member, one not at
@@ -68,8 +76,4 @@ export { refinementToJs } from "./refinements.ts";
 // internal, and only the candidate-set question a repair asks is published.
 export { typeCandidates } from "./stdlib-types.ts";
 export { collectTimerNames, variantTagsOf } from "./symbols.ts";
-// The distance every did-you-mean measures with. Published because
-// `kumiki fix` ranks its own candidate sets with it, and two copies of one
-// metric is two answers to "which name did they mean".
-export { levenshtein } from "./text-distance.ts";
 export { A11Y_CODES, check, type KumikiError, ROUTE_SLOT_FIELDS } from "./typecheck.ts";
