@@ -188,13 +188,13 @@ importers:
       '@kumikijs/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@kumikijs/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       playwright:
         specifier: 'catalog:'
         version: 1.61.1
     devDependencies:
-      '@kumikijs/runtime':
-        specifier: workspace:*
-        version: link:../runtime
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.61.1

@@ -8,10 +8,10 @@
 // (reducers), and effects are mocked at the capability boundary — so the oracle
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
+import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
-import { levenshtein } from "./text-distance.ts";
 
 /** One thing to do to the app. Exactly one field should be set. */
 export type Action =
@@ -524,33 +524,6 @@ function requireSeam<K extends "_dispatch" | "_navigate">(
   return fn as NonNullable<Dispatchable[K]>;
 }
 
-/**
- * The name `written` most likely meant, as a clause to append — or nothing when
- * no candidate is close. A reducer a scenario cannot find is usually one a
- * rename moved, which leaves the new name an edit or two away, and naming it is
- * the whole repair.
- *
- * Same threshold as `kumiki fix` ranks its candidate sets with (at most 2
- * edits, or at most a quarter of the written name's length), measured with the
- * same metric: two rules for "which name did they mean" would be two answers.
- */
-function nearestName(written: string, candidates: string[]): string {
-  let best: string | undefined;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (const cand of candidates) {
-    const d = levenshtein(written, cand);
-    if (d < bestScore) {
-      bestScore = d;
-      best = cand;
-    }
-  }
-  if (best === undefined) return "";
-  if (bestScore <= 2 || bestScore <= Math.ceil(written.length * 0.25)) {
-    return ` — did you mean "${best}"?`;
-  }
-  return "";
-}
-
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   // The waiting is the caller's: this step's settle is longer by `wait`.
   if ("wait" in a) return;
@@ -577,13 +550,17 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     // handler — so making it throw would change what an app does to enforce a
     // test-harness contract. A precondition reads the same `app.reducers` the
     // seam searches, and throwing lands on `actionError` with no runtime change
-    // at all.
+    // at all. `dispatchFault` is what the browser tier asks too, so the two
+    // agree by construction rather than by two hand-written copies of the rule.
     const dispatch = requireSeam(app, "_dispatch", describeAction(a));
-    const names = app.reducers.map((r) => r.name);
-    if (!names.includes(a.dispatch)) {
-      throw new Error(`no reducer named ${a.dispatch}${nearestName(a.dispatch, names)}`);
-    }
-    dispatch(a.dispatch, a.payload ?? {});
+    const payload = a.payload ?? {};
+    const fault = dispatchFault(
+      a.dispatch,
+      payload,
+      app.reducers.map((r) => ({ name: r.name, id: r.selector?.id ?? null })),
+    );
+    if (fault) throw new Error(fault);
+    dispatch(a.dispatch, payload);
     return;
   }
   if ("navigate" in a) {

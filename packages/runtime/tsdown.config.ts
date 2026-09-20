@@ -27,6 +27,14 @@ import { publishedOutputOptions } from "../../tsdown.shared.ts";
 //   compiler's list, so a generated chunk name it cannot know ships as a
 //   dangling import. `packages/tests/modular-build.test.ts` compares this
 //   directory against the compiler's tables exactly, which is what catches it.
+// - `dist/text-distance.js` — the `./text-distance` subpath, built on its own so
+//   a consumer that wants the did-you-mean metric (the compiler does, on every
+//   `kumiki check`) does not evaluate the whole runtime to reach it. A SEPARATE
+//   config rather than a second entry beside `index`: two entries in one build
+//   would make `index.js` import this file instead of inlining it, and
+//   `inlineRuntime` needs `dist/index.js` to be one self-contained file. The
+//   duplicated copy that costs is a few hundred bytes, and the same trade the
+//   granular modules already make.
 export default defineConfig([
   {
     entry: { index: "src/index.ts" },
@@ -34,6 +42,15 @@ export default defineConfig([
     dts: true,
     // Emit .js/.d.ts (honors "type": "module") instead of tsdown's node-default .mjs.
     fixedExtension: false,
+    outputOptions: publishedOutputOptions,
+  },
+  {
+    entry: { "text-distance": "src/text-distance.ts" },
+    format: "esm",
+    dts: true,
+    fixedExtension: false,
+    // The first config already cleaned dist/; cleaning here would race it.
+    clean: false,
     outputOptions: publishedOutputOptions,
   },
   {

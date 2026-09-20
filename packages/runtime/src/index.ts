@@ -96,6 +96,9 @@ export {
   withEnvRecord,
   withEnvReplay,
 } from "./core.ts";
+// The `{dispatch}` precondition both verification tiers ask, so §8.10's
+// promise that they agree is structural rather than hand-maintained.
+export { type DispatchTarget, dispatchFault } from "./dispatch-check.ts";
 export { installConfirm } from "./effects-confirm.ts";
 export { httpFetch } from "./effects-http.ts";
 export {
@@ -173,11 +176,13 @@ export {
   replayEpisodes,
   type TestResult,
 } from "./testkit.ts";
-// The edit distance every did-you-mean in this repo measures with. It lives in
-// this package because this is the one below all the others: `@kumikijs/compiler`
-// re-exports it for `kumiki fix`, and the scenario runner here ranks reducer
-// names with it without the runtime depending on the compiler.
-export { levenshtein } from "./text-distance.ts";
+// The did-you-mean metric and the ranking built on it. They live in this
+// package because this is the one below all the others: `@kumikijs/compiler`
+// re-exports them for `kumiki fix`, and the verification tiers here rank
+// reducer names with them without the runtime depending on the compiler. The
+// `@kumikijs/runtime/text-distance` subpath is the cheap door for a consumer
+// that wants only these — this barrel evaluates the whole runtime.
+export { levenshtein, nearestName } from "./text-distance.ts";
 export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
 export { inputPatchers, inputTiles } from "./tiles-input.ts";
 export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";

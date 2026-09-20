@@ -349,7 +349,10 @@ app Todos
       steps: [{ do: { dispatch: "addTodo" }, expect: { state: { todos: "" } } }],
     });
     expect(report.ok).toBe(false);
-    expect(report.steps[0]?.actionError).toContain("addTodo");
+    // Quoted, like every other `actionError` that carries text from the
+    // fixture: trailing whitespace or a stray character in the name is the typo
+    // a reader is here to find, and unquoted it is invisible.
+    expect(report.steps[0]?.actionError).toContain('no reducer named "addTodo"');
   });
 
   // Same channel discipline as the nine selector verbs: the fault is the
@@ -380,6 +383,19 @@ app Todos
     expect(report.steps[0]?.actionError).toContain('did you mean "addTodoItem"');
   });
 
+  // The other side of the threshold. A suggestion that names an unrelated
+  // reducer reads as authoritative, so over-suggesting is the direction that
+  // misleads — a name nothing is close to gets no clause at all.
+  it("offers no suggestion when nothing is close", async () => {
+    const app = await loadSource(RENAMED);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "purgeEverything" } }],
+    });
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain('no reducer named "purgeEverything"');
+    expect(fault).not.toContain("did you mean");
+  });
+
   it("still dispatches the reducer that does exist", async () => {
     const app = await loadSource(RENAMED);
     const report = await runScenario(app, freshRoot(), {
@@ -389,21 +405,24 @@ app Todos
     expect(report.ok).toBe(true);
   });
 
-  // The other silence two lines down in the same seam is deliberate: §1.6.2
-  // says an id-scoped reducer applies only to the element carrying that `{id}`,
-  // so a dispatch that does not name it is asking for a reducer that
-  // legitimately does not apply. Over-reporting here would fail every scenario
-  // driving a bare tile whose name some id-scoped reducer also claims.
-  it("leaves a dispatch skipped only by the id scope alone", async () => {
+  // The seam's id-scoped `return` is deliberate on the CLICK path: a DOM event
+  // reaches the codegen'd handler, which calls `_dispatch` once per same-tile
+  // reducer name, and the id-mismatched ones drop out there — §1.6.2 working.
+  // `performAction`'s `{dispatch}` branch is never on that path. It sees one
+  // explicit step naming one reducer, so a step that cannot reach the reducer it
+  // named did nothing, and leaving it green pins the exact shape #410 reported.
+  it("fails a dispatch that the id scope would drop", async () => {
     const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
     const report = await runScenario(app, freshRoot(), {
       steps: [{ do: { dispatch: "scopedMiss" }, expect: { state: { log: "" } } }],
     });
-    expect(report.steps[0]?.actionError).toBeUndefined();
-    expect(report.ok).toBe(true);
+    expect(report.ok).toBe(false);
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain('reducer "scopedMiss" is scoped to #edit');
+    expect(fault).toContain('{"id": "edit"}');
   });
 
-  it("still fires that same reducer when the payload carries its id", async () => {
+  it("fires that same reducer when the payload carries its id", async () => {
     const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
     const report = await runScenario(app, freshRoot(), {
       steps: [
@@ -414,6 +433,17 @@ app Todos
       ],
     });
     expect(report.steps.flatMap((s) => [...s.errors, ...s.failures])).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
+  // ...and the check does not over-report: an unscoped reducer needs no id, so
+  // the common case carries no payload and still fires.
+  it("leaves an unscoped reducer alone", async () => {
+    const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "plain" }, expect: { state: { log: "plain;" } } }],
+    });
+    expect(report.steps[0]?.actionError).toBeUndefined();
     expect(report.ok).toBe(true);
   });
 });

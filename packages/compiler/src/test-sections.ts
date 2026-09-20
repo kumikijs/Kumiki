@@ -1,4 +1,4 @@
-import { levenshtein } from "@kumikijs/runtime";
+import { levenshtein } from "@kumikijs/runtime/text-distance";
 import { type Expr, isTileExpr, type TestDef, type TileExpr } from "./ast.ts";
 
 /**
