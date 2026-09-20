@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "the child renders inside the shell while nothing has panicked",
+      "do": { "navigate": "/section/report" },
+      "expect": {
+        "noErrors": true,
+        "state": { "reveal": false },
+        "domIncludes": ["Section", "report: ready"]
+      }
+    },
+    {
+      "label": "the child panics and the shell's boundary shows its fallback in place of the section, naming the route target rather than the tile inside it",
+      "do": { "clickText": "break" },
+      "expect": {
+        "noErrors": true,
+        "state": { "reveal": true },
+        "domIncludes": ["shell caught: get called on None at Report"],
+        "domExcludes": ["Section", "report: ready", "at ReportBody"]
+      }
+    },
+    {
+      "label": "a child with its own boundary keeps the panic to itself — nearest wins, and the shell stays up",
+      "do": { "navigate": "/section/guarded" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Section", "guarded caught: get called on None at Guarded"],
+        "domExcludes": ["shell caught"]
+      }
+    }
+  ]
+}

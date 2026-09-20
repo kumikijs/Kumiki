@@ -85,19 +85,30 @@ function boundaryJs(
  * boundary would make a test on a panicking tile compare the fallback.
  *
  * It is the one application that cannot pass anything, so the target may
- * declare no `in=`: the entry lowers to `tile: () => …` and there is nothing
+ * declare no `in=`: the entry lowers to `tile: () => …` — a `sub-routes`
+ * parent to `tile: (_fill) => …`, whose one parameter is the outlet fill
+ * described below, not an argument the target can read — and there is nothing
  * to bind `$1` to.
  *
  * `where` is the entry being lowered — `Route /x`, `Sub-route /x in tile "Y"`
  * — so the refusal names it, as the undefined-target throws beside the call
  * sites do. One `in=` tile can be named by several entries, and the throw is
  * reported without its stack.
+ *
+ * `fill` is the JS name of the outlet fill the runtime hands the factory
+ * (`OutletFill` in the runtime). A tile that declares `sub-routes` calls it
+ * around its own tree, *inside* its boundary, so the child the runtime injects
+ * into the `route-outlet` is built under the parent's `try` / `catch` — the
+ * §7.3 reading that a boundary covers what renders under the tile, the outlet
+ * child included (#363). The child's own boundary, being inner, still wins.
+ * A tile with no `sub-routes` has nothing to fill and takes no `fill`.
  */
-export function genRouteTile(tile: TileDef, gen: GenCtx, where: string): string {
+export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: string): string {
   // Unreachable: E0213 refuses the entry. It used to lower anyway, and the
   // mount died with `_d_1 is not defined` after `check` and `build` said ok.
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
-  return boundaryJs(tile, `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`, gen);
+  const named = `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`;
+  return boundaryJs(tile, fill ? `${fill}(${named})` : named, gen);
 }
 
 export function tileExprJs(

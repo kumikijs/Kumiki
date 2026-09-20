@@ -398,7 +398,12 @@ export const _stdlibCore = {
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
     const rec = panicInfo(e, "tile-render");
-    return { message: rec.message, location, category: rec.category };
+    // The panic names the tile it was attributed to when a frame nearer to it
+    // knew which route target it was building (a `sub-routes` child in the
+    // declaring tile's outlet, #363); `location` — the tile that declares the
+    // boundary — is what it is attributed to otherwise. An empty attribution
+    // is none: only a hand-built entry or a cross-realm panic can carry one.
+    return { message: rec.message, location: rec.location || location, category: rec.category };
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {

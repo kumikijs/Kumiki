@@ -691,8 +691,10 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
 
 /**
  * A route entry applies the tile it names, and is the only application that
- * cannot pass anything: the route table lowers to `tile: () => …`
- * (`codegen.ts`), so a target that declares `in=` leaves `$1` unbound and the
+ * cannot pass anything: the route table lowers to `tile: () => …` — a
+ * `sub-routes` parent to `tile: (_fill) => …`, whose parameter is the runtime's
+ * outlet fill and nothing the target can read (`codegen.ts`) — so a target that
+ * declares `in=` leaves `$1` unbound and the
  * mount dies with `_d_1 is not defined` — `check` and `build` both say ok and
  * the app renders nothing at all.
  *

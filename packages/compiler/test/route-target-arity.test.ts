@@ -1,5 +1,7 @@
 // A route entry applies the tile it names, and is the only application that
-// cannot pass anything: the route table lowers to `tile: () => …`. A target
+// cannot pass anything: the route table lowers to `tile: () => …` (a
+// `sub-routes` parent to `tile: (_fill) => …`, whose parameter is the runtime's
+// outlet fill, not an argument the target can read). A target
 // that declared `in=` left `$1` unbound, so `check` and `build` both said ok
 // and the mount died with `_d_1 is not defined` — nothing rendered at all.
 

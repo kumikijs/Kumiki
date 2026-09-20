@@ -244,6 +244,7 @@ tile SettingsLayout
 - If no child route matches, the parent's `/settings` (default) is used
 - If that also fails, fall through to the global `/404`
 - Multiple `route-outlet()` calls inside a single parent tile are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
+- The child renders **under** the parent: an `error-boundary` on the parent covers it, and a boundary the child declares itself wins ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)).
 
 ---
 

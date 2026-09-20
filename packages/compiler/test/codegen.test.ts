@@ -347,6 +347,13 @@ describe("codegen", () => {
     expect(result.js).toContain("subRoutes:");
     expect(result.js).toContain('pattern: "/settings/account"');
     expect(result.js).toContain('pattern: "/settings"');
+    // Every tile entry names its target — what the runtime attributes a panic
+    // raised while building it to — and the parent alone takes the runtime's
+    // outlet fill, so the child it injects is built inside the parent's
+    // boundary (lifecycle.md §7.3, #363). The child lowers without one.
+    expect(result.js).toContain('name: "Layout", tile: (_fill) =>');
+    expect(result.js).toContain('name: "Account", tile: () =>');
+    expect(result.js).toContain('name: "NotFound", tile: () =>');
   });
 
   it("lowers `@token` refs in a style block to runtime `_s.token(...)` calls (§4.3)", () => {
