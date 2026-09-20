@@ -1,0 +1,61 @@
+# Feature: an `error-boundary` on a `sub-routes` parent covers the child in
+# its `route-outlet` (spec/lifecycle.md §7.3, spec/routing.md §3.6).
+#
+# A boundary holds for everything that renders under the tile, and a child the
+# runtime injects into the parent's outlet is under it. So the obvious way to
+# write "one fallback for this whole section" — declare it on the shell —
+# covers the children too: `Report` declares no boundary, and a panic in it
+# shows `SectionFallback` in place of the whole section. The nearest boundary
+# wins: `Guarded` declares its own, so a panic there shows `GuardedFallback`
+# inside the outlet and the shell's frame stays up.
+#
+# `PanicInfo.location` names the tile that panicked (`Report`, `Guarded`),
+# not the tile whose boundary caught it.
+
+slot secret : Option(Text) = None
+slot reveal : Bool         = false
+
+tile NotFound = column(text("not found"))
+
+tile Report = column(
+    text("report: ready"),
+    when(reveal, text("secret: " + secret.get)))
+
+tile Guarded
+    error-boundary = GuardedFallback
+    = column(
+        text("guarded: ready"),
+        when(reveal, text("secret: " + secret.get)))
+
+tile SectionFallback
+    in=PanicInfo
+    = text("section fallback: " + $1.message + " at " + $1.location) {color: "danger"}
+
+tile GuardedFallback
+    in=PanicInfo
+    = text("guarded fallback: " + $1.message + " at " + $1.location) {color: "danger"}
+
+tile BreakBtn = button(text="break", onClick=doBreak)
+
+tile Section
+    error-boundary = SectionFallback
+    sub-routes = {
+        "/section/report"  -> Report,
+        "/section/guarded" -> Guarded
+    }
+    = column(
+        heading("Section"),
+        BreakBtn,
+        route-outlet())
+      {pad: "lg", gap: "md"}
+
+reducer doBreak on=ui.click(BreakBtn) do= reveal := true
+
+app OutletErrorBoundary
+    caps   = []
+    routes = {
+        "/"          -> NotFound,
+        "/section/*" -> Section,
+        "/404"       -> NotFound
+    }
+    init   = []

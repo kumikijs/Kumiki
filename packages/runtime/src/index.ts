@@ -62,6 +62,7 @@ export {
   mountCore,
   type NavContext,
   type NeverEqualCause,
+  type OutletFill,
   overridableInvoke,
   type PanicCategory,
   type PanicCauseLink,

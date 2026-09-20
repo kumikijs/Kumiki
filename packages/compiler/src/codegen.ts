@@ -192,6 +192,10 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // If the parent tile declares `sub-routes`, attach a nested route table
   // (spec/routing.md §3.6) so the runtime can re-match the path inside the
   // parent's wildcard pattern and inject the matched child into `route-outlet`.
+  // The parent's factory takes the runtime's outlet fill and applies it inside
+  // its own boundary (`genRouteTile`), so the child renders under the parent's
+  // `error-boundary` (lifecycle.md §7.3). Every tile entry also carries `name`,
+  // which is what the runtime attributes a panic raised while building it to.
   lines.push("const _routes = [");
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) {
@@ -204,9 +208,10 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
       const where = `Route ${r.path}`;
       if (!tile) throw new Error(`${where} targets undefined tile "${r.tile}"`);
       const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
+      const name = `name: ${JSON.stringify(tile.name)}`;
       if (tile.subRoutes && tile.subRoutes.length > 0) {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx, where)}${sr}, subRoutes: [`,
+          `  { pattern: ${JSON.stringify(r.path)}, ${name}, tile: (_fill) => ${genRouteTile(tile, ctx, where, "_fill")}${sr}, subRoutes: [`,
         );
         for (const subR of tile.subRoutes) {
           if (subR.tile.startsWith(">>")) {
@@ -219,14 +224,14 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
             if (!childTile) throw new Error(`${childWhere} targets undefined tile "${subR.tile}"`);
             const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
             lines.push(
-              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genRouteTile(childTile, ctx, childWhere)}${csr} },`,
+              `    { pattern: ${JSON.stringify(subR.path)}, name: ${JSON.stringify(childTile.name)}, tile: () => ${genRouteTile(childTile, ctx, childWhere)}${csr} },`,
             );
           }
         }
         lines.push(`  ] },`);
       } else {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genRouteTile(tile, ctx, where)}${sr} },`,
+          `  { pattern: ${JSON.stringify(r.path)}, ${name}, tile: () => ${genRouteTile(tile, ctx, where)}${sr} },`,
         );
       }
     }

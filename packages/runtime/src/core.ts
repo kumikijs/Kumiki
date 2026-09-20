@@ -230,7 +230,15 @@ export type EventHandler = (el: Record<string, unknown>) => void;
  */
 export class KumikiPanic extends Error {
   readonly isKumikiPanic = true as const;
-  readonly location: string | undefined;
+  /**
+   * The tile the panic is attributed to, when one is known. Raised without one
+   * (`panic(message)`, `.get` on `None`) and filled in by the nearest frame
+   * that knows which tile it was building — `pickRootTile` for a route target —
+   * so a boundary or the top-level display can name the tile that panicked
+   * rather than the one that caught it (lifecycle.md §7.3). Set at most once:
+   * the innermost attribution is the accurate one.
+   */
+  location: string | undefined;
   constructor(message: string, location?: string, options?: { cause?: unknown }) {
     // Forward `cause` to the native Error(message, options) so root-cause
     // information survives on the standard `.cause` field. Older callsites
@@ -886,10 +894,25 @@ export type MountOptions = {
   hydrate?: boolean;
 };
 
+/**
+ * Fills the `route-outlet` of a tree a route target's factory just built, and
+ * hands the tree back. `pickRootTile` passes one to every factory; a parent that
+ * declares `sub-routes` calls it around its own tree from inside its
+ * `error-boundary`, so the child it injects is built under the parent's
+ * `try` / `catch` (lifecycle.md §7.3). A factory that has no outlet may ignore it.
+ */
+export type OutletFill = (tree: TileNode) => TileNode;
+
 export type RouteEntry = {
   pattern: string;
+  /**
+   * The name of the tile this entry targets. A panic raised while building it
+   * carries no tile of its own, and this is what `pickRootTile` attributes it
+   * to (see `KumikiPanic.location`).
+   */
+  name?: string;
   /** Returns the TileNode for this route given the current state. */
-  tile: () => TileNode;
+  tile: (fill: OutletFill) => TileNode;
   /**
    * Nested route table for parent routes that delegate to a `route-outlet`
    * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
@@ -1060,23 +1083,53 @@ export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>)
     const cur = slotValues.route as ParsedRoute;
     for (const r of app.routes) {
       if (r.pattern === cur.pattern && "tile" in r) {
-        const root = r.tile();
-        // §3.6: parent route delegates child rendering to `route-outlet`.
-        if (cur.childPattern && r.subRoutes) {
-          const childEntry = r.subRoutes.find(
-            (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
-          );
-          if (childEntry) injectRouteOutlet(root, childEntry.tile());
-        }
-        return root;
+        // §3.6: parent route delegates child rendering to `route-outlet`. The
+        // child is built inside the parent's factory — through the fill the
+        // factory calls around its own tree — rather than after it returns, so
+        // a boundary the parent declares covers the child (lifecycle.md §7.3).
+        const childEntry =
+          cur.childPattern && r.subRoutes
+            ? r.subRoutes.find(
+                (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+              )
+            : undefined;
+        const fill: OutletFill = childEntry
+          ? (tree) => {
+              injectRouteOutlet(tree, routeTree(childEntry, keepTree));
+              return tree;
+            }
+          : keepTree;
+        return routeTree(r, fill);
       }
     }
     // 404 fallback tile
     for (const r of app.routes) {
-      if (r.pattern === "/404" && "tile" in r) return r.tile();
+      if (r.pattern === "/404" && "tile" in r) return routeTree(r, keepTree);
     }
   }
   return app.root ? app.root() : { kind: "text", text: "(no root)" };
+}
+
+/** The fill for a factory whose outlet has nothing to show (or that has none). */
+const keepTree: OutletFill = (tree) => tree;
+
+/**
+ * Build a route target's tree, attributing a panic raised while building it to
+ * the tile the entry names when nothing nearer has. A `sub-routes` child is the
+ * case that needs this: its panic is caught by the parent's boundary, and the
+ * fallback's `PanicInfo.location` should name the child that panicked, not the
+ * parent that declared the boundary (#363). A panic already attributed — by a
+ * frame further in — keeps its attribution.
+ */
+function routeTree(entry: RouteEntry, fill: OutletFill): TileNode {
+  try {
+    return entry.tile(fill);
+  } catch (e) {
+    if (isPanic(e) && e.location === undefined && entry.name !== undefined) {
+      e.location = entry.name;
+    }
+    throw e;
+  }
 }
 
 /** One slot in a reducer batch whose new value its refinement refuses. */

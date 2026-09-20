@@ -51,6 +51,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [39-effect-session](./39-effect-session.kumiki) | sessionStorage persistence (per-tab; same shape as `storage-*`) |
 | [21-timer](./21-timer.kumiki) | periodic execution with `timer(1s)` |
 | [23-lifecycle-route-enter](./23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
+| [92-outlet-error-boundary](./92-outlet-error-boundary.kumiki) | an `error-boundary` on a `sub-routes` shell covering the child in its `route-outlet`, and a child's own boundary winning |
 | [46-stdlib-paren-methods](./46-stdlib-paren-methods.kumiki) | paren-form stdlib methods (`is-ok()` / `values()` / `lower()` / `sort()` etc.) + `Bytes.from-text/base64/bytes` constructors |
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | names that are JS reserved words (`new` / `class` / `var`) or look like runtime internals (`_live` / `_s`) |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | a conditional swapping two inline tiles that differ only in their handler |

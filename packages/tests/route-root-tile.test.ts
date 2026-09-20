@@ -164,6 +164,166 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
 });
 
 /**
+ * A boundary on a `sub-routes` parent covers the child in its `route-outlet`.
+ *
+ * §7.3 scopes a boundary to what renders *under* the tile, and a child the
+ * runtime injects into the parent's outlet is under it in the rendered tree.
+ * It used to be constructed outside the parent's `try` / `catch` — `pickRootTile`
+ * returned from the parent's factory before it called the child's — so a
+ * boundary declared only on the shell covered the frame and nothing else, and
+ * the one obvious way to write "one fallback for this whole section" silently
+ * did not (#363). The parent's factory now takes the outlet's contents as a
+ * callback, so the child is built inside the parent's guard.
+ *
+ * Two things follow and are pinned beside it: the nearest boundary wins (a
+ * child's own comes first, being inner), and `PanicInfo.location` names the
+ * tile that panicked rather than the one that declared the boundary — the
+ * child is the one position where the two differ and the runtime knows which
+ * tile was being built.
+ */
+describe("a boundary on a sub-routes parent covers the child in its outlet", () => {
+  let disposeFn: (() => void) | undefined;
+  let mountedRoot: HTMLElement | undefined;
+  afterEach(() => {
+    disposeFn?.();
+    disposeFn = undefined;
+    mountedRoot?.remove();
+    mountedRoot = undefined;
+  });
+
+  const at = async (src: string, path: string) => {
+    const app = await loadSource(src);
+    mountedRoot = freshRoot();
+    const { dispose } = mount(app, mountedRoot, { router: "memory" });
+    disposeFn = dispose;
+    await tick();
+    (app as typeof app & { _navigate: (p: string, replace?: boolean) => void })._navigate(
+      path,
+      false,
+    );
+    await tick();
+    return { app, root: mountedRoot };
+  };
+
+  /** The issue's program: the child declares no boundary, the shell does. */
+  const SHELL = `slot xs : List(Int) = []
+tile Fallback in=PanicInfo = column(text("caught: " + $1.message + " at " + $1.location) {test-id: "fallback"})
+tile NotFound = column(text("nf"))
+tile Boom = column(text(xs.head.get.show))
+tile Shell error-boundary=Fallback sub-routes={"/shell/a" -> Boom} = column(text("frame"), route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`;
+
+  it("renders the parent's fallback when the outlet child panics", async () => {
+    const { root } = await at(SHELL, "/shell/a");
+    expect(root.querySelector('[data-kumiki-test="fallback"]')).not.toBeNull();
+    expect(root.textContent).toContain("caught: get called on None");
+    // The whole section is replaced, frame included: the fallback stands where
+    // the shell's tree would have been, exactly as for a panic in the shell's
+    // own body.
+    expect(root.textContent).not.toContain("frame");
+    expect(root.querySelector("[data-kumiki-panic]")).toBeNull();
+  });
+
+  it("names the tile that panicked in PanicInfo.location, not the parent", async () => {
+    const { root } = await at(SHELL, "/shell/a");
+    expect(root.textContent).toContain("at Boom");
+  });
+
+  it("still names the parent when the parent's own body panics", async () => {
+    const { root } = await at(
+      `slot xs : List(Int) = []
+tile Fallback in=PanicInfo = column(text("caught at " + $1.location))
+tile NotFound = column(text("nf"))
+tile Child = column(text("child"))
+tile Shell error-boundary=Fallback sub-routes={"/shell/a" -> Child} = column(text(xs.head.get.show), route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect(root.textContent).toContain("caught at Shell");
+  });
+
+  it("lets a boundary on the child win over the parent's — nearest, not outermost", async () => {
+    const { root } = await at(
+      `slot xs : List(Int) = []
+tile Outer in=PanicInfo = column(text("outer caught " + $1.message) {test-id: "outer"})
+tile Inner in=PanicInfo = column(text("inner caught " + $1.message + " at " + $1.location) {test-id: "inner"})
+tile NotFound = column(text("nf"))
+tile Boom error-boundary=Inner = column(text(xs.head.get.show))
+tile Shell error-boundary=Outer sub-routes={"/shell/a" -> Boom} = column(text("frame"), route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect(root.querySelector('[data-kumiki-test="inner"]')).not.toBeNull();
+    expect(root.querySelector('[data-kumiki-test="outer"]')).toBeNull();
+    expect(root.textContent).toContain("inner caught get called on None at Boom");
+    // The child's boundary contained the panic, so the shell rendered as usual.
+    expect(root.textContent).toContain("frame");
+  });
+
+  it("keeps a healthy child in the outlet under a parent that declares a boundary", async () => {
+    // The parent's factory changed shape to make room for the child; the
+    // ordinary case has to come out the same as before.
+    const { root } = await at(
+      `tile Fallback in=PanicInfo = column(text("caught"))
+tile NotFound = column(text("nf"))
+tile Child = column(text("child"))
+tile Shell error-boundary=Fallback sub-routes={"/shell/a" -> Child} = column(text("frame"), route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect(root.textContent).toContain("frame");
+    expect(root.textContent).toContain("child");
+    expect(root.textContent).not.toContain("caught");
+  });
+
+  it("leaves a child with no boundary anywhere to the built-in display, naming the child", async () => {
+    const { root } = await at(
+      `slot xs : List(Int) = []
+tile NotFound = column(text("nf"))
+tile Boom = column(text(xs.head.get.show))
+tile Shell sub-routes={"/shell/a" -> Boom} = column(text("frame"), route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect(root.textContent).toContain("Something went wrong:");
+    expect(root.querySelector('[data-kumiki-panic="Boom"][role="alert"]')).not.toBeNull();
+  });
+
+  it("fires tile.unmount for the child when the outlet child starts panicking", async () => {
+    // The child rendered once (mount fired), then a click makes it panic and
+    // the parent's fallback replaces the whole section: the child is gone from
+    // the rendered tree, so its unmount fires, and nothing re-mounts it.
+    const { app, root } = await at(
+      `slot go : Bool = false
+slot mounts : Int = 0
+slot unmounts : Int = 0
+reducer sawMount on=tile.mount(Child) do= mounts := mounts + 1
+reducer sawUnmount on=tile.unmount(Child) do= unmounts := unmounts + 1
+reducer fire on=ui.click(Btn) do= go := true
+tile Btn = button(text="go", onClick=fire)
+tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
+tile NotFound = column(text("nf"))
+tile Child = column(text("child"), when(go, text(panic("x"))))
+tile Shell error-boundary=Fallback sub-routes={"/shell/a" -> Child} = column(Btn, route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    const live = app.live as Record<string, unknown>;
+    expect(live.mounts).toBe(1);
+    root.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await tick();
+    expect(root.textContent).toContain("caught: x");
+    expect(live.unmounts).toBe(1);
+  });
+});
+
+/**
  * What a boundary takes, and what it refuses.
  *
  * §7.2.2 defines a panic as a controlled signal — `panic(message)`, the
