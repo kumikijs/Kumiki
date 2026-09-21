@@ -35,10 +35,10 @@ import {
   pickRootTile,
   type RoutingImpl,
   readStatus,
+  refuseCapability,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
-  warnUndeclaredCapability,
   withEnvRecord,
   withRenderingApp,
 } from "./core.ts";
@@ -215,8 +215,21 @@ async function dispatchEmit(
   // start that never ends leaves the bootstrap episode uncommitted, and
   // `renderToString` refuses to return one.
   if (effect.cap !== "" && !caps.has(effect.cap)) {
-    warnUndeclaredCapability(effect.cap);
+    // Both records, because they say different things: the start / cancel pair
+    // is that this emit did not run, and the `panic` step is that it was
+    // refused and why (§10.4.2's second clause). `refuseCapability` prints the
+    // same console line the live path prints, which is the signal that
+    // replaces the `console.warn` this used to be. What the live path does
+    // beyond this is fire `app.error`, and this pass has none to fire: a
+    // server-side reducer panic is a `panic` step and nothing more (see
+    // `applyReducerOnSsr`), and a refusal is held to that same rule rather
+    // than inventing a second one.
     logger.cancelPendingEffect(logger.recordEffectStart(emit.effect, input), emit.effect);
+    // After the pair, not before it: the pair is the event (this emit did not
+    // run) and the panic step is the explanation, so a reader meets them in
+    // that order. It also makes the episode `status: "panic"`, which is what
+    // an episode carrying a panic step says on the live path too.
+    logger.recordPanic(refuseCapability(emit.effect, effect.cap));
     return;
   }
   const token = logger.recordEffectStart(emit.effect, input);

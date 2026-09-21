@@ -627,6 +627,12 @@ reducer が完了すると、emit された effect 集合がディスパッチ�
 
 各 effect の `cap` が `app.caps` に含まれるか検査。違反は実行せず `app.error` に通知。
 
+`cap` が空の effect は標準の表示系 effect であり、ゲートを通さない。
+
+通知の中身は [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) の `PanicInfo` であり、`category` は `"capability"`、`location` は拒否された effect を名指す。併せて、検証ティアが読むチャネルである `console.error` にも出力し、その emit を囲む episode が開いていればその episode に `panic` step としても記録する。throw は発生していないので `stack` も `cause` も持たない。
+
+報告は live・SSR の両経路が同じ言葉で行う。異なるのは報告*先*である。`renderToString` には発火すべき `app.error` が無く（そのパスでの reducer panic が `panic` step だけで終わるのと同じ理由。[§10.5.1](#_10-5-1-structure-of-an-episode)）、サーバ側ではコンソールと episode がすべてである。live 経路では `app.init` の emit が最初の episode が開く前に dispatch されるため、コンソールと `app.error` には報告されるが、step を付ける episode が無い。
+
 ### 10.4.3 policy 処理
 
 | policy | 実装 |

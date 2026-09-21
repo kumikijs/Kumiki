@@ -668,6 +668,12 @@ When a reducer completes, the set of emitted effects is passed to the dispatcher
 
 Checks whether each effect's `cap` is included in `app.caps`. A violation is not executed and is notified to `app.error`.
 
+An effect with an empty `cap` is a standard presentation effect and passes ungated.
+
+The notification is the `PanicInfo` of [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer), under `category: "capability"`, with `location` naming the refused effect. It also goes to `console.error`, the channel the verification tiers read, and — where an episode is open around the emit — to that episode as a `panic` step. Nothing was thrown, so it carries no `stack` and no `cause`.
+
+Both passes report, in the same words. What differs is what they can report *to*: `renderToString` has no `app.error` to fire, the same way a reducer panic on that pass is a `panic` step and nothing more ([§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)), so on the server the console and the episode are the whole of it. On the live path, an emit from `app.init` is dispatched before the first episode opens, so it reports to the console and to `app.error` but has no episode to attach a step to.
+
 ### 10.4.3 policy Handling
 
 | policy | Implementation |
@@ -757,7 +763,7 @@ A `panic` step additionally carries:
 
 - `stack`: the `Error.stack` of the caught throw, when available.
 - `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
-- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the throw was caught. Emitted by the reducer / tile-render / hydrate catch sites today; `effect` / `capability` / `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw currently surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step.
+- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the failure was caught, or for `capability` refused. Emitted by the reducer / tile-render / hydrate / capability sites today; `effect` and `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step, which is a different thing from the refusal `capability` names.
 
 `stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. The `stack` and the cause **chain** are dev-tooling and stay here: the runtime never splats the `PanicRecord` into a user reducer `$event`. What a program is handed is the `PanicInfo` [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) declares — `message`, `location`, `category`, the id of this episode as `episode-id`, and `cause` as the **nearest** link's message alone, with no stack on it.
 
@@ -771,7 +777,7 @@ The server-side `renderToString` pass collapses the entire `app.init` causal cha
 
 - `trigger.kind = "ssr.hydrate"`, `trigger.target = <initial-route-path>`.
 - `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
-- The one emit that produces no pair is one the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start` followed by `effect-cancel` (`targetId = <effect-name>`) and runs nothing, the same shape a replaced `debounce` timer leaves. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run. The live dispatcher records no step at all for the same refusal under the default policy, because it returns before claiming a token: one refused emit therefore reads differently depending on which side refused it.
+- The one emit that produces no pair is one the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start` followed by `effect-cancel` (`targetId = <effect-name>`) and runs nothing, the same shape a replaced `debounce` timer leaves, and then a `panic` step carrying the refusal. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run; the `panic` step says why, and makes the episode `status: "panic"`. The live dispatcher records no start / cancel pair for the same refusal under the default policy, because it returns before claiming a token, and records the `panic` step only when an episode is open around the emit (an `app.init` emit is dispatched before the first one is): one refused emit therefore still reads differently depending on which side refused it, but both sides report it.
 
 Example:
 

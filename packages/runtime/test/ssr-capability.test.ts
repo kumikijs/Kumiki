@@ -7,9 +7,9 @@
 // The live dispatcher's `launch` applies the first sentence; the SSR pass did
 // not, so an effect the client refuses to run still ran on the server — a
 // request issued from the prerender and never again after hydration. These
-// tests hold the two passes to that first sentence. The second — the report to
-// `app.error` — is implemented on neither path, and is not what this file
-// pins: a violation reaches `console.warn` and stops there.
+// tests hold the two passes to that first sentence. The second — the report —
+// is `capability-refusal.test.ts`, which holds both passes to it; what stays
+// here is that a refused effect does not run, and the shape of what does.
 //
 // The `AppShape`s are built by hand because that is the only way to reach the
 // hole: the compiler rejects an emit whose capability is undeclared (E0301),
@@ -71,12 +71,12 @@ function makeApp(cap: string, declared: string[]): Built {
   return { app, ran };
 }
 
-let warnings: string[];
+let errors: string[];
 
 beforeEach(() => {
-  warnings = [];
-  vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
+  errors = [];
+  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
   });
 });
 
@@ -117,12 +117,14 @@ describe("the SSR pass gates an effect on its capability", () => {
     expect(ran).toEqual(["stored:draft"]);
   });
 
-  it("warns in the words the live dispatcher uses", async () => {
+  it("reports in the words the live dispatcher uses", async () => {
     const { app } = makeApp("storage.write", []);
 
     await renderToString(app);
 
-    expect(warnings).toEqual(['Capability "storage.write" not declared in app.caps']);
+    expect(errors).toEqual([
+      `[kumiki] panic in effect "save": capability "storage.write" is not declared in app.caps`,
+    ]);
   });
 
   it("does not reach a host provider for an undeclared capability", async () => {
@@ -161,7 +163,9 @@ describe("the SSR pass gates an effect on its capability", () => {
     await renderToString(app);
 
     expect(ran).toEqual(["stored:draft"]);
-    expect(warnings).toEqual(['Capability "http.post" not declared in app.caps']);
+    expect(errors).toEqual([
+      `[kumiki] panic in effect "audit": capability "http.post" is not declared in app.caps`,
+    ]);
   });
 
   it("leaves a declared sibling in the same init alone", async () => {
@@ -179,11 +183,15 @@ describe("the SSR pass gates an effect on its capability", () => {
     const { bootstrapEpisode } = await renderToString(app);
 
     expect(ran).toEqual(["pinged:hello"]);
-    expect(bootstrapEpisode.status).toBe("completed");
     // One episode carries both accounts: the refusal and the chain that ran.
+    // Its status is `panic` because it carries a panic step — the refusal is
+    // reported (§10.4.2's second clause), and the sibling running anyway is
+    // what the steps say, not what the status does.
+    expect(bootstrapEpisode.status).toBe("panic");
     expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
       "effect-start",
       "effect-cancel",
+      "panic",
       "effect-start",
       "effect-end",
     ]);
@@ -195,19 +203,26 @@ describe("the bootstrap episode records the skip", () => {
     // `recordEffectStart` leaves the episode pending until its end lands.
     // A gate that recorded the start and then returned would keep the
     // bootstrap episode uncommitted, which `renderToString` rejects outright.
+    // What this pins is that it committed at all; `panic` is the status of an
+    // episode carrying a panic step, not a strand.
     const { app } = makeApp("storage.write", []);
 
     const { bootstrapEpisode } = await renderToString(app);
 
-    expect(bootstrapEpisode.status).toBe("completed");
+    expect(bootstrapEpisode.status).toBe("panic");
+    expect(bootstrapEpisode.steps.at(-1)).toMatchObject({ kind: "panic" });
   });
 
-  it("shows the effect that would have run, then its cancel", async () => {
+  it("shows the effect that would have run, then its cancel, then why", async () => {
     const { app } = makeApp("storage.write", []);
 
     const { bootstrapEpisode } = await renderToString(app);
 
-    expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual(["effect-start", "effect-cancel"]);
+    expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
+      "effect-start",
+      "effect-cancel",
+      "panic",
+    ]);
     const [start, cancel] = bootstrapEpisode.steps;
     expect(start).toMatchObject({ kind: "effect-start", name: "save", args: "draft" });
     expect(cancel).toMatchObject({ kind: "effect-cancel", targetId: "save" });

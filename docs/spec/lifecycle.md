@@ -153,7 +153,7 @@ type PanicInfo = {
 }
 ```
 
-`category` names the runtime catch site where the throw was intercepted. The reducer / tile-render / hydrate paths emit their own category today; `effect` / `capability` / `unknown` are reserved values so app code can exhaustive-match without a fallthrough as future callsites are wired in.
+`category` names where in the runtime the failure was intercepted. The reducer / tile-render / hydrate paths emit their own category today, and `capability` names an effect the capability check refused ([runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)) — the one value that reports something nothing threw. `effect` and `unknown` are reserved values so app code can exhaustive-match without a fallthrough as future callsites are wired in.
 
 `episode-id` names the episode the panic happened in ([runtime.md §10.5](./runtime.md#_10-5-episode-loop)) — the join between a panic a user saw and what `kumiki replay` / `kumiki_episode_tail` read back. It is `Option(Text)` because an episode is not always open: a host that attached no episode logger has none to name, and `None` is the answer for that. The same is true of a panic raised outside any dispatch — a render panic caught on the first paint, for one.
 

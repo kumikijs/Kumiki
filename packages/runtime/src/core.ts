@@ -1708,6 +1708,7 @@ export function mountCore(
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
+    handleCapabilityRefusal,
   );
 
   // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
@@ -2162,13 +2163,28 @@ export function mountCore(
     envReads?: readonly EnvRead[],
   ): void {
     reportPanic(location, e);
-    const rec = panicInfo(e, "reducer");
-    episode?.recordPanic({
-      ...rec,
-      location,
+    fireAppError(panicInfo(e, "reducer"), location, {
       ...(reducer !== undefined ? { name: reducer } : {}),
       ...(envReads !== undefined && envReads.length > 0 ? { envReads } : {}),
     });
+  }
+
+  /**
+   * The three channels a reported failure takes once its record exists: the
+   * episode, so `kumiki replay` can read it; and the `app.error` reducers,
+   * which take it as `PanicInfo`. (The console is the caller's, because what
+   * it prints depends on whether anything was thrown.)
+   *
+   * Split out of {@link handleLivePanic} for the capability refusal, which has
+   * a record but no throw — one path to `app.error`, so a category cannot be
+   * reported to the log and quietly not to the app.
+   */
+  function fireAppError(
+    rec: PanicRecord,
+    location: string,
+    extra: { name?: string; envReads?: readonly EnvRead[] } = {},
+  ): void {
+    episode?.recordPanic({ ...rec, location, ...extra });
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -2184,6 +2200,19 @@ export function mountCore(
     } finally {
       inPanicHandler = false;
     }
+  }
+
+  /**
+   * §10.4.2's second clause on the live path: an emit whose capability
+   * `app.caps` does not declare is refused, and the refusal is reported — to
+   * the console the tiers watch, to the episode, and to `app.error`.
+   *
+   * The dispatcher calls this through a seam rather than reporting itself,
+   * because it is built before `app.error` can be dispatched to and has no
+   * reducer machinery of its own.
+   */
+  function handleCapabilityRefusal(effect: string, cap: string): void {
+    fireAppError(refuseCapability(effect, cap), `effect "${effect}"`);
   }
 
   /**
@@ -2805,13 +2834,31 @@ type Dispatcher = {
 };
 
 /**
- * The report a refused effect produces, on the live path and on the server
- * render pass alike (§10.4.2). Shared rather than written twice, so the two
- * gates cannot drift into two wordings — or, once the channel this belongs on
- * is settled, into two channels.
+ * What a refused effect reports (§10.4.2's second clause), on the live path and
+ * on the server render pass alike. Shared rather than written twice, so the two
+ * gates cannot drift into two wordings or two channels — which is what they did
+ * while this was a `console.warn` nobody read: neither `smoke` nor `scenario`
+ * watches that channel, so an app whose only effect was refused mounted,
+ * rendered, and passed (#366).
+ *
+ * Built as a record rather than run through {@link panicInfo}, because nothing
+ * was thrown: there is no stack that would point at the program, and no cause.
+ * From there on it is the pipeline every other reported failure takes — the
+ * `panic` step, and `userPanicInfo` to the `$event` an `app.error` reducer
+ * reads — under the `capability` category that was declared for it.
  */
-export function warnUndeclaredCapability(cap: string): void {
-  console.warn(`Capability "${cap}" not declared in app.caps`);
+export function refuseCapability(effect: string, cap: string): PanicRecord {
+  const rec: PanicRecord = {
+    message: `capability "${cap}" is not declared in app.caps`,
+    location: `effect "${effect}"`,
+    stack: undefined,
+    cause: undefined,
+    category: "capability",
+  };
+  // Printed here rather than by each caller, so the refusal cannot reach the
+  // console in two wordings the way it reached two channels before.
+  reportPanicRecord(`effect "${effect}"`, rec, "panic");
+  return rec;
 }
 
 function makeEffectDispatcher(
@@ -2834,6 +2881,9 @@ function makeEffectDispatcher(
   // is undeclared. The logger reattaches the cancel to the episode that owns
   // the token, NOT the current top.
   onPolicyCancel?: (token: string, effectName: string) => void,
+  // §10.4.2's second clause. The dispatcher refuses the emit; reporting the
+  // refusal needs `app.error` and the episode, neither of which it has.
+  onCapabilityRefusal?: (effect: string, cap: string) => void,
 ): Dispatcher {
   type TimerEntry = {
     // §6.4.1: cancel clears `debounce` (a pending-but-not-yet-issued launch)
@@ -2877,7 +2927,7 @@ function makeEffectDispatcher(
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
-      warnUndeclaredCapability(eff.cap);
+      onCapabilityRefusal?.(eff.name, eff.cap);
       // Deferred-policy dispatch (debounce) already recorded an effect-start
       // on the originating episode before the timer fired. Bailing out here
       // without releasing the token would strand that episode in
@@ -3400,10 +3450,17 @@ export function panicInfo(e: unknown, category: PanicCategory = "unknown"): Pani
  * breaking that grep.
  */
 function reportPanic(where: string, e: unknown): void {
-  const rec = panicInfo(e);
-  const lines: string[] = [
-    `[kumiki] ${isPanic(e) ? "panic" : "error"} in ${where}: ${rec.message}`,
-  ];
+  reportPanicRecord(where, panicInfo(e), isPanic(e) ? "panic" : "error");
+}
+
+/**
+ * {@link reportPanic} for a record that was built rather than caught — the
+ * capability refusal is the one such caller. One header shape for everything
+ * the runtime reports, because `smoke` and `scenario` read this channel whole
+ * and a second format would be a second thing for a reader to recognise.
+ */
+function reportPanicRecord(where: string, rec: PanicRecord, kind: "panic" | "error"): void {
+  const lines: string[] = [`[kumiki] ${kind} in ${where}: ${rec.message}`];
   if (rec.stack !== undefined) {
     for (const line of formatStackForConsole(rec.stack, rec.message)) lines.push(line);
   }
