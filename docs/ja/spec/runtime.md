@@ -631,7 +631,11 @@ reducer が完了すると、emit された effect 集合がディスパッチ�
 
 通知の中身は [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) の `PanicInfo` であり、`category` は `"capability"`、`location` は拒否された effect を名指す。併せて、検証ティアが読むチャネルである `console.error` にも出力し、その emit を囲む episode が開いていればその episode に `panic` step としても記録する。throw は発生していないので `stack` も `cause` も持たない。
 
-報告は live・SSR の両経路が同じ言葉で行う。異なるのは報告*先*である。`renderToString` には発火すべき `app.error` が無く（そのパスでの reducer panic が `panic` step だけで終わるのと同じ理由。[§10.5.1](#_10-5-1-structure-of-an-episode)）、サーバ側ではコンソールと episode がすべてである。live 経路では `app.init` の emit が最初の episode が開く前に dispatch されるため、コンソールと `app.error` には報告されるが、step を付ける episode が無い。
+報告は live・SSR の両経路が同じ言葉で行う。異なるのは報告*先*である。`renderToString` には発火すべき `app.error` が無い — そのパスでは reducer の panic も `panic` step だけで終わり、拒否もその同じ規則に従わせる — ので、サーバ側ではコンソールと episode がすべてである。
+
+step が付く episode は、いま開いている episode ではなく、その emit を**所有する** episode である。default policy では dispatcher は発火元の episode が開いたまま拒否するので、step はそこに落ちる。遅延 policy（[§10.4.3](#_10-4-3-policy-処理)）では launch はタイマーやキューの末尾から、その episode が閉じたずっと後に発火する。それでも step は `effect-start` を確保した episode に落ちなければならず、`episode-id` もそれを名指さなければならない — 「episode 無し」に落ちると、その episode には `effect-start` と `effect-cancel` だけが残り、置き換えられた `debounce` タイマーと見分けがつかなくなる。拒否が `panic` step と `effect-cancel` の両方を生む場合、`panic` step が**先**に来る。cancel は episode を確定させるので、読み手は結果より先に理由に出会う。
+
+名指せる episode が無い唯一の emit は `app.init` からのものである。最初の episode が開く前に dispatch されるため、コンソールと `app.error` には `episode-id: None` を伴って報告される。
 
 ### 10.4.3 policy 処理
 

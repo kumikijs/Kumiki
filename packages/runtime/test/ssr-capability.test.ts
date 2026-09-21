@@ -190,8 +190,8 @@ describe("the SSR pass gates an effect on its capability", () => {
     expect(bootstrapEpisode.status).toBe("panic");
     expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
       "effect-start",
-      "effect-cancel",
       "panic",
+      "effect-cancel",
       "effect-start",
       "effect-end",
     ]);
@@ -210,21 +210,27 @@ describe("the bootstrap episode records the skip", () => {
     const { bootstrapEpisode } = await renderToString(app);
 
     expect(bootstrapEpisode.status).toBe("panic");
-    expect(bootstrapEpisode.steps.at(-1)).toMatchObject({ kind: "panic" });
+    expect(bootstrapEpisode.steps.at(-1)).toMatchObject({ kind: "effect-cancel" });
   });
 
-  it("shows the effect that would have run, then its cancel, then why", async () => {
+  it("shows the effect that would have run, then why, then its cancel", async () => {
+    // The panic comes before the cancel, not after it: `cancelPendingEffect`
+    // settles the episode, and a step appended to a settled episode is one
+    // `onEpisode` and the localStorage mirror have already been handed
+    // without. The live path is bound to that order for the same reason
+    // (§10.4.2), so the two passes write the same three steps the same way.
     const { app } = makeApp("storage.write", []);
 
     const { bootstrapEpisode } = await renderToString(app);
 
     expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
       "effect-start",
-      "effect-cancel",
       "panic",
+      "effect-cancel",
     ]);
-    const [start, cancel] = bootstrapEpisode.steps;
+    const [start, panic, cancel] = bootstrapEpisode.steps;
     expect(start).toMatchObject({ kind: "effect-start", name: "save", args: "draft" });
+    expect(panic).toMatchObject({ kind: "panic", category: "capability" });
     expect(cancel).toMatchObject({ kind: "effect-cancel", targetId: "save" });
   });
 

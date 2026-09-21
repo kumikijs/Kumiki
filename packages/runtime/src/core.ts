@@ -1705,10 +1705,10 @@ export function mountCore(
     (effect, outcome, value, key, token) => {
       handleEffectResult(effect, outcome, value, key, token);
     },
+    handleCapabilityRefusal,
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
-    handleCapabilityRefusal,
   );
 
   // route.leave guard pending state (routing §3.5.2 + lifecycle §7.6):
@@ -2122,11 +2122,12 @@ export function mountCore(
 
   /**
    * `episode.currentId()` without letting the logger displace the panic being
-   * handled. Every caller is inside a panic catch, and `episodeLogger` is a
-   * host-supplied seam: the optional chain covers a logger that is absent, not
-   * one written against an older `EpisodeLogger` that has no `currentId`. A
-   * throw there would escape the catch and take the panic's own report with
-   * it — the contract `safeErrorField` / `safeCauseOf` exist to hold.
+   * reported. `episodeLogger` is a host-supplied seam: the optional chain
+   * covers a logger that is absent, not one written against an older
+   * `EpisodeLogger` that has no `currentId`. A throw there would take the
+   * panic's own report with it — the contract `safeErrorField` /
+   * `safeCauseOf` exist to hold — whether or not the caller sits inside a
+   * catch, which since the capability refusal not every caller does.
    *
    * Degrading to `None` is the right answer (it is what "no episode to name"
    * already means) but a silent one would look like a host that simply
@@ -2170,30 +2171,41 @@ export function mountCore(
   }
 
   /**
-   * The three channels a reported failure takes once its record exists: the
-   * episode, so `kumiki replay` can read it; and the `app.error` reducers,
-   * which take it as `PanicInfo`. (The console is the caller's, because what
-   * it prints depends on whether anything was thrown.)
+   * The two channels a reported failure takes once its record exists: the
+   * episode, so `kumiki replay` can read it, and the `app.error` reducers,
+   * which take it as `PanicInfo`. The console is the caller's, because what it
+   * prints depends on whether anything was thrown.
+   *
+   * The two are not symmetric, and deliberately so. The episode gets the step
+   * unconditionally; `app.error` does not run when the app declares no handler
+   * for it, and does not run re-entrantly — a panic raised while an `app.error`
+   * reducer is on the stack is recorded and logged but not fed back in, which
+   * is the only thing standing between a handler that panics and an unbounded
+   * recursion.
    *
    * Split out of {@link handleLivePanic} for the capability refusal, which has
-   * a record but no throw — one path to `app.error`, so a category cannot be
-   * reported to the log and quietly not to the app.
+   * a record but no throw, so that both reach `app.error` down one path.
+   *
+   * `token` names a deferred-policy claim; see `EpisodeLogger.recordPanic`.
    */
   function fireAppError(
     rec: PanicRecord,
     location: string,
     extra: { name?: string; envReads?: readonly EnvRead[] } = {},
+    token?: string,
   ): void {
-    episode?.recordPanic({ ...rec, location, ...extra });
+    // The id the `$event` carries is the one the step actually landed on,
+    // rather than a second lookup that could answer differently: a reducer
+    // panic is raised while its episode is still open (`applyReducer` calls
+    // this before its `endTrigger`), but a deferred-policy refusal arrives
+    // with the stack already empty and only the token to go on.
+    const episodeId = episode?.recordPanic({ ...rec, location, ...extra }, token);
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
     );
     if (handlers.length === 0) return;
-    // The episode is still open here — `applyReducer` calls this before its
-    // `endTrigger` — so the id names the dispatch that panicked, which is what
-    // `kumiki replay` needs to reproduce it.
-    const info = userPanicInfo(rec, location, safeEpisodeId());
+    const info = userPanicInfo(rec, location, episodeId ?? safeEpisodeId());
     inPanicHandler = true;
     try {
       for (const h of handlers) applyReducer(h, { $event: info });
@@ -2211,8 +2223,9 @@ export function mountCore(
    * because it is built before `app.error` can be dispatched to and has no
    * reducer machinery of its own.
    */
-  function handleCapabilityRefusal(effect: string, cap: string): void {
-    fireAppError(refuseCapability(effect, cap), `effect "${effect}"`);
+  function handleCapabilityRefusal(effect: string, cap: string, token?: string): void {
+    const rec = reportCapabilityRefusal(effect, cap);
+    fireAppError(rec, rec.location, {}, token);
   }
 
   /**
@@ -2834,30 +2847,32 @@ type Dispatcher = {
 };
 
 /**
- * What a refused effect reports (§10.4.2's second clause), on the live path and
- * on the server render pass alike. Shared rather than written twice, so the two
- * gates cannot drift into two wordings or two channels — which is what they did
- * while this was a `console.warn` nobody read: neither `smoke` nor `scenario`
- * watches that channel, so an app whose only effect was refused mounted,
- * rendered, and passed (#366).
+ * Print a refused effect (§10.4.2's second clause) and hand the caller the
+ * record to route onward — the `panic` step and the `app.error` `$event`. The
+ * live path and the server render pass share it, so the wording and the
+ * channel are one thing rather than two that agree today.
+ *
+ * It reports as well as builds, and is named for the reporting half: the
+ * console line is the part a second copy would break, since `smoke` and
+ * `scenario` read that channel whole.
  *
  * Built as a record rather than run through {@link panicInfo}, because nothing
  * was thrown: there is no stack that would point at the program, and no cause.
- * From there on it is the pipeline every other reported failure takes — the
- * `panic` step, and `userPanicInfo` to the `$event` an `app.error` reducer
- * reads — under the `capability` category that was declared for it.
+ * `location` is assembled once, here, and travels on the record.
  */
-export function refuseCapability(effect: string, cap: string): PanicRecord {
-  const rec: PanicRecord = {
+export function reportCapabilityRefusal(
+  effect: string,
+  cap: string,
+): PanicRecord & { location: string } {
+  const location = `effect "${effect}"`;
+  const rec: PanicRecord & { location: string } = {
     message: `capability "${cap}" is not declared in app.caps`,
-    location: `effect "${effect}"`,
+    location,
     stack: undefined,
     cause: undefined,
     category: "capability",
   };
-  // Printed here rather than by each caller, so the refusal cannot reach the
-  // console in two wordings the way it reached two channels before.
-  reportPanicRecord(`effect "${effect}"`, rec, "panic");
+  reportPanicRecord(location, rec, "panic");
   return rec;
 }
 
@@ -2871,6 +2886,15 @@ function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
+  // §10.4.2's second clause. The dispatcher refuses the emit; reporting the
+  // refusal needs `app.error` and the episode, neither of which it has.
+  // Required, unlike the episode seams below: those are absent when the mount
+  // attached no logger, this one has no such case, and a construction path
+  // that forgot it would be #366 again — no console line, no episode step, no
+  // `app.error`, and nothing in any tier that could see it.
+  // `token` is the deferred-policy claim (debounce, queue), so the panic can
+  // name the episode that owns the `effect-start` rather than the empty stack.
+  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   // Policy-induced cancel of a pending effect-start that was already claimed
@@ -2881,9 +2905,6 @@ function makeEffectDispatcher(
   // is undeclared. The logger reattaches the cancel to the episode that owns
   // the token, NOT the current top.
   onPolicyCancel?: (token: string, effectName: string) => void,
-  // §10.4.2's second clause. The dispatcher refuses the emit; reporting the
-  // refusal needs `app.error` and the episode, neither of which it has.
-  onCapabilityRefusal?: (effect: string, cap: string) => void,
 ): Dispatcher {
   type TimerEntry = {
     // §6.4.1: cancel clears `debounce` (a pending-but-not-yet-issued launch)
@@ -2927,13 +2948,27 @@ function makeEffectDispatcher(
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
-      onCapabilityRefusal?.(eff.name, eff.cap);
-      // Deferred-policy dispatch (debounce) already recorded an effect-start
-      // on the originating episode before the timer fired. Bailing out here
-      // without releasing the token would strand that episode in
-      // `closedAwaiting` forever — drain it via the cancel seam so the
-      // trace shows WHY no effect-end ever lands.
-      if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+      try {
+        // The token first: a deferred-policy launch (debounce, queue) fires
+        // from a timer or a promise tail, so by now `endTrigger` has balanced
+        // out and there is no episode in focus to record against — only the
+        // token still names the episode that claimed the `effect-start`.
+        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+      } finally {
+        // Deferred-policy dispatch already recorded an effect-start on the
+        // originating episode before the timer fired. Bailing out here without
+        // releasing the token would strand that episode in `closedAwaiting`
+        // forever — drain it via the cancel seam so the trace shows WHY no
+        // effect-end ever lands. In a `finally`, because the report above runs
+        // a host-supplied logger and then user reducers, and a throw out of
+        // either would otherwise take the release with it.
+        //
+        // After the report, not before: `cancelPendingEffect` settles the
+        // episode, which commits it, and a panic step appended to a committed
+        // episode is one `onEpisode` and the localStorage mirror have
+        // already been handed without it.
+        if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+      }
       return;
     }
     // Episode logger seam (§10.5): the moment the dispatcher commits to
@@ -3441,23 +3476,24 @@ export function panicInfo(e: unknown, category: PanicCategory = "unknown"): Pani
  * Surface a caught live panic so the verification tiers still see it: smoke()
  * and runScenario() both patch console.error into their issue/error buffers, so
  * a controlled panic is reported as a failure rather than silently swallowed.
- *
- * The first line format (`[kumiki] panic in <where>: <message>`) is stable —
- * `packages/tests/scenario.test.ts` greps for it (via the console.error buffer
- * that `runScenario` collects) to distinguish a controlled panic from a
- * generic console.error. Stack trace + Error.cause chain are appended as
- * indented continuation lines so devtools show a full root-cause trail without
- * breaking that grep.
  */
 function reportPanic(where: string, e: unknown): void {
   reportPanicRecord(where, panicInfo(e), isPanic(e) ? "panic" : "error");
 }
 
 /**
- * {@link reportPanic} for a record that was built rather than caught — the
- * capability refusal is the one such caller. One header shape for everything
- * the runtime reports, because `smoke` and `scenario` read this channel whole
- * and a second format would be a second thing for a reader to recognise.
+ * The one place the runtime's console report is formatted — {@link reportPanic}
+ * for a caught throw, {@link reportCapabilityRefusal} for a record that was
+ * built rather than caught. One header shape for everything, because `smoke`
+ * and `scenario` read this channel whole and a second format would be a second
+ * thing for a reader to recognise.
+ *
+ * The first line format (`[kumiki] <kind> in <where>: <message>`) is stable —
+ * `packages/tests/scenario.test.ts` greps for it (via the console.error buffer
+ * that `runScenario` collects) to distinguish a controlled panic from a
+ * generic console.error. Stack trace + Error.cause chain are appended as
+ * indented continuation lines so devtools show a full root-cause trail without
+ * breaking that grep.
  */
 function reportPanicRecord(where: string, rec: PanicRecord, kind: "panic" | "error"): void {
   const lines: string[] = [`[kumiki] ${kind} in ${where}: ${rec.message}`];

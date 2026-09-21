@@ -41,10 +41,15 @@ export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
 export type EnvRead = { kind: EnvReadKind; value: unknown };
 
 /**
- * Where a caught throw originated in the runtime's staging (docs/spec/runtime.md
- * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, and `hydrate`;
- * `effect` / `capability` / `unknown` are reserved values so consumers can
- * exhaustive-switch without a fallthrough case as future callsites are wired in.
+ * What the runtime was doing when a panic was reported (docs/spec/runtime.md
+ * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, `hydrate`
+ * and `capability`; `effect` and `unknown` stay reserved values so consumers
+ * can exhaustive-switch without a fallthrough case as future callsites are
+ * wired in.
+ *
+ * `capability` is the one category for something nothing threw: a refused
+ * effect (§10.4.2) is a program that cannot work rather than a caught error,
+ * so its record carries no `stack` and no `cause`.
  */
 export type PanicCategory =
   | "reducer"
@@ -113,7 +118,9 @@ export type EpisodeStep =
       /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
       cause?: PanicCauseLink[];
       /**
-       * Where the runtime caught the throw. Omitted in episode logs written
+       * What the runtime was doing when the panic was reported. For
+       * `capability` that is a refusal rather than a caught throw, so the step
+       * carries no `stack` and no `cause`. Omitted in episode logs written
        * before this field existed; readers should treat absence as
        * {@link PanicCategory} `"unknown"`.
        */
@@ -237,18 +244,32 @@ export type EpisodeLogger = {
    * object is written as-is to the `panic` step (except for the `ts`, which the
    * logger stamps). `stack` / `cause` / `category` are optional so callers on
    * older paths (or ad-hoc tests) can keep passing only `{message, location?}`.
+   *
+   * `token` names the episode that claimed an `effect-start`, resolved the
+   * same way `recordEffectEnd` resolves it and falling back to the episode in
+   * focus. A deferred-policy launch (debounce, queue) fires from a timer or a
+   * promise tail, long after `endTrigger` balanced out, so the stack is empty
+   * and only the token can say which episode the panic belongs to (§10.5.1).
+   *
+   * Returns the id of the episode the step landed on, or `undefined` when
+   * there was none — which is the id `PanicInfo.episode-id` must carry, by
+   * construction rather than by a second lookup that could name a different
+   * episode.
    */
-  recordPanic(info: {
-    message: string;
-    location?: string | undefined;
-    stack?: string | undefined;
-    cause?: PanicCauseLink[] | undefined;
-    category?: PanicCategory | undefined;
-    /** The reducer that threw, when the throw came from a reducer body. */
-    name?: string | undefined;
-    /** What that body read from the environment before it threw (§10.5.1). */
-    envReads?: readonly EnvRead[] | undefined;
-  }): void;
+  recordPanic(
+    info: {
+      message: string;
+      location?: string | undefined;
+      stack?: string | undefined;
+      cause?: PanicCauseLink[] | undefined;
+      category?: PanicCategory | undefined;
+      /** The reducer that threw, when the throw came from a reducer body. */
+      name?: string | undefined;
+      /** What that body read from the environment before it threw (§10.5.1). */
+      envReads?: readonly EnvRead[] | undefined;
+    },
+    token?: string,
+  ): string | undefined;
   /**
    * Inject an already-completed episode at the tail of the memory ring (and
    * the localStorage mirror, when enabled). Used by SSR hydration to seat
@@ -466,9 +487,9 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       persistLocalStorage();
       opts.onEpisode?.(ep);
     },
-    recordPanic(info) {
-      const ep = topEpisode();
-      if (!ep) return;
+    recordPanic(info, token) {
+      const ep = (token !== undefined ? inflight.get(token) : undefined) ?? topEpisode();
+      if (!ep) return undefined;
       const step: EpisodeStep = { kind: "panic", message: info.message, ts: now() };
       if (info.location !== undefined) step.location = info.location;
       if (info.name !== undefined) step.name = info.name;
@@ -480,6 +501,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       if (info.category !== undefined) step.category = info.category;
       ep.steps.push(step);
       ep.status = "panic";
+      return ep.id;
     },
     list() {
       return memory.slice();

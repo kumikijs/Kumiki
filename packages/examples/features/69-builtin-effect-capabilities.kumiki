@@ -4,8 +4,9 @@
 # `navigate` / `navigate-back` / `toast` have no `effect` declaration to read a
 # `cap=` off — the runtime registers them itself. They are gated all the same:
 # emitting one without its capability in `app.caps` is E0301, and at runtime an
-# undeclared capability drops the effect with a console warning. Removing
-# `nav.push` below turns the "Go" button into a button that does nothing.
+# undeclared capability refuses the effect and reports the refusal to
+# `app.error` (runtime.md §10.4.2). Removing `nav.push` below turns the "Go"
+# button into a button that navigates nowhere and panics instead.
 #
 # The `.ok` selector works on them too: the runtime reports a standard effect's
 # result through the same channel a declared effect's goes through, so

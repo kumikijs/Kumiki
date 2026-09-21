@@ -35,7 +35,7 @@ import {
   pickRootTile,
   type RoutingImpl,
   readStatus,
-  refuseCapability,
+  reportCapabilityRefusal,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
@@ -217,19 +217,19 @@ async function dispatchEmit(
   if (effect.cap !== "" && !caps.has(effect.cap)) {
     // Both records, because they say different things: the start / cancel pair
     // is that this emit did not run, and the `panic` step is that it was
-    // refused and why (§10.4.2's second clause). `refuseCapability` prints the
-    // same console line the live path prints, which is the signal that
-    // replaces the `console.warn` this used to be. What the live path does
-    // beyond this is fire `app.error`, and this pass has none to fire: a
-    // server-side reducer panic is a `panic` step and nothing more (see
-    // `applyReducerOnSsr`), and a refusal is held to that same rule rather
-    // than inventing a second one.
-    logger.cancelPendingEffect(logger.recordEffectStart(emit.effect, input), emit.effect);
-    // After the pair, not before it: the pair is the event (this emit did not
-    // run) and the panic step is the explanation, so a reader meets them in
-    // that order. It also makes the episode `status: "panic"`, which is what
-    // an episode carrying a panic step says on the live path too.
-    logger.recordPanic(refuseCapability(emit.effect, effect.cap));
+    // refused and why. What the live path does beyond this is fire
+    // `app.error`, and this pass has none to fire: a server-side reducer panic
+    // is a `panic` step and nothing more (see `applyReducerOnSsr`), and a
+    // refusal is held to that same rule rather than inventing a second one.
+    //
+    // Panic before cancel, the order the live path is bound to: there the
+    // cancel settles the originating episode and commits it, so a step
+    // appended after it is one `onEpisode` and the localStorage mirror have
+    // already been handed without. Reading it back, the reason precedes the
+    // consequence it explains.
+    const token = logger.recordEffectStart(emit.effect, input);
+    logger.recordPanic(reportCapabilityRefusal(emit.effect, effect.cap), token);
+    logger.cancelPendingEffect(token, emit.effect);
     return;
   }
   const token = logger.recordEffectStart(emit.effect, input);
