@@ -147,7 +147,7 @@ The `PanicInfo` type:
 type PanicInfo = {
     message: Text,
     location: Text,         # e.g. `reducer "foo"` or `render`
-    episode-id: Text,
+    episode-id: Option(Text),
     cause: Option(Text),
     category: Text          # "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
 }
@@ -155,7 +155,11 @@ type PanicInfo = {
 
 `category` names the runtime catch site where the throw was intercepted. The reducer / tile-render / hydrate paths emit their own category today; `effect` / `capability` / `unknown` are reserved values so app code can exhaustive-match without a fallthrough as future callsites are wired in.
 
-**Implementation gaps to close.** Today's runtime only populates `message`, `location`, and `category` on the `$event` payload. `episode-id` and `cause` are declared on the type for forward compatibility but are NOT supplied yet — reducers MUST treat both as `None`-equivalent. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime actually emits `reducer "foo"` / `render`. These are pre-existing gaps tracked separately from the panic-info wire-through work.
+`episode-id` names the episode the panic happened in ([runtime.md §10.5](./runtime.md#_10-5-episode-loop)) — the join between a panic a user saw and what `kumiki replay` / `kumiki_episode_tail` read back. It is `Option(Text)` because an episode is not always open: a host that attached no episode logger has none to name, and `None` is the answer for that. So is a panic raised outside any dispatch.
+
+`cause` is the **nearest** `Error.cause` message when the throw carried one, and `None` otherwise. The chain behind it, and the stack with it, stay in the episode log — `episode-id` is how to reach them.
+
+Every field is supplied on every path a panic reaches a program: an `app.error` reducer, a `route.error` reducer, and an `error-boundary` fallback are handed the same record, built once. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime emits `reducer "foo"` / `render`.
 
 The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 
@@ -187,7 +191,7 @@ The boundary belongs to the **tile**, not to the place it was written: it holds 
 
 It covers everything that renders **under** the tile, and a child a `sub-routes` entry injects into the tile's `route-outlet` ([Routing §3.6](./routing.md#_3-6-nested-routes)) is under it: a boundary declared on the shell is one fallback for the whole section, children included. The **nearest** boundary wins — a child that declares its own shows its own fallback inside the outlet, and the shell stays up. In the fallback's `PanicInfo`, `location` names the **route target the runtime was building** (the outlet child in particular), and the tile that declares the boundary otherwise. A tile the target renders inside its own body is not distinguished from the target.
 
-What it takes is a **panic** — the controlled signal [§7.2.2](#_7-2-2-unexpected-errors-panic) defines. The fallback receives `{message, location, category}`, the same payload [§7.2.3](#_7-2-3-the-app-error-reducer)'s `app.error` reducer is given. Anything else that reaches a boundary is a defect in the generated code or in the runtime rather than a program error, and is re-raised for the top-level display: a fallback that absorbed one would replace a failure with a rendered page, and `smoke` / `scenario` verify through the error channel, so nothing would be left to see.
+What it takes is a **panic** — the controlled signal [§7.2.2](#_7-2-2-unexpected-errors-panic) defines. The fallback receives the whole of `PanicInfo`, the same payload [§7.2.3](#_7-2-3-the-app-error-reducer)'s `app.error` reducer is given, built by the same code so the two cannot drift. Anything else that reaches a boundary is a defect in the generated code or in the runtime rather than a program error, and is re-raised for the top-level display: a fallback that absorbed one would replace a failure with a rendered page, and `smoke` / `scenario` verify through the error channel, so nothing would be left to see.
 
 > **Implementation status.** The live runtime implements the panic model of [Error Handling](#_7-2-error-handling): a panic during a reducer dispatch rolls back that episode's `slot` changes (no partial writes), is surfaced to the verification tiers (`smoke` / scenario), and fires the `app.error` reducer ([The app.error reducer](#_7-2-3-the-app-error-reducer)) with `PanicInfo` as `$event`. A panic during rendering is caught by the nearest enclosing `error-boundary`, which includes a route target's boundary and, for a child in a `sub-routes` parent's `route-outlet`, the parent's. A render panic with **no** boundary above it falls back to a built-in top-level panic display instead of escaping the event handler uncaught. `panic(message)` and the polymorphic `.get` (which panics on `None` / `Err`, consistent with `.get-err`) raise this same controlled signal.
 

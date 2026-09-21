@@ -43,6 +43,7 @@ export {
   bindLabel,
   type CapabilityProvider,
   type CapabilityRegistry,
+  currentEpisodeId,
   currentTheme,
   type DiagnosticSite,
   type EffectResult,
@@ -93,6 +94,7 @@ export {
   type TileRenderer,
   type TileRenderers,
   tokenRef,
+  userPanicInfo,
   withEnvRecord,
   withEnvReplay,
 } from "./core.ts";

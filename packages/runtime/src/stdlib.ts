@@ -6,6 +6,7 @@
 
 import {
   _setPathHelper,
+  currentEpisodeId,
   isPanic,
   KumikiPanic,
   type PathSegment,
@@ -15,6 +16,7 @@ import {
   readEnv,
   refinementRejectionOf,
   tokenRef,
+  userPanicInfo,
 } from "./core.ts";
 
 /**
@@ -391,8 +393,8 @@ export const _stdlibCore = {
    * trace at all. Those are re-thrown for the render bailout to report.
    *
    * The payload is the shape `app.error` already receives (`handleLivePanic`),
-   * built by the same `panicInfo`, so the two ways a panic reaches a program
-   * agree — and so an empty message stays empty instead of stringifying the
+   * built by the same `userPanicInfo`, so the two ways a panic reaches a
+   * program agree — and so an empty message stays empty instead of stringifying the
    * error object.
    */
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
@@ -403,7 +405,13 @@ export const _stdlibCore = {
     // declaring tile's outlet, #363); `location` — the tile that declares the
     // boundary — is what it is attributed to otherwise. An empty attribution
     // is none: only a hand-built entry or a cross-realm panic can carry one.
-    return { message: rec.message, location: rec.location || location, category: rec.category };
+    //
+    // The episode comes from the render pass this is inside (§10.5): a render
+    // runs within the dispatch that caused it, so the id names the episode the
+    // panic belongs to. A boundary that catches during the first paint, or in a
+    // host that attached no logger, has none — `None`, which is a value the
+    // fallback can match on.
+    return userPanicInfo(rec, rec.location || location, currentEpisodeId());
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {

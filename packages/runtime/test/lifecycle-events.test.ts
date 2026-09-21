@@ -171,7 +171,10 @@ describe("runtime: route.error fallback (#81)", () => {
     // Dev-only fields must never bleed into a user reducer payload —
     // spreading the raw PanicRecord would leak stack to production UI.
     expect(captured.event).not.toHaveProperty("stack");
-    expect(captured.event).not.toHaveProperty("cause");
+    // `cause` is a declared field of `PanicInfo` and supplied since #364, so it
+    // is present; what stays out is the `PanicRecord` shape behind it — the
+    // chain of links, each carrying its own stack. This throw had no cause.
+    expect(captured.event?.cause).toEqual({ _tag: "None" });
     dispose();
   });
 });

@@ -89,12 +89,18 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   // The payload of `app.error` and of an `error-boundary` tile's `in=`
   // (docs/spec/lifecycle.md §7.2.3). Filed with the domain types rather than
   // with lifecycle because a program names it exactly the way it names `Route`.
+  //
+  // `episode-id` is `Option(Text)` because an episode is not always open: a
+  // host that attached no episode logger has none to name. It was declared
+  // `Text` and supplied by nothing, which made §7.2.3's own instruction —
+  // treat it as `None`-equivalent — inexpressible, since a `Text` has no
+  // `None` and what arrived was `undefined` (#364).
   def(
     "PanicInfo",
     record({
       message: prim("Text"),
       location: prim("Text"),
-      "episode-id": prim("Text"),
+      "episode-id": app("Option", prim("Text")),
       cause: app("Option", prim("Text")),
       category: prim("Text"),
     }),

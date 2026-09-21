@@ -1362,6 +1362,12 @@ export type MountedApp = AppShape & {
   _rerender: () => void;
   /** Prefetch dedupe set (§3.8), lazily created on first link prefetch. */
   _prefetched?: Set<string>;
+  /**
+   * The open episode's id, for a caller that is inside this app's render pass
+   * and has no other way to reach its logger — `_s.boundaryPanic` is the one
+   * ({@link currentEpisodeId}). Absent when the host attached no logger.
+   */
+  _episodeId?: () => string | undefined;
   live: Record<string, unknown>;
 };
 
@@ -1521,6 +1527,41 @@ export function getRenderingApp(): MountedApp | undefined {
 }
 
 /**
+ * The episode open around the render pass now executing, for `PanicInfo`'s
+ * `episode-id` on the boundary path.
+ *
+ * `_s.boundaryPanic` is called from generated code deep inside a tile
+ * expression and has no mount in hand, so it asks the render pass instead —
+ * which is the right scope anyway: a render runs inside the dispatch that
+ * caused it (`render()` is called before `endTrigger`), so the episode this
+ * names is the one the panic belongs to. Outside a render, or with no logger
+ * attached, there is none, and `PanicInfo.episode-id` is `None`.
+ *
+ * Hung off `globalThis` for the same reason the environment journal above is,
+ * and it is the same failure when it is not: an app compiled with
+ * `bundle: true` carries its own inlined runtime, so the `_s.boundaryPanic`
+ * that asks belongs to THAT copy while the `mount` that renders belongs to the
+ * tool's. A module-local `renderingApp` leaves the asking copy looking at a
+ * pass nothing ever opened, and the answer is a silent `None` — which is
+ * exactly what the first cut of this did. `kumiki run` / the test suites drive
+ * apps that way, so it is the normal case, not the exotic one.
+ *
+ * {@link withRenderingApp} is the only writer and restores the previous value
+ * on both exits, so a nested mount inside a render (a custom element that
+ * mounts its own app) leaves the outer pass's answer intact.
+ */
+// `undefined` is in the type, not just implied by `?`: under
+// `exactOptionalPropertyTypes` the restore in `withRenderingApp`'s `finally`
+// writes back whatever it saved, and outside any render that is `undefined`.
+type RenderEpisodeHost = {
+  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
+};
+
+export function currentEpisodeId(): string | undefined {
+  return (globalThis as RenderEpisodeHost).__kumikiRenderEpisode__?.();
+}
+
+/**
  * Bracket a render pass. Saved/restored (not just cleared) because a custom
  * element inside the tree can synchronously mount a nested Kumiki app while
  * the outer render is still on the stack.
@@ -1532,12 +1573,16 @@ export function getRenderingApp(): MountedApp | undefined {
  */
 export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
   const prev = renderingApp;
+  const host = globalThis as RenderEpisodeHost;
+  const prevEpisode = host.__kumikiRenderEpisode__;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
+  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId ?? null;
   try {
     return fn();
   } finally {
     renderingApp = prev;
+    host.__kumikiRenderEpisode__ = prevEpisode;
   }
 }
 
@@ -2039,17 +2084,16 @@ export function mountCore(
       (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
     );
     if (handlers.length === 0) return false;
-    // User-facing $event stays limited to the fields the Kumiki PanicInfo
-    // type documents (message / location + category). `stack` and `cause`
-    // are intentionally NOT splatted — a raw devtools stack in production UI
-    // is a footgun; those fields live in the episode-log only.
-    const info: {
-      message: string;
-      location?: string;
-      category: PanicCategory;
-      pattern: string;
-    } = { message: rec.message, category: rec.category, pattern };
-    if (rec.location !== undefined) info.location = rec.location;
+    // The same `PanicInfo` the other two paths hand a program, plus the
+    // `pattern` that is this event's own. It used to be built by hand here,
+    // which is how `location` came to be absent rather than `undefined` on
+    // this one path — a field the type declares, read off an object that does
+    // not carry it. The caller records `"render"` against the episode for the
+    // same panic, so that is what an unattributed one is called here too.
+    const info = {
+      ...userPanicInfo(rec, rec.location ?? "render", episode?.currentId()),
+      pattern,
+    };
     for (const h of handlers) {
       try {
         applyReducer(h, { $event: info, $route: cur });
@@ -2096,9 +2140,10 @@ export function mountCore(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
     );
     if (handlers.length === 0) return;
-    // User-facing $event is limited to fields the spec's PanicInfo type
-    // documents; `stack` / `cause` stay in the episode-log only.
-    const info = { message: rec.message, location, category: rec.category };
+    // The episode is still open here — `applyReducer` calls this before its
+    // `endTrigger` — so the id names the dispatch that panicked, which is what
+    // `kumiki replay` needs to reproduce it.
+    const info = userPanicInfo(rec, location, episode?.currentId());
     inPanicHandler = true;
     try {
       for (const h of handlers) applyReducer(h, { $event: info });
@@ -2421,6 +2466,11 @@ export function mountCore(
   }
 
   app._rerender = render;
+  // Published on the shape so `currentEpisodeId()` can answer for whichever app
+  // is mid-render — `_s.boundaryPanic` runs inside a tile expression and has no
+  // other way to reach this mount's logger.
+  (app as AppShape & { _episodeId?: () => string | undefined })._episodeId = () =>
+    episode?.currentId();
   (
     app as AppShape & { _dispatch?: (name: string, el: Record<string, unknown>) => void }
   )._dispatch = (reducerName: string, el: Record<string, unknown>) => {
@@ -3125,6 +3175,48 @@ export type PanicRecord = {
   cause: PanicCauseLink[] | undefined;
   category: PanicCategory;
 };
+
+/**
+ * The user-facing `PanicInfo` (lifecycle.md §7.2.3) — what an `app.error`
+ * reducer, a `route.error` reducer and an `error-boundary` fallback are each
+ * handed. One builder for all three: #362 aligned two of them by hand and both
+ * were then missing the same two fields in the same way, which is the drift
+ * this closes by construction.
+ *
+ * What it does NOT carry is as deliberate as what it does. `stack` is a raw
+ * devtools trace and a footgun on a production page; `cause` here is the
+ * NEAREST link's message, not the chain `collectCauseChain` walks — the chain,
+ * and the stacks on it, stay in the episode log where `kumiki replay` reads
+ * them (runtime.md §10.5.1).
+ *
+ * `episode-id` and `cause` are `Option(Text)`, so "there was none" is a value
+ * the language can say. Both were declared `Text` and supplied by nothing,
+ * which made §7.2.3's own instruction — reducers "MUST treat both as
+ * `None`-equivalent" — inexpressible for `episode-id`: a `Text` has no `None`,
+ * and what arrived was JavaScript's `undefined` rendered through `+` (#364).
+ */
+export function userPanicInfo(
+  rec: PanicRecord,
+  location: string,
+  episodeId: string | undefined,
+): {
+  message: string;
+  location: string;
+  "episode-id": OptionOf<string>;
+  cause: OptionOf<string>;
+  category: PanicCategory;
+} {
+  const nearest = rec.cause?.[0]?.message;
+  return {
+    message: rec.message,
+    location,
+    "episode-id": episodeId === undefined ? NONE : someOf(episodeId),
+    // An empty cause message is no cause: a link that says nothing answers
+    // nothing, and `Some("")` reads on the page as a reason that is blank.
+    cause: nearest ? someOf(nearest) : NONE,
+    category: rec.category,
+  };
+}
 
 /**
  * Safety cap for `Error.cause` chain traversal — pathological or intentionally

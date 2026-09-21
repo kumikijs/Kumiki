@@ -1381,7 +1381,11 @@ describe("live panic handling (#24)", () => {
     expect(ev.category).toBe("reducer");
     // Dev-only fields must stay in the episode log, not on user reducer input.
     expect(ev).not.toHaveProperty("stack");
-    expect(ev).not.toHaveProperty("cause");
+    // `cause` is a declared field of `PanicInfo` and supplied since #364: what
+    // stays in the episode log is the chain behind the nearest link and the
+    // stack on each. `boom in reducer` was thrown with no cause.
+    expect(ev.cause).toEqual({ _tag: "None" });
+    expect(JSON.stringify(ev)).not.toContain("at ");
   });
 
   it("a render panic with no error-boundary is caught by the top-level boundary", () => {
