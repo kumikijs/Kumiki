@@ -62,17 +62,22 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   // element a tile produced, so what these rows list is where a *selector*
   // reaches — narrower than what fires the event. A kind missing from them is
   // a gap in this table rather than a fact about the DOM.
-  { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button"]) },
+  //
+  // `editable` is in all three: a `<div contenteditable="true">` is focusable
+  // without a `tabindex`, so `focus` / `blur` / `keydown` all reach it
+  // natively, which is why writing the handler on the tile already worked
+  // while the selector form drew a W0212 whose reason was untrue (#367).
+  { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button", "editable"]) },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
   {
     ev: "focus",
     handler: "onFocus",
-    tiles: new Set(["input", "textarea", "button", "select"]),
+    tiles: new Set(["input", "textarea", "button", "select", "editable"]),
   },
   {
     ev: "blur",
     handler: "onBlur",
-    tiles: new Set(["input", "textarea", "button", "select"]),
+    tiles: new Set(["input", "textarea", "button", "select", "editable"]),
   },
 ];
 

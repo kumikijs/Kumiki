@@ -49,9 +49,13 @@ describe("UI_LIFTS", () => {
       new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
     );
     expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea", "editable"]));
-    expect(byEv.get("key")?.tiles).toEqual(new Set(["input", "textarea", "button"]));
-    expect(byEv.get("focus")?.tiles).toEqual(new Set(["input", "textarea", "button", "select"]));
-    expect(byEv.get("blur")?.tiles).toEqual(new Set(["input", "textarea", "button", "select"]));
+    expect(byEv.get("key")?.tiles).toEqual(new Set(["input", "textarea", "button", "editable"]));
+    expect(byEv.get("focus")?.tiles).toEqual(
+      new Set(["input", "textarea", "button", "select", "editable"]),
+    );
+    expect(byEv.get("blur")?.tiles).toEqual(
+      new Set(["input", "textarea", "button", "select", "editable"]),
+    );
   });
 });
 

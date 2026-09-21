@@ -400,6 +400,55 @@ app A
   });
 });
 
+// The same three rows `input` was, and the fix for `input` did not touch them.
+// `key` / `focus` / `blur` are the events the runtime attaches to whatever
+// element a tile produced, and a `<div contenteditable="true">` is focusable
+// without a `tabindex`, so all three reach it natively — which is why writing
+// the handler on the tile already worked. What the rows list is where a
+// *selector* lands, so an omission there is a gap in the table, not a fact
+// about the DOM, and W0212 reported it as the latter.
+describe("a ui.key / ui.focus / ui.blur selector reaches an editable", () => {
+  const source = (ev: string, tile: string) => `slot note : Text = ""
+slot hits : Int = 0
+reducer hit on=ui.${ev}(Ed) do= hits := hits + 1
+tile Ed = ${tile}
+tile App = column(Ed, text(hits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  const cases: ReadonlyArray<[string, string]> = [
+    ["key", "onKeyDown"],
+    ["focus", "onFocus"],
+    ["blur", "onBlur"],
+  ];
+
+  for (const [ev, handler] of cases) {
+    it(`says nothing about ui.${ev}`, () => {
+      expect(codes(source(ev, "editable(bind=note)"))).toEqual([]);
+    });
+
+    it(`emits the ${handler} the ui.${ev} subscription asked for`, () => {
+      expect(build(source(ev, "editable(bind=note)"))).toContain(`${handler}: _h("hit")`);
+    });
+
+    it(`still reports a tile that fires no ${ev} event`, () => {
+      // The control for each row: without it, dropping the check entirely
+      // would pass the two above.
+      expect(codes(source(ev, "box(text(note))"))).toEqual(["W0212"]);
+    });
+  }
+
+  it("leaves ui.change alone, which is the rule rather than the same gap", () => {
+    // The row a reader expects to move with these three. It must not: a
+    // `<div contenteditable>` fires no `change` event at all, so there is
+    // nothing for a selector to reach and the warning is true.
+    expect(codes(source("change", "editable(bind=note)"))).toEqual(["W0212"]);
+  });
+});
+
 // language.md §1.6.3: "Going via `.get` is safe: assigning when the Option is
 // `None` is a no-op". The lvalue was flattened into a plain field path, so the
 // write landed on a sibling field named `get` and never reached the payload.

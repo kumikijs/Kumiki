@@ -648,9 +648,9 @@ The allowed root builtins per event are (current toolchain coverage; the impleme
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button` |
-| `focus`  | `input`, `textarea`, `button`, `select` |
-| `blur`   | `input`, `textarea`, `button`, `select` |
+| `key`    | `input`, `textarea`, `button`, `editable` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `editable` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `editable` |
 | `hover`  | any tile |
 
 **Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
@@ -658,6 +658,8 @@ The allowed root builtins per event are (current toolchain coverage; the impleme
 The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
 
 **Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
+
+**Note on `editable` and `change`**: `editable` is listed under `input`, `key`, `focus` and `blur` and **not** under `change`, and that one absence is the rule rather than a gap. A `<div contenteditable="true">` is focusable without a `tabindex`, so it fires `focus`, `blur` and `keydown` natively, and its renderer dispatches `input`; it fires no `change` event at all, which no table row can supply. `ui.change(<editable tile>)` is therefore W0212 for a reason that is true — use `ui.input` and compare, or `ui.blur`, depending on which moment is wanted.
 
 ### E0213 `call-arity-mismatch`
 
