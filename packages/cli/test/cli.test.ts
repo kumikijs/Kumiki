@@ -192,10 +192,20 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // contenteditable IME guard. The budget follows the measurement down, or
     // it stops being one: at 68,000 it had 13KB of slack and could not have
     // failed for anything short of a doubling.
+    //
+    // 57,000 from 56,000 (56,025 measured, from 55,577): supplying every field
+    // of `PanicInfo` (#364). 334 of it is the shared `userPanicInfo` builder
+    // and the episode seam the boundary path reads through — what a counter
+    // with no `error-boundary` and no `app.error` reducer pays so that an app
+    // with either gets a field it can read instead of `undefined`. The other
+    // 114 is the guard around the logger seam plus moving `endTrigger` into a
+    // `finally`, both of which buy a property the whole file already holds: a
+    // throw from inside a panic catch must not displace the panic, and an
+    // episode this dispatch opened must close however it exits.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(56_000);
+    expect(total).toBeLessThan(57_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

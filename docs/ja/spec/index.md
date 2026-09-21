@@ -224,5 +224,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `90-refinement-validation.kumiki` | type, slot, reducer | フォーム | [§5.6](./forms.md#_5-6-バリデーション戦略) |
 | `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `92-outlet-error-boundary.kumiki` | slot, reducer, tile, app | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
+| `93-panic-info.kumiki` | slot, reducer, tile, app | ライフサイクル | [§7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) |
 <!-- examples:end -->
 :::

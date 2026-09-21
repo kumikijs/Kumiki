@@ -93,6 +93,7 @@ export {
   type TileRenderer,
   type TileRenderers,
   tokenRef,
+  userPanicInfo,
   withEnvRecord,
   withEnvReplay,
 } from "./core.ts";

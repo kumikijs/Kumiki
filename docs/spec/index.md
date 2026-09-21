@@ -224,5 +224,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `90-refinement-validation.kumiki` | type, slot, reducer | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
 | `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 | `92-outlet-error-boundary.kumiki` | slot, reducer, tile, app | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
+| `93-panic-info.kumiki` | slot, reducer, tile, app | lifecycle | [§7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) |
 <!-- examples:end -->
 :::

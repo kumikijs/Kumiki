@@ -267,6 +267,14 @@ export type EpisodeLogger = {
    * episode or join the existing one.
    */
   hasOpenEpisode(): boolean;
+  /**
+   * The id of the episode currently in focus, or `undefined` when none is —
+   * the same question `hasOpenEpisode` answers, with the answer a caller can
+   * name. `PanicInfo.episode-id` (lifecycle.md §7.2.3) is what needs it: a
+   * panic is the one event a program is handed while the episode that produced
+   * it is still open, and the id is its join to what `kumiki replay` reads.
+   */
+  currentId(): string | undefined;
 };
 
 /**
@@ -478,6 +486,9 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
     },
     hasOpenEpisode() {
       return stack.length > 0;
+    },
+    currentId() {
+      return topEpisode()?.id;
     },
   };
 }

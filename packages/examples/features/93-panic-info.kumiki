@@ -1,0 +1,96 @@
+# Feature: every field of `PanicInfo` is a value a program can read
+# (spec/lifecycle.md §7.2.3).
+#
+# A panic reaches a program three ways: an `error-boundary` fallback takes it as
+# `$1`, an `app.error` reducer takes it as `$event`, and a `route.error`
+# reducer takes the same plus the matched `pattern`. This example reads all
+# five fields on the first two, side by side, so the payloads can be compared
+# by looking. (`route.error` has no example of its own; its coverage is
+# `packages/runtime/test/lifecycle-events.test.ts`.)
+#
+# What this example pins is that every field is READABLE — `message`,
+# `location` and `category` also fail here as the literal word `undefined` if
+# one stops being supplied. It does not pin `episode-id` and `cause`: those are
+# read through `.get-or`, which answers the default for a missing value just as
+# it does for `None`, and `kumiki run` attaches no episode logger anyway, so
+# both report `(none)` whatever the runtime does. The case that can tell the
+# difference needs a logger attached and lives in
+# `packages/tests/panic-info-fields.test.ts`.
+#
+# `episode-id` is the join to the episode log: it names the episode the panic
+# happened in, which is what `kumiki replay` / `kumiki_episode_tail` read. It is
+# `Option(Text)` because an episode is not always open. `cause` is the nearest
+# `Error.cause` message when the throw carried one; the full chain, and the
+# stack with it, stays in the episode log.
+#
+# The `(none)` the scenario expects is what a run with no episode logger says.
+# `kumiki run` attaches one only when asked (`--episode-log`, or
+# `KUMIKI_EPISODE_LOG` in the environment); with a logger attached both lines
+# would name a real episode instead.
+#
+# The `app.error` half is driven by entering `/boom` rather than by a button.
+# A reducer panic is reported on the error channel by design (§7.3: the
+# verification tiers watch it), and `smoke` drives every button and fails on
+# anything that reaches that channel. A scenario can claim the error with
+# `errorIncludes`; `smoke` never navigates, so the route is its own arming.
+
+slot secret      : Option(Text) = None
+slot breakRender : Bool         = false
+
+slot caught      : Text         = "-"
+slot caughtAt    : Text         = "-"
+slot caughtCat   : Text         = "-"
+slot caughtEp    : Option(Text) = None
+slot caughtCause : Option(Text) = None
+
+# `secret` is None, so `.get` panics — the controlled signal §7.2.2 defines.
+# Under `Guarded` that is a render panic the boundary catches; inside a reducer
+# body it rolls the dispatch back and fires `app.error`.
+tile Body = column(when(breakRender, text("secret: " + secret.get)))
+
+tile Guarded
+    error-boundary = Fallback
+    = column(
+        text("guarded: ready"),
+        Body)
+
+tile Fallback
+    in=PanicInfo
+    = column(
+        text("fallback message: " + $1.message),
+        text("fallback location: " + $1.location),
+        text("fallback category: " + $1.category),
+        text("fallback episode: " + $1.episode-id.get-or("(none)")),
+        text("fallback cause: " + $1.cause.get-or("(none)")))
+      {color: "danger"}
+
+tile BreakRenderBtn = button(text="break render", onClick=breakRenderNow) {id: "break-render"}
+
+tile App
+    = column(
+        heading("PanicInfo fields"),
+        Guarded,
+        BreakRenderBtn,
+        text("error message: " + caught),
+        text("error location: " + caughtAt),
+        text("error category: " + caughtCat),
+        text("error episode: " + caughtEp.get-or("(none)")),
+        text("error cause: " + caughtCause.get-or("(none)")))
+      {pad: "lg", gap: "md"}
+
+reducer breakRenderNow on=ui.click(BreakRenderBtn) do= breakRender := true
+
+reducer breakOnEnter on=route.enter("/boom") do= caught := secret.get
+
+reducer onPanic
+    on=app.error
+    do= caught      := $event.message
+        caughtAt    := $event.location
+        caughtCat   := $event.category
+        caughtEp    := $event.episode-id
+        caughtCause := $event.cause
+
+app PanicInfoFields
+    caps   = []
+    routes = {"/" -> App, "/boom" -> App, "/404" -> App}
+    init   = []

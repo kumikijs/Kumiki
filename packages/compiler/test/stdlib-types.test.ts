@@ -47,10 +47,12 @@ ${TAIL}`);
   it("quotes a field name TypeScript cannot take bare", () => {
     // `PanicInfo.episode-id` is kebab-case; unquoted, the declaration does not
     // parse at all — which is what routing PanicInfo through this table opened.
-    expect(
-      providerLine(`effect e cap=custom.thing in=PanicInfo out=Result(Unit, Text)
-${TAIL}`),
-    ).toContain('"episode-id": string');
+    const line = providerLine(`effect e cap=custom.thing in=PanicInfo out=Result(Unit, Text)
+${TAIL}`);
+    // Its type is whatever the stdlib table says (an `Option(Text)` since
+    // #364); what this pins is the key, quoted rather than bare.
+    expect(line).toContain('"episode-id": {');
+    expect(line).not.toMatch(/[^"]episode-id:/);
   });
 
   it("names a user generic's parameters instead of erasing them", () => {

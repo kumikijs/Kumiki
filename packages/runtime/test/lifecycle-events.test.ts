@@ -4,7 +4,7 @@
 // packages/tests/lifecycle-events.test.ts.
 
 import type { AppShape, ReducerSpec, TileNode } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 function baseApp(overrides: Partial<AppShape>): AppShape {
@@ -171,7 +171,52 @@ describe("runtime: route.error fallback (#81)", () => {
     // Dev-only fields must never bleed into a user reducer payload —
     // spreading the raw PanicRecord would leak stack to production UI.
     expect(captured.event).not.toHaveProperty("stack");
-    expect(captured.event).not.toHaveProperty("cause");
+    // `cause` is a declared field of `PanicInfo` and supplied since #364, so it
+    // is present; what stays out is the `PanicRecord` shape behind it — the
+    // chain of links, each carrying its own stack. This throw had no cause.
+    expect(captured.event?.cause).toEqual({ _tag: "None" });
+    dispose();
+  });
+
+  // #364: `route.error` is the third path a `PanicInfo` reaches a program, and
+  // the one with no corpus example driving it. Every declared field is read
+  // here for the same reason the other two are read in
+  // `packages/tests/panic-info-fields.test.ts`: a field that stops being
+  // supplied reads as `undefined`, which nothing else in this file would catch.
+  it("route.error $event carries every declared PanicInfo field", () => {
+    const captured: { event?: Record<string, unknown> } = {};
+    let mode: "boom" | "ok" = "boom";
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const app: AppShape = baseApp({
+      reducers: [
+        lifecycleReducer('route.error("/")', (s, payload) => {
+          captured.event = payload.$event as Record<string, unknown>;
+          mode = "ok";
+          return { slots: s, emits: [] };
+        }),
+      ],
+      routes: [
+        {
+          pattern: "/",
+          tile: (): TileNode => {
+            if (mode === "boom") throw new Error("kaboom", { cause: new Error("the socket") });
+            return { kind: "text", text: "recovered" };
+          },
+        },
+      ],
+    });
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+    // `location` is the field the shared builder fixed on this path: it used to
+    // be absent here rather than `undefined`, because the literal built by hand
+    // never carried it. A render the runtime could not attribute is `"render"`.
+    expect(captured.event?.location).toBe("render");
+    expect(captured.event?.message).toBe("kaboom");
+    expect(captured.event?.category).toBe("tile-render");
+    expect(captured.event?.pattern).toBe("/");
+    expect(captured.event?.cause).toEqual({ _tag: "Some", _0: "the socket" });
+    // The first paint has no episode open around it, so this one is `None` —
+    // what matters is that the field is a value rather than `undefined`.
+    expect(captured.event?.["episode-id"]).toEqual({ _tag: "None" });
     dispose();
   });
 });
