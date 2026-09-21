@@ -1354,7 +1354,7 @@ describe("live panic handling (#24)", () => {
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("app.error $event does NOT expose stack/cause to user code", () => {
+  it("app.error $event carries the declared fields and no dev-only ones", () => {
     // Capture the $event payload the app.error reducer sees.
     let capturedEvent: unknown;
     const app = makePanicApp();

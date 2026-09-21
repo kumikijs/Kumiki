@@ -155,11 +155,11 @@ type PanicInfo = {
 
 `category` は、その throw を捕捉した runtime 側の catch サイトを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路であり、`effect` / `capability` / `unknown` は予約値である —— 今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするため。
 
-`episode-id` は panic が起きた episode を名指す（[runtime.md §10.5](./runtime.md#_10-5-episode-loop)）—— ユーザーが見た panic と、`kumiki replay` / `kumiki_episode_tail` が読み戻すものとを繋ぐ結合キーである。`Option(Text)` なのは、episode が常に開いているとは限らないからだ：episode logger を接続していないホストには名指すべき episode が無く、それに対する答えが `None` である。どの dispatch の外側でもない場所で発生した panic も同じ。
+`episode-id` は panic が起きた episode を名指す（[runtime.md §10.5](./runtime.md#_10-5-episode-loop)）—— ユーザーが見た panic と、`kumiki replay` / `kumiki_episode_tail` が読み戻すものとを繋ぐ結合キーである。`Option(Text)` なのは、episode が常に開いているとは限らないからだ：episode logger を接続していないホストには名指すべき episode が無く、それに対する答えが `None` である。どの dispatch にも属さない場所で発生した panic —— 例えば初回描画で捕捉された描画 panic —— も同じである。
 
-`cause` は、throw が `Error.cause` を伴っていた場合のその**最も近い**リンクの message であり、そうでなければ `None` である。その背後のチェーンと、それに付随するスタックは episode log に留まる —— そこへ辿り着く手段が `episode-id` である。
+`cause` は、throw が `Error.cause` を伴っていた場合のその**最も近い**リンクの message であり、そうでなければ `None` である。message が空の cause も `None` として扱う：`.get-or` を通すと `Some("")` は理由が入るべき場所を空白にしてしまい、「理由が無い」ではなく「理由が空である」と読めてしまうからだ。その背後のチェーンと、それに付随するスタックは episode log に留まる —— そこへ辿り着く手段が `episode-id` である。
 
-panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
+panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、マッチした `pattern` が乗る。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` である —— 境界経路ではどの dispatch の内側でもない描画が、サーバー側ではすべての描画がそれに当たる（`renderToString` は描画より前に bootstrap episode を commit する）。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
 
 開発ツール向けのフィールドである `stack`（JS の `Error.stack`）と機械可読な `Error.cause` チェーンは episode log（`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）に記録されるが、ユーザー向けの `$event` には意図的に**公開しない** —— 生のスタックを本番 UI に漏らすのは footgun だからである。参照するには `kumiki replay` / `kumiki_episode_tail` を使う。
 

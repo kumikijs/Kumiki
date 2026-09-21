@@ -51,3 +51,9 @@ The runtime's `EpisodeLogger` gains `currentId()` — the question `hasOpenEpiso
 answers, with the answer a caller can name — and a mounted app publishes an
 episode seam so the boundary path, which runs inside an app's own inlined
 runtime copy, can read it across that boundary.
+
+**A hand-written `EpisodeLogger` needs a `currentId()`.** It is a required
+member, so a logger built against the previous shape no longer satisfies the
+type. Anything from `createEpisodeLogger()` already has it. The runtime does not
+assume it at runtime: a logger without one degrades to `episode-id: None` and
+warns once, rather than throwing from inside a panic catch.

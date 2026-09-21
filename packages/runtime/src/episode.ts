@@ -488,7 +488,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       return stack.length > 0;
     },
     currentId() {
-      return stack[stack.length - 1]?.id;
+      return topEpisode()?.id;
     },
   };
 }

@@ -1527,36 +1527,44 @@ export function getRenderingApp(): MountedApp | undefined {
 }
 
 /**
- * The episode open around the render pass now executing, for `PanicInfo`'s
- * `episode-id` on the boundary path.
- *
- * `_s.boundaryPanic` is called from generated code deep inside a tile
- * expression and has no mount in hand, so it asks the render pass instead —
- * which is the right scope anyway: a render runs inside the dispatch that
- * caused it (`render()` is called before `endTrigger`), so the episode this
- * names is the one the panic belongs to. Outside a render, or with no logger
- * attached, there is none, and `PanicInfo.episode-id` is `None`.
+ * Where {@link currentEpisodeId} reads its answer from.
  *
  * Hung off `globalThis` for the same reason the environment journal above is,
  * and it is the same failure when it is not: an app compiled with
  * `bundle: true` carries its own inlined runtime, so the `_s.boundaryPanic`
  * that asks belongs to THAT copy while the `mount` that renders belongs to the
- * tool's. A module-local `renderingApp` leaves the asking copy looking at a
- * pass nothing ever opened, and the answer is a silent `None` — which is
- * exactly what the first cut of this did. `kumiki run` / the test suites drive
- * apps that way, so it is the normal case, not the exotic one.
+ * tool's. A module-local leaves the asking copy looking at a pass nothing ever
+ * opened, and the answer is a silent `None` — which is exactly what the first
+ * cut of this did. `kumiki run` / the test suites drive apps that way, so it
+ * is the normal case, not the exotic one.
+ *
+ * `undefined` is in the type, not just implied by `?`: under
+ * `exactOptionalPropertyTypes` the restore in {@link withRenderingApp}'s
+ * `finally` writes back whatever it saved, and outside any render that is
+ * `undefined`.
+ */
+type RenderEpisodeHost = {
+  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
+};
+
+/**
+ * The episode open around the render pass now executing, for `PanicInfo`'s
+ * `episode-id` on the boundary path.
+ *
+ * `_s.boundaryPanic` is called from generated code deep inside a tile
+ * expression and has no mount in hand, so it asks the render pass instead.
+ * A render from `applyReducer`'s tail runs before that dispatch's
+ * `endTrigger`, so there the answer is the episode the panic belongs to.
+ * Other renders have no episode open around them — `updateRoute` renders after
+ * each `route.enter` reducer has opened and closed its own, and the
+ * leave-confirm paths and the `_setSlot` host seam render outside any dispatch
+ * — and a boundary panic in one of those is `None` even with a logger
+ * attached. So is the first paint, and so is a host that attached no logger.
  *
  * {@link withRenderingApp} is the only writer and restores the previous value
  * on both exits, so a nested mount inside a render (a custom element that
  * mounts its own app) leaves the outer pass's answer intact.
  */
-// `undefined` is in the type, not just implied by `?`: under
-// `exactOptionalPropertyTypes` the restore in `withRenderingApp`'s `finally`
-// writes back whatever it saved, and outside any render that is `undefined`.
-type RenderEpisodeHost = {
-  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
-};
-
 export function currentEpisodeId(): string | undefined {
   return (globalThis as RenderEpisodeHost).__kumikiRenderEpisode__?.();
 }
@@ -1577,7 +1585,7 @@ export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
   const prevEpisode = host.__kumikiRenderEpisode__;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
-  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId ?? null;
+  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId;
   try {
     return fn();
   } finally {
@@ -2091,7 +2099,7 @@ export function mountCore(
     // not carry it. The caller records `"render"` against the episode for the
     // same panic, so that is what an unattributed one is called here too.
     const info = {
-      ...userPanicInfo(rec, rec.location ?? "render", episode?.currentId()),
+      ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
       pattern,
     };
     for (const h of handlers) {
@@ -2108,6 +2116,32 @@ export function mountCore(
   // Re-entrancy guard so a panic inside the `app.error` handler itself does not
   // recurse — it is just logged.
   let inPanicHandler = false;
+
+  let warnedEpisodeSeam = false;
+
+  /**
+   * `episode.currentId()` without letting the logger displace the panic being
+   * handled. Every caller is inside a panic catch, and `episodeLogger` is a
+   * host-supplied seam: the optional chain covers a logger that is absent, not
+   * one written against an older `EpisodeLogger` that has no `currentId`. A
+   * throw there would escape the catch and take the panic's own report with
+   * it — the contract `safeErrorField` / `safeCauseOf` exist to hold.
+   *
+   * Degrading to `None` is the right answer (it is what "no episode to name"
+   * already means) but a silent one would look like a host that simply
+   * attached no logger, so it warns once per mount.
+   */
+  function safeEpisodeId(): string | undefined {
+    try {
+      return episode?.currentId();
+    } catch (e) {
+      if (!warnedEpisodeSeam) {
+        warnedEpisodeSeam = true;
+        console.warn(`kumiki: episode logger has no currentId(); episode-id will be None`, e);
+      }
+      return undefined;
+    }
+  }
 
   /**
    * Handle a caught live panic per docs/spec/lifecycle.md §7.2: the dispatch episode
@@ -2143,7 +2177,7 @@ export function mountCore(
     // The episode is still open here — `applyReducer` calls this before its
     // `endTrigger` — so the id names the dispatch that panicked, which is what
     // `kumiki replay` needs to reproduce it.
-    const info = userPanicInfo(rec, location, episode?.currentId());
+    const info = userPanicInfo(rec, location, safeEpisodeId());
     inPanicHandler = true;
     try {
       for (const h of handlers) applyReducer(h, { $event: info });
@@ -2181,6 +2215,21 @@ export function mountCore(
       const t = triggerOfReducer(r);
       episode.beginTrigger({ kind: t.kind, target: t.target, payload });
     }
+    // In a `finally` rather than on each exit: the body runs user reducers
+    // (through `handleLivePanic`) and host effects (through
+    // `dispatcher.dispatch`), and a throw from either would leave the episode
+    // open for the rest of the process — every later dispatch joining one
+    // trigger that never commits. A nested call did not open it and must not
+    // close it, which `opened` already says.
+    try {
+      applyReducerBody(r, payload);
+    } finally {
+      if (opened) episode?.endTrigger();
+    }
+  }
+
+  /** {@link applyReducer}'s body, minus the episode bracket it runs inside. */
+  function applyReducerBody(r: ReducerSpec, payload: Record<string, unknown>): void {
     // Journalled unconditionally rather than only when a logger is attached:
     // the guard would be a second way for the scope to be open or not, and the
     // balance of this one is what keeps every later read in the process
@@ -2195,7 +2244,6 @@ export function mountCore(
       // dispatch still runs); the `app.error` reducer (if any) is fired with
       // PanicInfo. The reducer-test harness catches panics separately (#24).
       handleLivePanic(`reducer "${r.name}"`, outcome.error, r.name, envReads);
-      if (opened) episode?.endTrigger();
       return;
     }
     const result = outcome.value;
@@ -2213,7 +2261,6 @@ export function mountCore(
       // The body still ran, and still read the environment. A replay that
       // re-runs it has to see the same answers or it may not reject at all.
       episode?.recordReducer(r.name, [], [], envReads);
-      if (opened) episode?.endTrigger();
       return;
     }
     episode?.recordReducer(
@@ -2243,7 +2290,6 @@ export function mountCore(
     if (dirty.length > 0) {
       episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched)));
     }
-    if (opened) episode?.endTrigger();
   }
 
   function handleEffectResult(
@@ -2469,8 +2515,7 @@ export function mountCore(
   // Published on the shape so `currentEpisodeId()` can answer for whichever app
   // is mid-render — `_s.boundaryPanic` runs inside a tile expression and has no
   // other way to reach this mount's logger.
-  (app as AppShape & { _episodeId?: () => string | undefined })._episodeId = () =>
-    episode?.currentId();
+  (app as AppShape & { _episodeId?: () => string | undefined })._episodeId = safeEpisodeId;
   (
     app as AppShape & { _dispatch?: (name: string, el: Record<string, unknown>) => void }
   )._dispatch = (reducerName: string, el: Record<string, unknown>) => {
@@ -3190,10 +3235,12 @@ export type PanicRecord = {
  * them (runtime.md §10.5.1).
  *
  * `episode-id` and `cause` are `Option(Text)`, so "there was none" is a value
- * the language can say. Both were declared `Text` and supplied by nothing,
- * which made §7.2.3's own instruction — reducers "MUST treat both as
- * `None`-equivalent" — inexpressible for `episode-id`: a `Text` has no `None`,
- * and what arrived was JavaScript's `undefined` rendered through `+` (#364).
+ * the language can say. Neither was supplied by anything, and `episode-id` was
+ * declared `Text`, which made §7.2.3's own instruction — reducers "MUST treat
+ * both as `None`-equivalent" — inexpressible on that one: a `Text` has no
+ * `None`, and what arrived was JavaScript's `undefined` rendered through `+`
+ * (#364). `cause` was `Option(Text)` already, so there the gap was only that
+ * nothing wrote it.
  */
 export function userPanicInfo(
   rec: PanicRecord,

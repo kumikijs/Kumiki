@@ -4,12 +4,13 @@
 // nothing could enforce and, for a `Text`-typed `episode-id`, nothing could
 // even express.
 //
-// The corpus example (`93-panic-info`) pins that all five are readable on both
-// paths a panic reaches a program. What it cannot show is the half that needed
-// supplying: `kumiki run` attaches no episode logger, so `episode-id` is
-// legitimately `None` there, and `.get-or` answers the same before and after.
-// This suite attaches one, and drives the example through the same two seams
-// its scenario does.
+// The corpus example (`93-panic-info`) pins that all five are readable on the
+// two paths it drives. What it cannot show is the half that needed supplying:
+// `kumiki run` attaches no episode logger, so `episode-id` is legitimately
+// `None` there, and `.get-or` answers the same before and after. This suite
+// attaches one, and drives the example through the same two seams its scenario
+// does. The third path, `route.error`, is covered in
+// `packages/runtime/test/lifecycle-events.test.ts`.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

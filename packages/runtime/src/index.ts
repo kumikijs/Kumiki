@@ -43,7 +43,6 @@ export {
   bindLabel,
   type CapabilityProvider,
   type CapabilityRegistry,
-  currentEpisodeId,
   currentTheme,
   type DiagnosticSite,
   type EffectResult,
