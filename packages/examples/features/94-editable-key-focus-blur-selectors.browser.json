@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "label": "initial render — a contenteditable div whose tabIndex reads -1: it is in no tab order, and is focusable anyway because it is an editing host. That is the whole premise these three lift rows rest on, and the next step is what proves it",
+      "expect": {
+        "noErrors": true,
+        "state": { "keys": 0, "focuses": 0, "blurs": 0 },
+        "elementState": {
+          "#ed": { "contentEditable": "true", "tabIndex": -1 }
+        }
+      }
+    },
+    {
+      "label": "a real focus() lands on it — the scenario tier dispatches a FocusEvent at the element and so cannot see this, which is why the check is here",
+      "do": { "focus": "#ed" },
+      "expect": {
+        "noErrors": true,
+        "focused": "#ed",
+        "state": { "focuses": 1, "blurs": 0 }
+      }
+    },
+    {
+      "label": "a real blur() runs the ui.blur reducer",
+      "do": { "blur": "#ed" },
+      "expect": {
+        "noErrors": true,
+        "state": { "focuses": 1, "blurs": 1 }
+      }
+    },
+    {
+      "label": "focusing a neighbouring tile does not count, even though button is itself in the focus lift set",
+      "do": { "focus": "#away" },
+      "expect": {
+        "noErrors": true,
+        "focused": "#away",
+        "state": { "focuses": 1, "blurs": 1 }
+      }
+    }
+  ]
+}

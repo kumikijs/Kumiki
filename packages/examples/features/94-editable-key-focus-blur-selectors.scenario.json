@@ -18,7 +18,7 @@
       }
     },
     {
-      "label": "a keystroke runs the ui.key reducer",
+      "label": "a keystroke runs the ui.key reducer, and only that one",
       "do": { "key": "#ed", "value": "a" },
       "expect": {
         "noErrors": true,
@@ -29,7 +29,16 @@
     {
       "label": "a second keystroke counts again — the handler is not a one-shot",
       "do": { "key": "#ed", "value": "b" },
-      "expect": { "noErrors": true, "state": { "keys": 2 } }
+      "expect": { "noErrors": true, "state": { "keys": 2, "focuses": 1, "blurs": 0 } }
+    },
+    {
+      "label": "typing still writes the bind — ui.input coexists with the three, and moves none of them",
+      "do": { "fill": "#ed", "value": "abc" },
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "abc", "keys": 2, "focuses": 1, "blurs": 0 },
+        "domIncludes": ["note: abc"]
+      }
     },
     {
       "label": "leaving the editable runs the ui.blur reducer",
@@ -41,12 +50,19 @@
       }
     },
     {
-      "label": "the three are wired to this tile alone — another tile's events do not count",
-      "do": { "click": "#away" },
-      "expect": {
-        "noErrors": true,
-        "state": { "keys": 2, "focuses": 1, "blurs": 1 }
-      }
+      "label": "a keystroke on another tile does not count — keydown bubbles, so this also catches a handler lifted onto the enclosing column",
+      "do": { "key": "#away", "value": "c" },
+      "expect": { "noErrors": true, "state": { "keys": 2, "focuses": 1, "blurs": 1 } }
+    },
+    {
+      "label": "focusing another tile does not count — button is itself in the focus lift set, so this catches codegen gating on tile kind instead of on the selector's tile",
+      "do": { "focus": "#away" },
+      "expect": { "noErrors": true, "state": { "keys": 2, "focuses": 1, "blurs": 1 } }
+    },
+    {
+      "label": "blurring another tile does not count either",
+      "do": { "blur": "#away" },
+      "expect": { "noErrors": true, "state": { "keys": 2, "focuses": 1, "blurs": 1 } }
     }
   ]
 }
