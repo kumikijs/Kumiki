@@ -8,6 +8,7 @@
 // (reducers), and effects are mocked at the capability boundary — so the oracle
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
+import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
@@ -250,7 +251,8 @@ export type StepResult = {
   expectedErrors: string[];
   /**
    * Why the step's action could not run — a selector matching nothing, a `fill`
-   * aimed at an element that holds no text. Absent in the healthy case, and a
+   * aimed at an element that holds no text, a `dispatch` naming a reducer the
+   * app does not have. Absent in the healthy case, and a
    * channel of its own rather than an entry in `errors`: nothing was observed
    * about the app, so `noErrors` and `errorIncludes` must not see it. It fails
    * the step all the same.
@@ -502,6 +504,26 @@ function describeAction(a: Action): string {
   return unhandledAction(a);
 }
 
+/**
+ * The seam named, or a fault. Both `_dispatch` and `_navigate` used to be
+ * called through `?.`, so a shape mounted without one did nothing and reported
+ * nothing — the same silence a missing selector had before #334, one layer
+ * further in.
+ */
+function requireSeam<K extends "_dispatch" | "_navigate">(
+  app: Dispatchable,
+  seam: K,
+  action: string,
+): NonNullable<Dispatchable[K]> {
+  const fn = app[seam];
+  if (!fn) {
+    throw new Error(
+      `${action}: this app shape carries no \`${seam}\` seam, so there is nothing to drive`,
+    );
+  }
+  return fn as NonNullable<Dispatchable[K]>;
+}
+
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   // The waiting is the caller's: this step's settle is longer by `wait`.
   if ("wait" in a) return;
@@ -523,11 +545,29 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("dispatch" in a) {
-    app._dispatch?.(a.dispatch, a.payload ?? {});
+    // Checked here rather than in the seam. `_dispatch` is production code —
+    // the confirm effect's callback reaches it, and so does every codegen'd
+    // handler — so making it throw would change what an app does to enforce a
+    // test-harness contract. A precondition reads the same `app.reducers` the
+    // seam searches, and throwing lands on `actionError` with no runtime change
+    // at all. `dispatchFault` is what the browser tier asks too, so the two
+    // agree by construction rather than by two hand-written copies of the rule.
+    const dispatch = requireSeam(app, "_dispatch", describeAction(a));
+    const payload = a.payload ?? {};
+    const fault = dispatchFault(
+      a.dispatch,
+      payload,
+      app.reducers.map((r) => ({ name: r.name, id: r.selector?.id ?? null })),
+    );
+    if (fault) throw new Error(fault);
+    dispatch(a.dispatch, payload);
     return;
   }
   if ("navigate" in a) {
-    app._navigate?.(a.navigate);
+    // Only the missing seam: an unrouted path is not a fault here. It renders
+    // `/404`, which the next step's `domIncludes` can see — unlike a dispatch
+    // that went nowhere, which leaves nothing behind to assert on.
+    requireSeam(app, "_navigate", describeAction(a))(a.navigate);
     return;
   }
   if ("clickText" in a) {

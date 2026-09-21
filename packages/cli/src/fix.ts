@@ -13,8 +13,8 @@ import {
   calleeCandidates,
   check,
   collectTimerNames,
-  levenshtein,
   lex,
+  nearestName,
   parse,
   typeCandidates,
   variantTagsOf,
@@ -237,31 +237,17 @@ function atomicWriteFileSync(path: string, content: string): void {
 }
 
 /**
- * Closest candidate name for `missing` under this file's threshold: at most 2
- * edits, or at most `ceil(missing.length / 4)` of them. Takes candidates as an
- * iterable so callers can supply a scoped
- * set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
+ * Closest candidate name for `missing`, argument-ordered the way this file's
+ * call sites read. Takes candidates as an iterable so callers can supply a
+ * scoped set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
  * names for E0106, variant tags for E0209.
+ *
+ * The rule itself is `nearestName`, shared with the verification tiers' own
+ * unknown-name message. It used to live here, and the threshold — not the
+ * metric — is the half that drifts when a rule has two homes.
  */
 function suggestNameFrom(candidates: Iterable<string>, missing: string): string | null {
-  let best: string | null = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (const cand of candidates) {
-    const d = levenshtein(missing, cand);
-    // Skip self-matches so `missing === cand` never dominates a genuinely close
-    // alternative. Relying on the `applied ⇔ source changed` invariant to
-    // suppress `replace X with X` downstream is fragile: a candidate at
-    // distance 1 that would otherwise win never gets a chance if the loop
-    // latches onto the self-match first.
-    if (d === 0) continue;
-    if (d < bestScore) {
-      bestScore = d;
-      best = cand;
-    }
-  }
-  if (best === null) return null;
-  if (bestScore <= 2 || bestScore <= Math.ceil(missing.length * 0.25)) return best;
-  return null;
+  return nearestName(missing, candidates);
 }
 
 function suggestName(store: Store, missing: string): string | null {

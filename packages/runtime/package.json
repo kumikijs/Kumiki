@@ -2,7 +2,7 @@
   "name": "@kumikijs/runtime",
   "version": "0.13.0",
   "type": "module",
-  "description": "Kumiki DOM runtime — mounts compiled Kumiki apps, dispatches effects, manages the signal graph.",
+  "description": "Kumiki DOM runtime \u2014 mounts compiled Kumiki apps, dispatches effects, manages the signal graph.",
   "license": "Apache-2.0",
   "author": "kage1020",
   "homepage": "https://github.com/kumikijs/Kumiki/tree/main/packages/runtime#readme",
@@ -29,6 +29,10 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./text-distance": {
+      "types": "./dist/text-distance.d.ts",
+      "default": "./src/text-distance.ts"
+    },
     "./bundle": "./dist/index.js",
     "./bundle.min": "./dist/bundle.min.js",
     "./modules/*": "./dist/modules/*"
@@ -43,6 +47,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./text-distance": {
+        "types": "./dist/text-distance.d.ts",
+        "import": "./dist/text-distance.js"
       },
       "./bundle": "./dist/index.js",
       "./bundle.min": "./dist/bundle.min.js",

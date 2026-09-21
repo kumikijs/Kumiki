@@ -62,3 +62,53 @@ test("a selector matching nothing fails the step off the error channel", async (
   expect(report.steps[1]?.actionError).toBeTruthy();
   expect(report.steps[1]?.errors).toEqual([]);
 });
+
+// `{dispatch}` is the verb where the two tiers could most easily drift: it names
+// a reducer rather than matching a selector, and the seam it goes through
+// returns silently when the name matches nothing. Both tiers ask the same
+// `dispatchFault`, so §8.10's "exactly as at the scenario tier" is structural.
+const DISPATCH_SOURCE = `slot log : Text = ""
+reducer addTodoItem on=ui.click(AddBtn)       do= log := log + "add;"
+reducer scopedMiss  on=ui.click(AddBtn#other) do= log := log + "miss;"
+tile AddBtn = button(text="add") {id: "add"}
+tile App    = column(AddBtn, text("log: " + log))
+app Dispatches
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+test("a dispatch naming no reducer fails the step, with the near-miss", async ({ page }) => {
+  const report = await runOnPage(page, DISPATCH_SOURCE, {
+    steps: [{ do: { dispatch: "addTodoIten" }, expect: { state: { log: "" } } }],
+  });
+  expect(report.ok).toBe(false);
+  const fault = report.steps[0]?.actionError ?? "";
+  expect(fault).toContain('no reducer named "addTodoIten"');
+  expect(fault).toContain('did you mean "addTodoItem"');
+  // The app did nothing wrong, and said nothing — which is what makes this
+  // tier's always-fatal error list the wrong channel for it.
+  expect(report.steps[0]?.errors).toEqual([]);
+});
+
+test("a dispatch the id scope would drop fails rather than passing", async ({ page }) => {
+  const report = await runOnPage(page, DISPATCH_SOURCE, {
+    steps: [{ do: { dispatch: "scopedMiss" }, expect: { state: { log: "" } } }],
+  });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.actionError).toContain("is scoped to #other");
+});
+
+test("a dispatch that can run still runs", async ({ page }) => {
+  const report = await runOnPage(page, DISPATCH_SOURCE, {
+    steps: [
+      { do: { dispatch: "addTodoItem" }, expect: { state: { log: "add;" } } },
+      {
+        do: { dispatch: "scopedMiss", payload: { id: "other" } },
+        expect: { state: { log: "add;miss;" } },
+      },
+    ],
+  });
+  expect(report.steps.flatMap((s) => [...s.errors, ...s.failures])).toEqual([]);
+  expect(report.ok).toBe(true);
+});

@@ -5,7 +5,11 @@
 
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
-import type { Action as ScenarioAction } from "@kumikijs/runtime";
+import {
+  type DispatchTarget,
+  dispatchFault,
+  type Action as ScenarioAction,
+} from "@kumikijs/runtime";
 import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
 
 export type Action =
@@ -605,15 +609,44 @@ async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("dispatch" in a) {
-    await page.evaluate(
-      (arg: { n: string; p: Record<string, unknown> }) =>
-        window.__kumikiApp?._dispatch?.(arg.n, arg.p),
-      { n: a.dispatch, p: (a.payload ?? {}) as Record<string, unknown> },
+    // The same precondition the scenario tier asks, on the same rule — §8.10
+    // promises an action that could not run fails the step "exactly as at the
+    // scenario tier", and `{dispatch}` is the verb where the two could most
+    // easily drift: it names a reducer instead of matching a selector, and the
+    // seam returns silently when the name matches nothing.
+    //
+    // Read out of the page rather than judged in it: a `ReducerSpec` carries
+    // `apply`, a function, so it cannot cross `page.evaluate`'s structured
+    // clone — but the two fields the rule needs are plain strings.
+    const payload = (a.payload ?? {}) as Record<string, unknown>;
+    const targets = await page.evaluate(
+      () =>
+        window.__kumikiApp?.reducers?.map((r) => ({ name: r.name, id: r.selector?.id ?? null })) ??
+        null,
     );
+    if (targets === null) throw new Error("dispatch: the page exposes no reducers to drive");
+    const fault = dispatchFault(a.dispatch, payload, targets as DispatchTarget[]);
+    if (fault) throw new Error(fault);
+    const drove = await page.evaluate(
+      (arg: { n: string; p: Record<string, unknown> }) => {
+        if (typeof window.__kumikiApp?._dispatch !== "function") return false;
+        window.__kumikiApp._dispatch(arg.n, arg.p);
+        return true;
+      },
+      { n: a.dispatch, p: payload },
+    );
+    if (!drove) throw new Error("dispatch: the page carries no `_dispatch` seam to drive");
     return;
   }
   if ("navigate" in a) {
-    await page.evaluate((path: string) => window.__kumikiApp?._navigate?.(path), a.navigate);
+    // Only the missing seam, as at the scenario tier: an unrouted path renders
+    // /404, which `domIncludes` can see.
+    const navigated = await page.evaluate((path: string) => {
+      if (typeof window.__kumikiApp?._navigate !== "function") return false;
+      window.__kumikiApp._navigate(path);
+      return true;
+    }, a.navigate);
+    if (!navigated) throw new Error("navigate: the page carries no `_navigate` seam to drive");
     return;
   }
   if ("clickText" in a) {
@@ -813,6 +846,8 @@ declare global {
   interface Window {
     __kumikiApp?: {
       live?: Record<string, unknown>;
+      /** Only what a `{dispatch}` precondition reads; the real shape carries far more. */
+      reducers?: Array<{ name: string; selector?: { tile: string; id?: string } }>;
       _dispatch?: (n: string, p: Record<string, unknown>) => void;
       _navigate?: (path: string) => void;
     };
