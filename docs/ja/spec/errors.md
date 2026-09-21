@@ -763,7 +763,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0301 `missing-capability`
 
-effect が要求するケイパビリティが `app.caps` で宣言されていない。要求元は effect 自身の `cap=`、または `navigate` / `toast` のような[標準 effect](./stdlib.md#_2-6-標準-effect)（プログラム側で宣言しないもの）が登録されているケイパビリティである。DOM ランタイムはどちらも同じように制限する — 宣言されていないケイパビリティの effect は console 警告を出して捨てられるので、この検査がないと emit はコンパイルもマウントも通り、そして何も起きない。
+effect が要求するケイパビリティが `app.caps` で宣言されていない。要求元は effect 自身の `cap=`、または `navigate` / `toast` のような[標準 effect](./stdlib.md#_2-6-標準-effect)（プログラム側で宣言しないもの）が登録されているケイパビリティである。DOM ランタイムはどちらも同じように制限する — 宣言されていないケイパビリティの effect は拒否され、拒否は報告される（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）。この検査がないと emit はコンパイルもマウントも通り、プログラムが動かないことは実行時の panic で初めて分かる。
 
 > `Effect "<effect>" requires capability "<cap>" which is not declared in app.caps`
 

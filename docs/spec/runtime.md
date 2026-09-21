@@ -668,6 +668,16 @@ When a reducer completes, the set of emitted effects is passed to the dispatcher
 
 Checks whether each effect's `cap` is included in `app.caps`. A violation is not executed and is notified to `app.error`.
 
+An effect with an empty `cap` is a standard presentation effect and passes ungated.
+
+The notification is the `PanicInfo` of [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer), under `category: "capability"`, with `location` naming the refused effect. It also goes to `console.error`, the channel the verification tiers read, and — where an episode is open around the emit — to that episode as a `panic` step. Nothing was thrown, so it carries no `stack` and no `cause`.
+
+Both passes report, in the same words. What differs is what they can report *to*: `renderToString` has no `app.error` to fire, the same way a reducer panic on that pass is a `panic` step and nothing more ([§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)), so on the server the console and the episode are the whole of it.
+
+The episode a refusal attaches to is the one that **owns the emit**, which is not always the one in focus. Under the default policy the dispatcher refuses while the triggering episode is still open, and the step lands there. Under a deferred policy ([§10.4.3](#_10-4-3-policy-handling)) the launch fires from a timer or a queue tail, long after that episode closed; the step MUST still land on the episode that claimed the `effect-start`, and `episode-id` MUST name it — a refusal that fell back to "no episode" would leave that episode holding an `effect-start` and an `effect-cancel` and nothing else, which is what a replaced `debounce` timer looks like. Where a refusal produces both a `panic` step and an `effect-cancel`, the `panic` step comes **first**: the cancel settles the episode, and a reader meets the reason before the consequence.
+
+The one emit with no episode to name is one from `app.init`, dispatched before the first episode opens: it reports to the console and to `app.error`, carrying `episode-id: None`.
+
 ### 10.4.3 policy Handling
 
 | policy | Implementation |
@@ -757,7 +767,7 @@ A `panic` step additionally carries:
 
 - `stack`: the `Error.stack` of the caught throw, when available.
 - `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
-- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the throw was caught. Emitted by the reducer / tile-render / hydrate catch sites today; `effect` / `capability` / `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw currently surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step.
+- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the failure was caught, or for `capability` refused. Emitted by the reducer / tile-render / hydrate / capability sites today; `effect` and `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step, which is a different thing from the refusal `capability` names.
 
 `stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. The `stack` and the cause **chain** are dev-tooling and stay here: the runtime never splats the `PanicRecord` into a user reducer `$event`. What a program is handed is the `PanicInfo` [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) declares — `message`, `location`, `category`, the id of this episode as `episode-id`, and `cause` as the **nearest** link's message alone, with no stack on it.
 
@@ -771,7 +781,7 @@ The server-side `renderToString` pass collapses the entire `app.init` causal cha
 
 - `trigger.kind = "ssr.hydrate"`, `trigger.target = <initial-route-path>`.
 - `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
-- The one emit that produces no pair is one the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start` followed by `effect-cancel` (`targetId = <effect-name>`) and runs nothing, the same shape a replaced `debounce` timer leaves. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run. The live dispatcher records no step at all for the same refusal under the default policy, because it returns before claiming a token: one refused emit therefore reads differently depending on which side refused it.
+- The one emit that produces no pair is one the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start`, then a `panic` step carrying the refusal, then `effect-cancel` (`targetId = <effect-name>`), and runs nothing. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run; the `panic` step says why, and makes the episode `status: "panic"`. The live dispatcher writes the same three steps in the same order for a refusal under a deferred policy, which is the case where it too claimed a token; under the default policy it returns before claiming one, so only the `panic` step lands. Either way both sides report the refusal, and `status` is `"panic"` wherever the step is.
 
 Example:
 
@@ -858,7 +868,8 @@ The snapshot envelope is versioned and self-describing:
 - `kumiki` is the snapshot schema version (current = `1`). A client whose runtime expects a different version MUST discard the snapshot and fall back to a full CSR boot — this keeps server / client out-of-sync deploys safe.
 - `slots` excludes every slot whose declaration carries the `volatile` modifier ([§1.4.1](./language.md#_1-4-1-syntax) modifiers table): the runtime treats SSR snapshotting as the same serialisation boundary as persistence, so `volatile` slots are never written to the wire.
 - `bootstrap.steps[].slot-diffs` use the same `volatile` filter, so a volatile slot never appears in either the `slots` map or the bootstrap diff.
-- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update, plus effect-cancel for an emit the capability check refused — see [§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
+- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update, plus `panic` and effect-cancel for an emit the capability check refused, in that order — see [§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
+- `bootstrap.status` is `"completed"` for a chain that ran, and `"panic"` for one carrying a `panic` step — a refused emit is the case where an otherwise successful init pass ships a `"panic"` bootstrap. A client MUST hydrate either one; the status describes the recorded run, not the snapshot's usability.
 
 ### 10.6.2 Hydration
 

@@ -35,10 +35,10 @@ import {
   pickRootTile,
   type RoutingImpl,
   readStatus,
+  reportCapabilityRefusal,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
-  warnUndeclaredCapability,
   withEnvRecord,
   withRenderingApp,
 } from "./core.ts";
@@ -215,8 +215,21 @@ async function dispatchEmit(
   // start that never ends leaves the bootstrap episode uncommitted, and
   // `renderToString` refuses to return one.
   if (effect.cap !== "" && !caps.has(effect.cap)) {
-    warnUndeclaredCapability(effect.cap);
-    logger.cancelPendingEffect(logger.recordEffectStart(emit.effect, input), emit.effect);
+    // Both records, because they say different things: the start / cancel pair
+    // is that this emit did not run, and the `panic` step is that it was
+    // refused and why. What the live path does beyond this is fire
+    // `app.error`, and this pass has none to fire: a server-side reducer panic
+    // is a `panic` step and nothing more (see `applyReducerOnSsr`), and a
+    // refusal is held to that same rule rather than inventing a second one.
+    //
+    // Panic before cancel, the order the live path is bound to: there the
+    // cancel settles the originating episode and commits it, so a step
+    // appended after it is one `onEpisode` and the localStorage mirror have
+    // already been handed without. Reading it back, the reason precedes the
+    // consequence it explains.
+    const token = logger.recordEffectStart(emit.effect, input);
+    logger.recordPanic(reportCapabilityRefusal(emit.effect, effect.cap), token);
+    logger.cancelPendingEffect(token, emit.effect);
     return;
   }
   const token = logger.recordEffectStart(emit.effect, input);

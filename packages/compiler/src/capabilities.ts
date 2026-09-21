@@ -42,8 +42,9 @@ export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
  * They are not `effect` declarations, so nothing in a program says what they
  * require; without this table the capability check has no capability to look
  * at and passes. The runtime has no such gap: an undeclared capability there
- * drops the effect with a console warning, so `emit navigate(…)` under
- * `caps=[]` compiles, mounts, and silently does nothing.
+ * refuses the effect and reports the refusal (runtime.md §10.4.2), so
+ * `emit navigate(…)` under `caps=[]` compiles and mounts, and the first sign
+ * it cannot work is a panic at run time.
  */
 export const BUILTIN_EFFECT_CAPS: ReadonlyMap<string, string | null> = new Map([
   ["navigate", "nav.push"],

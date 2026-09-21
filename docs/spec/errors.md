@@ -785,7 +785,7 @@ Only a literal template is checked. `fmt(tpl, x)` over a slot or a field has no 
 
 ### E0301 `missing-capability`
 
-A capability required by an effect is not declared in `app.caps`. The requirement comes from the effect's own `cap=`, or — for a [standard effect](./stdlib.md#_2-6-standard-effects) such as `navigate` or `toast`, which no program declares — from the capability that effect is registered behind. The DOM runtime gates both the same way: an undeclared capability drops the effect with a console warning, so without this check the emit compiles, mounts, and silently does nothing.
+A capability required by an effect is not declared in `app.caps`. The requirement comes from the effect's own `cap=`, or — for a [standard effect](./stdlib.md#_2-6-standard-effects) such as `navigate` or `toast`, which no program declares — from the capability that effect is registered behind. The DOM runtime gates both the same way: an undeclared capability refuses the effect and reports the refusal ([runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)), so without this check the emit compiles and mounts, and the program's first sign that it cannot work is a panic at run time.
 
 > `Effect "<effect>" requires capability "<cap>" which is not declared in app.caps`
 
