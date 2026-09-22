@@ -226,5 +226,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `92-outlet-error-boundary.kumiki` | slot, reducer, tile, app | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
 | `93-panic-info.kumiki` | slot, reducer, tile, app | lifecycle | [§7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) |
 | `94-editable-key-focus-blur-selectors.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
+| `95-disabled-controls-refuse-a-step.kumiki` | slot, reducer, tile | testing | [§8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification) |
 <!-- examples:end -->
 :::

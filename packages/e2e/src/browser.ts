@@ -6,11 +6,14 @@
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
+  type CONTROL_DEMANDS,
+  controlFault,
   type DispatchTarget,
   dispatchFault,
+  readControl,
   type Action as ScenarioAction,
 } from "@kumikijs/runtime";
-import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
+import { type ConsoleMessage, chromium, type Locator, type Page, type Route } from "playwright";
 
 export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
@@ -34,6 +37,14 @@ export type Action =
 
 export type Expect = {
   noErrors?: boolean;
+  /**
+   * Substrings that must each appear in this step's `actionError`. The scenario
+   * tier's key, and supported here rather than owned there, because the refusal
+   * it asserts comes from a rule both tiers ask — a fixture that asserts one
+   * must be runnable at both, or §8.10's promise that they agree is untestable
+   * for exactly the case it was added for.
+   */
+  actionErrorIncludes?: string[];
   state?: Record<string, unknown>;
   domIncludes?: string[];
   domExcludes?: string[];
@@ -71,6 +82,7 @@ export type Scenario = { steps: ScenarioStep[] };
  */
 const EXPECT_KEYS = [
   "noErrors",
+  "actionErrorIncludes",
   "state",
   "domIncludes",
   "domExcludes",
@@ -208,12 +220,18 @@ export type StepResult = {
   ok: boolean;
   /**
    * Why the step's action could not run — a selector matching nothing, a `fill`
-   * aimed at an element that holds no text. Kept off `errors` because every
+   * aimed at an element that holds no text, a control the platform refuses to
+   * drive. Kept off `errors` because every
    * entry in that list is fatal *as a defect in the app* here (see the `ok`
    * computation below), and a fixture's own broken selector is not one. It
    * fails the step all the same, through this field.
    */
   actionError?: string;
+  /**
+   * The action error this step's `actionErrorIncludes` matched — see the
+   * scenario tier's field of the same name.
+   */
+  expectedActionError?: string;
   errors: string[];
   state: Record<string, unknown>;
   visibleText: string;
@@ -464,15 +482,34 @@ async function serveScenario(
         .locator("body")
         .innerText()
         .catch(() => "");
-      const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
+      const failures = await evaluateExpect(
+        page,
+        step.expect,
+        errorBuf,
+        state,
+        visibleText,
+        actionError,
+      );
+      // Split as at the scenario tier: a refusal the step asked for is kept in
+      // the trace and off the failing channel, and a step that asked for one
+      // and was not refused fails through `failures` instead.
+      const wanted = step.expect?.actionErrorIncludes ?? [];
+      const claimed =
+        actionError !== undefined &&
+        wanted.length > 0 &&
+        wanted.every((w) => actionError?.includes(w));
       const r: StepResult = {
-        ok: errorBuf.length === 0 && failures.length === 0 && actionError === undefined,
+        ok:
+          errorBuf.length === 0 && failures.length === 0 && (claimed || actionError === undefined),
         errors: [...errorBuf],
         state,
         visibleText,
         failures,
       };
-      if (actionError !== undefined) r.actionError = actionError;
+      if (actionError !== undefined) {
+        if (claimed) r.expectedActionError = actionError;
+        else r.actionError = actionError;
+      }
       if (step.label !== undefined) r.label = step.label;
       if (actionDesc !== undefined) r.action = actionDesc;
       steps.push(r);
@@ -588,6 +625,32 @@ function describeAction(a: Action): string {
   return `navigate ${a.navigate}`;
 }
 
+/**
+ * What the platform would refuse, asked before the verb runs. The same rule the
+ * scenario tier asks (`controlFault`) off the same reader (`readControl`), so
+ * §8.10's promise that the tiers agree holds by construction rather than by two
+ * hand-written tables — one drift less than `dispatchFault` has, where each tier
+ * reads the fields itself.
+ *
+ * `readControl` crosses `page.evaluate` because it closes over nothing: what
+ * Playwright serialises is the function's own source. The budget is `fill`'s: a
+ * selector matching nothing must not spend the suite's default 30s to say so.
+ *
+ * Playwright refuses most of these on its own, by timing out on actionability,
+ * but in its words and three seconds later — and not all of them. `focus()` on
+ * a `disabled` <input> moves nothing and reports nothing (measured), so the
+ * silent pass this rule ends exists at this tier too.
+ */
+async function refuse(
+  loc: Locator,
+  verb: keyof typeof CONTROL_DEMANDS,
+  where: string,
+): Promise<void> {
+  const state = await loc.evaluate(readControl, undefined, { timeout: 3000 });
+  const fault = controlFault(verb, where, state);
+  if (fault) throw new Error(fault);
+}
+
 async function performAction(page: Page, a: Action): Promise<void> {
   if ("wait" in a) {
     await page.waitForTimeout(a.wait);
@@ -650,23 +713,30 @@ async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("clickText" in a) {
-    await page
+    const target = page
       .locator("button, a, [role=button]")
       .filter({ hasText: a.clickText })
-      .first()
-      .click({ timeout: 3000 });
+      .first();
+    await refuse(target, "clickText", describeAction(a));
+    await target.click({ timeout: 3000 });
     return;
   }
   if ("click" in a) {
-    await page.locator(a.click).first().click({ timeout: 3000 });
+    const target = page.locator(a.click).first();
+    await refuse(target, "click", describeAction(a));
+    await target.click({ timeout: 3000 });
     return;
   }
   if ("focus" in a) {
-    await page.locator(a.focus).first().focus({ timeout: 3000 });
+    const target = page.locator(a.focus).first();
+    await refuse(target, "focus", describeAction(a));
+    await target.focus({ timeout: 3000 });
     return;
   }
   if ("blur" in a) {
-    await page.locator(a.blur).first().blur({ timeout: 3000 });
+    const target = page.locator(a.blur).first();
+    await refuse(target, "blur", describeAction(a));
+    await target.blur({ timeout: 3000 });
     return;
   }
   if ("fill" in a) {
@@ -678,10 +748,16 @@ async function performAction(page: Page, a: Action): Promise<void> {
     // `isContentEditable` and actionability, so a disabled or read-only control
     // is refused in its words (and the scenario tier fills it).
     //
-    // One locator for both calls: re-resolving would check one element and fill
-    // whatever a re-render put there afterwards, and would spend two 3s
-    // budgets where the comment promises one.
+    // One locator for every call: re-resolving would check one element and fill
+    // whatever a re-render put there afterwards.
     const target = page.locator(a.fill).first();
+    // Before the shape check, and its own probe rather than a field folded into
+    // the one below: a disabled control is refused whatever its shape, and the
+    // scenario tier asks the same question in the same place. Deriving
+    // `fillable` from `ControlState` would save a round trip and cost the
+    // agreement — that reader looks through a <label> wrapper, which `fill`
+    // deliberately does not.
+    await refuse(target, "fill", describeAction(a));
     const found = await target.evaluate(
       (el: Element) => ({
         tag: el.tagName.toLowerCase(),
@@ -728,6 +804,7 @@ async function performAction(page: Page, a: Action): Promise<void> {
   }
   // choose
   const loc = page.locator(a.choose).first();
+  await refuse(loc, "choose", describeAction(a));
   await loc
     .selectOption({ label: a.value }, { timeout: 3000 })
     .catch(() => loc.selectOption(a.value));
@@ -739,11 +816,21 @@ async function evaluateExpect(
   errors: string[],
   state: Record<string, unknown>,
   visibleText: string,
+  actionError?: string,
 ): Promise<string[]> {
   if (!expect) return [];
   const failures: string[] = [];
   if (expect.noErrors && errors.length > 0) {
     failures.push(`expected no errors but got: ${errors.join("; ")}`);
+  }
+  // Worded exactly as at the scenario tier: a fixture that runs at both must
+  // not have to read two different reports of the same verdict.
+  for (const s of expect.actionErrorIncludes ?? []) {
+    if (actionError === undefined) {
+      failures.push(`expected the action to be refused for "${s}", but it ran`);
+    } else if (!actionError.includes(s)) {
+      failures.push(`expected the refusal to include "${s}" but got: ${actionError}`);
+    }
   }
   for (const [key, want] of Object.entries(expect.state ?? {})) {
     const got = readPath(state, key);

@@ -293,6 +293,12 @@ export async function runCmd(
     if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
+    // The same, for the other channel — a refusal the step asked for is off
+    // `actionError`, and a step whose whole point is that the platform turned
+    // it away must not print as a step where nothing happened.
+    if (s.expectedActionError !== undefined) {
+      console.log(`    expected refusal: ${s.expectedActionError}`);
+    }
     for (const f of s.failures) console.log(`    assert: ${f}`);
     // Advisory, and attributed to the action above it — that pairing is the
     // whole reason the runner buffers diagnostics per step. Listed rather than

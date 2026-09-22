@@ -1,0 +1,104 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been driven yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "locked": "sealed", "sealed": "kept", "frozen": "held", "live": "" },
+        "domIncludes": ["typed: 0", "clicks: 0", "keys: 0"]
+      }
+    },
+    {
+      "label": "fill on a disabled input is refused, and the slot does not move",
+      "do": { "fill": "#locked", "value": "typed" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<input> is disabled", "takes no typing"],
+        "state": { "locked": "sealed", "typed": 0 }
+      }
+    },
+    {
+      "label": "fill on a readonly input is refused for readonly, not disabled",
+      "do": { "fill": "#sealed", "value": "typed" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<input> is readonly"],
+        "state": { "sealed": "kept" }
+      }
+    },
+    {
+      "label": "fill on a disabled editable is refused too — the two kinds agree",
+      "do": { "fill": "#frozen", "value": "typed" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<div> is not editable"],
+        "state": { "frozen": "held" }
+      }
+    },
+    {
+      "label": "click on a disabled button is refused",
+      "do": { "click": "#off" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<button> is disabled", "no user gesture reaches it"],
+        "state": { "clicks": 0 }
+      }
+    },
+    {
+      "label": "clickText finds the same disabled button, and is refused the same way",
+      "do": { "clickText": "off" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<button> is disabled"],
+        "state": { "clicks": 0 }
+      }
+    },
+    {
+      "label": "choose on a disabled select is refused",
+      "do": { "choose": "#shut", "value": "Bee" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<select> is disabled"],
+        "state": { "picked": "a" }
+      }
+    },
+    {
+      "label": "the check tile puts its id on a label, and the input inside it decides",
+      "do": { "click": "#agree" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["the <input> inside the <label> it matched is disabled"],
+        "state": { "clicks": 0 }
+      }
+    },
+    {
+      "label": "focus and key are refused on a disabled control too",
+      "do": { "focus": "#locked" },
+      "expect": { "noErrors": true, "actionErrorIncludes": ["<input> is disabled"] }
+    },
+    {
+      "label": "key on a disabled control reaches no reducer",
+      "do": { "key": "#locked", "value": "a" },
+      "expect": { "noErrors": true, "actionErrorIncludes": ["<input> is disabled"] }
+    },
+    {
+      "label": "readonly refuses the typing alone — focus still runs",
+      "do": { "focus": "#sealed" },
+      "expect": { "noErrors": true, "state": { "keys": 0 } }
+    },
+    {
+      "label": "and a readonly input still receives keydown, as a browser delivers it",
+      "do": { "key": "#sealed", "value": "a" },
+      "expect": { "noErrors": true, "state": { "keys": 1 } }
+    },
+    {
+      "label": "a control in neither state is driven, so the rule refuses rather than blocks",
+      "do": { "fill": "#live", "value": "hello" },
+      "expect": {
+        "noErrors": true,
+        "state": { "live": "hello", "typed": 1 },
+        "domIncludes": ["live: hello", "typed: 1"]
+      }
+    }
+  ]
+}

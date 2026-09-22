@@ -105,6 +105,72 @@ describe("scenario runner", () => {
     });
   });
 
+  // #369: the runner wrote the value and dispatched the event itself, so a step
+  // that drove a control the platform refuses moved the slot, ran the reducer,
+  // and passed — asserting behaviour the product cannot produce. The corpus
+  // fixture beside this covers the whole table; these pin the two things that
+  // are about the runner rather than about the rule: a refusal lands on the
+  // fault channel and nowhere else, and `actionErrorIncludes` reads it.
+  describe("a step cannot drive a control the platform refuses", () => {
+    const disabled = join(examples, "features", "95-disabled-controls-refuse-a-step.kumiki");
+
+    it("fails the step and leaves the slot where it was", async () => {
+      const app = await loadApp(disabled);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: { fill: "#locked", value: "typed" } }],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.actionError).toContain("<input> is disabled");
+      expect(report.steps[0]?.state.locked).toBe("sealed");
+      expect(report.steps[0]?.state.typed).toBe(0);
+    });
+
+    // The same split `errorIncludes` needed, for the same reason: a refusal is
+    // not something the app said, so a step must not be able to pass by
+    // claiming it through the error channel.
+    it("keeps the refusal off the error channel, out of errorIncludes' reach", async () => {
+      const app = await loadApp(disabled);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          {
+            do: { fill: "#locked", value: "typed" },
+            expect: { errorIncludes: ["is disabled"] },
+          },
+        ],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.errors).toEqual([]);
+      expect(report.steps[0]?.failures[0]).toContain("but got: none");
+    });
+
+    it("actionErrorIncludes claims it, and moves it off the failing channel", async () => {
+      const app = await loadApp(disabled);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          {
+            do: { fill: "#locked", value: "typed" },
+            // `noErrors` composes with it, as it does with `errorIncludes`.
+            expect: { noErrors: true, actionErrorIncludes: ["<input> is disabled"] },
+          },
+        ],
+      });
+      expect(report.ok).toBe(true);
+      expect(report.steps[0]?.actionError).toBeUndefined();
+      expect(report.steps[0]?.expectedActionError).toContain("is disabled");
+    });
+
+    it("a step that asks to be refused and is not refused fails", async () => {
+      const app = await loadApp(disabled);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [
+          { do: { fill: "#live", value: "x" }, expect: { actionErrorIncludes: ["disabled"] } },
+        ],
+      });
+      expect(report.ok).toBe(false);
+      expect(report.steps[0]?.failures[0]).toContain("but it ran");
+    });
+  });
+
   // A manifest-registered custom capability (telemetry.track) must compile and
   // its effect must be emittable + dispatched — mocked deterministically here,
   // exactly like a standard effect. loadApp resolves examples/features/kumiki.caps.json.

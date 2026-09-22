@@ -57,12 +57,16 @@ are deterministic and hermetic.
 - The four DOM-event actions — focus, blur, key and hover — dispatch the real event on the
   selector, driving a `ui.<event>` reducer through the listener the runtime wired. Prefer them
   to `dispatch`, which calls the reducer directly and proves nothing about the wiring.
-- `expect`: `{ noErrors?, errorIncludes?: [], state?: {slot: value}, domIncludes?: [], domExcludes?: [] }`.
+- `expect`: `{ noErrors?, errorIncludes?: [], actionErrorIncludes?: [], state?: {slot: value}, domIncludes?: [], domExcludes?: [] }`.
   `errorIncludes` asserts an error **was** reported (each substring must appear in one) — for
   contracts whose point is that the runtime surfaces something, e.g. a reducer batch a
   refinement rejected. `noErrors` then means "nothing this step did not ask for", so both compose.
   Neither sees an action that could not run: that is `actionError`, and no `errorIncludes` can
   claim it — so a step cannot pass by asserting its own broken selector.
+  `actionErrorIncludes` is that channel's own assertion: each substring must appear in the step's
+  `actionError`, and a step that asks to be refused and is not refused fails. Write it when the
+  refusal is the behaviour you mean to assert — a step that drives a `disabled` or `readonly`
+  control is turned away, naming the control and the reason, rather than driving it.
   `state` is a **partial** match; keys may be dotted paths (`issues.id-1.status`).
 - `effects`: per-effect queues of `{outcome, value}` returned in order — script HTTP/storage
   so the loop is deterministic and never hits the network.

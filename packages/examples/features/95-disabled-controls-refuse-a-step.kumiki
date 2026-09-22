@@ -1,0 +1,83 @@
+# Feature: a scenario step that drives a control the platform would refuse
+# fails, and a step that means to assert the refusal says so.
+#
+# The runner used to write the value and dispatch the event itself, so a `fill`
+# on a `disabled` input moved the slot and ran the `ui.input` reducer — green,
+# and asserting behaviour the product cannot produce. Every slot below counts
+# what the refused step would have moved, so a rule that stopped working shows
+# up as a number rather than as a missing message.
+#
+# The scenario beside this file is the whole feature: the refusals are on
+# `actionError`, which `expect.actionErrorIncludes` reads.
+
+slot locked : Text = "sealed"
+slot sealed : Text = "kept"
+slot frozen : Text = "held"
+slot live   : Text = ""
+
+slot picked : Text = "a"
+
+slot typed  : Int = 0
+slot clicks : Int = 0
+slot keys   : Int = 0
+
+fn picks() -> List({label: Text, value: Text})
+   = [{label: "Ay", value: "a"},
+      {label: "Bee", value: "b"}]
+
+# Each of these fires only if the step it belongs to actually drove the control.
+reducer typed_in on=ui.input(Locked) do= typed  := typed + 1
+reducer clicked  on=ui.click(Off)    do= clicks := clicks + 1
+reducer agreed   on=ui.click(Agree)  do= clicks := clicks + 1
+reducer live_in  on=ui.input(Live)   do= typed  := typed + 1
+
+# A readonly input is focusable and does receive `keydown` in a browser, so this
+# reducer must still run — `readonly` refuses the typing alone.
+reducer key_hit  on=ui.key(Sealed)   do= keys   := keys + 1
+
+tile Locked = input(bind=locked) {id: "locked", disabled: true}
+
+# `readonly` refuses the typing and nothing else: a readonly input is focusable
+# and does receive `keydown`, so only `fill` is turned away here.
+tile Sealed = input(bind=sealed) {id: "sealed", readonly: true}
+
+# An `editable` has neither property, so a disabled one renders
+# `contenteditable="false"` — which is also what a readonly one renders.
+tile Frozen = editable(bind=frozen) {id: "frozen", disabled: true}
+
+tile Off = button(text="off") {id: "off", disabled: true}
+
+tile Shut = select(bind=picked, options=picks()) {id: "shut", disabled: true}
+
+# `check` puts the tile's id on a <label> and the disabled state on the <input>
+# inside it, so the rule has to look through the wrapper — a browser does.
+tile Agree = check(value=false) {id: "agree", disabled: true}
+
+# The control that is not refused, so the rule is shown to turn away the
+# disabled ones rather than every step.
+tile Live = input(bind=live) {id: "live", placeholder: "type here"}
+
+tile App
+    = column(
+        heading("controls a step cannot drive"),
+        Locked,
+        Sealed,
+        Frozen,
+        Off,
+        Shut,
+        row(Agree, text("I agree")) {gap: "sm", align: "center"},
+        Live,
+        text("locked: " + locked),
+        text("sealed: " + sealed),
+        text("frozen: " + frozen),
+        text("live: " + live),
+        text("picked: " + picked),
+        text("typed: " + typed.show),
+        text("clicks: " + clicks.show),
+        text("keys: " + keys.show))
+      {pad: "lg", gap: "md"}
+
+app DisabledControlsRefuseAStep
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

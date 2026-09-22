@@ -31,6 +31,17 @@ import { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
 import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
+// The preconditions both verification tiers ask before a step runs, so §8.10's
+// promise that they agree is structural rather than hand-maintained. This one:
+// a verb that drives a control must not drive one the platform refuses. The
+// other is `dispatchFault` below, kept apart here only by the export order.
+export {
+  CONTROL_DEMANDS,
+  type ControlDemand,
+  type ControlState,
+  controlFault,
+  readControl,
+} from "./control-check.ts";
 export {
   _setPathHelper,
   type AppShape,
@@ -97,8 +108,7 @@ export {
   withEnvRecord,
   withEnvReplay,
 } from "./core.ts";
-// The `{dispatch}` precondition both verification tiers ask, so §8.10's
-// promise that they agree is structural rather than hand-maintained.
+// The second of them: a `{dispatch}` must name a reducer it can reach.
 export { type DispatchTarget, dispatchFault } from "./dispatch-check.ts";
 export { installConfirm } from "./effects-confirm.ts";
 export { httpFetch } from "./effects-http.ts";
@@ -140,6 +150,7 @@ export {
   type EffectScript,
   type Expect,
   HEADLESS_ACTION_KEYS,
+  HEADLESS_EXPECT_KEYS,
   runScenario,
   type Scenario,
   type ScenarioReport,

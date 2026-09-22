@@ -28,6 +28,9 @@ async function main(argv: string[]): Promise<void> {
     const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
     console.log(`[${status}] ${head}`);
     if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
+    if (s.expectedActionError !== undefined) {
+      console.log(`    expected refusal: ${s.expectedActionError}`);
+    }
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const f of s.failures) console.log(`    assert: ${f}`);
   }

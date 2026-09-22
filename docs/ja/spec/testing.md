@@ -332,7 +332,7 @@ expect(Object.keys(todos)).toHaveLength(1)
 - `focused`: 指定セレクタが実際にフォーカスされていること（再レンダリング時のフォーカス奪取バグを検出）
 - `visible` / `hidden`: 計算済みスタイル上で本当に見えている／いないこと（`display:none` 等）
 
-このティアでも `expect` キーと操作の種類は**閉じた集合**である——scenario ティアのものから `errorIncludes` と `key` / `hover` 操作を除き、上のブラウザ限定名と `setProperty` を加えたもの。集合外のキーはページを開く前に、種類だけでなく値も含めて拒否される。`errorIncludes` は「エラーが報告されること」を要求するが、このティアは報告されたエラーをすべて致命として扱うため、未評価のまま放置するのではなく拒否する。操作自体が実行できなかったステップは、scenario ティアと同じく `actionError` として報告されて失敗する。fixture 側の壊れたセレクタはアプリの欠陥ではないため、常に致命として扱われるエラー一覧からは外してある。`{fill}` は Playwright 自身の拒否が言わない「何に一致したか」を挙げるため、**セレクタがラッパーへずれた場合**は両ティアで同じメッセージが読める。ただしこのチェックを通ったものは Playwright に渡り、そちらは `isContentEditable` と actionability で判断するので、disabled / readonly のコントロールはここでは Playwright の言葉で拒否され、scenario ティアでは書き込まれる。また `{submit}` はイベントの dispatch ではなく `requestSubmit()` を呼ぶ。constraint validation を含めて実物を走らせることがこのティアの目的だからである。`effects`（scenario ティアの capability 境界モック）は**サポートしない**。実 Chromium を実 DOM/CSS に対して走らせることがこのティアの目的であり、黙って無視すれば「リクエストはスタブされている」と信じたまま実際には外へ出ていく fixture ができてしまうため、拒否する。
+このティアでも `expect` キーと操作の種類は**閉じた集合**である——scenario ティアのものから `errorIncludes` と `key` / `hover` 操作を除き、上のブラウザ限定名と `setProperty` を加えたもの。集合外のキーはページを開く前に、種類だけでなく値も含めて拒否される。`actionErrorIncludes` は除かれる側ではない。それが表明する拒否は両ティアが問う同一のルールから来るので、拒否を表明する fixture は両方で走れなければならない。`errorIncludes` は「エラーが報告されること」を要求するが、このティアは報告されたエラーをすべて致命として扱うため、未評価のまま放置するのではなく拒否する。操作自体が実行できなかったステップは、scenario ティアと同じく `actionError` として報告されて失敗する。fixture 側の壊れたセレクタはアプリの欠陥ではないため、常に致命として扱われるエラー一覧からは外してある。`{fill}` は Playwright 自身の拒否が言わない「何に一致したか」を挙げるため、**セレクタがラッパーへずれた場合**は両ティアで同じメッセージが読める。プラットフォームが拒否するコントロールも同様に、同じルールによって同じ言葉で拒否される。Playwright 自身の actionability より先に問う——そちらは 3 秒後に別の言葉で答え、`{focus}` に至っては何も答えないからである。また `{submit}` はイベントの dispatch ではなく `requestSubmit()` を呼ぶ。constraint validation を含めて実物を走らせることがこのティアの目的だからである。`effects`（scenario ティアの capability 境界モック）は**サポートしない**。実 Chromium を実 DOM/CSS に対して走らせることがこのティアの目的であり、黙って無視すれば「リクエストはスタブされている」と信じたまま実際には外へ出ていく fixture ができてしまうため、拒否する。
 
 重い（ブラウザバイナリ）ため既定の CI テストには含めず、フォーカス・レイアウト・実描画の確認や最終検証で使う opt-in 層。結果の**正しさ**は smoke では判定できず、層 3 のアサーションが担う。
 
@@ -352,10 +352,39 @@ example コーパス（`packages/tests`）は「壊れた example は決して�
 `kumiki run <file> <scenario.json>`（MCP: `kumiki_run_scenario`）は、アプリを**シナリオ**で駆動し、毎ステップの構造化 trace を返す。これが「人を介さない生成→実行→観測→修正ループ」の土台になる。
 
 - **操作（action）**: `{dispatch, payload?}`（reducer を名前で発火）/ `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`。`{focus}` `{blur}` `{key}` `{hover}` はセレクタ一致要素に対し実際の DOM イベント——`FocusEvent`、`value` を `key` に持つ `KeyboardEvent`、`mouseenter`——を dispatch するため、`ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducer が依存する `addEventListener` 配線層をシナリオ単独で検証できる。いずれもセレクタ一致要素に対して dispatch する。ランタイムがリスナを張るのがそこだからである。`keydown` はそこからバブルし、これが `ui.key(Container)` をフォーカス可能な子孫から駆動できる理由である。`focus` / `blur` / `mouseenter` はバブルしない（ブラウザは 1 つのイベントを伝播させるのではなく、祖先ごとに別々の `mouseenter` を発火する）。`ui.key` reducer のペイロードは `key` と `code` を運ぶが、この層で設定されるのは `key` だけである。`code` は物理キーを指し、`"Enter"` と書いたシナリオはそれを選んでいないためである。`{submit}` は `ui.submit` reducer が待ち受けるフォームイベントを dispatch する。`form` タイルは作者が付けない限り id を持たないため、セレクタはフォーム自身でもその内側の要素でもよい。`{fill, value}` は `input` / `textarea` / `editable` に書き込み、それ以外に当たった場合は一致した要素名を挙げて拒否する。セレクタがラッパーへずれたとき、誰も読まないプロパティを代入して通るのではなく失敗する。`{wait}` はそのステップ本来の settle に指定ミリ秒を上乗せする。debounce の待ち・retry のバックオフ・タイマーはこれで観測する（操作のないステップは settle しない）。
-- **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、アプリに存在しない reducer 名を指す `{dispatch}`、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
-- **アサーション（expect）**: `{ noErrors?, errorIncludes?, state?, domIncludes?, domExcludes? }` — 上の操作一覧と同じく**閉じた集合**である。集合外のキーは無視されるのではなく実行を失敗させ、browser ティアが所有する名前（`focused` / `visible` / `hidden` / `animating` / `elementState`、および `setProperty` 操作）はそのティアを名指しして失敗する。したがって、**ブラウザティアのアサーションを含む** `.browser.json` を `kumiki run` に渡すと、何も検証しないまま通るのではなく拒否される。headless DOM で答えられるものしか assert していない fixture はそのまま実行される（コーパスに実例がある）。文書自体も同じく閉じている — `steps`（必須、かつ空でないこと：何も assert しないシナリオが成功を返してはならない）と `effects` / `defaultEffect` のみ。したがって `steps` の綴り間違いは「存在しない」と読まれるのではなく名指しで報告される。シナリオの検証は mount より前に行われ、文書中の問題はすべて一度に報告される。`state` は **slot 状態への部分一致**（ドット区切りパス可）。`errorIncludes` は `noErrors` の対になるもので、各部分文字列がそのステップ中に報告されたいずれかのエラーに含まれることを要求する。refinement が拒否した reducer バッチ（[batching](./runtime.md#a-batch-commits-all-or-nothing)）や、`.err` reducer が受け取らない effect エラーのように、runtime が*報告すること*自体が契約であるケース向けである。scenario ティア専用で、browser ティアは報告されたエラーをすべて致命として扱う。満たせるのはアプリが報告したエラーだけである——操作自体が実行できなかったステップは代わりに `actionError` を報告し、失敗する。DOM テキストではなく状態を検証できるため、「select が常に最後の選択肢になる」ような**非例外の振る舞いバグ**（人がクリックして気づくクラス）を機械的に検出できる。これは TDD の受け入れ基準（AC）を実行可能にしたものに等しい。
+- **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、アプリに存在しない reducer 名を指す `{dispatch}`、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`、および**プラットフォームが操作を拒否するコントロール**（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
+- **アサーション（expect）**: `{ noErrors?, errorIncludes?, actionErrorIncludes?, state?, domIncludes?, domExcludes? }` — 上の操作一覧と同じく**閉じた集合**である。集合外のキーは無視されるのではなく実行を失敗させ、browser ティアが所有する名前（`focused` / `visible` / `hidden` / `animating` / `elementState`、および `setProperty` 操作）はそのティアを名指しして失敗する。したがって、**ブラウザティアのアサーションを含む** `.browser.json` を `kumiki run` に渡すと、何も検証しないまま通るのではなく拒否される。headless DOM で答えられるものしか assert していない fixture はそのまま実行される（コーパスに実例がある）。文書自体も同じく閉じている — `steps`（必須、かつ空でないこと：何も assert しないシナリオが成功を返してはならない）と `effects` / `defaultEffect` のみ。したがって `steps` の綴り間違いは「存在しない」と読まれるのではなく名指しで報告される。シナリオの検証は mount より前に行われ、文書中の問題はすべて一度に報告される。`state` は **slot 状態への部分一致**（ドット区切りパス可）。`errorIncludes` は `noErrors` の対になるもので、各部分文字列がそのステップ中に報告されたいずれかのエラーに含まれることを要求する。refinement が拒否した reducer バッチ（[batching](./runtime.md#a-batch-commits-all-or-nothing)）や、`.err` reducer が受け取らない effect エラーのように、runtime が*報告すること*自体が契約であるケース向けである。scenario ティア専用で、browser ティアは報告されたエラーをすべて致命として扱う。満たせるのはアプリが報告したエラーだけである——操作自体が実行できなかったステップは代わりに `actionError` を報告し、失敗する。`actionErrorIncludes` はそのもう一方のチャネルに対応するものである。各部分文字列がそのステップの `actionError` に含まれることを要求し、一致したものは `expectedActionError` へ移ってステップを失敗させなくなる。これが必要なのは、拒否そのものが fixture の表明したい挙動であることが多いためである——「保存中は save ボタンが disabled なので、クリックしても何も起きない」を書く方法はこれ以前には無く、disabled なコントロールを操作したステップは、ガードが効いていても reducer が存在しなくても同じく通っていた。逆向きにも一方通行である：拒否を要求したのに拒否されなかったステップは失敗する。したがってルールが拒否しなくなった日には、拒否を表明している fixture はすべて緑ではなく赤になる。DOM テキストではなく状態を検証できるため、「select が常に最後の選択肢になる」ような**非例外の振る舞いバグ**（人がクリックして気づくクラス）を機械的に検出できる。これは TDD の受け入れ基準（AC）を実行可能にしたものに等しい。
 - **effect スクリプト**: `effects: { <name>: [{outcome, value}, ...] }` で HTTP / Storage の結果を順に差し替え、ループを決定論的・ネットワーク非依存に保つ。
 - **後始末**: 実行はレポートを返す前に自身の mount を dispose する。レポートより長生きするものは無い — `timer` reducer のインターバルは止まり、ホストのライフサイクルリスナは外れ、shape は再び mount できる状態に戻る。描画された DOM も一緒に消えるので、`domText` ではなく要素そのものを見たい呼び出し側は自分で mount する。
+
+#### プラットフォームが拒否するコントロールはステップからも操作できない {#a-step-cannot-drive-a-control-the-platform-refuses}
+
+シナリオは「ユーザーが操作したときこのアプリは動くか」に答えるために存在する。値を書いてイベントを dispatch するやり方はプラットフォームを迂回するため、`disabled` なフィールドへの `fill` が slot を動かし `ui.input` reducer まで走ってしまっていた——緑で、しかも製品には作れない挙動を表明した状態である。これは高くつく方向の失敗である。アプリは理由があってフィールドを無効化しており（保存処理中、権限のないユーザー）、シナリオはそこへ構わず入力し、ティアは何も検証していないのに「ガードは効いている」と報告する。
+
+コントロールを操作する前に、両ティアは 1 つのルールを問う。各操作がコントロールに要求するもの:
+
+| 要求 | 操作 |
+|---|---|
+| ジェスチャ | `{click}`, `{clickText}`, `{choose}`, `{focus}`, `{blur}`, `{key}` |
+| 入力 | `{fill}` |
+
+コントロールが拒否するもの:
+
+| 状態 | 拒否する要求 | 報告される理由 |
+|---|---|---|
+| `disabled` | 両方 | `disabled` |
+| `readonly` | 入力 | `readonly` |
+| `contenteditable="false"` | 入力 | `not editable` |
+
+拒否されたステップは `actionError` を報告して失敗し、メッセージはコントロールと理由を名指しする。代わりに拒否そのものを表明したい fixture は `expect.actionErrorIncludes` を使う。
+
+意図的な帰結が 3 つある。いずれも HTML 仕様から読み取ったのではなく Chromium で実測したものである（[`disabled-controls.spec.ts`](https://github.com/kumikijs/Kumiki/blob/dev/packages/e2e/tests/disabled-controls.spec.ts) がその実測をテストとして残したもの）:
+
+- **`{hover}` はコントロール操作ではない。** Chromium は `disabled` な `<input>` にも `<button>` にも `mouseenter` を発火するので、そこに置かれた `ui.hover` reducer は実際に走る。ここで拒否すればプラットフォームに無い規則を発明することになる——これは逆向きの、そしてより悪いバグである。動いているプログラムを壊れていると報告するからだ。
+- **`readonly` が拒否するのは入力だけである。** readonly な `<input>` はフォーカス可能で `keydown` も受け取るので、`{focus}` と `{key}` は通る。
+- **`editable` の理由は `disabled` ではなく `not editable` である。** `disabled` と `readonly` はどちらも `contenteditable="false"` として描画され、DOM 上に両者を区別するものは無い。したがって与える理由は真であるほうを選ぶ。
+
+`{submit}` はコントロールではなくフォームを対象とし、`{dispatch}` / `{navigate}` は DOM ではなく seam を駆動するので、いずれもこのルールを問わない。`check` / `radio` / `switch` がタイルの id を載せる `<label>` を対象にした操作は、その内側の `<input>` で判定される。ブラウザがラベルではなくコントロールで判定するからである。
 
 なぜ Kumiki でこれが綺麗に成立するか: 状態が明示的（slot）なので oracle が信頼でき、イベントが宣言的（reducer 名）なので正確に駆動でき、effect が capability 境界でモック可能なので再現性がある。エージェントが要件から「アプリ + シナリオ（AC）」を生成し、trace を読んで自己修正することで、人は要件を一度述べるだけでよい。ループの手順は `.claude/skills/kumiki-iterate` に記述。
 
