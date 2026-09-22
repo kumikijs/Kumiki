@@ -225,5 +225,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `92-outlet-error-boundary.kumiki` | slot, reducer, tile, app | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 | `93-panic-info.kumiki` | slot, reducer, tile, app | ライフサイクル | [§7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) |
+| `94-editable-key-focus-blur-selectors.kumiki` | slot, reducer, tile | コア | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 <!-- examples:end -->
 :::

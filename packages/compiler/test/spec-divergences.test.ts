@@ -400,6 +400,114 @@ app A
   });
 });
 
+// The gap the `ui.input` row had, in three more rows: the fix directly above
+// moved `input` alone and left `key` / `focus` / `blur` listing the same
+// `input` / `textarea` / `button` (/ `select`) they always had.
+//
+// The runtime attaches those three to whatever element a tile produced, and a
+// `<div contenteditable="true">` is an editing host — focusable without a
+// `tabindex` — so all three reach it, which is why writing the handler on the
+// tile already worked. What the rows list is where a *selector* lands, so an
+// omission there is a gap in the table, not a fact about the DOM, and W0212
+// reported it as the latter.
+describe("a ui.key / ui.focus / ui.blur selector reaches an editable", () => {
+  const source = (ev: string, tile: string) => `slot note : Text = ""
+slot hits : Int = 0
+reducer hit on=ui.${ev}(Ed) do= hits := hits + 1
+tile Ed = ${tile}
+tile App = column(Ed, text(hits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /**
+   * The same program with the handler written on the tile instead. `/404`
+   * gets a tile of its own here, unlike the fixtures above: a tile body is
+   * inlined once per route that reaches it, so the two-route shape would make
+   * an occurrence count track the route table rather than the emission.
+   */
+  const explicit = (handler: string) => `slot note : Text = ""
+slot hits : Int = 0
+reducer hit on=app.start do= hits := hits + 1
+tile Ed       = editable(bind=note, ${handler}=hit)
+tile App      = column(Ed, text(hits.show))
+tile NotFound = text("nope")
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> NotFound}
+    init   = []
+`;
+
+  /** `tile Card = box(Ed)` — the selector names the container, not the leaf. */
+  const throughAncestor = (ev: string) => `slot note : Text = ""
+slot hits : Int = 0
+reducer hit on=ui.${ev}(Card) do= hits := hits + 1
+tile Ed   = editable(bind=note)
+tile Card = box(Ed)
+tile App  = column(Card, text(hits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  const cases: ReadonlyArray<[string, string]> = [
+    ["key", "onKeyDown"],
+    ["focus", "onFocus"],
+    ["blur", "onBlur"],
+  ];
+
+  for (const [ev, handler] of cases) {
+    it(`says nothing about ui.${ev}`, () => {
+      expect(codes(source(ev, "editable(bind=note)"))).toEqual([]);
+    });
+
+    it(`emits the ${handler} the ui.${ev} subscription asked for`, () => {
+      expect(build(source(ev, "editable(bind=note)"))).toContain(`${handler}: _h("hit")`);
+    });
+
+    it(`still reports a tile that fires no ${ev} event, and still drops it`, () => {
+      // The control for each row: without it, dropping the check entirely
+      // would pass the two above. Both halves, because "silently dropped" is
+      // a claim about the warning AND about the handler — a change that kept
+      // warning while wiring the listener anyway would pass on the code alone.
+      expect(codes(source(ev, "box(text(note))"))).toEqual(["W0212"]);
+      expect(build(source(ev, "box(text(note))"))).not.toContain(`${handler}: _h("hit")`);
+    });
+
+    it(`keeps emitting a ${handler} written on the tile itself`, () => {
+      // The evidence that the event reaches an editable at all is that this
+      // spelling already worked — and it was pinned nowhere. It also changed
+      // code path here: `propsFor` used to reach it only through the
+      // explicit-flush loop, and now the lift loop finds it too. Once,
+      // whichever loop produced it — the two emitting it side by side is the
+      // failure this count exists for.
+      const js = build(explicit(handler));
+      expect(js).toContain(`${handler}: _h("hit")`);
+      expect(js.match(new RegExp(`${handler}: _h\\("hit"\\)`, "g"))).toHaveLength(1);
+    });
+
+    it(`lifts ui.${ev} through a container whose leaf is the editable`, () => {
+      // `focus` / `blur` do not bubble, so a handler that landed on the `box`
+      // would be a dead listener both `check` and `build` accept. The checker
+      // walks into the referenced tile, and codegen lifts through the same
+      // edge — newly true for `editable`, and the place those two would come
+      // apart again.
+      expect(codes(throughAncestor(ev))).toEqual([]);
+      expect(build(throughAncestor(ev))).toContain(`${handler}: _h("hit")`);
+    });
+  }
+
+  it("leaves ui.change alone, which is the rule rather than the same gap", () => {
+    // The row a reader expects to move with these three. It must not: a
+    // `<div contenteditable>` fires no `change` event at all, so there is
+    // nothing for a selector to reach and the warning is true.
+    expect(codes(source("change", "editable(bind=note)"))).toEqual(["W0212"]);
+  });
+});
+
 // language.md §1.6.3: "Going via `.get` is safe: assigning when the Option is
 // `None` is a no-op". The lvalue was flattened into a plain field path, so the
 // write landed on a sibling field named `get` and never reached the payload.

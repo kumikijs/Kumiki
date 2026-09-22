@@ -5,9 +5,16 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *
  * `ev`: kumiki-side ui-kind (from `ui.<ev>(...)` reducer selectors).
  * `handler`: the JSX-style prop name codegen emits on the tile.
- * `tiles`: root-builtin tile kinds that can actually fire this event at
- *   runtime. `null` = any tile (currently only `hover`, which the runtime
- *   wires uniformly via `applyUiEventHandlers`).
+ * `tiles`: root-builtin tile kinds a `ui.<ev>(Tile)` SELECTOR lifts a handler
+ *   onto. `null` = any tile (currently only `hover`, which the runtime wires
+ *   uniformly via `applyUiEventHandlers`).
+ *
+ *   Not the same question as "which kinds fire this event", and narrower for
+ *   `key` / `focus` / `blur`: those three are attached to whatever element a
+ *   renderer returned, so what limits them is this table rather than the DOM.
+ *   A kind absent from one of those rows is current coverage, not a rule —
+ *   see the row notes. For `click` / `submit` / `change` / `input` the two
+ *   questions do coincide, and an absence there is a fact about the element.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
@@ -62,17 +69,38 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   // element a tile produced, so what these rows list is where a *selector*
   // reaches — narrower than what fires the event. A kind missing from them is
   // a gap in this table rather than a fact about the DOM.
-  { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button"]) },
+  //
+  // `editable` is in all three: a `<div contenteditable="true">` is an editing
+  // host, so it is focusable without a `tabindex` and `focus` / `blur` /
+  // `keydown` all reach it. That is why writing the handler on the tile
+  // already worked while the selector form drew a W0212 whose reason was
+  // untrue.
+  //
+  // The same reasoning still reaches kinds these rows do not list, and they
+  // are a gap rather than a decision: `slider` (a bare `<input type="range">`)
+  // and `link` (an `<a>` whose `href` is always assigned) are absent from all
+  // three, and `select` fires `keydown` natively but is absent from `key`.
+  // `check` / `radio` / `switch` are half of one: their `<label>` wrapper sees
+  // a bubbled `keydown` but not `focus` / `blur`, which do not bubble, so only
+  // the `key` row is missing them. Tracked separately, because each is a
+  // behaviour change for a kind #367 did not name.
+  //
+  // What is NOT a gap is an element that cannot be focused at all — a
+  // `disabled` or permanently `readonly` control, which `applyControlState`
+  // renders with `contenteditable="false"` or the DOM attribute. The row lists
+  // the kind; whether a given instance can fire is a runtime property no
+  // compile-time table can answer.
+  { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button", "editable"]) },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
   {
     ev: "focus",
     handler: "onFocus",
-    tiles: new Set(["input", "textarea", "button", "select"]),
+    tiles: new Set(["input", "textarea", "button", "select", "editable"]),
   },
   {
     ev: "blur",
     handler: "onBlur",
-    tiles: new Set(["input", "textarea", "button", "select"]),
+    tiles: new Set(["input", "textarea", "button", "select", "editable"]),
   },
 ];
 
@@ -99,10 +127,12 @@ function liftTilesFor(handler: string): ReadonlySet<string> | null {
  *
  * The four `null`s are the handlers `applyUiEventHandlers` installs on
  * whatever element the tile produced. That is about the LISTENER, not about
- * the event reaching it: `focus` and `blur` do not bubble, so a `div` with no
- * `tabindex` never fires them, and `keydown` reaches a container only from a
- * focusable descendant. Reporting them would need to know about focusability,
- * which is a different check from this one.
+ * the event reaching it: `focus` and `blur` do not bubble, so a plain `div` —
+ * one that is neither `contenteditable` nor given a `tabindex` — never fires
+ * them, and `keydown` reaches a container only from a focusable descendant.
+ * (`editable` is the `contenteditable` case, which is why it sits in those
+ * rows of the lift table.) Reporting them would need to know about
+ * focusability, which is a different check from this one.
  */
 export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
   onClick: liftTilesFor("onClick"),
