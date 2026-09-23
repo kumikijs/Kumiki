@@ -501,7 +501,7 @@ export function createServer(): McpServer {
     "kumiki_run_scenario",
     {
       title: "Run a scenario",
-      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. A step whose action could not run — a selector matching nothing, a \`fill\` aimed at an element that holds no text — reports \`action failed:\` instead of an error, and fails: the action never ran, so that step's state is not a state the app reached through it, and \`errorIncludes\` cannot claim it. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).`,
+      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. A step whose action could not run — a selector matching nothing, a \`fill\` aimed at an element that holds no text, a control the platform refuses to drive (\`disabled\` refuses any verb that drives a control; \`readonly\` and an editable's \`contenteditable="false"\` refuse the typing alone, so \`fill\` only; \`hover\` is never refused) — reports \`action failed:\` instead of an error, and fails: the action never ran, so that step's state is not a state the app reached through it, and \`errorIncludes\` cannot claim it. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], actionErrorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something; \`actionErrorIncludes\` asserts the step was REFUSED, for a control the platform will not drive; it matches the refusal alone, so a step that ran, or that failed for another reason such as a selector matching nothing, fails rather than claiming one).`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -539,6 +539,13 @@ export function createServer(): McpServer {
           // so without this line the agent driving the fix loop reads a step
           // that reported something as one that reported nothing.
           ...s.expectedErrors.map((e) => `    expected error: ${e}`),
+          // The same, for the other channel: a refusal the step's
+          // `actionErrorIncludes` claimed is out of `actionError`, and without
+          // this line a step whose whole point is that the platform turned it
+          // away reads as a step where nothing happened.
+          ...(s.expectedActionError !== undefined
+            ? [`    expected refusal: ${s.expectedActionError}`]
+            : []),
           ...s.failures.map((f) => `    assert: ${f}`),
         ];
         const emits = s.emits.length ? `    emits: ${s.emits.map((e) => e.effect).join(", ")}` : "";

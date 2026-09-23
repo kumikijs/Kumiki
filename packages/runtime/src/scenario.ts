@@ -8,6 +8,13 @@
 // (reducers), and effects are mocked at the capability boundary — so the oracle
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
+import {
+  ControlRefusal,
+  type ControlVerb,
+  controlFault,
+  judgeRefusal,
+  readControl,
+} from "./control-check.ts";
 import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, RuntimeDiagnostic } from "./index.ts";
@@ -51,6 +58,21 @@ export type Expect = {
    * happened.
    */
   errorIncludes?: string[];
+  /**
+   * Substrings that must each appear in this step's `actionError` — the channel
+   * an action that could not run reports on. The counterpart to `errorIncludes`
+   * for the other channel, and the reason it exists is the same: a refusal is
+   * often the behaviour a fixture means to assert. "The save button is disabled
+   * while the save is in flight, so clicking it does nothing" had no spelling
+   * before this — the step that drove the disabled control passed, and passed
+   * whether the guard held or the reducer simply did not exist.
+   *
+   * A matched `actionError` moves to `expectedActionError` and stops failing
+   * the step, exactly as a matched error moves to `expectedErrors`. A step that
+   * asks for a refusal and is not refused fails: the assertion is about the
+   * platform turning the step away, so an action that ran does not satisfy it.
+   */
+  actionErrorIncludes?: string[];
   /** Partial match against the slot state (slot name → expected value). */
   state?: Record<string, unknown>;
   /** Substrings that must appear in the rendered text. */
@@ -72,9 +94,10 @@ export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
  * `@kumikijs/e2e`'s `Expect` / `Action`; a key added there and not here reads
  * as "unknown", which is the safe direction.
  */
-const HEADLESS_EXPECT_KEYS = [
+export const HEADLESS_EXPECT_KEYS = [
   "noErrors",
   "errorIncludes",
+  "actionErrorIncludes",
   "state",
   "domIncludes",
   "domExcludes",
@@ -106,6 +129,16 @@ const BROWSER_ACTION_KEYS = ["setProperty"] as const;
 type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
 type Covers<Whole extends Part, Part> = Whole;
 type _ExpectKeysCovered = Covers<keyof Expect, (typeof HEADLESS_EXPECT_KEYS)[number]>;
+/**
+ * And `CONTROL_DEMANDS` is pinned the same way, in the direction that matters:
+ * every action kind has a row saying what it asks of a control. Without this a
+ * DOM-driving verb added to `Action` and forgotten there would ask nothing of
+ * one — silently, which is the shape `control-check.ts` exists to remove.
+ */
+type _ControlVerbsTotal = Covers<
+  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
+  ControlVerb
+>;
 type _ActionKindsCovered = Covers<
   Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
   (typeof HEADLESS_ACTION_KEYS)[number]
@@ -252,12 +285,21 @@ export type StepResult = {
   /**
    * Why the step's action could not run — a selector matching nothing, a `fill`
    * aimed at an element that holds no text, a `dispatch` naming a reducer the
-   * app does not have. Absent in the healthy case, and a
+   * app does not have, or a control the platform refuses to drive (`disabled`,
+   * `readonly`). Absent in the healthy case, and a
    * channel of its own rather than an entry in `errors`: nothing was observed
    * about the app, so `noErrors` and `errorIncludes` must not see it. It fails
    * the step all the same.
    */
   actionError?: string;
+  /**
+   * The action error this step's `actionErrorIncludes` matched. Kept in the
+   * trace and off `actionError`, so the step passes — the mirror of
+   * `expectedErrors`, and for the same reason: a refusal the platform makes is
+   * behaviour worth asserting, not a fault, and a fixture that asserts one must
+   * not also have to assert that its run failed.
+   */
+  expectedActionError?: string;
   emits: { effect: string; args: unknown[] }[];
   state: Record<string, unknown>;
   domText: string;
@@ -401,12 +443,17 @@ export async function runScenario(
       // Kept out of `errorBuf`, which is what the app reported. An action that
       // could not run is the scenario's fault, and folding the two together let
       // `errorIncludes` claim it — see `StepResult.actionError`.
-      let actionError: string | undefined;
+      let fault: { message: string; refusal?: ControlRefusal } | undefined;
       if (step.do) {
         try {
           performAction(step.do, root, dispatchable);
         } catch (e) {
-          actionError = errStr(e);
+          // The refusal is carried, not flattened to its message: a substring
+          // match alone cannot tell it from a selector that matched nothing.
+          fault =
+            e instanceof ControlRefusal
+              ? { message: e.message, refusal: e }
+              : { message: errStr(e) };
         }
         // `wait` is the whole action: it adds its duration to the settle this
         // step would have had anyway, so a debounce window or a retry backoff
@@ -417,6 +464,13 @@ export async function runScenario(
         (step.expect?.errorIncludes ?? []).some((s) => e.includes(s)),
       );
       const unexpected = errorBuf.filter((e) => !expected.includes(e));
+      // Judged by the shared rule, so this tier and the browser tier give the
+      // same answer about the same fault rather than two hand-written ones.
+      // Split before `mkStep`, which computes `ok` from `actionError` alone —
+      // the same shape `expectedErrors` has — and the verdict's own failures
+      // lead the list, since whether the action happened at all comes before
+      // anything observed after it.
+      const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
       const result = mkStep(
         step.label,
         actionDesc,
@@ -424,10 +478,14 @@ export async function runScenario(
         [...emitBuf],
         app,
         root,
-        evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
+        [
+          ...verdict.failures,
+          ...evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
+        ],
         [...diagBuf],
         expected,
-        actionError,
+        verdict.claimed === undefined ? fault?.message : undefined,
+        verdict.claimed,
       );
       steps.push(result);
     }
@@ -460,6 +518,7 @@ function mkStep(
   diagnostics: RuntimeDiagnostic[] = [],
   expectedErrors: string[] = [],
   actionError?: string,
+  expectedActionError?: string,
 ): StepResult {
   const step: StepResult = {
     ok: errors.length === 0 && failures.length === 0 && actionError === undefined,
@@ -474,6 +533,7 @@ function mkStep(
   if (label !== undefined) step.label = label;
   if (action !== undefined) step.action = action;
   if (actionError !== undefined) step.actionError = actionError;
+  if (expectedActionError !== undefined) step.expectedActionError = expectedActionError;
   return step;
 }
 
@@ -525,6 +585,22 @@ function requireSeam<K extends "_dispatch" | "_navigate">(
 }
 
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
+  /**
+   * What the platform would refuse, asked once per verb at the point the verb
+   * has its element — one rule for all of them rather than a branch inside
+   * `fill`, which is where the question was first noticed and would have been
+   * the narrow answer. Each verb resolves its own element (`click` falls back
+   * to the document, `clickText` searches by text, `choose` wants a <select>),
+   * so a single pre-pass would have to duplicate that resolution; this is the
+   * same rule, asked where the element is known.
+   *
+   * `controlFault` is what the browser tier asks too, off `readControl`, so the
+   * two tiers agree by construction rather than by two copies of the table.
+   */
+  const refuse = (verb: ControlVerb, el: Element): void => {
+    const fault = controlFault(verb, describeAction(a), readControl(el));
+    if (fault) throw fault;
+  };
   // The waiting is the caller's: this step's settle is longer by `wait`.
   if ("wait" in a) return;
   if ("submit" in a) {
@@ -574,6 +650,7 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const els = Array.from(root.querySelectorAll<HTMLElement>("button, a, [role='button']"));
     const target = els.find((e) => (e.textContent ?? "").includes(a.clickText));
     if (!target) throw new Error(`no clickable element with text "${a.clickText}"`);
+    refuse("clickText", target);
     target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return;
   }
@@ -584,6 +661,7 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const el =
       root.querySelector<HTMLElement>(a.click) ?? document.querySelector<HTMLElement>(a.click);
     if (!el) throw new Error(`no element matching selector ${a.click}`);
+    refuse("click", el);
     el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return;
   }
@@ -599,12 +677,14 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     // element from a prior test.
     const el = root.querySelector<HTMLElement>(a.focus);
     if (!el) throw new Error(`no element matching selector ${a.focus}`);
+    refuse("focus", el);
     el.dispatchEvent(new FocusEvent("focus"));
     return;
   }
   if ("blur" in a) {
     const el = root.querySelector<HTMLElement>(a.blur);
     if (!el) throw new Error(`no element matching selector ${a.blur}`);
+    refuse("blur", el);
     el.dispatchEvent(new FocusEvent("blur"));
     return;
   }
@@ -625,6 +705,7 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     // test.
     const el = root.querySelector<HTMLElement>(a.key);
     if (!el) throw new Error(`no element matching selector ${a.key}`);
+    refuse("key", el);
     el.dispatchEvent(new KeyboardEvent("keydown", { key: a.value, bubbles: true }));
     return;
   }
@@ -642,15 +723,18 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   if ("fill" in a) {
     const el = root.querySelector<HTMLElement>(a.fill);
     if (!el) throw new Error(`no input matching selector ${a.fill}`);
+    // Before either branch below: a disabled <input> and a disabled `editable`
+    // are the same refusal, and asking inside one of them is how the two kinds
+    // came to disagree in the first place.
+    refuse("fill", el);
     // An `editable` holds its text in `textContent`, which is what its
     // renderer reads back — a `value` write leaves it untouched, so the
     // `input` the step dispatches carries the text the control held before it.
     // The attribute rather than `isContentEditable`: a disabled or readonly
     // editable carries `contenteditable="false"`, and routing that one to the
-    // `value` branch would put the stale-text bug straight back. The step
-    // fills it all the same — `fill` does not respect `disabled` on an
-    // `<input>` either. No `change` follows: the platform defines none for a
-    // contenteditable.
+    // `value` branch would put the stale-text bug straight back — the `refuse`
+    // above turns that one away before it gets here. No `change` follows: the
+    // platform defines none for a contenteditable.
     if (el.getAttribute("contenteditable") !== null) {
       el.textContent = a.value;
       el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -674,6 +758,7 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   if ("choose" in a) {
     const sel = root.querySelector<HTMLSelectElement>(a.choose);
     if (!sel) throw new Error(`no select matching selector ${a.choose}`);
+    refuse("choose", sel);
     const opt = Array.from(sel.options).find(
       (o) => o.value === a.value || (o.textContent ?? "").trim() === a.value,
     );
@@ -711,6 +796,9 @@ function evaluateExpect(
       );
     }
   }
+  // `actionErrorIncludes` is judged by `judgeRefusal` in the step loop, not
+  // here: it reads the fault rather than the app, and both tiers must answer it
+  // the same way.
   if (expect.state) {
     const state = snapshotState(app);
     for (const [key, want] of Object.entries(expect.state)) {

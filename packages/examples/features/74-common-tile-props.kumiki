@@ -6,8 +6,10 @@
 # while the compiler emitted `max_w` type-checked, rendered, and did nothing.
 # Every app in this corpus set a page width that never applied.
 #
-# What a scenario can see of that is `loading`: a loading button is disabled,
-# so clicking it must not run its reducer. The attributes themselves are
+# What a scenario can see of that is `loading`: a loading button is disabled, so
+# a step that clicks it is refused (#369) rather than passing having driven
+# nothing — before `actionErrorIncludes` the step below was green whether the
+# guard held or the reducer simply did not exist. The attributes themselves are
 # asserted in `packages/tests/tile-props.test.ts`, which compares the mounted
 # DOM against the served HTML — this tier reads text, not attributes.
 

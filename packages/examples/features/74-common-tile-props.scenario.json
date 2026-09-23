@@ -23,10 +23,11 @@
       "expect": { "noErrors": true, "state": { "busy": true, "saves": 1 } }
     },
     {
-      "label": "a loading button is disabled — the click reaches no reducer",
+      "label": "a loading button is disabled — the click is refused, not merely ignored",
       "do": { "clickText": "save" },
       "expect": {
         "noErrors": true,
+        "actionErrorIncludes": ["<button> is disabled"],
         "state": { "busy": true, "saves": 1 },
         "domIncludes": ["saves=1"]
       }

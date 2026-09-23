@@ -7,6 +7,7 @@
 // NOT verify behavioral correctness (a wrong-but-non-throwing result) — that is
 // the job of example-specific assertions.
 
+import { type ControlVerb, readControl, refusesControl } from "./control-check.ts";
 import type { AppShape, NeverEqualCause, ReconcileFallback, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 
@@ -337,8 +338,39 @@ function collectInteractive(root: HTMLElement): HTMLElement[] {
     if (el.tagName.toLowerCase() === "input" && (el as HTMLInputElement).type === "file") {
       return false;
     }
-    return true;
+    // A control a user could not reach is skipped for the same reason, and by
+    // the rule the two scenario tiers ask (#369). Firing at one lies in both
+    // directions: a reducer behind an unreachable disabled button that throws
+    // is reported as a defect the app does not have, and a guard that stops
+    // working is invisible because this harness was firing regardless.
+    //
+    // A skip, not a report: `smoke` exercises whatever it finds rather than
+    // running a written script, so a control it cannot drive is not a mistake
+    // anyone made. That is the one thing it does differently from the tiers
+    // that are handed a scenario.
+    return !refusesControl(smokeVerbFor(el), readControl(el));
   });
+}
+
+/**
+ * The verb `fire` drives this element with, in the vocabulary the rule speaks.
+ * Kept beside `actionFor` (which names the *event*, for the trace) rather than
+ * derived from it: the two answer different questions, and a `select` is
+ * `change` there and `choose` here.
+ */
+function smokeVerbFor(el: HTMLElement): ControlVerb {
+  const tag = el.tagName.toLowerCase();
+  if (tag === "select") return "choose";
+  if (tag === "textarea") return "fill";
+  if (tag === "input") {
+    const type = (el as HTMLInputElement).type;
+    // `fire` clicks these rather than typing into them.
+    return type === "checkbox" || type === "radio" ? "click" : "fill";
+  }
+  // A button, and an `editable` under `[data-kumiki-bind]`, which `fire`
+  // clicks — so it asks for a gesture, and a read-only editable still takes
+  // one.
+  return "click";
 }
 
 function actionFor(el: Element): string {
