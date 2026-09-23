@@ -82,8 +82,18 @@
       "expect": { "noErrors": true, "actionErrorIncludes": ["<input> is disabled"] }
     },
     {
+      "label": "and blur, which a control that can never be focused cannot receive",
+      "do": { "blur": "#locked" },
+      "expect": { "noErrors": true, "actionErrorIncludes": ["<input> is disabled"] }
+    },
+    {
       "label": "readonly refuses the typing alone — focus still runs",
       "do": { "focus": "#sealed" },
+      "expect": { "noErrors": true, "state": { "keys": 0 } }
+    },
+    {
+      "label": "and so does blur",
+      "do": { "blur": "#sealed" },
       "expect": { "noErrors": true, "state": { "keys": 0 } }
     },
     {

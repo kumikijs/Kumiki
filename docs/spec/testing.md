@@ -404,7 +404,7 @@ These run in default CI (no browser binaries), so a re-introduced dropped-expres
 
 A scenario exists to answer "does this app work when a user drives it". Writing the value and dispatching the event bypasses the platform, so a `fill` on a `disabled` field used to move the slot and run the `ui.input` reducer — green, and asserting behaviour the product cannot produce. That is the expensive direction: an app disables a field for a reason (a pending save, an unauthorized user), the scenario types into it anyway, and the tier reports that the guard holds when nothing was tested.
 
-Before a verb drives a control, both tiers ask one rule. What each verb asks of the control:
+Before a verb drives a control, one rule decides. What each verb asks of the control:
 
 | asks | verbs |
 |---|---|
@@ -419,9 +419,11 @@ and what a control refuses:
 | `readonly` | typing | `readonly` |
 | `contenteditable="false"` | typing | `not editable` |
 
-A refused step reports `actionError` and fails, naming the control and the reason; `expect.actionErrorIncludes` is how a fixture asserts the refusal instead.
+A refused step reports `actionError` and fails, naming the control and the reason; `expect.actionErrorIncludes` is how a fixture asserts the refusal instead. It matches the refusal alone rather than the whole `actionError` channel, so a step cannot claim one on a selector that matched nothing — `no element matching selector #save-disabled` contains `disabled`, and claiming it would be the same "passed having tested nothing" one level up.
 
-Three consequences are deliberate, and each is measured against Chromium rather than read off the HTML spec ([`disabled-controls.spec.ts`](https://github.com/kumikijs/Kumiki/blob/dev/packages/e2e/tests/disabled-controls.spec.ts) is that measurement kept as a test):
+All three drivers ask it: both scenario tiers, and `kumiki smoke`, which exercises whatever controls it finds. Smoke *skips* a refused control rather than reporting it — it runs no written script, so a control it cannot drive is nobody's mistake — but firing at one lied in both directions, reporting a reducer behind an unreachable button as a defect and hiding a guard that stopped working.
+
+Three consequences are deliberate, and each is measured against Chromium rather than read off the HTML spec ([`disabled-controls.spec.ts`](https://github.com/kumikijs/Kumiki/blob/main/packages/e2e/tests/disabled-controls.spec.ts) is that measurement kept as a test):
 
 - **`{hover}` is not a control verb.** Chromium fires `mouseenter` on a `disabled` `<input>` and on a `disabled` `<button>`, so a `ui.hover` reducer on one does run. Refusing the step would invent a rule the platform does not have — which is the opposite bug, and the worse one, because it reports a working program broken.
 - **`readonly` refuses the typing alone.** A readonly `<input>` is focusable and does receive `keydown`, so `{focus}` and `{key}` still drive one.

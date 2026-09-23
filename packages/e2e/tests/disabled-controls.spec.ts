@@ -10,6 +10,15 @@
 // settled `hover` — Chromium fires `mouseenter` on a disabled control, which is
 // why `hover` is absent from the table.
 //
+// Three kinds of case, and each says which it is, because they are not equally
+// strong. Some observe Playwright's actionability gate declining to try, which
+// says only that a *user* cannot reach the control. Some skip that gate with
+// `force`, so the claim is about Chromium's handling of real input. And some
+// dispatch at the element directly — the weakest gate of the three, and the
+// one the scenario runner actually uses: a `dispatchEvent` is delivered to a
+// disabled control, so the platform refuses nothing there. That last group is
+// why `control-check.ts` exists rather than being redundant with the browser.
+//
 // It runs against `page.setContent`, not a Kumiki app, on purpose: what is
 // being pinned is the platform, and putting a renderer in between would let a
 // renderer change explain away a failure here.
@@ -23,10 +32,11 @@ const PAGE = `<!doctype html><meta charset="utf-8"><body>
 <button id="d-btn" disabled>go</button>
 <label id="d-check"><input type="checkbox" disabled></label>
 <div id="ed-off" contenteditable="false">old</div>
+<select id="d-sel" disabled><option value="a">Ay</option><option value="b">Bee</option></select>
 <script>
   window.seen = [];
-  for (const id of ['d-input','r-input','d-btn','d-check','ed-off']) {
-    for (const t of ['click','focus','keydown','mouseenter'])
+  for (const id of ['d-input','r-input','d-btn','d-check','ed-off','d-sel']) {
+    for (const t of ['click','focus','blur','keydown','mouseenter','change'])
       document.getElementById(id).addEventListener(t, () => window.seen.push(id + ':' + t), true);
   }
 </script>
@@ -53,6 +63,60 @@ test.describe("what a browser refuses", () => {
     expect(await seen(page)).toEqual([]);
   });
 
+  // The case above measures Playwright's gate declining to try. This one skips
+  // that gate with `force`, so the click is real input delivered at the
+  // element's coordinates: Chromium drops it. `mouseenter` arrives and nothing
+  // else — which is the same fact the `hover` case at the bottom records, from
+  // the other side.
+  test("and Chromium drops a real click even when actionability is skipped", async ({ page }) => {
+    await page
+      .locator("#d-btn")
+      .click({ force: true, timeout: 2000 })
+      .catch(() => {});
+    expect(await seen(page)).toEqual(["d-btn:mouseenter"]);
+  });
+
+  // Why the rule has to live in the runner rather than lean on the browser.
+  // Chromium's refusal above sits in the *user input* path, and the scenario
+  // runner is not on it: it calls `dispatchEvent` at the element. A dispatch is
+  // delivered whatever the control's state, so a `ui.click` reducer on a
+  // disabled button runs — which is #369's bug, measured. Nothing at this tier
+  // or the happy-dom one will turn that away on its own.
+  test("but a synthetic dispatch reaches a disabled control, which is the bug", async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      document.getElementById("d-btn")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(await seen(page)).toEqual(["d-btn:click"]);
+  });
+
+  // The one synthetic path the platform does guard, and why the <label> wrapper
+  // still needs `readControl`. `HTMLElement.click()` is defined to do nothing
+  // on an actually-disabled control, so the click on the <input> produces
+  // nothing — the <label>'s capture listener would have recorded it otherwise.
+  // A <label> is not itself disabled, so the click on it does fire, and only
+  // the activation it forwards to the <input> stops. A rule that read the
+  // <label> alone would see a live control and let the step through.
+  test("a <label> wrapping a disabled control still takes a synthetic click", async ({ page }) => {
+    await page.evaluate(() => {
+      (document.querySelector("#d-check input") as HTMLElement | null)?.click();
+      (document.getElementById("d-check") as HTMLElement | null)?.click();
+    });
+    expect(await seen(page)).toEqual(["d-check:click"]);
+    expect(
+      await page.evaluate(
+        () => document.querySelector<HTMLInputElement>("#d-check input")?.checked,
+      ),
+    ).toBe(false);
+  });
+
+  test("choose is refused on a disabled <select>", async ({ page }) => {
+    await expect(page.locator("#d-sel").selectOption("b", REFUSED)).rejects.toThrow(/Timeout/);
+    expect(await page.locator("#d-sel").inputValue()).toBe("a");
+    expect(await seen(page)).toEqual([]);
+  });
+
   test("a disabled control takes no typing, and neither does a readonly one", async ({ page }) => {
     await expect(page.locator("#d-input").fill("typed", REFUSED)).rejects.toThrow(/Timeout/);
     await expect(page.locator("#r-input").fill("typed", REFUSED)).rejects.toThrow(/Timeout/);
@@ -75,6 +139,20 @@ test.describe("what a browser refuses", () => {
     expect(await seen(page)).toEqual(["r-input:focus", "r-input:keydown"]);
   });
 
+  // `blur` and `key` on a disabled control are consequences of the case above
+  // rather than separate measurements: a control that cannot be focused cannot
+  // be blurred, and a keystroke goes to whatever *is* focused. Both are pinned
+  // here so the table's `blur` and `key` rows rest on something.
+  test("a disabled control is never focused, so it is never blurred or typed at", async ({
+    page,
+  }) => {
+    await page.locator("#d-input").focus();
+    await page.locator("#d-input").blur();
+    await page.keyboard.press("a");
+    expect(await seen(page)).toEqual([]);
+    expect(await page.locator("#d-input").inputValue()).toBe("");
+  });
+
   // The two entries a reader would expect to travel with `fill` and do not.
   test("contenteditable=false takes no typing, and takes a click", async ({ page }) => {
     await expect(page.locator("#ed-off").fill("typed", REFUSED)).rejects.toThrow(
@@ -94,18 +172,25 @@ test.describe("what a browser refuses", () => {
   });
 });
 
-const SOURCE = `slot locked : Text = "sealed"
-slot sealed : Text = "kept"
-slot live   : Text = ""
-slot clicks : Int  = 0
+const SOURCE = `slot locked    : Text = "sealed"
+slot sealed    : Text = "kept"
+slot live      : Text = ""
+slot picked    : Text = "a"
+slot open_pick : Text = "a"
+slot clicks    : Int  = 0
+
+fn picks() -> List({label: Text, value: Text})
+   = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}]
 
 reducer clicked on=ui.click(Off) do= clicks := clicks + 1
 
 tile Locked = input(bind=locked) {id: "locked", disabled: true}
 tile Sealed = input(bind=sealed) {id: "sealed", readonly: true}
 tile Off    = button(text="off") {id: "off", disabled: true}
+tile Shut   = select(bind=picked, options=picks()) {id: "shut", disabled: true}
+tile Open   = select(bind=open_pick, options=picks()) {id: "open"}
 tile Live   = input(bind=live) {id: "live"}
-tile App    = column(Locked, Sealed, Off, Live, text("clicks: " + clicks.show))
+tile App    = column(Locked, Sealed, Off, Shut, Open, Live, text("clicks: " + clicks.show))
 app DisabledControls
     caps   = []
     routes = {"/" -> App, "/404" -> App}
@@ -120,6 +205,8 @@ test.describe("the rule, at this tier", () => {
         { do: { fill: "#sealed", value: "typed" } },
         { do: { click: "#off" } },
         { do: { focus: "#locked" } },
+        { do: { blur: "#locked" } },
+        { do: { choose: "#shut", value: "Bee" } },
       ],
     });
     expect(report.ok).toBe(false);
@@ -129,9 +216,21 @@ test.describe("the rule, at this tier", () => {
       "<button> is disabled, so no user gesture reaches it",
     );
     expect(report.steps[3]?.actionError).toContain("<input> is disabled");
+    expect(report.steps[4]?.actionError).toContain("<input> is disabled");
+    expect(report.steps[5]?.actionError).toContain("<select> is disabled");
     // The app did nothing wrong and said nothing: a refusal is not a defect.
     for (const step of report.steps) expect(step.errors).toEqual([]);
     expect(report.steps[0]?.state.locked).toBe("sealed");
+  });
+
+  // The happy path of the `readControl` round trip over a <select>: without
+  // this, `refuse(loc, "choose", …)` is never executed at this tier at all.
+  test("and drives the select that is not disabled", async ({ page }) => {
+    const report = await runOnPage(page, SOURCE, {
+      steps: [{ do: { choose: "#open", value: "Bee" }, expect: { state: { open_pick: "b" } } }],
+    });
+    expect(report.steps[0]?.actionError).toBeUndefined();
+    expect(report.ok).toBe(true);
   });
 
   // The key the fixture in `packages/examples` uses, so a scenario asserting a
@@ -158,5 +257,17 @@ test.describe("the rule, at this tier", () => {
     });
     expect(report.ok).toBe(false);
     expect(report.steps[0]?.failures[0]).toContain("but it ran");
+  });
+
+  // `actionError` is a shared channel, and `no element matching selector
+  // #off-disabled` contains `disabled`. A substring match over it would claim
+  // that as a refusal and report the step green.
+  test("a fault that is not a refusal cannot be claimed as one", async ({ page }) => {
+    const report = await runOnPage(page, SOURCE, {
+      steps: [{ do: { click: "#off-disabled" }, expect: { actionErrorIncludes: ["disabled"] } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.expectedActionError).toBeUndefined();
+    expect(report.steps[0]?.failures[0]).toContain("but it failed to resolve");
   });
 });

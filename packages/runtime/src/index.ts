@@ -31,16 +31,24 @@ import { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
 import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
-// The preconditions both verification tiers ask before a step runs, so §8.10's
-// promise that they agree is structural rather than hand-maintained. This one:
-// a verb that drives a control must not drive one the platform refuses. The
-// other is `dispatchFault` below, kept apart here only by the export order.
+// The preconditions a driver asks before a step runs, so §8.10's promise that
+// the tiers agree is structural rather than hand-maintained. This one: a verb
+// that drives a control must not drive one the platform refuses — asked by both
+// scenario tiers and, as `refusesControl`, by `kumiki smoke`. The other is
+// `dispatchFault` below, kept apart here only by the export order.
 export {
   CONTROL_DEMANDS,
   type ControlDemand,
+  ControlRefusal,
+  type ControlRefusalReason,
   type ControlState,
+  type ControlVerb,
   controlFault,
+  judgeRefusal,
+  type RefusalVerdict,
   readControl,
+  refusesControl,
+  type StepFault,
 } from "./control-check.ts";
 export {
   _setPathHelper,

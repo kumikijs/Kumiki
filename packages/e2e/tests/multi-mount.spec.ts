@@ -32,6 +32,11 @@ test("two apps co-mounted on one page stay isolated", async ({ page }) => {
         // and nothing under it, on the tier where reproducing locally costs a
         // Chromium install.
         if (s.actionError !== undefined) lines.push(`    action failed: ${s.actionError}`);
+        // And the other half of that channel — see the same line in
+        // `fixtures.spec.ts`.
+        if (s.expectedActionError !== undefined) {
+          lines.push(`    expected refusal: ${s.expectedActionError}`);
+        }
         for (const e of s.errors) lines.push(`    error: ${e}`);
         for (const f of s.failures) lines.push(`    assert: ${f}`);
         return lines.join("\n");

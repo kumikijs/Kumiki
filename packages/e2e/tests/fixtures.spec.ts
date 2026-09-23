@@ -103,6 +103,12 @@ for (const fx of fixtures) {
           // and nothing under it, on the tier where reproducing locally costs a
           // Chromium install.
           if (s.actionError !== undefined) lines.push(`    action failed: ${s.actionError}`);
+          // And the other half of that channel: a step whose refusal was
+          // expected but whose `state` assertion failed would otherwise print
+          // its assert line with no sign the action never ran.
+          if (s.expectedActionError !== undefined) {
+            lines.push(`    expected refusal: ${s.expectedActionError}`);
+          }
           for (const e of s.errors) lines.push(`    error: ${e}`);
           for (const f of s.failures) lines.push(`    assert: ${f}`);
           return lines.join("\n");

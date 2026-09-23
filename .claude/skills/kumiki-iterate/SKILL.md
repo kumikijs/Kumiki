@@ -63,10 +63,17 @@ are deterministic and hermetic.
   refinement rejected. `noErrors` then means "nothing this step did not ask for", so both compose.
   Neither sees an action that could not run: that is `actionError`, and no `errorIncludes` can
   claim it — so a step cannot pass by asserting its own broken selector.
-  `actionErrorIncludes` is that channel's own assertion: each substring must appear in the step's
-  `actionError`, and a step that asks to be refused and is not refused fails. Write it when the
-  refusal is the behaviour you mean to assert — a step that drives a `disabled` or `readonly`
-  control is turned away, naming the control and the reason, rather than driving it.
+  `actionErrorIncludes` is that channel's own assertion, for the one thing that lands there and is
+  not a mistake: a control the platform refuses. `disabled` refuses every verb that drives a
+  control; `readonly` and an editable's `contenteditable="false"` refuse `fill` alone, so
+  `{click}` / `{focus}` / `{key}` still drive a readonly input; `{hover}` is never refused,
+  because a browser does fire `mouseenter` on a disabled control. A refused step reports
+  `actionError` naming the control and the reason (`disabled` / `readonly` / `not editable`), and
+  the trace prints it as `expected refusal:` once a step claims it — that line, and the
+  `expectedActionError` field behind it, is how you tell a claimed refusal from a step where
+  nothing happened. Assert the whole phrase the message suggests (`["<button> is disabled"]`), not
+  the bare reason. A step that asks to be refused and either runs or fails for some other reason
+  fails.
   `state` is a **partial** match; keys may be dotted paths (`issues.id-1.status`).
 - `effects`: per-effect queues of `{outcome, value}` returned in order — script HTTP/storage
   so the loop is deterministic and never hits the network.

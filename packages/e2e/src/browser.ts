@@ -6,10 +6,12 @@
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
-  type CONTROL_DEMANDS,
+  ControlRefusal,
+  type ControlVerb,
   controlFault,
   type DispatchTarget,
   dispatchFault,
+  judgeRefusal,
   readControl,
   type Action as ScenarioAction,
 } from "@kumikijs/runtime";
@@ -40,7 +42,8 @@ export type Expect = {
   /**
    * Substrings that must each appear in this step's `actionError`. The scenario
    * tier's key, and supported here rather than owned there, because the refusal
-   * it asserts comes from a rule both tiers ask — a fixture that asserts one
+   * it asserts comes from a rule both tiers ask, off one `judgeRefusal` — a
+   * fixture that asserts one
    * must be runnable at both, or §8.10's promise that they agree is untestable
    * for exactly the case it was added for.
    */
@@ -126,6 +129,14 @@ type ScenarioActionKind = ScenarioAction extends infer A
   : never;
 type ScenarioOnly = Exclude<ScenarioActionKind, ActionKind | (typeof ACTION_MODIFIERS)[number]>;
 type _ScenarioOnlyCovered = Covers<ScenarioOnly, (typeof SCENARIO_ACTION_KEYS)[number]>;
+/**
+ * And this tier's own action kinds are pinned to `CONTROL_DEMANDS`, which the
+ * scenario tier cannot do for `setProperty` — that verb exists only here.
+ */
+type _ControlVerbsTotal = Covers<
+  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
+  ControlVerb
+>;
 
 const ACTION_KEYS = [
   "dispatch",
@@ -468,12 +479,16 @@ async function serveScenario(
     for (const step of scenario.steps) {
       errorBuf = [];
       const actionDesc = step.do ? describeAction(step.do) : undefined;
-      let actionError: string | undefined;
+      let fault: { message: string; refusal?: ControlRefusal } | undefined;
       if (step.do) {
         try {
           await performAction(page, step.do);
         } catch (e) {
-          actionError = e instanceof Error ? e.message : String(e);
+          // Carried rather than flattened, as at the scenario tier: `refuse`
+          // throws in this process (only `readControl` crosses into the page),
+          // so the class survives.
+          const message = e instanceof Error ? e.message : String(e);
+          fault = e instanceof ControlRefusal ? { message, refusal: e } : { message };
         }
         await page.waitForTimeout(settleMs);
       }
@@ -482,34 +497,24 @@ async function serveScenario(
         .locator("body")
         .innerText()
         .catch(() => "");
-      const failures = await evaluateExpect(
-        page,
-        step.expect,
-        errorBuf,
-        state,
-        visibleText,
-        actionError,
-      );
-      // Split as at the scenario tier: a refusal the step asked for is kept in
-      // the trace and off the failing channel, and a step that asked for one
-      // and was not refused fails through `failures` instead.
-      const wanted = step.expect?.actionErrorIncludes ?? [];
-      const claimed =
-        actionError !== undefined &&
-        wanted.length > 0 &&
-        wanted.every((w) => actionError?.includes(w));
+      // The same verdict the scenario tier takes, from the same function — the
+      // two used to be a verbatim copy of each other that had already drifted
+      // into different `ok` shapes.
+      const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
+      const failures = [
+        ...verdict.failures,
+        ...(await evaluateExpect(page, step.expect, errorBuf, state, visibleText)),
+      ];
+      const actionError = verdict.claimed === undefined ? fault?.message : undefined;
       const r: StepResult = {
-        ok:
-          errorBuf.length === 0 && failures.length === 0 && (claimed || actionError === undefined),
+        ok: errorBuf.length === 0 && failures.length === 0 && actionError === undefined,
         errors: [...errorBuf],
         state,
         visibleText,
         failures,
       };
-      if (actionError !== undefined) {
-        if (claimed) r.expectedActionError = actionError;
-        else r.actionError = actionError;
-      }
+      if (actionError !== undefined) r.actionError = actionError;
+      if (verdict.claimed !== undefined) r.expectedActionError = verdict.claimed;
       if (step.label !== undefined) r.label = step.label;
       if (actionDesc !== undefined) r.action = actionDesc;
       steps.push(r);
@@ -641,14 +646,10 @@ function describeAction(a: Action): string {
  * a `disabled` <input> moves nothing and reports nothing (measured), so the
  * silent pass this rule ends exists at this tier too.
  */
-async function refuse(
-  loc: Locator,
-  verb: keyof typeof CONTROL_DEMANDS,
-  where: string,
-): Promise<void> {
+async function refuse(loc: Locator, verb: ControlVerb, where: string): Promise<void> {
   const state = await loc.evaluate(readControl, undefined, { timeout: 3000 });
   const fault = controlFault(verb, where, state);
-  if (fault) throw new Error(fault);
+  if (fault) throw fault;
 }
 
 async function performAction(page: Page, a: Action): Promise<void> {
@@ -745,8 +746,9 @@ async function performAction(page: Page, a: Action): Promise<void> {
     // match. Probing first names the tag, so a selector that drifted onto its
     // wrapper reads here the way it reads at the scenario tier. Only that case:
     // what the probe accepts still goes to Playwright, which judges by
-    // `isContentEditable` and actionability, so a disabled or read-only control
-    // is refused in its words (and the scenario tier fills it).
+    // `isContentEditable` and actionability — which the `refuse` below has
+    // already answered, in Kumiki's words and in the same words the scenario
+    // tier uses.
     //
     // One locator for every call: re-resolving would check one element and fill
     // whatever a re-render put there afterwards.
@@ -816,22 +818,14 @@ async function evaluateExpect(
   errors: string[],
   state: Record<string, unknown>,
   visibleText: string,
-  actionError?: string,
 ): Promise<string[]> {
   if (!expect) return [];
   const failures: string[] = [];
   if (expect.noErrors && errors.length > 0) {
     failures.push(`expected no errors but got: ${errors.join("; ")}`);
   }
-  // Worded exactly as at the scenario tier: a fixture that runs at both must
-  // not have to read two different reports of the same verdict.
-  for (const s of expect.actionErrorIncludes ?? []) {
-    if (actionError === undefined) {
-      failures.push(`expected the action to be refused for "${s}", but it ran`);
-    } else if (!actionError.includes(s)) {
-      failures.push(`expected the refusal to include "${s}" but got: ${actionError}`);
-    }
-  }
+  // `actionErrorIncludes` is judged by `judgeRefusal` in the step loop, as at
+  // the scenario tier: it reads the fault rather than the page.
   for (const [key, want] of Object.entries(expect.state ?? {})) {
     const got = readPath(state, key);
     if (!matches(want, got)) failures.push(`state ${key}: expected ${j(want)}, got ${j(got)}`);

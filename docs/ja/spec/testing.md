@@ -361,7 +361,7 @@ example コーパス（`packages/tests`）は「壊れた example は決して�
 
 シナリオは「ユーザーが操作したときこのアプリは動くか」に答えるために存在する。値を書いてイベントを dispatch するやり方はプラットフォームを迂回するため、`disabled` なフィールドへの `fill` が slot を動かし `ui.input` reducer まで走ってしまっていた——緑で、しかも製品には作れない挙動を表明した状態である。これは高くつく方向の失敗である。アプリは理由があってフィールドを無効化しており（保存処理中、権限のないユーザー）、シナリオはそこへ構わず入力し、ティアは何も検証していないのに「ガードは効いている」と報告する。
 
-コントロールを操作する前に、両ティアは 1 つのルールを問う。各操作がコントロールに要求するもの:
+コントロールを操作する前に、1 つのルールが判断する。各操作がコントロールに要求するもの:
 
 | 要求 | 操作 |
 |---|---|
@@ -376,9 +376,11 @@ example コーパス（`packages/tests`）は「壊れた example は決して�
 | `readonly` | 入力 | `readonly` |
 | `contenteditable="false"` | 入力 | `not editable` |
 
-拒否されたステップは `actionError` を報告して失敗し、メッセージはコントロールと理由を名指しする。代わりに拒否そのものを表明したい fixture は `expect.actionErrorIncludes` を使う。
+拒否されたステップは `actionError` を報告して失敗し、メッセージはコントロールと理由を名指しする。代わりに拒否そのものを表明したい fixture は `expect.actionErrorIncludes` を使う。これが照合するのは拒否だけであって `actionError` チャネル全体ではない。したがって、何にも一致しないセレクタを拒否として主張することはできない——`no element matching selector #save-disabled` は `disabled` を含んでおり、それを主張できてしまえば「何も検証しないまま通る」が一段上で再現するだけである。
 
-意図的な帰結が 3 つある。いずれも HTML 仕様から読み取ったのではなく Chromium で実測したものである（[`disabled-controls.spec.ts`](https://github.com/kumikijs/Kumiki/blob/dev/packages/e2e/tests/disabled-controls.spec.ts) がその実測をテストとして残したもの）:
+このルールは 3 つのドライバすべてが問う。2 つの scenario ティアと、見つけたコントロールを片端から操作する `kumiki smoke` である。smoke は拒否されたコントロールを報告せず**スキップ**する——書かれたスクリプトを走らせるわけではないので、操作できないコントロールは誰の間違いでもない——が、そこへイベントを発火させることは両方向に嘘をついていた。到達できない button の裏にある reducer の例外をアプリの欠陥として報告し、同時に、効かなくなったガードを見えなくしていた。
+
+意図的な帰結が 3 つある。いずれも HTML 仕様から読み取ったのではなく Chromium で実測したものである（[`disabled-controls.spec.ts`](https://github.com/kumikijs/Kumiki/blob/main/packages/e2e/tests/disabled-controls.spec.ts) がその実測をテストとして残したもの）:
 
 - **`{hover}` はコントロール操作ではない。** Chromium は `disabled` な `<input>` にも `<button>` にも `mouseenter` を発火するので、そこに置かれた `ui.hover` reducer は実際に走る。ここで拒否すればプラットフォームに無い規則を発明することになる——これは逆向きの、そしてより悪いバグである。動いているプログラムを壊れていると報告するからだ。
 - **`readonly` が拒否するのは入力だけである。** readonly な `<input>` はフォーカス可能で `keydown` も受け取るので、`{focus}` と `{key}` は通る。
