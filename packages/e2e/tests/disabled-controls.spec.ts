@@ -30,12 +30,13 @@ const PAGE = `<!doctype html><meta charset="utf-8"><body>
 <input id="d-input" disabled>
 <input id="r-input" readonly>
 <button id="d-btn" disabled>go</button>
+<button id="d-wrap" disabled><span id="icon">go</span></button>
 <label id="d-check"><input type="checkbox" disabled></label>
 <div id="ed-off" contenteditable="false">old</div>
 <select id="d-sel" disabled><option value="a">Ay</option><option value="b">Bee</option></select>
 <script>
   window.seen = [];
-  for (const id of ['d-input','r-input','d-btn','d-check','ed-off','d-sel']) {
+  for (const id of ['d-input','r-input','d-btn','d-wrap','icon','d-check','ed-off','d-sel']) {
     for (const t of ['click','focus','blur','keydown','mouseenter','change'])
       document.getElementById(id).addEventListener(t, () => window.seen.push(id + ':' + t), true);
   }
@@ -89,6 +90,27 @@ test.describe("what a browser refuses", () => {
       document.getElementById("d-btn")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(await seen(page)).toEqual(["d-btn:click"]);
+  });
+
+  // The most common real shape of this bug, and the asymmetry that decides how
+  // `readControl` handles it. A real click on the <span> reaches the <span> and
+  // stops: Chromium does not propagate it to the disabled <button>, so a
+  // `ui.click` bound there does not run. A dispatched one does reach the
+  // <button> — and dispatching is what a driver does, so the reducer runs and
+  // the step passes. Hence the `closest(":disabled")` ascent.
+  test("a click inside a disabled button reaches it when dispatched, not when real", async ({
+    page,
+  }) => {
+    await page
+      .locator("#icon")
+      .click({ force: true, timeout: 2000 })
+      .catch(() => {});
+    expect(await seen(page)).not.toContain("d-wrap:click");
+    await page.evaluate(() => {
+      (window as unknown as { seen: string[] }).seen = [];
+      document.getElementById("icon")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(await seen(page)).toEqual(["d-wrap:click", "icon:click"]);
   });
 
   // The one synthetic path the platform does guard, and why the <label> wrapper
@@ -183,14 +205,16 @@ fn picks() -> List({label: Text, value: Text})
    = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}]
 
 reducer clicked on=ui.click(Off) do= clicks := clicks + 1
+reducer busied  on=ui.click(Busy) do= clicks := clicks + 1
 
 tile Locked = input(bind=locked) {id: "locked", disabled: true}
 tile Sealed = input(bind=sealed) {id: "sealed", readonly: true}
 tile Off    = button(text="off") {id: "off", disabled: true}
+tile Busy   = button(text="saving", loading=true) {id: "busy"}
 tile Shut   = select(bind=picked, options=picks()) {id: "shut", disabled: true}
 tile Open   = select(bind=open_pick, options=picks()) {id: "open"}
 tile Live   = input(bind=live) {id: "live"}
-tile App    = column(Locked, Sealed, Off, Shut, Open, Live, text("clicks: " + clicks.show))
+tile App    = column(Locked, Sealed, Off, Busy, Shut, Open, Live, text("clicks: " + clicks.show))
 app DisabledControls
     caps   = []
     routes = {"/" -> App, "/404" -> App}
@@ -207,6 +231,7 @@ test.describe("the rule, at this tier", () => {
         { do: { focus: "#locked" } },
         { do: { blur: "#locked" } },
         { do: { choose: "#shut", value: "Bee" } },
+        { do: { click: '#busy [data-kumiki-tile="spinner"]' } },
       ],
     });
     expect(report.ok).toBe(false);
@@ -218,6 +243,7 @@ test.describe("the rule, at this tier", () => {
     expect(report.steps[3]?.actionError).toContain("<input> is disabled");
     expect(report.steps[4]?.actionError).toContain("<input> is disabled");
     expect(report.steps[5]?.actionError).toContain("<select> is disabled");
+    expect(report.steps[6]?.actionError).toContain("the <button> it matched inside is disabled");
     // The app did nothing wrong and said nothing: a refusal is not a defect.
     for (const step of report.steps) expect(step.errors).toEqual([]);
     expect(report.steps[0]?.state.locked).toBe("sealed");

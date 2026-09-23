@@ -46,7 +46,7 @@ const ASKS_NOTHING: ControlVerb[] = [
 
 const ACTIVE: ControlState = {
   tag: "input",
-  wrapped: false,
+  via: "self",
   disabled: false,
   readonly: false,
   contentEditable: null,
@@ -197,7 +197,7 @@ describe("readControl finds the control a verb would drive", () => {
   it("reads the state off a control the selector matched itself", () => {
     expect(readControl(el('<input id="a" disabled>'))).toEqual({
       tag: "input",
-      wrapped: false,
+      via: "self",
       disabled: true,
       readonly: false,
       contentEditable: null,
@@ -218,7 +218,7 @@ describe("readControl finds the control a verb would drive", () => {
   // Measured: Chromium refuses a click on the label of a disabled checkbox.
   it("looks through the <label> wrapper check / radio / switch render", () => {
     const state = readControl(el('<label id="a"><input type="checkbox" disabled></label>'));
-    expect(state).toMatchObject({ tag: "input", wrapped: true, disabled: true });
+    expect(state).toMatchObject({ tag: "input", via: "label", disabled: true });
     expect(controlFault("click", "click #a", state)?.headline).toContain(
       "the <input> inside the <label> it matched is disabled",
     );
@@ -228,6 +228,30 @@ describe("readControl finds the control a verb would drive", () => {
   // click on a region because something disabled sits somewhere inside it.
   it("does not reach into a container that merely holds a control", () => {
     expect(readControl(el('<div id="a"><input disabled></div>'))).toBeNull();
+  });
+
+  // The other direction, and the one that is not symmetric with it. Measured:
+  // a click dispatched at a <span> inside a disabled <button> reaches the
+  // <button>'s listener, so `ui.click` on that button runs — the bug, one
+  // element down from where the rule was looking.
+  it("ascends to a disabled control the selector landed inside", () => {
+    const state = readControl(
+      el('<button id="b" disabled><span id="a">go</span></button>').querySelector("#a") as Element,
+    );
+    expect(state).toMatchObject({ tag: "button", via: "ancestor", disabled: true });
+    expect(controlFault("click", "click #a", state)?.headline).toContain(
+      "the <button> it matched inside is disabled",
+    );
+  });
+
+  // The ascent stops at `:disabled` rather than at any control, so a selector
+  // inside a live control is still nothing this rule speaks about.
+  it("does not ascend to a control that is not disabled", () => {
+    expect(
+      readControl(
+        el('<button id="b"><span id="a">go</span></button>').querySelector("#a") as Element,
+      ),
+    ).toBeNull();
   });
 
   it("a container with no control in it", () => {

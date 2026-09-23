@@ -13,4 +13,6 @@ All three drivers — both verification tiers and `kumiki smoke` — now ask one
 
 `expect.actionErrorIncludes` is the new key that asserts a refusal, so "this button is disabled and clicking it does nothing" is expressible rather than merely green. It matches the refusal alone, not the whole `actionError` channel, so a step cannot claim one on a selector that matched nothing. `kumiki run`'s trace prints a claimed refusal as `expected refusal:`.
 
+The rule resolves in both directions: a verb aimed at the `<label>` `check` / `radio` / `switch` render is judged by the `<input>` inside it, and a verb aimed at something inside a disabled control — the spinner a `loading` button renders — is judged by that control, since the dispatched event reaches it.
+
 `kumiki smoke` asks the same rule, and no longer fires at a control a user could not reach.

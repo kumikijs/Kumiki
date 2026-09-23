@@ -28,6 +28,7 @@ fn picks() -> List({label: Text, value: Text})
 # Each of these fires only if the step it belongs to actually drove the control.
 reducer typed_in on=ui.input(Locked) do= typed  := typed + 1
 reducer clicked  on=ui.click(Off)    do= clicks := clicks + 1
+reducer busied   on=ui.click(Busy)   do= clicks := clicks + 1
 reducer agreed   on=ui.click(Agree)  do= clicks := clicks + 1
 reducer live_in  on=ui.input(Live)   do= typed  := typed + 1
 
@@ -47,6 +48,12 @@ tile Frozen = editable(bind=frozen) {id: "frozen", disabled: true}
 
 tile Off = button(text="off") {id: "off", disabled: true}
 
+# A `loading` button disables itself and renders a spinner inside — the one
+# shape in the stdlib where a step's selector can land *inside* a control. A
+# click dispatched at the spinner reaches the button's listener, so the rule
+# has to look up as well as down.
+tile Busy = button(text="saving", loading=true) {id: "busy"}
+
 tile Shut = select(bind=picked, options=picks()) {id: "shut", disabled: true}
 
 # `check` puts the tile's id on a <label> and the disabled state on the <input>
@@ -64,6 +71,7 @@ tile App
         Sealed,
         Frozen,
         Off,
+        Busy,
         Shut,
         row(Agree, text("I agree")) {gap: "sm", align: "center"},
         Live,

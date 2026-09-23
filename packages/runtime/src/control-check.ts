@@ -100,12 +100,16 @@ export type ControlState = {
   /** The lowercased tag of the control being judged. */
   tag: string;
   /**
-   * True when the selector matched a wrapper and the control judged is the one
-   * inside it. `check` / `radio` / `switch` put the tile's id on a <label> and
-   * the state on the <input> under it, so a step aimed at the tile lands on the
-   * wrapper — and a browser judges the control, not the label.
+   * How the selector reached the control being judged.
+   *
+   * `"self"` — it matched the control. `"label"` — it matched a <label> and the
+   * control is the one inside it, which is what `check` / `radio` / `switch`
+   * render: the tile's id on the <label>, the state on the <input> under it,
+   * and a browser judging the control rather than the label. `"ancestor"` — it
+   * matched something *inside* a disabled control, and the control is that
+   * ancestor.
    */
-  wrapped: boolean;
+  via: "self" | "label" | "ancestor";
   disabled: boolean;
   readonly: boolean;
   /** The `contenteditable` attribute, verbatim, or `null` when it carries none. */
@@ -128,23 +132,43 @@ export function readControl(el: Element): ControlState | null {
     e.matches(CONTROLS) || e.getAttribute("contenteditable") !== null;
 
   let target = el;
-  let wrapped = false;
+  let via: "self" | "label" | "ancestor" = "self";
   if (!isControl(el)) {
-    // Only a <label>, never any container that happens to hold a control.
-    // `root.querySelector("input")` from an arbitrary ancestor would let a
-    // `click` on a region be refused because something disabled sits inside it,
-    // which is a refusal the platform does not make.
-    if (el.tagName.toLowerCase() !== "label") return null;
-    const inner = (el as HTMLLabelElement).control ?? el.querySelector(CONTROLS);
-    if (!inner) return null;
-    target = inner;
-    wrapped = true;
+    // Downward, only a <label>, never any container that happens to hold a
+    // control. `root.querySelector("input")` from an arbitrary ancestor would
+    // let a `click` on a region be refused because something disabled sits
+    // inside it, which is a refusal the platform does not make.
+    const inner =
+      el.tagName.toLowerCase() === "label"
+        ? ((el as HTMLLabelElement).control ?? el.querySelector(CONTROLS))
+        : null;
+    if (inner) {
+      target = inner;
+      via = "label";
+    } else {
+      // Upward, only as far as a control the platform has actually disabled.
+      // Measured: a click dispatched at a <span> inside a disabled <button>
+      // reaches the <button>'s listener, so the reducer bound to it runs — the
+      // same silent pass as a click on the button itself, one element down.
+      // (A real click does not; Chromium does not propagate it through the
+      // disabled ancestor. Only the dispatch does, and dispatching is what a
+      // driver does.)
+      //
+      // Safe in the other direction because no tile puts a tile inside a
+      // control: a `button` holds a text node and at most the spinner, so a
+      // descendant of a disabled control can never carry a reducer of its own,
+      // and refusing here cannot turn away a step a browser would have run.
+      const owner = el.closest(":disabled");
+      if (!owner) return null;
+      target = owner;
+      via = "ancestor";
+    }
   }
 
   const c = target as Element & { disabled?: unknown; readOnly?: unknown };
   return {
     tag: target.tagName.toLowerCase(),
-    wrapped,
+    via,
     // Both readings, because they answer slightly different questions and
     // Kumiki may one day ask the second: the IDL property reflects the content
     // attribute, while `:disabled` also matches a control inside a disabled
@@ -237,9 +261,12 @@ export function controlFault(
   if (!found || control === null) return undefined;
   const { reason, demand } = found;
 
-  const what = control.wrapped
-    ? `the <${control.tag}> inside the <label> it matched`
-    : `<${control.tag}>`;
+  const WHAT: Record<ControlState["via"], string> = {
+    self: `<${control.tag}>`,
+    label: `the <${control.tag}> inside the <label> it matched`,
+    ancestor: `the <${control.tag}> it matched inside`,
+  };
+  const what = WHAT[control.via];
   const headline = `${where}: ${what} is ${reason}, ${CONSEQUENCE[demand]}`;
   // The suggestion is part of the contract, not decoration: a refusal is often
   // the behaviour a fixture means to assert, and the message is where an agent

@@ -386,7 +386,7 @@ example コーパス（`packages/tests`）は「壊れた example は決して�
 - **`readonly` が拒否するのは入力だけである。** readonly な `<input>` はフォーカス可能で `keydown` も受け取るので、`{focus}` と `{key}` は通る。
 - **`editable` の理由は `disabled` ではなく `not editable` である。** `disabled` と `readonly` はどちらも `contenteditable="false"` として描画され、DOM 上に両者を区別するものは無い。したがって与える理由は真であるほうを選ぶ。
 
-`{submit}` はコントロールではなくフォームを対象とし、`{dispatch}` / `{navigate}` は DOM ではなく seam を駆動するので、いずれもこのルールを問わない。`check` / `radio` / `switch` がタイルの id を載せる `<label>` を対象にした操作は、その内側の `<input>` で判定される。ブラウザがラベルではなくコントロールで判定するからである。
+`{submit}` はコントロールではなくフォームを対象とし、`{dispatch}` / `{navigate}` は DOM ではなく seam を駆動するので、いずれもこのルールを問わない。`check` / `radio` / `switch` がタイルの id を載せる `<label>` を対象にした操作は、その内側の `<input>` で判定される。ブラウザがラベルではなくコントロールで判定するからである。disabled なコントロールの*内側*を対象にした操作——`loading` な button が描くスピナーなど——はそのコントロールで判定される。ドライバが dispatch したイベントはそこへ届くからである。
 
 なぜ Kumiki でこれが綺麗に成立するか: 状態が明示的（slot）なので oracle が信頼でき、イベントが宣言的（reducer 名）なので正確に駆動でき、effect が capability 境界でモック可能なので再現性がある。エージェントが要件から「アプリ + シナリオ（AC）」を生成し、trace を読んで自己修正することで、人は要件を一度述べるだけでよい。ループの手順は `.claude/skills/kumiki-iterate` に記述。
 

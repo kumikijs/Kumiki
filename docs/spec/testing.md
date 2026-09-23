@@ -429,7 +429,7 @@ Three consequences are deliberate, and each is measured against Chromium rather 
 - **`readonly` refuses the typing alone.** A readonly `<input>` is focusable and does receive `keydown`, so `{focus}` and `{key}` still drive one.
 - **An `editable` reports `not editable`, not `disabled`.** `disabled` and `readonly` both render `contenteditable="false"` on it and nothing in the DOM distinguishes them, so the reason given is the one that is true.
 
-`{submit}` targets a form rather than a control, and `{dispatch}` / `{navigate}` drive a seam rather than the DOM, so none of them asks this. A verb aimed at the `<label>` that `check` / `radio` / `switch` put the tile's id on is judged by the `<input>` inside it, because a browser judges the control rather than the label.
+`{submit}` targets a form rather than a control, and `{dispatch}` / `{navigate}` drive a seam rather than the DOM, so none of them asks this. A verb aimed at the `<label>` that `check` / `radio` / `switch` put the tile's id on is judged by the `<input>` inside it, because a browser judges the control rather than the label. A verb aimed at something *inside* a disabled control — the spinner a `loading` button renders, say — is judged by that control, because the event a driver dispatches reaches it.
 
 Why this works cleanly in Kumiki: because state is explicit (slots), the oracle is trustworthy; because events are declarative (reducer names), it can be driven precisely; and because effects can be mocked at the capability boundary, it is reproducible. The agent generates "app + scenario (AC)" from requirements and self-corrects by reading the trace, so the human only needs to state the requirements once. The loop procedure is described in `.claude/skills/kumiki-iterate`.
 
