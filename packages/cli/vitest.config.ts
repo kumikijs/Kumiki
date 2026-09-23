@@ -17,5 +17,9 @@ export default defineConfig({
     // default, so a cold cache or a loaded machine turns into a spurious
     // timeout. Same reasoning, same number, as packages/tests.
     testTimeout: 30000,
+    // The compiled bundles those tests import (under test-tmp/, or the smoke
+    // loader's kumiki-smoke-* temp dirs) are plain JS with the runtime inlined.
+    // Node imports them as they are; Vite would transform each one afresh.
+    server: { deps: { external: [/\/test-tmp\//, /\/kumiki-smoke-/] } },
   },
 });

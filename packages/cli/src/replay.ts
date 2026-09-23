@@ -168,7 +168,7 @@ export async function replayCmd(
   capabilities: string[],
   opts: ReplayCmdOptions,
 ): Promise<void> {
-  ensureDom();
+  await ensureDom();
   const source = readFileSync(kumikiPath, "utf8");
   const app = await loadApp(source, capabilities, { sourcePath: kumikiPath });
 

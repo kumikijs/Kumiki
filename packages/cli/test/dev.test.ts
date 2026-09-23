@@ -24,14 +24,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDevServer } from "../src/dev.ts";
-
-const CLI_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "kumiki.ts");
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 function runCli(args: string[]): { out: string; code: number } {
   try {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     return { out, code: 0 };
@@ -239,8 +237,8 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
-// CLI dispatch tests spawn `npx tsx kumiki.ts ...` so the first run pays the
-// tsx cold-start cost. Local runs were ~1s/test; CI cold start pushed the
+// CLI dispatch tests spawn `node --import tsx kumiki.ts ...` so the first run
+// pays the tsx cold-start cost. Local runs were ~1s/test; CI cold start pushed the
 // first invocation past vitest's 5s default. Give the whole suite a 30s
 // per-test budget so cold-start drift doesn't flake builds.
 const DISPATCH_TIMEOUT_MS = 30_000;

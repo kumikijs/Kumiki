@@ -16,10 +16,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
-const CLI_PATH = resolve(here, "../src/kumiki.ts");
 
 describe("kumiki build --minify", () => {
   let plainDir: string;
@@ -35,9 +35,8 @@ describe("kumiki build --minify", () => {
   });
 
   function build(outDir: string, ...flags: string[]): string {
-    return execFileSync("npx", ["tsx", CLI_PATH, "build", COUNTER_PATH, outDir, ...flags], {
+    return execFileSync(process.execPath, [...CLI_ARGV, "build", COUNTER_PATH, outDir, ...flags], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
   }

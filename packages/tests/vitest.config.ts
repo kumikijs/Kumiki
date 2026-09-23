@@ -13,6 +13,11 @@ export default defineConfig({
     // `fetch` that never leaves the process, and an IntersectionObserver that
     // actually notifies. The CLI installs the same pair in `ensureDom`.
     setupFiles: ["./helpers/setup.ts"],
+    // The bundles that loader writes are plain JS with the runtime inlined, so
+    // Node imports them as they are. Left to Vite, each one — hundreds of KB,
+    // at a fresh path every time — went through its transform pipeline, which
+    // was most of this suite's wall time.
+    server: { deps: { external: [/\/\.smoke-tmp\//] } },
     // Nearly every test here compiles a `.kumiki` file and inlines the runtime
     // bundle before it can assert anything. That is seconds of real work, and
     // the files run in parallel, so the 5s default turns machine load into
