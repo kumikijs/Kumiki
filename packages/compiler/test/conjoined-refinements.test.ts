@@ -18,6 +18,11 @@ import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import type { AppShape, SlotMeta } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
+import type { TypeDef } from "../src/ast.ts";
+import type { GenCtx } from "../src/codegen/context.ts";
+import { refinementsOf } from "../src/codegen/emit-type.ts";
+import { lex } from "../src/lexer.ts";
+import { parse } from "../src/parser.ts";
 import { defined } from "./helpers/defined.ts";
 
 const TMP_ROOT = resolve(__dirname, "test-tmp");
@@ -40,6 +45,9 @@ type Opaque  = nominal Text where email where uuid
 type Both    = Text where len-gt(3) where len-lt(9)
 type Triple  = nominal Text where len-gt(3) where len-lt(9) where nonempty
 type Thread  = {label: Text, replies: List(Thread)}
+type NonEmpty(T) = T where nonempty
+type Named(T)    = nominal NonEmpty(T) where len-gt(1)
+type Hands(T)    = NonEmpty(T)
 
 slot h   : Handle  = "kumiki"
 slot c   : Chained = "kumiki"
@@ -52,6 +60,10 @@ slot d   : Both    = "kumiki"
 slot p   : Triple  = "kumiki"
 slot n   : Int     = 1
 slot t   : Thread  = {label: "root", replies: []}
+slot ng  : NonEmpty(Text)   = "kumiki"
+slot nh  : NonEmpty(Short)  = "kumiki"
+slot nn  : Named(Handle)    = "kumiki"
+slot hh  : Hands(Text)      = "kumiki"
 
 tile App = text("x")
 
@@ -201,5 +213,69 @@ describe("a type's predicates conjoin", () => {
     // A recursive record is legal (§1.3.6, inv. 4), so the walk that collects
     // predicates has to stop at the record rather than follow the name back.
     expect(meta("t").refine).toBeUndefined();
+  });
+});
+
+// A generic that hands a parameter back is an edge of the chain a type denotes
+// (spec/language.md §1.3.6, inv. 2), exactly as an alias is: `unaliasType`
+// follows it with the arguments substituted, so the checker reads
+// `NonEmpty(Text)` as `Text where nonempty`. Codegen stopped at the
+// application and emitted no `refine` at all, so every write landed (#439).
+describe("a refinement written on a generic alias", () => {
+  it("gates the slot the generic declares", () => {
+    const refine = refineOf("ng");
+    expect(refine("kumiki")).toBe(true);
+    expect(refine("")).toBe(false);
+    expect(meta("ng").refineKind).toBe("nonempty");
+  });
+
+  it("carries the argument's predicates too, base outward", () => {
+    // `Short` is the argument: its `len-lt(9)` is the base the generic's
+    // `nonempty` is written over, so it comes first.
+    expect(meta("nh").refineAll?.map((r) => r.kind)).toEqual(["len-lt", "nonempty"]);
+    const refine = refineOf("nh");
+    expect(refine("")).toBe(false);
+    expect(refine("kumikijs!")).toBe(false);
+    expect(refine("kumiki")).toBe(true);
+  });
+
+  it("follows a generic applied inside another, under a nominal", () => {
+    // `Named(Handle)` is `nominal NonEmpty(Handle) where len-gt(1)`: Handle's
+    // two, then the inner generic's, then the outer one's own.
+    expect(meta("nn").refineAll?.map((r) => r.kind)).toEqual([
+      "len-gt",
+      "len-lt",
+      "nonempty",
+      "len-gt",
+    ]);
+    expect(meta("nn").refineAll?.map((r) => r.args)).toEqual([[3], [9], [], [1]]);
+  });
+
+  it("follows a generic alias to another generic", () => {
+    expect(meta("hh").refineKind).toBe("nonempty");
+    expect(refineOf("hh")("")).toBe(false);
+  });
+});
+
+// Both of these are E0009, so `compile` stops before codegen; the walk is
+// driven directly, because it still has to end on the way to that report.
+describe("a generic alias written in terms of itself", () => {
+  const walk = (src: string, root: string): string[] => {
+    const types = new Map<string, TypeDef>();
+    for (const d of parse(lex(src)).defs) if (d.kind === "TypeDef") types.set(d.name, d);
+    const gen = { types } as GenCtx;
+    const pos = { line: 1, col: 1 };
+    return refinementsOf({ kind: "TypeRef", name: root, pos }, gen).map((r) => r.pred);
+  };
+
+  it("collects, and terminates on, a generic that applies itself", () => {
+    expect(walk("type Loop(T) = Loop(T) where nonempty\ntype L = Loop(Text)", "L")).toEqual([
+      "nonempty",
+    ]);
+  });
+
+  it("collects, and terminates on, an alias that is its own argument", () => {
+    const src = "type NonEmpty(T) = T where nonempty\ntype A = NonEmpty(A)";
+    expect(walk(src, "A")).toEqual(["nonempty"]);
   });
 });

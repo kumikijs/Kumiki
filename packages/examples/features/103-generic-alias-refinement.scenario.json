@@ -1,0 +1,42 @@
+{
+  "steps": [
+    {
+      "label": "both slots start on values their generic types accept",
+      "expect": {
+        "noErrors": true,
+        "state": { "name": "ada", "tag": "ku" },
+        "domIncludes": ["name: ada", "tag: ku"]
+      }
+    },
+    {
+      "label": "a non-empty name commits",
+      "do": { "clickText": "rename" },
+      "expect": { "noErrors": true, "state": { "name": "grace" } }
+    },
+    {
+      "label": "an empty one is refused by the generic's own nonempty",
+      "do": { "clickText": "rename" },
+      "expect": {
+        "noErrors": true,
+        "state": { "name": "grace" },
+        "domIncludes": ["name: grace"],
+        "errorIncludes": ["slot \"name\" cannot hold \"\" (nonempty)"]
+      }
+    },
+    {
+      "label": "a tag under the argument's bound commits",
+      "do": { "clickText": "grow" },
+      "expect": { "noErrors": true, "state": { "tag": "kukiki" } }
+    },
+    {
+      "label": "and one past it is refused — the argument's predicate, reached through the generic",
+      "do": { "clickText": "grow" },
+      "expect": {
+        "noErrors": true,
+        "state": { "tag": "kukiki" },
+        "domIncludes": ["tag: kukiki"],
+        "errorIncludes": ["slot \"tag\" cannot hold \"kukikikiki\" (len-lt(7))"]
+      }
+    }
+  ]
+}

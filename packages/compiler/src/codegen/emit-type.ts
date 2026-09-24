@@ -1,3 +1,4 @@
+import { paramSubstitution, substituteType } from "../assignable.ts";
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import { refinementBodyJs, refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
@@ -132,13 +133,17 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
  * first wherever the two definitions sit in the file, because `Short` is what
  * `Handle` is declared over. It is the order a failed predicate is named in.
  *
- * The edges are an alias, a `nominal` wrapper and a `where`, and the walk stops
- * at a structural type: nothing written inside a record, a union or a container
- * is a refinement of the type itself. It is **not** yet every edge normalization
- * follows — a generic that hands a parameter back (`type NonEmpty(T) = T where
- * nonempty`) is one, and its refinement is still dropped here (#439). `seen` is
- * what makes a name written in terms of itself terminate; the cycle is E0009's
- * to report, and this walk still has to end on the way there.
+ * The edges are the ones normalization (`unaliasType`) follows: an alias, a
+ * `nominal` wrapper, a `where`, and a program-defined generic applied to its
+ * arguments — `type NonEmpty(T) = T where nonempty` makes `NonEmpty(Handle)`
+ * carry Handle's predicates and then `nonempty` (#439). The walk stops at a
+ * structural type: nothing written inside a record, a union or a container is a
+ * refinement of the type itself, and a stdlib constructor (`List`, `Option`, …)
+ * has no definition here to follow. `seen` is what makes a name written in
+ * terms of itself terminate — a generic is guarded by its name like an alias,
+ * and the body it is entered with is the substituted one, so an argument that
+ * names the chain again (`type A = NonEmpty(A)`) meets the same guard. The
+ * cycle is E0009's to report, and this walk still has to end on the way there.
  */
 export function refinementsOf(
   t: TypeExpr,
@@ -146,24 +151,29 @@ export function refinementsOf(
   seen: ReadonlySet<string> = new Set(),
 ): Refinement[] {
   switch (t.kind) {
-    case "TypeRef": {
+    case "TypeRef":
+    case "TypeApp": {
       if (seen.has(t.name)) return [];
       const def = gen.types.get(t.name);
       if (!def) return [];
-      const next = new Set(seen);
-      next.add(t.name);
-      return refinementsOf(def.body, gen, next);
+      // Substituted for the reason `unaliasType` substitutes: a parameter may
+      // share its name with a top-level definition, and an unsubstituted
+      // `TypeRef` would resolve against that instead of the argument.
+      const body =
+        t.kind === "TypeApp"
+          ? substituteType(def.body, paramSubstitution(def.params, t.args))
+          : def.body;
+      return refinementsOf(body, gen, new Set([...seen, t.name]));
     }
     case "TypeNominal":
     case "TypeRefinement": {
       const inner = refinementsOf(t.inner, gen, seen);
       return t.refinement ? [...inner, t.refinement] : inner;
     }
-    // A type in its own right, or (`TypeApp`) an edge this walk does not follow
-    // yet. Listed rather than defaulted so `assertNever` reports the next node
-    // kind added to `TypeExpr` instead of silently losing its refinements.
+    // A type in its own right. Listed rather than defaulted so `assertNever`
+    // reports the next node kind added to `TypeExpr` instead of silently losing
+    // its refinements.
     case "TypePrim":
-    case "TypeApp":
     case "TypeRecord":
     case "TypeUnion":
       return [];
