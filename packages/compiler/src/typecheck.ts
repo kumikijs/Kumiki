@@ -58,7 +58,7 @@ import {
   type GraphEdge,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { refinementProblem } from "./refinements.ts";
+import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
@@ -5377,11 +5377,8 @@ function resolveType(
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
-      checkRefinement(t.refinement, errors);
-      resolveType(t.inner, sym, errors, typeParams);
-      return;
     case "TypeRefinement":
-      checkRefinement(t.refinement, errors);
+      checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
@@ -5406,11 +5403,22 @@ function resolveType(
  *    with nothing in it. These are reachable, and each used to reach the
  *    runtime — as a check that refuses every value, one that accepts every
  *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
- *    `v <= x` half of what `between(0, "x")` lowered to.
+ *    `v <= x` half of what `between(0, "x")` lowered to. Also E0804, a
+ *    predicate over a base it cannot test (`Text where positive`): every
+ *    body is guarded by the shape it tests, so that slot refuses every write
+ *    (#440). The base is `inner` read through the chain the refinement is,
+ *    with the definition's type parameters left opaque — they say nothing
+ *    about the shape until the generic is applied.
  */
-function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void {
+function checkRefinement(
+  r: Refinement | undefined,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
   if (!r) return;
-  const problem = refinementProblem(r);
+  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
   if (!problem) return;
   // Written out rather than looked up: `spec-drift.test.ts` reads the codes
   // this file emits off `code: "E…"`, so a code assembled anywhere but at the
@@ -5430,6 +5438,20 @@ function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void
     message: problem.message,
     pos: r.pos,
   });
+}
+
+/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
+function baseProblem(
+  r: Refinement,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+): RefinementProblem | undefined {
+  const opaque = new Map([...typeParams].map((p) => [p, unknownType(inner.pos)]));
+  const base = unaliasType(substituteType(inner, opaque), sym);
+  // `null` is a chain that closes on itself: E0009's to report.
+  const message = base ? refinementBaseProblem(r, base) : undefined;
+  return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
 
 /**

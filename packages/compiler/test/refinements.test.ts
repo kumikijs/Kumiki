@@ -236,3 +236,92 @@ describe("arguments a predicate cannot be built from are reported", () => {
     });
   }
 });
+
+// Every predicate lowers to a check guarded by the shape it tests (#352), so
+// one written over a base type it cannot test refuses every value — the slot
+// takes nothing from then on, and only the smoke tier ever saw it (#440). It is
+// E0804's own defect reached from the other side: not arguments no value can
+// satisfy, but a base no value of which can.
+describe("a predicate over a base type it cannot test is reported", () => {
+  const bad: [string, string][] = [
+    // One row per column of the §1.3.3 pairing: the text family over a number…
+    ["nonempty over Int", `slot n : Int where nonempty = 1`],
+    ["len-eq over Int", `slot n : Int where len-eq(2) = 1`],
+    ["len-lt over Float", `slot n : Float where len-lt(2) = 1.0`],
+    ["len-gt over Time", `slot n : Time where len-gt(2) = 0`],
+    ["email over Int", `slot n : Int where email = 1`],
+    ["url over Bool", `slot b : Bool where url = true`],
+    ["uuid over Int", `slot n : Int where uuid = 1`],
+    ["regex over Int", `slot n : Int where regex("[0-9]+") = 1`],
+    // …and the numeric family over text.
+    ["between over Text", `slot s : Text where between(0, 3) = "a"`],
+    ["positive over Text", `slot s : Text where positive = "ada"`],
+    ["negative over Text", `slot s : Text where negative = "a"`],
+    // A structural type is not a base either predicate tests.
+    ["nonempty over a record", `slot r : {a: Text} where nonempty = {a: "x"}`],
+    ["positive over a list", `slot l : List(Int) where positive = []`],
+    // The base is read through the chain the refinement is: an alias, a
+    // `nominal`, an earlier `where`.
+    [
+      "positive under a nominal over Text",
+      `type Handle = nominal Text\nslot h : Handle where positive = "a"`,
+    ],
+    [
+      "nonempty over an alias of Int",
+      `type Count = Int where between(0, 9)\nslot c : Count where nonempty = 1`,
+    ],
+    ["a second where over the wrong base", `slot s : Text where nonempty where positive = "a"`],
+    ["a predicate folded onto a nominal", `type Id = nominal Int where uuid\nslot i : Id = 1`],
+  ];
+
+  for (const [label, src] of bad) {
+    it(`reports ${label}`, () => {
+      expect(codes(src)).toContain("E0804");
+    });
+  }
+
+  it("names what the predicate tests and the base it was written over", () => {
+    const messageFor = (src: string): string =>
+      check(parse(lex(`${src}\n${TAIL}`)))
+        .filter((e) => e.code === "E0804")
+        .map((e) => e.message)
+        .join("");
+    expect(messageFor(`slot s : Text where positive = "a"`)).toBe(
+      'Refinement "positive" tests a number but is written over Text, so no value satisfies it',
+    );
+    expect(messageFor(`slot n : Int where nonempty = 1`)).toBe(
+      'Refinement "nonempty" tests text but is written over Int, so no value satisfies it',
+    );
+  });
+
+  // `len-lt(0)` is well formed — `0` is a count — and still refuses every
+  // text, since no length is below zero: the same slot that takes nothing,
+  // reached through a legal argument.
+  it("reports len-lt(0)", () => {
+    const errors = check(parse(lex(`slot s : Text where len-lt(0) = ""\n${TAIL}`)));
+    expect(errors.filter((e) => e.code === "E0804").map((e) => e.message)).toEqual([
+      "Refinement len-lt(0) is shorter than every text, so no value satisfies it",
+    ]);
+  });
+
+  const good = [
+    `type Handle = nominal Text\nslot h : Handle where nonempty = "a"`,
+    `type Cents = nominal Int\nslot c : Cents where between(0, 9) = 1`,
+    `slot t : Time where positive = 1`,
+    `slot f : Float where negative = -1.0`,
+    // `one-of` is excluded by design: its choices are the domain, over any base.
+    `slot t : Time where one-of(0, 1000) = 0`,
+    `slot n : Int where one-of(1, 2) = 1`,
+    // A parameter says nothing about the base until the generic is applied.
+    `type NonEmpty(T) = T where nonempty\nslot s : NonEmpty(Text) = "a"`,
+    // A parameter spelled like a top-level type is still the parameter (§1.3.6 inv. 5).
+    `type Cents = Int\ntype Wrap(Cents) = Cents where nonempty\nslot s : Wrap(Text) = "a"`,
+    `slot s : Text where len-lt(1) = ""`,
+  ];
+
+  for (const src of good) {
+    it(`accepts ${src.split("\n").slice(-1)[0]}`, () => {
+      expect(codes(src)).not.toContain("E0804");
+    });
+  }
+});

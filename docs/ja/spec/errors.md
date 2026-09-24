@@ -1007,14 +1007,26 @@ test typo-section =
 
 ### E0804 `refinement-args-invalid`
 
-登録済み述語が、チェックを組み立てられない引数とともに書かれている。
+登録済み述語が、チェックを組み立てられない引数とともに、またはその述語が検査できない基底型の上に書かれている。
 
 > `Refinement "<pred>" takes <n> argument(s) but got <m>`
 > `Refinement "<pred>" takes <what> but argument <i> is <given>`
 > `Refinement "<pred>" needs at least <min> value(s) but got <n>`
 > `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
 > `Refinement regex("<p>") is not a pattern: <reason>`
+> `Refinement len-lt(0) is shorter than every text, so no value satisfies it`
+> `Refinement "<pred>" tests <text | a number> but is written over <base>, so no value satisfies it`
 
-各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。
+各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。
 
-**修正**：述語が取る引数を書く — `between` には数値の境界、`len-*` 系には 0 以上の整数、`regex` にはコンパイルできるパターン、`one-of` には 1 個以上のリテラル。
+基底型は同じ規則のもう半分である。各述語は 1 つの形の値を検査し、それ以外には `false` を返す（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。そのため別の形の基底型の上に書かれた述語は**あらゆる**値を拒否する：`slot name : Text where positive` は何も通さず、そこへの書き込みはそのたびに reducer のバッチを破棄する。各述語が必要とするもの：
+
+| 述語 | 検査するもの | 必要な基底型 |
+|---|---|---|
+| `nonempty`, `len-eq`, `len-lt`, `len-gt`, `email`, `url`, `uuid`, `regex` | テキスト | `Text` |
+| `between`, `positive`, `negative` | 数値 | `Int`・`Float`・`Time` |
+| `one-of` | 所属 | 任意 — 候補そのものが定義域 |
+
+基底型は refinement が書かれている連鎖 — 別名・`nominal`・先行する `where` — をたどって読む。したがって `type Handle = nominal Text` に `where positive` を付けると報告され、`nominal Int` に `where between(0, 9)` を付けても報告されない。レコード・union・コンテナはどちらの系統が検査する基底型でもない。型パラメータはジェネリックが適用されるまで基底型について何も言わないので、`type NonEmpty(T) = T where nonempty` は報告されない。
+
+**修正**：述語が取る引数を書く — `between` には数値の境界、`len-*` 系には 0 以上の整数、`regex` にはコンパイルできるパターン、`one-of` には 1 個以上のリテラル — そして述語が検査する基底型の上に書くか、手元の基底型を検査する述語を選ぶ（テキストには `positive` ではなく `len-gt(0)`）。

@@ -188,7 +188,7 @@ one-of(v1, v2, ...)
 | `regex("p")` | `p` が値**全体**にマッチする。パターンは両端がアンカーされるため、`regex("[0-9]{4}")` は `"AB1234"` を拒否する | パターンとして解釈できるテキストリテラル 1 個 |
 | `one-of(v1, ...)` | 値が列挙されたリテラルのいずれか | リテラル 1 個以上 |
 
-述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。
+述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とし、`one-of` は任意の基底型を取る。
 
 述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数の長さ、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
 

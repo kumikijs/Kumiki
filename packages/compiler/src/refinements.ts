@@ -19,7 +19,8 @@
 // E0803 at build time — the honest answer, and the same reasoning as E0802 for
 // a documented function the toolchain does not lower.
 
-import type { Refinement } from "./ast.ts";
+import { typeToString } from "./assignable.ts";
+import type { Refinement, TypeExpr } from "./ast.ts";
 
 /** A literal a refinement can be written with (language.md §1.3.1). */
 export type RefinementArg = number | string;
@@ -34,12 +35,33 @@ export type RefinementArg = number | string;
  */
 type ArgKind = "number" | "count" | "text" | "literal";
 
+/**
+ * The shape of value a predicate tests (language.md §1.3.3). Each body is
+ * guarded by it — `typeof v === "string"`, `typeof v === "number"` — so a
+ * predicate written over a base of another shape refuses every value, which
+ * {@link refinementBaseProblem} reports. `any` is `one-of`, whose choices are
+ * the domain whatever the base.
+ */
+type Tests = "text" | "number" | "any";
+
+/** The primitive bases each shape is a value of. */
+const BASES: Record<Exclude<Tests, "any">, readonly string[]> = {
+  text: ["Text"],
+  number: ["Int", "Float", "Time"],
+};
+
+const TESTS_DESCRIPTION: Record<Exclude<Tests, "any">, string> = {
+  text: "text",
+  number: "a number",
+};
+
 /** A fixed parameter list, or a variadic tail with a floor under its length. */
 type Params =
   | { readonly fixed: readonly ArgKind[] }
   | { readonly rest: ArgKind; readonly min: number };
 
 type RefinementEntry = {
+  readonly tests: Tests;
   readonly params: Params;
   /**
    * A problem the arguments only have together — a range with nothing in it, a
@@ -97,6 +119,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
   [
     "between",
     {
+      tests: "number",
       params: { fixed: ["number", "number"] },
       combined: (a) =>
         num(a, 0) > num(a, 1)
@@ -105,18 +128,45 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
       body: (a) => `${NUM} && v >= ${num(a, 0)} && v <= ${num(a, 1)}`,
     },
   ],
-  ["nonempty", { params: { fixed: [] }, body: () => `${STR} && v.length > 0` }],
-  ["len-eq", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length === ${num(a, 0)}` }],
-  ["len-lt", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length < ${num(a, 0)}` }],
-  ["len-gt", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length > ${num(a, 0)}` }],
-  ["positive", { params: { fixed: [] }, body: () => `${NUM} && v > 0` }],
-  ["negative", { params: { fixed: [] }, body: () => `${NUM} && v < 0` }],
-  ["email", { params: { fixed: [] }, body: () => `${STR} && ${EMAIL_RE}.test(v)` }],
-  ["url", { params: { fixed: [] }, body: () => `${STR} && ${URL_RE}.test(v)` }],
-  ["uuid", { params: { fixed: [] }, body: () => `${STR} && ${UUID_RE}.test(v)` }],
+  ["nonempty", { tests: "text", params: { fixed: [] }, body: () => `${STR} && v.length > 0` }],
+  [
+    "len-eq",
+    {
+      tests: "text",
+      params: { fixed: ["count"] },
+      body: (a) => `${STR} && v.length === ${num(a, 0)}`,
+    },
+  ],
+  [
+    "len-lt",
+    {
+      tests: "text",
+      params: { fixed: ["count"] },
+      // A count, so well formed, and still below every length there is.
+      combined: (a) =>
+        num(a, 0) === 0
+          ? "len-lt(0) is shorter than every text, so no value satisfies it"
+          : undefined,
+      body: (a) => `${STR} && v.length < ${num(a, 0)}`,
+    },
+  ],
+  [
+    "len-gt",
+    {
+      tests: "text",
+      params: { fixed: ["count"] },
+      body: (a) => `${STR} && v.length > ${num(a, 0)}`,
+    },
+  ],
+  ["positive", { tests: "number", params: { fixed: [] }, body: () => `${NUM} && v > 0` }],
+  ["negative", { tests: "number", params: { fixed: [] }, body: () => `${NUM} && v < 0` }],
+  ["email", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${EMAIL_RE}.test(v)` }],
+  ["url", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${URL_RE}.test(v)` }],
+  ["uuid", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${UUID_RE}.test(v)` }],
   [
     "regex",
     {
+      tests: "text",
       params: { fixed: ["text"] },
       combined: (a) => {
         // The pattern as written, and only then the anchored form. Compiling
@@ -143,6 +193,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
   [
     "one-of",
     {
+      tests: "any",
       params: { rest: "literal", min: 1 },
       body: (a) => `${JSON.stringify(a)}.includes(v)`,
     },
@@ -227,6 +278,24 @@ export function refinementProblem(r: Refinement): RefinementProblem | undefined 
     };
   }
   return undefined;
+}
+
+/**
+ * Why `r` refuses every value of `base`, the type it is written over read to
+ * its structural form, or `undefined` when a value of it can pass. `base` is
+ * the caller's to normalise: an opaque one — a type parameter, a name that
+ * resolves to nothing — says nothing about the shape, and passes.
+ *
+ * This is the other half of E0804's rule. The arguments decide which values of
+ * the tested shape pass; the base decides whether the slot holds that shape at
+ * all, and `positive` over `Text` refuses every text exactly as `between(5, 1)`
+ * refuses every number (#440).
+ */
+export function refinementBaseProblem(r: Refinement, base: TypeExpr): string | undefined {
+  const tests = REFINEMENTS.get(r.pred)?.tests;
+  if (tests === undefined || tests === "any" || base.kind === "TypeRef") return undefined;
+  if (base.kind === "TypePrim" && BASES[tests].includes(base.name)) return undefined;
+  return `Refinement "${r.pred}" tests ${TESTS_DESCRIPTION[tests]} but is written over ${typeToString(base)}, so no value satisfies it`;
 }
 
 function arityProblem(

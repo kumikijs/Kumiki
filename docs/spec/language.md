@@ -188,7 +188,7 @@ Every one of them is a **runtime check**: the value is tested on its way into th
 | `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
 | `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
 
-A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number.
+A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` takes any base.
 
 The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional length, a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
 
