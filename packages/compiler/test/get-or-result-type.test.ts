@@ -14,8 +14,10 @@ import { describe, expect, it } from "vitest";
 //
 // Every expectation here is the whole diagnostic list rather than a filtered
 // one: a stray extra report on a program this file calls clean is the thing
-// worth catching, and the argument-count cases are due to gain a diagnostic
-// under a code of their own.
+// worth catching. The argument-count cases have since gained the diagnostic
+// this file anticipated — as an E0213, since the receiver deciding the count
+// is what an arity mismatch is; `get-or-receiver-arity.test.ts` owns it, and
+// what is pinned here is that it did not also make the result type decidable.
 
 const errsOf = (src: string) => check(parse(lex(src)));
 const app = (defs: string): string =>
@@ -157,25 +159,32 @@ reducer keep on=ui.click(B) do= n := m.get-or("k", "none")`),
 });
 
 describe("what stays undecidable", () => {
-  it("an argument count that does not fit the receiver says nothing", () => {
+  it("an argument count that does not fit the receiver decides no result type", () => {
     // The lowering picks the Map reading or the unwrapping one by counting
-    // arguments, so neither call has a result type to check against here. Both
-    // are still lowered — to the reading their count names, on the receiver
-    // they were given — which is a defect of its own.
+    // arguments, so neither call has a result type to check against here —
+    // which is still true, and is what keeps a *wrong* result type from being
+    // guessed. What has changed is that the mismatch no longer goes unsaid:
+    // the count is reported as the arity error it is, so the call cannot
+    // silently lower to the other reading. That report is the whole list —
+    // no E0201 rides along on a result type nothing decided.
     expect(
-      errsOf(
+      diagnostics(
         app(`slot opt : Option(Int) = None
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := opt.get-or("k", "none")`),
       ),
-    ).toEqual([]);
+    ).toEqual([
+      'E0213 Method ".get-or" on "Option" expects 1 argument(s) (default) but got 2 — ".get-or(key, default)" is the "Map" reading',
+    ]);
     expect(
-      errsOf(
+      diagnostics(
         app(`slot m : Map(Text, Int) = {}
 slot o : Option(Int) = None
 reducer keep on=ui.click(B) do= o := m.get-or("k")`),
       ),
-    ).toEqual([]);
+    ).toEqual([
+      'E0213 Method ".get-or" on "Map" expects 2 argument(s) (key, default) but got 1 — ".get-or(default)" is the "Option" / "Result" reading',
+    ]);
   });
 
   it("a None with no element type decides neither the fallback nor the result", () => {

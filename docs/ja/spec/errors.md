@@ -653,9 +653,16 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| `x.get-or(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `app.routes` の `"/p" -> T` | 引数無し、したがって `in=` も無し | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |
 | tile の `sub-routes` の `"/p" -> T` | 同上 | `Sub-route "<path>" in tile "<parent>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |
 | `tile-test` の `given.in` | ターゲットの `in=`、すなわち宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
+
+**`.get-or`** は、引数の個数を**レシーバ**が決める唯一のメンバーである。これは1つの名前に2つの読みがあり、引数の個数で区別されるからである：`Option(T).get-or(d)` / `Result(T, E).get-or(d)` と `Map(K, V).get-or(k, d)`（[標準ライブラリ §2.2.1](./stdlib.md#_2-2-1-map-k-v) / [§2.2.4](./stdlib.md#_2-2-4-option-t)、[ランタイム §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。名前そのものにとってはどちらの個数も正しいので、個数が誤りになるのはレシーバに対してだけであり、メッセージは数だけでなくもう一方の読みを示す。そうでなければ、2行上の呼び出しとなぜ違うのかが読み手に分からない。
+
+報告されなかった場合、呼び出しは与えられたレシーバの上で、**個数**が名指す読みへ lower されていた。`m.get-or("k")` はアンラップ側のヘルパへ届き、そのヘルパは `_tag` を持たない値をそのまま返すので、slot は Map 全体を受け取っていた。`opt.get-or("k", 0)` は Map 側のヘルパへ届き、そこでは持っていないキーで Option オブジェクトを索いてしまうため、`Some` に対しても fallback が答えになっていた。後者のほうが厄介である —— 型は正しく値だけが誤っているので、後続のどこもつまずかない。
+
+型が決定できないレシーバでは何も報告しない：個数は読みを選ぶだけで、それが正しい読みかどうかは決めない。動的なレシーバに対する誤ったエラーは沈黙より悪い。
 
 **ルートのエントリ**は、何も渡せない唯一の適用である：`tile: () => …` へ落ちる —— `sub-routes` を持つ親は `tile: (_fill) => …` へ落ちるが、その唯一の引数は runtime の outlet fill（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）であってターゲットが読める引数ではない —— ため、`in=` を宣言したターゲットは `$1` が束縛されないまま残り、`check` も `build` も ok と言ったあとで mount が `_d_1 is not defined` で死んでいた。サブルートのエントリ — したがって `route-outlet` が描画するもの — も同じ規則である。どちらも [ルーティング §3.1.4](./routing.md#_3-1-4-a-route-target-takes-no-argument) にあり、この規則で何も失われない理由もそこにある：描画されているルートは `route` slot にあり、どの tile も引数無しで読める。
 

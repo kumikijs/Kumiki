@@ -2488,6 +2488,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             message: `Method ".${e.method}" expects ${min} argument(s) but got ${e.args.length}`,
             pos: e.pos,
           });
+        } else if (e.method === "get-or") {
+          // Clearing the minimum is not the whole rule for this one name, and
+          // the check has to come after it so one mistake is one diagnostic.
+          checkGetOrArity(e, sym, errors, ctx);
         }
       }
       checkExpr(e.receiver, sym, errors, ctx);
@@ -3011,6 +3015,62 @@ function unwrappedType(t: TypeExpr): TypeExpr | null {
   if (t.kind !== "TypeApp") return null;
   if (t.name !== "Option" && t.name !== "Result") return null;
   return t.args[0] ?? null;
+}
+
+/**
+ * `.get-or` is one name with two readings, and the argument count is what
+ * *selects* between them rather than a minimum to clear — `Option(T).get-or(d)`
+ * and `Map(K, V).get-or(k, d)` (stdlib.md §2.2.1 / §2.2.4). So the receiver is
+ * what decides how many arguments the call must have, and a count that does
+ * not fit it is an arity error even though both counts are legal for the name.
+ *
+ * Unreported, such a call lowered to the *other* reading. `m.get-or("k")`
+ * became `_s.getOr(m, "k")`, whose last line is `return v ?? fallback` for a
+ * value carrying no `_tag`, so the slot received the whole map; and
+ * `opt.get-or("k", 0)` became `_s.mapGetOr(opt, "k", 0)`, which indexes the
+ * Option object by a key it does not have and answers the fallback on a `Some`
+ * too — a wrong value of the right type, which nothing downstream trips over.
+ *
+ * `getOrResultType` already knows this rule and returns `null` when the two
+ * disagree. That is the right answer for an inference table, because a wrong
+ * result type rejects working programs, but it means inference is silent here
+ * by construction. The report belongs in the arity check, which is why this is
+ * a check rather than a change to that resolver.
+ *
+ * A receiver the checker cannot decide raises nothing: the count alone selects
+ * a reading but decides nothing about whether it is the right one, and the
+ * corpus calls `.get-or` in 80-odd places, so a false error here is the
+ * expensive direction.
+ */
+function checkGetOrArity(
+  e: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
+  if (recv?.kind !== "TypeApp") return;
+
+  const isMap = recv.name === "Map";
+  const unwraps = recv.name === "Option" || recv.name === "Result";
+  if (!isMap && !unwraps) return;
+
+  const want = isMap ? 2 : 1;
+  if (e.args.length === want) return;
+
+  // Naming the other reading is the point of the message: both counts are
+  // legal for this name, so "expects 2" alone leaves the author wondering why
+  // this call differs from the one two lines up.
+  const taken = isMap ? "(key, default)" : "(default)";
+  const other = isMap
+    ? '".get-or(default)" is the "Option" / "Result" reading'
+    : '".get-or(key, default)" is the "Map" reading';
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `Method ".get-or" on "${recv.name}" expects ${want} argument(s) ${taken} but got ${e.args.length} — ${other}`,
+    pos: e.pos,
+  });
 }
 
 /**
