@@ -31,7 +31,7 @@ type Handle  = nominal Text where len-gt(1)
 slot form   : Contact                         = {email: "ada@example.com", age: 36}
 slot look   : Lookup                          = Pending
 slot tags   : List(Short)                     = []
-slot uniq   : Set(Text where nonempty)        = []
+slot uniq   : Set(Text where nonempty)        = {}
 slot opt    : Option(Int where positive)      = None
 slot res    : Result(Short, Text where email) = Ok("a")
 slot pair   : Tuple(Text, Int where negative) = ("a", -1)
@@ -123,9 +123,13 @@ describe("a refinement on a container element", () => {
     expect(failureOf("tags", ["abc", "abcd"])).toEqual({ kind: "len-lt", args: [4], path: "[1]" });
   });
 
-  it("checks a Set's elements", () => {
-    expect(refineOf("uniq")(["a"])).toBe(true);
-    expect(refineOf("uniq")(["a", ""])).toBe(false);
+  it("checks a Set's members, which are an object's keys at runtime", () => {
+    expect(refineOf("uniq")({ a: true })).toBe(true);
+    expect(failureOf("uniq", { a: true, "": true })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: '{""}',
+    });
   });
 
   it("checks Option's Some, and not None", () => {

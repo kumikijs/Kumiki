@@ -179,6 +179,15 @@ export function nestedRefinements(gen: GenCtx): NestedRefinements {
     }
   };
 
+  /** `k` as the key type reads it: a number when the type is one over a number. */
+  const keyJs = (k: TypeExpr | undefined): string => {
+    const base = k ? unaliasType(k, gen) : null;
+    const numeric =
+      base?.kind === "TypePrim" &&
+      (base.name === "Int" || base.name === "Float" || base.name === "Time");
+    return numeric ? '(typeof k === "number" ? k : Number(k))' : "k";
+  };
+
   const containerJs = (t: TypeExpr & { kind: "TypeApp" }, depth: number): string | undefined => {
     const [a0, a1] = t.args;
     const sub = (x: TypeExpr | undefined): string | undefined =>
@@ -192,8 +201,7 @@ export function nestedRefinements(gen: GenCtx): NestedRefinements {
         : [];
     };
     switch (t.name) {
-      case "List":
-      case "Set": {
+      case "List": {
         const check = sub(a0);
         return check
           ? fnOf([
@@ -201,18 +209,23 @@ export function nestedRefinements(gen: GenCtx): NestedRefinements {
             ])
           : undefined;
       }
+      // A set and a map's keys are an object's keys at runtime (`setToggle`,
+      // a map literal), so they are strings; a member over a number is read
+      // back as one before its predicate sees it.
+      case "Set": {
+        const check = sub(a0);
+        return check
+          ? fnOf([
+              `for (const k of Array.isArray(v) ? v : Object.keys(v ?? {})) { ${at('"{" + JSON.stringify(k) + "}"', check, keyJs(a0))} }`,
+            ])
+          : undefined;
+      }
       case "Map": {
         const steps: string[] = [];
         const key = sub(a0);
-        // A map is an object at runtime, so its keys are strings; a key type
-        // over a number is read back as one before its predicate sees it.
         if (key) {
-          const base = a0 ? unaliasType(a0, gen) : null;
-          const numeric =
-            base?.kind === "TypePrim" &&
-            (base.name === "Int" || base.name === "Float" || base.name === "Time");
           steps.push(
-            `for (const k of Object.keys(v ?? {})) { ${at('".keys[" + JSON.stringify(k) + "]"', key, numeric ? "Number(k)" : "k")} }`,
+            `for (const k of Object.keys(v ?? {})) { ${at('".keys[" + JSON.stringify(k) + "]"', key, keyJs(a0))} }`,
           );
         }
         const val = sub(a1);
