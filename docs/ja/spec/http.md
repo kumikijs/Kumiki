@@ -157,10 +157,10 @@ app App
 
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
-| `base-url` | 相対 URL のベース | リクエストごと |
+| `base-url` | 相対 URL のベース — `Text` | リクエストごと |
 | `headers` | 全リクエストに付与 | リクエストごと |
-| `timeout` | デフォルトタイムアウト（duration） | リクエストごと |
-| `credentials` | fetch の credentials モード（[§6.9](#_6-9-default-settings)） | リクエストごと |
+| `timeout` | デフォルトタイムアウト — `Duration`、またはミリ秒の `Int` | リクエストごと |
+| `credentials` | fetch の credentials モード（[§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
 | `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
@@ -175,10 +175,14 @@ app App
 reducer 名の 3 つだけは例外で、そもそも値ではない：コンパイラが `reducer` 定義に
 対して一度だけ解決する。
 
-4 つの式について検査されるのは**名前**である：解決されない名前は書かれた位置で
-[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。**値**は検査されない — フィールドが
-要求する型と与えられた値を突き合わせるものが無いので、`timeout: "soon"` は
-コンパイルを通って `fetch` まで届く。
+4 つの式について検査されるのは名前と値である。解決されない名前は書かれた位置で
+[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。型の合わない値はフィールドの位置で
+[E0201](./errors.md#e0201-type-mismatch) になる：`base-url` は `Text` を取る。`timeout` は
+`Duration` または `Int` を取り、`Int` はミリ秒として読まれる — どちらも実行時には
+ミリ秒であり、`Text` は `setTimeout` に `NaN` として届いて、すべてのリクエストを
+応答前に中断させる。`credentials` は `Text` を取り、リテラルは Fetch の 3 つの
+モードのいずれかでなければならない — それ以外を指定した init はブラウザが拒否する。
+slot の値は実行時に決まるので、型の合う slot は何を保持するかにかかわらず受理される。
 
 ### 6.3.2 401 のグローバル処理
 

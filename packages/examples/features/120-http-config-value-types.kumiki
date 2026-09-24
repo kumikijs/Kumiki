@@ -1,0 +1,37 @@
+# Feature (http.md §6.3.1): each value field of app.http has a type, and check
+# holds the field to it.
+#
+#   base-url     Text — a slot of a type built on Text (`Url`) included
+#   timeout      Duration, or an Int of milliseconds
+#   credentials  Text, and a literal is one of omit / same-origin / include
+#
+# The values below are the correct shapes. `smoke` makes the request through
+# the real HTTP path against `120-http-config-value-types.http.json`, and there
+# is no `.err` reducer, so a request that failed — the way `timeout: "soon"`
+# made every request abort before it could answer — would surface as an
+# unconsumed effect error instead of passing quietly.
+
+slot endpoint : Url  = "https://api.example.com"
+slot quote    : Text = ""
+
+effect fetchQuote cap=http.get
+                  in=Unit
+                  out=Result(Text, HttpError)
+                  map-request={url: "/quote", decode: Decoder.Text}
+
+reducer load   on=ui.click(LoadBtn)    do= emit fetchQuote()
+reducer loaded on=fetchQuote.ok($q, _) do= quote := $q
+
+tile LoadBtn = button(text="Load quote") {id: "load"}
+
+tile App = column(LoadBtn, text("quote: " + quote)) {pad: "lg", gap: "md"}
+
+app HttpConfigValueTypes
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    http   = {
+        base-url:    endpoint,
+        timeout:     Duration.s(5),
+        credentials: "same-origin"
+    }

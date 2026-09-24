@@ -231,5 +231,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | core | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | core | [§2.2](./stdlib.md#_2-2-collection-methods) |
+| `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 <!-- examples:end -->
 :::
