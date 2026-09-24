@@ -1,0 +1,33 @@
+# Feature (language.md §1.7.3, §1.6.4 Invariant 3): a handler written on a
+# user-tile call site joins the handlers already on the node that tile renders.
+#
+# `Btn {onClick: btnOwn}` is merged onto the `button` that `Btn` renders. That
+# button is also inside `Row`, so `ui.click(Row)` is lifted onto it too. Both
+# match the click, so both run, once each, in definition order: `rowClick`
+# (defined first) and then `btnOwn`. The log therefore reads "RB" per click.
+#
+# `Plain` is the control: it has only the lifted subscription, so a click
+# there adds "P" and nothing from the other row.
+
+slot log : Text = ""
+
+reducer rowClick   on=ui.click(Row)   do= log := log + "R"
+reducer btnOwn     on=ui.click(Btn)   do= log := log + "B"
+reducer plainClick on=ui.click(Plain) do= log := log + "P"
+
+tile Btn   = button(text="both") {id: "both"}
+tile Row   = row(Btn {onClick: btnOwn})
+tile Plain = row(button(text="plain") {id: "plain"})
+
+tile App
+    = column(
+        heading("a call-site handler joins the lifted one"),
+        Row,
+        Plain,
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+app CallSiteHandlerJoinsLifted
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

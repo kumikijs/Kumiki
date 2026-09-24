@@ -179,27 +179,98 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     // Two routes, each wiring the risky input AND its fallback.
     expect(js.split(`onKeyDown: _h("bump")`).length - 1).toBe(4);
   });
+});
 
-  // #333 fixed the chain; this is the boundary one file over that still drops
-  // it, pinned here so the gap is visible rather than folklore. `_attachProps`
-  // is a plain spread (`{...node.props, ...props}`), so a handler written on a
-  // user-tile CALL SITE replaces the one the body lifted through the chain
-  // instead of joining it. Tracked as #407 — when that lands, this expectation
-  // flips to the union and the `not.toContain` goes away.
-  it("KNOWN GAP (#407): a call-site handler still replaces the lifted one", () => {
-    const src = `slot n : Int = 0
-reducer rowClick on=ui.click(Row) do= n := n + 1
+// #407 — a handler written on a user-tile CALL SITE belongs to the node that
+// tile renders, and joins what is already wired there: the lifted
+// subscriptions of every enclosing tile and a handler written on the builtin
+// itself. It used to be spread over the finished node by `_attachProps`
+// (`{...node.props, ...props}`), which replaced them, so the enclosing tile's
+// reducer never ran and nothing said so.
+describe("a call-site handler joins the lifted ones (#407)", () => {
+  const app = (defs: string) => `slot n : Int = 0
+${defs}
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  /** Every `onClick` the module emits, as its reducer list. */
+  const onClicks = (js: string): string[] =>
+    [...js.matchAll(/onClick: _h\(([^)]*)\)/g)].map((m) => m[1] ?? "");
+
+  it("fires the enclosing tile's subscription beside the call site's own", () => {
+    const src = app(`reducer rowClick on=ui.click(Row) do= n := n + 1
 reducer btnOwn   on=ui.click(Btn) do= n := n + 100
 tile Btn = button(text="x")
 tile Row = row(Btn {onClick: btnOwn})
-tile App = column(Row, text(n.show))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
+tile App = column(Row, text(n.show))`);
     expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
-    const js = jsOf(src);
-    // The body lifts both, exactly as #333 intends…
-    expect(js).toContain(`onClick: _h("rowClick", "btnOwn")`);
-    // …and the call site's spread then overwrites it, so `rowClick` is dead.
-    expect(js).toContain(`onClick: _h("btnOwn")`);
+    // One wiring per route, each the union — and no second, narrower wiring
+    // left over for a spread to put on top of it.
+    expect(onClicks(jsOf(src))).toEqual(['"rowClick", "btnOwn"', '"rowClick", "btnOwn"']);
+  });
+
+  it("joins a reducer that only the call site names", () => {
+    const src = app(`reducer rowClick on=ui.click(Row) do= n := n + 1
+reducer extra    on=app.start      do= n := n + 7
+tile Btn = button(text="x")
+tile Row = row(Btn {onClick: extra})
+tile App = column(Row, text(n.show))`);
+    expect(onClicks(jsOf(src))).toEqual(['"rowClick", "extra"', '"rowClick", "extra"']);
+  });
+
+  it("joins a handler written on the builtin the tile renders", () => {
+    const src = app(`reducer own   on=app.start do= n := n + 1
+reducer outer on=app.start do= n := n + 2
+tile Btn = button(text="x", onClick=own)
+tile App = column(Btn {onClick: outer}, text(n.show))`);
+    expect(onClicks(jsOf(src))).toEqual(['"own", "outer"', '"own", "outer"']);
+  });
+
+  it("runs them in definition order, wherever each was written", () => {
+    // §1.6.4 Invariant 3. The call site's reducer is defined FIRST here, so it
+    // runs first although it is the explicit one and the other is lifted.
+    const src = app(`reducer btnOwn   on=ui.click(Btn) do= n := n + 100
+reducer rowClick on=ui.click(Row) do= n := n + 1
+tile Btn = button(text="x")
+tile Row = row(Btn {onClick: btnOwn})
+tile App = column(Row, text(n.show))`);
+    expect(onClicks(jsOf(src))).toEqual(['"btnOwn", "rowClick"', '"btnOwn", "rowClick"']);
+  });
+
+  it("orders an explicit handler on a builtin by definition too", () => {
+    // The rule `propsFor` used to apply was explicit-first. One rule now,
+    // in both places: this is the builtin half of it.
+    const src = app(`reducer lifted on=ui.click(Row) do= n := n + 1
+reducer own    on=app.start      do= n := n + 2
+tile Row = row(button(text="x", onClick=own))
+tile App = column(Row, text(n.show))`);
+    expect(onClicks(jsOf(src))).toEqual(['"lifted", "own"', '"lifted", "own"']);
+  });
+
+  it("carries a handler through every call site the node is the root of", () => {
+    const src = app(`reducer a on=app.start do= n := n + 1
+reducer b on=app.start do= n := n + 2
+tile Btn   = button(text="x")
+tile Inner = Btn {onClick: a}
+tile App   = column(Inner {onClick: b}, text(n.show))`);
+    expect(onClicks(jsOf(src))).toEqual(['"a", "b"', '"a", "b"']);
+  });
+
+  it("reaches the root of each branch a body can take", () => {
+    const src = app(`slot lit : Bool = true
+reducer rowClick on=ui.click(Row) do= n := n + 1
+reducer btnOwn   on=app.start      do= n := n + 100
+tile Btn = if lit then button(text="on") else button(text="off")
+tile Row = row(Btn {onClick: btnOwn})
+tile App = column(Row, text(n.show))`);
+    // Two branches in each of two routes, every one the union.
+    expect(onClicks(jsOf(src))).toEqual(Array(4).fill('"rowClick", "btnOwn"'));
+  });
+
+  it("wires a reducer once, on one node, when the call site and the body both name it", () => {
+    const src = app(`reducer hit on=ui.click(Btn) do= n := n + 1
+tile Btn = button(text="x", onClick=hit)
+tile App = column(Btn {onClick: hit}, text(n.show))`);
+    expect(onClicks(jsOf(src))).toEqual(['"hit"', '"hit"']);
   });
 });

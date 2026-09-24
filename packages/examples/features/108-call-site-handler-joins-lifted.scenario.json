@@ -1,0 +1,23 @@
+{
+  "steps": [
+    {
+      "label": "nothing has run yet",
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "one click runs the lifted ui.click(Row) and the call site's btnOwn, in definition order",
+      "do": { "click": "#both" },
+      "expect": { "noErrors": true, "state": { "log": "RB" }, "domIncludes": ["log: RB"] }
+    },
+    {
+      "label": "and again on the next click: the joined handler is not a one-shot",
+      "do": { "click": "#both" },
+      "expect": { "noErrors": true, "state": { "log": "RBRB" } }
+    },
+    {
+      "label": "a button outside Row gets its own subscription only",
+      "do": { "click": "#plain" },
+      "expect": { "noErrors": true, "state": { "log": "RBRBP" }, "domIncludes": ["log: RBRBP"] }
+    }
+  ]
+}
