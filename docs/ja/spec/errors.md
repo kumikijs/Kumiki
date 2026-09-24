@@ -446,6 +446,29 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 **修正**：2つの束縛のどちらかの名前を変えるか、reducer が読まない positional には `_` を書く。
 
+### E0127 `fn-as-value`
+
+値が来る位置に `fn` の名前が括弧なしで書かれている。`fn` は値ではない — ラムダは無い（[言語 §1.9.1](./language.md#_1-9-1-禁止事項)）— ので、括弧のない名前はいつも同じ誤り、すなわち呼び出しの書き忘れである。
+
+> `"<name>" is a fn, and a fn is not a value — write the call: <name>(<params>)`
+
+このチェックがなければ、名前は生成された関数そのものへ lowering されていた。`emit load(label)` は、effect が `in=Text` と宣言している位置へ *関数* を渡して dispatch した：storage のキーは関数のソース文字列になり、HTTP の body は `undefined` にシリアライズされたままリクエストが送られた。どの層もこれを報告しなかった — 値の型をチェッカが決められず、すべての比較が沈黙した — し、`app.init = [load(label)]` はアプリがマウントされる前に同じ場所へ到達した。
+
+同名のローカル束縛・パラメータ・slot がシャドーイングしている名前はその値であり、報告されない（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）。
+
+**括弧のない `fn` 名が正しい唯一の位置**は、高階メソッドの式断片の引数である（[言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数)）。そこでは値ではなく、メソッドが自身の positional で行う呼び出しを表し、その呼び出しへ lowering される：
+
+| メソッド | 式断片の引数 | 束縛する positional |
+|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | 唯一の引数 | `$1`, `$2` |
+| `fold(init, f)` | 2 番目 | `$1`（アキュムレータ）, `$2`（要素） |
+| `flat-map`, `map-err` | 唯一の引数 | `$1` |
+| `update(k, f)` | 2 番目 | `$1`（現在の値） |
+
+`xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
+
+**修正**: 呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -653,6 +676,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| 式断片に `fn` 名を渡す `x.m(f)`（[E0127](#e0127-fn-as-value)） | 式断片が束縛する positional の数、ただし 1 つ以上 | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>`（または `at least 1`） |
 | `x.get-or(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `x.get(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get" on "<T>" …, but got <m> — "…" is the "<U>" reading` |
 | `app.routes` の `"/p" -> T` | 引数無し、したがって `in=` も無し | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |

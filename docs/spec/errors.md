@@ -468,6 +468,29 @@ A bind list names the payload's positionals **in order**, so two binds naming on
 
 **Fix**: Rename one of the two binds, or write `_` for the positional the reducer does not read.
 
+### E0127 `fn-as-value`
+
+A `fn` name is written without its parentheses where a value goes. A `fn` is not a value — there are no lambdas ([Language §1.9.1](./language.md#_1-9-1-prohibitions)) — so the bare name is always the same mistake: the call is missing.
+
+> `"<name>" is a fn, and a fn is not a value — write the call: <name>(<params>)`
+
+Without this check the name lowered to the generated function itself. `emit load(label)` dispatched a *function* where the effect declares `in=Text`: a storage key stringified to the function's source, an HTTP body serialised to `undefined` and the request went out anyway. Nothing reported it at any tier — the value was of no type the checker could decide, so every comparison was silent — and `app.init = [load(label)]` reached the same place before the app had mounted.
+
+A name a local bind, a parameter or a slot of the same name shadows is that value and is not reported ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)).
+
+**The one position a bare `fn` name is right** is the fragment argument of a higher-order method ([Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions)). There it is not a value but the call the method makes with its own positionals, and it lowers to that call:
+
+| Method | Fragment argument | Positionals it binds |
+|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | the only one | `$1`, `$2` |
+| `fold(init, f)` | the second | `$1` (accumulator), `$2` (element) |
+| `flat-map`, `map-err` | the only one | `$1` |
+| `update(k, f)` | the second | `$1` (the current value) |
+
+`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). Every other argument, including `fold`'s first, is a value and takes this check.
+
+**Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -675,6 +698,7 @@ An application passes a different number of arguments than the thing it applies 
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| `x.m(f)` with a `fn` name as the fragment ([E0127](#e0127-fn-as-value)) | the positionals the fragment binds, at least one | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>` (or `at least 1`) |
 | `x.get-or(...)` | the **receiver**, which selects the reading | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `x.get(...)` | the **receiver**, which selects the reading | `Method ".get" on "<T>" …, but got <m> — "…" is the "<U>" reading` |
 | `"/p" -> T` in `app.routes` | no argument, so no `in=` | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |

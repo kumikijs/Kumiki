@@ -357,6 +357,26 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["zip", 1],
 ]);
 
+/**
+ * The argument of each higher-order method that is an expression fragment
+ * rather than a value, and how many positionals (`$1`, `$2`) the lambda it is
+ * lowered into binds. A bare `fn` name there is the one place a `fn` name is
+ * not a value (language.md §1.8.6): `xs.map(double)` means `xs.map(double($1))`,
+ * so `methodCallJs` lowers it as that call and the checker lets it through
+ * instead of reporting E0127. One table so the two cannot disagree about which
+ * position is which.
+ */
+export const FRAGMENT_ARGUMENTS: ReadonlyMap<string, { index: number; binds: number }> = new Map([
+  ["filter", { index: 0, binds: 2 }],
+  ["map", { index: 0, binds: 2 }],
+  ["find", { index: 0, binds: 2 }],
+  ["sort-by", { index: 0, binds: 2 }],
+  ["fold", { index: 1, binds: 2 }],
+  ["flat-map", { index: 0, binds: 1 }],
+  ["update", { index: 1, binds: 1 }],
+  ["map-err", { index: 0, binds: 1 }],
+]);
+
 export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "filter",
   "map",
@@ -533,12 +553,34 @@ export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
   ...FIELD_ACCESS_SHORTCUTS,
 ]);
 
-export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: EvalCtx): string {
+/**
+ * A bare `fn` name in a fragment position, rewritten as the call the fragment
+ * stands for — `double` becomes `double($1)`, `add` in a `fold` becomes
+ * `add($1, $2)`. Lowered as it was written it is the generated function
+ * itself, so `xs.map(double)` built a list of functions. A name a local or a
+ * slot shadows is that value, not the `fn`, exactly as a `Ref` resolves.
+ */
+function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
+  if (FRAGMENT_ARGUMENTS.get(method)?.index !== index || a.kind !== "Ref") return null;
+  if (ctx.localBinds.has(a.name) || ctx.gen.slots.some((s) => s.name === a.name)) return null;
+  const fn = ctx.gen.fns.find((f) => f.name === a.name);
+  if (!fn) return null;
+  const positionals = ["$1", "$2"].slice(0, fn.params.length);
+  return {
+    kind: "Call",
+    callee: a.name,
+    args: positionals.map((name) => ({ kind: "Ref", name, pos: a.pos })),
+    pos: a.pos,
+  };
+}
+
+export function methodCallJs(recv: Expr, method: string, written: Expr[], ctx: EvalCtx): string {
   // Chained `recv.run-reducer(name)` in a property-test invariant (§8.3): apply
   // the reducer to the receiver state. `_event` is bound in the generated trial.
   if (method === "run-reducer") {
-    return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(args[0]))}, _event)`;
+    return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(written[0]))}, _event)`;
   }
+  const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
   // Build inner ctx with $1, $2 bound for predicate expression fragments.
   const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
   const p1 = declareBind(inner, "$1");

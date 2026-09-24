@@ -45,6 +45,7 @@ import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
+  FRAGMENT_ARGUMENTS,
   KNOWN_MEMBERS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
@@ -2288,7 +2289,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Bool":
     case "Unit":
       return;
-    case "Ref":
+    case "Ref": {
       // An `app.init` argument is evaluated while `createApp()` builds the app
       // object; the route is installed later, by whichever mount follows. Both
       // spellings therefore read nothing here, and both get the same answer —
@@ -2358,7 +2359,22 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         }
         return;
       }
-      if (sym.fns.has(e.name)) return;
+      const fn = sym.fns.get(e.name);
+      if (fn) {
+        // A `fn` is not a value (§1.9.1: no lambdas), so its bare name here is
+        // always the same mistake — the call's parentheses are missing. It
+        // lowered to the generated function itself and reached whatever read
+        // it, a capability boundary included, as a function. The fragment
+        // argument of a higher-order method is the one position a name is
+        // right, and the `MethodCall` case keeps it from reaching here.
+        errors.push({
+          code: "E0127",
+          kind: "fn-as-value",
+          message: `"${e.name}" is a fn, and a fn is not a value — write the call: ${e.name}(${fn.params.map((p) => p.name).join(", ")})`,
+          pos: e.pos,
+        });
+        return;
+      }
       // Could be a built-in like `route`
       if (e.name === "route" || e.name === "now" || e.name === "self") return;
       // `$1` in a tile is bound only when the tile declares `in=`; reaching here
@@ -2379,6 +2395,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         pos: e.pos,
       });
       return;
+    }
     case "Variant":
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
@@ -2446,7 +2463,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
-    case "MethodCall":
+    case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === "run-reducer") {
         checkExpr(e.receiver, sym, errors, ctx);
@@ -2501,7 +2518,12 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
-      for (const a of e.args) {
+      const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+      for (const [i, a] of e.args.entries()) {
+        if (fragment?.index === i && isFragmentFnName(a, sym, ctx)) {
+          checkFragmentFnArity(a, e.method, fragment.binds, sym, errors);
+          continue;
+        }
         // Inside a method-call argument `$1` / `$2` are the implicit lambda's
         // parameters, and they SHADOW any outer ones — a tile that declares
         // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
@@ -2527,6 +2549,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         if (want !== null && fallback !== undefined) checkAgainst(fallback, want, sym, errors, ctx);
       }
       return;
+    }
     case "Wildcard":
       // In the two positions `checkTest`'s dedicated passes walk — anywhere in
       // a `given`, and a reducer-test `expect` — reporting here as well would
@@ -2612,6 +2635,40 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       return;
   }
+}
+
+/**
+ * Whether `a` is a bare `fn` name — the one thing a fragment argument may be
+ * besides an expression (§1.8.6). Resolved the way a `Ref` is: a local bind or
+ * a slot of the same name shadows the `fn`, and is then an ordinary value.
+ */
+function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
+  return (
+    a.kind === "Ref" && !ctx.localBinds.has(a.name) && !sym.slots.has(a.name) && sym.fns.has(a.name)
+  );
+}
+
+/**
+ * A `fn` named as a fragment is applied to the positionals the fragment binds
+ * (`FRAGMENT_ARGUMENTS`), so it has to take between one and that many. More
+ * would leave a parameter unbound, and none would drop the element.
+ */
+function checkFragmentFnArity(
+  a: Expr & { kind: "Ref" },
+  method: string,
+  binds: number,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const n = sym.fns.get(a.name)?.params.length ?? 0;
+  if (n >= 1 && n <= binds) return;
+  const supplies = n === 0 ? "at least 1" : `at most ${binds}`;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `Function "${a.name}" expects ${n} argument(s) but .${method} supplies ${supplies}`,
+    pos: a.pos,
+  });
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
