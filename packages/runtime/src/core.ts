@@ -3244,6 +3244,11 @@ function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
   return typeof seg === "object" && seg !== null && seg.get === true;
 }
 
+/** A segment that names an element of a List of this length. */
+function isListIndex(seg: PathSegment, length: number): seg is number {
+  return typeof seg === "number" && Number.isInteger(seg) && seg >= 0 && seg < length;
+}
+
 /**
  * Immutably set a (possibly nested) path on a value. Shared by `bind=`
  * write-back and by the assignment a reducer lowers to, so the two ways to
@@ -3274,6 +3279,17 @@ export function _setPathHelper(
       }
     }
     return _setPathHelper(obj, rest, value);
+  }
+  // A List stays a List: the element at the index is replaced in a copy. An
+  // index that names no element — past the end, negative, not a whole number —
+  // writes nothing, the way writing through an empty `.get` writes nothing
+  // (language.md §1.6.3). The object spread below would turn the array into
+  // an object keyed by its indices.
+  if (Array.isArray(obj)) {
+    if (!isListIndex(head, obj.length)) return obj;
+    const out = [...obj];
+    out[head] = _setPathHelper(obj[head], rest, value);
+    return out;
   }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
   return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };

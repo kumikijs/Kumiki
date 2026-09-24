@@ -894,6 +894,10 @@ An lvalue step names a **stdlib member** of the receiver rather than a field. Th
 
 `.get` is the exception, and only where §1.6.3 defines it. On a receiver that does not unwrap — a `Map`, a `List` — `.get` is a member like any other and reported the same way.
 
+An **index step into a `Set`** is refused by the same code. An index names a place — an entry of a `Map`, a position of a `List` — and a Set has membership and no places, so `tags[x] := v` has nowhere to land either:
+
+> `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+
 The name is dispatched, not reserved: a record that declares a field named `length` is still written through it. Conversely a record does not declare `.show`, so the dispatch falls through to the stdlib and `rec.show := "x"` is E0602 like any other member.
 
 E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.

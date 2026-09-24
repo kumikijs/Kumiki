@@ -59,6 +59,95 @@ describe("a segment that is not a field name", () => {
   });
 });
 
+// Every non-unwrap step used to end in an object spread, and `{...[1, 2, 3]}`
+// is `{"0": 1, "1": 2, "2": 3}` — an index write turned the List into an
+// object keyed by the indices. language.md §1.6.3 says what an index into a
+// List writes.
+describe("an index into a List", () => {
+  it("replaces the element at the index and leaves a List", () => {
+    const out = _setPathHelper([1, 2, 3], [0], 7);
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toEqual([7, 2, 3]);
+  });
+
+  it("does not edit the list it was given", () => {
+    const xs = [1, 2, 3];
+    _setPathHelper(xs, [1], 9);
+    expect(xs).toEqual([1, 2, 3]);
+  });
+
+  it("writes through the element at the index, keeping both levels a List and a record", () => {
+    const out = _setPathHelper(
+      {
+        rows: [
+          { n: 1, t: "a" },
+          { n: 2, t: "b" },
+        ],
+      },
+      ["rows", 1, "n"],
+      9,
+    );
+    expect(out).toEqual({
+      rows: [
+        { n: 1, t: "a" },
+        { n: 9, t: "b" },
+      ],
+    });
+    expect(Array.isArray((out as { rows: unknown }).rows)).toBe(true);
+  });
+
+  it("reaches a List inside a List", () => {
+    expect(
+      _setPathHelper(
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        [1, 0],
+        0,
+      ),
+    ).toEqual([
+      [1, 2],
+      [0, 4],
+    ]);
+  });
+
+  // No element is there to replace, the same way `xs.get(i)` reads `None`:
+  // the write is a no-op, as writing through an empty `.get` is (§1.6.3).
+  it("leaves the List unchanged for an index past the end", () => {
+    const xs = [1, 2, 3];
+    expect(_setPathHelper(xs, [3], 7)).toBe(xs);
+    expect(_setPathHelper(xs, [99, "n"], 7)).toBe(xs);
+  });
+
+  it("leaves the List unchanged for a negative index", () => {
+    const xs = [1, 2, 3];
+    expect(_setPathHelper(xs, [-1], 7)).toBe(xs);
+  });
+
+  it("leaves the List unchanged for an index that is not a whole number", () => {
+    const xs = [1, 2, 3];
+    expect(_setPathHelper(xs, [0.5], 7)).toBe(xs);
+    expect(_setPathHelper(xs, seg(["0"]), 7)).toBe(xs);
+    expect(_setPathHelper(xs, seg([Number.NaN]), 7)).toBe(xs);
+  });
+});
+
+// The paths the List branch must not disturb: a Map is a plain object, and
+// `todos[id].done` (§1.6.3's own example) goes through the object branch it
+// always did.
+describe("an index into a Map", () => {
+  it("writes the entry and leaves a plain object", () => {
+    expect(_setPathHelper({ a: 1 }, ["b"], 2)).toEqual({ a: 1, b: 2 });
+  });
+
+  it("writes a field of an entry", () => {
+    expect(_setPathHelper({ t1: { done: false, x: 1 } }, ["t1", "done"], true)).toEqual({
+      t1: { done: true, x: 1 },
+    });
+  });
+});
+
 describe("an unwrap segment", () => {
   it("edits the payload of a Some and leaves the tag", () => {
     expect(_setPathHelper({ _tag: "Some", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({

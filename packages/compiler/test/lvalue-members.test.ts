@@ -215,3 +215,47 @@ describe("the write side answers the read side's question too", () => {
     expect(write.filter((c) => c === code)).toEqual(read.filter((c) => c === code));
   });
 });
+
+// An index step is one of §1.6.3's three, but only on a receiver that has a
+// place for it to name. A `List` index names a position and a `Map` index names
+// an entry; a `Set` has membership and nothing else, so `s[x] := v` is refused
+// with the code a member gets, rather than lowered to a write that turned the
+// Set into something else.
+describe("an index step into a Set", () => {
+  it("is E0602, naming the Set and the members that change it", () => {
+    const errs = errsOf(withBody(`slot tags : Set(Int) = []`, `tags[7] := 8`));
+    const e = errs.find((x) => x.code === "E0602");
+    expect(e?.kind).toBe("unassignable-member");
+    expect(e?.message).toContain('into "Set"');
+    expect(e?.message).toContain(".add");
+  });
+
+  it("is reported once, with no type mismatch on the right-hand side behind it", () => {
+    const errs = errsOf(withBody(`slot tags : Set(Int) = []`, `tags[7] := "not an Int"`));
+    expect(errs.map((x) => x.code)).toEqual(["E0602"]);
+  });
+
+  it("is reported where the Set is reached through a record field", () => {
+    const errs = errsOf(
+      withBody(
+        `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
+        `doc.tags["a"] := "b"`,
+      ),
+    );
+    expect(errs.map((x) => x.code)).toEqual(["E0602"]);
+  });
+});
+
+describe("an index step into a List or a Map stays legal", () => {
+  it("accepts a List index write of the element type", () => {
+    expect(errsOf(withBody(`slot xs : List(Int) = [1, 2, 3]`, `xs[0] := 7`))).toEqual([]);
+  });
+
+  it("checks the right-hand side of a List index write against the element type", () => {
+    expect(codesOf(withBody(`slot xs : List(Int) = [1, 2, 3]`, `xs[0] := "x"`))).toContain("E0201");
+  });
+
+  it("accepts a Map index write of the value type", () => {
+    expect(errsOf(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
+  });
+});

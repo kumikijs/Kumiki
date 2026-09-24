@@ -1,0 +1,56 @@
+# Feature (language.md §1.6.3): an index step into a List.
+#
+# `xs[i] := v` replaces the element at `i` and leaves a List. Reached through a
+# field or another index, the element is written the same way, and every level
+# keeps its shape: a List stays a List, a record stays a record.
+#
+# An index that names no element — past the end, or negative — writes nothing,
+# the way a write through an empty `.get` writes nothing. `xs.get(i)` reads
+# `None` at those indices, and the write agrees with the read.
+#
+# The setter used to spread every level into an object literal, so the first
+# write turned `[1, 2, 3]` into `{"0": 7, "1": 2, "2": 3}` and every reader
+# after it — `.length`, `.head`, a `for` over it — saw something else.
+#
+# A Set has membership and no places, so an index write into one is E0602;
+# `.add` / `.remove` / `.toggle` change it.
+
+type Row = { name: Text, n: Int }
+
+slot xs   : List(Int)       = [1, 2, 3]
+slot rows : List(Row)       = [{name: "a", n: 1}, {name: "b", n: 2}]
+slot grid : List(List(Int)) = [[1, 2], [3, 4]]
+
+reducer set-first on=ui.click(First)
+    do= xs[0] := 7
+
+reducer set-nested on=ui.click(Nested)
+    do= rows[1].n := 9
+        grid[1][0] := 0
+
+reducer set-outside on=ui.click(Outside)
+    do= xs[3] := 99
+
+reducer set-negative on=ui.click(Negative)
+    do= xs[-1] := 99
+
+tile First    = button(text="first")    {id: "first"}
+tile Nested   = button(text="nested")   {id: "nested"}
+tile Outside  = button(text="outside")  {id: "outside"}
+tile Negative = button(text="negative") {id: "negative"}
+
+tile App
+    = column(
+        heading("index writes into a List"),
+        row(First, Nested, Outside, Negative) {gap: "sm"},
+        text("length: " + xs.length.show),
+        text("head: " + xs.head.get-or(-1).show),
+        text("sum: " + xs.fold(0, $1 + $2).show),
+        text("second row: " + rows.get(1).map($1.n).get-or(-1).show),
+        text("grid: " + grid.length.show))
+      {pad: "lg", gap: "md"}
+
+app ListIndexWrite
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

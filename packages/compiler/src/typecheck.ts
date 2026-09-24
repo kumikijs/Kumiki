@@ -1944,8 +1944,10 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
-  if (lv.kind === "LIndex") checkExpr(lv.index, sym, errors, ctx);
-  else {
+  if (lv.kind === "LIndex") {
+    checkExpr(lv.index, sym, errors, ctx);
+    checkIndexLvalue(lv, sym, errors);
+  } else {
     // Record the same decision `classifyFieldAccess` records for a read, so
     // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
     // the base type is unknown, as it is there — the name-based reading then
@@ -1957,6 +1959,28 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
+}
+
+/**
+ * An index step into a `Set`. A `List` index names a position and a `Map` index
+ * names an entry, so each has a place for the value to land; a `Set` has
+ * membership and nothing else, so `s[x] := v` has no place to write — the same
+ * refusal §1.6.3 gives a member, and reported by the same code. Membership is
+ * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ */
+function checkIndexLvalue(
+  lv: Lvalue & { kind: "LIndex" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    pos: lv.pos,
+  });
 }
 
 /**
@@ -3194,7 +3218,9 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     return null;
   }
   if (base.kind === "TypeApp") {
-    if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
+    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
+    // a right-hand side to be checked against.
+    if (base.name === "List") return base.args[0] ?? null;
     if (base.name === "Map") return base.args[1] ?? null;
   }
   return null;

@@ -1,0 +1,51 @@
+{
+  "steps": [
+    {
+      "label": "the lists as declared",
+      "expect": {
+        "noErrors": true,
+        "state": { "xs": [1, 2, 3] },
+        "domIncludes": ["length: 3", "head: 1", "sum: 6"]
+      }
+    },
+    {
+      "label": "an index write replaces one element and leaves a List",
+      "do": { "click": "#first" },
+      "expect": {
+        "noErrors": true,
+        "state": { "xs": [7, 2, 3] },
+        "domIncludes": ["length: 3", "head: 7", "sum: 12"]
+      }
+    },
+    {
+      "label": "through a List of records and a List of Lists, every level keeps its shape",
+      "do": { "click": "#nested" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "rows": [{ "name": "a", "n": 1 }, { "name": "b", "n": 9 }],
+          "grid": [[1, 2], [0, 4]]
+        },
+        "domIncludes": ["second row: 9", "grid: 2"]
+      }
+    },
+    {
+      "label": "an index past the end writes nothing",
+      "do": { "click": "#outside" },
+      "expect": {
+        "noErrors": true,
+        "state": { "xs": [7, 2, 3] },
+        "domIncludes": ["length: 3"]
+      }
+    },
+    {
+      "label": "a negative index writes nothing",
+      "do": { "click": "#negative" },
+      "expect": {
+        "noErrors": true,
+        "state": { "xs": [7, 2, 3] },
+        "domIncludes": ["length: 3", "sum: 12"]
+      }
+    }
+  ]
+}
