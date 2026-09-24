@@ -866,8 +866,21 @@ describe("division yields Float (language.md §1.9.4)", () => {
 });
 
 describe("undecidable types stay silent", () => {
+  // A member on a *typed* receiver is not an example of this: `l.head` on a
+  // `List(Int)` is an `Option(Int)`, and writing it into an `Int` is a wrong
+  // program rather than an undecidable one. `receiver-member-result.test.ts`
+  // owns those. What belongs here is a receiver that decides nothing at all.
   it("says nothing about a value whose type cannot be inferred", () => {
-    expect(inReducer(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.head`)).toEqual([]);
+    expect(inReducer(`slot n : Int = 0`, `n := $event.head`)).toEqual([]);
+  });
+
+  // A member whose result a lambda decides, rather than the receiver. `map` on
+  // a `List(Int)` is a `List(T')` and `T'` is whatever the body says, so it is
+  // left alone instead of guessed at.
+  it("says nothing about a member whose result a lambda body decides", () => {
+    expect(inReducer(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.map($1 + 1)`)).toEqual(
+      [],
+    );
   });
 
   it("says nothing about an opaque type parameter", () => {
@@ -1090,9 +1103,17 @@ tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
   });
 
   it("says nothing about an operator with one unresolved side", () => {
-    expect(inReducer(`slot t : Text = ""\nslot l : List(Text) = []`, `t := l.head + "x"`)).toEqual(
-      [],
-    );
+    expect(inReducer(`slot t : Text = ""`, `t := $event.head + "x"`)).toEqual([]);
+  });
+
+  // The operand *is* resolved here — `l.head` on a `List(Text)` is an
+  // `Option(Text)` — and `+` does not check it. That is the operator check's
+  // own gap rather than a missing result type, so this asserts only that no
+  // type mismatch is claimed, rather than writing the silence into the spec.
+  it("does not yet report an Option operand of +", () => {
+    expect(
+      inReducer(`slot t : Text = ""\nslot l : List(Text) = []`, `t := l.head + "x"`),
+    ).not.toContain("E0201");
   });
 });
 

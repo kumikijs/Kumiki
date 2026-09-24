@@ -2481,7 +2481,12 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         // codegen with a bare `TypeError` and no position — so `check` says ok
         // and `build` dies. Reported here, where the position is.
         const min = METHOD_MIN_ARGS.get(e.method);
-        if (min !== undefined && e.args.length < min) {
+        if (e.method === "get") {
+          // The minimum in the table is the `Map` / `List` reading's. Asking it
+          // first would report `o.get()` — which takes none — so this one name
+          // is judged by its receiver instead.
+          checkGetArity(e, sym, errors, ctx);
+        } else if (min !== undefined && e.args.length < min) {
           errors.push({
             code: "E0213",
             kind: "call-arity-mismatch",
@@ -3008,8 +3013,9 @@ function checkVariantAgainst(
 
 /**
  * What `.get` unwraps a type to — `Option(T)` / `Result(T, E)` to `T`, and
- * `null` for anything else. One resolver, read by the rvalue path and the
- * lvalue one alike, so the two cannot come to disagree about what it reaches.
+ * `null` for anything else. One resolver, read by the lvalue path and by
+ * `receiverMemberResult` on the rvalue side, so the two cannot come to disagree
+ * about what it reaches.
  */
 function unwrappedType(t: TypeExpr): TypeExpr | null {
   if (t.kind !== "TypeApp") return null;
@@ -3091,6 +3097,56 @@ function checkGetOrArity(
       code: "E0213",
       kind: "call-arity-mismatch",
       message: `Method ".get-or" expects 1 argument(s) (default) or 2 (key, default) but got ${e.args.length} — no receiver has a reading that takes more`,
+      pos: e.pos,
+    });
+  }
+}
+
+/**
+ * `.get` is the same shape as `.get-or`: one name whose argument count the
+ * receiver decides. `Map(K, V).get(k)` and `List(T).get(i)` take an index or a
+ * key; `Option(T).get` and `Result(T, E).get` take nothing and unwrap
+ * (stdlib.md §2.2.1 / §2.2.3 / §2.2.4 / §2.2.5).
+ *
+ * `METHOD_MIN_ARGS` states one minimum for the name, so it cannot tell those
+ * apart. It says `.get` takes one, which makes `o.get()` "expects 1 argument(s)
+ * but got 0" — false, and the reverse mistake, `o.get(1)`, clears the minimum
+ * and was reported by nothing at all: `receiverMemberResult` answers `null` for
+ * a count its receiver does not take, which is right for an inference table and
+ * silent by construction. So the receiver is asked here, where a count is what
+ * is being judged.
+ */
+function checkGetArity(
+  e: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
+  const keyed = recv?.kind === "TypeApp" && (recv.name === "Map" || recv.name === "List");
+  const unwraps = recv?.kind === "TypeApp" && (recv.name === "Option" || recv.name === "Result");
+
+  // A receiver that decides the reading gets the message that names it, the
+  // way `.get-or` does: both counts are legal for the name, so a bare number
+  // leaves the author wondering why this call differs from one two lines up.
+  if (recv?.kind === "TypeApp" && (keyed || unwraps)) {
+    if (e.args.length === (keyed ? 1 : 0)) return;
+    const message = keyed
+      ? `Method ".get" on "${recv.name}" expects 1 argument (${
+          recv.name === "Map" ? "key" : "index"
+        }) but got ${e.args.length} — ".get" with no arguments is the "Option" / "Result" reading`
+      : `Method ".get" on "${recv.name}" takes no arguments and unwraps, but got ${e.args.length} — ".get(key)" is the "Map" reading and ".get(index)" the "List" one`;
+    errors.push({ code: "E0213", kind: "call-arity-mismatch", message, pos: e.pos });
+    return;
+  }
+
+  // The receiver decided nothing, so which reading was meant is not ours to
+  // say. The count still is, past one: no reading takes more.
+  if (e.args.length > 1) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Method ".get" takes no arguments or one, but got ${e.args.length} — no receiver has a reading that takes more`,
       pos: e.pos,
     });
   }
@@ -3295,10 +3351,10 @@ function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName): bool
 
 /**
  * Result types of the methods whose answer is fixed regardless of the receiver
- * (docs/spec/stdlib.md §2.2). Deliberately short: a method whose result depends
- * on the receiver's type argument (`.head`, `.map`, `.filter`) stays undecidable
- * rather than being guessed, because a wrong answer here becomes a wrong
- * diagnostic on a working program.
+ * (docs/spec/stdlib.md §2.2). Deliberately short: a method the receiver decides
+ * is resolved by `receiverMemberResult` instead, and one a *lambda body* decides
+ * (`.map`, `.fold`) stays undecidable rather than being guessed, because a wrong
+ * answer here becomes a wrong diagnostic on a working program.
  */
 const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["show", "Text"],
@@ -3397,6 +3453,203 @@ function freshResultType(qualifier: string | null, pos: Pos, sym: SymbolTable): 
   return assignable(prim("Text", pos), named, sym) ? named : null;
 }
 
+/**
+ * The type `recv.member` produces, for the members whose result the receiver
+ * decides (stdlib.md §2.2). `null` for anything else, which is the answer that
+ * costs nothing: an undecidable result is checked against nothing, while a
+ * *wrong* one reports a program that works.
+ *
+ * The alternative is `METHOD_RESULT`, a flat name → prim table, which cannot
+ * say "a `List` of the receiver's own element" — so `xs.head` on a `List(Int)`
+ * has no type there, and `n := xs.head` puts an `Option(Int)` into a slot
+ * declared `Int` with nothing to report it. From there the readers disagree
+ * with the slot: `is-some` is false on a value that is present, and `match`
+ * finds no arm.
+ *
+ * Both spellings ask this one function. `xs.head` parses as a `FieldAccess`
+ * and `xs.head()` as a `MethodCall` (§2.2.3's parenthesis-free shortcut), and
+ * resolving them in two places is how the two readings of one member come to
+ * disagree. `argCount` is what tells them apart where a member has two
+ * readings — `.get` is `Option(V)` on a `Map` given a key and `T` on an
+ * `Option` given nothing.
+ *
+ * Deliberately not here: `map` / `flat-map` / `fold` / `map-err`, whose result
+ * a lambda body decides rather than the receiver, and the `Time` / `Duration`
+ * members (§2.2.8 / §2.2.9). Those two are a family of their own — they answer
+ * in each other's types rather than in a type argument, and `Duration` is a
+ * nominal over `Int` rather than a prim, so neither the `TypePrim` branch below
+ * nor the `TypeApp` one reaches them.
+ */
+function receiverMemberResult(
+  recv: TypeExpr | null,
+  member: string,
+  argCount: number,
+  sym: SymbolTable,
+  pos: Pos,
+): TypeExpr | null {
+  const t = unaliasType(recv, sym);
+  if (!t) return null;
+
+  // One name, two readings, told apart by the count — and already resolved by
+  // a function that takes both, so it is asked here rather than copied.
+  if (member === "get-or") return getOrResultType(t, argCount);
+
+  const int = () => prim("Int", pos);
+  const bool = () => prim("Bool", pos);
+  const text = () => prim("Text", pos);
+  const list = (of: TypeExpr) => container("List", [of], pos);
+  const option = (of: TypeExpr) => container("Option", [of], pos);
+
+  if (t.kind === "TypePrim" && t.name === "Text") {
+    switch (member) {
+      case "length":
+        return int();
+      case "is-empty":
+      case "starts-with":
+      case "ends-with":
+      case "contains":
+        return bool();
+      case "upper":
+      case "lower":
+      case "trim":
+      case "replace":
+      case "slice":
+        return text();
+      case "split":
+        return list(text());
+      case "parse-int":
+        return option(int());
+      case "parse-float":
+        return option(prim("Float", pos));
+      default:
+        return null;
+    }
+  }
+
+  if (t.kind !== "TypeApp") return null;
+
+  // A member that builds its result out of an element answers `null` when the
+  // receiver was written without that argument, rather than a `List` of
+  // nothing. (A bare `List` is E0210 in its own right, so this is a floor
+  // under the resolver rather than a shape a program can reach.) The members
+  // that hand the receiver straight back need no element to do it.
+  const a0 = t.args[0] ?? null;
+  const a1 = t.args[1] ?? null;
+
+  switch (t.name) {
+    case "Map":
+      switch (member) {
+        case "size":
+          return int();
+        case "is-empty":
+        case "has":
+          return bool();
+        case "keys":
+          return a0 && list(a0);
+        case "values":
+          return a1 && list(a1);
+        case "entries":
+          return a0 && a1 ? list(container("Tuple", [a0, a1], pos)) : null;
+        // A key that is absent is `None` (§2.2.1), which is what makes the
+        // common `m.get(k).get-or(d)` shape type at all.
+        case "get":
+          return argCount === 1 && a1 ? option(a1) : null;
+        case "insert":
+        case "remove":
+        case "update":
+        case "merge":
+        case "filter":
+          return t;
+        default:
+          return null;
+      }
+    case "Set":
+      switch (member) {
+        case "size":
+          return int();
+        case "has":
+          return bool();
+        case "add":
+        case "remove":
+        case "toggle":
+        case "union":
+        case "intersect":
+        case "diff":
+          return t;
+        case "to-list":
+          return a0 && list(a0);
+        default:
+          return null;
+      }
+    case "List":
+      switch (member) {
+        case "length":
+          return int();
+        case "is-empty":
+        case "contains":
+          return bool();
+        case "get":
+          return argCount === 1 && a0 ? option(a0) : null;
+        case "head":
+        case "last":
+        case "find":
+          return a0 && option(a0);
+        case "tail":
+        case "push":
+        case "prepend":
+        case "concat":
+        case "slice":
+        case "reverse":
+        case "sort":
+        case "sort-by":
+        case "unique":
+        case "filter":
+          return t;
+        case "join":
+          return text();
+        case "chunk":
+          return list(t);
+        default:
+          return null;
+      }
+    case "Option":
+      switch (member) {
+        case "is-some":
+        case "is-none":
+          return bool();
+        // The unwrap, and only written without arguments — `.get(k)` on an
+        // Option is the Map reading, which `checkGetArity` reports.
+        case "get":
+          return argCount === 0 ? unwrappedType(t) : null;
+        case "filter":
+        case "or":
+          return t;
+        case "to-list":
+          return a0 && list(a0);
+        default:
+          return null;
+      }
+    case "Result":
+      switch (member) {
+        case "is-ok":
+        case "is-err":
+          return bool();
+        case "get":
+          return argCount === 0 ? unwrappedType(t) : null;
+        case "get-err":
+          return argCount === 0 ? a1 : null;
+        case "or":
+          return t;
+        case "to-option":
+          return a0 && option(a0);
+        default:
+          return null;
+      }
+    default:
+      return null;
+  }
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -3421,14 +3674,14 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         const t = primFieldType(base.name, e.field, e.pos);
         if (t) return t;
       }
-      // `.get` unwraps Option(T) / Result(T,E) → T
-      if (e.field === "get") {
-        const inner = unwrappedType(base);
-        if (inner) return inner;
-      }
-      // Paren-less method shortcut (`n.show`, `f.to-int`) — same table as the
-      // called form, reached here because the parser produces a FieldAccess
-      // for a member with no argument list.
+      // The parenthesis-free spelling (§2.2.3) is the same member written with
+      // no argument list, so it asks the same resolver the called form does —
+      // which is what keeps `xs.head` and `xs.head()` from answering
+      // differently.
+      const decided = receiverMemberResult(base, e.field, 0, sym, e.pos);
+      if (decided) return decided;
+      // A member whose result is the same whatever the receiver (`n.show`,
+      // `f.to-int`).
       const fixed = METHOD_RESULT.get(e.field);
       return fixed ? prim(fixed, e.pos) : null;
     }
@@ -3441,26 +3694,18 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return null;
     }
     case "MethodCall": {
-      // `.get(k)` on a Map → Option(V) (spec: a missing key is None — the common
-      // `m.get(k).get` / `.get-or(d)` shape relies on this). `.get()` on
-      // Option/Result → inner. Anything else stays dynamic (conservative).
-      if (e.method === "get") {
-        const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
-        if (recv?.kind === "TypeApp") {
-          if (recv.name === "Map")
-            return recv.args[1] ? container("Option", [recv.args[1]], e.pos) : null;
-          if (recv.name === "Option" || recv.name === "Result") return recv.args[0] ?? null;
-        }
-      }
-      // `.get-or(d)` resolves from its receiver the way `.get` does, and a Map
-      // lookup with a fallback answers V. Without this the unwrapped value was
-      // assignable to the container it came out of.
-      if (e.method === "get-or") {
-        const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
-        return getOrResultType(recv, e.args.length);
-      }
-      // `r.copy(f=v)` is record update — same type in, same type out.
+      // `r.copy(f=v)` is record update — same type in, same type out. Not a
+      // collection member, so it is answered here rather than in the table of
+      // §2.2 members below.
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
+      const decided = receiverMemberResult(
+        inferType(e.receiver, sym, ctx),
+        e.method,
+        e.args.length,
+        sym,
+        e.pos,
+      );
+      if (decided) return decided;
       const fixed = METHOD_RESULT.get(e.method);
       return fixed ? prim(fixed, e.pos) : null;
     }
