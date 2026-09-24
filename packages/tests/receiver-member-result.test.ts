@@ -1,8 +1,7 @@
-// The issue's own repro. `inferType` resolved `.get`, `.get-or` and `.copy`
-// and nothing else whose result the receiver decides, so an `Option(Int)`
-// landed in an `Int` slot and a `Bool` in a `Text` slot with `check` saying
-// `ok`. The value is then of a shape its readers do not expect: `is-some` is
-// false on a value that is present, and a `match` finds no arm.
+// A member whose result the receiver decides used to resolve to nothing, so
+// an `Option(Int)` landed in an `Int` slot and a `Bool` in a `Text` slot with
+// `check` saying `ok`. The value is then of a shape its readers do not expect:
+// `is-some` is false on a value that is present, and a `match` finds no arm.
 //
 // The checker's own cases, family by family, are in
 // `packages/compiler/test/receiver-member-result.test.ts`. What this file pins
@@ -16,8 +15,8 @@ import { describe, expect, it } from "vitest";
 const app = (defs: string): string =>
   `${defs}\ntile B = button(text="x")\ntile App = column(B)\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
 
-/** The issue's program, verbatim in shape. */
-const THE_REPRO = app(`slot xs  : List(Int)   = []
+/** Three results, each written into a slot of another type. */
+const WRONG_SLOT_WRITES = app(`slot xs  : List(Int)   = []
 slot opt : Option(Int) = None
 slot n   : Int         = 0
 slot t   : Text        = ""
@@ -27,21 +26,20 @@ reducer c on=ui.click(B) do= n := xs.get(0)`);
 
 describe("a receiver-decided result lands in a slot of its own type", () => {
   it("check reports all three writes", () => {
-    const codes = check(parse(lex(THE_REPRO))).map((e) => e.code);
+    const codes = check(parse(lex(WRONG_SLOT_WRITES))).map((e) => e.code);
     expect(codes.filter((c) => c === "E0201")).toHaveLength(3);
   });
 
   it("build refuses to emit it", () => {
-    const r = compile(THE_REPRO, { runtimeSpecifier: "./runtime.js" });
+    const r = compile(WRONG_SLOT_WRITES, { runtimeSpecifier: "./runtime.js" });
     expect(r.kind).toBe("fail");
     if (r.kind !== "fail") return;
     expect(r.errors.map((e) => e.code)).toContain("E0201");
   });
 
-  // `.get` on a `List` is the one the issue calls an inconsistency rather than
-  // a missing feature: it resolved for `Map` / `Option` / `Result` and not for
-  // `List`, though §2.2.3 gives all four.
-  it("reports .get on a List, which used to be the one container it skipped", () => {
+  // `.get` resolved for `Map` / `Option` / `Result` and not for `List`, though
+  // §2.2 gives all four.
+  it("reports .get on a List", () => {
     const src = app(`slot xs : List(Int) = []\nslot n : Int = 0
 reducer a on=ui.click(B) do= n := xs.get(0)`);
     expect(check(parse(lex(src))).map((e) => e.code)).toContain("E0201");
@@ -82,6 +80,21 @@ describe("what must keep compiling", () => {
       "the chained unwrap the spec leans on",
       `slot m : Map(Text, Int) = {}\nslot n : Int = 0`,
       'n := m.get("k").get-or(0)',
+    ],
+    [
+      "find into an Option",
+      `slot xs : List(Int) = []\nslot o : Option(Int) = None`,
+      "o := xs.find($1 > 1)",
+    ],
+    [
+      "the membership test the spec's own example is written as",
+      `slot xs : List(Int) = []\nslot b : Bool = false`,
+      "b := xs.find($1 > 1).is-some",
+    ],
+    [
+      "the unwrapping .get, written without arguments",
+      `slot o : Option(Int) = None\nslot n : Int = 0`,
+      "n := o.get",
     ],
   ])("accepts %s", (_label, decls, body) => {
     const src = app(`${decls}\nreducer a on=ui.click(B) do= ${body}`);

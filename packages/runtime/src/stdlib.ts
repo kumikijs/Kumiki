@@ -198,6 +198,18 @@ export const _stdlibCore = {
   listFilter<T>(xs: T[], pred: (x: T) => boolean): T[] {
     return (xs ?? []).filter(pred);
   },
+  /**
+   * `List(T).find(pred)` → `Option(T)` (stdlib.md §2.2.3).
+   *
+   * The raw `Array.prototype.find` answers `undefined` when nothing matches,
+   * which is not a `None` any reader recognises: `.is-some` on it is false
+   * whether or not an element was found, and `match` finds no arm. Wrapped the
+   * same way `listHead` and `listLast` wrap theirs.
+   */
+  listFind<T>(xs: T[], pred: (x: T) => boolean): unknown {
+    const hit = (xs ?? []).find(pred);
+    return hit === undefined ? _stdlibCore.None : _stdlibCore.Some(hit);
+  },
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
   },

@@ -26,6 +26,8 @@ slot listed : List(Int)    = []
 slot reason : Text         = ""
 slot count  : Int          = 0
 slot found  : Bool         = false
+slot hit    : Option(Int)  = None
+slot miss   : Option(Int)  = None
 
 # `head` answers an Option of the receiver's own element, so this slot is an
 # `Option(Int)` and not an `Int`.
@@ -54,6 +56,14 @@ reducer measure on=ui.click(Count)
     do= count := names.size
         found := nums.contains(2)
 
+# `find` answers an `Option` the same way `head` does, so a miss is a `None`
+# a reader recognises rather than an absent value, and `is-some` tells the two
+# apart.
+reducer search on=ui.click(Find)
+    do= hit   := nums.find($1 > 2)
+        miss  := nums.find($1 > 99)
+        found := nums.find($1 > 99).is-some
+
 # The unwrap the Option forces: `first` is an `Option(Int)`, so reading an
 # `Int` out of it is written, not assumed.
 reducer unwrap on=ui.click(Unwrap)
@@ -66,19 +76,22 @@ tile Listed = button(text="listed") {id: "listed"}
 tile Err    = button(text="err")    {id: "err"}
 tile Count  = button(text="count")  {id: "count"}
 tile Unwrap = button(text="unwrap") {id: "unwrap"}
+tile Find   = button(text="find")   {id: "find"}
 
 tile App
     = column(
         heading("results decided by the receiver"),
         row(Head, Keys, Sort, Listed) {gap: "sm"},
-        row(Err, Count, Unwrap) {gap: "sm"},
+        row(Err, Count, Unwrap, Find) {gap: "sm"},
         text("first: " + first.get-or(0).show),
         text("keys: " + keys.length.show),
         text("sorted: " + sorted.length.show),
         text("listed: " + listed.length.show),
         text("reason: " + reason),
         text("count: " + count.show),
-        text("found: " + found.show))
+        text("found: " + found.show),
+        text("hit: " + hit.get-or(0).show),
+        text("miss: " + miss.get-or(-1).show))
       {pad: "lg", gap: "md"}
 
 app ReceiverDecidedResults

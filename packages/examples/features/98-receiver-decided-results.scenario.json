@@ -57,6 +57,19 @@
       "label": "the Option is unwrapped where an Int is wanted, rather than assumed",
       "do": { "click": "#unwrap" },
       "expect": { "noErrors": true, "state": { "count": 3 }, "domIncludes": ["count: 3"] }
+    },
+    {
+      "label": "find answers an Option, so a miss is a None that is-some can read",
+      "do": { "click": "#find" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "hit": { "_tag": "Some", "_0": 3 },
+          "miss": { "_tag": "None" },
+          "found": false
+        },
+        "domIncludes": ["hit: 3", "miss: -1", "found: false"]
+      }
     }
   ]
 }

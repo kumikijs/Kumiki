@@ -71,6 +71,32 @@ describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
   });
 });
 
+// `find` is typed `Option(T)` by the spec and by the checker, and lowered to
+// this helper. The raw `Array.prototype.find` it used to lower to answers
+// `undefined` on no match, which is neither a `Some` nor a `None`: `.is-some`
+// on it is false whether or not an element was found, and a `match` finds no
+// arm. The two cases below are the ones that tell those apart.
+describe("listFind (docs/spec/stdlib.md §2.2.3 List.find)", () => {
+  it("wraps a hit in Some, so is-some reads true", () => {
+    const hit = _stdlibCore.listFind([3, 1, 2], (x) => x > 2);
+    expect(hit).toEqual({ _tag: "Some", _0: 3 });
+    expect(_stdlibCore.variantIs(hit, "Some")).toBe(true);
+  });
+
+  it("answers None on a miss, rather than undefined", () => {
+    const miss = _stdlibCore.listFind([3, 1, 2], (x) => x > 99);
+    expect(miss).toEqual({ _tag: "None" });
+    expect(_stdlibCore.variantIs(miss, "Some")).toBe(false);
+    expect(_stdlibCore.variantIs(miss, "None")).toBe(true);
+  });
+
+  it("treats a nullish list as empty rather than throwing", () => {
+    expect(_stdlibCore.listFind(undefined as unknown as number[], () => true)).toEqual({
+      _tag: "None",
+    });
+  });
+});
+
 // Issue #340: `fmt` had no helper at all, so codegen's `_s.fmt ? … : template`
 // guard always took the else branch and every call returned its template with
 // the placeholders intact. The rules pinned here are the ones docs/spec/stdlib.md

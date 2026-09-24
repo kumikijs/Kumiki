@@ -618,7 +618,10 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       }
       return `_s.recordCopy(${recvJs}, {})`;
     case "find":
-      return `((${recvJs}) || []).find(${argFnList(args[0]!)})`;
+      // Spec: List(T).find returns Option(T), like `head` and `last`. The raw
+      // array `find` answers `undefined` on no match, which reads as neither
+      // `Some` nor `None`.
+      return `_s.listFind(${recvJs}, ${argFnList(args[0]!)})`;
     case "push":
       return `[...(${recvJs} ?? []), ${argRaw(args[0]!)}]`;
     case "unique":
