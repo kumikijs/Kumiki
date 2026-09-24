@@ -30,6 +30,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
+| `E0126` | `T.fresh()` / `T.parse(t)` / `T.show(v)` qualified by a type constructor (`List`, `Map`, `Tuple`, a `type Box(T)`) | name the application as a type — `type IntBox = Box(Int)` — and qualify with that: `IntBox.fresh()`. `kumiki_fix` skips it |
 | `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
 | `E0119` | `$route` in a reducer the runtime does not bind one in (anything but `route.enter` / `route.leave` / `route.error` and a link's prefetch target) | read the `route` slot instead; try `kumiki_fix` |
 | `E0120` | `route` or `$route` in an `app.init` argument — those are evaluated while the app object is built, before any mount installs a route | move the read into a `route.enter` reducer; reading the `route` slot does **not** help here |

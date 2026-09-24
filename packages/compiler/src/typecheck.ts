@@ -2109,6 +2109,31 @@ function checkCallee(
       });
       return;
     }
+    // A name can be a type's and still not be a type: `List`, `Map`, `Tuple`
+    // and a `type Box(T) = …` want their arguments first. The call has no type
+    // to mint (`fresh`) or read into (`parse`), and each check above declines
+    // it on its own terms — the name resolves, the callee resolves, and the
+    // inference answers nothing — so `slot n : Int = Box.fresh()` stored a uuid
+    // string in an `Int` slot with no report at all.
+    // `constructorArity` answers `null` for variadic `Tuple` and for a name that
+    // is no type at all, so it is asked only of a name `isKnownTypeName` holds.
+    const typeArity =
+      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
+        ? constructorArity(qualifier, sym)
+        : 0;
+    if (typeArity !== 0) {
+      const wanted =
+        typeArity === null
+          ? "type arguments"
+          : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
+      errors.push({
+        code: "E0126",
+        kind: "type-constructor-qualifier",
+        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none`,
+        pos,
+      });
+      return;
+    }
   }
   const arity = builtinArity(callee);
   if (arity !== undefined) {

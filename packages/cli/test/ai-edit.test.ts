@@ -2714,6 +2714,24 @@ describe("planFixesExplained: skip-reason classification", () => {
     expect(skipped[0]?.reason).toBe("e0117-no-close-type");
   });
 
+  it("e0126-type-arguments-unknown: the arguments a constructor wants are the author's to choose", () => {
+    // `List.fresh()` could become `IntList.fresh()` only by picking an element
+    // type, and nothing in the program says which one was meant — so the skip
+    // is named rather than falling through to `no-repair-branch`, which would
+    // read as a branch nobody has written yet.
+    const store = writeAndLoad(
+      ["slot l : List(Int) = List.fresh()", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { patches, skipped } = planFixesExplained(store, [
+      synth(
+        "E0126",
+        'Type "List" takes 1 type argument, so it is not a type on its own — "List.fresh" needs one that takes none',
+      ),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0126-type-arguments-unknown");
+  });
+
   it("e0216-quoted-name-extract-failed: E0216 message without both quoted names", () => {
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { skipped } = planFixesExplained(store, [synth("E0216", 'Variant "Zork" is unknown')]);

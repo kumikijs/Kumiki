@@ -82,6 +82,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | core |
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
+| [E0126](./errors.md#e0126-type-constructor-qualifier) | `type-constructor-qualifier` | fn | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -231,5 +232,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | core | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | core | [§2.2](./stdlib.md#_2-2-collection-methods) |
+| `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | stdlib | [§E0126](./errors.md#e0126-type-constructor-qualifier) |
 <!-- examples:end -->
 :::

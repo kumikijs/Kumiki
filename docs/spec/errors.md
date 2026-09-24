@@ -387,7 +387,7 @@ An unresolved name is *opaque*, and an opaque type accepts every value — so be
 
 Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
-A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — and the two members answer differently for it. `parse` branches on the qualifier, so a misspelling did not fail, it changed which branch ran: `Int.parse("12")` answers `Some(12)` and `Itn.parse("12")` answers `Some("12")`, which an `Int` slot then holds and every later sum concatenates. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this.
+A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — and the two members answer differently for it. `parse` branches on the qualifier, so a misspelling did not fail, it changed which branch ran: `Int.parse("12")` answers `Some(12)` and `Itn.parse("12")` answers `Some("12")`, which an `Int` slot then holds and every later sum concatenates. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0126](#e0126-type-constructor-qualifier).
 
 `Decoder`, `EffectId`, `Duration` and `Bytes` are the exception, in both spellings and whether or not the name is also a type: their members are exactly the built-in calls [E0116](#e0116-undef-call) lists, so `fresh` / `parse` / `show` do not resolve inside them and are that E0116 rather than this. What the exception is for is that these three members ignore the qualifier they are written on — `EffectId.fresh()` and `Duration.fresh()` both lowered to a freshly minted id, one where the author wrote the empty sentinel and one straight into a `Duration` slot, and neither was reported. `Duration` is a standard-library type and `Bytes` a primitive, so this is the one place a real type name does not answer for those three members.
 
@@ -467,6 +467,18 @@ A bind list names the payload's positionals **in order**, so two binds naming on
 **A repeated name that is also a reserved one is E0121 alone.** `on=load.ok($el, $el)` collects one E0121 per bind and no E0123: those reports already say to rename the bind, and renaming it settles the duplicate too, so a third would repeat one mistake rather than name another. The bind still enters the reducer's scope either way, so the body's reads resolve to it and collect nothing further.
 
 **Fix**: Rename one of the two binds, or write `_` for the positional the reducer does not read.
+
+### E0126 `type-constructor-qualifier`
+
+A type-member call — `T.fresh()`, `T.parse(t)`, `T.show(v)` — is qualified by a type **constructor** rather than a type: a name that still wants its type arguments, like `List`, `Map`, `Tuple` or a `type Box(T) = …`.
+
+> `Type "<name>" takes <n> type argument(s), so it is not a type on its own — "<name>.<member>" needs one that takes none`
+
+`Tuple` takes any number of arguments, and the message says `type arguments` without a count for it; variadic is still not zero.
+
+The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee is one of the type members, so [E0116](#e0116-undef-call) does not either; and there is no type for the call to have, so nothing reaches [E0201](#e0201-type-mismatch). Each check was right on its own terms, and the call fell between them: `slot n : Int = Box.fresh()` stored a uuid string in an `Int` slot with nothing reported.
+
+**Fix**: Name the application as a type and qualify the call with that — `type IntBox = Box(Int)`, then `IntBox.fresh()`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
 
 ## E02xx — Types
 

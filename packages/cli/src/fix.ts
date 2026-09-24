@@ -669,6 +669,14 @@ export function planFixesExplained(
         apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
       });
     }
+    if (err.code === "E0126") {
+      // The repair is a type that applies the constructor — `type IntList =
+      // List(Int)`, then `IntList.fresh()` — and which arguments to apply is
+      // the one thing the program does not say. Named here rather than left to
+      // `no-repair-branch`, which would read as a branch nobody has written.
+      skip(err.code, "e0126-type-arguments-unknown", err.message);
+      continue;
+    }
     // Default classifier: this diagnostic code has no repair branch at all.
     // Distinct from `*-quoted-name-extract-failed` (which means "a branch
     // fired but the message shape didn't match") — `no-repair-branch` means
