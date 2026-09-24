@@ -665,7 +665,7 @@ describe("codegen", () => {
     expect(result.js).toMatch(/const __a0 = _s\.now\(\);/);
     expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0] })');
     expect(result.js).toContain("(__a0)");
-    expect(result.js).toMatch(/"search:" \+ String/);
+    expect(result.js).toMatch(/"search:" \+ \(\(\w+\) => String\(/);
     // _s.now() must appear exactly once in the generated reducer body —
     // double-eval would surface as two occurrences.
     const occurrences = (result.js.match(/_s\.now\(\)/g) ?? []).length;

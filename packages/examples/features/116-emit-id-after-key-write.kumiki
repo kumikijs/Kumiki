@@ -1,0 +1,36 @@
+# Feature: the `EffectId` that `emit` yields names the effect the dispatcher
+# registered, even when the same reducer writes the slot its key reads.
+#
+# `load` is keyed by `noteKey` (`policy=latest-per-key(noteKey)`). `open` moves
+# the key and emits in one reducer, so the id it keeps is built from the key it
+# has just staged — `"load:b"` — which is the key the dispatcher runs the
+# request under. `Cancel` hands that id back, and the in-flight request is the
+# one it aborts: `.err` sees `aborted` and `status` reads "cancelled".
+
+slot noteKey : Text     = "a"
+slot lastId  : EffectId = EffectId.none
+slot status  : Text     = "idle"
+
+effect load cap=http.get
+            in=Text
+            out=Result(Text, HttpError)
+            policy=latest-per-key(noteKey)
+            map-request={url: "/api/notes/" + $1, decode: Decoder.Text}
+
+effect cancelLoad cap=http.cancel in=EffectId out=Unit
+
+reducer open     on=ui.click(OpenBtn)   do= noteKey := "b"
+                                            lastId := emit load("b")
+                                            status := "loading"
+reducer onCancel on=ui.click(CancelBtn) do= emit cancelLoad(lastId)
+reducer onOk     on=load.ok($body, _)   do= status := $body
+reducer onErr    on=load.err($err, _)   do= status := if $err.message == "aborted" then "cancelled" else "err: " + $err.message
+
+tile OpenBtn   = button(text="Open b", onClick=open)       {id: "open"}
+tile CancelBtn = button(text="Cancel", onClick=onCancel) {id: "cancel"}
+tile App = column(OpenBtn, CancelBtn, text(lastId.show), text(status)) {pad: "lg", gap: "md"}
+
+app EmitIdAfterKeyWrite
+    caps   = [http.get, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

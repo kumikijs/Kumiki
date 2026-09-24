@@ -4,6 +4,7 @@ import {
   bindRef,
   declareBind,
   type EvalCtx,
+  type GenCtx,
   jsBinding,
   jsProperty,
   makeEvalCtx,
@@ -801,14 +802,27 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
   const argRefs = e.args.map((_, i) => `__a${i}`).join(", ");
   const inputRef = e.args[0] ? "__a0" : "null";
   const eff = ctx.gen.effects.find((d) => d.name === effect);
-  let keyJs: string;
-  if (eff?.policy?.kind === "PolLatestKey") {
-    const keyCtx = makeEvalCtx(ctx.gen, ["$1"]);
-    keyJs = `String((((${bindRef(keyCtx, "$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
-  } else {
-    keyJs = `"_"`;
-  }
+  // The reducer body is where this id is built, so a slot the key reads has to
+  // read what the body has staged: the dispatcher runs the effect's own `keyOf`
+  // after those writes are applied, and the two must name the same request.
+  const keyJs =
+    eff?.policy?.kind === "PolLatestKey"
+      ? `${policyKeyOfJs(eff.policy.key, ctx.gen, ctx.reducerScope === true)}(${inputRef})`
+      : `"_"`;
   return `((() => { ${argBinds} _emits.push({ effect: ${effectJson}, args: [${argRefs}] }); return ${JSON.stringify(`${effect}:`)} + ${keyJs}; })())`;
+}
+
+/**
+ * A `policy=latest-per-key(<key>)` key as a function of the effect's input,
+ * answering the key as text. It has two callers that must agree on every
+ * input: the dispatcher's `keyOf` (`policyJs`), and the `EffectId` an `emit`
+ * expression yields, which `emit cancel(id)` later hands back. `reducerScope`
+ * is the only difference between them — whether a slot read sees the writes a
+ * reducer body has staged — and it is the caller's position that decides it.
+ */
+export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): string {
+  const keyCtx = makeEvalCtx(gen, ["$1"], reducerScope);
+  return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
 }
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {

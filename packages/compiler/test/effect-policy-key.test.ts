@@ -2,8 +2,14 @@
 // checked there was a `ReferenceError` on the first dispatch rather than a
 // diagnostic — the app imported, mounted and rendered first.
 
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+
+const TMP_ROOT = resolve(__dirname, "test-tmp");
+mkdirSync(TMP_ROOT, { recursive: true });
 
 function diagnose(source: string): { code: string; message: string; line: number; col: number }[] {
   return check(parse(lex(source))).map((e) => ({
@@ -134,5 +140,60 @@ describe("an effect's map-request is checked in the same scope", () => {
 
   it("reports $route as an undefined name", () => {
     expect(codes(mapRequestApp("$route.path"))).toEqual(["E0103"]);
+  });
+});
+
+type LoadedApp = {
+  live: Record<string, unknown>;
+  effects: Record<string, { policy?: { keyOf?: (input: unknown) => string } }>;
+  reducers: {
+    name: string;
+    apply: (
+      live: Record<string, unknown>,
+      payload: Record<string, unknown>,
+    ) => { slots: Record<string, unknown> };
+  }[];
+};
+
+/** Compile `source`, import the module from disk, and build one app instance. */
+async function load(source: string): Promise<LoadedApp> {
+  const result = compile(source, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
+  if (result.kind !== "ok")
+    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
+  const dir = mkdtempSync(join(TMP_ROOT, "policy-key-"));
+  const file = join(dir, "app.mjs");
+  writeFileSync(file, result.js);
+  const mod: { createApp: () => LoadedApp } = await import(
+    `${pathToFileURL(file).href}?t=${Date.now()}`
+  );
+  return mod.createApp();
+}
+
+describe("the EffectId an `emit` expression yields", () => {
+  // The id is `"<effect>:" + key`, built inside the reducer body. The
+  // dispatcher computes its own key with the effect's `keyOf` once the
+  // reducer's writes are applied, and registers the request under that. When
+  // the two disagree, `emit cancel(id)` names nothing in flight.
+  it("agrees with the dispatcher's key when the reducer wrote the key slot first", {
+    timeout: 30_000,
+  }, async () => {
+    const app = await load(`slot noteKey : Text     = "a"
+slot lastId  : EffectId = EffectId.none
+effect load cap=http.get in=Text out=Result(Text, HttpError)
+            policy=latest-per-key(noteKey)
+reducer go on=ui.click(B) do= noteKey := "b"
+                              lastId := emit load("x")
+tile B = button(text="b", onClick=go)
+tile Home = column(B)
+app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`);
+    const go = app.reducers.find((r) => r.name === "go");
+    if (!go) expect.fail("no reducer named go");
+    const { slots } = go.apply(app.live, {});
+    // What the runtime does between the reducer and the dispatch.
+    Object.assign(app.live, slots);
+    const keyOf = app.effects.load?.policy?.keyOf;
+    if (!keyOf) expect.fail("load has no keyOf");
+    expect(slots.lastId).toBe(`load:${keyOf("x")}`);
+    expect(slots.lastId).toBe("load:b");
   });
 });

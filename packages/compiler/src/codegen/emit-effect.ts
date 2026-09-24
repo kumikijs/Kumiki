@@ -1,6 +1,6 @@
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
-import { jsOfExpr } from "./expr.ts";
+import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
 /**
  * The built-in implementation call for a standard capability, given the request
@@ -96,10 +96,10 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   switch (p.kind) {
     case "PolLatest":
       return `{ kind: "latest" }`;
-    case "PolLatestKey": {
-      const keyCtx = makeEvalCtx(gen, ["$1"]);
-      return `{ kind: "latest-per-key", keyOf: ((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(p.key, keyCtx)})) }`;
-    }
+    case "PolLatestKey":
+      // Module scope: `keyOf` runs at dispatch, after the reducer's writes are
+      // applied to the live slots, so there is no staged write left to see.
+      return `{ kind: "latest-per-key", keyOf: ${policyKeyOfJs(p.key, gen, false)} }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":
