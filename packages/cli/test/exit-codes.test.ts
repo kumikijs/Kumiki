@@ -17,12 +17,9 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = resolve(here, "../src/kumiki.ts");
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 // Each case pays for a node + tsx module load, not for compiler work, and the
 // whole file is spawns — so the limits are generous enough to survive a
@@ -43,9 +40,7 @@ function write(name: string, source: string): string {
 }
 
 function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-  // `node --import tsx` rather than `npx tsx`: same interpreter, without npm's
-  // per-call resolution — which this file would pay for ~35 times.
-  const res = spawnSync(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
+  const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
     stdio: "pipe",
     encoding: "utf8",
     timeout: CHILD_TIMEOUT_MS,

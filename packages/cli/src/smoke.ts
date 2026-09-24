@@ -6,7 +6,6 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { compile } from "@kumikijs/compiler";
 import {
   nodeEpisodeLogReader,
@@ -32,9 +31,23 @@ import {
   useHttpFixture,
 } from "./harness.ts";
 
-let domReady = false;
-export function ensureDom(): void {
-  if (domReady) return;
+// The registration in flight or done, shared by every caller. A promise rather
+// than a flag: the import makes this async, so two overlapping calls would both
+// pass a "not yet" check and happy-dom throws on the second registration.
+let domReady: Promise<void> | null = null;
+export function ensureDom(): Promise<void> {
+  domReady ??= registerDom().catch((err: unknown) => {
+    // A failed import must not poison every later call.
+    domReady = null;
+    throw err;
+  });
+  return domReady;
+}
+
+async function registerDom(): Promise<void> {
+  // Loaded on first use, not at the top: happy-dom is a heavy import, and
+  // check / build / the edit verbs never touch a DOM.
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
   // Registers window/document/Event/… onto globalThis, overwriting Node's own
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
   // accept events constructed from the DOM realm).
@@ -43,7 +56,6 @@ export function ensureDom(): void {
   // example's own fixture instead of the network, and an IntersectionObserver
   // that actually notifies. Installed after registration, which overwrites both.
   installTestDoubles();
-  domReady = true;
 }
 
 /**
@@ -119,7 +131,7 @@ export async function smokeSource(
     settleMs?: number;
   } = {},
 ): Promise<SmokeReport> {
-  ensureDom();
+  await ensureDom();
   // Effects run for real here (unlike `runScenario`, which replaces every
   // `invoke`), so the http capability is answered by the example's own
   // `.http.json`. Without a path there is no fixture, and any request reports
@@ -209,7 +221,7 @@ export async function runScenarioSource(
   capabilities: string[] = [],
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
-  ensureDom();
+  await ensureDom();
   // A scenario scripts effects at the `invoke` boundary, so http never reaches
   // `fetch` — the fixture is here for a capability the runner does not wrap,
   // and to keep a stray request reported rather than live.
@@ -324,7 +336,7 @@ export async function runTestsSource(
   capabilities: string[] = [],
   opts: { sourcePath?: string } = {},
 ): Promise<TestResult[]> {
-  ensureDom();
+  await ensureDom();
   await loadApp(source, capabilities, {
     includeTests: true,
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),

@@ -6,7 +6,8 @@ import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import type { AppShape } from "@kumikijs/runtime";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// Drop temp bundles inside the project tree so Vitest's resolver allows them.
+// Temp bundles go under test-tmp/ as `app.mjs`: vitest.config.ts externalizes
+// that path, so Node imports them without Vite transforming each one.
 const TMP_ROOT = resolve(here, "../../test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
 

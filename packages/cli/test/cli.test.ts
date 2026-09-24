@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 const ROUTING_PATH = resolve(here, "../../examples/features/18-routing.kumiki");
 const STORAGE_PATH = resolve(here, "../../examples/features/20-effect-storage.kumiki");
 const INPUT_BIND_PATH = resolve(here, "../../examples/features/13-text-input-bind.kumiki");
-const CLI_PATH = resolve(here, "../src/kumiki.ts");
 const REPLAY_COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
 const REPLAY_COUNTER_LOG = resolve(here, "fixtures/replay/counter.log.jsonl");
 const REPLAY_PERSIST = resolve(here, "fixtures/replay/persist.kumiki");
@@ -28,9 +28,8 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
   });
 
   function build(input: string): void {
-    execFileSync("npx", ["tsx", CLI_PATH, "build", input, outDir], {
+    execFileSync(process.execPath, [...CLI_ARGV, "build", input, outDir], {
       stdio: "pipe",
-      shell: true,
     });
   }
 
@@ -331,9 +330,8 @@ describe("kumiki check --strict-icons", () => {
 
   function runCli(args: string[]): { out: string; code: number } {
     try {
-      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
         stdio: "pipe",
-        shell: true,
         encoding: "utf8",
       });
       return { out, code: 0 };
@@ -437,9 +435,8 @@ describe("kumiki check --strict-selector-id", () => {
 
   function runCli(args: string[]): { out: string; code: number } {
     try {
-      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
         stdio: "pipe",
-        shell: true,
         encoding: "utf8",
       });
       return { out, code: 0 };
@@ -528,9 +525,8 @@ describe("kumiki check (W0212 ui-event-tile-mismatch)", () => {
   });
 
   function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     return {
@@ -579,9 +575,8 @@ describe("kumiki smoke with a manifest-registered capability", () => {
   const CUSTOM_CAP = resolve(here, "../../examples/features/27-custom-capability.kumiki");
 
   it("smokes a file whose capability is declared in kumiki.caps.json", { timeout: 30000 }, () => {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, "smoke", CUSTOM_CAP], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, "smoke", CUSTOM_CAP], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(out).toContain("ok");
@@ -613,11 +608,14 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
   function check(): { stdout: string; stderr: string; code: number } {
-    const res = spawnSync("npx", ["tsx", CLI_PATH, "check", join(root, "src", "app.kumiki")], {
-      stdio: "pipe",
-      shell: true,
-      encoding: "utf8",
-    });
+    const res = spawnSync(
+      process.execPath,
+      [...CLI_ARGV, "check", join(root, "src", "app.kumiki")],
+      {
+        stdio: "pipe",
+        encoding: "utf8",
+      },
+    );
     return {
       stdout: res.stdout ?? "",
       stderr: res.stderr ?? "",
@@ -664,9 +662,9 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     timeout: 60_000,
   }, () => {
     const res = spawnSync(
-      "npx",
-      ["tsx", CLI_PATH, "build", join(root, "src", "app.kumiki"), join(root, "out")],
-      { stdio: "pipe", shell: true, encoding: "utf8" },
+      process.execPath,
+      [...CLI_ARGV, "build", join(root, "src", "app.kumiki"), join(root, "out")],
+      { stdio: "pipe", encoding: "utf8" },
     );
     expect(res.status).toBe(1);
     expect(res.stderr ?? "").toContain("E0302");
@@ -689,9 +687,8 @@ describe("kumiki test (in-language test runner)", () => {
   const TESTS = resolve(here, "../../examples/features/28-tests.kumiki");
 
   it("runs reducer-test + tile-test definitions and reports pass", { timeout: 30000 }, () => {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, "test", TESTS], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(out).toContain("PASS  inc-increments");
@@ -709,9 +706,8 @@ describe("kumiki test (in-language test runner)", () => {
   // meant to catch the bug would have certified it.
   it("refuses a batch the app's refinement rejects", { timeout: 30000 }, () => {
     const file = resolve(here, "../../examples/features/63-reducer-batch-atomicity.kumiki");
-    const res = spawnSync("npx", ["tsx", CLI_PATH, "test", file], {
+    const res = spawnSync(process.execPath, [...CLI_ARGV, "test", file], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(res.stdout).toContain("PASS  bump-commits-whole");
@@ -732,9 +728,8 @@ describe("kumiki test (in-language test runner)", () => {
   // one at all.
   it("runs a reducer that reads the route slot", { timeout: 30000 }, () => {
     const file = resolve(here, "../../examples/features/80-route-in-tests.kumiki");
-    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", file], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, "test", file], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(out).toContain("PASS  route-defaults-to-empty");
@@ -752,9 +747,8 @@ describe("kumiki test (in-language test runner)", () => {
   });
 
   it("filters by a name prefix", { timeout: 30000 }, () => {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS, "inc-i*"], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, "test", TESTS, "inc-i*"], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(out).toContain("PASS  inc-increments");
@@ -763,9 +757,8 @@ describe("kumiki test (in-language test runner)", () => {
   });
 
   it("reports per-test timings and a property case count", { timeout: 30000 }, () => {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, "test", TESTS], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(out).toMatch(/PASS {2}inc-increments \(\d+ms\)/);
@@ -773,9 +766,8 @@ describe("kumiki test (in-language test runner)", () => {
   });
 
   it("--coverage reports reducer / effect / tile coverage", { timeout: 30000 }, () => {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, "test", TESTS, "--coverage"], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, "test", TESTS, "--coverage"], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     expect(out).toContain("coverage");
@@ -800,9 +792,8 @@ describe("kumiki fix --auto-patch (fix from a failing test)", () => {
   /** Run the CLI, capturing stdout+stderr and the exit code without throwing. */
   function runCli(args: string[]): { out: string; code: number } {
     try {
-      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
         stdio: "pipe",
-        shell: true,
         encoding: "utf8",
       });
       return { out, code: 0 };
@@ -941,9 +932,8 @@ test msg-text =
 describe("kumiki replay (episode log replay, §10.5.3)", () => {
   function runCli(args: string[]): { out: string; code: number } {
     try {
-      const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
         stdio: "pipe",
-        shell: true,
         encoding: "utf8",
       });
       return { out, code: 0 };
@@ -986,18 +976,13 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
   });
 
   it("--mock 'effect: ok(value)' replaces a recorded effect outcome", { timeout: 30000 }, () => {
-    // `shell: true` (used by `runCli` for parity with the surrounding test
-    // file's style) treats `(...)` as a subshell on POSIX, so the `ok(...)`
-    // value has to be wrapped in extra double quotes so bash hands the
-    // literal through to npx. The follow-up issue #136 tracks moving the
-    // whole file to `shell: false`, after which this can shed the quotes.
     const { out, code } = runCli([
       "replay",
       REPLAY_PERSIST,
       "--from-log",
       REPLAY_PERSIST_LOG,
       "--mock",
-      '"persist:ok(null)"',
+      "persist:ok(null)",
     ]);
     expect(code).toBe(0);
     // The .ok branch fires: status becomes "saved".
@@ -1157,9 +1142,8 @@ describe("kumiki check (E0003 missing-app)", () => {
   });
 
   function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     return {
