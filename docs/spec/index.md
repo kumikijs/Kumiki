@@ -229,5 +229,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `94-editable-key-focus-blur-selectors.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 | `95-disabled-controls-refuse-a-step.kumiki` | slot, reducer, tile | testing | [§8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification) |
 | `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
+| `97-get-or-two-readings.kumiki` | slot, reducer, tile | core | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 <!-- examples:end -->
 :::
