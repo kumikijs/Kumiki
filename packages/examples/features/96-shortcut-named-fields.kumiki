@@ -6,10 +6,10 @@
 # member, and every one of them is a real field of a real record, so each write
 # is a plain field write.
 #
-# This is the half of #370 the corpus can hold. The rejections are check-time,
-# so they live in `packages/compiler/test/lvalue-members.test.ts`; what an
-# example can show is that the rule refuses members without refusing fields
-# that merely share their names.
+# This is the half the corpus can hold. The rejections are check-time, so they
+# live in `packages/compiler/test/lvalue-members.test.ts`; what an example can
+# show is that the rule refuses members without refusing fields that merely
+# share their names.
 
 # Every field name here is also a stdlib member: `length` and `size` on a Text
 # and a Map, `head` and `keys` on a List, and `get` itself.
@@ -58,7 +58,8 @@ reducer stretch on=ui.click(Stretch)
 
 # An index step, the third member of the closed set. A Map, which is the shape
 # §1.6.3's own example uses — an index write into a List is a separate defect
-# of the runtime's setter (it spreads the array into an object literal), #462.
+# of the runtime's setter, which spreads the array into an object literal, and
+# is tracked on its own rather than widened into this rule.
 reducer mark on=ui.click(Mark)
     do= marks["a"] := 1
 

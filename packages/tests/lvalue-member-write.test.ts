@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 const app = (defs: string): string =>
   `${defs}\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
 
-/** The issue's own program (#370), verbatim in shape. */
+/** The reported program, verbatim in shape. */
 const THE_REPRO = app(`slot name  : Text         = "abc"
 slot maybe : Option(Text) = None
 
@@ -71,6 +71,26 @@ tile App = column(Btn, text(ruler.length.show + ruler.get))`);
     expect(r.js).toContain('"length"');
     expect(r.js).toContain('"get"');
     expect(r.js).not.toContain('{"get":true}');
+  });
+
+  // `File` is a scalar to the type system and a record to the runtime, so its
+  // metadata is a structural field rather than a member (stdlib.md §2.1) — the
+  // one "field" answer that comes from somewhere other than a record
+  // declaration. Reached through the unwrap, so both exceptions to the closed
+  // step set are in one path and the lowering has to keep them apart.
+  it("still emits a File's structural field behind the unwrap", () => {
+    const src = app(`slot f : Option(File) = None
+
+reducer act on=ui.click(Btn)
+    do= f.get.name := "x"
+
+tile Btn = button(text="go")
+tile App = column(Btn)`);
+    const r = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("ok");
+    if (r.kind !== "ok") return;
+    // The unwrap, then the field as a key — not two keys and not two unwraps.
+    expect(r.js).toContain('[{"get":true}, "name"]');
   });
 
   // §1.6.3's one exception, which must stay an exception.

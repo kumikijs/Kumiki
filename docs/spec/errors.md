@@ -884,7 +884,9 @@ An lvalue step names a **stdlib member** of the receiver rather than a field. Th
 
 `.get` is the exception, and only where §1.6.3 defines it. On a receiver that does not unwrap — a `Map`, a `List` — `.get` is a member like any other and reported the same way.
 
-The name is dispatched, not reserved: a record that declares a field named `length` is still written through it. And a receiver whose type cannot be decided raises nothing, exactly as it raises nothing on the read side ([E0108](#e0108-undef-member)) — a false error on a dynamic receiver is worse than the silence.
+The name is dispatched, not reserved: a record that declares a field named `length` is still written through it. Conversely a record does not declare `.show`, so the dispatch falls through to the stdlib and `rec.show := "x"` is E0602 like any other member.
+
+E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.
 
 **Fix**: Write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists.
 
