@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "nothing saved yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 0 },
+        "domIncludes": ["saved: false", "count: 0"]
+      }
+    },
+    {
+      "label": "() lands in the Unit positions: the slot, the Ok payload and the fn parameter",
+      "do": { "click": "#save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "saved": { "_tag": "Ok" }, "count": 1 },
+        "domIncludes": ["saved: true", "count: 1"]
+      }
+    }
+  ]
+}

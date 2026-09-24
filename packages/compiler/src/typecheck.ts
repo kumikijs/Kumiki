@@ -3661,6 +3661,11 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return { kind: "TypePrim", name: "Text", pos: e.pos };
     case "Bool":
       return { kind: "TypePrim", name: "Bool", pos: e.pos };
+    case "Unit":
+      // `()` is the one value of `Unit`, and a known type like any other
+      // literal's. Left undecidable, it was accepted against every declared
+      // type and reached the runtime as a `null` where a record was read.
+      return prim("Unit", e.pos);
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
