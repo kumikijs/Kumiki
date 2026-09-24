@@ -580,7 +580,12 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       // Two shapes:
       //   Option(T).get-or(default)    → returns T (unwrap or default)
       //   Map(K,V).get-or(key, default) → returns V (lookup or default)
-      // Dispatch at runtime so we don't need static type info.
+      // The count selects the shape, and the helpers dispatch on the value at
+      // runtime, so no static type is needed here. `checkGetOrArity` is what
+      // makes that safe: a count that does not fit a receiver the checker can
+      // decide is reported, and a count past both readings is reported on any
+      // receiver — which matters because the second branch below reads exactly
+      // two arguments and would otherwise drop the rest without a word.
       if (args.length === 1) {
         return `_s.getOr(${recvJs}, ${argRaw(args[0]!)})`;
       }

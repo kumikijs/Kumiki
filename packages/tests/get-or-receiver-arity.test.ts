@@ -51,6 +51,20 @@ describe("the receiver decides .get-or's arity, and check and build agree", () =
     expect(r.errors.map((e) => e.code)).toContain("E0213");
   });
 
+  // A count past both readings needs no receiver: neither reading takes more
+  // than two, and the lowering reads exactly two and drops the rest — so an
+  // unreported third argument is this same defect under another name. This is
+  // the one shape the check reports without knowing the receiver, which is why
+  // it is pinned through `build` as well.
+  it("check and build both refuse a third argument on a receiver they cannot decide", () => {
+    const src = body(`slot sink : Int = 0`, `$event.get-or("k", 0, 99)`);
+    expect(check(parse(lex(src))).map((e) => e.code)).toContain("E0213");
+    const r = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => e.code)).toContain("E0213");
+  });
+
   // The half a rejection cannot show: each legal reading still reaches its own
   // helper. Asserting the helper rather than "it compiles" is the point — the
   // defect was precisely that the wrong helper was reached, and both spellings

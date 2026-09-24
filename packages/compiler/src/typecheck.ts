@@ -3037,10 +3037,16 @@ function unwrappedType(t: TypeExpr): TypeExpr | null {
  * by construction. The report belongs in the arity check, which is why this is
  * a check rather than a change to that resolver.
  *
- * A receiver the checker cannot decide raises nothing: the count alone selects
- * a reading but decides nothing about whether it is the right one, and the
- * corpus calls `.get-or` in 80-odd places, so a false error here is the
- * expensive direction.
+ * A receiver the checker cannot decide raises nothing *about which reading was
+ * meant*: the count selects one but decides nothing about whether it is the
+ * right one, and `.get-or` is called widely across the corpus, so a false
+ * error here is the expensive direction.
+ *
+ * A count past both readings is the exception, and needs no receiver at all —
+ * no receiver has a reading that takes more than two. The lowering emits
+ * `_s.mapGetOr(recv, a0, a1)` for every count but one and reads no further, so
+ * an unreported third argument is this same defect under another name: it is
+ * dropped, silently.
  */
 function checkGetOrArity(
   e: Expr & { kind: "MethodCall" },
@@ -3049,28 +3055,45 @@ function checkGetOrArity(
   ctx: Ctx,
 ): void {
   const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
-  if (recv?.kind !== "TypeApp") return;
+  const isMap = recv?.kind === "TypeApp" && recv.name === "Map";
+  const unwraps = recv?.kind === "TypeApp" && (recv.name === "Option" || recv.name === "Result");
 
-  const isMap = recv.name === "Map";
-  const unwraps = recv.name === "Option" || recv.name === "Result";
-  if (!isMap && !unwraps) return;
+  // A receiver that decides the reading gets the message that names it. This
+  // comes first so the better sentence wins wherever it can be written: a
+  // count-only message on a `Map` would leave out the one fact the author
+  // needs.
+  if (recv?.kind === "TypeApp" && (isMap || unwraps)) {
+    const want = isMap ? 2 : 1;
+    if (e.args.length === want) return;
 
-  const want = isMap ? 2 : 1;
-  if (e.args.length === want) return;
+    // Naming the other reading is the point of the message: both counts are
+    // legal for this name, so "expects 2" alone leaves the author wondering
+    // why this call differs from the one two lines up.
+    const taken = isMap ? "(key, default)" : "(default)";
+    const other = isMap
+      ? '".get-or(default)" is the "Option" / "Result" reading'
+      : '".get-or(key, default)" is the "Map" reading';
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Method ".get-or" on "${recv.name}" expects ${want} argument(s) ${taken} but got ${e.args.length} — ${other}`,
+      pos: e.pos,
+    });
+    return;
+  }
 
-  // Naming the other reading is the point of the message: both counts are
-  // legal for this name, so "expects 2" alone leaves the author wondering why
-  // this call differs from the one two lines up.
-  const taken = isMap ? "(key, default)" : "(default)";
-  const other = isMap
-    ? '".get-or(default)" is the "Option" / "Result" reading'
-    : '".get-or(key, default)" is the "Map" reading';
-  errors.push({
-    code: "E0213",
-    kind: "call-arity-mismatch",
-    message: `Method ".get-or" on "${recv.name}" expects ${want} argument(s) ${taken} but got ${e.args.length} — ${other}`,
-    pos: e.pos,
-  });
+  // The receiver decided nothing, so which of the two readings was meant is
+  // not ours to say. The count still is, past two: neither reading takes more,
+  // whatever the receiver turns out to be, and the lowering drops the extras
+  // rather than failing on them.
+  if (e.args.length > 2) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Method ".get-or" expects 1 argument(s) (default) or 2 (key, default) but got ${e.args.length} — no receiver has a reading that takes more`,
+      pos: e.pos,
+    });
+  }
 }
 
 /**
@@ -3087,8 +3110,11 @@ function checkGetOrArity(
  * The argument count is part of the question rather than a check beside it: the
  * lowering tells the Map reading from the unwrapping one by counting arguments
  * (`codegen/expr.ts`, `case "get-or"`), so a call whose count does not fit its
- * receiver has no result type to speak of and stays undecidable here — while
- * still lowering to the reading its count names.
+ * receiver has no result type to speak of and stays undecidable here. It no
+ * longer reaches that lowering either: `checkGetOrArity` reports the count
+ * wherever the receiver decides one, and reports a count past both readings on
+ * any receiver — so this resolver's silence is a missing result type rather
+ * than a missing diagnostic.
  */
 function getOrResultType(recv: TypeExpr | null, argCount: number): TypeExpr | null {
   if (recv?.kind !== "TypeApp") return null;

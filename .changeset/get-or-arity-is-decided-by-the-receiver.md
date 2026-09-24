@@ -10,6 +10,6 @@ A `.get-or` call whose argument count does not fit its receiver is now an arity 
 
 Neither existing check could see it. `METHOD_MIN_ARGS` states a minimum, which one argument meets, and no maximum. `getOrResultType` takes the receiver and the count together and resolves to nothing when they disagree — the right answer for an inference table, since a wrong result type rejects working programs, but it leaves inference silent by construction. The report belongs in the arity check, where the receiver is what decides the count, and it is **E0213 `call-arity-mismatch`**: the message names the receiver, the count that fits it, and the reading the written count would have selected, because both counts are legal for the name.
 
-A receiver whose type the checker cannot decide reports nothing: the count selects a reading but decides nothing about whether it is the right one.
+A receiver whose type the checker cannot decide reports nothing about *which* reading was meant: the count selects one but decides nothing about whether it is the right one. A count past **both** readings is reported on any receiver — no reading takes more than two arguments, and the lowering reads exactly two, so a third was being dropped silently even where the receiver was unknown.
 
 Refs #382.

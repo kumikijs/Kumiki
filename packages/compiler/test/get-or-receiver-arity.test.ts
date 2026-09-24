@@ -80,15 +80,37 @@ describe("the receiver decides how many arguments .get-or takes", () => {
     expect(codesOf(withCall(MAP, `m.get-or()`))).toContain("E0213");
   });
 
-  // A count that fits no reading on any receiver.
-  it("rejects a count past both readings", () => {
-    expect(codesOf(withCall(MAP, `m.get-or("k", 0, 1)`))).toContain("E0213");
+  // A count that fits no reading on any receiver — so unlike the two cases
+  // above, this one does not need the receiver to be known. Codegen emits
+  // `_s.mapGetOr(recv, a0, a1)` for every count but one and drops the rest, so
+  // an unreported third argument is the same silent lowering under another
+  // name: it vanishes.
+  it.each([
+    ["a Map", MAP, `m.get-or("k", 0, 1)`],
+    ["a receiver the checker cannot decide", `slot sink : Int = 0`, `$event.get-or("k", 0, 1)`],
+  ])("rejects a count past both readings on %s", (_label, decls, call) => {
+    expect(codesOf(withCall(decls, call))).toContain("E0213");
+  });
+
+  // On a known receiver the message stays the receiver's own, because it can
+  // say which reading was meant. The count-only message is the fallback for
+  // when it cannot.
+  it("names the receiver when it knows it, and both readings when it does not", () => {
+    const known = errsOf(withCall(MAP, `m.get-or("k", 0, 1)`)).find((e) => e.code === "E0213");
+    expect(known?.message).toContain('on "Map"');
+
+    const dynamic = errsOf(withCall(`slot sink : Int = 0`, `$event.get-or("k", 0, 1)`)).find(
+      (e) => e.code === "E0213",
+    );
+    expect(dynamic?.message).not.toContain('on "');
+    expect(dynamic?.message).toContain("(default)");
+    expect(dynamic?.message).toContain("(key, default)");
   });
 });
 
 describe("what stays legal", () => {
-  // The two readings the spec gives. These are 80-odd call sites across the
-  // corpus, so reporting either one is the expensive direction.
+  // The two readings the spec gives. These are called widely across the corpus,
+  // so reporting either one is the expensive direction.
   it.each([
     ["the Map reading on a Map", MAP, `m.get-or("k", 0)`],
     ["the Option reading on an Option", OPT, `o.get-or(0)`],
@@ -109,18 +131,35 @@ describe("what stays legal", () => {
 });
 
 describe("a receiver the checker cannot decide stays silent", () => {
-  // AC 3. The count alone decides nothing — it only selects a reading once we
-  // know which reading applies. Reporting on the count by itself would report
-  // every dynamic receiver, which is the expensive direction again.
-  it("says nothing when the receiver is a union", () => {
+  // AC 3, for a count that *is* one of the two readings: which one is right is
+  // the receiver's to say, so a receiver that says nothing gets no report.
+  //
+  // `$1` inside a method-call argument is the honest example. The checker
+  // binds it with no type on purpose — which argument a method binds is
+  // per-method, and guessing wrong costs a diagnostic on a working program —
+  // so there is genuinely nothing here to decide, and the whole result can be
+  // asserted.
+  it("says nothing about a lambda parameter, whose type is undecided by design", () => {
     const errs = errsOf(
-      withCall(`type F = All | Done\nslot f : F = All\nslot sink : Int = 0`, `f.get-or(0)`),
+      withCall(`slot xs : List(Int) = []\nslot sink : List(Int) = []`, `xs.map($1.get-or(0))`),
     );
     expect(errs).toEqual([]);
   });
 
-  it("says nothing about either count on an undecidable receiver", () => {
+  it("says nothing about an event payload, which carries no declared type", () => {
+    expect(codesOf(withCall(`slot sink : Int = 0`, `$event.get-or(0)`))).not.toContain("E0213");
+  });
+
+  // A declared union is a weaker case and is asserted more weakly on purpose.
+  // The checker *does* know `F` is neither a container nor an unwrapping type,
+  // so `.get-or` on it is a wrong program rather than an undecidable one — it
+  // is simply not one this check reports, because deciding what `.get-or` on a
+  // non-container should say is a per-receiver member table and a change of
+  // its own. Asserting the empty list here would write that missed report into
+  // the spec and break the day someone adds it.
+  it("does not report the count on a union receiver", () => {
     const decls = `type F = All | Done\nslot f : F = All\nslot sink : Int = 0`;
+    expect(codesOf(withCall(decls, `f.get-or(0)`))).not.toContain("E0213");
     expect(codesOf(withCall(decls, `f.get-or("k", 0)`))).not.toContain("E0213");
   });
 });
