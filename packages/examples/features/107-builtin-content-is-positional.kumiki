@@ -1,0 +1,32 @@
+# Feature (language.md §1.7.1): a builtin's content is its first POSITIONAL
+# argument. A named argument is a prop wherever it is written, so it may come
+# first without taking the content's place.
+#
+#   heading(level=2, title)          says `title`; `level` is a prop
+#   text(test-id="count", n.show)    says the count; `test-id` is a prop
+#
+# Clicking the button changes both contents, so the page shows they are the
+# values that were rendered, not the named arguments written before them.
+
+slot n     : Int  = 0
+slot title : Text = "Counter"
+
+reducer bump on=ui.click(Bump)
+    do= n     := n + 1
+        title := "Counted"
+
+tile Bump = button(text="bump") {id: "bump"}
+
+tile App
+    = column(
+        heading(level=2, title),
+        text(test-id="count", "count: " + n.show),
+        markdown(test-id="note", "*content first positional*"),
+        code(lang="kumiki", "heading(level=2, title)"),
+        Bump)
+      {pad: "lg", gap: "md"}
+
+app BuiltinContentIsPositional
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

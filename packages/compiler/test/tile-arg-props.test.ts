@@ -214,3 +214,14 @@ app P
     expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
   });
 });
+
+describe("which argument a builtin takes as its content (#393)", () => {
+  // The DOM half is `packages/tests/builtin-content-arg.test.ts`. `level` has no
+  // DOM trace to read there, so the prop half of the issue's own program is
+  // held here, at the shape emitted.
+  it("renders the positional argument and keeps the named one a prop", () => {
+    const js = emit('heading(level=2, "Title")');
+    expect(js).toContain('kind: "heading", text: _s.show("Title")');
+    expect(propsOf(js)).toContain("level: 2");
+  });
+});
