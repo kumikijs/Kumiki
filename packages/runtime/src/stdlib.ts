@@ -20,6 +20,22 @@ import {
 } from "./core.ts";
 
 /**
+ * How a `Set` element or a `Map` key reads back from the string it is stored
+ * under — the checker records it from the receiver's declared key type, and
+ * codegen passes it to the readers (`keys` / `entries` / `to-list`). Absent
+ * means the key is `Text`, or a type the checker could not decide, and the
+ * string is the value.
+ */
+export type KeyKind = "number" | "bool";
+
+/** A stored object key, restored to the kind of value it was written from. */
+function restoreKey(key: string, kind: KeyKind | undefined): unknown {
+  if (kind === "number") return Number(key);
+  if (kind === "bool") return key === "true";
+  return key;
+}
+
+/**
  * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
  *
  * A blank — `null`, `undefined`, `""`, whitespace — is not zero here. `Number`
@@ -130,14 +146,14 @@ export const _stdlibCore = {
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
-  mapKeys(m: Record<string, unknown> | undefined | null): string[] {
-    return m ? Object.keys(m) : [];
+  mapKeys(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
+    return m ? Object.keys(m).map((k) => restoreKey(k, kind)) : [];
   },
   mapValues(m: Record<string, unknown> | undefined | null): unknown[] {
     return m ? Object.values(m) : [];
   },
-  mapEntries(m: Record<string, unknown> | undefined | null): unknown[] {
-    return m ? Object.entries(m) : [];
+  mapEntries(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
+    return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
   mapGet(m: Record<string, unknown> | undefined | null, k: string): unknown {
     return m ? m[k] : undefined;
@@ -562,7 +578,7 @@ export const _stdlibCore = {
     return a.length > 0 ? _stdlibCore.Some(a[a.length - 1]) : _stdlibCore.None;
   },
   /** Set(T).to-list / Option(T).to-list → List(T). */
-  toList(v: unknown): unknown[] {
+  toList(v: unknown, kind?: KeyKind): unknown[] {
     if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
       // Option: Some(x) → [x], None → [].
       const o = v as { _tag: string; _0?: unknown };
@@ -571,8 +587,11 @@ export const _stdlibCore = {
     // Return a fresh copy so the result never aliases a slot array, matching
     // listHead/listTail/listLast which all produce new values.
     if (Array.isArray(v)) return [...v];
-    // Set is stored as `{ [key]: true }` (keys are stringified, like the other set ops).
-    if (v && typeof v === "object") return Object.keys(v as Record<string, unknown>);
+    // Set is stored as `{ [key]: true }` (keys are stringified, like the other
+    // set ops), so the element is read back through its recorded kind.
+    if (v && typeof v === "object") {
+      return Object.keys(v as Record<string, unknown>).map((k) => restoreKey(k, kind));
+    }
     return [];
   },
   /** Result(T,E).get-err → E; panics (KumikiPanic) if the value is Ok. */

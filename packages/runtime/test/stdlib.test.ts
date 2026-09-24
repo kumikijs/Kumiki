@@ -172,3 +172,36 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
     expect(_stdlibCore.fmt(undefined)).toBe("");
   });
 });
+
+// A Set is stored as `{ [key]: true }` and a Map as a plain object, so their
+// keys are JavaScript object keys — strings, whatever the declared type. The
+// readers that hand keys back restore them to the kind the checker recorded
+// (stdlib.md §2.2.1 / §2.2.2): without that, a `Set(Int)` read back `["7", "8"]`
+// under a `List(Int)` type, and `contains(7)`, `sort` and `+` all disagreed
+// with it.
+describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
+  const set = _stdlibCore.setAdd(_stdlibCore.setAdd({}, 7), 8);
+
+  it("Set.to-list answers numbers for a numeric element", () => {
+    expect(_stdlibCore.toList(set, "number")).toEqual([7, 8]);
+  });
+
+  it("Map.keys answers numbers for a numeric key", () => {
+    expect(_stdlibCore.mapKeys({ 1: "a", 2: "b" }, "number")).toEqual([1, 2]);
+  });
+
+  it("Map.entries pairs a numeric key with its value", () => {
+    expect(_stdlibCore.mapEntries({ 1: "a" }, "number")).toEqual([[1, "a"]]);
+  });
+
+  it("answers booleans for a Bool key", () => {
+    const flags = _stdlibCore.setAdd(_stdlibCore.setAdd({}, true), false);
+    expect(_stdlibCore.toList(flags, "bool")).toEqual([true, false]);
+    expect(_stdlibCore.mapKeys({ true: 1 }, "bool")).toEqual([true]);
+  });
+
+  it("leaves a Text key a string, including one that looks like a number", () => {
+    expect(_stdlibCore.mapKeys({ "7": 1, a: 2 })).toEqual(["7", "a"]);
+    expect(_stdlibCore.toList(_stdlibCore.setAdd({}, "7"))).toEqual(["7"]);
+  });
+});

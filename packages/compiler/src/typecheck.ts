@@ -17,6 +17,7 @@ import type {
   EffectDef,
   Expr,
   FnDef,
+  KeyKind,
   Lvalue,
   Pattern,
   Pos,
@@ -2500,6 +2501,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         }
       }
       checkExpr(e.receiver, sym, errors, ctx);
+      {
+        const kind = keyKindOfReader(inferType(e.receiver, sym, ctx), e.method, sym);
+        if (kind) e.keyKind = kind;
+      }
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
       for (const a of e.args) {
         // Inside a method-call argument `$1` / `$2` are the implicit lambda's
@@ -3959,6 +3964,42 @@ function undefMemberError(
   };
 }
 
+/** The members that hand a `Set`'s elements or a `Map`'s keys back. */
+const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
+  Set: new Set(["to-list"]),
+  Map: new Set(["keys", "entries"]),
+};
+
+/**
+ * The `KeyKind` a key reader lowers with, or `undefined` when `member` does not
+ * read keys on this receiver or the key is already a string. One answer for
+ * both spellings — `st.to-list` and `st.to-list()` ask it alike.
+ *
+ * Followed through aliases, `nominal` and `where`, since what matters is how
+ * the key is represented: a `TaskId = nominal Int` key is written from a
+ * number and reads back as one. `Time` is a number at runtime.
+ */
+function keyKindOfReader(
+  recv: TypeExpr | null,
+  member: string,
+  sym: SymbolTable,
+): KeyKind | undefined {
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp" || !KEY_READERS[t.name]?.has(member)) return undefined;
+  const key = unaliasType(t.args[0] ?? null, sym);
+  if (key?.kind !== "TypePrim") return undefined;
+  switch (key.name) {
+    case "Int":
+    case "Float":
+    case "Time":
+      return "number";
+    case "Bool":
+      return "bool";
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Annotate a `FieldAccess` with the decision codegen needs (ADR-002), and
  * report what `classifyMember` refuses. The arity check below is the read
@@ -3997,6 +4038,8 @@ function classifyFieldAccess(
         return;
       }
       e.accessKind = "shortcut";
+      const kind = keyKindOfReader(t, e.field, sym);
+      if (kind) e.keyKind = kind;
       return;
     }
 

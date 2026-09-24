@@ -113,6 +113,8 @@ diff(other)                 : Set(T)
 to-list                     : List(T)
 ```
 
+**Keys read back as their declared type.** In the implementation a Set's elements and a Map's keys are stored as JavaScript object keys, which are strings, but the readers that hand keys back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries` — answer the values the type says: a number when the key type is `Int` / `Float` / `Time` (or a `nominal` / `where` over one), a boolean for `Bool`, and the string itself for `Text`. So `tags.add(7).to-list` is `[7]`, and a later `contains(7)`, `sort` or arithmetic agrees with the list's type. The conversion follows the receiver's type as the checker resolved it, so a receiver whose type cannot be decided keeps the strings. Keys of other types — a record, a variant — are not covered by this conversion.
+
 ### 2.2.3 List(T)
 
 ```

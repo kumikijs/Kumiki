@@ -1,0 +1,69 @@
+# Feature (stdlib.md §2.2.1 / §2.2.2): a key reads back as its declared type.
+#
+#   Set(T).to-list     : List(T)
+#   Map(K, V).keys     : List(K)
+#   Map(K, V).entries  : List(Tuple(K, V))
+#
+# A Set and a Map store their keys as JavaScript object keys, which are
+# strings. A `Set(Int)` built up with `add` used to read back `["7", "8"]` under
+# a `List(Int)` type, so `contains(7)` was false, a sum concatenated instead of
+# adding, and `sort` ordered text. The readers now hand back the key's own
+# type: a number for `Int` / `Float` / `Time` (and a nominal over one), a
+# boolean for `Bool`, and the string itself for `Text`.
+
+type Seat = nominal Int
+
+slot tags   : Set(Int)       = {}
+slot seats  : Set(Seat)      = {}
+slot flags  : Set(Bool)      = {}
+slot names  : Map(Int, Text) = {}
+slot labels : Map(Text, Int) = {}
+
+slot listed : List(Int)             = []
+slot keys   : List(Int)             = []
+slot pairs  : List(Tuple(Int, Text)) = []
+slot bools  : List(Bool)            = []
+slot words  : List(Text)            = []
+slot sum    : Int                   = 0
+slot has8   : Bool                  = false
+slot looped : Int                   = 0
+
+reducer fill on=ui.click(Fill)
+    do= tags   := tags.add(10).add(8)
+        seats  := seats.add(3)
+        flags  := flags.add(true)
+        names  := names.insert(2, "two").insert(1, "one")
+        labels := labels.insert("7", 7)
+
+reducer read on=ui.click(Read)
+    do= listed := tags.to-list.sort
+        keys   := names.keys()
+        pairs  := names.entries
+        bools  := flags.to-list
+        words  := labels.keys
+        sum    := tags.to-list.fold(0, $1 + $2) + seats.to-list.fold(0, $1 + $2)
+        has8   := tags.to-list.contains(8)
+
+# A `for` over `Map.keys` binds the same numbers, in a reducer and in a tile.
+reducer walk on=ui.click(Walk)
+    do= for k in names.keys
+            looped := looped + k
+
+tile Fill = button(text="fill") {id: "fill"}
+tile Read = button(text="read") {id: "read"}
+tile Walk = button(text="walk") {id: "walk"}
+
+tile App
+    = column(
+        heading("keys keep their type"),
+        row(Fill, Read, Walk) {gap: "sm"},
+        text("sum: " + sum.show),
+        text("has 8: " + has8.show),
+        text("looped: " + looped.show),
+        column(for id in names.keys text("next: " + (id + 100).show) {key: id.show}))
+      {pad: "lg", gap: "md"}
+
+app NonTextKeys
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
