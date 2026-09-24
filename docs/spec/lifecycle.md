@@ -187,6 +187,8 @@ tile ErrorFallback
 
 When you write `error-boundary = X` in a tile definition, a panic during rendering under that tile calls the X tile with `in=PanicInfo` and shows the fallback.
 
+So `X` must declare `in=PanicInfo` (or a type `PanicInfo` is assignable to, such as an alias of it). Its `$1` is the panic whatever it declares, so a fallback that declares another `in=`, or none, is [E0130](./errors.md#e0130-boundary-fallback-input), reported at the `error-boundary` clause.
+
 The boundary belongs to the **tile**, not to the place it was written: it holds wherever that tile renders, including where a route names it as its target and where a `sub-routes` entry does.
 
 It covers everything that renders **under** the tile, and a child a `sub-routes` entry injects into the tile's `route-outlet` ([Routing §3.6](./routing.md#_3-6-nested-routes)) is under it: a boundary declared on the shell is one fallback for the whole section, children included. The **nearest** boundary wins — a child that declares its own shows its own fallback inside the outlet, and the shell stays up. In the fallback's `PanicInfo`, `location` names the **route target the runtime was building** (the outlet child in particular), and the tile that declares the boundary otherwise. A tile the target renders inside its own body is not distinguished from the target.

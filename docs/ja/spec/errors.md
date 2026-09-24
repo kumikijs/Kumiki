@@ -61,6 +61,7 @@ type KumikiError = {
 | `E0121` | なし | 代わりの名前を選び、body 内のすべての読みを書き換えるのは作者の意図であり、静的修復の外。 |
 | `E0122` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図。 |
 | `E0123` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図 — E0122 と同じであり、その規則をトリガに適用したものだからである。 |
+| `E0130` | なし | フォールバックの `in=` は決まっているが、その body が `PanicInfo` の与える形で panic を読むかは作者の意図である。 |
 | `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
@@ -445,6 +446,22 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 **繰り返された名前が予約名でもある場合は E0121 だけになる。** `on=load.ok($el, $el)` は束縛ごとに E0121 を1件ずつ集め、E0123 は出ない：それらの報告が既に「束縛の名前を変えよ」と言っており、そうすれば重複も解消するので、3件目は別の誤りを名指すのではなくひとつの誤りを繰り返すだけになる。どちらの場合も束縛は reducer のスコープに入るので、body の読みはそこへ解決され、それ以上何も集めない。
 
 **修正**：2つの束縛のどちらかの名前を変えるか、reducer が読まない positional には `_` を書く。
+
+
+### E0130 `boundary-fallback-input`
+
+tile が `error-boundary` に指定したフォールバックが `in=PanicInfo` を宣言していない — 別の型を宣言しているか、`in=` がまったく無い。
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+フォールバックは panic に適用される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）：codegen はフォールバックが何を宣言していても、その `$1` にランタイムが組み立てた `PanicInfo` を束縛する。したがって型は作者が選ぶものではない。`in=Text` を宣言したフォールバックは、値がレコードであるのに `$1` を `Text` として検査されていた — `text("recovered: " + $1)` は `check` も `smoke` も通り、`recovered: [object Object]` を描画した。`in=` を宣言しないフォールバックは panic を名指すことすらできない：その `$1` は [E0103](#e0103-undef-ref-undef-slot) であり、そのヒント — `in=` を宣言せよ — に従うと最初の形に行き着いた。
+
+これは [E0119](#e0119-route-bind-out-of-scope) が `$route` について述べる位置の規則を `$1` に当てはめたものである：名前が何を保持するかは tile がどこで適用されるかで決まり、boundary は tile を作者の書いていないものに適用する唯一の位置である。`PanicInfo` が宣言された型に代入可能であればよいので、その別名（`type Crash = PanicInfo`）も同じ宣言である。
+
+`error-boundary` 句の位置に、句ごとに1回報告する：tile をこの位置に置くのは句であり、同じ tile が他の場所で描画されるなら、呼び出し側が渡すものに適用される普通の tile である。
+
+**修正**: フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message` / `$1.location` などのフィールドで読む。
 
 ## E02xx — 型
 

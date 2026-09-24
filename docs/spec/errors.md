@@ -77,6 +77,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0121` | no | Choosing a replacement name, and rewriting every read of it in the body, is user intent. |
 | `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
 | `E0123` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent — as for E0122, whose rule this is at the trigger. |
+| `E0130` | no | The fallback's `in=` is fixed, but whether its body reads the panic the way `PanicInfo` gives it is user intent. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
@@ -467,6 +468,21 @@ A bind list names the payload's positionals **in order**, so two binds naming on
 **A repeated name that is also a reserved one is E0121 alone.** `on=load.ok($el, $el)` collects one E0121 per bind and no E0123: those reports already say to rename the bind, and renaming it settles the duplicate too, so a third would repeat one mistake rather than name another. The bind still enters the reducer's scope either way, so the body's reads resolve to it and collect nothing further.
 
 **Fix**: Rename one of the two binds, or write `_` for the positional the reducer does not read.
+
+### E0130 `boundary-fallback-input`
+
+A tile names an `error-boundary` fallback that does not declare `in=PanicInfo` — either another type, or no `in=` at all.
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+A fallback is applied to the panic ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)): codegen binds its `$1` to the `PanicInfo` the runtime builds, whatever the fallback declares. So the type is not the author's to choose. A fallback declaring `in=Text` had its `$1` checked as a `Text` while the value was a record — `text("recovered: " + $1)` passed `check` and `smoke` and rendered `recovered: [object Object]`. One declaring no `in=` could not name the panic at all: its `$1` is [E0103](#e0103-undef-ref-undef-slot), whose hint — declare an `in=` — led to the first shape.
+
+This is the position rule [E0119](#e0119-route-bind-out-of-scope) states for `$route`, applied to `$1`: what the name holds is decided by where the tile is applied, and a boundary is the one position that applies a tile to something it did not write. `PanicInfo` must be assignable to the declared type, so an alias of it (`type Crash = PanicInfo`) is the same declaration.
+
+Reported at the `error-boundary` clause, once per clause: the clause is what puts the tile in this position, and the same tile rendered anywhere else is an ordinary tile applied to what its caller passes.
+
+**Fix**: Declare `in=PanicInfo` on the fallback, and read the panic through `$1.message`, `$1.location` and the other fields.
 
 ## E02xx — Types
 

@@ -71,7 +71,7 @@ tile App = column(A)`,
     [
       "a loop closed by an error-boundary, at the boundary clause",
       `tile A error-boundary=B = column(text("a"))
-tile B = column(text("b"), A())
+tile B in=PanicInfo = column(text("b"), A())
 tile App = column(A())`,
       "1:23",
     ],
@@ -205,7 +205,7 @@ app SubCycle caps=[] routes={"/a/*" -> Outer, "/b/*" -> Inner, "/404" -> NotFoun
     // like any other. Reached through a call rather than a bare identifier
     // because only the call site emits the wrapper.
     const src = `tile A error-boundary=B = column(text("a"))
-tile B = column(text("b"), A())
+tile B in=PanicInfo = column(text("b"), A())
 tile App = column(A())
 ${TAIL}`;
     const [err, ...rest] = diags(src);

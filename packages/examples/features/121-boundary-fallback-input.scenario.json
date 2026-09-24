@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "nothing has panicked, so the tile renders its own body",
+      "expect": { "noErrors": true, "domIncludes": ["status: ready"] }
+    },
+    {
+      "label": "the fallback reads the panic through the fields PanicInfo gives it",
+      "do": { "click": "#reveal" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["recovered: ", "category: "],
+        "domExcludes": ["[object Object]", "status: ready"]
+      }
+    }
+  ]
+}

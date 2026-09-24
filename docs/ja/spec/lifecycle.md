@@ -187,6 +187,8 @@ tile ErrorFallback
 
 `error-boundary = X` を tile 定義に書くと、その tile 配下の描画中 panic は X tile を `in=PanicInfo` で呼び出して fallback 表示する。
 
+したがって `X` は `in=PanicInfo`（または `PanicInfo` が代入可能な型、たとえばその別名）を宣言しなければならない。何を宣言していても `$1` は panic なので、別の `in=` を宣言した、あるいは何も宣言しないフォールバックは [E0130](./errors.md#e0130-boundary-fallback-input) であり、`error-boundary` 句の位置に報告される。
+
 境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
 
 境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。

@@ -686,7 +686,39 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
       pos: tile.errorBoundaryPos ?? tile.pos,
     });
   }
+  checkBoundaryFallback(tile, sym, errors);
   if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
+}
+
+/**
+ * An `error-boundary` fallback is applied to the panic, whatever it declares:
+ * codegen binds its `$1` to the `PanicInfo` the runtime builds (lifecycle.md
+ * §7.3). So the fallback's `in=` is not the author's to choose — one that
+ * declares another type has a `$1` that is not the value the checker reasons
+ * about, and one that declares none cannot name the panic at all.
+ *
+ * `PanicInfo` has to be assignable to what the fallback declares, which is the
+ * guarantee the checker's reading of `$1` rests on. Reported at the clause,
+ * because the clause is what puts the tile in this position: the same tile
+ * rendered anywhere else is an ordinary tile with an ordinary `in=`.
+ */
+function checkBoundaryFallback(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
+  if (tile.errorBoundary === undefined) return;
+  const fallback = sym.tiles.get(tile.errorBoundary);
+  if (fallback === undefined) return; // E0105
+  const panicInfo: TypeExpr = { kind: "TypeRef", name: "PanicInfo", pos: fallback.pos };
+  if (fallback.in !== undefined && assignable(panicInfo, fallback.in, sym)) return;
+  const declared =
+    fallback.in === undefined ? "declares no in=" : `declares in=${typeToString(fallback.in)}`;
+  errors.push({
+    code: "E0130",
+    kind: "boundary-fallback-input",
+    message:
+      `Tile "${tile.name}" uses "${fallback.name}" as its error-boundary, which ${declared} — ` +
+      `a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare ` +
+      `in=PanicInfo`,
+    pos: tile.errorBoundaryPos ?? tile.pos,
+  });
 }
 
 /**

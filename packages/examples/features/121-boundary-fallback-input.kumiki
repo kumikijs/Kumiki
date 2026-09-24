@@ -1,0 +1,35 @@
+# Feature (lifecycle.md §7.3): an `error-boundary` fallback is applied to the
+# panic, so its `in=` is `PanicInfo` — or a type PanicInfo is assignable to,
+# such as the alias below. `$1` is the panic whatever the fallback declares, so
+# a fallback declaring `in=Text` would render `recovered: [object Object]`, and
+# one declaring no `in=` could not name the panic at all. Both are E0130 at the
+# `error-boundary` clause.
+
+type Crash = PanicInfo
+
+slot secret : Option(Text) = None
+slot reveal : Bool         = false
+
+tile Risky
+    error-boundary = Recovered
+    = column(
+        text("status: ready"),
+        when(reveal, text("secret: " + secret.get)))
+
+tile Recovered
+    in=Crash
+    = column(
+        text("recovered: " + $1.message),
+        text("category: " + $1.category))
+      {gap: "sm"}
+
+tile RevealBtn = button(text="reveal") {id: "reveal"}
+
+reducer doReveal on=ui.click(RevealBtn) do= reveal := true
+
+tile App = column(Risky, RevealBtn) {pad: "lg", gap: "md"}
+
+app BoundaryFallbackInput
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
