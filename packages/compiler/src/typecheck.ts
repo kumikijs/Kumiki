@@ -64,8 +64,11 @@ import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   type GivenSection,
   givenSection,
+  isRecordValue,
   isSectionName,
   nearestSection,
+  notARecordMessage,
+  type RecordPosition,
   type SectionName,
   sectionNames,
   type TestKind,
@@ -4583,8 +4586,9 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     // §8.5: each `given.mocks` key must name a declared effect — a typo would
     // otherwise silently never match an emit (the M1-review no-silent-typo rule).
     // The section is read through the shared table for the same reason codegen
-    // is: a second spelling of "mocks" in this file is a second vocabulary.
-    const mocks = givenSection(t, "reducer-test", "mocks");
+    // is: a second spelling of "mocks" in this file is a second vocabulary. A
+    // `given` that is not a record has no sections, and is E0713's.
+    const mocks = isRecordValue(t.given) ? givenSection(t, "reducer-test", "mocks") : undefined;
     if (mocks?.kind === "RecordLit") {
       for (const m of mocks.fields) {
         if (!sym.effects.has(m.name)) {
@@ -4678,8 +4682,9 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
     }
     return;
   }
-  // A section the vocabulary does not list is already an E0714, and it is where
-  // the missing argument went: `given = {slots: {}, input: "Ada"}` wrote the
+  // A section the vocabulary does not list is already an E0714 (and a `given`
+  // that is no record at all an E0713), and it is where the missing argument
+  // went: `given = {slots: {}, input: "Ada"}` wrote the
   // input under a name nothing reads. Counting it as absent as well is one
   // mistake named twice, at a position that stops existing as soon as the first
   // is fixed — so the count waits for a `given` every section of which was
@@ -4697,8 +4702,12 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
   });
 }
 
-/** Whether a section of `t`'s `given` names none of a tile-test's, and so is an E0714. */
+/**
+ * Whether some of `t`'s `given` is read by nothing: a section that names none
+ * of a tile-test's (E0714), or a `given` that is not a record at all (E0713).
+ */
 function hasUnreadSection(t: TestDef): boolean {
+  if (!isRecordValue(t.given)) return true;
   return recordFieldsOf(t.given).some((f) => !isSectionName("tile-test", "given", f.name));
 }
 
@@ -4751,6 +4760,15 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   // reported. Nothing walks an invariant or an `episode-test` expect.
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
 
+  // A clause that is not a record has no sections to read, and the loops below
+  // would read it as an empty one; E0713 says so instead, once, at the clause.
+  // Nothing inside it is resolved — it is not a value anything evaluates.
+  requireRecord(t.given, "given", errors);
+  if (t.testKind === "reducer-test" || t.testKind === "episode-test") {
+    requireRecord(t.expect, "expect", errors);
+  }
+  if (t.testKind === "episode-test") requireRecord(t.mocks, "mocks", errors);
+
   // Every arm below is a section name the table lists, and the `default`s are
   // `never` — so a section added to the table is a compile error here until it
   // is given a rule, which is the half of "one vocabulary" the accessors in
@@ -4761,10 +4779,14 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
         checkTestSlotMap(f.value, sym, errors, owned);
         break;
       case "event":
-        checkTestEvent(f.value, sym, errors, owned);
+        if (requireRecord(f.value, "given.event", errors)) {
+          checkTestEvent(f.value, sym, errors, owned);
+        }
         break;
       case "mocks":
-        checkTestMockValues(f.value, sym, errors, owned);
+        if (requireRecord(f.value, "given.mocks", errors)) {
+          checkTestMockValues(f.value, sym, errors, owned);
+        }
         break;
       case "in":
         checkExpr(f.value, sym, errors, owned);
@@ -4880,6 +4902,26 @@ function unknownSectionMessage(kind: TestKind, part: TestPart, written: string):
 function nearestSectionHint(kind: TestKind, part: TestPart, written: string): string {
   const nearest = nearestSection(kind, part, written);
   return nearest === undefined ? "" : ` — did you mean "${nearest}"?`;
+}
+
+/**
+ * E0713 when `value` — written at a test-body `position` the lowering reads
+ * as a record — is something else; whether it is a record (or absent) to go on
+ * reading. The sentence is the one the lowering throws, from the shared table.
+ */
+function requireRecord(
+  value: Expr | TileExpr | undefined,
+  position: RecordPosition,
+  errors: KumikiError[],
+): boolean {
+  if (value === undefined || isRecordValue(value)) return true;
+  errors.push({
+    code: "E0713",
+    kind: "test-shape-invalid",
+    message: notARecordMessage(position),
+    pos: value.pos,
+  });
+  return false;
 }
 
 /** The fields of `e` when it is a record literal, and none when it is not. */

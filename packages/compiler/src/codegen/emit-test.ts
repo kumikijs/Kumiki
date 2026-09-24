@@ -8,7 +8,7 @@ import {
   type TileExpr,
 } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
-import { expectSection, givenSection, isSectionName } from "../test-sections.ts";
+import { expectSection, givenSection, isSectionName, recordFieldsAt } from "../test-sections.ts";
 import { bindRef, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
@@ -314,8 +314,7 @@ function parseEpisodeLog(raw: string): unknown[] {
  * in the test's binding context.
  */
 function episodeMockJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "RecordLit") return "{}";
-  const parts = e.fields.map((f) => {
+  const parts = recordFieldsAt(e, "mocks").map((f) => {
     const v = f.value;
     const key = JSON.stringify(f.name);
     if (v.kind === "Ref" && v.name === "from-log") return `${key}: { policy: "from-log" }`;
@@ -340,9 +339,8 @@ function episodeMockJs(e: Expr, ctx: EvalCtx): string {
  * final slot values) or a record of expected slot → value pairs.
  */
 function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "RecordLit") return "{}";
   const parts: string[] = [];
-  for (const f of e.fields) {
+  for (const f of recordFieldsAt(e, "expect")) {
     if (!isSectionName("episode-test", "expect", f.name)) {
       // Dropping it silently is what an episode-test asserting nothing is made
       // of: `testkit` leaves `expectedSlots` null, skips both flags, and
@@ -373,8 +371,9 @@ function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
 }
 
 function mocksJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "RecordLit") return "{}";
-  const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`);
+  const parts = recordFieldsAt(e, "given.mocks").map(
+    (f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`,
+  );
   return `{ ${parts.join(", ")} }`;
 }
 
@@ -408,10 +407,11 @@ function mockScriptJs(v: Expr, ctx: EvalCtx): string {
  * still reach the reducer.
  */
 function eventPayloadJs(event: Expr | undefined, ctx: EvalCtx): string {
-  if (event?.kind !== "RecordLit") return "({})";
-  const el = event.fields.find((f) => f.name === "el");
+  if (event === undefined) return "({})";
+  const fields = recordFieldsAt(event, "given.event");
+  const el = fields.find((f) => f.name === "el");
   if (el) return jsOfExpr(el.value, ctx);
-  const rest = event.fields.filter((f) => f.name !== "type" && f.name !== "target");
+  const rest = fields.filter((f) => f.name !== "type" && f.name !== "target");
   if (rest.length === 0) return "({})";
   return jsOfExpr({ kind: "RecordLit", fields: rest, pos: event.pos }, ctx);
 }

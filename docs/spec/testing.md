@@ -69,12 +69,14 @@ value, and only a property-test invariant may call it
 ([§8.3](#_8-3-property-tests)): it lowers to a read of the trial's bindings, so
 anywhere else the generated module dies before a single test reports.
 
-Two positions are checked for *shape* rather than for names, because what the
+Some positions are checked for *shape* rather than for names, because what the
 lowering does with an unrecognised one is assert something else
 ([E0713](./errors.md#e0713-test-shape-invalid)): a `reducer-test` mock that is
-not `ok(...)` / `err(...)` / `delay(...)` became a success mock, and an
+not `ok(...)` / `err(...)` / `delay(...)` became a success mock, an
 `expect.effects` that is not a list became the assertion that no effect was
-emitted.
+emitted, and a `given` / `expect` / `mocks` (or a `given`'s `mocks` / `event`)
+that is not a record was read as an empty one, so the setup, the assertion or
+the script it was written for did not happen.
 
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
