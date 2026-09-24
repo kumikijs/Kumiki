@@ -866,8 +866,22 @@ describe("division yields Float (language.md §1.9.4)", () => {
 });
 
 describe("undecidable types stay silent", () => {
+  // `n := l.head` on a `List(Int)` used to be the example here, and it was the
+  // wrong one: that head is an `Option(Int)`, so the program was wrong rather
+  // than undecidable, and the silence was a missing result type rather than a
+  // decision to stay quiet. It reports now — `receiver-member-result.test.ts`
+  // owns it — and the example is a receiver that genuinely decides nothing.
   it("says nothing about a value whose type cannot be inferred", () => {
-    expect(inReducer(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.head`)).toEqual([]);
+    expect(inReducer(`slot n : Int = 0`, `n := $event.head`)).toEqual([]);
+  });
+
+  // A member whose result a lambda decides, rather than the receiver. `map` on
+  // a `List(Int)` is a `List(T')` and `T'` is whatever the body says, so it is
+  // left alone instead of guessed at.
+  it("says nothing about a member whose result a lambda body decides", () => {
+    expect(inReducer(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.map($1 + 1)`)).toEqual(
+      [],
+    );
   });
 
   it("says nothing about an opaque type parameter", () => {
