@@ -94,6 +94,7 @@ export {
   type RedirectEntry,
   type ReducerSpec,
   type RefinementCheck,
+  type RefinementFailure,
   type RefinementPart,
   type RouteEntry,
   type Router,

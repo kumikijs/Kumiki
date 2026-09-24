@@ -2,7 +2,7 @@ import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { assertNever } from "../ast.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { bindRef, declareBind, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
-import { refinementJs } from "./emit-type.ts";
+import { slotTypeIsRefined } from "./emit-slot.ts";
 import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
 import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
@@ -19,7 +19,7 @@ import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
  */
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
   const def = gen.slots.find((s) => s.name === slot);
-  if (!def || refinementJs(def.type, gen) === undefined) return valueJs;
+  if (!def || !slotTypeIsRefined(def.type, gen)) return valueJs;
   return `_s.slotWrite(_slots, _rejected, ${JSON.stringify(slot)}, ${valueJs})`;
 }
 
