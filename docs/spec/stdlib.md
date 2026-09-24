@@ -440,6 +440,19 @@ TypeName.show(value)       : Text         ; the string representation of a value
 
 `TypeName.show(value)` is the qualified spelling of the `.show` method of [§2.2](#_2-2-collection-methods), and the qualifier is discarded: `Duration.show(d)` and `d.show` are the same expression and the same `Text`. That holds for every `TypeName`, [`Duration`](#_2-2-9-duration) and [`Bytes`](#_2-2-10-bytes) included — their other members are constructors, but `show` is not one of them, and reading it as one made a `Text` slot refuse the call with [E0201](./errors.md#e0201-type-mismatch). `parse` is the opposite case: its `Option(T)` *is* the qualifier's, which is why the two are written apart here.
 
+`parse` reads its text by the **base** `T` resolves to, not by the name it is written with, so a `nominal` parses the way the type it is declared over does: with `type Cents = nominal Int`, `Cents.parse("12")` is `Some(12)`, and `Duration.parse("500")` is `Some(500)` because a [`Duration`](#_2-2-9-duration) is a `nominal Int` of milliseconds. The bases a text has a reading as:
+
+| Base | `Some` of | `None` when the text |
+|---|---|---|
+| `Int` | the number it spells, truncated | is blank or spells no finite number |
+| `Float` | the number it spells | is blank or spells no finite number |
+| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | names no instant |
+| `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
+| `Text` | the text itself | is empty |
+| `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |
+
+Any other base — a record, a union, `File`, `EffectId`, `Unit`, or a `nominal` over one of them — has no reading of a text, and `T.parse` on it is [E0802](./errors.md#e0802-unimplemented-function). Those used to answer the raw text wrapped in `Some`, which the call's own type claims is a `T`.
+
 ### 2.4.4 Randomness
 
 ```

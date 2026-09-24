@@ -1,0 +1,55 @@
+# Feature (stdlib.md §2.4.3): `T.parse(text)` is an `Option(T)`, and the text
+# is read by the base `T` is declared over — not by the name `T` is written with.
+#
+#   Cents.parse("12")      : Option(Cents)     Some(12)    a nominal Int
+#   Duration.parse("500")  : Option(Duration)  Some(500)   milliseconds
+#   Bool.parse("false")    : Option(Bool)      Some(false)
+#   Slug.parse("a-b")      : Option(Slug)      Some("a-b") a nominal Text
+#
+# Each used to come back as the text it was given, whatever `T` said: the sum
+# below was `12 + "12"`, a string `Cents`, and `Some("false")` unwrapped to a
+# non-empty string that every `if` reads as true.
+#
+# Written the other way, the wrong type is reported where the call is:
+# `slot wait : Duration = Duration.parse("500")` is E0201 — the parse answers
+# an `Option(Duration)` — and a type no text spells, like a record, is E0802:
+# `Point.parse(t)` has nothing of type `Point` to produce.
+
+type Cents = nominal Int where positive
+type Slug  = nominal Text
+
+slot total : Cents            = 12
+slot wait  : Duration         = Duration.ms(100)
+slot quiet : Option(Bool)     = None
+slot slug  : Option(Slug)     = None
+slot typed : Text             = "12"
+
+reducer add on=ui.click(AddBtn)
+    do= total := total + Cents.parse(typed).get-or(0)
+
+reducer extend on=ui.click(ExtendBtn)
+    do= wait := wait + Duration.parse("500").get-or(Duration.ms(0))
+
+reducer read on=ui.click(ReadBtn)
+    do= quiet := Bool.parse("false")
+        slug  := Slug.parse("a-b")
+
+tile AddBtn    = button(text="add")    {id: "add"}
+tile ExtendBtn = button(text="extend") {id: "extend"}
+tile ReadBtn   = button(text="read")   {id: "read"}
+
+tile App = column(
+             text("total " + total.show),
+             text("wait " + wait.to-ms.show + "ms"),
+             text(match quiet with
+                    | Some(q) -> if q then "quiet on" else "quiet off"
+                    | None    -> "quiet unset"),
+             text(match slug with
+                    | Some(s) -> "slug " + s
+                    | None    -> "slug unset"),
+             row(AddBtn, ExtendBtn, ReadBtn) {gap: "sm"})
+
+app ParseByBase
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

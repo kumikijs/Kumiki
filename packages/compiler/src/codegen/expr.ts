@@ -1,4 +1,5 @@
 import type { Expr, Pattern, Pos } from "../ast.ts";
+import { parseReading } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
@@ -38,6 +39,43 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
     );
   }
   return jsOfExpr(arg, ctx);
+}
+
+/**
+ * `T.parse(text)` → `Option(T)`, converted by the base `T` unaliases to rather
+ * than by its name — so `type Cents = nominal Int` and the standard library's
+ * `Duration` read a number, as `Int` does (#431, #424). `parseReading` is the
+ * answer the checker reports E0802 from, so a qualifier with no reading never
+ * reaches here from a checked program; the throw is for `codegen()` called
+ * without `check()`, which would otherwise lower to a value of the wrong kind.
+ */
+function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
+  const a = requiredArg(callee, args, pos, ctx);
+  const reading = parseReading(callee.slice(0, callee.indexOf(".")), ctx.gen);
+  switch (reading) {
+    case "Int":
+      return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
+    case "Float":
+      return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(_n) : _s.None; })(${a})`;
+    case "Time":
+      // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one has
+      // to produce that number, or every later `diff` / `plus` / `format` reads
+      // a string and produces `NaN`. The zone rule for a date-only string lives
+      // with the formatter that has to agree with it.
+      return `_s.parseTime(${a})`;
+    case "Bool":
+      // Converted, not wrapped: `Some("false")` unwraps to a non-empty string,
+      // which every `if` reads as true.
+      return `((_v) => _v === "true" ? _s.Some(true) : _v === "false" ? _s.Some(false) : _s.None)(${a})`;
+    case "Text":
+      return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
+    case "Bytes":
+      return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_s.bytesFromText(_v)) : _s.None)(${a})`;
+    case null:
+      throw new Error(
+        `${callee}() at ${pos.line}:${pos.col} names a type no text has a reading as — run \`check\` for the diagnostic`,
+      );
+  }
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
@@ -151,28 +189,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // Module calls like TodoId.fresh, now, etc.
       if (cn === "now") return `_s.now()`;
       if (/^[A-Z][A-Za-z0-9_]*\.fresh$/.test(cn)) return `_s.freshId()`;
-      if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) {
-        // `T.parse(text)` → Option<T>. Numeric types coerce to a number so
-        // arithmetic (e.g. fold/sum) works; other types keep the string.
-        const a = requiredArg(cn, e.args, e.pos, ctx);
-        const qualifier = cn.split(".")[0];
-        if (qualifier === "Int") {
-          return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
-        }
-        if (qualifier === "Float") {
-          return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(_n) : _s.None; })(${a})`;
-        }
-        if (qualifier === "Time") {
-          // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one
-          // has to produce that number. Falling into the generic branch below
-          // wrapped the raw text in `Some`, and every later operation — `diff`,
-          // `plus`, `format` — read a string where it needed a number and
-          // produced `NaN`. The zone rule for a date-only string lives with the
-          // formatter that has to agree with it.
-          return `_s.parseTime(${a})`;
-        }
-        return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
-      }
+      if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) return parseJs(cn, e.args, e.pos, ctx);
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
         return `_s.show(${requiredArg(cn, e.args, e.pos, ctx)})`;
       }

@@ -57,6 +57,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { parseReading, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
@@ -2109,6 +2110,26 @@ function checkCallee(
       });
       return;
     }
+    // `parse` lowers by the base the qualifier unaliases to (#431), and a
+    // record, a union, `File`, `EffectId` or `Unit` has no reading of a text.
+    // Their call used to lower to the raw string wrapped in `Some`, which the
+    // inference types `Option(<qualifier>)` — a value no reader of that type
+    // can use, and no diagnostic to say so. A constructor still wanting its
+    // arguments resolves to no type at all and is not this report's.
+    if (
+      callee.slice(dot + 1) === "parse" &&
+      isQualifierName(qualifier) &&
+      qualifierType(qualifier, pos, sym) !== null &&
+      parseReading(qualifier, sym) === null
+    ) {
+      errors.push({
+        code: "E0802",
+        kind: "unimplemented-function",
+        message: `Function "${callee}" is documented but not implemented by the runtime`,
+        pos,
+      });
+      return;
+    }
   }
   const arity = builtinArity(callee);
   if (arity !== undefined) {
@@ -3406,31 +3427,6 @@ function arithmeticResult(
 }
 
 /**
- * The type a call's qualifier names, or `null` when it names none — including
- * when the call has no qualifier at all.
- *
- * A primitive is answered first because the grammar resolves those itself — a
- * `TypePrim`, never a symbol-table entry — so `sym.types` has no `Int`.
- *
- * A definition answers only when it is complete on its own, and that half is
- * the load-bearing one: an unapplied `TypeRef` to a `type Box(T) = …` unaliases
- * into an unsubstituted body and mismatches against real types, so `Box.fresh()`
- * would report a type the author never wrote. An *unresolvable* name costs
- * nothing by comparison — `relate` short-circuits on a `TypeRef` it cannot
- * unalias, which is how `unknownType` (literally `TypeRef "?"`) works — so
- * answering `null` for one only keeps this function honest; E0117 is the report
- * either way. That is why `isKnownTypeName`, the resolution rule E0117 applies,
- * is not the rule here: naming a type is what makes a qualifier legal, and
- * *being* one is what lets it answer.
- */
-function qualifiedType(name: string | null, pos: Pos, sym: SymbolTable): TypeExpr | null {
-  if (name === null) return null;
-  if (isPrimTypeName(name)) return prim(name, pos);
-  const def = sym.types.get(name);
-  return def !== undefined && def.params.length === 0 ? { kind: "TypeRef", name, pos } : null;
-}
-
-/**
  * The type `T.fresh()` produces, or `null` when the qualifier is not one it can
  * produce a value of.
  *
@@ -3447,8 +3443,8 @@ function qualifiedType(name: string | null, pos: Pos, sym: SymbolTable): TypeExp
  * base for a uuid. All three go back to the `null` they had before — no worse
  * than the lowering, which is the most an inference can honestly claim.
  */
-function freshResultType(qualifier: string | null, pos: Pos, sym: SymbolTable): TypeExpr | null {
-  const named = qualifiedType(qualifier, pos, sym);
+function freshResultType(qualifier: string, pos: Pos, sym: SymbolTable): TypeExpr | null {
+  const named = qualifierType(qualifier, pos, sym);
   if (named === null) return null;
   return assignable(prim("Text", pos), named, sym) ? named : null;
 }
@@ -3798,41 +3794,37 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // ordered the way the lowering is, which is what keeps the two agreeing.
       //
       // The other two members of `TYPE_MEMBER_CALLS` are answered by the
-      // qualifier, below — `fresh` produces it and `parse` an `Option` of it.
+      // qualifier, below — `parse` an `Option` of it and `fresh` the qualifier.
       // All three are read through the one spelling rule codegen and
       // `builtinArity` apply, so a name a hyphen disqualifies as a qualifier
       // (`Othe-Id.fresh()`) is not a type-member call here either.
       const member =
         qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
       if (member === "show") return prim("Text", e.pos);
-      // `Duration.ms(500)` and friends build the standard library's `Duration`;
-      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10). Both keep the
-      // whole qualifier, ahead of the type-member rule: their members are
-      // constructors rather than `fresh` / `parse`.
-      //
-      // `parse` is the spelling they share with it, and both get it wrong the
-      // same way — `Duration.parse(t)` and `Bytes.parse(t)` answer a bare
-      // `Duration` / `Bytes` where the spec gives them `Option(…)`, so writing
-      // the call as documented is E0201 and writing it wrongly is clean. That
-      // is #424, left as it was rather than widened into this fix and pinned in
-      // `spec-divergences.test.ts` so it cannot drift further.
-      if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
-      if (qualifier === "Bytes") return prim("Bytes", e.pos);
-      // `TypeName.fresh()` is a `T` and `TypeName.parse(t)` an `Option(T)`
-      // (stdlib §2.4.1 / §2.4.3). Without this the call that *mints* an id was
-      // the one expression the nominal rule could not judge: `slot p : PostId`
-      // took a `UserId.fresh()` in silence, which is the mistake `nominal`
-      // exists to catch (#348).
+      // `TypeName.parse(t)` is an `Option(T)` (stdlib §2.4.3) — for `Duration`
+      // and `Bytes` too, which is why it is read ahead of their namespaces
+      // below. Caught by those instead, it answered the bare qualifier, so the
+      // documented `o : Option(Duration) := Duration.parse(t)` was E0201 and
+      // `d : Duration := Duration.parse(t)` was clean (#424).
       //
       // The qualifier is resolved rather than matched, so a name that is no
-      // type answers nothing and E0117 keeps that report to itself (#276). What
-      // `fresh` can claim is narrower still, because its lowering discards the
-      // qualifier — `freshResultType` is where that is read.
-      if (member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      if (member === "parse") {
-        const named = qualifiedType(qualifier, e.pos, sym);
+      // type answers nothing and E0117 keeps that report to itself (#276).
+      if (qualifier !== null && member === "parse") {
+        const named = qualifierType(qualifier, e.pos, sym);
         return named === null ? null : container("Option", [named], e.pos);
       }
+      // `Duration.ms(500)` and friends build the standard library's `Duration`;
+      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10). Both keep the
+      // whole qualifier for every other member: those are constructors.
+      if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
+      if (qualifier === "Bytes") return prim("Bytes", e.pos);
+      // `TypeName.fresh()` is a `T` (stdlib §2.4.1). Without this the call that
+      // *mints* an id was the one expression the nominal rule could not judge:
+      // `slot p : PostId` took a `UserId.fresh()` in silence, which is the
+      // mistake `nominal` exists to catch (#348). What `fresh` can claim is
+      // narrower than the qualifier, because its lowering discards it —
+      // `freshResultType` is where that is read.
+      if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
       return sym.fns.get(e.callee)?.ret ?? null;
     }
     default:

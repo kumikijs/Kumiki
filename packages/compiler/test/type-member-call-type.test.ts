@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
 // is the one mistake `nominal` exists to catch and the position it matters most
 // in, `.fresh` being how an id is normally minted (#348).
 //
-// `Duration` and `Bytes` are the carve-out: their members are constructors
-// rather than these two, so the qualifier keeps answering for them.
+// `Duration` and `Bytes` are the carve-out: their other members are
+// constructors, so the qualifier keeps answering for those — but not for
+// `parse`, which is the type member for them as for every other type.
 //
 // Expectations are the whole diagnostic list, not a filtered one — a stray
 // extra report on a program called clean here is exactly what would ship.
@@ -140,6 +141,61 @@ describe("<Type>.parse(t) is an Option(<Type>)", () => {
   });
 });
 
+/**
+ * `parse` is lowered by the base its qualifier unaliases to, not by its name
+ * (#431), so the types it reads are exactly the bases that have a reading of a
+ * text: `Int`, `Float`, `Time`, `Bool`, `Text` and `Bytes`. Anything else — a
+ * record, a union, `File`, `EffectId`, `Unit` — used to fall into a branch that
+ * wrapped the raw string, which the checker then typed `Option(<Type>)`. That
+ * is a value no reader of the type can use, so the call is reported where it is
+ * written instead of being answered with one.
+ */
+describe("a parse whose qualifier has no reading of a text", () => {
+  const E = (callee: string) =>
+    `E0802 Function "${callee}" is documented but not implemented by the runtime`;
+
+  it("reports a record, a union and the primitives no text spells", () => {
+    expect(diagnostics(`type Point = {x: Int}\nslot o : Option(Point) = Point.parse("a")`)).toEqual(
+      [E("Point.parse")],
+    );
+    expect(diagnostics(`type Tone = Hi | Lo\nslot o : Option(Tone) = Tone.parse("Hi")`)).toEqual([
+      E("Tone.parse"),
+    ]);
+    expect(diagnostics(`slot o : Option(File) = File.parse("a")`)).toEqual([E("File.parse")]);
+    expect(diagnostics(`slot o : Option(EffectId) = EffectId.parse("a")`)).toEqual([
+      E("EffectId.parse"),
+    ]);
+  });
+
+  it("reports a nominal over one of them, because the base is what decides", () => {
+    expect(
+      diagnostics(`type Doc = nominal {x: Int}\nslot o : Option(Doc) = Doc.parse("a")`),
+    ).toEqual([E("Doc.parse")]);
+  });
+
+  it("accepts every base that has a reading, directly and through a nominal", () => {
+    expect(diagnostics(`slot o : Option(Bool) = Bool.parse("true")`)).toEqual([]);
+    expect(
+      diagnostics(`type Cents = nominal Int where positive
+type Ratio = nominal Float
+type Due = nominal Time
+type Flag = nominal Bool
+type Blob = nominal Bytes
+slot c : Option(Cents) = Cents.parse("12")
+slot r : Option(Ratio) = Ratio.parse("0.5")
+slot d : Option(Due) = Due.parse("2026-01-01")
+slot f : Option(Flag) = Flag.parse("true")
+slot b : Option(Blob) = Blob.parse("x")`),
+    ).toEqual([]);
+  });
+
+  it("leaves an undefined qualifier to E0117 alone", () => {
+    expect(diagnostics(`slot o : Option(Int) = Nope.parse("1")`)).toEqual([
+      'E0117 Reference to undefined type "Nope"',
+    ]);
+  });
+});
+
 describe("the qualifiers that keep their own answers", () => {
   it("leaves Duration's constructors as they were", () => {
     expect(diagnostics(`slot d : Duration = Duration.ms(500)`)).toEqual([]);
@@ -149,11 +205,25 @@ describe("the qualifiers that keep their own answers", () => {
     expect(diagnostics(`slot b : Bytes = Bytes.from-text("x")`)).toEqual([]);
   });
 
-  // Their `parse` is the one member they share with the rule above, and both
-  // answer a bare type where the spec gives an `Option` — #424. Pinned in
-  // `spec-divergences.test.ts`, which is the file for a claim the
-  // implementation does not meet; a `toEqual([])` here would read as the
-  // intended answer.
+  // `parse` is the one member they share with the rule above, and it is the
+  // rule above that answers it: an `Option` of the qualifier, like every other
+  // type (stdlib §2.4.3). Both used to be caught by the namespace branch and
+  // answer the bare type, so the documented spelling was E0201 and the wrong
+  // one was clean (#424). Each direction is asserted per qualifier, so a fix
+  // that moves only one of the four is caught.
+  it("gives Duration.parse the Option the spec gives it", () => {
+    expect(diagnostics(`slot o : Option(Duration) = Duration.parse("500")`)).toEqual([]);
+    expect(diagnostics(`slot d : Duration = Duration.parse("500")`)).toEqual([
+      "E0201 Expected Duration but got Option(Duration)",
+    ]);
+  });
+
+  it("gives Bytes.parse the Option the spec gives it", () => {
+    expect(diagnostics(`slot o : Option(Bytes) = Bytes.parse("x")`)).toEqual([]);
+    expect(diagnostics(`slot b : Bytes = Bytes.parse("x")`)).toEqual([
+      "E0201 Expected Bytes but got Option(Bytes)",
+    ]);
+  });
 
   it("keeps the qualified show a Text, whatever the qualifier", () => {
     expect(diagnostics(`${IDS}\nslot s : Text = PostId.show("a")`)).toEqual([]);
