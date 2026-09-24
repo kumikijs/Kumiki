@@ -1951,25 +1951,73 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
     // the base type is unknown, as it is there — the name-based reading then
     // stands, on both sides alike.
     const base = unaliasType(lvalueType(lv.base, sym), sym);
-    if (base?.kind === "TypeRecord") {
-      const isField = recordFieldType(base, lv.field) !== null;
-      lv.accessKind = isField ? "field" : "shortcut";
-      if (!isField) {
-        // The read side's diagnostic, raised for a write. Without it the same
-        // expression was an error as an rvalue and silent as an lvalue, and
-        // the write landed on a key beside the data it meant to edit.
-        errors.push({
-          code: "E0108",
-          kind: "undef-member",
-          message: `Record type has no field or method ".${lv.field}"`,
-          pos: lv.pos,
-        });
-      }
-    } else if (base) {
+    if (base) {
       lv.accessKind = "shortcut";
+      checkMemberLvalue(lv, base, sym, errors);
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
+}
+
+/**
+ * `classifyMember`'s answer, asked for a write. The read side asks whether
+ * `.member` names something on this receiver; the write side asks that and
+ * then one thing more — whether what it names can be written *through*.
+ * §1.6.3's step set is closed: a field, an index, and `.get`. A member is none
+ * of those, and lowering it anyway made the segment a literal key, so
+ * `name.length := 9` on a `Text` left the slot holding `{"length": 9}` — not a
+ * `Text`, and reported by nothing until a render tripped over it.
+ *
+ * Everything but that last question is the classifier's, so the two sides
+ * cannot disagree about what a name *is*. They differ only in what they do
+ * with the answer, which is the difference the two sides actually have.
+ */
+function checkMemberLvalue(
+  lv: Lvalue & { kind: "LField" },
+  base: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  switch (classifyMember(base, lv.field, sym)) {
+    case "field":
+      // A record's own field, or a prim's structural field (`File.name`).
+      // Recorded rather than left as "shortcut" so the annotation says what
+      // the segment is; both spellings lower to the same key.
+      lv.accessKind = "field";
+      return;
+
+    case "member":
+      // The one member §1.6.3 makes an lvalue — and only where it defines it,
+      // on a receiver that unwraps. On anything else `.get` is the same
+      // corruption as any other member: the runtime's setter falls through an
+      // unwrap segment when the value carries no `_tag`, so the write lands on
+      // the whole slot.
+      if (lv.field === "get" && unwrappedType(base) !== null) return;
+      errors.push({
+        code: "E0602",
+        kind: "unassignable-member",
+        message: `Cannot assign through ".${lv.field}": it is a member of "${typeName(base, sym)}", not a field`,
+        pos: lv.pos,
+      });
+      return;
+
+    // Not a member of *this* receiver, so there is nothing to refuse writing
+    // through — the name is undefined here, which is the read side's answer
+    // and now the write side's too. Calling it E0602 would have put a false
+    // sentence in the message: `.abs` is not "a member of Text".
+    case "numeric-only":
+      errors.push(undefMemberError(base, lv.field, lv.pos, sym, true));
+      return;
+
+    case "unknown":
+      errors.push(undefMemberError(base, lv.field, lv.pos, sym));
+      return;
+
+    case "undecidable":
+      // A receiver we do not fully understand. Silent, exactly as on the read
+      // side: a false error on a dynamic receiver is worse than the silence.
+      return;
+  }
 }
 
 /**
@@ -3505,10 +3553,86 @@ function sharedBase(
 }
 
 /**
- * Decide whether `recv.field` is a record field read or a method shortcut, and
- * annotate the node so codegen lowers the right thing (ADR-002). Emits E0108
- * when the receiver type is KNOWN and `field` is neither a member nor a record
- * field; stays silent (shortcut) when the type is undecidable.
+ * What `recv.field` names on a receiver of type `t`, for both sides of `:=`.
+ *
+ * ADR-002 makes `recv.member` a dispatch rather than a keyword — a record's
+ * own field wins, and otherwise the name is looked up in the stdlib — so
+ * "field or member?" is one question with one answer, asked once for a read
+ * and once for a write. It used to be asked twice, by two ladders that had
+ * drifted: the write side knew only how to answer it for a record, and treated
+ * every numeric-only member as a member of whatever receiver it was written
+ * on. Now the ladder is here and the callers only decide what to do with the
+ * verdict.
+ *
+ * - `field`        — a real field, and therefore a real lvalue step.
+ * - `member`       — a stdlib member of this receiver.
+ * - `numeric-only` — a member, but of `Int` / `Float`, and this receiver is
+ *                    neither. Not a member here, and the message says so.
+ * - `unknown`      — the receiver is understood and has no such name.
+ * - `undecidable`  — a union, an opaque type parameter, or no type at all. We
+ *                    only speak about types we fully understand, because a
+ *                    false error on a dynamic receiver is worse than silence.
+ */
+type MemberClass = "field" | "member" | "numeric-only" | "unknown" | "undecidable";
+
+function classifyMember(t: TypeExpr | null, field: string, sym: SymbolTable): MemberClass {
+  if (!t) return "undecidable";
+
+  if (t.kind === "TypeRecord") {
+    if (recordFieldType(t, field) !== null) return "field";
+    // The one member every value has, including a record — the dispatch falls
+    // through to the stdlib for any name the record does not declare, and
+    // `.show` is the name that resolves there.
+    if (field === "show") return "member";
+    return "unknown";
+  }
+
+  const isKnownReceiver =
+    (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
+    (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
+  if (!isKnownReceiver) return "undecidable";
+
+  // A prim's structural field (`File.name`) — a field the type system does not
+  // see in the type, because `File` is a scalar to it and a record to the
+  // runtime (stdlib.md §2.1).
+  if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[field]) return "field";
+
+  if (KNOWN_MEMBERS.has(field)) {
+    return NUMERIC_MEMBERS.has(field) && !isNumeric(t, sym) ? "numeric-only" : "member";
+  }
+  return "unknown";
+}
+
+/**
+ * The one wording for "this receiver has no such member", so the two sides
+ * cannot report the same expression differently depending on which side of
+ * `:=` it landed on. A record says "record type" because naming its shape adds
+ * nothing a reader of the line does not already have.
+ */
+function undefMemberError(
+  t: TypeExpr,
+  field: string,
+  pos: Pos,
+  sym: SymbolTable,
+  numericOnly = false,
+): KumikiError {
+  const head =
+    t.kind === "TypeRecord"
+      ? `Record type has no field or method ".${field}"`
+      : `Type "${typeName(t, sym)}" has no member ".${field}"`;
+  return {
+    code: "E0108",
+    kind: "undef-member",
+    message: numericOnly ? `${head} — it is a method of Int / Float` : head,
+    pos,
+  };
+}
+
+/**
+ * Annotate a `FieldAccess` with the decision codegen needs (ADR-002), and
+ * report what `classifyMember` refuses. The arity check below is the read
+ * side's alone: it is about an expression producing a value, and the write
+ * side's answer for the same name is E0602 either way.
  */
 function classifyFieldAccess(
   e: Expr & { kind: "FieldAccess" },
@@ -3518,41 +3642,13 @@ function classifyFieldAccess(
 ): void {
   const t = unaliasType(inferType(e.base, sym, ctx), sym);
   if (!t) return; // dynamic — keep name-based shortcut dispatch, no diagnostic
-  if (t.kind === "TypeRecord") {
-    if (recordFieldType(t, e.field)) {
+
+  switch (classifyMember(t, e.field, sym)) {
+    case "field":
       e.accessKind = "field";
       return;
-    }
-    if (e.field === "show") {
-      e.accessKind = "shortcut";
-      return;
-    }
-    errors.push({
-      code: "E0108",
-      kind: "undef-member",
-      message: `Record type has no field or method ".${e.field}"`,
-      pos: e.pos,
-    });
-    return;
-  }
-  const isKnownReceiver =
-    (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
-    (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
-  if (isKnownReceiver) {
-    if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[e.field]) {
-      e.accessKind = "field";
-      return;
-    }
-    if (KNOWN_MEMBERS.has(e.field)) {
-      if (NUMERIC_MEMBERS.has(e.field) && !isNumeric(t, sym)) {
-        errors.push({
-          code: "E0108",
-          kind: "undef-member",
-          message: `Type "${typeName(t, sym)}" has no member ".${e.field}" — it is a method of Int / Float`,
-          pos: e.pos,
-        });
-        return;
-      }
+
+    case "member": {
       // Written without the arguments it needs. The parser produces a field
       // access when there is no argument list, so the arity check on the
       // method-call branch never saw this shape: `f.pow` reached codegen's
@@ -3572,16 +3668,19 @@ function classifyFieldAccess(
       e.accessKind = "shortcut";
       return;
     }
-    const tn = t.kind === "TypeApp" ? t.name : (t as { name: string }).name;
-    errors.push({
-      code: "E0108",
-      kind: "undef-member",
-      message: `Type "${tn}" has no member ".${e.field}"`,
-      pos: e.pos,
-    });
+
+    case "numeric-only":
+      errors.push(undefMemberError(t, e.field, e.pos, sym, true));
+      return;
+
+    case "unknown":
+      errors.push(undefMemberError(t, e.field, e.pos, sym));
+      return;
+
+    case "undecidable":
+      // A union or an opaque type param → leave as shortcut, no diagnostic.
+      return;
   }
-  // Any other resolved type (union, opaque type param) → leave as shortcut, no
-  // diagnostic (we only flag members of types we fully understand).
 }
 
 function currentFnName(ctx: Ctx): string {

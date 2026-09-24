@@ -1,0 +1,95 @@
+# Feature (language.md §1.6.3): a member name is dispatched, not reserved.
+#
+# The lvalue step set is closed — a field, an index, and `.get` on an Option or
+# Result — so `text.length := 9` is E0602 rather than a write. That rule has to
+# leave this app alone: every field written below is *named* like a stdlib
+# member, and every one of them is a real field of a real record, so each write
+# is a plain field write.
+#
+# This is the half the corpus can hold. The rejections are check-time, so they
+# live in `packages/compiler/test/lvalue-members.test.ts`; what an example can
+# show is that the rule refuses members without refusing fields that merely
+# share their names.
+
+# Every field name here is also a stdlib member: `length` and `size` on a Text
+# and a Map, `head` and `keys` on a List, and `get` itself.
+type Ruler = {
+  length: Int,
+  size  : Int,
+  head  : Text,
+  keys  : Int,
+  get   : Text
+}
+
+slot ruler : Ruler = {length: 0, size: 0, head: "start", keys: 0, get: "held"}
+
+# The Option that makes `.get` the unwrap rather than a field, so both readings
+# of the one name are in the same file.
+slot draft : Option({length: Int}) = None
+
+slot marks : Map(Text, Int) = {}
+
+# Each of these is a field write on a record. Under the name-based reading they
+# would have been the member, and the slot would have gained a key instead.
+reducer measure on=ui.click(Measure)
+    do= ruler.length := ruler.length + 1
+
+reducer resize on=ui.click(Resize)
+    do= ruler.size := ruler.size + 2
+
+reducer rename on=ui.click(Rename)
+    do= ruler.head := "moved"
+
+reducer rekey on=ui.click(Rekey)
+    do= ruler.keys := ruler.keys + 3
+
+# The field literally named `get`, which is the case that makes the dispatch a
+# decision rather than a keyword: here it is a field, below it is the unwrap.
+reducer hold on=ui.click(Hold)
+    do= ruler.get := "taken"
+
+reducer start on=ui.click(Start)
+    do= draft := Some({length: 10})
+
+# The same spelling, one line apart, resolving the other way: `draft` is an
+# Option, so this reaches the payload. A `None` makes it a no-op.
+reducer stretch on=ui.click(Stretch)
+    do= draft.get.length := 99
+
+# An index step, the third member of the closed set. A Map, which is the shape
+# §1.6.3's own example uses — an index write into a List is a separate defect
+# of the runtime's setter, which spreads the array into an object literal, and
+# is tracked on its own rather than widened into this rule.
+reducer mark on=ui.click(Mark)
+    do= marks["a"] := 1
+
+reducer bump on=ui.click(Bump)
+    do= marks["a"] := 7
+
+tile Measure = button(text="measure") {id: "measure"}
+tile Resize  = button(text="resize")  {id: "resize"}
+tile Rename  = button(text="rename")  {id: "rename"}
+tile Rekey   = button(text="rekey")   {id: "rekey"}
+tile Hold    = button(text="hold")    {id: "hold"}
+tile Start   = button(text="start")   {id: "start"}
+tile Stretch = button(text="stretch") {id: "stretch"}
+tile Mark    = button(text="mark")    {id: "mark"}
+tile Bump    = button(text="bump")    {id: "bump"}
+
+tile App
+    = column(
+        heading("fields named like members"),
+        row(Measure, Resize, Rename, Rekey, Hold) {gap: "sm"},
+        row(Start, Stretch, Mark, Bump) {gap: "sm"},
+        text("length: " + ruler.length.show),
+        text("size: " + ruler.size.show),
+        text("head: " + ruler.head),
+        text("keys: " + ruler.keys.show),
+        text("get: " + ruler.get),
+        text("marks: " + marks.size.show))
+      {pad: "lg", gap: "md"}
+
+app ShortcutNamedFields
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -876,6 +876,20 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 **Note**: The granularity is **path shape**. `issues[id].status` and `issues[id].updatedAt` are considered different shapes and can coexist, but double assignment to `count` is forbidden.
 
+### E0602 `unassignable-member`
+
+An lvalue step names a **stdlib member** of the receiver rather than a field. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index, and `.get` on an `Option` / `Result` — so a member cannot be written through: the segment would become a literal key and the write would replace the slot with a record. `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
+
+> `Cannot assign through ".<member>": it is a member of "<T>", not a field`
+
+`.get` is the exception, and only where §1.6.3 defines it. On a receiver that does not unwrap — a `Map`, a `List` — `.get` is a member like any other and reported the same way.
+
+The name is dispatched, not reserved: a record that declares a field named `length` is still written through it. Conversely a record does not declare `.show`, so the dispatch falls through to the stdlib and `rec.show := "x"` is E0602 like any other member.
+
+E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.
+
+**Fix**: Write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists.
+
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 
 A band for checks that are **off** unless an explicit `strict*` opt-in turns them on, plus the ones that guard invariants of the testing DSL itself. There is no warning tier here: without the matching flag `check()` filters the `strict*` codes out entirely, so they neither print nor affect the exit code; with it they are errors. Testing-DSL codes are always active, because they only fire inside `test` / `episode-test` / `property-test` bodies.

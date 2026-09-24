@@ -462,6 +462,8 @@ The tiles a subscription reaches are decided by the path a descendant is rendere
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
 
+The steps a path may take are a **closed set**: a field (`.name`), an index (`[key]`), and `.get` on an `Option` / `Result`. Nothing else is an lvalue — in particular a stdlib member is not one, and `name.length := 9` is [E0602](./errors.md#e0602-unassignable-member) rather than a write. There is nothing for such a write to mean: a member derives a value from the receiver, so there is no place in the receiver for the assignment to land.
+
 ```kumiki snippet
 # These reducer statements:
 todos[id].done := true
