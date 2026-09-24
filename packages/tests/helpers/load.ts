@@ -14,8 +14,10 @@ import { resolveCapabilities } from "@kumikijs/compiler/node";
 import type { AppShape } from "@kumikijs/runtime";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// Vitest resolves dynamic imports against the project root, so the loaded
-// module has to live inside it — the CLI's default OS temp dir is not.
+// The loaded module goes under .smoke-tmp/ rather than the CLI's default OS
+// temp dir because vitest.config.ts externalizes that path: Node imports the
+// bundle as it is instead of Vite transforming each one. Move it and nothing
+// fails; the suite just gets slow again.
 const TMP_ROOT = join(here, "..", ".smoke-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
 

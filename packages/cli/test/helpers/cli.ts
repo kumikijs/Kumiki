@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** The CLI's TypeScript entry — the tests run the source, so no build is needed first. */
-export const CLI_PATH = resolve(here, "../../src/kumiki.ts");
+const CLI_PATH = resolve(here, "../../src/kumiki.ts");
 
 /**
  * The arguments that start the CLI under `process.execPath`, ahead of the verb.

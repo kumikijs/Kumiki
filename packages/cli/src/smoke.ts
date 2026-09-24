@@ -31,11 +31,22 @@ import {
   useHttpFixture,
 } from "./harness.ts";
 
-let domReady = false;
-export async function ensureDom(): Promise<void> {
-  if (domReady) return;
-  // Loaded on first use, not at the top: happy-dom is the heaviest import the
-  // CLI has, and check / build / the edit verbs never touch a DOM.
+// The registration in flight or done, shared by every caller. A promise rather
+// than a flag: the import makes this async, so two overlapping calls would both
+// pass a "not yet" check and happy-dom throws on the second registration.
+let domReady: Promise<void> | null = null;
+export function ensureDom(): Promise<void> {
+  domReady ??= registerDom().catch((err: unknown) => {
+    // A failed import must not poison every later call.
+    domReady = null;
+    throw err;
+  });
+  return domReady;
+}
+
+async function registerDom(): Promise<void> {
+  // Loaded on first use, not at the top: happy-dom is a heavy import, and
+  // check / build / the edit verbs never touch a DOM.
   const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
   // Registers window/document/Event/… onto globalThis, overwriting Node's own
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
@@ -45,7 +56,6 @@ export async function ensureDom(): Promise<void> {
   // example's own fixture instead of the network, and an IntersectionObserver
   // that actually notifies. Installed after registration, which overwrites both.
   installTestDoubles();
-  domReady = true;
 }
 
 /**
