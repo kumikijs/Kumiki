@@ -9,12 +9,12 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *   onto. `null` = any tile (currently only `hover`, which the runtime wires
  *   uniformly via `applyUiEventHandlers`).
  *
- *   Not the same question as "which kinds fire this event", and narrower for
- *   `key` / `focus` / `blur`: those three are attached to whatever element a
- *   renderer returned, so what limits them is this table rather than the DOM.
- *   A kind absent from one of those rows is current coverage, not a rule —
- *   see the row notes. For `click` / `submit` / `change` / `input` the two
- *   questions do coincide, and an absence there is a fact about the element.
+ *   For `key` / `focus` / `blur` the runtime attaches the listener to
+ *   whatever element a renderer returned, so which kinds a selector reaches
+ *   is decided by where those events arrive at that element — see
+ *   `FOCUSABLE_ROOT` and `LABEL_WRAPPED_CONTROL`, which the three rows are
+ *   built from. For `click` / `submit` / `change` / `input` each kind's
+ *   renderer decides, and an absence there is a fact about the element.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
@@ -42,6 +42,49 @@ export type UiLift = {
   readonly tiles: ReadonlySet<string> | null;
 };
 
+/**
+ * Kinds whose rendered element is itself focusable, so `focus`, `blur` and
+ * `keydown` all arrive at the element the runtime attaches its listeners to
+ * (`applyUiEventHandlers`). The `key` / `focus` / `blur` rows are built from
+ * this list and `LABEL_WRAPPED_CONTROL`, so the three rows cannot drift apart.
+ *
+ * - `input` / `textarea` / `button` / `select` / `slider`: form controls (a
+ *   `slider` is a bare `<input type="range">`, operated with arrow keys).
+ * - `editable`: a `<div contenteditable="true">` is an editing host, so it is
+ *   focusable without a `tabindex` (its `tabIndex` reads -1: in no tab order,
+ *   focusable anyway).
+ * - `link`: an `<a>` whose `href` is always assigned, so it is focusable and in
+ *   the tab order. A keydown on it runs `ui.key(Link)` BEFORE the browser acts
+ *   on the key: on Enter the browser then activates the link, and the link's
+ *   own click listener navigates as always. The reducer sees the key and
+ *   cannot stop the navigation. This is unlike `click`, which the link reserves
+ *   for navigation and which is therefore absent from the `click` row.
+ *
+ * What this list cannot answer is whether one *instance* can take focus: a
+ * `disabled` control, or an `editable` rendered `contenteditable="false"`,
+ * fires none of the three. That is a runtime property of the element.
+ */
+const FOCUSABLE_ROOT = [
+  "input",
+  "textarea",
+  "button",
+  "select",
+  "slider",
+  "editable",
+  "link",
+] as const;
+
+/**
+ * Kinds rendered as a `<label>` wrapping their focusable `<input>`, so the
+ * runtime's listeners sit on the label and not on the control that takes
+ * focus. The two kinds of event reach the label differently: `keydown`
+ * BUBBLES from the checkbox to the label, so a `ui.key` selector lands; `focus`
+ * and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on the label
+ * ever runs, and W0212 for them is true. These three look like one case with
+ * the focusable controls and are two.
+ */
+const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
+
 export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",
@@ -65,43 +108,14 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   // `onInput` from that listener, so a selector lands on it like any other
   // text control.
   { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
-  // `key` / `focus` / `blur` are the three the runtime attaches to whatever
-  // element a tile produced, so what these rows list is where a *selector*
-  // reaches — narrower than what fires the event. A kind missing from them is
-  // a gap in this table rather than a fact about the DOM.
-  //
-  // `editable` is in all three: a `<div contenteditable="true">` is an editing
-  // host, so it is focusable without a `tabindex` and `focus` / `blur` /
-  // `keydown` all reach it. That is why writing the handler on the tile
-  // already worked while the selector form drew a W0212 whose reason was
-  // untrue.
-  //
-  // The same reasoning still reaches kinds these rows do not list, and they
-  // are a gap rather than a decision: `slider` (a bare `<input type="range">`)
-  // and `link` (an `<a>` whose `href` is always assigned) are absent from all
-  // three, and `select` fires `keydown` natively but is absent from `key`.
-  // `check` / `radio` / `switch` are half of one: their `<label>` wrapper sees
-  // a bubbled `keydown` but not `focus` / `blur`, which do not bubble, so only
-  // the `key` row is missing them. Tracked separately, because each is a
-  // behaviour change for a kind #367 did not name.
-  //
-  // What is NOT a gap is an element that cannot be focused at all — a
-  // `disabled` or permanently `readonly` control, which `applyControlState`
-  // renders with `contenteditable="false"` or the DOM attribute. The row lists
-  // the kind; whether a given instance can fire is a runtime property no
-  // compile-time table can answer.
-  { ev: "key", handler: "onKeyDown", tiles: new Set(["input", "textarea", "button", "editable"]) },
+  {
+    ev: "key",
+    handler: "onKeyDown",
+    tiles: new Set([...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]),
+  },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
-  {
-    ev: "focus",
-    handler: "onFocus",
-    tiles: new Set(["input", "textarea", "button", "select", "editable"]),
-  },
-  {
-    ev: "blur",
-    handler: "onBlur",
-    tiles: new Set(["input", "textarea", "button", "select", "editable"]),
-  },
+  { ev: "focus", handler: "onFocus", tiles: new Set(FOCUSABLE_ROOT) },
+  { ev: "blur", handler: "onBlur", tiles: new Set(FOCUSABLE_ROOT) },
 ];
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */

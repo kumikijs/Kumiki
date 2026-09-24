@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired",
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "a real focus() lands on the slider, which is what lets its ui.focus fire at all. The scenario tier dispatches a FocusEvent at the element and cannot see this",
+      "do": { "focus": "#vol" },
+      "expect": { "noErrors": true, "focused": "#vol", "state": { "log": "sf " } }
+    },
+    {
+      "label": "and a real blur() runs its ui.blur",
+      "do": { "blur": "#vol" },
+      "expect": { "noErrors": true, "state": { "log": "sf sb " } }
+    },
+    {
+      "label": "the link is focusable: its href is always set",
+      "do": { "focus": "#home" },
+      "expect": { "noErrors": true, "focused": "#home", "state": { "log": "sf sb lf " } }
+    },
+    {
+      "label": "leaving the link",
+      "do": { "blur": "#home" },
+      "expect": { "noErrors": true, "state": { "log": "sf sb lf lb " } }
+    },
+    {
+      "label": "the select is focusable, so the key row's premise holds for it too",
+      "do": { "focus": "#pick" },
+      "expect": { "noErrors": true, "focused": "#pick", "state": { "log": "sf sb lf lb " } }
+    },
+    {
+      "label": "the checkbox inside check's label takes focus, and nothing reaches the label: focus does not bubble, which is why ui.focus on a check stays W0212",
+      "do": { "focus": "#done input" },
+      "expect": { "noErrors": true, "focused": "#done input", "state": { "log": "sf sb lf lb " } }
+    }
+  ]
+}
