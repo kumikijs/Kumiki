@@ -173,9 +173,9 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 });
 
-// Issue #466: `Option(T).filter` lowers to the polymorphic `_s.filter`, which
-// read an Option's own representation (`{_tag, _0}`) as a Map and filtered its
-// fields. The result was neither a `Some` nor a `None`.
+// `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read
+// an Option's own representation (`{_tag, _0}`) as a Map and filter its fields.
+// The result was neither a `Some` nor a `None`.
 describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () => {
   it("keeps a Some whose value passes the predicate", () => {
     const kept = _stdlibCore.filter(_stdlibCore.Some(3), (x) => (x as number) > 2);
