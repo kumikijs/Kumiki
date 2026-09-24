@@ -519,6 +519,8 @@ issue.copy(status=Done, priority=High)
 
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
+> **最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T`、`load.err($e, _)` は `$e : E` を束縛する。`Result` 以外の `out=` では `.ok` の束縛がその値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。2つ目の束縛（リクエストキー）、`Result` でない `out=` の `.err`、組み込み effect の結果は宣言された型を持たず、検査されない。
+
 ### 1.6.6 例
 
 ```kumiki fragment

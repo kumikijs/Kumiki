@@ -1629,6 +1629,28 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
   }
 }
 
+/**
+ * The type `$1` holds in an `effect-name.ok(…)` / `.err(…)` trigger — the
+ * value the effect's `out=` says it delivers (language.md §1.6.5). A `Result`
+ * splits by outcome: `.ok` binds its Ok payload and `.err` its Err payload.
+ * Any other `out=` is the whole value on `.ok`; what `.err` carries then is the
+ * runtime's failure, which no declaration names, so it stays undecided — as
+ * does a built-in effect, which has no `out=` to read.
+ */
+function effectPayloadType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  const out = sym.effects.get(effect)?.outType;
+  if (!out) return null;
+  const u = unaliasType(out, sym);
+  if (u?.kind === "TypeApp" && u.name === "Result" && u.args.length === 2) {
+    return (outcome === "ok" ? u.args[0] : u.args[1]) ?? null;
+  }
+  return outcome === "ok" ? out : null;
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -1651,7 +1673,8 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     // since it stands for a positional rather than skipping one, which is the
     // index `emit-reducer.ts` reads the payload at.
     const boundAt = new Map<string, number>();
-    r.on.binds.forEach((b, i) => {
+    const trigger = r.on;
+    trigger.binds.forEach((b, i) => {
       if (b.name === "_") return;
       if (RESERVED_BIND_NAMES.has(b.name)) {
         // §1.6.5 — codegen declares these three in every reducer body, whatever
@@ -1682,7 +1705,14 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
             pos: b.pos,
           });
       }
-      ctx.localBinds.add(b.name);
+      // `$1` is the effect's result; the positionals after it (the request key)
+      // stay untyped. A reserved name is not this bind's to type — the body
+      // reads the compiler's own declaration of it.
+      const type =
+        i === 0 && !RESERVED_BIND_NAMES.has(b.name)
+          ? effectPayloadType(trigger.effect, trigger.outcome, sym)
+          : null;
+      bindLocal(ctx, b.name, type);
     });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.

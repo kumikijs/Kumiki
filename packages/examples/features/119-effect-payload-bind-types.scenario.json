@@ -1,0 +1,41 @@
+{
+  "steps": [
+    {
+      "label": "nothing stored: the Ok payload is a None, stored as the Option it is",
+      "expect": {
+        "noErrors": true,
+        "state": { "session": { "_tag": "None" } },
+        "domIncludes": ["signed out"]
+      }
+    },
+    {
+      "label": "after a save the reload's Ok payload is a Some, rendered through the match",
+      "do": { "click": "#sign-in" },
+      "expect": {
+        "noErrors": true,
+        "state": { "session": { "_tag": "Some", "_0": { "email": "a@example.com" } } },
+        "domIncludes": ["signed in as a@example.com"]
+      }
+    },
+    {
+      "label": "a failed read binds the Err payload, a Text, and leaves the session alone",
+      "do": { "click": "#reload" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "problem": "storage blocked",
+          "session": { "_tag": "Some", "_0": { "email": "a@example.com" } }
+        },
+        "domIncludes": ["problem: storage blocked"]
+      }
+    }
+  ],
+  "effects": {
+    "loadSession": [
+      { "outcome": "ok", "value": { "_tag": "None" } },
+      { "outcome": "ok", "value": { "_tag": "Some", "_0": { "email": "a@example.com" } } },
+      { "outcome": "err", "value": "storage blocked" }
+    ],
+    "saveSession": [{ "outcome": "ok", "value": null }]
+  }
+}
