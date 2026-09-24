@@ -458,6 +458,8 @@ subscription が届く tile を決めるのは、その子孫が「どの経路�
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
 
+path が取れるステップは**閉じた集合**である：フィールド（`.name`）、インデックス（`[key]`）、そして `Option` / `Result` への `.get` の3つ。それ以外は lvalue ではない。特に標準ライブラリのメンバーは lvalue ではなく、`name.length := 9` は書き込みではなく [E0602](./errors.md#e0602-unassignable-member) である。そもそもそうした書き込みには意味が無い：メンバーはレシーバから値を導出するものなので、代入が着地すべき場所がレシーバ内に存在しない。
+
 ```kumiki snippet
 # これらの reducer 文は:
 todos[id].done := true

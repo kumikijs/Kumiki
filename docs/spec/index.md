@@ -111,6 +111,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | style |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | core |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | core |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | lifecycle |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
@@ -227,5 +228,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `93-panic-info.kumiki` | slot, reducer, tile, app | lifecycle | [§7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) |
 | `94-editable-key-focus-blur-selectors.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 | `95-disabled-controls-refuse-a-step.kumiki` | slot, reducer, tile | testing | [§8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification) |
+| `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 <!-- examples:end -->
 :::

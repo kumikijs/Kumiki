@@ -1967,9 +1967,68 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       }
     } else if (base) {
       lv.accessKind = "shortcut";
+      checkMemberLvalue(lv, base, sym, errors);
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
+}
+
+/**
+ * The rest of `classifyFieldAccess`'s ladder, asked for a write (#370). The
+ * read side asks whether `.member` names something on this receiver; the write
+ * side asks that and then one thing more — whether what it names can be
+ * written *through*. §1.6.3's step set is closed: a field, an index, and
+ * `.get`. A member is none of those, and lowering it anyway made the segment a
+ * literal key, so `name.length := 9` on a `Text` left the slot holding
+ * `{"length": 9}` — not a `Text`, and reported by nothing until a render
+ * tripped over it.
+ *
+ * Only for a receiver we fully understand, which is the read side's policy
+ * too: a false error on a dynamic receiver is worse than the silence.
+ */
+function checkMemberLvalue(
+  lv: Lvalue & { kind: "LField" },
+  base: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const isKnownReceiver =
+    (base.kind === "TypePrim" && SCALAR_PRIMS.has(base.name)) ||
+    (base.kind === "TypeApp" && STDLIB_CONTAINERS.has(base.name));
+  if (!isKnownReceiver) return;
+
+  // A primitive's structural field (`File.name`) is a field, and is written
+  // through as one. Recorded rather than left as "shortcut" so the annotation
+  // says what the segment is; both spellings lower to the same key.
+  if (base.kind === "TypePrim" && PRIM_FIELDS[base.name]?.[lv.field]) {
+    lv.accessKind = "field";
+    return;
+  }
+
+  // The one member §1.6.3 makes an lvalue — and only where it defines it, on a
+  // receiver that unwraps. On anything else `.get` is the same corruption as
+  // any other member: the runtime's setter falls through an unwrap segment
+  // when the value carries no `_tag`, so the write lands on the whole slot.
+  if (lv.field === "get" && unwrappedType(base) !== null) return;
+
+  if (KNOWN_MEMBERS.has(lv.field)) {
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: `Cannot assign through ".${lv.field}": it is a member of "${typeName(base, sym)}", not a field`,
+      pos: lv.pos,
+    });
+    return;
+  }
+
+  // Not a member at all. The read side's own answer, which the write side was
+  // missing entirely.
+  errors.push({
+    code: "E0108",
+    kind: "undef-member",
+    message: `Type "${typeName(base, sym)}" has no member ".${lv.field}"`,
+    pos: lv.pos,
+  });
 }
 
 /**
