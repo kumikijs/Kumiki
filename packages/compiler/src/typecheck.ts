@@ -955,6 +955,44 @@ function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
+/** The controls `bind` writes back from (forms.md §5.1.1, plus `editable`). */
+const BIND_CONTROLS = new Set([
+  "input",
+  "textarea",
+  "select",
+  "slider",
+  "check",
+  "switch",
+  "radio",
+  "editable",
+]);
+
+/**
+ * E0219: `strict` on a bound control. forms.md §5.1.2 used to specify
+ * `strict=false` — take a value the refinement refuses and turn a form-level
+ * `valid` flag false — and nothing ever implemented it: the flag has no reader
+ * in the language, so the prop passed `check` and did nothing (#443). The
+ * chapter now has one mode, and the prop an author carries over from the old
+ * text is reported where it is written, as an argument or in the props block.
+ */
+function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  if (!BIND_CONTROLS.has(t.name)) return;
+  const written = [
+    ...t.args.flatMap((a) =>
+      a.name === "strict" ? [{ pos: a.namePos ?? (a.value as Expr).pos }] : [],
+    ),
+    ...t.props.flatMap((p) => (p.name === "strict" ? [{ pos: p.pos }] : [])),
+  ];
+  for (const { pos } of written) {
+    errors.push({
+      code: "E0219",
+      kind: "bind-strict-prop",
+      message: `"strict" is not a prop of ${t.name}: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`,
+      pos,
+    });
+  }
+}
+
 /**
  * `button(type=…)` takes one of the three HTML values. A literal outside them
  * is worth reporting because of which way it fails: an invalid `type`
@@ -1189,6 +1227,7 @@ function checkTileCall(
   checkA11y(t, sym, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
+  checkBindStrictProp(t, errors);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");

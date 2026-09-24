@@ -122,7 +122,7 @@ export const selectTile: TileRenderer<"select"> = (node) => {
     if (matched === undefined) return;
     if (state?.bind) {
       const app = liveApp(sel);
-      if (app) writeBind(app, state.bind, state.bindPath, matched.value);
+      if (app) writeBind(app, sel, state.bind, state.bindPath, matched.value);
     }
     if (state?.onChange) state.onChange({ ...(state.el ?? {}), value: matched.value });
   });

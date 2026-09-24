@@ -12,6 +12,7 @@ import {
   _setPathHelper,
   attrValue,
   bindLabel,
+  noteBindWrite,
   resolveApp,
   warnUnresolvedEvent,
 } from "../../core.ts";
@@ -23,18 +24,27 @@ export function liveApp(el: Element): MountedApp | undefined {
   return app;
 }
 
+/**
+ * Write what control `el` now holds back to its slot (forms.md §5.1). A value
+ * the slot's refinement refuses is refused for this field alone and reported
+ * nowhere — a half-typed value is expected — but it is not forgotten: the
+ * control keeps showing it, so `error(field=…)` has to speak for it, and the
+ * pass that re-renders is what lets it.
+ */
 export function writeBind(
   app: MountedApp,
+  el: HTMLElement,
   slotName: string,
   bindPath: BindSegment[] | undefined,
   value: unknown,
 ): void {
-  if (bindPath && bindPath.length > 0) {
-    const current = app.live[slotName] ?? {};
-    app._setSlot(slotName, _setPathHelper(current, bindPath, value));
-  } else {
-    app._setSlot(slotName, value);
-  }
+  const next =
+    bindPath && bindPath.length > 0
+      ? _setPathHelper(app.live[slotName] ?? {}, bindPath, value)
+      : value;
+  const accepted = app._setSlot(slotName, next);
+  noteBindWrite(app, el, slotName, next, accepted);
+  if (!accepted) app._rerender();
 }
 
 export function bindDataset(

@@ -1356,7 +1356,11 @@ const ROOT_ATTR = "data-kumiki-root";
  */
 export type MountedApp = AppShape & {
   _dispatch: (name: string, el: Record<string, unknown>) => void;
-  _setSlot: (name: string, value: unknown) => void;
+  /**
+   * Write a slot through its refinement: `true` when the value was taken,
+   * `false` when the refinement refused it and nothing changed.
+   */
+  _setSlot: (name: string, value: unknown) => boolean;
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;
@@ -1372,6 +1376,66 @@ export type MountedApp = AppShape & {
 };
 
 const appByRoot = new WeakMap<Element, MountedApp>();
+
+/**
+ * A value a `bind` wrote and its slot's refinement refused (forms.md §5.1.2):
+ * the slot value the write would have produced, and what the control was
+ * showing when it was refused.
+ */
+type RefusedBind = { slot: string; value: unknown; shown: string };
+
+/**
+ * Per mount, the controls whose shown value their slot refused. A refused
+ * bind leaves the slot as it was and the control as the user left it, so the
+ * two disagree; this is what lets `error(field=…)` speak for what the field
+ * shows rather than for the value the slot kept.
+ */
+const refusedBinds = new WeakMap<object, Map<HTMLElement, RefusedBind>>();
+
+/** What a bound control shows: its value, or an editable's text. */
+function shownValue(el: HTMLElement): string {
+  return "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? "");
+}
+
+/**
+ * Record the outcome of a `bind` write from `el`: a refused one is remembered
+ * against the control, an accepted one clears whatever was.
+ */
+export function noteBindWrite(
+  app: object,
+  el: HTMLElement,
+  slot: string,
+  value: unknown,
+  accepted: boolean,
+): void {
+  let byEl = refusedBinds.get(app);
+  if (accepted) {
+    byEl?.delete(el);
+    return;
+  }
+  if (!byEl) {
+    byEl = new Map();
+    refusedBinds.set(app, byEl);
+  }
+  byEl.set(el, { slot, value, shown: shownValue(el) });
+}
+
+/**
+ * The refused value a control bound to `slot` is still showing, if any. An
+ * entry whose control has left the page, or no longer shows what was refused
+ * — a reducer rewrote the slot and the control followed it — is stale, and
+ * dropped here rather than by every path that can move a control.
+ */
+export function refusedBindShown(app: object, slot: string): { value: unknown } | undefined {
+  const byEl = refusedBinds.get(app);
+  if (!byEl) return undefined;
+  for (const [el, r] of byEl) {
+    if (r.slot !== slot) continue;
+    if (el.isConnected && shownValue(el) === r.shown) return { value: r.value };
+    byEl.delete(el);
+  }
+  return undefined;
+}
 
 /**
  * The live mount of an `AppShape`, if it has one. A shape carries the app's
@@ -2594,14 +2658,15 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  (app as AppShape & { _setSlot?: (name: string, value: unknown) => void })._setSlot = (
+  (app as AppShape & { _setSlot?: (name: string, value: unknown) => boolean })._setSlot = (
     name: string,
     value: unknown,
   ) => {
     const meta = app.slots[name];
-    if (meta?.refine && !meta.refine(value)) return;
+    if (meta?.refine && !meta.refine(value)) return false;
     slotValues[name] = value;
     render();
+    return true;
   };
   (app as AppShape & { _navigate?: (path: string, replace?: boolean) => void })._navigate = (
     path: string,
@@ -3938,8 +4003,16 @@ function reconcileNode(
       diag?.fallback({ reason: "no-patcher" }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
+  } else if (newNode.kind === "error") {
+    // Every own field compared equal, which leaves the element mounted
+    // untouched — except for a tile whose output reads state its node does
+    // not carry. `error(field=…)` renders the message for what its field
+    // *shows*, and a `bind` its refinement refused changes that without
+    // changing the slot the node is built from (forms.md §5.1.2, #443), so
+    // its patcher re-derives the message on every pass, equal node or not.
+    patchers.error?.(oldEl, oldNode as never, newNode as never, ctx);
   }
-  // No `else`: when every own field compares equal the element stays mounted
+  // Otherwise, when every own field compares equal the element stays mounted
   // untouched, and that is unconditionally safe — handlers compare by identity
   // (§10.3.13), so reaching here means the mounted element already holds the
   // handlers this render produced.

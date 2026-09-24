@@ -100,6 +100,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | コア |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | コア |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | コア |
+| [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
@@ -231,5 +232,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | コア | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | コア | [§2.2](./stdlib.md#_2-2-コレクションメソッド) |
+| `105-refused-bind.kumiki` | slot, reducer, tile | フォーム | [§5.1.2](./forms.md#_5-1-2-refinement-の扱い) |
 <!-- examples:end -->
 :::

@@ -100,6 +100,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | core |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | core |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | core |
+| [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | forms |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
@@ -231,5 +232,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | core | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | core | [§2.2](./stdlib.md#_2-2-collection-methods) |
+| `105-refused-bind.kumiki` | slot, reducer, tile | forms | [§5.1.2](./forms.md#_5-1-2-handling-of-refinement) |
 <!-- examples:end -->
 :::
