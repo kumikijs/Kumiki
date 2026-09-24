@@ -314,3 +314,76 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * A program whose one reducer's `do=` clause is `body`, over a `count` slot for
+ * the branch condition and two text slots to write.
+ */
+function branching(body: string): string {
+  return `slot count : Int  = 1
+slot note  : Text = ""
+slot other : Text = ""
+
+reducer subject on=app.start
+    do= ${body}
+
+tile Page = column(text(note))
+
+app A
+    caps   = []
+    routes = {"/" -> Page, "/404" -> Page}
+    init   = []
+`;
+}
+
+/** Each E0103 `check` reports: the name, and the source from its position to the end of that line. */
+function undefinedReads(source: string): { name: string; at: string }[] {
+  const lines = source.split("\n");
+  return check(parse(lex(source)))
+    .filter((e) => e.code === "E0103")
+    .map((e) => ({
+      name: /"([^"]+)"/.exec(e.message)?.[1] ?? "",
+      at: e.pos ? (lines[e.pos.line - 1]?.slice(e.pos.col - 1) ?? "") : "",
+    }));
+}
+
+describe("the checker scopes each `if` branch as codegen does", () => {
+  // language.md §1.6.7: "each branch of an `if`" is a scope, and a binding
+  // declared in one ends with it. Codegen emits each branch as a block of its
+  // own, so a read `check` let through would resolve to nothing and throw
+  // `n is not defined` the first time the reducer ran.
+  it("reports a branch-local `let` read after the `if` as E0103 at the read", () => {
+    const src = branching(
+      'if count > 0 then { let n = "inner" } else { let n = "other" }\n        note := n',
+    );
+    expect(undefinedReads(src)).toEqual([{ name: "n", at: "n" }]);
+  });
+
+  it("reports one declared in only one branch and read after the `if`", () => {
+    const src = branching('if count > 0 then { let n = "inner" } else { () }\n        note := n');
+    expect(undefinedReads(src)).toEqual([{ name: "n", at: "n" }]);
+  });
+
+  it("does not carry a `let` from the `then` branch into the `else` branch", () => {
+    const src = branching('if count > 0 then { let n = "inner" } else { note := n }');
+    expect(undefinedReads(src)).toEqual([{ name: "n", at: "n }" }]);
+  });
+
+  it("keeps an earlier `let` readable in both branches and after, and lets a branch shadow it", () => {
+    const src = branching(
+      'let n = "outer"\n        if count > 0 then { let n = "inner"\n                            note := n }\n                     else { note := n }\n        other := n',
+    );
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("still counts a slot written in both branches as written after the `if` (E0601)", () => {
+    const src = branching(
+      'if count > 0 then { note := "a" } else { note := "b" }\n        note := "c"',
+    );
+    expect(codes(src)).toEqual(["E0601"]);
+  });
+
+  it("still lets each branch write the slot the other one writes", () => {
+    expect(codes(branching('if count > 0 then { note := "a" } else { note := "b" }'))).toEqual([]);
+  });
+});

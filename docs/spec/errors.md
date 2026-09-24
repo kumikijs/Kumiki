@@ -245,6 +245,8 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
+A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), so a name one `if` branch declares is undefined in the other branch and on every statement after the `if`. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
+
 **Fix**: Confirm that the referenced slot / binding is declared.
 
 ### E0104 `undef-effect` / `init-not-effect-call`
