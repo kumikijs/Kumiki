@@ -826,13 +826,17 @@ An effect declared with `cap=http.cancel` does not have the required shape `in=E
 
 ### E0304 `derived-slot`
 
-A slot's initial value reads another slot — or itself. Derived slots are prohibited ([Store Layer Invariants](./language.md#_1-4-2-invariants), inv. 4), and `init-expr` ([Store Layer Syntax](./language.md#_1-4-1-syntax)) admits a literal, a record or collection literal, or a builtin call, none of which name a slot.
+A slot's initial value reads another slot — or itself, or the runtime's `route` slot, directly or through a `fn` call. Derived slots are prohibited ([Store Layer Invariants](./language.md#_1-4-2-invariants), inv. 4), and `init-expr` ([Store Layer Syntax](./language.md#_1-4-1-syntax)) admits a literal, a record or collection literal, or a builtin call, none of which name a slot.
 
 > `Slot "<name>" reads slot "<other>" in its initial value; derived slots are prohibited — compute it in a fn instead`
+> `Slot "<name>" reads "route" in its initial value; derived slots are prohibited, and this one cannot be computed at all: initial values are evaluated while the module loads, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
+> `Slot "<name>" reads "route" through "<fn>" (<fn> → … → route) in its initial value; …`
 
 The lowering agrees with the invariant: a slot read is emitted as a lookup in the live-value table, and that table is built from the slot table, not before it. So an initializer that reads a slot throws on mount whichever order the two slots are declared in — the declaration order is not what decides it. Because no initializer may read a slot, a cycle between initializers cannot be written, and has no code of its own.
 
-**Fix**: Give the slot a value that stands on its own and compute the derived form in a `fn`, which is the layer for derived computation. A value that must be derived once at startup belongs in a `route.enter` reducer instead.
+**`route` is a slot here too, and fails harder.** The runtime installs it into the live-value table during the mount, and the slot table that holds the initial values is evaluated in the module body above that table, so `slot at : Text = route.path` threw `Cannot access '_live' before initialization` while the module was being *imported* — nothing mounted, with `check` and `build` clean. A `fn` that reads the route is correct everywhere it runs after the mount, which is everywhere but here and an `app.init` argument ([E0120](#e0120-route-in-app-init), the same rule one position over); calling one from an initializer is reported at the call, with the chain of `fn`s that reaches the read, the way E0120 reports it. `$route` written in an initializer is an undefined name ([E0103](#e0103-undef-ref-undef-slot)) — nothing applies an initializer with a payload — and a local bind or `fn` parameter named `route` is that binding, not the slot. `now` is not a slot: it comes from a module import, so an initializer may read it.
+
+**Fix**: Give the slot a value that stands on its own and compute the derived form in a `fn`, which is the layer for derived computation. A value that must be derived once at startup belongs in a `route.enter` reducer instead — and for the route, that is the only place: the reducer runs with the route the app landed on and again on every arrival.
 
 ### E0305 `fn-impurity`
 

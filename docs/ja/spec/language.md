@@ -287,7 +287,7 @@ modifier は最大 1 つ。`volatile` は `transient` がすることをすべ�
 1. **全 slot がグローバル**
 2. 書き換えは **reducer の `do=` からのみ**
 3. 初期値は **純粋式のみ**（effect 実行不可）
-4. **派生 slot は禁止**（派生計算は `fn` レイヤを使う）
+4. **派生 slot は禁止**（派生計算は `fn` レイヤを使う）。runtime の `route` slot も含む。直接読んでも `fn` 呼び出し越しに読んでも同じで、route はすべての初期値が評価された後のマウントで設置される（[E0304](./errors.md#e0304-derived-slot)）
 
 ### 1.4.3 例
 
