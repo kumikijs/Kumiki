@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "nothing filtered yet",
+      "expect": { "noErrors": true, "state": { "kept": { "_tag": "None" }, "isKept": false } }
+    },
+    {
+      "label": "a passing Some stays Some, a failing Some becomes None, a None stays None",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "kept": { "_tag": "Some", "_0": 3 },
+          "gone": { "_tag": "None" },
+          "still": { "_tag": "None" },
+          "isKept": true
+        },
+        "domIncludes": ["kept: 3", "gone: -1", "still: -1", "is-some: true"]
+      }
+    }
+  ]
+}

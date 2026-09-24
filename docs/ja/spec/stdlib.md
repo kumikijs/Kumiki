@@ -93,9 +93,10 @@ m.get-or(k, default)         # Map: 値がなければ default
 opt.get-or(default)          # Option: None なら default、Some(v) なら v
 ```
 
-`.filter` は **List と Map の両方に対して使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
+`.filter` は **List・Map・Option のいずれに対しても使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
 - 受信側が List → 各要素について `pred($1)` を評価、`true` の要素だけ残す
 - 受信側が Map  → 各エントリについて `pred($1, $2)` (key, value) を評価、`true` のエントリだけ残す
+- 受信側が Option → `Some(v)` なら `pred($1=v)` を評価し、`true` ならその `Some(v)`、`false` なら `None`。`None` は `pred` を評価せず `None` のまま ([§2.2.4](#_2-2-4-option-t))
 
 例えば `m.keys.filter(...)` のようにチェーンしたとき、`m.keys` は `List(K)` を返すため `filter` は List のシグネチャで動く。混在チェーンを書いても型に応じた挙動になる。
 
