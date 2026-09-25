@@ -147,7 +147,7 @@ pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 type Handle = nominal Text where len-gt(3) where len-lt(7)
 ```
 
-A `Handle` is longer than 3 characters **and** shorter than 7. The predicates are read through the chain a type denotes ([§1.3.6](#_1-3-6-invariants), inv. 1), so they accumulate over a name as well as over one expression: on `type Short = Text where len-lt(7)`, `type Handle = nominal Short where len-gt(3)` carries both.
+A `Handle` is longer than 3 characters **and** shorter than 7. The predicates are read through the chain a type denotes ([§1.3.6](#_1-3-6-invariants), inv. 1), so they accumulate over a name as well as over one expression: on `type Short = Text where len-lt(7)`, `type Handle = nominal Short where len-gt(3)` carries both. A generic that hands its parameter back is a link of the same chain (inv. 2): on `type NonEmpty(T) = T where nonempty`, `NonEmpty(Short)` carries `len-lt(7)` and then `nonempty`.
 
 A value that fails is reported against the **first predicate it fails**, taking them **in the order the chain is read, from the base outward**. Inside one type expression that is the order they are written; across names it is the order the declarations lead through — `Short`'s `len-lt(7)` comes before `Handle`'s own `len-gt(3)` because `Short` is what `Handle` is declared over, wherever in the file either definition sits. That is the predicate the rejection names when a write discards a reducer's batch ([batching](./runtime.md#a-batch-commits-all-or-nothing)) and the one whose message the `error` tile renders ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
 
