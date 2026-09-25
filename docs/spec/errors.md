@@ -1041,14 +1041,32 @@ The second message answers a predicate the table does not hold at all. The parse
 
 ### E0804 `refinement-args-invalid`
 
-A registered predicate is written with arguments it cannot be built into a check from.
+A registered predicate is written with arguments it cannot be built into a check from, or over a base type it cannot test.
 
 > `Refinement "<pred>" takes <n> argument(s) but got <m>`
 > `Refinement "<pred>" takes <what> but argument <i> is <given>`
 > `Refinement "<pred>" needs at least <min> value(s) but got <n>`
 > `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
 > `Refinement regex("<p>") is not a pattern: <reason>`
+> `Refinement len-lt(0) is shorter than every text, so no value satisfies it`
+> `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
+> `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
+> `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
 
-The arity and the shape of each argument are in the table at [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates). A refinement **no** value can satisfy is the same defect as one **every** value satisfies — both take the slot's guarantee away from the program that relies on it — and an argument that is not what the predicate takes produces one or the other: `between(5, 1)` and `len-eq(2.5)` refuse every value, `len-gt(-1)` accepts every one (`v.length > -1` is true of `""`), and `one-of()` has nothing to admit. `between(0, "x")` is the sharpest case: the emitted check used to read `v >= 0 && v <= x`, whose second half is not a comparison against a bound but a reference to a name nothing declares, so the first write or the first `error(field=…)` render threw a `ReferenceError`.
+The arity and the shape of each argument are in the table at [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates). A refinement **no** value can satisfy is the same defect as one **every** value satisfies — both take the slot's guarantee away from the program that relies on it — and an argument that is not what the predicate takes produces one or the other: `between(5, 1)` and `len-eq(2.5)` refuse every value, `len-gt(-1)` accepts every one (`v.length > -1` is true of `""`), and `one-of()` has nothing to admit. `between(0, "x")` is the sharpest case: the emitted check used to read `v >= 0 && v <= x`, whose second half is not a comparison against a bound but a reference to a name nothing declares, so the first write or the first `error(field=…)` render threw a `ReferenceError`. `len-lt(0)` takes a legal count and still refuses every text, since no length is below zero.
 
-**Fix**: Write the arguments the predicate takes — numeric bounds for `between`, a whole non-negative count for the `len-*` family, a pattern that compiles for `regex`, at least one literal for `one-of`.
+The base is the other half of the same rule. Every predicate tests one shape of value and answers `false` for any other ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), so one written over a base of another shape refuses **every** value: `slot name : Text where positive` passes nothing, and each write to it discards its reducer's batch. What each predicate needs:
+
+| Predicate | Tests | Base it needs |
+|---|---|---|
+| `nonempty`, `len-eq`, `len-lt`, `len-gt`, `email`, `url`, `uuid`, `regex` | text | `Text` |
+| `between`, `positive`, `negative` | a number | `Int`, `Float` or `Time` |
+| `one-of` | equality with one of its literals, strictly | `Text` for text literals; `Int`, `Float` or `Time` for numeric ones |
+
+`one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
+
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+
+A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition.
+
+**Fix**: Write the arguments the predicate takes — numeric bounds for `between`, a whole non-negative count for the `len-*` family, a pattern that compiles for `regex`, at least one literal for `one-of` — and write it over the base it tests, or pick the predicate that tests the base you have (`len-gt(0)` rather than `positive` on a text).

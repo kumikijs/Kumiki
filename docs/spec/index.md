@@ -237,6 +237,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | core | [§1.7.1](./language.md#_1-7-1-syntax) |
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | core | [§1.9](./language.md#_1-9-expression-language) |
+| `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | http | [§6.4](./http.md#_6-4-cancellation) |
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 <!-- examples:end -->
 :::
