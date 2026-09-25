@@ -232,5 +232,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | コア | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | コア | [§2.2](./stdlib.md#_2-2-コレクションメソッド) |
 | `102-non-text-keys.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.2.2](./stdlib.md#_2-2-2-set-t) |
+| `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 <!-- examples:end -->
 :::

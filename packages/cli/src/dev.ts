@@ -116,8 +116,9 @@ type InternalOptions = {
 
 function kumikiDevPlugin(opts: InternalOptions): Plugin {
   const devSrcDir = dirname(fileURLToPath(import.meta.url));
-  // tsdown copies src/dev/ → dist/dev/, so this relative path works under both
-  // tsx-from-src and the published build (see tsdown.config.ts).
+  // This module sits in src/ when run from source and in dist/ once built
+  // (dist/dev-*.js); tsdown copies src/dev/ to dist/dev/, so `<here>/dev/` holds
+  // the client and panel in both (see tsdown.config.ts).
   const clientTemplate = readFileSync(join(devSrcDir, "dev", "client.ts"), "utf8");
   const panelSource = readFileSync(join(devSrcDir, "dev", "panel.ts"), "utf8");
 
