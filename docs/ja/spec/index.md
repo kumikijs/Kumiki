@@ -235,6 +235,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | ルーティング | [§E0304](./errors.md#e0304-derived-slot) |
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | コア | [§1.7.1](./language.md#_1-7-1-構文) |
+| `110-parse-by-base.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |
 | `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§E0126](./errors.md#e0126-type-constructor-qualifier) |
 <!-- examples:end -->
 :::
