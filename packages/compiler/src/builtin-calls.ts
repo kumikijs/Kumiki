@@ -116,9 +116,10 @@ export const QUALIFIED_CALL_NAMESPACES: ReadonlySet<string> = new Set([
  * rather than resolved used to be the argument for the checker not resolving it
  * either, and the two members answer it differently:
  *
- * - `parse` branches on the qualifier (`Int` / `Float` / `Time` have numeric
- *   and millisecond readings), so a misspelt one silently produces a different
- *   value: `Itn.parse("12")` is `Some("12")` where `Int.parse` is `Some(12)`.
+ * - `parse` reads its text by the base the qualifier resolves to
+ *   (`parse-reading.ts`), so a misspelt one names no reading at all — where it
+ *   used to branch on the name and silently produce a different value:
+ *   `Itn.parse("12")` was `Some("12")` where `Int.parse` is `Some(12)`.
  * - `fresh` and `show` discard it. A misspelling there produces the same value,
  *   and the name is checked because a qualifier that resolves to no type is
  *   wrong on its own terms — which makes the checker deliberately stricter
