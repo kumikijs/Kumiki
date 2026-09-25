@@ -194,11 +194,19 @@ export const _stdlibCore = {
   /**
    * Polymorphic `.filter` dispatch — used by codegen when the receiver type
    * isn't statically known (e.g. `m.keys.filter(...)` vs `m.filter(...)`).
-   * Arrays go through Array.prototype.filter; objects (Maps in Kumiki) fall
-   * back to the (k, v) → boolean predicate of mapFilter.
+   * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
+   * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
+   * so it has to be told apart before the Map branch reads its `_tag` / `_0`
+   * fields as entries; other objects (Maps in Kumiki) fall back to the
+   * (k, v) → boolean predicate of mapFilter.
    */
   filter(coll: unknown, pred: (...args: unknown[]) => boolean): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
+    if (_stdlibCore.variantIs(coll, "Some")) {
+      const value = (coll as { _0: unknown })._0;
+      return pred(value) ? coll : _stdlibCore.None;
+    }
+    if (_stdlibCore.variantIs(coll, "None")) return coll;
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {

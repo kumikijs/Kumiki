@@ -93,9 +93,10 @@ m.get-or(k, default)         # Map: default if there is no value
 opt.get-or(default)          # Option: default if None, v if Some(v)
 ```
 
-`.filter` **can be used on both List and Map**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):
+`.filter` **can be used on a List, a Map, or an Option**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):
 - Receiver is List → evaluate `pred($1)` for each element, keep only elements that are `true`
 - Receiver is Map  → evaluate `pred($1, $2)` (key, value) for each entry, keep only entries that are `true`
+- Receiver is Option → for `Some(v)`, evaluate `pred($1=v)`: `true` keeps that `Some(v)`, `false` gives `None`; a `None` stays `None` without evaluating `pred` ([§2.2.4](#_2-2-4-option-t))
 
 For example, when you chain like `m.keys.filter(...)`, `m.keys` returns `List(K)`, so `filter` runs with the List signature. Even if you write a mixed chain, the behavior follows the type.
 

@@ -232,6 +232,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | core | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | core | [§2.2](./stdlib.md#_2-2-collection-methods) |
 | `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | routing | [§E0304](./errors.md#e0304-derived-slot) |
+| `100-option-filter.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `102-non-text-keys.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.2](./stdlib.md#_2-2-2-set-t) |
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | core | [§1.7.1](./language.md#_1-7-1-syntax) |
