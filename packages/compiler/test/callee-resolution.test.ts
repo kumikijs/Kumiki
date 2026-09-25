@@ -683,17 +683,20 @@ describe("every built-in is held to the count its lowering reads", () => {
   // outcome — what is under test is the count, and a `Duration` assigned to an
   // `Int` slot would otherwise add a second diagnostic to half the cases.
 
-  /** An argument no builtin's lowering objects to. */
-  const FILLER = "1";
+  /**
+   * An argument no builtin's lowering objects to — except `parse`, whose
+   * argument is checked to be the `Text` it reads, so a number there is a
+   * second diagnostic on top of the count.
+   */
+  const fillerOf = (name: string) => (name === "parse" ? `"1"` : "1");
 
   /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
   const QUALIFIER = "Probe";
 
-  const args = (n: number) => Array.from({ length: n }, () => FILLER).join(", ");
-
   function callOf(name: string): (n: number) => string {
     const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
-    return (n) => `${spelling}(${args(n)})`;
+    const filler = fillerOf(name);
+    return (n) => `${spelling}(${Array.from({ length: n }, () => filler).join(", ")})`;
   }
 
   const ALL: [string, BuiltinArity][] = [
