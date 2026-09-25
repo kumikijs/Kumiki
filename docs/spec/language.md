@@ -296,7 +296,7 @@ The initial value is required. A slot with no `=` would have to hold something b
 1. **All slots are global**
 2. Mutation is **only from a reducer's `do=`**
 3. The initial value is **a pure expression only** (effects cannot be executed)
-4. **Derived slots are prohibited** (use the `fn` layer for derived computation)
+4. **Derived slots are prohibited** (use the `fn` layer for derived computation). This includes the runtime's `route` slot, read directly or through a `fn` call — it is installed by the mount, after every initial value has been evaluated ([E0304](./errors.md#e0304-derived-slot))
 
 ### 1.4.3 Examples
 
@@ -617,7 +617,7 @@ pattern      ::= identifier
 **`( … )` vs `{ … }` — arguments/children vs props**:
 - `( … )` is the **argument & children list**: positional child tiles (`column(A, B)`), value arguments (`heading("Hi")`), and named arguments (`button(text="Save", onClick=r)`, `input(bind=draft)`). A child tile or another tile call goes **here**.
 - `{ … }` is the **props block**: `key: value` pairs only — style/layout/ARIA props and event-handler bindings (`{pad: "lg", gap: "md"}`, `{todoId: $1}`, `{onClick: r}`). It contains **no tile calls and no children**. Writing a tile call inside `{ … }` (e.g. `link(to="/x") {text("Home")}`) is a parse error.
-- A tile's **label/content** is passed in `( … )`: it is a positional value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) and a **named** arg for the interactive builtins (`button(text="Save")`, `link(to="/x", text="Home")`). The canonical place for a label is the `text=` **argument**, consistent across `button` and `link`. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; both compile to the same node.)
+- A tile's **label/content** is passed in `( … )`: it is the first **positional** value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) — a named argument is a prop wherever it is written, so `heading(level=2, title)` says `title` and `level` stays a prop — and a **named** arg for the interactive builtins (`button(text="Save")`, `link(to="/x", text="Home")`). The canonical place for a label is the `text=` **argument**, consistent across `button` and `link`. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; both compile to the same node.)
 
 **Semantics of `when(cond, tile)`**:
 - `cond` is true → render `tile`
