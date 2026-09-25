@@ -45,7 +45,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0219` | `strict` on a bound control (`input(bind=s, strict=false)`) — a prop an earlier forms spec described and nothing implemented | remove it; a refused bind is always refused, and `error(field=s)` beside the control shows why |
 | `W0213` | a handler prop sits on a tile that never fires it — a builtin (`row(onClick=r)`), or a user tile whose render tree has no firing kind (`Inner(onClick=r)` where `Inner = box(...)`, message: "renders nothing that fires it (observed in body: …)") | move it onto the button / input — inside the user tile, so its root is the firing one — or subscribe with `on=ui.<ev>(<Tile>)` |
 | `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
-| `E0304` | a slot's initial value reads a slot (its own or another's) | give it a standalone value and derive the rest in a `fn` |
+| `E0304` | a slot's initial value reads a slot (its own or another's, or `route` — directly or through a `fn`) | give it a standalone value and derive the rest in a `fn`; for `route`, fill the slot from a `route.enter` reducer |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
