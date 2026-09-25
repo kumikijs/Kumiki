@@ -1,4 +1,4 @@
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
 // `stdlib.md` §2.4 gives the type-member calls a result type — `T.fresh()` is a
@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
 // is the one mistake `nominal` exists to catch and the position it matters most
 // in, `.fresh` being how an id is normally minted (#348).
 //
-// `Duration` and `Bytes` are the carve-out: their members are constructors
-// rather than these two, so the qualifier keeps answering for them.
+// `Duration` and `Bytes` are the carve-out: their other members are
+// constructors, so the qualifier keeps answering for those — but not for
+// `parse`, which is the type member for them as for every other type.
 //
 // Expectations are the whole diagnostic list, not a filtered one — a stray
 // extra report on a program called clean here is exactly what would ship.
@@ -140,6 +141,159 @@ describe("<Type>.parse(t) is an Option(<Type>)", () => {
   });
 });
 
+/**
+ * `parse` is lowered by the base its qualifier unaliases to, not by its name,
+ * so the types it reads are exactly the bases that have a reading of a text:
+ * `Int`, `Float`, `Time`, `Bool`, `Text` and `Bytes`. Anything else — a record,
+ * a union, `File`, `EffectId`, `Unit`, a type constructor written without its
+ * arguments — has nothing of its type to produce, so the call is reported where
+ * it is written instead of being answered with one.
+ */
+describe("a parse whose qualifier has no reading of a text", () => {
+  const E = (qualifier: string) =>
+    `E0802 "${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`;
+
+  it("reports a record, a union and the primitives no text spells", () => {
+    expect(diagnostics(`type Point = {x: Int}\nslot o : Option(Point) = Point.parse("a")`)).toEqual(
+      [E("Point")],
+    );
+    expect(diagnostics(`type Tone = Hi | Lo\nslot o : Option(Tone) = Tone.parse("Hi")`)).toEqual([
+      E("Tone"),
+    ]);
+    expect(diagnostics(`slot o : Option(File) = File.parse("a")`)).toEqual([E("File")]);
+    expect(diagnostics(`slot o : Option(EffectId) = EffectId.parse("a")`)).toEqual([E("EffectId")]);
+    expect(diagnostics(`slot o : Option(Unit) = Unit.parse("a")`)).toEqual([E("Unit")]);
+  });
+
+  it("reports a nominal over one of them, because the base is what decides", () => {
+    expect(
+      diagnostics(`type Doc = nominal {x: Int}\nslot o : Option(Doc) = Doc.parse("a")`),
+    ).toEqual([E("Doc")]);
+  });
+
+  // A constructor still wanting its arguments names no complete type, so the
+  // call has no `Option(T)` to infer and nothing to lower to. It is a type name,
+  // so E0117 does not answer it either — and `check` used to say `ok` while
+  // `build` threw on it.
+  it("reports a type constructor written without its arguments", () => {
+    for (const q of ["List", "Option", "Map", "Result", "Set", "Tuple"]) {
+      expect(inReducer(`slot o : Option(Int) = None`, `o := ${q}.parse("x")`), q).toEqual([E(q)]);
+    }
+    expect(
+      inReducer(`type Box(T) = {v: T}\nslot o : Option(Int) = None`, `o := Box.parse("x")`),
+    ).toEqual([E("Box")]);
+  });
+
+  it("accepts every base that has a reading, directly and through a nominal", () => {
+    expect(diagnostics(`slot o : Option(Bool) = Bool.parse("true")`)).toEqual([]);
+    expect(
+      diagnostics(`type Cents = nominal Int where positive
+type Ratio = nominal Float
+type Due = nominal Time
+type Flag = nominal Bool
+type Blob = nominal Bytes
+type Count = Int
+type Tally = nominal Cents
+slot c : Option(Cents) = Cents.parse("12")
+slot r : Option(Ratio) = Ratio.parse("0.5")
+slot d : Option(Due) = Due.parse("2026-01-01")
+slot f : Option(Flag) = Flag.parse("true")
+slot b : Option(Blob) = Blob.parse("x")
+slot n : Option(Count) = Count.parse("3")
+slot t : Option(Tally) = Tally.parse("4")`),
+    ).toEqual([]);
+  });
+
+  it("leaves an undefined qualifier to E0117 alone", () => {
+    expect(diagnostics(`slot o : Option(Int) = Nope.parse("1")`)).toEqual([
+      'E0117 Reference to undefined type "Nope"',
+    ]);
+  });
+
+  // The definition is what is wrong there, and it is reported at the
+  // definition. The parse has no base to judge, so it adds nothing.
+  it("adds nothing to an alias that resolves to nothing", () => {
+    expect(
+      diagnostics(`type Foo = Bar\nslot o : Option(Int) = None
+reducer r on=ui.click(B) do= o := Foo.parse("1")`),
+    ).toEqual(['E0117 Reference to undefined type "Bar"']);
+    const cyclic = diagnostics(`type P = Q\ntype Q = P\nslot o : Option(Int) = None
+reducer r on=ui.click(B) do= o := P.parse("1")`);
+    expect(cyclic.some((d) => d.startsWith("E0009"))).toBe(true);
+    expect(cyclic.filter((d) => d.startsWith("E0802"))).toEqual([]);
+  });
+});
+
+describe("the text a parse reads", () => {
+  it("is checked to be a Text", () => {
+    expect(inReducer(`slot o : Option(Int) = None`, `o := Int.parse(true)`)).toEqual([
+      "E0201 Expected Text but got Bool",
+    ]);
+    expect(
+      inReducer(`type Flag = nominal Bool\nslot o : Option(Flag) = None`, `o := Flag.parse(1)`),
+    ).toEqual(["E0201 Expected Text but got Int"]);
+    expect(inReducer(`slot o : Option(Int) = None`, `o := Int.parse("1")`)).toEqual([]);
+  });
+});
+
+/**
+ * `check` and `build` are two guarantees about one program, and a parse that
+ * passes the first and throws out of the second is the worst of both: the
+ * author is told the program is fine and then handed a stack trace. So every
+ * qualifier shape is compiled here, and a clean `check` has to mean a built
+ * program.
+ */
+describe("a parse that checks clean compiles", () => {
+  const DEFS = `type Point = {x: Int}
+type Tone = Hi | Lo
+type Box(T) = {v: T}
+type Cents = nominal Int where positive
+type Slug = nominal Text
+type Doc = nominal {x: Int}
+type Count = Int
+type Tally = nominal Cents`;
+  const QUALIFIERS = [
+    "Int",
+    "Float",
+    "Time",
+    "Bool",
+    "Text",
+    "Bytes",
+    "Unit",
+    "File",
+    "EffectId",
+    "Duration",
+    "List",
+    "Option",
+    "Map",
+    "Result",
+    "Set",
+    "Tuple",
+    "Point",
+    "Tone",
+    "Box",
+    "Cents",
+    "Slug",
+    "Doc",
+    "Count",
+    "Tally",
+  ];
+
+  it("builds every qualifier check accepts", () => {
+    let clean = 0;
+    for (const q of QUALIFIERS) {
+      const src = app(
+        `${DEFS}\nslot o : Text = ""\nreducer r on=ui.click(B) do= o := ${q}.parse("x").show`,
+      );
+      if (errsOf(src).some((e) => e.severity !== "warning")) continue;
+      clean += 1;
+      expect(compile(src, { runtimeSpecifier: "./runtime.js" }).kind, q).toBe("ok");
+    }
+    // The readings plus Duration and the definitions over them.
+    expect(clean).toBe(11);
+  });
+});
+
 describe("the qualifiers that keep their own answers", () => {
   it("leaves Duration's constructors as they were", () => {
     expect(diagnostics(`slot d : Duration = Duration.ms(500)`)).toEqual([]);
@@ -149,11 +303,25 @@ describe("the qualifiers that keep their own answers", () => {
     expect(diagnostics(`slot b : Bytes = Bytes.from-text("x")`)).toEqual([]);
   });
 
-  // Their `parse` is the one member they share with the rule above, and both
-  // answer a bare type where the spec gives an `Option` — #424. Pinned in
-  // `spec-divergences.test.ts`, which is the file for a claim the
-  // implementation does not meet; a `toEqual([])` here would read as the
-  // intended answer.
+  // `parse` is the one member they share with the rule above, and it is the
+  // rule above that answers it: an `Option` of the qualifier, like every other
+  // type (stdlib §2.4.3). Both used to be caught by the namespace branch and
+  // answer the bare type, so the documented spelling was E0201 and the wrong
+  // one was clean. Each direction is asserted per qualifier, so a fix
+  // that moves only one of the four is caught.
+  it("gives Duration.parse the Option the spec gives it", () => {
+    expect(diagnostics(`slot o : Option(Duration) = Duration.parse("500")`)).toEqual([]);
+    expect(diagnostics(`slot d : Duration = Duration.parse("500")`)).toEqual([
+      "E0201 Expected Duration but got Option(Duration)",
+    ]);
+  });
+
+  it("gives Bytes.parse the Option the spec gives it", () => {
+    expect(diagnostics(`slot o : Option(Bytes) = Bytes.parse("x")`)).toEqual([]);
+    expect(diagnostics(`slot b : Bytes = Bytes.parse("x")`)).toEqual([
+      "E0201 Expected Bytes but got Option(Bytes)",
+    ]);
+  });
 
   it("keeps the qualified show a Text, whatever the qualifier", () => {
     expect(diagnostics(`${IDS}\nslot s : Text = PostId.show("a")`)).toEqual([]);
@@ -214,7 +382,7 @@ describe("where the minted type is read", () => {
 describe("a qualifier that names no type infers nothing", () => {
   it("reports the undefined type once and nothing about the value", () => {
     // E0117 owns this report (#276), and answering `null` is what keeps
-    // `qualifiedType` honest rather than what keeps the count at one: `relate`
+    // `qualifierType` honest rather than what keeps the count at one: `relate`
     // short-circuits on a `TypeRef` it cannot unalias, so an inferred reference
     // to a name with no definition would add nothing either way. The guard that
     // does carry weight is the arity one, below.
@@ -240,7 +408,7 @@ describe("a qualifier that names no type infers nothing", () => {
     // `Box` names a type but `Box` alone is not one, so there is no type to
     // answer with — an unapplied `TypeRef` would unalias into an unsubstituted
     // body and mismatch against every real type, which is the half of
-    // `qualifiedType`'s guard that carries weight.
+    // `qualifierType`'s guard that carries weight.
     //
     // The empty list is the pre-existing state, not a correct answer: E0117
     // declines (the name *is* a type's), E0116 declines (the callee resolves),
