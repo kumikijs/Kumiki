@@ -1669,25 +1669,30 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
 }
 
 /**
- * The type `$1` holds in an `effect-name.ok(…)` / `.err(…)` trigger — the
- * value the effect's `out=` says it delivers (language.md §1.6.5). A `Result`
- * splits by outcome: `.ok` binds its Ok payload and `.err` its Err payload.
- * Any other `out=` is the whole value on `.ok`; what `.err` carries then is the
- * runtime's failure, which no declaration names, so it stays undecided — as
- * does a built-in effect, which has no `out=` to read.
+ * The type `$1` holds in an `effect-name.ok(…)` trigger — the value the
+ * effect's `out=` says a success delivers (language.md §1.6.5): the Ok payload
+ * of a `Result(T, E)`, or the whole value of any other `out=`.
+ *
+ * `.err` stays undecided. What arrives there is the runtime's failure record
+ * (`{message: …}` from the storage / indexed handlers and the dispatcher's
+ * catch), which the declared `E` does not describe; typing `$e` as `E` would
+ * reject the read that matches it and accept the one that does not. A
+ * built-in effect has no `out=` to read, and a `Result` of the wrong arity is
+ * already reported where it is written, so neither is guessed at.
  */
 function effectPayloadType(
   effect: string,
   outcome: "ok" | "err",
   sym: SymbolTable,
 ): TypeExpr | null {
+  if (outcome === "err") return null;
   const out = sym.effects.get(effect)?.outType;
   if (!out) return null;
   const u = unaliasType(out, sym);
-  if (u?.kind === "TypeApp" && u.name === "Result" && u.args.length === 2) {
-    return (outcome === "ok" ? u.args[0] : u.args[1]) ?? null;
+  if (u?.kind === "TypeApp" && u.name === "Result") {
+    return u.args.length === 2 ? (u.args[0] ?? null) : null;
   }
-  return outcome === "ok" ? out : null;
+  return out;
 }
 
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -1703,7 +1708,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     // Both checks a bind is subject to today are asked here, in the walk that
     // puts the names into scope, so the answer to one cannot drift from the
     // answer to the other. Whichever of them fires, the name still enters the
-    // scope — that is what `ctx.localBinds.add` below the branch is for, and
+    // scope — that is what `bindLocal` below the branch is for, and
     // why it sits outside it: the body's reads are then that binding, so a
     // `$route` bind does not also collect an E0119 apiece for every read.
     //

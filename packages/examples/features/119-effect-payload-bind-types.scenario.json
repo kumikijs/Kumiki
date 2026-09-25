@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "nothing stored: the Ok payload is a None, stored as the Option it is",
+      "label": "mocked Ok, nothing stored: the payload is a None, stored as the Option it is",
       "expect": {
         "noErrors": true,
         "state": { "session": { "_tag": "None" } },
@@ -9,7 +9,7 @@
       }
     },
     {
-      "label": "after a save the reload's Ok payload is a Some, rendered through the match",
+      "label": "mocked Ok after a save: the payload is a Some, rendered through the match",
       "do": { "click": "#sign-in" },
       "expect": {
         "noErrors": true,
@@ -18,15 +18,15 @@
       }
     },
     {
-      "label": "a failed read binds the Err payload, a Text, and leaves the session alone",
+      "label": "mocked err, shaped as the {message} record the storage handler delivers: the reducer reads $e.message and leaves the session alone",
       "do": { "click": "#reload" },
       "expect": {
         "noErrors": true,
         "state": {
-          "problem": "storage blocked",
+          "problem": "SecurityError: storage blocked",
           "session": { "_tag": "Some", "_0": { "email": "a@example.com" } }
         },
-        "domIncludes": ["problem: storage blocked"]
+        "domIncludes": ["problem: SecurityError: storage blocked"]
       }
     }
   ],
@@ -34,7 +34,7 @@
     "loadSession": [
       { "outcome": "ok", "value": { "_tag": "None" } },
       { "outcome": "ok", "value": { "_tag": "Some", "_0": { "email": "a@example.com" } } },
-      { "outcome": "err", "value": "storage blocked" }
+      { "outcome": "err", "value": { "message": "SecurityError: storage blocked" } }
     ],
     "saveSession": [{ "outcome": "ok", "value": null }]
   }

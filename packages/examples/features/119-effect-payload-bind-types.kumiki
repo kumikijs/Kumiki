@@ -1,12 +1,16 @@
 # Feature (language.md §1.6.5): an effect-event bind has the type the effect's
-# `out=` gives it. On a `Result(T, E)`, `.ok($v, _)` binds `$v : T` and
-# `.err($e, _)` binds `$e : E`; any other `out=` is the whole value on `.ok`.
+# `out=` gives a success. On a `Result(T, E)`, `.ok($v, _)` binds `$v : T`;
+# any other `out=` is the whole value on `.ok`.
 #
-# So the reads below are checked like any slot read: `$s` is an
-# `Option(Session)` and is stored as one, `$e` is the `Text` the Err carries.
-# Writing `session := $s.get-or(None)` — unwrapping the Option into the slot
-# that declares it — or `label := $s` is E0201, where it used to pass `check`
-# and leave the slot holding a value of another type.
+# So the `.ok` read below is checked like any slot read: `$s` is an
+# `Option(Session)` and is stored as one. Writing `session := $s.get-or(None)`
+# — unwrapping the Option into the slot that declares it — or `label := $s` is
+# E0201, where it used to pass `check` and leave the slot holding a value of
+# another type.
+#
+# `.err($e, _)` is not typed from `out=`: what a failed `storage.read` delivers
+# is the runtime's failure record `{message: …}`, not the declared `Text`, so
+# the reducer reads `$e.message`.
 
 type Session = {email: Text}
 
@@ -25,7 +29,7 @@ effect saveSession cap=storage.write
 
 reducer boot     on=app.start               do= emit loadSession()
 reducer restored on=loadSession.ok($s, _)   do= session := $s
-reducer failed   on=loadSession.err($e, _)  do= problem := $e
+reducer failed   on=loadSession.err($e, _)  do= problem := $e.message
 reducer signIn   on=ui.click(SignIn)        do= emit saveSession({email: "a@example.com"})
 reducer stored   on=saveSession.ok(_, _)    do= emit loadSession()
 reducer reload   on=ui.click(Reload)        do= emit loadSession()

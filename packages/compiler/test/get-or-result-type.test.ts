@@ -208,7 +208,7 @@ reducer keep on=ui.click(B) do= n := $event.get-or("not an Int")`),
   it("an effect payload bind is a receiver like a slot: unwrapping one is the same pair", () => {
     // The shape this defect was found in: an `Option` restored from storage,
     // unwrapped into the slot that declares it. `$s` has the Ok type of the
-    // effect's `out=` (#385), so the receiver decides the result exactly as an
+    // effect's `out=`, so the receiver decides the result exactly as an
     // `Option(Session)` slot would. `effect-payload-bind-type.test.ts` owns
     // the bind's type; this pins that `.get-or` reaches it.
     expect(
