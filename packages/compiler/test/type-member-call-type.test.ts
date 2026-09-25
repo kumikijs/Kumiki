@@ -361,26 +361,13 @@ describe("where the minted type is read", () => {
     expect(inReducer(IDS, `let id = PostId.fresh(); p := id`)).toEqual([]);
   });
 
-  it("known gap: a match used as a value has no type, so the arm value is unchecked", () => {
-    // `match` is the idiomatic way to open the `Option` that `parse` now
-    // produces, and it is the one position of the four that loses the type.
-    //
-    // The binder is not what loses it — `checkExpr`'s `MatchExpr` case infers
-    // the scrutinee and binds the payload, so `| Some(id) -> p := id` and
-    // `| Some(id) -> takesPost(id)` both report. What is missing is a
-    // `MatchExpr` case in `inferType`: a `match` in value position falls to
-    // `default: return null`, so the destination has nothing to compare the arm
-    // against. `p := ou.get-or(p)` reports because `getOrResultType` gives that
-    // expression a type and a `match` has none.
-    //
-    // Not this rule's doing — an `Option(UserId)` slot shows the same silence —
-    // and not this PR's to fix. #435 carries it; both lines change when it
-    // lands.
+  it("carries through a match arm to the destination", () => {
+    // `match` is the idiomatic way to open the `Option` that `parse` produces.
+    // The arm value is checked against where the `match` lands, and the
+    // binder is typed, so the statement form reports as well.
     const body = (q: string) => `p := match ${q}.parse("a") with | Some(id) -> id | None -> p`;
-    expect(inReducer(IDS, body("UserId"))).toEqual([]);
+    expect(inReducer(IDS, body("UserId"))).toEqual(["E0201 Expected PostId but got UserId"]);
     expect(inReducer(IDS, body("PostId"))).toEqual([]);
-    // The binder itself is typed, which is what scopes the gap to the value
-    // position — this half reports today.
     expect(
       inReducer(
         `${IDS}\nslot hit : Bool = false`,
