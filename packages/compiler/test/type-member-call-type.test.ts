@@ -148,7 +148,7 @@ describe("<Type>.parse(t) is an Option(<Type>)", () => {
  * a union, `File`, `EffectId`, `Unit` — has nothing of its type to produce, so
  * the call is reported where it is written instead of being answered with one.
  * A type constructor written without its arguments is not a type at all, and
- * that is reported first, as E0126, on `parse` as on every other member.
+ * that is reported first, as E0124, on `parse` as on every other member.
  */
 describe("a parse whose qualifier has no reading of a text", () => {
   const E = (qualifier: string) =>
@@ -176,10 +176,15 @@ describe("a parse whose qualifier has no reading of a text", () => {
   // call has no `Option(T)` to infer and nothing to lower to. It is a type name,
   // so E0117 does not answer it either — and `check` used to say `ok` while
   // `build` threw on it. It is not a type at all, which is the one thing to say
-  // about it: E0126, and no E0802 on top for the reading it cannot have.
+  // about it: E0124, and no E0802 on top for the reading it cannot have.
+  // The repair has to land on a type `parse` can read into, not just any type:
+  // `type IntList = List(Int)` then `IntList.parse` is E0802 on the next
+  // round, so the message names the second half of the repair up front.
+  const PARSE_BASE =
+    " and whose base has a reading of a text (Int, Float, Time, Bool, Text or Bytes)";
   it("reports a type constructor written without its arguments", () => {
-    const E0126 = (q: string, args: string) =>
-      `E0126 Type "${q}" takes ${args}, so it is not a type on its own — "${q}.parse" needs one that takes none`;
+    const E0124 = (q: string, args: string) =>
+      `E0124 Type "${q}" takes ${args}, so it is not a type on its own — "${q}.parse" needs one that takes none${PARSE_BASE}`;
     const wanted: Record<string, string> = {
       List: "1 type argument",
       Option: "1 type argument",
@@ -190,12 +195,12 @@ describe("a parse whose qualifier has no reading of a text", () => {
     };
     for (const [q, args] of Object.entries(wanted)) {
       expect(inReducer(`slot o : Option(Int) = None`, `o := ${q}.parse("x")`), q).toEqual([
-        E0126(q, args),
+        E0124(q, args),
       ]);
     }
     expect(
       inReducer(`type Box(T) = {v: T}\nslot o : Option(Int) = None`, `o := Box.parse("x")`),
-    ).toEqual([E0126("Box", "1 type argument")]);
+    ).toEqual([E0124("Box", "1 type argument")]);
   });
 
   it("accepts every base that has a reading, directly and through a nominal", () => {
@@ -435,14 +440,16 @@ describe("a qualifier that names no type infers nothing", () => {
 /**
  * A qualifier that names a type *constructor* is not a type: `Box` wants its
  * `T`, `List` its element, `Tuple` however many it is given. There is no type
- * for `fresh` to mint or `parse` to read into, and three separate checks each
+ * for `fresh` to mint or `show` to name, and three separate checks each
  * declined the call — E0117 (the name *is* a type's), E0116 (the callee
  * resolves), E0201 (nothing to compare) — so `slot n : Int = Box.fresh()`
- * put a uuid string in an `Int` slot with nothing reported (#432).
+ * put a uuid string in an `Int` slot with nothing reported. `parse` was
+ * reported, but as a type with no reading of a text, which a phantom-parameter
+ * nominal over `Text` is not; the missing arguments are the earlier mistake.
  */
 describe("a qualifier that is a type constructor, not a type", () => {
   const E = (name: string, args: string, callee: string) =>
-    `E0126 Type "${name}" takes ${args}, so it is not a type on its own — "${callee}" needs one that takes none`;
+    `E0124 Type "${name}" takes ${args}, so it is not a type on its own — "${callee}" needs one that takes none`;
 
   it("reports a declared constructor at the call", () => {
     expect(diagnostics(`type Box(T) = nominal List(T)\nslot n : Int = Box.fresh()`)).toEqual([
@@ -455,7 +462,7 @@ describe("a qualifier that is a type constructor, not a type", () => {
       E("List", "1 type argument", "List.fresh"),
     ]);
     expect(diagnostics(`slot o : Option(Map(Text, Int)) = Map.parse("a")`)).toEqual([
-      E("Map", "2 type arguments", "Map.parse"),
+      `${E("Map", "2 type arguments", "Map.parse")} and whose base has a reading of a text (Int, Float, Time, Bool, Text or Bytes)`,
     ]);
     expect(diagnostics(`slot s : Text = Option.show(None)`)).toEqual([
       E("Option", "1 type argument", "Option.show"),

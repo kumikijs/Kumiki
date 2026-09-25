@@ -57,7 +57,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
-import { parseQualifier, qualifierType } from "./parse-reading.ts";
+import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
@@ -2171,10 +2171,17 @@ function checkCallee(
         typeArity === null
           ? "type arguments"
           : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
+      // A `parse` repaired to any applied type can still land on E0802 below —
+      // `type IntList = List(Int)` has no reading of a text either — so its
+      // message names both halves of the repair in the one round.
+      const readable =
+        callee.slice(dot + 1) === "parse"
+          ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
+          : "";
       errors.push({
-        code: "E0126",
+        code: "E0124",
         kind: "type-constructor-qualifier",
-        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none`,
+        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none${readable}`,
         pos,
       });
       return;
@@ -2182,7 +2189,7 @@ function checkCallee(
     // `parse` lowers by the base the qualifier unaliases to, and a record, a
     // union, `File`, `EffectId` or `Unit` has no reading of a text — codegen
     // has nothing of the call's type to produce. `parseQualifier` is the one
-    // answer both sides read, so every qualifier that passed E0117 and E0126
+    // answer both sides read, so every qualifier that passed E0117 and E0124
     // above and has no reading is reported here, and none reaches the
     // lowering. A qualifier whose definition resolves to nothing is left to
     // the report at that definition.
@@ -2194,7 +2201,7 @@ function checkCallee(
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
-        message: `"${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`,
+        message: `"${qualifier}" has no reading of a text — parse into ${PARSE_READINGS_PHRASE} and build it in a fn`,
         pos,
       });
       return;

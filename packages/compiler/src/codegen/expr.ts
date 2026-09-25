@@ -77,7 +77,7 @@ function readingJs(reading: ParseReading, a: string): string {
  * `None`. An `Option(Cents)` never meets a slot-write guard, so without this
  * `Cents.parse("-5")` handed the program a `Cents` its own type refuses.
  *
- * `parseQualifier` is the answer the checker reports E0802 from (E0126 first,
+ * `parseQualifier` is the answer the checker reports E0802 from (E0124 first,
  * for a constructor written without its arguments), so a qualifier
  * with no reading never reaches here from a checked program; the throw is for
  * `codegen()` called without `check()`, which would otherwise lower to a value
