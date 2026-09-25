@@ -238,5 +238,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | コア | [§1.9](./language.md#_1-9-式言語) |
 | `114-unit-value.kumiki` | slot, reducer, fn, tile | 標準ライブラリ | [§2.1](./stdlib.md#_2-1-ビルトイン型) |
+| `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.4](./http.md#_6-4-cancellation) |
 <!-- examples:end -->
 :::

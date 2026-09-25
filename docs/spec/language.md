@@ -188,9 +188,9 @@ Every one of them is a **runtime check**: the value is tested on its way into th
 | `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
 | `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
 
-A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number.
+A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` compares strictly, so its literals need a `Text` base when they are text and an `Int`, `Float` or `Time` one when they are numbers. A generic's parameter is judged where the generic is applied: `type NonEmpty(T) = T where nonempty` is fine, and `NonEmpty(Int)` is E0804.
 
-The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional length, a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
+The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional or negative length, `len-lt(0)` (shorter than every text), a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
 
 Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to write proofs, the debugging loop breaks down.
 
@@ -337,6 +337,9 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   a slot and a `fn` are readable, and `$route` is not a name here
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
+  sees the reducer body's writes up to that statement and none after it
+  ([http.md §6.4](./http.md#_6-4-cancellation))
 
 ### 1.5.3 Examples
 

@@ -215,6 +215,8 @@ reducer cancelSearch
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
+id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
 ### 6.4.1 挙動

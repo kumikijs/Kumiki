@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { REFINEMENT_PREDS, refinementBases } from "../src/refinements.ts";
 import { UI_LIFTS } from "../src/ui-lifts.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -208,6 +209,61 @@ describe("§W0212's lift table matches UI_LIFTS", () => {
         } else {
           expect(documented, `${track} §W0212 row "${ev}"`).toEqual(new Set(tiles));
         }
+      }
+    });
+  }
+});
+
+// The same guard for §E0804's predicate/base table, the published copy of what
+// each entry of `REFINEMENTS` tests. A row that names a base the predicate
+// cannot test documents a program E0804 refuses, and a base missing from a row
+// hides one it accepts. Keyed off the backticks, so both tracks parse alike.
+describe("§E0804's base table matches the refinement table", () => {
+  function e0804Section(file: string): string {
+    const source = readFileSync(file, "utf8");
+    const start = source.search(/^### E0804\b/m);
+    expect(start, `${file} has no §E0804 heading`).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(start + 1);
+    const end = rest.search(/^### /m);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  /** The table as `predicate -> bases`, one entry per predicate a row names. */
+  function baseTable(file: string): Map<string, ReadonlySet<string>> {
+    const out = new Map<string, ReadonlySet<string>>();
+    const backticked = (cell: string | undefined): string[] =>
+      [...(cell ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string);
+    for (const line of e0804Section(file).split("\n")) {
+      if (!line.startsWith("|")) continue;
+      const cells = line.split("|").slice(1, -1);
+      if (cells.length !== 3) continue;
+      const preds = backticked(cells[0]);
+      // The header and the separator name no predicate.
+      if (preds.length === 0) continue;
+      for (const pred of preds) {
+        expect(out.has(pred), `${file} lists "${pred}" in two rows`).toBe(false);
+        out.set(pred, new Set(backticked(cells[2])));
+      }
+    }
+    return out;
+  }
+
+  const TRACKS = {
+    en: path.join(repoRoot, "docs", "spec", "errors.md"),
+    ja: path.join(repoRoot, "docs", "ja", "spec", "errors.md"),
+  } as const;
+
+  for (const [track, file] of Object.entries(TRACKS)) {
+    it(`lists every registered predicate once on the ${track} track`, () => {
+      expect([...baseTable(file).keys()].sort()).toEqual([...REFINEMENT_PREDS].sort());
+    });
+
+    it(`lists the bases each predicate tests on the ${track} track`, () => {
+      const table = baseTable(file);
+      for (const pred of REFINEMENT_PREDS) {
+        expect(table.get(pred), `${track} §E0804 row "${pred}"`).toEqual(
+          new Set(refinementBases(pred)),
+        );
       }
     });
   }
