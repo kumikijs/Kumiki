@@ -26,7 +26,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0008` | a name written twice inside one construct (app/effect/tile clause, record key or field, map key, tile argument or prop, fn/type parameter, `for-all` generator, union tag, route pattern) | delete the later one |
 | `E0009` | a `type` resolves to itself — the alias chain returns to a name on it without reaching a record, union, container or primitive | give one name on the chain a body; a recursive type wants a record or union where it names itself |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
-| `E0103` | undefined name / slot | declare it, or fix the spelling |
+| `E0103` | undefined name / slot — including a `let` read outside the `if` branch, `for` body or match arm that declared it | declare it, or fix the spelling; for a name an inner scope declared, declare it before that scope (`let n = if c then … else …`) or move the read inside — a rename is not the repair |
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
@@ -55,7 +55,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 ## Auto-fix
 
-For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions.
+For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
 
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes
