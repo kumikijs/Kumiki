@@ -57,7 +57,8 @@ reducer stretch on=ui.click(Stretch)
     do= draft.get.length := 99
 
 # An index step, the third member of the closed set, here on a Map — the shape
-# §1.6.3's own example uses. Example 101 writes through an index into a List.
+# §1.6.3's own example uses. `101-list-index-write.kumiki` writes through an
+# index into a List.
 reducer mark on=ui.click(Mark)
     do= marks["a"] := 1
 

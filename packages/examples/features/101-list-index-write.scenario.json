@@ -30,21 +30,43 @@
       }
     },
     {
-      "label": "an index past the end writes nothing",
-      "do": { "click": "#outside" },
+      "label": "a for loop writes each index it names, each write seeing the one before",
+      "do": { "click": "#zero-ends" },
       "expect": {
         "noErrors": true,
-        "state": { "xs": [7, 2, 3] },
-        "domIncludes": ["length: 3"]
+        "state": { "xs": [0, 2, 0] },
+        "domIncludes": ["length: 3", "head: 0", "sum: 2"]
       }
     },
     {
-      "label": "a negative index writes nothing",
-      "do": { "click": "#negative" },
+      "label": "a write past the end panics, and the reducer's earlier write rolls back with it",
+      "do": { "navigate": "/outside" },
       "expect": {
-        "noErrors": true,
-        "state": { "xs": [7, 2, 3] },
-        "domIncludes": ["length: 3", "sum: 12"]
+        "state": { "xs": [0, 2, 0], "tries": 0 },
+        "domIncludes": [
+          "length: 3",
+          "tries: 0",
+          "failed: Index 3 is out of range for a List of length 3"
+        ],
+        "errorIncludes": ["panic in reducer \"write-outside\""]
+      }
+    },
+    {
+      "label": "a negative index panics the same way",
+      "do": { "navigate": "/negative" },
+      "expect": {
+        "state": { "xs": [0, 2, 0], "tries": 0 },
+        "domIncludes": ["tries: 0", "failed: Index -1 is out of range for a List of length 3"],
+        "errorIncludes": ["panic in reducer \"write-negative\""]
+      }
+    },
+    {
+      "label": "a read past the end panics too, rather than reading undefined",
+      "do": { "navigate": "/read-outside" },
+      "expect": {
+        "state": { "picked": 0, "tries": 0 },
+        "domIncludes": ["tries: 0", "failed: Index 7 is out of range for a List of length 3"],
+        "errorIncludes": ["panic in reducer \"read-outside\""]
       }
     }
   ]

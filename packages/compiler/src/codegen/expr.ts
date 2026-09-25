@@ -195,7 +195,9 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `(${baseJs})[${JSON.stringify(e.field)}]`;
     }
     case "Index": {
-      return `(${jsOfExpr(e.base, ctx)})[${jsOfExpr(e.index, ctx)}]`;
+      // Through the runtime, so a List index that names no element panics
+      // here as it does on the left of `:=` (language.md §1.6.3).
+      return `_s.index(${jsOfExpr(e.base, ctx)}, ${jsOfExpr(e.index, ctx)})`;
     }
     case "Call": {
       const cn = e.callee;

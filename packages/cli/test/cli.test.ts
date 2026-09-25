@@ -201,10 +201,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `finally`, both of which buy a property the whole file already holds: a
     // throw from inside a panic catch must not displace the panic, and an
     // episode this dispatch opened must close however it exits.
+    //
+    // 58,000 from 57,000 (57,025 measured, from 56,609): an index into a List
+    // names an element or panics, on both sides of `:=` (language.md §1.6.3).
+    // The 416 are the one range rule both sides ask (`listPosition`), the
+    // `_s.index` read every `xs[i]` now lowers to, and the setter's two panics
+    // for an index that meets no List. A counter indexes nothing and still
+    // ships them: the alternative is an out-of-range write that lands nowhere
+    // and a read that hands `undefined` to whatever comes next.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(57_000);
+    expect(total).toBeLessThan(58_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

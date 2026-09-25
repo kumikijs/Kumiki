@@ -219,8 +219,7 @@ describe("the write side answers the read side's question too", () => {
 // An index step is one of §1.6.3's three, but only on a receiver that has a
 // place for it to name. A `List` index names a position and a `Map` index names
 // an entry; a `Set` has membership and nothing else, so `s[x] := v` is refused
-// with the code a member gets, rather than lowered to a write that turned the
-// Set into something else.
+// with the code a member gets.
 describe("an index step into a Set", () => {
   it("is E0602, naming the Set and the members that change it", () => {
     const errs = errsOf(withBody(`slot tags : Set(Int) = []`, `tags[7] := 8`));
@@ -235,14 +234,20 @@ describe("an index step into a Set", () => {
     expect(errs.map((x) => x.code)).toEqual(["E0602"]);
   });
 
-  it("is reported where the Set is reached through a record field", () => {
-    const errs = errsOf(
-      withBody(
-        `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
-        `doc.tags["a"] := "b"`,
-      ),
-    );
-    expect(errs.map((x) => x.code)).toEqual(["E0602"]);
+  // However the Set is reached, the step into it is the same step.
+  it.each([
+    [
+      "a record field",
+      `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
+      `doc.tags["a"] := "b"`,
+    ],
+    ["an alias", `type Tags = Set(Text)\nslot tags : Tags = []`, `tags["a"] := "b"`],
+    ["a nominal type", `type Tags = nominal Set(Text)\nslot tags : Tags = []`, `tags["a"] := "b"`],
+    ["an element of a List", `slot sets : List(Set(Int)) = []`, `sets[0][1] := 2`],
+    ["a value of a Map", `slot byKey : Map(Text, Set(Int)) = {}`, `byKey["a"][1] := 2`],
+    ["the payload of an Option", `slot maybe : Option(Set(Int)) = None`, `maybe.get[1] := 2`],
+  ])("is E0602 where the Set is %s", (_how, decls, body) => {
+    expect(codesOf(withBody(decls, body))).toEqual(["E0602"]);
   });
 });
 
@@ -257,5 +262,53 @@ describe("an index step into a List or a Map stays legal", () => {
 
   it("accepts a Map index write of the value type", () => {
     expect(errsOf(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
+  });
+});
+
+// A List index names a position, and a position is an `Int` (§1.6.3). Any other
+// index is a mistake the checker can see, so it is reported rather than left to
+// name no element at run time — on both sides of `:=`, since the read and the
+// write name the same element.
+describe("a List index is an Int", () => {
+  const list = `slot xs : List(Int) = [1, 2, 3]\nslot picked : Int = 0`;
+
+  it.each([
+    ["Text", `slot k : Text = "0"`],
+    ["Float", `slot k : Float = 0.5`],
+  ])("reports a %s index on the left of := as E0201", (name, decl) => {
+    const errs = errsOf(withBody(`${list}\n${decl}`, `xs[k] := 7`));
+    expect(errs.map((x) => x.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(`Expected Int but got ${name}`);
+  });
+
+  it.each([
+    ["Text", `slot k : Text = "0"`],
+    ["Float", `slot k : Float = 0.5`],
+  ])("reports a %s index on the right of := as E0201", (name, decl) => {
+    const errs = errsOf(withBody(`${list}\n${decl}`, `picked := xs[k]`));
+    expect(errs.map((x) => x.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(`Expected Int but got ${name}`);
+  });
+
+  it("reports a whole number spelled as text", () => {
+    expect(codesOf(withBody(list, `xs["0"] := 7`))).toEqual(["E0201"]);
+  });
+
+  it("reports the index of a List reached through a field", () => {
+    const decls = `type Row = { n: Int }\nslot rows : List(Row) = []\nslot k : Text = "0"`;
+    expect(codesOf(withBody(decls, `rows[k].n := 7`))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["an Int slot", `slot k : Int = 0`, `xs[k] := 7`],
+    ["arithmetic on an Int", `slot k : Int = 0`, `xs[k + 1] := 7`],
+    ["a refinement of Int", `type Idx = Int where between(0, 2)\nslot k : Idx = 0`, `xs[k] := 7`],
+    ["a negative literal", ``, `xs[-1] := 7`],
+  ])("accepts %s", (_how, decl, body) => {
+    expect(codesOf(withBody(`${list}\n${decl}`, body))).toEqual([]);
+  });
+
+  it("leaves a Map's key to the Map", () => {
+    expect(codesOf(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
   });
 });

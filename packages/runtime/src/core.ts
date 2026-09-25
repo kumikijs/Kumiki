@@ -3244,9 +3244,18 @@ function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
   return typeof seg === "object" && seg !== null && seg.get === true;
 }
 
-/** A segment that names an element of a List of this length. */
-function isListIndex(seg: PathSegment, length: number): seg is number {
-  return typeof seg === "number" && Number.isInteger(seg) && seg >= 0 && seg < length;
+/**
+ * The element of `list` an index names, or a panic when it names none
+ * (lifecycle.md §7.2.2). One rule for `xs[i]` on both sides of `:=`: the read
+ * (`_stdlibCore.index`) and the write (`_setPathHelper`) ask it the same way,
+ * so they cannot disagree about which indices are in range.
+ */
+export function listPosition(list: readonly unknown[], index: unknown): number {
+  if (typeof index === "number" && Number.isInteger(index) && index >= 0 && index < list.length) {
+    return index;
+  }
+  const shown = typeof index === "string" ? JSON.stringify(index) : String(index);
+  throw new KumikiPanic(`Index ${shown} is out of range for a List of length ${list.length}`);
 }
 
 /**
@@ -3280,16 +3289,27 @@ export function _setPathHelper(
     }
     return _setPathHelper(obj, rest, value);
   }
-  // A List stays a List: the element at the index is replaced in a copy. An
-  // index that names no element — past the end, negative, not a whole number —
-  // writes nothing, the way writing through an empty `.get` writes nothing
-  // (language.md §1.6.3). The object spread below would turn the array into
-  // an object keyed by its indices.
+  // A List stays a List: the element at the index is replaced in a copy
+  // (language.md §1.6.3). An index that names no element panics, as does an
+  // element that is not there to write through — the object spread below
+  // would turn the array into an object keyed by its indices, and a missing
+  // element into a record with one field.
   if (Array.isArray(obj)) {
-    if (!isListIndex(head, obj.length)) return obj;
+    const at = listPosition(obj, head);
+    const element = obj[at];
+    if (rest.length > 0 && (element === undefined || element === null)) {
+      throw new KumikiPanic(`Index ${at} of a List holds no value to write through`);
+    }
     const out = [...obj];
-    out[head] = _setPathHelper(obj[head], rest, value);
+    out[at] = _setPathHelper(element, rest, value);
     return out;
+  }
+  // A number is a List index or a `Map(Int, V)` key. Where the value is neither
+  // an array nor an object — absent after a restore or a decode — there is no
+  // List to index and no Map to insert into, and building an object would
+  // leave `{"0": v}` where a List was declared.
+  if (typeof head === "number" && (obj === null || typeof obj !== "object")) {
+    throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
   return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };
