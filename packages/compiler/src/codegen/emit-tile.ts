@@ -631,7 +631,7 @@ function tileCallJs(
  * The first positional argument of a tile call: a builtin's content, or a
  * user tile's input. A named argument is a prop wherever it is written, so
  * `heading(level=2, title)` says `title`; reading `args[0]` instead rendered
- * the level and dropped the title (#393).
+ * the level and dropped the title.
  */
 function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
   return t.args.find((a) => a.name === undefined);

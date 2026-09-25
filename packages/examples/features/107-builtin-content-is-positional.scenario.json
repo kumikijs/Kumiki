@@ -9,7 +9,8 @@
           "count: 0",
           "content first positional",
           "heading(level=2, title)"
-        ]
+        ],
+        "domExcludes": ["note"]
       }
     },
     {

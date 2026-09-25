@@ -1,12 +1,13 @@
-// A builtin's content is its first POSITIONAL argument (#393).
+// A builtin's content is its first POSITIONAL argument.
 //
 // `heading(level=2, title)` is an ordinary program: the level is a prop, the
 // title is what the heading says. Lowering read `t.args[0]` whatever its name,
 // so the level was rendered as the text and the title was dropped, with
-// `check` saying nothing. The user-tile half of the same disagreement was
-// closed by #330; this is the builtin half.
+// `check` saying nothing. A user-tile call already took its input from the
+// first positional argument; this holds the builtins to the same rule.
 //
-// Each row writes a named argument FIRST and the content after it, then
+// Each row writes a named argument FIRST and the content after it (one row
+// also writes it after, to show the order does not matter), then
 // mounts and reads the DOM: the content must be the positional value, and the
 // named argument must still have reached the element as a prop. `code` and
 // `editable` already read the positional argument; their rows hold all five
@@ -49,8 +50,8 @@ type Row = {
   says: string;
   /** What it must not say: the named argument's value, read as content. */
   notSays: string;
-  /** The named argument, observed on the element. */
-  prop: (el: HTMLElement) => void;
+  /** The named argument, observed on the element, where it leaves a trace. */
+  prop?: (el: HTMLElement) => void;
 };
 
 const rows: Row[] = [
@@ -67,6 +68,14 @@ const rows: Row[] = [
     // renderer draws every heading as an `h1`), so the prop half is held by
     // `test-id`, written first as well.
     tile: 'heading(test-id="probe", level=2, title)',
+    says: "Title",
+    notSays: "probe",
+    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+  },
+  {
+    kind: "heading, content first",
+    // The other order: a named argument after the content is a prop too.
+    tile: 'heading(title, test-id="probe", level=2)',
     says: "Title",
     notSays: "probe",
     prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
@@ -95,19 +104,32 @@ const rows: Row[] = [
     notSays: "probe",
     prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
   },
+  {
+    kind: "editable, text= beside a positional",
+    // `editable` also takes its content from `text=`, but only as a fallback
+    // for a call with no positional argument: written together, the
+    // positional one is the content.
+    tile: 'editable(text="A", "B")',
+    says: "B",
+    notSays: "A",
+  },
 ];
 
-describe("a builtin's content is its first positional argument (#393)", () => {
+describe("a builtin's content is its first positional argument", () => {
   for (const row of rows) {
-    it(`${row.kind}: a named argument written first stays a prop`, async () => {
+    it(`${row.kind}: the positional argument is the content, the named one is not`, async () => {
       const el = await render(row.tile);
       expect(el.textContent).toContain(row.says);
-      expect(el.textContent).not.toBe(row.notSays);
-      row.prop(el);
+      expect(el.textContent).not.toContain(row.notSays);
+      row.prop?.(el);
     });
   }
 
-  it("a builtin with no positional argument still renders empty content", async () => {
+  // Only the prop half here is a rule: a `test-id` never becomes content. The
+  // empty text is today's behaviour for a call that gives no content, and says
+  // nothing about `text(text="…")`, which `check` does not yet report; that
+  // shape is deliberately left unpinned until it gets a diagnostic.
+  it("text with only a test-id: the test-id is a prop, not the content", async () => {
     const el = await render('text(test-id="probe")');
     expect(el.textContent).toBe("");
     expect(el.getAttribute("data-kumiki-test")).toBe("probe");

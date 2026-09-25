@@ -1123,7 +1123,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
  * set, so what is counted here is what is read there. A prop's value is not a
  * tile, which is the one shape that has no consumer on either side and is
  * reported below. A builtin's content is read by the same rule: its first
- * positional argument, never `args[0]` whatever its name (#393).
+ * positional argument, never `args[0]` whatever its name.
  */
 function checkTileInput(
   t: TileExpr & { kind: "TileCall" },

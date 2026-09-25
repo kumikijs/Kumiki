@@ -599,6 +599,9 @@ pattern      ::= identifier
                | '_'
 ```
 
+**builtin の内容 — 位置引数**:
+- テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
+
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
 - `cond` が偽 → **当該子要素を tree から省略**（兄弟への影響なし）
@@ -623,7 +626,7 @@ pattern      ::= identifier
 
 ### 1.7.3 イベントハンドラ props {#_1-7-3-event-handler-props}
 
-イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノードにマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。builtin の内容も同じ規則で読まれる：`text` / `heading` / `markdown` / `code` / `editable` の内容は最初の**位置**引数であり、名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
+イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノードにマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}

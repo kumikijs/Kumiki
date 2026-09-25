@@ -215,13 +215,15 @@ app P
   });
 });
 
-describe("which argument a builtin takes as its content (#393)", () => {
+describe("which argument a builtin takes as its content", () => {
   // The DOM half is `packages/tests/builtin-content-arg.test.ts`. `level` has no
   // DOM trace to read there, so the prop half of the issue's own program is
   // held here, at the shape emitted.
-  it("renders the positional argument and keeps the named one a prop", () => {
+  it("shows the positional argument and keeps the named one a prop", () => {
     const js = emit('heading(level=2, "Title")');
-    expect(js).toContain('kind: "heading", text: _s.show("Title")');
+    // What is shown, without depending on the order of the node's fields.
+    expect(js).toContain('_s.show("Title")');
+    expect(js).not.toContain("_s.show(2)");
     expect(propsOf(js)).toContain("level: 2");
   });
 });
