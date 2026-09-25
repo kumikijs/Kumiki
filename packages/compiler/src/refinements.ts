@@ -19,7 +19,8 @@
 // E0803 at build time — the honest answer, and the same reasoning as E0802 for
 // a documented function the toolchain does not lower.
 
-import type { Refinement } from "./ast.ts";
+import { typeToString } from "./assignable.ts";
+import type { Refinement, TypeExpr } from "./ast.ts";
 
 /** A literal a refinement can be written with (language.md §1.3.1). */
 export type RefinementArg = number | string;
@@ -34,17 +35,65 @@ export type RefinementArg = number | string;
  */
 type ArgKind = "number" | "count" | "text" | "literal";
 
+/**
+ * The shape of value a predicate tests (language.md §1.3.3). Each body is
+ * guarded by it — `typeof v === "string"`, `typeof v === "number"` — so a
+ * predicate written over a base of another shape refuses every value, which
+ * {@link refinementBaseProblem} reports. `choice` is `one-of`, which lowers to
+ * a strict `includes` over its literals: it tests whichever shape the base is,
+ * so each literal has to be a value of that base.
+ */
+type Tests = Shape | "choice";
+
+/** The two shapes a predicate can test, one per `typeof` a guard reads. */
+type Shape = "text" | "number";
+
+/** The primitive bases each shape is a value of. */
+const BASES: Record<Shape, readonly string[]> = {
+  text: ["Text"],
+  number: ["Int", "Float", "Time"],
+};
+
+const TESTS_DESCRIPTION: Record<Tests, string> = {
+  text: "text",
+  number: "a number",
+  choice: "text or a number",
+};
+
+/** The shape a literal argument is a value of. */
+const shapeOfArg = (arg: RefinementArg): Shape => (typeof arg === "string" ? "text" : "number");
+
+/** The shape every value of `base` has, or `undefined` when it is neither. */
+function shapeOfBase(base: TypeExpr): Shape | undefined {
+  if (base.kind !== "TypePrim") return undefined;
+  return (Object.keys(BASES) as Shape[]).find((s) => BASES[s].includes(base.name));
+}
+
+/**
+ * The primitive bases `pred` can be written over — every one a value of the
+ * shape it tests, and for `one-of` every one its literals can be — or
+ * `undefined` for a name the table does not hold. errors.md §E0804 publishes
+ * this as a table, and `spec-drift.test.ts` holds the two to each other.
+ */
+export function refinementBases(pred: string): readonly string[] | undefined {
+  const tests = REFINEMENTS.get(pred)?.tests;
+  if (tests === undefined) return undefined;
+  return tests === "choice" ? [...BASES.text, ...BASES.number] : BASES[tests];
+}
+
 /** A fixed parameter list, or a variadic tail with a floor under its length. */
 type Params =
   | { readonly fixed: readonly ArgKind[] }
   | { readonly rest: ArgKind; readonly min: number };
 
 type RefinementEntry = {
+  readonly tests: Tests;
   readonly params: Params;
   /**
-   * A problem the arguments only have together — a range with nothing in it, a
-   * pattern that does not compile. Runs after every argument has passed its
-   * own `ArgKind`, so it can read them by position.
+   * A problem the arguments have beyond each one's own `ArgKind` — a range with
+   * nothing in it, a pattern that does not compile, a count that is legal and
+   * still below every length (`len-lt(0)`). Runs after every argument has
+   * passed its `ArgKind`, so it can read them by position.
    */
   readonly combined?: (args: readonly RefinementArg[]) => string | undefined;
   /**
@@ -97,6 +146,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
   [
     "between",
     {
+      tests: "number",
       params: { fixed: ["number", "number"] },
       combined: (a) =>
         num(a, 0) > num(a, 1)
@@ -105,18 +155,45 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
       body: (a) => `${NUM} && v >= ${num(a, 0)} && v <= ${num(a, 1)}`,
     },
   ],
-  ["nonempty", { params: { fixed: [] }, body: () => `${STR} && v.length > 0` }],
-  ["len-eq", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length === ${num(a, 0)}` }],
-  ["len-lt", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length < ${num(a, 0)}` }],
-  ["len-gt", { params: { fixed: ["count"] }, body: (a) => `${STR} && v.length > ${num(a, 0)}` }],
-  ["positive", { params: { fixed: [] }, body: () => `${NUM} && v > 0` }],
-  ["negative", { params: { fixed: [] }, body: () => `${NUM} && v < 0` }],
-  ["email", { params: { fixed: [] }, body: () => `${STR} && ${EMAIL_RE}.test(v)` }],
-  ["url", { params: { fixed: [] }, body: () => `${STR} && ${URL_RE}.test(v)` }],
-  ["uuid", { params: { fixed: [] }, body: () => `${STR} && ${UUID_RE}.test(v)` }],
+  ["nonempty", { tests: "text", params: { fixed: [] }, body: () => `${STR} && v.length > 0` }],
+  [
+    "len-eq",
+    {
+      tests: "text",
+      params: { fixed: ["count"] },
+      body: (a) => `${STR} && v.length === ${num(a, 0)}`,
+    },
+  ],
+  [
+    "len-lt",
+    {
+      tests: "text",
+      params: { fixed: ["count"] },
+      // A count, so well formed, and still below every length there is.
+      combined: (a) =>
+        num(a, 0) === 0
+          ? "len-lt(0) is shorter than every text, so no value satisfies it"
+          : undefined,
+      body: (a) => `${STR} && v.length < ${num(a, 0)}`,
+    },
+  ],
+  [
+    "len-gt",
+    {
+      tests: "text",
+      params: { fixed: ["count"] },
+      body: (a) => `${STR} && v.length > ${num(a, 0)}`,
+    },
+  ],
+  ["positive", { tests: "number", params: { fixed: [] }, body: () => `${NUM} && v > 0` }],
+  ["negative", { tests: "number", params: { fixed: [] }, body: () => `${NUM} && v < 0` }],
+  ["email", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${EMAIL_RE}.test(v)` }],
+  ["url", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${URL_RE}.test(v)` }],
+  ["uuid", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${UUID_RE}.test(v)` }],
   [
     "regex",
     {
+      tests: "text",
       params: { fixed: ["text"] },
       combined: (a) => {
         // The pattern as written, and only then the anchored form. Compiling
@@ -143,6 +220,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
   [
     "one-of",
     {
+      tests: "choice",
       params: { rest: "literal", min: 1 },
       body: (a) => `${JSON.stringify(a)}.includes(v)`,
     },
@@ -227,6 +305,38 @@ export function refinementProblem(r: Refinement): RefinementProblem | undefined 
     };
   }
   return undefined;
+}
+
+/**
+ * Why `r` refuses every value of `base`, the type it is written over read to
+ * its structural form, or `undefined` when a value of it can pass. `base` is
+ * the caller's to normalise: an opaque one — a type parameter, a name that
+ * resolves to nothing — says nothing about the shape, and passes. `over` is
+ * how the message names where the base came from; by default it is the `where`
+ * itself, and a generic's application passes its own wording.
+ *
+ * This is the other half of E0804's rule. The arguments decide which values of
+ * the tested shape pass; the base decides whether the slot holds that shape at
+ * all, and `positive` over `Text` refuses every text exactly as `between(5, 1)`
+ * refuses every number. `one-of` tests whatever shape the base has, so there
+ * the question is per literal: `includes` compares strictly, and a `1` listed
+ * over `Text` is a choice no value of the slot equals.
+ */
+export function refinementBaseProblem(
+  r: Refinement,
+  base: TypeExpr,
+  over = `is written over ${typeToString(base)}`,
+): string | undefined {
+  const tests = REFINEMENTS.get(r.pred)?.tests;
+  if (tests === undefined || base.kind === "TypeRef") return undefined;
+  const shape = shapeOfBase(base);
+  if (tests === "choice" && shape !== undefined) {
+    const wrong = r.args.findIndex((a) => shapeOfArg(a) !== shape);
+    if (wrong === -1) return undefined;
+    return `Refinement "${r.pred}" lists ${showArg(r.args[wrong])} (argument ${wrong + 1}) but ${over}, so no value equals it`;
+  }
+  if (shape !== undefined && shape === tests) return undefined;
+  return `Refinement "${r.pred}" tests ${TESTS_DESCRIPTION[tests]} but ${over}, so no value satisfies it`;
 }
 
 function arityProblem(

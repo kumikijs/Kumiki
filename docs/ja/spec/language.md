@@ -188,9 +188,9 @@ one-of(v1, v2, ...)
 | `regex("p")` | `p` が値**全体**にマッチする。パターンは両端がアンカーされるため、`regex("[0-9]{4}")` は `"AB1234"` を拒否する | パターンとして解釈できるテキストリテラル 1 個 |
 | `one-of(v1, ...)` | 値が列挙されたリテラルのいずれか | リテラル 1 個以上 |
 
-述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。
+述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とする。`one-of` は厳密に比較するので、リテラルがテキストなら `Text`、数値なら `Int`・`Float`・`Time` の基底型を必要とする。ジェネリックの型パラメータは適用箇所で判定される：`type NonEmpty(T) = T where nonempty` は問題なく、`NonEmpty(Int)` は E0804 である。
 
-述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数の長さ、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
+述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数や負の長さ、`len-lt(0)`（あらゆるテキストより短い）、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
 
 任意 Boolean 述語は禁止。理由：AI が証明を書く必要が生じるとデバッグループが壊れる。
 
@@ -337,6 +337,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   `$route` はここでは名前ではない
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
+  reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
+  （[http.md §6.4](./http.md#_6-4-cancellation)）
 
 ### 1.5.3 例
 
