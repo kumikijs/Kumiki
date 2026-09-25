@@ -322,14 +322,15 @@ function checkAll(
   }
 
   const index = buildDefIndex(program);
+  const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
     if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
-    if (def.kind === "SlotDef") checkSlot(def, sym, errors, index);
+    if (def.kind === "SlotDef") checkSlot(def, sym, errors, index, routeChain);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);
     if (def.kind === "FnDef") checkFn(def, sym, errors);
     if (def.kind === "EffectDef") checkEffect(def, sym, errors);
-    if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps);
+    if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps, routeChain);
     if (def.kind === "MotionDef") checkMotion(def, errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
@@ -628,7 +629,13 @@ function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
   }
 }
 
-function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index: DefIndex): void {
+function checkSlot(
+  slot: SlotDef,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  index: DefIndex,
+  routeChain: RouteChainResolver,
+): void {
   const reserved = RESERVED_SLOT_NAMES.get(slot.name);
   if (reserved !== undefined) {
     errors.push({
@@ -641,8 +648,9 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index
   resolveType(slot.type, sym, errors);
   // Derived slots are prohibited (language.md §1.4.2 inv. 4), and the lowering
   // agrees: a slot read is emitted as a lookup in the live-value table, which
-  // is built after the slot table — so an initializer that reads a slot throws
-  // on mount whichever order the two are declared in.
+  // is declared after the slot table in the module body — so an initializer
+  // that reads a slot throws while the module is imported, whichever order the
+  // two are declared in.
   for (const ref of referencesIn(slot, index)) {
     if (ref.layer !== "slot") continue;
     errors.push({
@@ -650,6 +658,36 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index
       kind: "derived-slot",
       message: `Slot "${slot.name}" reads slot "${ref.name}" in its initial value; derived slots are prohibited — compute it in a fn instead`,
       pos: ref.pos ?? slot.pos,
+    });
+  }
+  // `route` is a slot too, and the same lowering answers for it: the read is
+  // the same live-value lookup, so it throws while the module is imported.
+  // What differs is that no initializer can compute it, not even through a
+  // `fn`: the runtime installs it during the mount. `referencesIn` skips the
+  // name, so the loop above never sees it. Which `route` is the runtime's (a
+  // local bind of that name is not) is decided by the E0120 gate in
+  // `checkExpr`; `routeReadsIn` runs the initializer through that gate and
+  // collects the reads it matches. `$route` is left to the
+  // undefined-name report `checkExpr` gives it below at the same position: an
+  // initializer has no payload, so there it is a name that does not exist.
+  for (const read of routeReadsIn(slot.init, sym)) {
+    if (read.name !== "route") continue;
+    errors.push({
+      code: "E0304",
+      kind: "derived-slot",
+      message: routeInSlotInitMessage(slot.name, read.name),
+      pos: read.pos,
+    });
+  }
+  // Neither loop above looks inside a `fn` the initializer calls. The call is
+  // emitted into the slot table, so the `fn` body also runs while the module
+  // is imported, and its read of the route throws the same way.
+  for (const hop of routeReachedThroughCalls(slot.init, sym, routeChain)) {
+    errors.push({
+      code: "E0304",
+      kind: "derived-slot",
+      message: routeInSlotInitMessage(slot.name, hop.name, hop.chain),
+      pos: hop.pos,
     });
   }
   const ctx: Ctx = {
@@ -894,10 +932,11 @@ type Ctx = {
    */
   routeBind: "bound" | "unbound" | "no-payload";
   /**
-   * Where the E0120 gate records the names it matched, for a caller that wants
-   * the answer rather than the diagnostic. Set only by the pass that asks
-   * whether a `fn` body would read the route from an `app.init` position; a
-   * scope that leaves it unset is unaffected.
+   * Where the E0120 gate records the reads it matched, for a caller that wants
+   * the answer rather than the diagnostic. Set only by `routeReadsIn`, the
+   * probe that asks whether an expression evaluated before the mount — a `fn`
+   * body reached from one, a slot initializer — reads the route; a scope that
+   * leaves it unset is unaffected.
    *
    * A read nested inside a `let`, a `for` or a match arm reaches this array
    * because every narrower scope is built by spreading the parent (`innerScope`
@@ -905,7 +944,7 @@ type Ctx = {
    * of those explicitly and nested reads stop being found — silently, since
    * every diagnostic the gate produces here is discarded.
    */
-  routeNamesSeen?: string[];
+  routeReadsSeen?: { name: string; pos: Pos }[];
 };
 
 /**
@@ -1123,8 +1162,8 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
  * the tile's root node alike — and `tileCallJs` takes the input from the same
  * set, so what is counted here is what is read there. A prop's value is not a
  * tile, which is the one shape that has no consumer on either side and is
- * reported below. The builtin call sites still take `args[0]` whatever its
- * name; that half is its own defect.
+ * reported below. A builtin's content is read by the same rule: its first
+ * positional argument, never `args[0]` whatever its name.
  */
 function checkTileInput(
   t: TileExpr & { kind: "TileCall" },
@@ -2340,10 +2379,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         !ctx.localBinds.has(e.name)
       ) {
         // The one place that decides whether a `route` here is the runtime's,
-        // so the transitive pass asks this branch rather than matching the
-        // spelling itself: `routeNamesSeen` is how a caller checking a `fn`
-        // body in this position learns which name it found.
-        ctx.routeNamesSeen?.push(e.name);
+        // so the passes that ask about another position — a `fn` body reached
+        // from one, a slot initializer — probe this branch rather than
+        // matching the spelling themselves: `routeReadsSeen` is how they learn
+        // which name it found, and where.
+        ctx.routeReadsSeen?.push({ name: e.name, pos: e.pos });
         errors.push({
           code: "E0120",
           kind: "route-in-app-init",
@@ -5038,51 +5078,77 @@ function checkTestMockValues(
 }
 
 /**
- * What every E0120 says, whether the read is written in the argument or sits
- * behind a `fn` call. `chain` is the route from the called `fn` to the read —
- * `["here"]`, or `["outer", "inner"]` — and naming only the first of those
- * would send the author to a `fn` that is not itself wrong.
+ * `through "here" (here → route)` — the chain from the called `fn` to the read,
+ * or nothing for a read written in place. Naming only the first `fn` would send
+ * the author to a definition that is not itself wrong.
  */
+function routeChainText(name: string, chain?: readonly string[]): string {
+  return chain === undefined ? "" : ` through "${chain[0]}" (${[...chain, name].join(" → ")})`;
+}
+
+/** What every E0120 says, whether the read is written in the argument or sits behind a `fn` call. */
 function routeInAppInitMessage(name: string, chain?: readonly string[]): string {
-  const through =
-    chain === undefined ? "" : ` through "${chain[0]}" (${[...chain, name].join(" → ")})`;
   return (
-    `"${name}" is not available in an app.init argument${through}: these arguments are ` +
-    `evaluated once, while the app object is being built, and the runtime installs ` +
-    `the route during the mount that follows. Take the route from a route.enter ` +
+    `"${name}" is not available in an app.init argument${routeChainText(name, chain)}: these ` +
+    `arguments are evaluated once, while the app object is being built, and the runtime ` +
+    `installs the route during the mount that follows. Take the route from a route.enter ` +
     `reducer, which runs with the route the app landed on`
   );
 }
 
 /**
- * Would this `fn` body read the runtime's route if it were evaluated in an
- * `app.init` argument — and under which spelling?
- *
- * Asked of the gate itself, in that position, so that which `route` counts is
- * decided in one place. The scope is `checkFn`'s, with the position swapped:
- * `routeBind` is the `no-payload` a `fn` body really has, and says nothing
- * either way here — the E0120 gate returns before the branch that reads it, so
- * a `$route` in a `fn` collects E0120 from this probe and E0103 from `checkFn`,
- * which is right: the call site is wrong even once the body is.
- *
- * Running `checkExpr` twice over one body is safe because `inferType` reads no
- * field of the scope but `localTypes`, which this builds the way `checkFn`
- * does. That matters beyond the diagnostics, which are discarded: `checkExpr`
- * also writes `accessKind` onto field accesses for codegen, and definitions are
- * checked in source order, so a decision that depended on anything else here
- * would make the emitted module depend on where the `fn` was written.
+ * What E0304 says for a slot initializer that reaches the route — the same
+ * shape as E0120's, because it is the same hole one position over. E0304's own
+ * advice for a derived slot ("compute it in a fn") is left out: a `fn` called
+ * from here is exactly the hop this reports.
  */
-function fnReadsRoute(fn: FnDef, sym: SymbolTable): string | null {
-  const seen: string[] = [];
+function routeInSlotInitMessage(slot: string, name: string, chain?: readonly string[]): string {
+  return (
+    `Slot "${slot}" reads "${name}"${routeChainText(name, chain)} in its initial value; ` +
+    `derived slots are prohibited, and this one cannot be computed at all: initial values ` +
+    `are evaluated while the module loads, and the runtime installs the route during the ` +
+    `mount that follows. Take the route from a route.enter reducer, which runs with the ` +
+    `route the app landed on`
+  );
+}
+
+/**
+ * The route reads in `e`, if it were evaluated before the mount installs the
+ * route — each with the spelling that matched and where it is written.
+ *
+ * Asked of the E0120 gate itself, in the `app-init` position, so that which
+ * `route` counts (a local bind or a `fn` parameter of that name does not) is
+ * decided in one place. `params` and `positional` are the binds in scope: a
+ * `fn`'s parameters and the `$1` / `$2` `checkFn` binds, or nothing for a slot
+ * initializer. `routeBind` is the `no-payload` both really have, and says
+ * nothing either way here — the gate returns before the branch that reads it,
+ * so a `$route` in a `fn` collects a read from this probe and E0103 from
+ * `checkFn`, which is right: the call site is wrong even once the body is.
+ *
+ * Running `checkExpr` twice over one expression is safe because `inferType`
+ * reads no field of the scope but `localTypes`, which this builds the way the
+ * real check does. That matters beyond the diagnostics, which are discarded:
+ * `checkExpr` also writes `accessKind` onto field accesses for codegen, and
+ * definitions are checked in source order, so a decision that depended on
+ * anything else here would make the emitted module depend on where the
+ * definition was written.
+ */
+function routeReadsIn(
+  e: Expr,
+  sym: SymbolTable,
+  params: readonly { name: string; type: TypeExpr }[] = [],
+  positional: readonly string[] = [],
+): { name: string; pos: Pos }[] {
+  const seen: { name: string; pos: Pos }[] = [];
   const ctx: Ctx = {
     kind: "app-init",
-    localBinds: new Set([...fn.params.map((p) => p.name), "$1", "$2"]),
-    localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    localBinds: new Set([...params.map((p) => p.name), ...positional]),
+    localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
-    routeNamesSeen: seen,
+    routeReadsSeen: seen,
   };
-  checkExpr(fn.body, sym, [], ctx);
-  return seen[0] ?? null;
+  checkExpr(e, sym, [], ctx);
+  return seen;
 }
 
 /**
@@ -5103,6 +5169,26 @@ function fnCallsIn(e: Expr, sym: SymbolTable): { name: string; pos: Pos }[] {
   return out;
 }
 
+type RouteChainResolver = (start: string) => { chain: string[]; name: string } | null;
+
+/**
+ * Every `fn` call in `e` that reaches the route, at the call, with the chain
+ * that gets there. The one walk both pre-mount positions share: an `app.init`
+ * argument reports each as E0120, a slot initializer as E0304.
+ */
+function routeReachedThroughCalls(
+  e: Expr,
+  sym: SymbolTable,
+  routeChain: RouteChainResolver,
+): { pos: Pos; chain: string[]; name: string }[] {
+  const out: { pos: Pos; chain: string[]; name: string }[] = [];
+  for (const call of fnCallsIn(e, sym)) {
+    const reached = routeChain(call.name);
+    if (reached !== null) out.push({ pos: call.pos, ...reached });
+  }
+  return out;
+}
+
 /**
  * Resolve, for a `fn` name, the shortest chain of calls from it to a body that
  * reads the route, and the name that body read.
@@ -5113,19 +5199,20 @@ function fnCallsIn(e: Expr, sym: SymbolTable): { name: string; pos: Pos }[] {
  * has to terminate on its own. Re-entering a name cannot add reachability,
  * which is what makes the visited set safe to prune with.
  *
- * The per-`fn` answer is memoised across the app's arguments. The search is
- * not: it is a walk over a graph the memo already answers for, and each call
- * site is reported by the caller either way.
+ * The per-`fn` answer is memoised across every position that asks — each
+ * `app.init` argument and each slot initializer. The search is not: it is a
+ * walk over a graph the memo already answers for, and each call site is
+ * reported by the caller either way.
  */
-function routeChainResolver(
-  sym: SymbolTable,
-): (start: string) => { chain: string[]; name: string } | null {
+function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   const direct = new Map<string, string | null>();
   const readsRoute = (name: string): string | null => {
     const cached = direct.get(name);
     if (cached !== undefined) return cached;
     const fn = sym.fns.get(name);
-    const answer = fn ? fnReadsRoute(fn, sym) : null;
+    const answer = fn
+      ? (routeReadsIn(fn.body, sym, fn.params, ["$1", "$2"])[0]?.name ?? null)
+      : null;
     direct.set(name, answer);
     return answer;
   };
@@ -5164,6 +5251,7 @@ function checkApp(
   sym: SymbolTable,
   errors: KumikiError[],
   registeredCaps: Set<string>,
+  routeChain: RouteChainResolver,
 ): void {
   // Each declared capability must be standard or registered via a manifest.
   for (const cap of app.caps) {
@@ -5214,7 +5302,6 @@ function checkApp(
     // required and every other value would be a lie about the payload.
     routeBind: "unbound",
   };
-  const routeChain = routeChainResolver(sym);
   for (const e of app.init) {
     // An init entry is an effect call by the grammar (§1.12). `checkExpr` would
     // resolve the callee as a `fn` and send `fix` hunting in the wrong
@@ -5239,14 +5326,12 @@ function checkApp(
       // right — a tile, a reducer and an effect's `map-request` all run after
       // the mount that installs the route — so the report belongs here, at the
       // call.
-      for (const call of fnCallsIn(a, sym)) {
-        const reached = routeChain(call.name);
-        if (reached === null) continue;
+      for (const hop of routeReachedThroughCalls(a, sym, routeChain)) {
         errors.push({
           code: "E0120",
           kind: "route-in-app-init",
-          message: routeInAppInitMessage(reached.name, reached.chain),
-          pos: call.pos,
+          message: routeInAppInitMessage(hop.name, hop.chain),
+          pos: hop.pos,
         });
       }
     }
