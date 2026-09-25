@@ -178,11 +178,19 @@ export const _stdlibCore = {
   /**
    * Polymorphic `.filter` dispatch — used by codegen when the receiver type
    * isn't statically known (e.g. `m.keys.filter(...)` vs `m.filter(...)`).
-   * Arrays go through Array.prototype.filter; objects (Maps in Kumiki) fall
-   * back to the (k, v) → boolean predicate of mapFilter.
+   * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
+   * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
+   * so it has to be told apart before the Map branch reads its `_tag` / `_0`
+   * fields as entries; other objects (Maps in Kumiki) fall back to the
+   * (k, v) → boolean predicate of mapFilter.
    */
   filter(coll: unknown, pred: (...args: unknown[]) => boolean): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
+    if (_stdlibCore.variantIs(coll, "Some")) {
+      const value = (coll as { _0: unknown })._0;
+      return pred(value) ? coll : _stdlibCore.None;
+    }
+    if (_stdlibCore.variantIs(coll, "None")) return coll;
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
@@ -591,14 +599,20 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  /** Text.parse-int → Option(Int) (truncates; mirrors `Int.parse`). */
+  /**
+   * Text.parse-int → Option(Int): any text `Number` reads as finite, truncated.
+   * Looser than `Int.parse`, which reads decimal digits only (stdlib §2.4.3).
+   */
   parseIntOpt(s: unknown): unknown {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n)
       ? _stdlibCore.Some(Math.trunc(n))
       : _stdlibCore.None;
   },
-  /** Text.parse-float → Option(Float) (mirrors `Float.parse`). */
+  /**
+   * Text.parse-float → Option(Float): any text `Number` reads as finite.
+   * Looser than `Float.parse`, which reads decimal text only (stdlib §2.4.3).
+   */
   parseFloatOpt(s: unknown): unknown {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;

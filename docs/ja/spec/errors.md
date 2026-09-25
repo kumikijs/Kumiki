@@ -367,9 +367,9 @@ lowering が読む `_init` / `_event` は trial の中でしか束縛されな�
 
 型パラメータはそれを宣言した定義の body の中だけでスコープに入る：`type Box(T) = {v: T}` は正しく、`type Box(T) = {v: U}` は誤り。他の宣言箇所（`slot` / `fn` / `effect` / `tile in=`）は型パラメータを持たないので、そこでの未解決名は常にエラーである。
 
-**呼び出しの qualifier** も型名である。`T.fresh()` / `T.parse(t)` / `T.show(v)` は大文字で始まる任意の `T` に対して lowering される——codegen が正規表現で形だけを見ている——が、メンバによって意味が違う。`parse` は qualifier で分岐するため、綴り間違いは失敗ではなく分岐の変更になっていた：`Int.parse("12")` は `Some(12)` を返すが `Itn.parse("12")` は `Some("12")` を返し、それを `Int` slot が保持して以降の加算はすべて文字列連結になる。`fresh` と `show` は qualifier を捨てるので、そこでの綴り間違いは同じ値を返す——それでも名前を報告するのは、どの型も指さない qualifier がそれ自体として誤りだからであり、この 2 つについては検査が lowering より意図的に厳しい。qualifier は他の型名と同じ名前空間（プリミティブを含む）に対して解決され、qualifier として綴られている必要がある：ハイフンを含む名前は qualifier ではなく、それで書かれた呼び出しはこれではなく [E0116](#e0116-undef-call) になる。
+**呼び出しの qualifier** も型名である。`T.fresh()` / `T.parse(t)` / `T.show(v)` は大文字で始まる任意の `T` に対して lowering される——codegen が正規表現で形だけを見ている——ため、どの型も指さない qualifier はここで拒否しなければそのまま lowering される。`parse` は qualifier が解決される基底型によってテキストを読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、どの型にも解決されない名前には読むための基底型がない。`parse` が qualifier の名前で分岐していた頃は、綴り間違いは失敗ではなく分岐の変更になっていた：`Itn.parse("12")` は `Some("12")` を返し、それを `Int` slot が保持して以降の加算はすべて文字列連結になっていた。`fresh` と `show` は qualifier を捨てるので、そこでの綴り間違いは同じ値を返す——それでも名前を報告するのは、どの型も指さない qualifier がそれ自体として誤りだからであり、この 2 つについては検査が lowering より意図的に厳しい。qualifier は他の型名と同じ名前空間（プリミティブを含む）に対して解決され、qualifier として綴られている必要がある：ハイフンを含む名前は qualifier ではなく、それで書かれた呼び出しはこれではなく [E0116](#e0116-undef-call) になる。
 
-`Decoder` / `EffectId` / `Duration` / `Bytes` はその例外であり、括弧の有無にかかわらず、またその名前が型でもあるかどうかにかかわらず適用される：これらのメンバは [E0116](#e0116-undef-call) が挙げる組み込み呼び出しちょうどであり、`fresh` / `parse` / `show` はその中では解決されず、これではなくその E0116 になる。例外がある理由は、この 3 つが書かれた qualifier を無視するからである——`EffectId.fresh()` も `Duration.fresh()` も新しい id の生成へ lowering され、片方は著者が空のセンチネルを書いた場所に、もう片方は `Duration` slot にそのまま入っていて、どちらも報告されていなかった。`Duration` は標準ライブラリ型、`Bytes` はプリミティブなので、実在する型名がこの 3 メンバについて答えない唯一の場所がここである。
+`Decoder` / `EffectId` / `Duration` / `Bytes` はその例外であり、括弧の有無にかかわらず、またその名前が型でもあるかどうかにかかわらず適用される：これらのメンバは [E0116](#e0116-undef-call) が挙げる組み込み呼び出しちょうどであり、`fresh`（および引数なしで書かれた `parse` / `show`）はその中では解決されず、これではなくその E0116 になる。引数を与えられた `parse` / `show` は、他の qualifier と同様にこれらの上でも [標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換) の型メンバである: `Duration.parse(t)` は `Option(Duration)`、`Duration.show(d)` は `Text` である。例外がある理由は、`fresh` が書かれた qualifier を無視し、引数なしで書かれた `parse` / `show` がこれらの名前空間のメンバではないからである——`EffectId.fresh()` も `Duration.fresh()` も新しい id の生成へ lowering され、片方は著者が空のセンチネルを書いた場所に、もう片方は `Duration` slot にそのまま入っていて、どちらも報告されていなかった。`Duration` は標準ライブラリ型、`Bytes` はプリミティブなので、実在する型名が `fresh`、および引数なしの `parse` / `show` について答えない唯一の場所がここである。
 
 **修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。`kumiki fix` が最も近い型名を提案する。
 
@@ -1000,13 +1000,16 @@ test typo-section =
 
 ### E0802 `unimplemented-function`
 
-本ドキュメントが記述しているが、ツールチェーンがまだ lowering していない関数の呼び出し。`E0116` とは異なり、名前は正しく、欠けているのは実装側である。
+本ドキュメントが記述しているが、ツールチェーンが lowering を持たない関数の呼び出し。`E0116` とは異なり、名前は正しく、書かれたとおりには lowering できない。
 
 > `Function "<name>" is documented but not implemented by the runtime`
+> `"<T>" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`
 
-現在この状態にあるのは `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-デバッグ補助)）の 1 つ。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
+現在この状態にある呼び出しは 2 つあり、それぞれが 1 つのメッセージに対応する。1 つ目は `trace(label, value)`（[標準ライブラリ §2.4.6](./stdlib.md#_2-4-6-デバッグ補助)）。仕様上の挙動は episode ログへの記録だが、lowering された式から mount の episode logger へ届く接続点が存在しない — 修正はコード生成のケース追加ではなくランタイム側の変更になる。その間ここで報告することが診断の誠実さを保つ: 報告しなければ呼び出しは未定義のグローバルへ落ち、評価された場所でプログラムが壊れ、仕様を指し示すものは何も残らない。
 
-**修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。
+2 つ目は、基底型にテキストの読み方がない型に対する `T.parse(text)` — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、それらの上の `nominal`、または型引数なしで書かれた型コンストラクタ（`List.parse(t)`、`type Box(T) = …` に対する `Box.parse(t)`）。読み方のある基底型は [標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換) が挙げている。`trace` と違い、これは実装を待っている欠落ではない: レコードを表すテキストの綴りは存在しないので、どんな lowering にも作るものがない。メッセージが未実装と言わずにそう述べるのはそのためである。呼び出しの型は `Option(T)` だが、lowering は生のテキストを `Some` で包んでいたため、`T` として読む側が取り出す値は文字列だった。どの型も指さない `T` はこれではなく [E0117](#e0117-undef-type) であり、定義が何にも解決されない `T`（未定義の名前の別名、循環）はその定義での報告に任され、`nominal` はその基底型で判断される — `type Cents = nominal Int` は `Int` と同じようにパースされる。
+
+**修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。`T.parse` の場合は、読み方のある型（`Int.parse`、`Text.parse` など）でテキストを読み、`fn` の中でそこから `T` を組み立てる。
 
 ### E0803 `unimplemented-refinement`
 
@@ -1023,14 +1026,32 @@ test typo-section =
 
 ### E0804 `refinement-args-invalid`
 
-登録済み述語が、チェックを組み立てられない引数とともに書かれている。
+登録済み述語が、チェックを組み立てられない引数とともに、またはその述語が検査できない基底型の上に書かれている。
 
 > `Refinement "<pred>" takes <n> argument(s) but got <m>`
 > `Refinement "<pred>" takes <what> but argument <i> is <given>`
 > `Refinement "<pred>" needs at least <min> value(s) but got <n>`
 > `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
 > `Refinement regex("<p>") is not a pattern: <reason>`
+> `Refinement len-lt(0) is shorter than every text, so no value satisfies it`
+> `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
+> `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
+> `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
 
-各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。
+各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。
 
-**修正**：述語が取る引数を書く — `between` には数値の境界、`len-*` 系には 0 以上の整数、`regex` にはコンパイルできるパターン、`one-of` には 1 個以上のリテラル。
+基底型は同じ規則のもう半分である。各述語は 1 つの形の値を検査し、それ以外には `false` を返す（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。そのため別の形の基底型の上に書かれた述語は**あらゆる**値を拒否する：`slot name : Text where positive` は何も通さず、そこへの書き込みはそのたびに reducer のバッチを破棄する。各述語が必要とするもの：
+
+| 述語 | 検査するもの | 必要な基底型 |
+|---|---|---|
+| `nonempty`, `len-eq`, `len-lt`, `len-gt`, `email`, `url`, `uuid`, `regex` | テキスト | `Text` |
+| `between`, `positive`, `negative` | 数値 | `Int`・`Float`・`Time` |
+| `one-of` | いずれかのリテラルとの厳密な一致 | テキストリテラルなら `Text`、数値リテラルなら `Int`・`Float`・`Time` |
+
+`one-of` は厳密な所属判定に lower されるので、各リテラルは基底型の値でなければならない：`Text where one-of(1, 2)` はどのテキストとも一致しない候補を並べており、`Bool`・レコード・union にはそもそもリテラルがない。正しいリテラルの中に 1 つだけ誤ったものが混じっている場合も報告される — その候補は決して選ばれない。
+
+基底型は refinement が書かれている連鎖 — 別名・`nominal`・先行する `where` — をたどって読む。したがって `type Handle = nominal Text` に `where positive` を付けると報告され、`nominal Int` に `where between(0, 9)` を付けても報告されない。レコード・union・コンテナはどちらの系統が検査する基底型でもなく、`EffectId` のような不透明な型も同様である：実行時に何で表されていようと、プログラムはその述語が問う対象となる値をその型として持たない。
+
+型パラメータはそれ自体では基底型について何も言わないので、定義 `type NonEmpty(T) = T where nonempty` は報告されない。報告されるのはその**適用**である：引数を本体へ代入し — 入れ子の適用・レコードのフィールド・union のペイロードを通して — それによって検査できない基底型の上に置かれた refinement を適用箇所で報告する。`slot n : NonEmpty(Int)` や `type N = NonEmpty(Int)` の `NonEmpty(Int)`、`type W(T) = nominal T where positive` に対する `W(Text)` がそれである。引数によらず定義そのものが持つ問題は、定義で 1 度だけ報告される。
+
+**修正**：述語が取る引数を書く — `between` には数値の境界、`len-*` 系には 0 以上の整数、`regex` にはコンパイルできるパターン、`one-of` には 1 個以上のリテラル — そして述語が検査する基底型の上に書くか、手元の基底型を検査する述語を選ぶ（テキストには `positive` ではなく `len-gt(0)`）。

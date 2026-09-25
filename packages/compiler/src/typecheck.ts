@@ -18,6 +18,7 @@ import type {
   Expr,
   FnDef,
   Lvalue,
+  MatchArm,
   Pattern,
   Pos,
   Program,
@@ -57,8 +58,9 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { refinementProblem } from "./refinements.ts";
+import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
@@ -1030,6 +1032,19 @@ function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
       pos,
     });
   }
+}
+
+/**
+ * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
+ * typed from the scrutinee. For the positions that only *read* an arm — a
+ * value's type, a destination's check — so a pattern's own mistakes are
+ * dropped here: `checkExpr`'s `MatchExpr` case walks the same pattern with the
+ * real list, and reporting it twice would double every E0207/E0208/E0209.
+ */
+function armScope(arm: MatchArm, scrutType: TypeExpr | null, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner = innerScope(ctx);
+  checkPatternAgainstType(arm.pattern, scrutType, sym, [], inner);
+  return inner;
 }
 
 /**
@@ -2166,11 +2181,12 @@ function checkCallee(
     });
     return;
   }
-  // `<Type>.fresh|parse|show` is lowered on any capitalised qualifier — codegen
-  // matches it by regex — so a misspelt qualifier did not fail, it changed what
-  // the call does: `Int.parse` has a numeric branch and `Itn.parse` misses it,
-  // so an `Int` slot ends up holding `"12"` and every later sum concatenates.
-  // Reported as E0117 with the sentence `resolveType` uses, so the repair path
+  // `<Type>.fresh|parse|show` is matched on any capitalised qualifier — codegen
+  // matches it by regex — so a qualifier that names no type has to be refused
+  // here. When `parse` branched on the qualifier's name, a misspelt one did not
+  // fail, it changed what the call did: `Itn.parse("12")` was `Some("12")` and
+  // every later sum concatenated. It now reads by the base the qualifier
+  // resolves to, and a name that resolves to none has no base. Reported as E0117 with the sentence `resolveType` uses, so the repair path
   // for an unknown type name covers this one without knowing about it.
   if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
     const qualifier = callee.slice(0, dot);
@@ -2191,6 +2207,26 @@ function checkCallee(
       });
       return;
     }
+    // `parse` lowers by the base the qualifier unaliases to, and a record, a
+    // union, `File`, `EffectId`, `Unit` or a constructor written without its
+    // arguments has no reading of a text — codegen has nothing of the call's
+    // type to produce. `parseQualifier` is the one answer both sides read, so
+    // every qualifier that passed E0117 above and has no reading is reported
+    // here, and none reaches the lowering. A qualifier whose definition
+    // resolves to nothing is left to the report at that definition.
+    if (
+      callee.slice(dot + 1) === "parse" &&
+      isQualifierName(qualifier) &&
+      parseQualifier(qualifier, sym).kind === "none"
+    ) {
+      errors.push({
+        code: "E0802",
+        kind: "unimplemented-function",
+        message: `"${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`,
+        pos,
+      });
+      return;
+    }
   }
   const arity = builtinArity(callee);
   if (arity !== undefined) {
@@ -2204,6 +2240,13 @@ function checkCallee(
       return;
     }
     if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    // What `parse` reads is a text (stdlib §2.4.3). Given anything else the
+    // call is not a parse of anything: `Bool.parse(flag)` is `None` whatever
+    // `flag` holds.
+    const text = args[0];
+    if (dot > 0 && callee.slice(dot + 1) === "parse" && text) {
+      checkAgainst(text, prim("Text", pos), sym, errors, ctx);
+    }
     return;
   }
   if (!fn) {
@@ -2939,6 +2982,19 @@ function checkAgainst(
     checkAgainst(e.alternate, declared, sym, errors, ctx, code);
     return;
   }
+  if (e.kind === "MatchExpr") {
+    // Every arm lands here too, for the same reason as `if` — and each arm is
+    // read in its own scope, so `Some(id) -> id` is checked as the payload type
+    // the scrutinee gives `id`. Arm by arm rather than through `inferType`:
+    // a `UserId` arm beside a `PostId` arm gives the whole `match` the base
+    // they share, `Text`, and a `PostId` destination accepts `Text` — so a
+    // whole-match comparison would pass the wrong arm without a word.
+    const scrutType = inferType(e.scrutinee, sym, ctx);
+    for (const arm of e.arms) {
+      checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
+    }
+    return;
+  }
   if (
     e.kind === "Num" &&
     d.kind === "TypePrim" &&
@@ -3489,31 +3545,6 @@ function arithmeticResult(
 }
 
 /**
- * The type a call's qualifier names, or `null` when it names none — including
- * when the call has no qualifier at all.
- *
- * A primitive is answered first because the grammar resolves those itself — a
- * `TypePrim`, never a symbol-table entry — so `sym.types` has no `Int`.
- *
- * A definition answers only when it is complete on its own, and that half is
- * the load-bearing one: an unapplied `TypeRef` to a `type Box(T) = …` unaliases
- * into an unsubstituted body and mismatches against real types, so `Box.fresh()`
- * would report a type the author never wrote. An *unresolvable* name costs
- * nothing by comparison — `relate` short-circuits on a `TypeRef` it cannot
- * unalias, which is how `unknownType` (literally `TypeRef "?"`) works — so
- * answering `null` for one only keeps this function honest; E0117 is the report
- * either way. That is why `isKnownTypeName`, the resolution rule E0117 applies,
- * is not the rule here: naming a type is what makes a qualifier legal, and
- * *being* one is what lets it answer.
- */
-function qualifiedType(name: string | null, pos: Pos, sym: SymbolTable): TypeExpr | null {
-  if (name === null) return null;
-  if (isPrimTypeName(name)) return prim(name, pos);
-  const def = sym.types.get(name);
-  return def !== undefined && def.params.length === 0 ? { kind: "TypeRef", name, pos } : null;
-}
-
-/**
  * The type `T.fresh()` produces, or `null` when the qualifier is not one it can
  * produce a value of.
  *
@@ -3530,8 +3561,8 @@ function qualifiedType(name: string | null, pos: Pos, sym: SymbolTable): TypeExp
  * base for a uuid. All three go back to the `null` they had before — no worse
  * than the lowering, which is the most an inference can honestly claim.
  */
-function freshResultType(qualifier: string | null, pos: Pos, sym: SymbolTable): TypeExpr | null {
-  const named = qualifiedType(qualifier, pos, sym);
+function freshResultType(qualifier: string, pos: Pos, sym: SymbolTable): TypeExpr | null {
+  const named = qualifierType(qualifier, pos, sym);
   if (named === null) return null;
   return assignable(prim("Text", pos), named, sym) ? named : null;
 }
@@ -3862,6 +3893,17 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     case "IfExpr": {
       return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
     }
+    case "MatchExpr": {
+      // The arm values are what the `match` evaluates to, whatever the
+      // scrutinee is — an `Option`, a `Result` or a user union alike. Arms
+      // that disagree give the base they share, nominal dropped; one
+      // undecidable arm leaves the whole `match` undecidable (`commonType`).
+      const scrutType = inferType(e.scrutinee, sym, ctx);
+      return commonType(
+        e.arms.map((arm) => inferType(arm.body, sym, armScope(arm, scrutType, sym, ctx))),
+        sym,
+      );
+    }
     case "EmitExpr":
       // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
       // yields the dispatched effect's EffectId.
@@ -3881,41 +3923,37 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // ordered the way the lowering is, which is what keeps the two agreeing.
       //
       // The other two members of `TYPE_MEMBER_CALLS` are answered by the
-      // qualifier, below — `fresh` produces it and `parse` an `Option` of it.
+      // qualifier, below — `parse` an `Option` of it and `fresh` the qualifier.
       // All three are read through the one spelling rule codegen and
       // `builtinArity` apply, so a name a hyphen disqualifies as a qualifier
       // (`Othe-Id.fresh()`) is not a type-member call here either.
       const member =
         qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
       if (member === "show") return prim("Text", e.pos);
-      // `Duration.ms(500)` and friends build the standard library's `Duration`;
-      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10). Both keep the
-      // whole qualifier, ahead of the type-member rule: their members are
-      // constructors rather than `fresh` / `parse`.
-      //
-      // `parse` is the spelling they share with it, and both get it wrong the
-      // same way — `Duration.parse(t)` and `Bytes.parse(t)` answer a bare
-      // `Duration` / `Bytes` where the spec gives them `Option(…)`, so writing
-      // the call as documented is E0201 and writing it wrongly is clean. That
-      // is #424, left as it was rather than widened into this fix and pinned in
-      // `spec-divergences.test.ts` so it cannot drift further.
-      if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
-      if (qualifier === "Bytes") return prim("Bytes", e.pos);
-      // `TypeName.fresh()` is a `T` and `TypeName.parse(t)` an `Option(T)`
-      // (stdlib §2.4.1 / §2.4.3). Without this the call that *mints* an id was
-      // the one expression the nominal rule could not judge: `slot p : PostId`
-      // took a `UserId.fresh()` in silence, which is the mistake `nominal`
-      // exists to catch (#348).
+      // `TypeName.parse(t)` is an `Option(T)` (stdlib §2.4.3) — for `Duration`
+      // and `Bytes` too, which is why it is read ahead of their namespaces
+      // below. Caught by those instead, it answered the bare qualifier, so the
+      // documented `o : Option(Duration) := Duration.parse(t)` was E0201 and
+      // `d : Duration := Duration.parse(t)` was clean.
       //
       // The qualifier is resolved rather than matched, so a name that is no
-      // type answers nothing and E0117 keeps that report to itself (#276). What
-      // `fresh` can claim is narrower still, because its lowering discards the
-      // qualifier — `freshResultType` is where that is read.
-      if (member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      if (member === "parse") {
-        const named = qualifiedType(qualifier, e.pos, sym);
+      // type answers nothing and E0117 keeps that report to itself (#276).
+      if (qualifier !== null && member === "parse") {
+        const named = qualifierType(qualifier, e.pos, sym);
         return named === null ? null : container("Option", [named], e.pos);
       }
+      // `Duration.ms(500)` and friends build the standard library's `Duration`;
+      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10). Both keep the
+      // whole qualifier for every other member: those are constructors.
+      if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
+      if (qualifier === "Bytes") return prim("Bytes", e.pos);
+      // `TypeName.fresh()` is a `T` (stdlib §2.4.1). Without this the call that
+      // *mints* an id was the one expression the nominal rule could not judge:
+      // `slot p : PostId` took a `UserId.fresh()` in silence, which is the
+      // mistake `nominal` exists to catch (#348). What `fresh` can claim is
+      // narrower than the qualifier, because its lowering discards it —
+      // `freshResultType` is where that is read.
+      if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
       return sym.fns.get(e.callee)?.ret ?? null;
     }
     default:
@@ -5492,6 +5530,7 @@ function resolveType(
           });
         } else {
           checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+          checkApplication(t, sym, typeParams, errors);
         }
       }
       for (const a of t.args) resolveType(a, sym, errors, typeParams);
@@ -5505,11 +5544,8 @@ function resolveType(
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
-      checkRefinement(t.refinement, errors);
-      resolveType(t.inner, sym, errors, typeParams);
-      return;
     case "TypeRefinement":
-      checkRefinement(t.refinement, errors);
+      checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
@@ -5534,11 +5570,25 @@ function resolveType(
  *    with nothing in it. These are reachable, and each used to reach the
  *    runtime — as a check that refuses every value, one that accepts every
  *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
- *    `v <= x` half of what `between(0, "x")` lowered to.
+ *    `v <= x` half of what `between(0, "x")` lowered to. A legal count that is
+ *    still below every length, `len-lt(0)`, refuses every value the same way.
+ *    Also E0804, a predicate over a base it cannot test (`Text where
+ *    positive`, `Text where one-of(1)`): every body is guarded by the shape it
+ *    tests, and `one-of` compares strictly, so that slot refuses every write.
+ *    The base is `inner` read through the chain the refinement is, with the
+ *    definition's type parameters left opaque — they say nothing about the
+ *    shape until the generic is applied, which {@link checkApplication}
+ *    judges.
  */
-function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void {
+function checkRefinement(
+  r: Refinement | undefined,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
   if (!r) return;
-  const problem = refinementProblem(r);
+  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
   if (!problem) return;
   // Written out rather than looked up: `spec-drift.test.ts` reads the codes
   // this file emits off `code: "E…"`, so a code assembled anywhere but at the
@@ -5558,6 +5608,136 @@ function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void
     message: problem.message,
     pos: r.pos,
   });
+}
+
+/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
+function baseProblem(
+  r: Refinement,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+): RefinementProblem | undefined {
+  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const message = base ? refinementBaseProblem(r, base) : undefined;
+  return message ? { kind: "refinement-args-invalid", message } : undefined;
+}
+
+/** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
+function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
+  return new Map([...params].map((p) => [p, unknownType(pos)]));
+}
+
+/**
+ * `t` in the form a refinement's base is judged against, or `undefined` when
+ * nothing can be concluded from it: a chain that closes on itself (E0009's to
+ * report), or an application of a name that resolves to nothing (E0117's) —
+ * as opaque as the bare unresolved name `refinementBaseProblem` passes.
+ */
+function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
+  const base = unaliasType(t, sym);
+  if (base === null) return undefined;
+  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
+  return base;
+}
+
+/**
+ * E0804 for the refinements a generic's application puts over a base they
+ * cannot test.
+ *
+ * A generic's definition is checked with its parameters opaque, so
+ * `type NonEmpty(T) = T where nonempty` is silent there: `T` may be `Text`.
+ * The application is where the argument arrives, and `NonEmpty(Int)` is a
+ * type whose check refuses every value. So the body is walked here with the
+ * arguments substituted — into nested applications, record fields and union
+ * payloads alike — and each refinement is judged over the base the
+ * application gives it, reported at the application, which is what the
+ * author wrote wrong.
+ *
+ * `app`'s own arguments may name the parameters of a definition around it;
+ * those are opaque for the same reason, and are judged where that definition
+ * is applied in turn.
+ */
+function checkApplication(
+  app: TypeExpr & { kind: "TypeApp" },
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  const def = sym.types.get(app.name);
+  if (!def) return;
+  const opaque = opaqueParams(typeParams, app.pos);
+  const args = app.args.map((a) => substituteType(a, opaque));
+  const unapplied = def.params.map(() => unknownType(app.pos));
+  for (const message of appliedBaseProblems(app.name, args, unapplied, typeToString(app), sym)) {
+    errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
+  }
+}
+
+/**
+ * The messages for {@link checkApplication}: `name` applied to `args`, set
+ * against `judged`, the same application as the definitions around it were
+ * already checked with — every parameter still opaque there, opaque. A
+ * refinement whose base already had a problem under `judged` was reported
+ * where that definition was checked, and one whose base is no different is
+ * not the application's to report; only a problem the arguments bring is.
+ */
+function appliedBaseProblems(
+  name: string,
+  args: TypeExpr[],
+  judged: TypeExpr[],
+  shown: string,
+  sym: SymbolTable,
+  seen: ReadonlySet<string> = new Set(),
+): string[] {
+  const def = sym.types.get(name);
+  // A mismatched arity is E0210's, and a parameter with no argument would be
+  // read as whatever top-level type shares its name. Re-entering a name is a
+  // chain E0009 reports, and the walk has to end on the way there.
+  if (!def || seen.has(name) || def.params.length !== args.length) return [];
+  const applied = paramSubstitution(def.params, args);
+  const before = paramSubstitution(def.params, judged);
+  const inside = new Set([...seen, name]);
+  const out: string[] = [];
+  const walk = (t: TypeExpr): void => {
+    switch (t.kind) {
+      case "TypePrim":
+      case "TypeRef":
+        return;
+      case "TypeApp": {
+        const nested = t.args.map((a) => substituteType(a, applied));
+        const nestedBefore = t.args.map((a) => substituteType(a, before));
+        out.push(...appliedBaseProblems(t.name, nested, nestedBefore, shown, sym, inside));
+        for (const a of t.args) walk(a);
+        return;
+      }
+      case "TypeRecord":
+        for (const f of t.fields) walk(f.type);
+        return;
+      case "TypeUnion":
+        for (const v of t.variants) for (const p of v.payloads) walk(p);
+        return;
+      case "TypeNominal":
+      case "TypeRefinement": {
+        const r = t.refinement;
+        // A problem with the arguments is the definition's, reported there.
+        if (r && !refinementProblem(r)) {
+          const was = judgedBase(substituteType(t.inner, before), sym);
+          const now = judgedBase(substituteType(t.inner, applied), sym);
+          if (now && !(was && refinementBaseProblem(r, was))) {
+            const over = `${shown} applies it over ${typeToString(now)}`;
+            const message = refinementBaseProblem(r, now, over);
+            if (message) out.push(message);
+          }
+        }
+        walk(t.inner);
+        return;
+      }
+      default:
+        assertNever(t);
+    }
+  };
+  walk(def.body);
+  return out;
 }
 
 /**
