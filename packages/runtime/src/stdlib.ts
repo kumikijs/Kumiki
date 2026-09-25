@@ -610,14 +610,20 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  /** Text.parse-int → Option(Int) (truncates; mirrors `Int.parse`). */
+  /**
+   * Text.parse-int → Option(Int): any text `Number` reads as finite, truncated.
+   * Looser than `Int.parse`, which reads decimal digits only (stdlib §2.4.3).
+   */
   parseIntOpt(s: unknown): unknown {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n)
       ? _stdlibCore.Some(Math.trunc(n))
       : _stdlibCore.None;
   },
-  /** Text.parse-float → Option(Float) (mirrors `Float.parse`). */
+  /**
+   * Text.parse-float → Option(Float): any text `Number` reads as finite.
+   * Looser than `Float.parse`, which reads decimal text only (stdlib §2.4.3).
+   */
   parseFloatOpt(s: unknown): unknown {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;

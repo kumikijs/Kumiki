@@ -1,4 +1,5 @@
 import type { Expr, KeyKind, Pattern, Pos } from "../ast.ts";
+import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
@@ -8,6 +9,7 @@ import {
   jsProperty,
   makeEvalCtx,
 } from "./context.ts";
+import { refinementJs } from "./emit-type.ts";
 
 /** Extract the reducer name from a `run-reducer(name)` argument (a bare ref). */
 export function reducerNameArg(e: Expr | undefined): string {
@@ -38,6 +40,61 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
     );
   }
   return jsOfExpr(arg, ctx);
+}
+
+/** The lowering of one reading: text in, `Some(value)` or `None` out. */
+function readingJs(reading: ParseReading, a: string): string {
+  switch (reading) {
+    // Decimal only, and exact like `Bool`: `Number()` on its own also reads
+    // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
+    case "Int":
+      return `((_v) => (typeof _v === "string" && /^[+-]?[0-9]+$/.test(_v)) ? _s.Some(Number(_v)) : _s.None)(${a})`;
+    case "Float":
+      return `((_v) => { if (typeof _v !== "string" || !/^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/.test(_v)) return _s.None; const _n = Number(_v); return Number.isFinite(_n) ? _s.Some(_n) : _s.None; })(${a})`;
+    case "Time":
+      // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one has
+      // to produce that number, or every later `diff` / `plus` / `format` reads
+      // a string and produces `NaN`. The zone rule for a date-only string lives
+      // with the formatter that has to agree with it.
+      return `_s.parseTime(${a})`;
+    case "Bool":
+      // Converted, not wrapped: `Some("false")` unwraps to a non-empty string,
+      // which every `if` reads as true.
+      return `((_v) => _v === "true" ? _s.Some(true) : _v === "false" ? _s.Some(false) : _s.None)(${a})`;
+    case "Text":
+      return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
+    case "Bytes":
+      return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_s.bytesFromText(_v)) : _s.None)(${a})`;
+  }
+}
+
+/**
+ * `T.parse(text)` → `Option(T)`, converted by the base `T` unaliases to rather
+ * than by its name — so `type Cents = nominal Int` and the standard library's
+ * `Duration` read a number, as `Int` does.
+ *
+ * The reading is then held to every refinement `T` carries, and one it fails is
+ * `None`. An `Option(Cents)` never meets a slot-write guard, so without this
+ * `Cents.parse("-5")` handed the program a `Cents` its own type refuses.
+ *
+ * `parseQualifier` is the answer the checker reports E0802 from, so a qualifier
+ * with no reading never reaches here from a checked program; the throw is for
+ * `codegen()` called without `check()`, which would otherwise lower to a value
+ * of the wrong kind.
+ */
+function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
+  const a = requiredArg(callee, args, pos, ctx);
+  const qualifier = callee.slice(0, callee.indexOf("."));
+  const answer = parseQualifier(qualifier, ctx.gen);
+  if (answer.kind !== "reading") {
+    throw new Error(
+      `${callee}() at ${pos.line}:${pos.col} names a type no text has a reading as — run \`check\` for the diagnostic`,
+    );
+  }
+  const read = readingJs(answer.reading, a);
+  const refine = refinementJs({ kind: "TypeRef", name: qualifier, pos }, ctx.gen);
+  if (refine === undefined) return read;
+  return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
@@ -151,28 +208,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // Module calls like TodoId.fresh, now, etc.
       if (cn === "now") return `_s.now()`;
       if (/^[A-Z][A-Za-z0-9_]*\.fresh$/.test(cn)) return `_s.freshId()`;
-      if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) {
-        // `T.parse(text)` → Option<T>. Numeric types coerce to a number so
-        // arithmetic (e.g. fold/sum) works; other types keep the string.
-        const a = requiredArg(cn, e.args, e.pos, ctx);
-        const qualifier = cn.split(".")[0];
-        if (qualifier === "Int") {
-          return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
-        }
-        if (qualifier === "Float") {
-          return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(_n) : _s.None; })(${a})`;
-        }
-        if (qualifier === "Time") {
-          // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one
-          // has to produce that number. Falling into the generic branch below
-          // wrapped the raw text in `Some`, and every later operation — `diff`,
-          // `plus`, `format` — read a string where it needed a number and
-          // produced `NaN`. The zone rule for a date-only string lives with the
-          // formatter that has to agree with it.
-          return `_s.parseTime(${a})`;
-        }
-        return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
-      }
+      if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) return parseJs(cn, e.args, e.pos, ctx);
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
         return `_s.show(${requiredArg(cn, e.args, e.pos, ctx)})`;
       }

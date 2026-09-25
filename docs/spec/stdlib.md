@@ -442,6 +442,25 @@ TypeName.show(value)       : Text         ; the string representation of a value
 
 `TypeName.show(value)` is the qualified spelling of the `.show` method of [§2.2](#_2-2-collection-methods), and the qualifier is discarded: `Duration.show(d)` and `d.show` are the same expression and the same `Text`. That holds for every `TypeName`, [`Duration`](#_2-2-9-duration) and [`Bytes`](#_2-2-10-bytes) included — their other members are constructors, but `show` is not one of them, and reading it as one made a `Text` slot refuse the call with [E0201](./errors.md#e0201-type-mismatch). `parse` is the opposite case: its `Option(T)` *is* the qualifier's, which is why the two are written apart here.
 
+`parse` reads its text by the **base** `T` resolves to, not by the name it is written with, so a `nominal` parses the way the type it is declared over does: with `type Cents = nominal Int`, `Cents.parse("12")` is `Some(12)`, and `Duration.parse("500")` is `Some(500)` because a [`Duration`](#_2-2-9-duration) is a `nominal Int` of milliseconds. The bases a text has a reading as:
+
+| Base | `Some` of | `None` when the text |
+|---|---|---|
+| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty |
+| `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
+| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | names no instant |
+| `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
+| `Text` | the text itself | is empty |
+| `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |
+
+The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected.
+
+The value read is then held to every `where` refinement `T` carries ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), and a value that fails one is `None`: with `type Cents = nominal Int where positive`, `Cents.parse("-5")` is `None`. So `parse` never produces a value its own type refuses — an `Option(Cents)` never passes through a slot-write guard, so the parse is the only place that check can happen.
+
+The argument is a `Text`; anything else is [E0201](./errors.md#e0201-type-mismatch).
+
+Any other base — a record, a union, a container, `File`, `EffectId`, `Unit`, or a `nominal` over one of them — has no reading of a text, and neither has a type constructor written without its arguments (`List`, or `Box` for a `type Box(T) = …`). `T.parse` on one is [E0802](./errors.md#e0802-unimplemented-function). Those used to answer the raw text wrapped in `Some`, which the call's own type claims is a `T`.
+
 ### 2.4.4 Randomness
 
 ```

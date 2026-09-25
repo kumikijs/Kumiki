@@ -599,6 +599,9 @@ pattern      ::= identifier
                | '_'
 ```
 
+**builtin の内容 — 位置引数**:
+- テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
+
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
 - `cond` が偽 → **当該子要素を tree から省略**（兄弟への影響なし）
