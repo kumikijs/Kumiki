@@ -1829,13 +1829,17 @@ function checkStmt(
   if (s.kind === "IfStmt") {
     checkExpr(s.cond, sym, errors, ctx);
     checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
-    // then/else are exclusive — each branch starts from the parent write set.
-    // A slot written in only one branch (or both) counts as "written" for the
-    // parent, so subsequent code can't re-write it.
+    // Each branch is a scope of its own (language.md §1.6.7): a `let` in one
+    // is not in the other, nor after the `if`, which is also how codegen emits
+    // them. then/else are exclusive — each branch starts from the parent write
+    // set. A slot written in only one branch (or both) counts as "written" for
+    // the parent, so subsequent code can't re-write it.
     const thenWrites = new Set<string>(writtenRoots);
-    for (const st of s.consequent) checkStmt(st, sym, errors, ctx, thenWrites);
+    const thenScope = innerScope(ctx);
+    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
     const elseWrites = new Set<string>(writtenRoots);
-    for (const st of s.alternate) checkStmt(st, sym, errors, ctx, elseWrites);
+    const elseScope = innerScope(ctx);
+    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
     for (const r of thenWrites) writtenRoots.add(r);
     for (const r of elseWrites) writtenRoots.add(r);
     return;
