@@ -13,6 +13,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [01-slot-and-reducer](./01-slot-and-reducer.kumiki) | The basic cycle of slot (state) + reducer (update) + tile (render) |
 | [02-nominal-type](./02-nominal-type.kumiki) | nominal types and `between` refinement |
 | [91-conjoined-refinements](./91-conjoined-refinements.kumiki) | several `where` predicates on one type, and which one a rejection names |
+| [103-generic-alias-refinement](./103-generic-alias-refinement.kumiki) | a `where` on a generic alias (`type NonEmpty(T) = T where nonempty`) gates the slot, with its argument's predicates first |
 | [03-union-and-match](./03-union-and-match.kumiki) | union types and the `match` expression |
 | [04-record-and-copy](./04-record-and-copy.kumiki) | record types and `.copy(field=value)` immutable update |
 | [05-pure-fn](./05-pure-fn.kumiki) | pure functions `fn` (don't read slots) |
