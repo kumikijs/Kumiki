@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "label": "the module loads and mounts, and route.enter has filled the slot from the landing route",
+      "expect": {
+        "noErrors": true,
+        "state": { "landed": "/", "entries": 1 },
+        "domIncludes": ["landed: /", "entries: 1", "here: /", "started: yes"]
+      }
+    },
+    {
+      "label": "each arrival fills it again, from the route it arrived at",
+      "do": { "navigate": "/about" },
+      "expect": {
+        "noErrors": true,
+        "state": { "landed": "/about", "entries": 2 },
+        "domIncludes": ["landed: /about", "entries: 2"]
+      }
+    },
+    {
+      "label": "and the fn that reads the route answers for the route it is called on",
+      "do": { "navigate": "/" },
+      "expect": {
+        "noErrors": true,
+        "state": { "landed": "/", "entries": 3 },
+        "domIncludes": ["landed: /", "here: /"]
+      }
+    }
+  ]
+}

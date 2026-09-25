@@ -1,4 +1,4 @@
-import type { Expr, TileDef, TileExpr } from "../ast.ts";
+import type { Expr, TileArg, TileDef, TileExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import {
@@ -232,10 +232,10 @@ function tileCallJs(
     const def = gen.tiles.find((x) => x.name === name);
     if (!def) throw new Error(`Tile "${name}" not found`);
     const inner = makeEvalCtx(gen, ctx.localBinds);
-    // The first POSITIONAL argument, which is the set `checkTileInput` counts:
+    // The first positional argument, which is the set `checkTileInput` counts:
     // the two have to read the same one, or a call the checker approved lowers
     // to something else. A named argument is a prop and goes to `propsFor`.
-    const arg1 = t.args.find((a) => a.name === undefined);
+    const arg1 = firstPositional(t);
     const wrapBoundary = (body: string): string => boundaryJs(def, body, gen, enclosingTiles);
     // Each user-tile call site wraps its rendered output with `_named(…, "X")`
     // so the runtime can diff `tile.mount(X)` / `tile.unmount(X)` against the
@@ -300,11 +300,11 @@ function tileCallJs(
         return `({ kind: ${JSON.stringify(name)}, children: [${children}], props: ${propsObj} })`;
       }
       case "heading": {
-        const text = t.args[0] ? jsOfExpr(asExpr(t.args[0].value), ctx) : '""';
+        const text = contentJs(t, ctx);
         return `({ kind: "heading", text: _s.show(${text}), props: ${propsObj} })`;
       }
       case "text": {
-        const text = t.args[0] ? jsOfExpr(asExpr(t.args[0].value), ctx) : '""';
+        const text = contentJs(t, ctx);
         return `({ kind: "text", text: _s.show(${text}), props: ${propsObj} })`;
       }
       case "button": {
@@ -450,7 +450,7 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "markdown": {
-        const text = t.args[0] ? jsOfExpr(asExpr(t.args[0].value), ctx) : '""';
+        const text = contentJs(t, ctx);
         return `({ kind: "markdown", text: _s.show(${text}), props: ${propsObj} })`;
       }
       case "skeleton":
@@ -475,8 +475,7 @@ function tileCallJs(
         return `({ kind: "icon", name: _s.show(${nameJs}), props: ${propsObj} })`;
       }
       case "code": {
-        const arg0 = t.args.find((a) => !a.name);
-        const text = arg0 ? jsOfExpr(asExpr(arg0.value), ctx) : '""';
+        const text = contentJs(t, ctx);
         const langArg = t.args.find((a) => a.name === "lang");
         const lang = langArg ? `_s.show(${jsOfExpr(asExpr(langArg.value), ctx)})` : "undefined";
         return `({ kind: "code", text: _s.show(${text}), lang: ${lang}, props: ${propsObj} })`;
@@ -606,7 +605,7 @@ function tileCallJs(
         // input / textarea shape so codegen for text-in-bind is uniform.
         const fields: string[] = [`kind: "editable"`];
         const bindInfo = extractBindPath(t.args);
-        const textArg = t.args.find((a) => !a.name) ?? t.args.find((a) => a.name === "text");
+        const textArg = firstPositional(t) ?? t.args.find((a) => a.name === "text");
         const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
         if (bindInfo) {
           fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
@@ -626,6 +625,22 @@ function tileCallJs(
     throw new Error(`Unsupported builtin tile "${name}"`);
   };
   return wrap(emitBuiltin());
+}
+
+/**
+ * The first positional argument of a tile call: a builtin's content, or a
+ * user tile's input. A named argument is a prop wherever it is written, so
+ * `heading(level=2, title)` says `title`; reading `args[0]` instead rendered
+ * the level and dropped the title.
+ */
+function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
+  return t.args.find((a) => a.name === undefined);
+}
+
+/** A value builtin's content as JS; `""` when the call has no positional argument. */
+function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
+  const arg = firstPositional(t);
+  return arg ? jsOfExpr(asExpr(arg.value), ctx) : '""';
 }
 
 function asExpr(v: Expr | TileExpr): Expr {
