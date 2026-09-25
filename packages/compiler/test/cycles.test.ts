@@ -252,7 +252,8 @@ ${TAIL}`;
   });
 
   // Every position a slot read can occupy in an initializer. Each of these
-  // lowers to the same `_live[...]` lookup and would throw on mount.
+  // lowers to the same `_live[...]` lookup and would throw while the module is
+  // imported.
   const readSites: [string, string][] = [
     ["an operand", `slot a : Int = b + 1`],
     ["a method receiver", `slot a : Text = b.show`],
