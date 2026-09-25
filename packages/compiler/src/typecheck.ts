@@ -18,6 +18,7 @@ import type {
   Expr,
   FnDef,
   Lvalue,
+  MatchArm,
   Pattern,
   Pos,
   Program,
@@ -994,6 +995,19 @@ function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+}
+
+/**
+ * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
+ * typed from the scrutinee. For the positions that only *read* an arm — a
+ * value's type, a destination's check — so a pattern's own mistakes are
+ * dropped here: `checkExpr`'s `MatchExpr` case walks the same pattern with the
+ * real list, and reporting it twice would double every E0207/E0208/E0209.
+ */
+function armScope(arm: MatchArm, scrutType: TypeExpr | null, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner = innerScope(ctx);
+  checkPatternAgainstType(arm.pattern, scrutType, sym, [], inner);
+  return inner;
 }
 
 /**
@@ -2986,6 +3000,19 @@ function checkAgainst(
     checkAgainst(e.alternate, declared, sym, errors, ctx, code);
     return;
   }
+  if (e.kind === "MatchExpr") {
+    // Every arm lands here too, for the same reason as `if` — and each arm is
+    // read in its own scope, so `Some(id) -> id` is checked as the payload type
+    // the scrutinee gives `id`. Arm by arm rather than through `inferType`:
+    // a `UserId` arm beside a `PostId` arm gives the whole `match` the base
+    // they share, `Text`, and a `PostId` destination accepts `Text` — so a
+    // whole-match comparison would pass the wrong arm without a word.
+    const scrutType = inferType(e.scrutinee, sym, ctx);
+    for (const arm of e.arms) {
+      checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
+    }
+    return;
+  }
   if (
     e.kind === "Num" &&
     d.kind === "TypePrim" &&
@@ -3883,6 +3910,17 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     }
     case "IfExpr": {
       return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
+    }
+    case "MatchExpr": {
+      // The arm values are what the `match` evaluates to, whatever the
+      // scrutinee is — an `Option`, a `Result` or a user union alike. Arms
+      // that disagree give the base they share, nominal dropped; one
+      // undecidable arm leaves the whole `match` undecidable (`commonType`).
+      const scrutType = inferType(e.scrutinee, sym, ctx);
+      return commonType(
+        e.arms.map((arm) => inferType(arm.body, sym, armScope(arm, scrutType, sym, ctx))),
+        sym,
+      );
     }
     case "EmitExpr":
       // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
