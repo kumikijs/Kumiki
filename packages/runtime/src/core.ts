@@ -542,7 +542,14 @@ export type ReducerSpec = {
   };
 };
 
-export type EmitSpec = { effect: string; args: unknown[] };
+/**
+ * One queued `emit`. `key` is the `policy=latest-per-key(...)` key, evaluated
+ * where the emit ran (http.md §6.4): codegen fills it for a reducer's emit of a
+ * keyed effect, and the dispatcher runs the request under it. Absent — an
+ * `app.init` entry, a hand-written `apply`, an effect with no key — the
+ * dispatcher evaluates the effect's own `keyOf` against the live slots.
+ */
+export type EmitSpec = { effect: string; args: unknown[]; key?: string };
 
 export type EffectSpec = {
   name: string;
@@ -3084,11 +3091,10 @@ function makeEffectDispatcher(
       }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
-      const keyOf = (input: unknown): string => {
-        if (policy.kind === "latest-per-key") return policy.keyOf(input);
-        return "_";
-      };
-      const key = keyOf(input);
+      // A key evaluated at the emit wins: the reducer may have written the
+      // slot it reads after emitting, and the id `emit` yielded was built
+      // from the value before that write (http.md §6.4).
+      const key = policy.kind === "latest-per-key" ? (emit.key ?? policy.keyOf(input)) : "_";
       const id = `${eff.name}:${key}`;
       if (policy.kind === "once") {
         const seen = state.onceSeen.get(eff.name) ?? new Set<string>();
