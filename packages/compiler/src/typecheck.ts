@@ -61,7 +61,7 @@ import {
 } from "./def-graph.ts";
 import { parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { refinementProblem } from "./refinements.ts";
+import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
@@ -5548,6 +5548,7 @@ function resolveType(
           });
         } else {
           checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+          checkApplication(t, sym, typeParams, errors);
         }
       }
       for (const a of t.args) resolveType(a, sym, errors, typeParams);
@@ -5561,11 +5562,8 @@ function resolveType(
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
-      checkRefinement(t.refinement, errors);
-      resolveType(t.inner, sym, errors, typeParams);
-      return;
     case "TypeRefinement":
-      checkRefinement(t.refinement, errors);
+      checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
@@ -5590,11 +5588,25 @@ function resolveType(
  *    with nothing in it. These are reachable, and each used to reach the
  *    runtime — as a check that refuses every value, one that accepts every
  *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
- *    `v <= x` half of what `between(0, "x")` lowered to.
+ *    `v <= x` half of what `between(0, "x")` lowered to. A legal count that is
+ *    still below every length, `len-lt(0)`, refuses every value the same way.
+ *    Also E0804, a predicate over a base it cannot test (`Text where
+ *    positive`, `Text where one-of(1)`): every body is guarded by the shape it
+ *    tests, and `one-of` compares strictly, so that slot refuses every write.
+ *    The base is `inner` read through the chain the refinement is, with the
+ *    definition's type parameters left opaque — they say nothing about the
+ *    shape until the generic is applied, which {@link checkApplication}
+ *    judges.
  */
-function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void {
+function checkRefinement(
+  r: Refinement | undefined,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
   if (!r) return;
-  const problem = refinementProblem(r);
+  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
   if (!problem) return;
   // Written out rather than looked up: `spec-drift.test.ts` reads the codes
   // this file emits off `code: "E…"`, so a code assembled anywhere but at the
@@ -5614,6 +5626,136 @@ function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void
     message: problem.message,
     pos: r.pos,
   });
+}
+
+/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
+function baseProblem(
+  r: Refinement,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+): RefinementProblem | undefined {
+  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const message = base ? refinementBaseProblem(r, base) : undefined;
+  return message ? { kind: "refinement-args-invalid", message } : undefined;
+}
+
+/** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
+function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
+  return new Map([...params].map((p) => [p, unknownType(pos)]));
+}
+
+/**
+ * `t` in the form a refinement's base is judged against, or `undefined` when
+ * nothing can be concluded from it: a chain that closes on itself (E0009's to
+ * report), or an application of a name that resolves to nothing (E0117's) —
+ * as opaque as the bare unresolved name `refinementBaseProblem` passes.
+ */
+function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
+  const base = unaliasType(t, sym);
+  if (base === null) return undefined;
+  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
+  return base;
+}
+
+/**
+ * E0804 for the refinements a generic's application puts over a base they
+ * cannot test.
+ *
+ * A generic's definition is checked with its parameters opaque, so
+ * `type NonEmpty(T) = T where nonempty` is silent there: `T` may be `Text`.
+ * The application is where the argument arrives, and `NonEmpty(Int)` is a
+ * type whose check refuses every value. So the body is walked here with the
+ * arguments substituted — into nested applications, record fields and union
+ * payloads alike — and each refinement is judged over the base the
+ * application gives it, reported at the application, which is what the
+ * author wrote wrong.
+ *
+ * `app`'s own arguments may name the parameters of a definition around it;
+ * those are opaque for the same reason, and are judged where that definition
+ * is applied in turn.
+ */
+function checkApplication(
+  app: TypeExpr & { kind: "TypeApp" },
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  const def = sym.types.get(app.name);
+  if (!def) return;
+  const opaque = opaqueParams(typeParams, app.pos);
+  const args = app.args.map((a) => substituteType(a, opaque));
+  const unapplied = def.params.map(() => unknownType(app.pos));
+  for (const message of appliedBaseProblems(app.name, args, unapplied, typeToString(app), sym)) {
+    errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
+  }
+}
+
+/**
+ * The messages for {@link checkApplication}: `name` applied to `args`, set
+ * against `judged`, the same application as the definitions around it were
+ * already checked with — every parameter still opaque there, opaque. A
+ * refinement whose base already had a problem under `judged` was reported
+ * where that definition was checked, and one whose base is no different is
+ * not the application's to report; only a problem the arguments bring is.
+ */
+function appliedBaseProblems(
+  name: string,
+  args: TypeExpr[],
+  judged: TypeExpr[],
+  shown: string,
+  sym: SymbolTable,
+  seen: ReadonlySet<string> = new Set(),
+): string[] {
+  const def = sym.types.get(name);
+  // A mismatched arity is E0210's, and a parameter with no argument would be
+  // read as whatever top-level type shares its name. Re-entering a name is a
+  // chain E0009 reports, and the walk has to end on the way there.
+  if (!def || seen.has(name) || def.params.length !== args.length) return [];
+  const applied = paramSubstitution(def.params, args);
+  const before = paramSubstitution(def.params, judged);
+  const inside = new Set([...seen, name]);
+  const out: string[] = [];
+  const walk = (t: TypeExpr): void => {
+    switch (t.kind) {
+      case "TypePrim":
+      case "TypeRef":
+        return;
+      case "TypeApp": {
+        const nested = t.args.map((a) => substituteType(a, applied));
+        const nestedBefore = t.args.map((a) => substituteType(a, before));
+        out.push(...appliedBaseProblems(t.name, nested, nestedBefore, shown, sym, inside));
+        for (const a of t.args) walk(a);
+        return;
+      }
+      case "TypeRecord":
+        for (const f of t.fields) walk(f.type);
+        return;
+      case "TypeUnion":
+        for (const v of t.variants) for (const p of v.payloads) walk(p);
+        return;
+      case "TypeNominal":
+      case "TypeRefinement": {
+        const r = t.refinement;
+        // A problem with the arguments is the definition's, reported there.
+        if (r && !refinementProblem(r)) {
+          const was = judgedBase(substituteType(t.inner, before), sym);
+          const now = judgedBase(substituteType(t.inner, applied), sym);
+          if (now && !(was && refinementBaseProblem(r, was))) {
+            const over = `${shown} applies it over ${typeToString(now)}`;
+            const message = refinementBaseProblem(r, now, over);
+            if (message) out.push(message);
+          }
+        }
+        walk(t.inner);
+        return;
+      }
+      default:
+        assertNever(t);
+    }
+  };
+  walk(def.body);
+  return out;
 }
 
 /**
