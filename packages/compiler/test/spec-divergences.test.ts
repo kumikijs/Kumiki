@@ -347,7 +347,7 @@ app A
 
   // The premise, not an assumption: the call site's handler is merged onto the
   // node `Card` renders as its root, which is the `box` — handed down into
-  // that node's own props since #407, where it used to be spread on after.
+  // that node's own props, where it joins whatever else the box dispatches.
   // Nothing puts it on the `button` inside, so the click really is dead — a
   // scenario clicking the button never runs `open`.
   it("codegen puts the handler on the root box, not on the button inside", () => {

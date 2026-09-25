@@ -123,10 +123,10 @@ export function tileExprJs(
   // user-tile boundaries (see `tileCallJs`).
   implicitKeyExpr?: string,
   // Explicit handlers written on the user-tile call sites whose tree `t` is the
-  // root of, for the node `t` renders to join (see `explicitHandlers`). Only
-  // ever passed where `rendersOneNode` said the root is a single node, and
-  // like the implicit key it follows the arms of a branch and nothing else:
-  // a child is not the root.
+  // root of, for every node `t` renders at its root to join (see
+  // `explicitHandlers`). It follows the arms of a branch and each iteration of
+  // a `for`, and continues through a nested call site; a child is not the
+  // root, so it goes no further than that.
   rootHandlers?: HandlerWiring,
 ): string {
   switch (t.kind) {
@@ -136,7 +136,7 @@ export function tileExprJs(
       const bind = declareBind(inner, t.bind);
       const impl = `_s.show(${bind})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl)}))`;
+      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
@@ -251,15 +251,13 @@ function tileCallJs(
     // user-defined tile boundaries fire mount/unmount.
     const nameLit = JSON.stringify(def.name);
     // The handlers written here — plus any handed down from call sites this one
-    // is the root of — belong to the node the body renders, so they go down to
-    // that node's `propsFor` and join what is wired there (#407). Spread over
-    // the finished node by `_attachProps`, they replaced it. Where the body is
-    // not one node the old spread is all there is, so they stay on it.
+    // is the root of — belong to the nodes the body renders at its root, so
+    // they go down to each one's `propsFor` and join what is wired there. The
+    // props left for `_attachProps` to merge are data only: a handler spread
+    // over the finished node would replace the ones it already has.
     const handlers = explicitHandlers(t, rootHandlers);
-    const handDown = handlers.size > 0 && rendersOneNode(def.body, gen);
-    const callSiteProps = (): string =>
-      propsFor(t, ctx, undefined, handDown ? new Map() : handlers);
-    const bodyHandlers = handDown ? handlers : undefined;
+    const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
+    const bodyHandlers = handlers.size > 0 ? handlers : undefined;
     if (arg1) {
       const v = arg1.value;
       if (isTileExpr(v)) {
@@ -657,31 +655,6 @@ function tileCallJs(
     throw new Error(`Unsupported builtin tile "${name}"`);
   };
   return wrap(emitBuiltin());
-}
-
-/**
- * Whether a tile body renders exactly one node, whichever branch it takes —
- * the node a call site's handlers can be handed down to (see `tileCallJs`).
- * A `for` renders a list, which has no one node to take them; nor does a body
- * that reaches itself again, which E0005 reports.
- */
-function rendersOneNode(t: TileExpr, gen: GenCtx, seen: ReadonlySet<string> = new Set()): boolean {
-  switch (t.kind) {
-    case "TileFor":
-      return false;
-    case "TileWhen":
-      return rendersOneNode(t.body, gen, seen);
-    case "TileIf":
-      return rendersOneNode(t.consequent, gen, seen) && rendersOneNode(t.alternate, gen, seen);
-    case "TileMatch":
-      return t.arms.every((arm) => rendersOneNode(arm.body, gen, seen));
-    case "TileCall": {
-      if (BUILTIN_TILES.has(t.name)) return true;
-      const def = gen.tiles.find((x) => x.name === t.name);
-      if (!def || seen.has(def.name)) return false;
-      return rendersOneNode(def.body, gen, new Set([...seen, def.name]));
-    }
-  }
 }
 
 /**

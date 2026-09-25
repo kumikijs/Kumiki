@@ -1,28 +1,39 @@
 # Feature (language.md §1.7.3, §1.6.4 Invariant 3): a handler written on a
-# user-tile call site joins the handlers already on the node that tile renders.
+# user-tile call site joins the handlers already on the nodes that tile renders.
 #
 # `Btn {onClick: btnOwn}` is merged onto the `button` that `Btn` renders. That
 # button is also inside `Row`, so `ui.click(Row)` is lifted onto it too. Both
-# match the click, so both run, once each, in definition order: `rowClick`
-# (defined first) and then `btnOwn`. The log therefore reads "RB" per click.
+# run, once each, in definition order: `rowClick` (defined first) and then
+# `btnOwn`. The log therefore reads "RB" per click.
+#
+# `btnOwn` subscribes to `Other`, which the button is not inside, so nothing
+# but the call site puts it there: the "B" is the call site's handler, not a
+# second lift. Clicking `Other` itself adds a "B" alone.
+#
+# `Chips` renders a list rather than one node. The call site's handler joins
+# the lifted one on every button in it, so each chip logs "RB" as well.
 #
 # `Plain` is the control: it has only the lifted subscription, so a click
-# there adds "P" and nothing from the other row.
+# there adds "P" and nothing from the other rows.
 
-slot log : Text = ""
+slot log   : Text       = ""
+slot chips : List(Text) = ["c1", "c2"]
 
 reducer rowClick   on=ui.click(Row)   do= log := log + "R"
-reducer btnOwn     on=ui.click(Btn)   do= log := log + "B"
+reducer btnOwn     on=ui.click(Other) do= log := log + "B"
 reducer plainClick on=ui.click(Plain) do= log := log + "P"
 
 tile Btn   = button(text="both") {id: "both"}
-tile Row   = row(Btn {onClick: btnOwn})
+tile Chips = for c in chips button(text=c) {id: c}
+tile Row   = row(Btn {onClick: btnOwn}, Chips {onClick: btnOwn})
+tile Other = button(text="other") {id: "other"}
 tile Plain = row(button(text="plain") {id: "plain"})
 
 tile App
     = column(
         heading("a call-site handler joins the lifted one"),
         Row,
+        Other,
         Plain,
         text("log: " + log))
       {pad: "lg", gap: "md"}

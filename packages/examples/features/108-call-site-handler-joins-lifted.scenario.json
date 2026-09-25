@@ -15,9 +15,23 @@
       "expect": { "noErrors": true, "state": { "log": "RBRB" } }
     },
     {
+      "label": "each button a for-bodied tile renders gets the joined handler too",
+      "do": { "click": "#c2" },
+      "expect": { "noErrors": true, "state": { "log": "RBRBRB" } }
+    },
+    {
+      "label": "btnOwn's own subscription is Other, outside Row: it adds B alone",
+      "do": { "click": "#other" },
+      "expect": { "noErrors": true, "state": { "log": "RBRBRBB" } }
+    },
+    {
       "label": "a button outside Row gets its own subscription only",
       "do": { "click": "#plain" },
-      "expect": { "noErrors": true, "state": { "log": "RBRBP" }, "domIncludes": ["log: RBRBP"] }
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "RBRBRBBP" },
+        "domIncludes": ["log: RBRBRBBP"]
+      }
     }
   ]
 }

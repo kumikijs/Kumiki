@@ -452,7 +452,7 @@ reducer typed on=ui.key(RefBox) do= ...          # どちらでも input に配�
 
 subscription が届く tile を決めるのは、その子孫が「どの経路で描画されたか」であって子孫そのものではない。`RefBox` の*隣*に描画された `Leaf` はその内側ではないので、ハンドラを受け取らない。1 つの子孫に対して複数の外側 tile が同じイベントを subscribe している場合は、通常どおり [§1.6.4](#_1-6-4-不変条件) Invariant 3 が適用され、マッチしたすべてが定義順で発火する。
 
-同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。
+同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。したがってコンテナへの subscription は、そのイベントを発火する子孫の*すべて*に届き、自分のハンドラを持つボタンも例外ではない：チェックボックスと削除ボタンを持つ行に対する `ui.click(TodoRow)` は、その両方で実行される。行全体ではなく、そのイベントが意味する最も狭い tile を subscribe すること — `tile TodoCheck = check(...)` に対する `ui.click(TodoCheck)` のように。
 
 ### 1.6.3 lvalue の意味論
 
@@ -530,7 +530,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -626,7 +626,7 @@ pattern      ::= identifier
 
 ### 1.7.3 イベントハンドラ props {#_1-7-3-event-handler-props}
 
-イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノードにマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。ここでのマージは**結合**を意味する：そのハンドラは、そのノードが同じイベントに対して既に持っているもの — builtin 自身に書かれたハンドラ、そのノードをルートとする別の呼び出し側に書かれたハンドラ、そのノードに持ち上げられたすべての `ui.<ev>(<Tile>)` subscription（[§1.6.2](#_1-6-2-セレクタ)）— に加わる。マッチした各 reducer は 1 回ずつ、すべて**定義順**で実行される。これは [§1.6.4](#_1-6-4-不変条件) Invariant 3 が同じイベントにマッチする reducer 一般について述べていることであり、ハンドラがどこに書かれたかは実行順を決めない。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
+イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノード（本体が一覧を描画する `for` なら、その各ノード）にマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。ここでのマージは**結合**を意味する：そのハンドラは、そのノードが同じイベントに対して既に持っているもの — builtin 自身に書かれたハンドラ、そのノードをルートとする別の呼び出し側に書かれたハンドラ、そのノードに持ち上げられたすべての `ui.<ev>(<Tile>)` subscription（[§1.6.2](#_1-6-2-セレクタ)）— に加わる。マッチした各 reducer は 1 回ずつ、すべて**定義順**で実行される。これは [§1.6.4](#_1-6-4-不変条件) Invariant 3 が同じイベントにマッチする reducer 一般について述べていることであり、ハンドラがどこに書かれたかは実行順を決めない。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
@@ -641,9 +641,11 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 ### 1.7.4 例
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 

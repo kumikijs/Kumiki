@@ -85,8 +85,7 @@ export type HandlerWiring = ReadonlyMap<string, readonly string[]>;
  * `{onClick: foo}`), joined with `inherited`: the ones written on the user-tile
  * call sites whose tree this call is the root of. A handler written on
  * `Btn {onClick: r}` belongs to the node `Btn` renders, so it is handed down to
- * that node's own `propsFor` and joins what is already wired there. Spread over
- * the finished node instead, it replaced the lifted subscriptions (#407).
+ * that node's own `propsFor` and joins what is already wired there.
  */
 export function explicitHandlers(
   t: TileExpr & { kind: "TileCall" },
@@ -123,9 +122,7 @@ export function explicitHandlers(
  * was wired — written on the builtin, written on a user-tile call site whose
  * tree the element roots, or lifted from a `ui.<ev>(<Tile>)` subscription. One
  * rule, so where a handler happens to be written never decides what runs
- * first. The order is not cosmetic: in `02-todomvc` the delete button's call
- * site wires `remove` and the row lifts `toggle`, and running `remove` first
- * would leave `toggle` writing through the key it had just deleted.
+ * first.
  *
  * A reducer name counts once, so writing `onClick=inc` beside
  * `reducer inc on=ui.click(B)` does not run `inc` twice per click.
