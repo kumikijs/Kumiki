@@ -49,6 +49,7 @@ function program(on: string, body: string): string {
   return `slot seen  : Text = ""
 slot after : Text = ""
 slot flag  : Bool = true
+slot total : Int  = 0
 
 ${effect}reducer subject
     on=${on}
@@ -316,35 +317,16 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
 });
 
 /**
- * A program whose one reducer's `do=` clause is `body`, over a `count` slot for
- * the branch condition and two text slots to write.
+ * Every diagnostic `check` reports: its code, the name its message quotes, and
+ * the source from its position to the end of that line.
  */
-function branching(body: string): string {
-  return `slot count : Int  = 1
-slot note  : Text = ""
-slot other : Text = ""
-
-reducer subject on=app.start
-    do= ${body}
-
-tile Page = column(text(note))
-
-app A
-    caps   = []
-    routes = {"/" -> Page, "/404" -> Page}
-    init   = []
-`;
-}
-
-/** Each E0103 `check` reports: the name, and the source from its position to the end of that line. */
-function undefinedReads(source: string): { name: string; at: string }[] {
+function diagnostics(source: string): { code: string; name: string; at: string }[] {
   const lines = source.split("\n");
-  return check(parse(lex(source)))
-    .filter((e) => e.code === "E0103")
-    .map((e) => ({
-      name: /"([^"]+)"/.exec(e.message)?.[1] ?? "",
-      at: e.pos ? (lines[e.pos.line - 1]?.slice(e.pos.col - 1) ?? "") : "",
-    }));
+  return check(parse(lex(source))).map((e) => ({
+    code: e.code,
+    name: /"([^"]+)"/.exec(e.message)?.[1] ?? "",
+    at: e.pos ? (lines[e.pos.line - 1]?.slice(e.pos.col - 1) ?? "") : "",
+  }));
 }
 
 describe("the checker scopes each `if` branch as codegen does", () => {
@@ -353,37 +335,69 @@ describe("the checker scopes each `if` branch as codegen does", () => {
   // own, so a read `check` let through would resolve to nothing and throw
   // `n is not defined` the first time the reducer ran.
   it("reports a branch-local `let` read after the `if` as E0103 at the read", () => {
-    const src = branching(
-      'if count > 0 then { let n = "inner" } else { let n = "other" }\n        note := n',
+    const src = program(
+      "app.start",
+      'if flag then { let n = "inner" } else { let n = "other" }\n        seen := n',
     );
-    expect(undefinedReads(src)).toEqual([{ name: "n", at: "n" }]);
+    expect(diagnostics(src)).toEqual([{ code: "E0103", name: "n", at: "n" }]);
   });
 
   it("reports one declared in only one branch and read after the `if`", () => {
-    const src = branching('if count > 0 then { let n = "inner" } else { () }\n        note := n');
-    expect(undefinedReads(src)).toEqual([{ name: "n", at: "n" }]);
+    const src = program(
+      "app.start",
+      'if flag then { let n = "inner" } else { () }\n        seen := n',
+    );
+    expect(diagnostics(src)).toEqual([{ code: "E0103", name: "n", at: "n" }]);
   });
 
   it("does not carry a `let` from the `then` branch into the `else` branch", () => {
-    const src = branching('if count > 0 then { let n = "inner" } else { note := n }');
-    expect(undefinedReads(src)).toEqual([{ name: "n", at: "n }" }]);
-  });
-
-  it("keeps an earlier `let` readable in both branches and after, and lets a branch shadow it", () => {
-    const src = branching(
-      'let n = "outer"\n        if count > 0 then { let n = "inner"\n                            note := n }\n                     else { note := n }\n        other := n',
-    );
-    expect(codes(src)).toEqual([]);
+    const src = program("app.start", 'if flag then { let n = "inner" } else { seen := n }');
+    expect(diagnostics(src)).toEqual([{ code: "E0103", name: "n", at: "n }" }]);
   });
 
   it("still counts a slot written in both branches as written after the `if` (E0601)", () => {
-    const src = branching(
-      'if count > 0 then { note := "a" } else { note := "b" }\n        note := "c"',
+    const src = program(
+      "app.start",
+      'if flag then { seen := "a" } else { seen := "b" }\n        seen := "c"',
     );
     expect(codes(src)).toEqual(["E0601"]);
   });
 
   it("still lets each branch write the slot the other one writes", () => {
-    expect(codes(branching('if count > 0 then { note := "a" } else { note := "b" }'))).toEqual([]);
+    const src = program("app.start", 'if flag then { seen := "a" } else { seen := "b" }');
+    expect(codes(src)).toEqual([]);
+  });
+});
+
+describe("a branch's `let` leaves the type of the name after the `if` alone", () => {
+  // A scope carries the names it binds and the types it gives them, and both
+  // end with the branch. The outer `n` is an Int and the branch's is Text, so a
+  // branch whose types leaked would hand Text to the statements after the
+  // `if`: the valid write to an Int slot would be rejected, and the outer Int
+  // written into a Text slot would pass.
+  const shadowed = (write: string): string =>
+    program(
+      "app.start",
+      `let n = 5\n        if flag then { let n = "s"\n                       seen := n }\n                else { () }\n        ${write}`,
+    );
+
+  it("accepts the outer Int written to an Int slot after the `if`", LOADS, async () => {
+    const src = shadowed("total := n");
+    expect(codes(src)).toEqual([]);
+    expect(await apply(src)).toMatchObject({ seen: "s", total: 5 });
+  });
+
+  it("reports the outer Int written to a Text slot after the `if` as E0201", () => {
+    expect(diagnostics(shadowed("after := n")).map((d) => d.code)).toEqual(["E0201"]);
+  });
+
+  it("ends a branch's `$route` shadow with the branch (E0119)", () => {
+    // `$route` resolves through the positional-bind gate rather than the
+    // undefined-name one, so it is a separate way out of the branch.
+    const src = program(
+      "app.start",
+      'if flag then { let $route = "x"\n                       seen := $route }\n                else { () }\n        after := $route',
+    );
+    expect(codes(src)).toEqual(["E0119"]);
   });
 });
