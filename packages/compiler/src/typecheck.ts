@@ -647,8 +647,9 @@ function checkSlot(
   resolveType(slot.type, sym, errors);
   // Derived slots are prohibited (language.md §1.4.2 inv. 4), and the lowering
   // agrees: a slot read is emitted as a lookup in the live-value table, which
-  // is built after the slot table — so an initializer that reads a slot throws
-  // on mount whichever order the two are declared in.
+  // is declared after the slot table in the module body — so an initializer
+  // that reads a slot throws while the module is imported, whichever order the
+  // two are declared in.
   for (const ref of referencesIn(slot, index)) {
     if (ref.layer !== "slot") continue;
     errors.push({
@@ -658,11 +659,14 @@ function checkSlot(
       pos: ref.pos ?? slot.pos,
     });
   }
-  // `route` is a slot too, and the same lowering answers for it: the runtime
-  // installs it into the live-value table during the mount, and the table is
-  // declared below the slot table, so the read throws at import. It is not in
-  // the definition index, so the loop above never sees it — the E0120 gate
-  // does, asked in the position it decides for. `$route` is left to the
+  // `route` is a slot too, and the same lowering answers for it: the read is
+  // the same live-value lookup, so it throws while the module is imported.
+  // What differs is that no initializer can compute it, not even through a
+  // `fn`: the runtime installs it during the mount. `referencesIn` skips the
+  // name, so the loop above never sees it. Which `route` is the runtime's (a
+  // local bind of that name is not) is decided by the E0120 gate in
+  // `checkExpr`; `routeReadsIn` runs the initializer through that gate and
+  // collects the reads it matches. `$route` is left to the
   // undefined-name report `checkExpr` gives it below at the same position: an
   // initializer has no payload, so there it is a name that does not exist.
   for (const read of routeReadsIn(slot.init, sym)) {
@@ -674,8 +678,9 @@ function checkSlot(
       pos: read.pos,
     });
   }
-  // A `fn` hop walks past both: the call is emitted into the slot table and
-  // the body reads the live-value table when it runs, which is right there.
+  // Neither loop above looks inside a `fn` the initializer calls. The call is
+  // emitted into the slot table, so the `fn` body also runs while the module
+  // is imported, and its read of the route throws the same way.
   for (const hop of routeReachedThroughCalls(slot.init, sym, routeChain)) {
     errors.push({
       code: "E0304",

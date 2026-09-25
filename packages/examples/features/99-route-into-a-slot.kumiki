@@ -7,8 +7,9 @@
 #   slot landed : Text = route.path          # E0304 at the read
 #   slot landed : Text = here()              # E0304 at the call: here → route
 #
-# — without the check, both built clean and the module threw
-# "Cannot access '_live' before initialization" at import, so nothing mounted.
+# Without the check, both build clean and the module throws
+# "Cannot access '_live' before initialization" while it is imported, so
+# nothing mounts.
 #
 # What stays legal is everything that does not wait on the mount: `now` comes
 # from a module import, so a slot may start from it; and `here` reads the route

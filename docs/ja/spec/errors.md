@@ -808,11 +808,11 @@ slot の初期値がほかの slot——あるいは自分自身、あるいは 
 
 > `Slot "<name>" reads slot "<other>" in its initial value; derived slots are prohibited — compute it in a fn instead`
 > `Slot "<name>" reads "route" in its initial value; derived slots are prohibited, and this one cannot be computed at all: initial values are evaluated while the module loads, and the runtime installs the route during the mount that follows. Take the route from a route.enter reducer, which runs with the route the app landed on`
-> `Slot "<name>" reads "route" through "<fn>" (<fn> → … → route) in its initial value; …`
+> `Slot "<name>" reads "<read>" through "<fn>" (<fn> → … → <read>) in its initial value; …`
 
-低水準化もこの不変条件と一致している：slot の読み取りはライブ値テーブルの参照として出力されるが、そのテーブルは slot テーブルより先ではなく、slot テーブルから作られる。したがって slot を読む初期値は、2 つの slot をどちらの順で宣言してもマウント時に例外になる——宣言順が決め手ではない。どの初期値も slot を読めない以上、初期値どうしの循環は書きようがなく、専用のコードも持たない。
+低水準化もこの不変条件と一致している：slot の読み取りはライブ値テーブルの参照として出力されるが、そのテーブルは slot テーブルより先ではなく、slot テーブルから作られる。slot テーブルはモジュールのインポート中に評価されるので、slot を読む初期値は、2 つの slot をどちらの順で宣言してもモジュールのインポート中に例外になる——宣言順が決め手ではない。どの初期値も slot を読めない以上、初期値どうしの循環は書きようがなく、専用のコードも持たない。
 
-**`route` もここでは slot であり、失敗はより深刻である。** runtime はマウント中に `route` をライブ値テーブルへ設置するが、初期値を持つ slot テーブルはモジュール本体でそのテーブルより上で評価される。そのため `slot at : Text = route.path` はモジュールの*インポート*中に `Cannot access '_live' before initialization` を投げ、`check` も `build` もクリーンなまま何もマウントされなかった。route を読む `fn` は、マウント後に走る場所ならどこでも正しい——それが成り立たないのはここと `app.init` の引数だけである（[E0120](#e0120-route-in-app-init)。同じ規則の隣の位置）。初期値からそうした `fn` を呼ぶと、E0120 と同じく呼び出し位置で、読み取りに至る `fn` の連鎖とともに報告される。初期値に書いた `$route` は未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である——初期値をペイロード付きで適用するものはない。`route` という名前のローカル束縛や `fn` 引数はその束縛であって slot ではない。`now` は slot ではなくモジュールのインポートから来るので、初期値から読んでよい。
+**`route` もここでは slot であり、そもそも計算できない。** runtime は `route` をマウント中に、つまりすべての初期値が評価された後にライブ値テーブルへ設置する。したがって初期値が何かを導出しようにも、まだ route が無い。通常の導出 slot への助言も役に立たない：初期値から呼んだ `fn` は同じ slot テーブルの中で評価されるので、同じく存在しない route に行き着く。route を読む `fn` は、マウント後に走る場所ならどこでも正しい——それが成り立たないのはここと `app.init` の引数だけである（[E0120](#e0120-route-in-app-init)。同じ規則の隣の位置）。初期値からそうした `fn` を呼ぶと、E0120 と同じく呼び出し位置で、読み取りに至る `fn` の連鎖とともに報告される。`<read>` は連鎖の最後の本体が読む綴り、`route` または `$route` である。そのためメッセージは「compute it in a fn」を省き、`route.enter` の reducer を案内する。この検査がないと、`slot at : Text = route.path` も、`fn here() -> Text = route.path` を伴う `slot at : Text = here()` も綺麗にコンパイルが通り、モジュールのインポート中に `Cannot access '_live' before initialization` を投げて何もマウントされない。初期値に書いた `$route` は未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である——初期値をペイロード付きで適用するものはない。`route` という名前のローカル束縛や `fn` 引数はその束縛であって slot ではない。`now` は slot ではなくモジュールのインポートから来るので、初期値から読んでよい。
 
 **修正**：slot 自体は単独で成り立つ値にし、導出形は導出計算のための層である `fn` で計算する。起動時に 1 度だけ導出したい値なら `route.enter` の reducer に置く——route の場合はそこが唯一の場所である。その reducer は着地した route で走り、以後の到着のたびにも走る。
 

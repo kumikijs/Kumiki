@@ -3,13 +3,13 @@
 // the mount that follows, and that table is declared *after* `_slots`. A read of
 // `route` there lowered to `_live["route"]` above `const _live`, so the module
 // threw `Cannot access '_live' before initialization` at import and nothing
-// mounted — with `check` and `build` both clean. A `fn` hop walked past the
-// same hole: the call is emitted into the `_slots` literal and the `fn` body
-// reads `_live` when it runs, which is right there.
+// mounted — with `check` and `build` both clean. A `fn` call failed the same
+// way: the call is emitted into the `_slots` literal, so the `fn` body runs
+// while the module is imported and its `_live` read throws too.
 //
 // `route` is a slot, so this is E0304 `derived-slot` — the rule a read of any
 // other slot in the same position already answers, for the same lowering
-// reason. What the slot initialiser lacked was the transitive half E0120 has
+// reason. What the slot initializer lacked was the transitive half E0120 has
 // for `app.init` arguments; both positions ask the one resolver.
 
 import { describe, expect, it } from "vitest";
@@ -35,7 +35,7 @@ const positionIn = (defs: string, slot: string, needle: string) => {
   return { line: line + 1, col: col + 1 };
 };
 
-describe("route read directly in a slot initialiser", () => {
+describe("route read directly in a slot initializer", () => {
   it("is reported at the read, once", () => {
     const defs = "slot at : Text = route.path";
     const errs = diagnostics(defs);
@@ -48,13 +48,65 @@ describe("route read directly in a slot initialiser", () => {
     expect(codes("slot at : Route = route")).toEqual(["E0304"]);
   });
 
-  it("is reported wherever in the initialiser it appears", () => {
-    expect(codes('slot at : Text = if true then route.path else "x"')).toEqual(["E0304"]);
+  // Every position a read can occupy in an initializer. The gate records into
+  // an array the probe hands it, and the narrower scopes a `let`, a match arm
+  // or a method argument opens reach that array only because each is built by
+  // spreading its parent — a scope built any other way drops the read without
+  // a diagnostic. `for` has no expression form, so an initializer cannot
+  // write one; the method argument is the iteration it can write.
+  const readSites: [string, string][] = [
+    ["an if branch", 'slot at : Text = if true then route.path else "x"'],
+    ["a let value", "slot at : Text = let x = route.path in x"],
+    ["a let body", 'slot at : Text = let x = "a" in route.path + x'],
+    ["a match arm", 'slot at : Text = match "a" with | k -> route.path + k'],
+    ["a method argument", 'slot at : List(Text) = ["a"].map(route.path + $1)'],
+    ["a record field", "slot at : {p: Text} = {p: route.path}"],
+    ["a list element", "slot at : List(Text) = [route.path]"],
+    ["an argument to a fn that does not read the route", "slot at : Text = wrap(route.path)"],
+  ];
+  for (const [where, decl] of readSites) {
+    it(`is reported in ${where}, once, at the read`, () => {
+      // `wrap` is declared in every case so that the one case calling it gets
+      // exactly one report: the read in its argument, and no hop, because
+      // `wrap` itself reads nothing the mount installs.
+      const defs = `${decl}\nfn wrap(t: Text) -> Text = t`;
+      const errs = diagnostics(defs);
+      expect(errs.map((e) => e.code)).toEqual(["E0304"]);
+      expect(errs[0]?.pos).toEqual(positionIn(defs, "at", "route"));
+    });
+  }
+
+  it("is reported beside an ordinary slot read, each with its own message", () => {
+    // The two share a code and a position kind, not advice: "compute it in a
+    // fn" is right for `other` and is the one fix that does not help `route`.
+    const defs = `slot other : Text = ""
+slot at : Text = other + route.path`;
+    const errs = diagnostics(defs);
+    expect(errs.map((e) => e.code)).toEqual(["E0304", "E0304"]);
+    const slotRead = errs.find((e) => e.message.includes('reads slot "other"'));
+    const routeRead = errs.find((e) => e.message.includes('reads "route"'));
+    expect(slotRead?.pos).toEqual(positionIn(defs, "at", "other"));
+    expect(slotRead?.message).toContain("compute it in a fn");
+    expect(routeRead?.pos).toEqual(positionIn(defs, "at", "route"));
+    expect(routeRead?.message).not.toContain("compute it in a fn");
+    expect(routeRead?.message).not.toContain('slot "other"');
+  });
+
+  it("is reported once when the program also declares a slot named route", () => {
+    // That declaration is E0115, and reads of `route` never see it — so the
+    // read is the runtime's route, and the ordinary slot-read pass (which
+    // skips the name) must not add a second E0304 at the same position.
+    const defs = `slot route : Int = 0
+slot at : Int = route`;
+    const errs = diagnostics(defs);
+    expect(errs.map((e) => e.code)).toEqual(["E0115", "E0304"]);
+    expect(errs[1]?.message).toContain('reads "route" in its initial value');
+    expect(errs[1]?.pos).toEqual(positionIn(defs, "at", "route"));
   });
 
   it("sends the author to a route.enter reducer, not to a fn", () => {
     // E0304's own advice for a derived slot is "compute it in a fn", which is
-    // the one fix that does not help here: a fn called from the initialiser
+    // the one fix that does not help here: a fn called from the initializer
     // is reported below for the same reason.
     const message = diagnostics("slot at : Text = route.path")[0]?.message ?? "";
     expect(message).toContain('"route"');
@@ -69,7 +121,7 @@ describe("route read directly in a slot initialiser", () => {
   });
 
   it("leaves $route to the undefined-name report it already gets at the read", () => {
-    // A slot initialiser is applied with no payload, so `$route` is a name that
+    // A slot initializer is applied with no payload, so `$route` is a name that
     // does not exist there — the same answer a fn or a tile gets. One report,
     // at the read.
     const defs = "slot at : Text = $route.path";
@@ -79,7 +131,7 @@ describe("route read directly in a slot initialiser", () => {
   });
 });
 
-describe("route reached through a fn call in a slot initialiser", () => {
+describe("route reached through a fn call in a slot initializer", () => {
   it("is reported at the call, with the chain that reaches the route", () => {
     const defs = `slot at : Text = here()
 fn here() -> Text = route.path`;
@@ -109,15 +161,21 @@ fn inner() -> Text = route.path`;
   });
 
   it("reports the direct read and the hop separately when both are written", () => {
-    expect(
-      codes(`slot at : Text = route.path + here()
-fn here() -> Text = route.path`),
-    ).toEqual(["E0304", "E0304"]);
+    // Two things to fix, so two reports — each at its own position. Asserting
+    // the positions is what catches one site reported twice.
+    const defs = `slot at : Text = route.path + here()
+fn here() -> Text = route.path`;
+    const errs = diagnostics(defs);
+    expect(errs.map((e) => e.code)).toEqual(["E0304", "E0304"]);
+    expect(errs.map((e) => e.pos)).toEqual([
+      positionIn(defs, "at", "route"),
+      positionIn(defs, "at", "here()"),
+    ]);
   });
 
   it("reports the call to a fn that reads $route too, beside the body's own report", () => {
     // The body's `$route` is an undefined name (E0103) wherever the `fn` is
-    // called from; the call from the initialiser is wrong on its own account,
+    // called from; the call from the initializer is wrong on its own account,
     // and stays wrong once the body is fixed to read `route`.
     const defs = `slot at : Text = here()
 fn here() -> Text = $route.path`;
@@ -148,8 +206,42 @@ fn pong() -> Text = if true then ping() else route.path`);
   });
 });
 
+describe("one fn called from both pre-mount positions", () => {
+  // The resolver's per-`fn` answer is memoised across every position that
+  // asks, so whichever position is checked first fills it for the other.
+  // Definitions are checked in source order; the two layouts put the slot on
+  // either side of the app.
+  const defs = `slot at : Text = here()
+fn here() -> Text = route.path
+effect load cap=storage.read in=Text out=Result(Text, Text)`;
+  const app = `tile App = column(text("x"))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[load(here())]`;
+  const layouts: [string, string][] = [
+    ["the slot before the app", `${defs}\n${app}\n`],
+    ["the app before the slot", `${app}\n${defs}\n`],
+  ];
+  /** Where `needle` is written on the first line starting with `prefix`, 1-based. */
+  const at = (src: string, prefix: string, needle: string) => {
+    const lines = src.split("\n");
+    const line = lines.findIndex((l) => l.startsWith(prefix));
+    return { line: line + 1, col: (lines[line] ?? "").indexOf(needle) + 1 };
+  };
+  for (const [order, src] of layouts) {
+    it(`reports each call in its own position's code, with ${order}`, () => {
+      const errs = check(parse(lex(src)));
+      expect(errs.map((e) => e.code).sort()).toEqual(["E0120", "E0304"]);
+      const slotHop = errs.find((e) => e.code === "E0304");
+      const initHop = errs.find((e) => e.code === "E0120");
+      expect(slotHop?.pos).toEqual(at(src, "slot at ", "here()"));
+      expect(slotHop?.message).toContain("here → route");
+      expect(initHop?.pos).toEqual(at(src, "app A", "here()"));
+      expect(initHop?.message).toContain("here → route");
+    });
+  }
+});
+
 describe("what stays legal", () => {
-  it("now in a slot initialiser — a module import, not something a mount installs", () => {
+  it("now in a slot initializer — a module import, not something a mount installs", () => {
     expect(codes("slot started : Text = now.show")).toEqual([]);
   });
 
@@ -168,10 +260,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     ).toEqual([]);
   });
 
-  it("a route read in an effect's map-request, which borrows the slot-initialiser scope", () => {
+  it("a route read in an effect's map-request, which borrows the slot-initializer scope", () => {
     // `map-request` is checked in the `slot-init` position (`pureScope`) but is
     // evaluated per request, long after the mount. The rule is about a slot's
-    // own initialiser, not about the position it lends its name to.
+    // own initializer, not about the position it lends its name to.
     expect(
       check(
         parse(
