@@ -93,9 +93,10 @@ m.get-or(k, default)         # Map: 値がなければ default
 opt.get-or(default)          # Option: None なら default、Some(v) なら v
 ```
 
-`.filter` は **List と Map の両方に対して使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
+`.filter` は **List・Map・Option のいずれに対しても使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
 - 受信側が List → 各要素について `pred($1)` を評価、`true` の要素だけ残す
 - 受信側が Map  → 各エントリについて `pred($1, $2)` (key, value) を評価、`true` のエントリだけ残す
+- 受信側が Option → `Some(v)` なら `pred($1=v)` を評価し、`true` ならその `Some(v)`、`false` なら `None`。`None` は `pred` を評価せず `None` のまま ([§2.2.4](#_2-2-4-option-t))
 
 例えば `m.keys.filter(...)` のようにチェーンしたとき、`m.keys` は `List(K)` を返すため `filter` は List のシグネチャで動く。混在チェーンを書いても型に応じた挙動になる。
 
@@ -438,6 +439,25 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 ```
 
 `TypeName.show(value)` は [§2.2](#_2-2-コレクションメソッド) の `.show` メソッドを修飾子付きで書いたものであり、修飾子は捨てられる。`Duration.show(d)` と `d.show` は同じ式であり、同じ `Text` である。これは [`Duration`](#_2-2-9-duration) や [`Bytes`](#_2-2-10-bytes) を含むすべての `TypeName` について成り立つ。これらの他のメンバはコンストラクタだが `show` はそうではなく、コンストラクタとして読んだために `Text` スロットへの代入が [E0201](./errors.md#e0201-type-mismatch) で拒否されていた。`parse` は逆で、その `Option(T)` は修飾子の型そのものである。両者を分けて書いているのはそのためである。
+
+`parse` は書かれた名前ではなく `T` が解決される**基底型**によってテキストを読む。したがって `nominal` は宣言の元になった型と同じようにパースされる。`type Cents = nominal Int` なら `Cents.parse("12")` は `Some(12)` であり、[`Duration`](#_2-2-9-duration) はミリ秒の `nominal Int` なので `Duration.parse("500")` は `Some(500)` である。テキストに読み方がある基底型は次のとおり:
+
+| 基底型 | `Some` の中身 | `None` になるテキスト |
+|---|---|---|
+| `Int` | 表す数値: 省略可能な `+` / `-` と 10 進数字 | それ以外 — 小数、指数、`0x` / `0b` 接頭辞、前後の空白、空 |
+| `Float` | 表す数値: 省略可能な `+` / `-`、10 進数字、省略可能な `.` と数字、省略可能な `e` / `E` 指数 | それ以外 — `.5`、`1.`、`0x10`、`Infinity`、前後の空白、空 — または有限に収まらない大きさの数値 |
+| `Time` | [`Time.parse`](#_2-2-8-time) が読む時刻 | 時刻を表さない |
+| `Bool` | `"true"` なら `true`、`"false"` なら `false` — `.show` が生成する 2 つの綴り | それ以外 |
+| `Text` | テキストそのもの | 空 |
+| `Bytes` | `Bytes.from-text` と同じ UTF-8 バイト列 | 空 |
+
+読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。
+
+読んだ値はその後 `T` が持つすべての `where` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）に照らされ、どれかを満たさない値は `None` になる: `type Cents = nominal Int where positive` なら `Cents.parse("-5")` は `None` である。したがって `parse` は自身の型が拒否する値を決して生成しない — `Option(Cents)` は slot 書き込みのガードを通らないので、その検査ができるのは parse の時点だけである。
+
+引数は `Text` であり、それ以外は [E0201](./errors.md#e0201-type-mismatch) になる。
+
+それ以外の基底型 — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、型引数なしで書かれた型コンストラクタ（`List`、`type Box(T) = …` に対する `Box`）も同様である。それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
 
 ### 2.4.4 乱数
 
