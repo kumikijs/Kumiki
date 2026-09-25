@@ -188,9 +188,9 @@ Every one of them is a **runtime check**: the value is tested on its way into th
 | `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
 | `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
 
-A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number.
+A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` compares strictly, so its literals need a `Text` base when they are text and an `Int`, `Float` or `Time` one when they are numbers. A generic's parameter is judged where the generic is applied: `type NonEmpty(T) = T where nonempty` is fine, and `NonEmpty(Int)` is E0804.
 
-The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional length, a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
+The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional or negative length, `len-lt(0)` (shorter than every text), a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
 
 Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to write proofs, the debugging loop breaks down.
 
@@ -803,6 +803,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
 ### 1.9.1 Prohibitions
 
