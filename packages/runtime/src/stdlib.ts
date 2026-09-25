@@ -35,6 +35,28 @@ function instantOf(value: unknown): number {
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
 }
 
+type PlatformCrypto = {
+  randomUUID?: () => string;
+  getRandomValues?: (bytes: Uint8Array) => Uint8Array;
+};
+
+/**
+ * A v4 uuid for when `crypto.randomUUID` is missing — it exists only in a
+ * secure context, so a page on plain http falls back here. The result has to
+ * pass the `uuid` refinement like any other id `fresh()` returns.
+ * `getRandomValues` has no secure-context requirement; `Math.random` is the
+ * last resort for a host with no `crypto` at all.
+ */
+function uuidV4(c: PlatformCrypto | undefined): string {
+  const bytes = new Uint8Array(16);
+  if (c?.getRandomValues) c.getRandomValues(bytes);
+  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export const _stdlibCore = {
   /**
    * Record a slot write against its refinement and return the value unchanged
@@ -342,9 +364,9 @@ export const _stdlibCore = {
   /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {
     return readEnv("fresh-id", () => {
-      const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+      const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
       if (c?.randomUUID) return c.randomUUID();
-      return Math.random().toString(36).slice(2) + Date.now().toString(36);
+      return uuidV4(c);
     });
   },
   /** `now` — the current instant. Journalled (#337). */
