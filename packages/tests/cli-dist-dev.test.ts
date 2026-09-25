@@ -1,4 +1,4 @@
-// `kumiki dev` from the *built* CLI (#459).
+// `kumiki dev` from the *built* CLI.
 //
 // The dev plugin reads its browser client and panel from disk, next to the
 // module that holds it: `src/dev/*.ts` when the CLI runs from source, and
@@ -15,6 +15,8 @@
 // so turbo builds that `dist/` before these tests run.
 
 import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { get } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -45,6 +47,11 @@ function httpGet(url: URL): Promise<{ status: number; body: string }> {
 
 describe("kumiki dev from the built CLI", () => {
   it("starts and serves the dev client and panel", { timeout: 60_000 }, async () => {
+    if (!existsSync(BUILT_CLI)) {
+      throw new Error(
+        `${BUILT_CLI} not found — build @kumikijs/cli first (pnpm --filter @kumikijs/cli build)`,
+      );
+    }
     const child = spawn(
       process.execPath,
       ["--import", TSX, BUILT_CLI, "dev", COUNTER, "--port", "0"],
@@ -62,7 +69,10 @@ describe("kumiki dev from the built CLI", () => {
         child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
           err += chunk;
         });
-        child.on("exit", (code) => {
+        child.on("error", reject);
+        // `close`, not `exit`: it fires once stdout/stderr have drained, so the
+        // rejection carries the child's whole diagnostic.
+        child.on("close", (code) => {
           reject(new Error(`built kumiki dev exited ${code} before listening:\n${out}${err}`));
         });
       });
@@ -75,7 +85,10 @@ describe("kumiki dev from the built CLI", () => {
       const panel = await httpGet(new URL("/@kumiki-dev/panel.ts", url));
       expect(panel.status).toBe(200);
     } finally {
-      child.kill();
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+        await once(child, "exit");
+      }
     }
   });
 });
