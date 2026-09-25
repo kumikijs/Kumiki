@@ -1,6 +1,12 @@
-// The `latest-per-key` key runs when the effect dispatches, so a name nothing
-// checked there was a `ReferenceError` on the first dispatch rather than a
-// diagnostic — the app imported, mounted and rendered first.
+// An effect's own expressions — its `latest-per-key` key and its `map-request`.
+//
+// The checker tests come first: the key runs away from where it is written, so
+// a name nothing checked there was a `ReferenceError` on the first dispatch
+// rather than a diagnostic — the app imported, mounted and rendered first.
+//
+// The last block compiles a program, imports the generated module and runs one
+// reducer, to pin *when* the key is evaluated: at the emit, against the slot
+// values the reducer body has written so far.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -145,13 +151,12 @@ describe("an effect's map-request is checked in the same scope", () => {
 
 type LoadedApp = {
   live: Record<string, unknown>;
-  effects: Record<string, { policy?: { keyOf?: (input: unknown) => string } }>;
   reducers: {
     name: string;
     apply: (
       live: Record<string, unknown>,
       payload: Record<string, unknown>,
-    ) => { slots: Record<string, unknown> };
+    ) => { slots: Record<string, unknown>; emits: { effect: string; key?: string }[] };
   }[];
 };
 
@@ -169,31 +174,55 @@ async function load(source: string): Promise<LoadedApp> {
   return mod.createApp();
 }
 
-describe("the EffectId an `emit` expression yields", () => {
-  // The id is `"<effect>:" + key`, built inside the reducer body. The
-  // dispatcher computes its own key with the effect's `keyOf` once the
-  // reducer's writes are applied, and registers the request under that. When
-  // the two disagree, `emit cancel(id)` names nothing in flight.
-  it("agrees with the dispatcher's key when the reducer wrote the key slot first", {
-    timeout: 30_000,
-  }, async () => {
-    const app = await load(`slot noteKey : Text     = "a"
+/** A `latest-per-key(noteKey)` effect and one reducer `go` whose body is `body`. */
+function keyedApp(body: string[]): string {
+  const [first, ...rest] = body;
+  return `slot noteKey : Text     = "a"
 slot lastId  : EffectId = EffectId.none
 effect load cap=http.get in=Text out=Result(Text, HttpError)
             policy=latest-per-key(noteKey)
-reducer go on=ui.click(B) do= noteKey := "b"
-                              lastId := emit load("x")
+reducer go on=ui.click(B) do= ${first}
+${rest.map((s) => `                              ${s}`).join("\n")}
 tile B = button(text="b", onClick=go)
 tile Home = column(B)
-app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`);
-    const go = app.reducers.find((r) => r.name === "go");
-    if (!go) expect.fail("no reducer named go");
-    const { slots } = go.apply(app.live, {});
-    // What the runtime does between the reducer and the dispatch.
-    Object.assign(app.live, slots);
-    const keyOf = app.effects.load?.policy?.keyOf;
-    if (!keyOf) expect.fail("load has no keyOf");
-    expect(slots.lastId).toBe(`load:${keyOf("x")}`);
-    expect(slots.lastId).toBe("load:b");
+app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
+}
+
+/** Run `go` once against the declared defaults: the id it kept, and the key its emit record carries. */
+async function runGo(body: string[]): Promise<{ id: unknown; key: unknown }> {
+  const app = await load(keyedApp(body));
+  const go = app.reducers.find((r) => r.name === "go");
+  if (!go) expect.fail("no reducer named go");
+  const { slots, emits } = go.apply(app.live, {});
+  expect(emits.map((e) => e.effect)).toEqual(["load"]);
+  return { id: slots.lastId, key: emits[0]?.key };
+}
+
+describe("a `latest-per-key` key is evaluated at the emit (http.md §6.4)", () => {
+  // The key is computed once, where the emit runs in the reducer body: a slot
+  // it reads has the value the body has written so far, and a write after the
+  // emit is not seen. That one value is both the key the `emit` expression's id
+  // is built from and the key the emit record carries to the dispatcher. That
+  // the dispatcher runs the request under the carried key is pinned through the
+  // real dispatcher in `packages/tests/emit-id-after-key-write.test.ts`.
+  const EMIT = `lastId := emit load("x")`;
+
+  it.each([
+    ["a key write before the emit", [`noteKey := "b"`, EMIT], "b"],
+    ["a key write after the emit", [EMIT, `noteKey := "b"`], "a"],
+    [
+      "an emit under `let … in`, after a key write",
+      [`noteKey := "b"`, `lastId := let k = "x" in emit load(k)`],
+      "b",
+    ],
+    [
+      "an emit in a tuple `match` arm, after a key write",
+      [`noteKey := "b"`, `lastId := match ("x", 1) with | (s, _) -> emit load(s)`],
+      "b",
+    ],
+  ])("%s", { timeout: 30_000 }, async (_label, body, expected) => {
+    const { id, key } = await runGo(body);
+    expect(key).toBe(expected);
+    expect(id).toBe(`load:${expected}`);
   });
 });

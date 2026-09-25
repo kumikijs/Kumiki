@@ -1,11 +1,10 @@
-# Feature: the `EffectId` that `emit` yields names the effect the dispatcher
-# registered, even when the same reducer writes the slot its key reads.
+# Feature: a `latest-per-key` key is evaluated where the `emit` runs, so it sees
+# a write the same reducer made to the slot it reads (http.md §6.4).
 #
-# `load` is keyed by `noteKey` (`policy=latest-per-key(noteKey)`). `open` moves
-# the key and emits in one reducer, so the id it keeps is built from the key it
-# has just staged — `"load:b"` — which is the key the dispatcher runs the
-# request under. `Cancel` hands that id back, and the in-flight request is the
-# one it aborts: `.err` sees `aborted` and `status` reads "cancelled".
+# `load` is keyed by `noteKey`. `open` writes `noteKey := "b"` and then emits,
+# so the id it keeps is `"load:b"`, not `"load:a"`. `Cancel` hands that id to
+# `http.cancel`; the scenario pins the id, and the abort it leads to is pinned
+# with a request held in flight in `packages/tests`.
 
 slot noteKey : Text     = "a"
 slot lastId  : EffectId = EffectId.none

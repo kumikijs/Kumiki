@@ -97,8 +97,12 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
     case "PolLatest":
       return `{ kind: "latest" }`;
     case "PolLatestKey":
-      // Module scope: `keyOf` runs at dispatch, after the reducer's writes are
-      // applied to the live slots, so there is no staged write left to see.
+      // Not reducer scope: this lands in the effect table inside `createApp()`,
+      // where `_next` is unbound — it is local to each reducer's generated body
+      // — so a slot read here must be `_live[...]`. The dispatcher calls
+      // `keyOf` only for an emit that carries no key of its own, such as an
+      // `app.init` entry; a reducer's emit carries the key it was given where
+      // it ran (`reducerEmitJs`).
       return `{ kind: "latest-per-key", keyOf: ${policyKeyOfJs(p.key, gen, false)} }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
