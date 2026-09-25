@@ -1,0 +1,44 @@
+# Feature (errors.md E0304): a slot that should hold something about the route
+# starts from a value of its own, and a route.enter reducer fills it in.
+#
+# A slot's initial value is evaluated while the module loads; the runtime
+# installs `route` during the mount that follows. So none of these compile:
+#
+#   slot landed : Text = route.path          # E0304 at the read
+#   slot landed : Text = here()              # E0304 at the call: here → route
+#
+# Without the check, both build clean and the module throws
+# "Cannot access '_live' before initialization" while it is imported, so
+# nothing mounts.
+#
+# What stays legal is everything that does not wait on the mount: `now` comes
+# from a module import, so a slot may start from it; and `here` reads the route
+# correctly wherever it is called after the mount — a reducer and a tile below.
+
+slot landed  : Text = ""
+slot entries : Int  = 0
+slot started : Text = now.show
+
+fn here() -> Text = route.path
+
+reducer onHome  on=route.enter("/")      do= landed  := here()
+                                             entries := entries + 1
+reducer onAbout on=route.enter("/about") do= landed  := route.path
+                                             entries := entries + 1
+
+tile Home = page(heading("Home"),
+                 text("landed: " + landed),
+                 text("entries: " + entries.show),
+                 text("here: " + here()),
+                 text("started: " + (if started == "" then "no" else "yes")),
+                 link(to="/about") {text: "About", id: "to-about"})
+tile About = page(heading("About"),
+                  text("landed: " + landed),
+                  text("entries: " + entries.show),
+                  link(to="/") {text: "Home", id: "to-home"})
+tile NotFound = page(heading("404"), link(to="/") {text: "Home"})
+
+app RouteIntoASlot
+    caps   = []
+    routes = {"/" -> Home, "/about" -> About, "/404" -> NotFound}
+    init   = []
