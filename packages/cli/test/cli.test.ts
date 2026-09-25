@@ -201,10 +201,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `finally`, both of which buy a property the whole file already holds: a
     // throw from inside a panic catch must not displace the panic, and an
     // episode this dispatch opened must close however it exits.
+    //
+    // 58,000 from 57,000 (57,490 measured, from 56,930): the memory of refused
+    // binds that `error(field=…)` speaks for (forms.md §5.1.2) got its edges.
+    // 402 of it is core — the lookup scoped to the view being rendered, so a
+    // shape mounted twice does not show one view's refusal in the other, and
+    // pruning of controls that left the page. The other 158 is the shared
+    // input helper holding a refusal back until an IME composition ends.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(57_000);
+    expect(total).toBeLessThan(58_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

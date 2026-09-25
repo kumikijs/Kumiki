@@ -1385,10 +1385,14 @@ const appByRoot = new WeakMap<Element, MountedApp>();
 type RefusedBind = { slot: string; value: unknown; shown: string };
 
 /**
- * Per mount, the controls whose shown value their slot refused. A refused
- * bind leaves the slot as it was and the control as the user left it, so the
- * two disagree; this is what lets `error(field=…)` speak for what the field
- * shows rather than for the value the slot kept.
+ * Per app, the controls whose shown value their slot refused. A refused bind
+ * leaves the slot as it was and the control as the user left it, so the two
+ * disagree; this is what lets `error(field=…)` speak for what the field shows
+ * rather than for the value the slot kept.
+ *
+ * Keyed by the app, not the view: every view of a shape (runtime.md §10.9.1)
+ * shares this map, so a lookup is scoped to the view being rendered — a value
+ * refused in one view is not what another view's field shows.
  */
 const refusedBinds = new WeakMap<object, Map<HTMLElement, RefusedBind>>();
 
@@ -1399,7 +1403,10 @@ function shownValue(el: HTMLElement): string {
 
 /**
  * Record the outcome of a `bind` write from `el`: a refused one is remembered
- * against the control, an accepted one clears whatever was.
+ * against the control, an accepted one clears whatever was. Entries whose
+ * control has left the page are dropped on the way past, so a refused write on
+ * a control nothing ever asks about (no `error(field=…)` for its slot) does not
+ * keep the detached element alive for the app's lifetime.
  */
 export function noteBindWrite(
   app: object,
@@ -1409,6 +1416,9 @@ export function noteBindWrite(
   accepted: boolean,
 ): void {
   let byEl = refusedBinds.get(app);
+  if (byEl) {
+    for (const other of byEl.keys()) if (!other.isConnected) byEl.delete(other);
+  }
   if (accepted) {
     byEl?.delete(el);
     return;
@@ -1421,20 +1431,35 @@ export function noteBindWrite(
 }
 
 /**
- * The refused value a control bound to `slot` is still showing, if any. An
- * entry whose control has left the page, or no longer shows what was refused
- * — a reducer rewrote the slot and the control followed it — is stale, and
- * dropped here rather than by every path that can move a control.
+ * The refused value a control bound to `slot` inside `view` is still showing,
+ * if any. An entry whose control has left the page, or no longer shows what
+ * was refused — a reducer rewrote the slot and the control followed it — is
+ * stale, and every stale entry for the slot is dropped here rather than by
+ * every path that can move a control. A live entry in another view is kept
+ * and not returned.
  */
-export function refusedBindShown(app: object, slot: string): { value: unknown } | undefined {
+export function refusedBindShown(
+  app: object,
+  slot: string,
+  view: Node | undefined,
+): { value: unknown } | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
+  let found: { value: unknown } | undefined;
   for (const [el, r] of byEl) {
     if (r.slot !== slot) continue;
-    if (el.isConnected && shownValue(el) === r.shown) return { value: r.value };
-    byEl.delete(el);
+    if (!el.isConnected || shownValue(el) !== r.shown) {
+      byEl.delete(el);
+      continue;
+    }
+    if (!found && view?.contains(el)) found = { value: r.value };
   }
-  return undefined;
+  return found;
+}
+
+/** The controls a refused bind is remembered against, for `app`. */
+export function refusedBindControls(app: object): HTMLElement[] {
+  return [...(refusedBinds.get(app)?.keys() ?? [])];
 }
 
 /**
@@ -1588,6 +1613,30 @@ function shadowHost(el: Element): Element | null {
 /** The app whose synchronous render pass is currently executing, if any. */
 export function getRenderingApp(): MountedApp | undefined {
   return renderingApp ?? undefined;
+}
+
+/** Non-null only while one view's render pass is running: that view's host. */
+let renderingView: Element | null = null;
+
+/**
+ * The host of the view whose render pass is executing, if any. A shape
+ * mounted twice renders each view in turn under one `withRenderingApp`, so
+ * this — not the app — is what tells render-time state that belongs to one
+ * view (a refused bind, forms.md §5.1.2) which view is asking.
+ */
+export function getRenderingView(): Element | undefined {
+  return renderingView ?? undefined;
+}
+
+/** Bracket one view's render pass; saved/restored like {@link withRenderingApp}. */
+function withRenderingView<T>(view: Element, fn: () => T): T {
+  const prev = renderingView;
+  renderingView = view;
+  try {
+    return fn();
+  } finally {
+    renderingView = prev;
+  }
 }
 
 /**
@@ -1839,7 +1888,7 @@ export function mountCore(
     views.push(view);
     registerAppRoot(into, app);
     withRenderingApp(app, () => {
-      renderPass(view);
+      withRenderingView(view.target, () => renderPass(view));
     });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
   };
@@ -1868,7 +1917,8 @@ export function mountCore(
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
-        const pass = renderPass(views[i]!);
+        const view = views[i]!;
+        const pass = withRenderingView(view.target, () => renderPass(view));
         if (i === 0) tree = pass.tree;
         touched.push(...pass.touched);
       }
@@ -4008,9 +4058,25 @@ function reconcileNode(
     // untouched — except for a tile whose output reads state its node does
     // not carry. `error(field=…)` renders the message for what its field
     // *shows*, and a `bind` its refinement refused changes that without
-    // changing the slot the node is built from (forms.md §5.1.2, #443), so
-    // its patcher re-derives the message on every pass, equal node or not.
-    patchers.error?.(oldEl, oldNode as never, newNode as never, ctx);
+    // changing the slot the node is built from (forms.md §5.1.2), so its
+    // patcher re-derives the message on every pass, equal node or not.
+    //
+    // It is also what makes the tile follow its slot at all. A compiled app
+    // gets that today by accident: codegen emits `error(field=contact)` with
+    // `props: { field: _live["contact"], … }`, so the node is never equal
+    // across a change of the slot and the patcher above runs. This branch is
+    // what keeps the message right if that argument stopped leaking into
+    // `props`.
+    //
+    // Guarded like the patcher call above, so the two exits cannot drift.
+    try {
+      patchers.error?.(oldEl, oldNode as never, newNode as never, ctx);
+    } catch (e) {
+      if (e instanceof PatchRequiresRebuild) {
+        return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+      }
+      throw e;
+    }
   }
   // Otherwise, when every own field compares equal the element stays mounted
   // untouched, and that is unconditionally safe — handlers compare by identity

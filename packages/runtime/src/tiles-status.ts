@@ -7,6 +7,7 @@ import {
   ensureAnimationStyles,
   failedRefinement,
   getRenderingApp,
+  getRenderingView,
   refusedBindShown,
 } from "./core.ts";
 
@@ -28,7 +29,10 @@ function resolveFieldError(field: string): string {
   // A field showing a value its slot refused speaks for what it shows: the
   // slot kept the last value it accepted, and a message computed from that
   // one would be about a value the user is no longer looking at (#443).
-  const value = refusedBindShown(app, field)?.value ?? app.live?.[field] ?? meta.value;
+  // Only a control in the view being rendered speaks for this tile: another
+  // view of the same shape shows the slot's own value.
+  const refused = refusedBindShown(app, field, getRenderingView());
+  const value = refused?.value ?? app.live?.[field] ?? meta.value;
   if (meta.refine(value)) return "";
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.

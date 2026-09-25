@@ -1009,7 +1009,8 @@ const BIND_CONTROLS = new Set([
 ]);
 
 /**
- * E0219: `strict` on a bound control. forms.md §5.1.2 used to specify
+ * E0219: `strict` on a bind control kind (`BIND_CONTROLS`), with or without a
+ * `bind` — it is not a prop of these tiles at all. forms.md §5.1.2 used to specify
  * `strict=false` — take a value the refinement refuses and turn a form-level
  * `valid` flag false — and nothing ever implemented it: the flag has no reader
  * in the language, so the prop passed `check` and did nothing (#443). The

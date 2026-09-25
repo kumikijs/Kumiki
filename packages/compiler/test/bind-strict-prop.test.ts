@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 const TAIL = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 const errorsOf = (tiles: string) => check(parse(lex(`${tiles}\n${TAIL}`)));
 
-describe("strict on a bound control is E0219", () => {
+describe("strict on a bind control kind is E0219, bound or not", () => {
   const bad: [string, string][] = [
     [
       "as an argument of input",
@@ -23,6 +23,20 @@ describe("strict on a bound control is E0219", () => {
       `slot s : Text where nonempty = "a"\ntile App = textarea(bind=s) {strict: false}`,
     ],
     ["on a slider", `slot n : Int where between(0, 9) = 1\ntile App = slider(bind=n, strict=true)`],
+    [
+      "on an editable",
+      `slot s : Text where nonempty = "a"\ntile App = editable(bind=s, strict=false)`,
+    ],
+    ["on a check", `slot b : Bool = false\ntile App = check(bind=b, strict=false)`],
+    ["on a switch", `slot b : Bool = false\ntile App = switch(bind=b, strict=false)`],
+    ["on a radio", `slot s : Text = "a"\ntile App = radio(bind=s, strict=false)`],
+    [
+      "on a select",
+      `slot s : Text = "a"\ntile App = select(bind=s, options=["a", "b"], strict=false)`,
+    ],
+    // `strict` is not a prop of these kinds at all, so it is reported whether
+    // or not the control carries a `bind`.
+    ["on an input with no bind", `slot s : Text = "a"\ntile App = input(value=s, strict=false)`],
   ];
   for (const [label, src] of bad) {
     it(`reports it ${label}`, () => {
