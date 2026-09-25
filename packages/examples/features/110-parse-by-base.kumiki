@@ -5,6 +5,11 @@
 #   Duration.parse("500")  : Option(Duration)  Some(500)   milliseconds
 #   Bool.parse("false")    : Option(Bool)      Some(false)
 #   Slug.parse("a-b")      : Option(Slug)      Some("a-b") a nominal Text
+#   Cents.parse("-5")      : Option(Cents)     None        fails `where positive`
+#
+# The value read is held to the type's refinement, so `parse` never hands back
+# a `Cents` that `Cents` refuses. `Int` / `Float` read decimal text only:
+# `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`.
 #
 # Each used to come back as the text it was given, whatever `T` said: the sum
 # below was `12 + "12"`, a string `Cents`, and `Some("false")` unwrapped to a
@@ -23,6 +28,7 @@ slot wait  : Duration         = Duration.ms(100)
 slot quiet : Option(Bool)     = None
 slot slug  : Option(Slug)     = None
 slot typed : Text             = "12"
+slot below : Option(Cents)    = Some(1)
 
 reducer add on=ui.click(AddBtn)
     do= total := total + Cents.parse(typed).get-or(0)
@@ -34,9 +40,13 @@ reducer read on=ui.click(ReadBtn)
     do= quiet := Bool.parse("false")
         slug  := Slug.parse("a-b")
 
+reducer refuse on=ui.click(RefuseBtn)
+    do= below := Cents.parse("-5")
+
 tile AddBtn    = button(text="add")    {id: "add"}
 tile ExtendBtn = button(text="extend") {id: "extend"}
 tile ReadBtn   = button(text="read")   {id: "read"}
+tile RefuseBtn = button(text="refuse") {id: "refuse"}
 
 tile App = column(
              text("total " + total.show),
@@ -47,7 +57,10 @@ tile App = column(
              text(match slug with
                     | Some(s) -> "slug " + s
                     | None    -> "slug unset"),
-             row(AddBtn, ExtendBtn, ReadBtn) {gap: "sm"})
+             text(match below with
+                    | Some(b) -> "below " + b.show
+                    | None    -> "below refused"),
+             row(AddBtn, ExtendBtn, ReadBtn, RefuseBtn) {gap: "sm"})
 
 app ParseByBase
     caps   = []

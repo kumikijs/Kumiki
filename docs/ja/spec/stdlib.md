@@ -443,14 +443,20 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 | 基底型 | `Some` の中身 | `None` になるテキスト |
 |---|---|---|
-| `Int` | 表す数値（切り捨て） | 空白のみ、または有限の数値を表さない |
-| `Float` | 表す数値 | 空白のみ、または有限の数値を表さない |
+| `Int` | 表す数値: 省略可能な `+` / `-` と 10 進数字 | それ以外 — 小数、指数、`0x` / `0b` 接頭辞、前後の空白、空 |
+| `Float` | 表す数値: 省略可能な `+` / `-`、10 進数字、省略可能な `.` と数字、省略可能な `e` / `E` 指数 | それ以外 — `.5`、`1.`、`0x10`、`Infinity`、前後の空白、空 — または有限に収まらない大きさの数値 |
 | `Time` | [`Time.parse`](#_2-2-8-time) が読む時刻 | 時刻を表さない |
 | `Bool` | `"true"` なら `true`、`"false"` なら `false` — `.show` が生成する 2 つの綴り | それ以外 |
 | `Text` | テキストそのもの | 空 |
 | `Bytes` | `Bytes.from-text` と同じ UTF-8 バイト列 | 空 |
 
-それ以外の基底型 — レコード、ユニオン、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
+読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。
+
+読んだ値はその後 `T` が持つすべての `where` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）に照らされ、どれかを満たさない値は `None` になる: `type Cents = nominal Int where positive` なら `Cents.parse("-5")` は `None` である。したがって `parse` は自身の型が拒否する値を決して生成しない — `Option(Cents)` は slot 書き込みのガードを通らないので、その検査ができるのは parse の時点だけである。
+
+引数は `Text` であり、それ以外は [E0201](./errors.md#e0201-type-mismatch) になる。
+
+それ以外の基底型 — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、型引数なしで書かれた型コンストラクタ（`List`、`type Box(T) = …` に対する `Box`）も同様である。それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
 
 ### 2.4.4 乱数
 

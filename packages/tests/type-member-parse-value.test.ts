@@ -1,17 +1,16 @@
-// `T.parse(text)` is an `Option(T)` (stdlib §2.4.3), and the checker has said
-// so since #430 — but the lowering branched on the qualifier's *name*: `Int`,
-// `Float` and `Time` converted, and every other qualifier fell into a branch
-// that wrapped the raw string. So a nominal over `Int` parsed to a `Text`, and
-// the arithmetic after it concatenated:
+// `T.parse(text)` is an `Option(T)` (stdlib §2.4.3), and what it converts the
+// text into is decided by the base `T` unaliases to, not by the name it is
+// written with. The lowering used to branch on the name — `Int`, `Float` and
+// `Time` converted, and every other qualifier wrapped the raw string — so a
+// nominal over `Int` parsed to a `Text`, and the arithmetic after it
+// concatenated:
 //
 //   type Cents = nominal Int where positive
 //   total := total + Cents.parse("12").get-or(0)      # 12 + "12" = "1212"
 //
-// `check` said `ok` and nothing threw, which is the 06-expenses shape: the
-// defect is a value of the wrong kind, and only the state shows it. So every
-// assertion here reads `shape.live`, never the DOM (#431). `Duration.parse` is
-// the same defect on a standard-library nominal — a `Duration` is milliseconds,
-// and it came back as the text it was given (#424).
+// `check` said `ok` and nothing threw: the defect is a value of the wrong kind,
+// and only the state shows it. So every assertion here reads `shape.live`,
+// never the DOM.
 
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -133,5 +132,134 @@ describe("the standard library's Duration and Bytes parse to their own represent
     expect(b._tag).toBe("Some");
     expect(b._0).toBeInstanceOf(Uint8Array);
     expect([...(b._0 as Uint8Array)]).toEqual([104, 105]);
+  });
+});
+
+describe("a parse reads through every alias and nominal on the way to the base", () => {
+  it("reads a nominal over a nominal, and a plain alias, as their base", async () => {
+    const live = await stateAfterGo(
+      app(
+        `type Cents = nominal Int
+type Tally = nominal Cents
+type Count = Int
+type Flag = nominal Bool
+slot t : Option(Tally) = None
+slot c : Option(Count) = None
+slot f : Option(Flag) = None`,
+        `t := Tally.parse("4")\n        c := Count.parse("5")\n        f := Flag.parse("false")`,
+      ),
+    );
+    expect(live.t).toEqual({ _tag: "Some", _0: 4 });
+    expect(live.c).toEqual({ _tag: "Some", _0: 5 });
+    expect(live.f).toEqual({ _tag: "Some", _0: false });
+  });
+});
+
+describe("a parse never produces a value its type refuses", () => {
+  // The refinement is part of the type: a `Cents` held in an `Option(Cents)`
+  // never meets a slot-write guard, so a parse that let `-5` through handed
+  // the program a `Cents` that is not one.
+  it("answers None when the reading fails the nominal's refinement", async () => {
+    const live = await stateAfterGo(
+      app(
+        `type Cents = nominal Int where positive
+type Count = Cents
+slot neg : Option(Cents) = Some(1)
+slot pos : Option(Cents) = None
+slot via : Option(Count) = Some(1)`,
+        `neg := Cents.parse("-5")\n        pos := Cents.parse("5")\n        via := Count.parse("0")`,
+      ),
+    );
+    expect(live.neg).toEqual({ _tag: "None" });
+    expect(live.pos).toEqual({ _tag: "Some", _0: 5 });
+    expect(live.via).toEqual({ _tag: "None" });
+  });
+
+  it("checks a refinement on a nominal Text too", async () => {
+    const live = await stateAfterGo(
+      app(
+        `type Code = nominal Text where len-eq(3)
+slot a : Option(Code) = None
+slot b : Option(Code) = Some("xyz")`,
+        `a := Code.parse("abc")\n        b := Code.parse("abcd")`,
+      ),
+    );
+    expect(live.a).toEqual({ _tag: "Some", _0: "abc" });
+    expect(live.b).toEqual({ _tag: "None" });
+  });
+});
+
+describe("Int and Float read decimal text only", () => {
+  const INTS: [string, unknown][] = [
+    ["12", { _tag: "Some", _0: 12 }],
+    ["+7", { _tag: "Some", _0: 7 }],
+    ["-3", { _tag: "Some", _0: -3 }],
+    ["0x10", { _tag: "None" }],
+    ["0b101", { _tag: "None" }],
+    ["1e3", { _tag: "None" }],
+    [" 12 ", { _tag: "None" }],
+    ["1.5", { _tag: "None" }],
+    ["", { _tag: "None" }],
+  ];
+  const FLOATS: [string, unknown][] = [
+    ["0.25", { _tag: "Some", _0: 0.25 }],
+    ["-2.5", { _tag: "Some", _0: -2.5 }],
+    ["3", { _tag: "Some", _0: 3 }],
+    ["1e3", { _tag: "Some", _0: 1000 }],
+    ["1.5E-1", { _tag: "Some", _0: 0.15 }],
+    ["0x10", { _tag: "None" }],
+    [" 1.5", { _tag: "None" }],
+    [".5", { _tag: "None" }],
+    ["1.", { _tag: "None" }],
+    ["Infinity", { _tag: "None" }],
+    ["1e400", { _tag: "None" }],
+    ["", { _tag: "None" }],
+  ];
+
+  async function readAll(type: string, cases: [string, unknown][]) {
+    const slots = cases.map((_, i) => `slot s${i} : Option(${type}) = None`).join("\n");
+    const body = cases
+      .map(([t], i) => `s${i} := ${type}.parse(${JSON.stringify(t)})`)
+      .join("\n        ");
+    const live = await stateAfterGo(app(slots, body));
+    return cases.map(([t], i) => [t, live[`s${i}`]]);
+  }
+
+  it("reads an optional sign and digits as an Int, and nothing else", async () => {
+    expect(await readAll("Int", INTS)).toEqual(INTS);
+  });
+
+  it("reads a sign, digits, a fraction and an exponent as a Float, and nothing else", async () => {
+    expect(await readAll("Float", FLOATS)).toEqual(FLOATS);
+  });
+
+  // A `Duration` is an `Int` of milliseconds, so it reads as one: a fraction
+  // is not a whole number of milliseconds.
+  it("reads a Duration as an Int", async () => {
+    const live = await stateAfterGo(
+      app(
+        `slot a : Option(Duration) = None\nslot b : Option(Duration) = Some(Duration.ms(1))`,
+        `a := Duration.parse("250")\n        b := Duration.parse("1.5")`,
+      ),
+    );
+    expect(live.a).toEqual({ _tag: "Some", _0: 250 });
+    expect(live.b).toEqual({ _tag: "None" });
+  });
+});
+
+describe("an empty text reads as None where the base is text", () => {
+  it("answers None for Text, a nominal Text and Bytes", async () => {
+    const live = await stateAfterGo(
+      app(
+        `type Slug = nominal Text
+slot t : Option(Text) = Some("x")
+slot s : Option(Slug) = Some("x")
+slot b : Option(Bytes) = Some(Bytes.from-text("x"))`,
+        `t := Text.parse("")\n        s := Slug.parse("")\n        b := Bytes.parse("")`,
+      ),
+    );
+    expect(live.t).toEqual({ _tag: "None" });
+    expect(live.s).toEqual({ _tag: "None" });
+    expect(live.b).toEqual({ _tag: "None" });
   });
 });

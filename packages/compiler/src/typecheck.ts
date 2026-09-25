@@ -57,7 +57,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
-import { parseReading, qualifierType } from "./parse-reading.ts";
+import { parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
@@ -2089,11 +2089,12 @@ function checkCallee(
     });
     return;
   }
-  // `<Type>.fresh|parse|show` is lowered on any capitalised qualifier — codegen
-  // matches it by regex — so a misspelt qualifier did not fail, it changed what
-  // the call does: `Int.parse` has a numeric branch and `Itn.parse` misses it,
-  // so an `Int` slot ends up holding `"12"` and every later sum concatenates.
-  // Reported as E0117 with the sentence `resolveType` uses, so the repair path
+  // `<Type>.fresh|parse|show` is matched on any capitalised qualifier — codegen
+  // matches it by regex — so a qualifier that names no type has to be refused
+  // here. When `parse` branched on the qualifier's name, a misspelt one did not
+  // fail, it changed what the call did: `Itn.parse("12")` was `Some("12")` and
+  // every later sum concatenated. It now reads by the base the qualifier
+  // resolves to, and a name that resolves to none has no base. Reported as E0117 with the sentence `resolveType` uses, so the repair path
   // for an unknown type name covers this one without knowing about it.
   if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
     const qualifier = callee.slice(0, dot);
@@ -2114,22 +2115,22 @@ function checkCallee(
       });
       return;
     }
-    // `parse` lowers by the base the qualifier unaliases to (#431), and a
-    // record, a union, `File`, `EffectId` or `Unit` has no reading of a text.
-    // Their call used to lower to the raw string wrapped in `Some`, which the
-    // inference types `Option(<qualifier>)` — a value no reader of that type
-    // can use, and no diagnostic to say so. A constructor still wanting its
-    // arguments resolves to no type at all and is not this report's.
+    // `parse` lowers by the base the qualifier unaliases to, and a record, a
+    // union, `File`, `EffectId`, `Unit` or a constructor written without its
+    // arguments has no reading of a text — codegen has nothing of the call's
+    // type to produce. `parseQualifier` is the one answer both sides read, so
+    // every qualifier that passed E0117 above and has no reading is reported
+    // here, and none reaches the lowering. A qualifier whose definition
+    // resolves to nothing is left to the report at that definition.
     if (
       callee.slice(dot + 1) === "parse" &&
       isQualifierName(qualifier) &&
-      qualifierType(qualifier, pos, sym) !== null &&
-      parseReading(qualifier, sym) === null
+      parseQualifier(qualifier, sym).kind === "none"
     ) {
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
-        message: `Function "${callee}" is documented but not implemented by the runtime`,
+        message: `"${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`,
         pos,
       });
       return;
@@ -2147,6 +2148,13 @@ function checkCallee(
       return;
     }
     if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    // What `parse` reads is a text (stdlib §2.4.3). Given anything else the
+    // call is not a parse of anything: `Bool.parse(flag)` is `None` whatever
+    // `flag` holds.
+    const text = args[0];
+    if (dot > 0 && callee.slice(dot + 1) === "parse" && text) {
+      checkAgainst(text, prim("Text", pos), sym, errors, ctx);
+    }
     return;
   }
   if (!fn) {
@@ -3809,7 +3817,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // and `Bytes` too, which is why it is read ahead of their namespaces
       // below. Caught by those instead, it answered the bare qualifier, so the
       // documented `o : Option(Duration) := Duration.parse(t)` was E0201 and
-      // `d : Duration := Duration.parse(t)` was clean (#424).
+      // `d : Duration := Duration.parse(t)` was clean.
       //
       // The qualifier is resolved rather than matched, so a name that is no
       // type answers nothing and E0117 keeps that report to itself (#276).

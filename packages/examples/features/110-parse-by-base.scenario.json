@@ -4,8 +4,13 @@
       "label": "nothing parsed yet",
       "expect": {
         "noErrors": true,
-        "state": { "total": 12, "wait": 100, "quiet": { "_tag": "None" } },
-        "domIncludes": ["total 12", "wait 100ms", "quiet unset", "slug unset"]
+        "state": {
+          "total": 12,
+          "wait": 100,
+          "quiet": { "_tag": "None" },
+          "below": { "_tag": "Some", "_0": 1 }
+        },
+        "domIncludes": ["total 12", "wait 100ms", "quiet unset", "slug unset", "below 1"]
       }
     },
     {
@@ -28,6 +33,15 @@
           "slug": { "_tag": "Some", "_0": "a-b" }
         },
         "domIncludes": ["quiet off", "slug a-b"]
+      }
+    },
+    {
+      "label": "a reading the refinement refuses is None",
+      "do": { "click": "#refuse" },
+      "expect": {
+        "noErrors": true,
+        "state": { "below": { "_tag": "None" } },
+        "domIncludes": ["below refused"]
       }
     }
   ]

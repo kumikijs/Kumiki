@@ -1,16 +1,12 @@
 // What a type-member call's qualifier resolves to, and how `T.parse(text)`
 // reads its text — the answers the checker and the lowering share.
 //
-// `parse` used to branch on the qualifier's *name*: `Int`, `Float` and `Time`
-// converted, and every other qualifier fell into a branch that wrapped the raw
-// string. A nominal is named for itself, not for its base, so
-// `type Cents = nominal Int` parsed to a `Text` and the sum after it
-// concatenated (#431); `Duration`, the standard library's `nominal Int`, did
-// the same (#424). What decides the conversion is the base the qualifier
-// unaliases to, and only the type table knows that — so the question is asked
-// here, of the table, by both sides.
+// What decides the conversion is the base the qualifier unaliases to, not the
+// name it is written with: a nominal is named for itself, so a branch on the
+// name read `type Cents = nominal Int` as text. Only the type table knows the
+// base, so the question is asked here, of the table, by both sides.
 
-import { type TypeEnv, unaliasType } from "./assignable.ts";
+import { isKnownTypeName, type TypeEnv, unaliasType } from "./assignable.ts";
 import type { Pos, TypeExpr } from "./ast.ts";
 import { isPrimTypeName } from "./stdlib-types.ts";
 
@@ -39,10 +35,11 @@ export function qualifierType(name: string, pos: Pos, env: TypeEnv): TypeExpr | 
 
 /**
  * The bases a text has a reading as. Each is how `T.parse` lowers for a
- * qualifier that unaliases to it:
+ * qualifier that unaliases to it (stdlib §2.4.3 is the table):
  *
- * - `Int` / `Float` — the number the text spells (`Int` truncated), `None` for
- *   blank text or text that spells no finite number.
+ * - `Int` — an optional sign and decimal digits, nothing else.
+ * - `Float` — an optional sign, decimal digits, an optional fraction and an
+ *   optional exponent, spelling a finite number.
  * - `Time` — the instant as a millisecond number (stdlib §2.2.9).
  * - `Bool` — `"true"` / `"false"`, the two spellings `.show` produces.
  * - `Text` — the text itself, `None` when it is empty.
@@ -64,12 +61,35 @@ function isParseReading(name: string): name is ParseReading {
 }
 
 /**
- * The reading `qualifier.parse(text)` lowers to, or `null` when there is none:
- * the qualifier names no complete type (misspelt, or a constructor still
- * wanting its arguments), or it names one whose base no text spells — a
- * record, a union, `File`, `EffectId`, `Unit`, or a nominal over any of them.
+ * What `qualifier.parse(text)` reads its text as:
+ *
+ * - `reading` — the base it lowers by.
+ * - `none` — the qualifier names a type, and no text spells a value of it: a
+ *   record, a union, a container, `File`, `EffectId`, `Unit`, a nominal over
+ *   any of them, or a type constructor written without its arguments. The call
+ *   is the checker's to report (E0802).
+ * - `unresolved` — the qualifier names nothing, or a definition whose body
+ *   resolves to nothing (an alias of an undefined name, a cycle). That is
+ *   E0117's / E0009's to report where it is written, and the parse has no base
+ *   to judge, so it adds nothing.
  */
-export function parseReading(qualifier: string, env: TypeEnv): ParseReading | null {
-  const base = unaliasType(qualifierType(qualifier, { line: 0, col: 0 }, env), env);
-  return base?.kind === "TypePrim" && isParseReading(base.name) ? base.name : null;
+export type ParseQualifier =
+  | { readonly kind: "reading"; readonly reading: ParseReading }
+  | { readonly kind: "none" }
+  | { readonly kind: "unresolved" };
+
+export function parseQualifier(qualifier: string, env: TypeEnv): ParseQualifier {
+  if (!isPrimTypeName(qualifier) && !isKnownTypeName(qualifier, env)) {
+    return { kind: "unresolved" };
+  }
+  const named = qualifierType(qualifier, { line: 0, col: 0 }, env);
+  // A known name that is not a complete type: a built-in constructor or a
+  // program-defined generic, written without its arguments.
+  if (named === null) return { kind: "none" };
+  const base = unaliasType(named, env);
+  if (base === null) return { kind: "unresolved" };
+  if (base.kind === "TypeRef" && !env.types.has(base.name)) return { kind: "unresolved" };
+  return base.kind === "TypePrim" && isParseReading(base.name)
+    ? { kind: "reading", reading: base.name }
+    : { kind: "none" };
 }

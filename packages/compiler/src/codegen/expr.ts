@@ -1,5 +1,5 @@
 import type { Expr, Pattern, Pos } from "../ast.ts";
-import { parseReading } from "../parse-reading.ts";
+import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
@@ -9,6 +9,7 @@ import {
   jsProperty,
   makeEvalCtx,
 } from "./context.ts";
+import { refinementJs } from "./emit-type.ts";
 
 /** Extract the reducer name from a `run-reducer(name)` argument (a bare ref). */
 export function reducerNameArg(e: Expr | undefined): string {
@@ -41,22 +42,15 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
   return jsOfExpr(arg, ctx);
 }
 
-/**
- * `T.parse(text)` → `Option(T)`, converted by the base `T` unaliases to rather
- * than by its name — so `type Cents = nominal Int` and the standard library's
- * `Duration` read a number, as `Int` does (#431, #424). `parseReading` is the
- * answer the checker reports E0802 from, so a qualifier with no reading never
- * reaches here from a checked program; the throw is for `codegen()` called
- * without `check()`, which would otherwise lower to a value of the wrong kind.
- */
-function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
-  const a = requiredArg(callee, args, pos, ctx);
-  const reading = parseReading(callee.slice(0, callee.indexOf(".")), ctx.gen);
+/** The lowering of one reading: text in, `Some(value)` or `None` out. */
+function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
+    // Decimal only, and exact like `Bool`: `Number()` on its own also reads
+    // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
     case "Int":
-      return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(Math.trunc(_n)) : _s.None; })(${a})`;
+      return `((_v) => (typeof _v === "string" && /^[+-]?[0-9]+$/.test(_v)) ? _s.Some(Number(_v)) : _s.None)(${a})`;
     case "Float":
-      return `((_v) => { const _n = Number(_v); return (String(_v).trim() !== "" && Number.isFinite(_n)) ? _s.Some(_n) : _s.None; })(${a})`;
+      return `((_v) => { if (typeof _v !== "string" || !/^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/.test(_v)) return _s.None; const _n = Number(_v); return Number.isFinite(_n) ? _s.Some(_n) : _s.None; })(${a})`;
     case "Time":
       // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one has
       // to produce that number, or every later `diff` / `plus` / `format` reads
@@ -71,11 +65,36 @@ function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
       return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
     case "Bytes":
       return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_s.bytesFromText(_v)) : _s.None)(${a})`;
-    case null:
-      throw new Error(
-        `${callee}() at ${pos.line}:${pos.col} names a type no text has a reading as — run \`check\` for the diagnostic`,
-      );
   }
+}
+
+/**
+ * `T.parse(text)` → `Option(T)`, converted by the base `T` unaliases to rather
+ * than by its name — so `type Cents = nominal Int` and the standard library's
+ * `Duration` read a number, as `Int` does.
+ *
+ * The reading is then held to every refinement `T` carries, and one it fails is
+ * `None`. An `Option(Cents)` never meets a slot-write guard, so without this
+ * `Cents.parse("-5")` handed the program a `Cents` its own type refuses.
+ *
+ * `parseQualifier` is the answer the checker reports E0802 from, so a qualifier
+ * with no reading never reaches here from a checked program; the throw is for
+ * `codegen()` called without `check()`, which would otherwise lower to a value
+ * of the wrong kind.
+ */
+function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
+  const a = requiredArg(callee, args, pos, ctx);
+  const qualifier = callee.slice(0, callee.indexOf("."));
+  const answer = parseQualifier(qualifier, ctx.gen);
+  if (answer.kind !== "reading") {
+    throw new Error(
+      `${callee}() at ${pos.line}:${pos.col} names a type no text has a reading as — run \`check\` for the diagnostic`,
+    );
+  }
+  const read = readingJs(answer.reading, a);
+  const refine = refinementJs({ kind: "TypeRef", name: qualifier, pos }, ctx.gen);
+  if (refine === undefined) return read;
+  return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
