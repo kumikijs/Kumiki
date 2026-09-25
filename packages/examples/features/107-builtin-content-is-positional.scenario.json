@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "each builtin renders its positional argument, not the named one written first",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "Counter",
+          "count: 0",
+          "content first positional",
+          "heading(level=2, title)"
+        ],
+        "domExcludes": ["note"]
+      }
+    },
+    {
+      "label": "the rendered content follows the slots it reads",
+      "do": { "click": "#bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "n": 1, "title": "Counted" },
+        "domIncludes": ["Counted", "count: 1"]
+      }
+    }
+  ]
+}

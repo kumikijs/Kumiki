@@ -1175,8 +1175,8 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
  * the tile's root node alike — and `tileCallJs` takes the input from the same
  * set, so what is counted here is what is read there. A prop's value is not a
  * tile, which is the one shape that has no consumer on either side and is
- * reported below. The builtin call sites still take `args[0]` whatever its
- * name; that half is its own defect.
+ * reported below. A builtin's content is read by the same rule: its first
+ * positional argument, never `args[0]` whatever its name.
  */
 function checkTileInput(
   t: TileExpr & { kind: "TileCall" },
