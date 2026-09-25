@@ -5,9 +5,9 @@
 // is. Codegen emits `refineFailure` for such a slot; these read it the way the
 // rejection report and the `error` tile do (#444).
 
-import type { AppShape, MountedApp, RefinementFailure } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppShape, MountedApp, RefinementFailure } from "../src/core.ts";
+import { mount } from "../src/index.ts";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -19,7 +19,7 @@ const failure = (v: unknown): RefinementFailure | undefined => {
     : { kind: "email", args: [], path: ".email" };
 };
 
-function makeApp(value: unknown, root: AppShape["root"]): AppShape {
+function makeApp(value: unknown, root: NonNullable<AppShape["root"]>): AppShape {
   return {
     slots: {
       form: { value, refine: (v) => failure(v) === undefined, refineFailure: failure },

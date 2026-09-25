@@ -188,6 +188,15 @@ one-of(v1, v2, ...)
 | `regex("p")` | `p` が値**全体**にマッチする。パターンは両端がアンカーされるため、`regex("[0-9]{4}")` は `"AB1234"` を拒否する | パターンとして解釈できるテキストリテラル 1 個 |
 | `one-of(v1, ...)` | 値が列挙されたリテラルのいずれか | リテラル 1 個以上 |
 
+述語は型そのものの上だけでなく、**型のどこに書かれていても**検査される：レコードのフィールド、union のバリアントのペイロード、コンテナの要素（`List` / `Set` の要素、`Map` のキーと値、`Option` の `Some`、`Result` の `Ok` / `Err`、`Tuple` の各要素）は値の位置であり、値が受理されるのは、その値が持つすべての位置ですべての述語が成り立つときだけである。
+
+```kumiki fragment
+type Contact = {email: Text where email, age: Int where between(0, 120)}
+slot form : Contact = {email: "ada@example.com", age: 36}
+```
+
+のもとで `form.email := "nope"` は `form := {email: "nope", age: 36}` とまったく同じように拒否され、どちらの経路でも `age := 999` も同様である。位置は入れ子にも再帰にもなり — `List(Contact)`、再帰型 `type Tree = {label: Text where nonempty, kids: List(Tree)}` — 検査は有限である値をたどる。拒否された値は、フィールドの宣言順で最初に失敗した述語に対して、失敗した場所への**パス**付きで報告される：`(email at .email)`、`(nonempty at .kids[1].label)`、バリアントのペイロードなら `(nonempty at .Found)`、リスト要素なら `(len-lt(6) at [1])`。`error` タイルはその述語のメッセージを描画する（[フォーム §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
+
 述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。
 
 述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数の長さ、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
