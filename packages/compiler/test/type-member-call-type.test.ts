@@ -176,7 +176,7 @@ describe("where the minted type is read", () => {
 
   it("carries through a match arm to the destination", () => {
     // `match` is the idiomatic way to open the `Option` that `parse` produces.
-    // The arm value is checked against where the `match` lands (#435), and the
+    // The arm value is checked against where the `match` lands, and the
     // binder is typed, so the statement form reports as well.
     const body = (q: string) => `p := match ${q}.parse("a") with | Some(id) -> id | None -> p`;
     expect(inReducer(IDS, body("UserId"))).toEqual(["E0201 Expected PostId but got UserId"]);

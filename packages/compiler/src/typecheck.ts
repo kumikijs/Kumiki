@@ -2878,8 +2878,9 @@ function checkAgainst(
     // Every arm lands here too, for the same reason as `if` — and each arm is
     // read in its own scope, so `Some(id) -> id` is checked as the payload type
     // the scrutinee gives `id`. Arm by arm rather than through `inferType`:
-    // a `UserId` arm beside a `PostId` arm has no common type, and a whole-
-    // match comparison would say nothing about the arm that is wrong.
+    // a `UserId` arm beside a `PostId` arm gives the whole `match` the base
+    // they share, `Text`, and a `PostId` destination accepts `Text` — so a
+    // whole-match comparison would pass the wrong arm without a word.
     const scrutType = inferType(e.scrutinee, sym, ctx);
     for (const arm of e.arms) {
       checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
@@ -3811,7 +3812,8 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     }
     case "MatchExpr": {
       // The arm values are what the `match` evaluates to, whatever the
-      // scrutinee is — an `Option`, a `Result` or a user union alike. One
+      // scrutinee is — an `Option`, a `Result` or a user union alike. Arms
+      // that disagree give the base they share, nominal dropped; one
       // undecidable arm leaves the whole `match` undecidable (`commonType`).
       const scrutType = inferType(e.scrutinee, sym, ctx);
       return commonType(
