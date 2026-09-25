@@ -1,0 +1,3 @@
+{
+  "GET /api/notes/b": { "text": "note b" }
+}
