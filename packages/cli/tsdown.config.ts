@@ -14,6 +14,9 @@ export default defineConfig({
   // dev-server client/panel sources are served verbatim to the browser via the
   // internal dev plugin (resolveId / load). They aren't imported by Node code,
   // so tsdown's tree-shaker would otherwise drop them — copy them as-is.
-  copy: [{ from: "src/dev/", to: "dist/dev/" }],
+  // A directory copy lands *inside* `to`, so `to: "dist/"` yields dist/dev/*.ts,
+  // where the built dev chunk (dist/dev-*.js) looks for them (see src/dev.ts).
+  // packages/tests/cli-dist-dev.test.ts starts the built CLI to pin this.
+  copy: [{ from: "src/dev/", to: "dist/" }],
   outputOptions: publishedOutputOptions,
 });
