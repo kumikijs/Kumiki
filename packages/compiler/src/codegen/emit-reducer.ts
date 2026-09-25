@@ -3,7 +3,7 @@ import { assertNever } from "../ast.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { bindRef, declareBind, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
 import { refinementJs } from "./emit-type.ts";
-import { jsOfExpr, reducerNameArg, tupleArm } from "./expr.ts";
+import { jsOfExpr, reducerEmitJs, reducerNameArg, tupleArm } from "./expr.ts";
 import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 /**
@@ -333,8 +333,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
       const args = s.args.map((a) => jsOfConfirmArg(a, ctx)).join(", ");
       return `_emits.push({ effect: "confirm", args: [${args}] });`;
     }
-    const args = s.args.map((a) => jsOfExpr(a, ctx)).join(", ");
-    return `_emits.push({ effect: ${JSON.stringify(s.effect)}, args: [${args}] });`;
+    return `{ ${reducerEmitJs(s.effect, s.args, ctx).stmts} }`;
   }
   if (s.kind === "StopTimer") {
     return `_stops.push(${JSON.stringify(s.name)});`;

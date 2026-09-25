@@ -337,6 +337,9 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   a slot and a `fn` are readable, and `$route` is not a name here
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
+  sees the reducer body's writes up to that statement and none after it
+  ([http.md §6.4](./http.md#_6-4-cancellation))
 
 ### 1.5.3 Examples
 
