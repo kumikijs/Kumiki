@@ -232,8 +232,11 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | コア | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | コア | [§2.2](./stdlib.md#_2-2-コレクションメソッド) |
 | `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | ルーティング | [§E0304](./errors.md#e0304-derived-slot) |
+| `100-option-filter.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `104-nested-refinements.kumiki` | type, slot, reducer, tile | コア | [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | コア | [§1.7.1](./language.md#_1-7-1-構文) |
+| `110-parse-by-base.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |
+| `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | コア | [§1.9](./language.md#_1-9-式言語) |
 <!-- examples:end -->
 :::

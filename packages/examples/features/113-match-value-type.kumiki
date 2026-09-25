@@ -1,0 +1,69 @@
+# Feature (language.md §1.9): a `match` used as a value evaluates to one of
+# its arms, so every arm has to fit where the `match` lands.
+#
+# `owner` is a `UserId`, and so is each arm below: the `Some` arm's `id` is the
+# `UserId` the `Option(UserId)` pattern binds, and the `None` arm keeps the
+# slot's own value. Writing the same `match` into `post` — a `PostId` — is
+# E0201 at the `Some` arm, the way `post := picked.get-or(post)` is:
+#
+#   post := match picked with | Some(id) -> id | None -> post
+#   # E0201 Expected PostId but got UserId
+#
+# The same holds for a `Result` and for a user union, and for a `fn`'s
+# declared return type.
+
+type UserId = nominal Text
+type PostId = nominal Text
+
+type Choice = Nobody | Someone(UserId)
+
+slot owner  : UserId         = "u-0"
+slot post   : PostId         = "p-0"
+slot picked : Option(UserId) = None
+slot choice : Choice         = Nobody
+slot parsed : Result(Int, Text) = Err("not yet")
+slot count  : Int            = 0
+
+fn ownerOr(o: Option(UserId), d: UserId) -> UserId
+    = match o with
+    | Some(id) -> id
+    | None     -> d
+
+reducer pick on=ui.click(Pick)
+    do= picked := Some("u-1")
+        choice := Someone("u-2")
+        parsed := Ok(7)
+
+reducer adopt on=ui.click(Adopt)
+    do= owner := match picked with
+        | Some(id) -> id
+        | None     -> owner
+
+reducer adopt-choice on=ui.click(AdoptChoice)
+    do= owner := match choice with
+        | Someone(id) -> id
+        | Nobody      -> ownerOr(picked, owner)
+
+reducer read-count on=ui.click(ReadCount)
+    do= count := match parsed with
+        | Ok(n)  -> n
+        | Err(e) -> -1
+
+tile Pick        = button(text="pick")         {id: "pick"}
+tile Adopt       = button(text="adopt")        {id: "adopt"}
+tile AdoptChoice = button(text="adopt choice") {id: "adopt-choice"}
+tile ReadCount   = button(text="read count")   {id: "read-count"}
+
+tile App
+    = column(
+        heading("match as a value"),
+        row(Pick, Adopt, AdoptChoice, ReadCount) {gap: "sm"},
+        text("owner: " + owner),
+        text("post: " + post),
+        text("count: " + count.show))
+      {pad: "lg", gap: "md"}
+
+app MatchValueType
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

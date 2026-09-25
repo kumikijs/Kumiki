@@ -389,9 +389,9 @@ An unresolved name is *opaque*, and an opaque type accepts every value — so be
 
 Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
-A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — and the two members answer differently for it. `parse` branches on the qualifier, so a misspelling did not fail, it changed which branch ran: `Int.parse("12")` answers `Some(12)` and `Itn.parse("12")` answers `Some("12")`, which an `Int` slot then holds and every later sum concatenates. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this.
+A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this.
 
-`Decoder`, `EffectId`, `Duration` and `Bytes` are the exception, in both spellings and whether or not the name is also a type: their members are exactly the built-in calls [E0116](#e0116-undef-call) lists, so `fresh` / `parse` / `show` do not resolve inside them and are that E0116 rather than this. What the exception is for is that these three members ignore the qualifier they are written on — `EffectId.fresh()` and `Duration.fresh()` both lowered to a freshly minted id, one where the author wrote the empty sentinel and one straight into a `Duration` slot, and neither was reported. `Duration` is a standard-library type and `Bytes` a primitive, so this is the one place a real type name does not answer for those three members.
+`Decoder`, `EffectId`, `Duration` and `Bytes` are the exception, in both spellings and whether or not the name is also a type: their members are exactly the built-in calls [E0116](#e0116-undef-call) lists, so `fresh` — and `parse` / `show` written with no argument — do not resolve inside them and are that E0116 rather than this. Given its argument, `parse` / `show` is the type member of [Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion) on these qualifiers as on any other: `Duration.parse(t)` is an `Option(Duration)` and `Duration.show(d)` a `Text`. What the exception is for is `fresh`, which ignores the qualifier it is written on, and a `parse` / `show` written with no argument, which is no member of these namespaces — `EffectId.fresh()` and `Duration.fresh()` both lowered to a freshly minted id, one where the author wrote the empty sentinel and one straight into a `Duration` slot, and neither was reported. `Duration` is a standard-library type and `Bytes` a primitive, so this is the one place a real type name does not answer for `fresh`, or for `parse` / `show` without an argument.
 
 **Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list. `kumiki fix` proposes the closest type name.
 
@@ -1012,13 +1012,16 @@ A method call of the form `obj.method(...)` does not exist in the set of methods
 
 ### E0802 `unimplemented-function`
 
-A call names a function this document describes but the toolchain does not lower yet. Distinct from `E0116`: the name is right, and the gap is on the implementation side.
+A call names a function this document describes and the toolchain has no lowering for. Distinct from `E0116`: the name is right, and the call cannot be lowered as written.
 
 > `Function "<name>" is documented but not implemented by the runtime`
+> `"<T>" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`
 
-Currently one name is in this state: `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
+Currently two calls are in this state, one for each message. The first is `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
 
-**Fix**: Remove the call. Nothing in the language is blocked on it — `trace` is a debugging aid.
+The second is `T.parse(text)` on a type whose base has no reading of a text — a record, a union, a container, `File`, `EffectId`, `Unit`, a `nominal` over one of them, or a type constructor written without its arguments (`List.parse(t)`, `Box.parse(t)` for a `type Box(T) = …`). [Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion) lists the bases that do. Unlike `trace`, this is not a gap waiting on an implementation: there is no text a record is spelt as, so there is nothing for any lowering to produce, and the message says so rather than calling it unimplemented. The call's type is `Option(T)`, and the lowering used to wrap the raw text in `Some`, so the value a `T` reader unwrapped was a string. A `T` that names no type is [E0117](#e0117-undef-type) instead, a `T` whose definition resolves to nothing (an alias of an undefined name, a cycle) is left to the report at that definition, and a `nominal` is judged by its base — `type Cents = nominal Int` parses the way `Int` does.
+
+**Fix**: Remove the call. Nothing in the language is blocked on `trace` — it is a debugging aid. For `T.parse`, read the text into a type that has a reading (`Int.parse`, `Text.parse`, …) and build the `T` from that in a `fn`.
 
 ### E0803 `unimplemented-refinement`
 
@@ -1035,14 +1038,32 @@ The second message answers a predicate the table does not hold at all. The parse
 
 ### E0804 `refinement-args-invalid`
 
-A registered predicate is written with arguments it cannot be built into a check from.
+A registered predicate is written with arguments it cannot be built into a check from, or over a base type it cannot test.
 
 > `Refinement "<pred>" takes <n> argument(s) but got <m>`
 > `Refinement "<pred>" takes <what> but argument <i> is <given>`
 > `Refinement "<pred>" needs at least <min> value(s) but got <n>`
 > `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
 > `Refinement regex("<p>") is not a pattern: <reason>`
+> `Refinement len-lt(0) is shorter than every text, so no value satisfies it`
+> `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
+> `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
+> `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
 
-The arity and the shape of each argument are in the table at [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates). A refinement **no** value can satisfy is the same defect as one **every** value satisfies — both take the slot's guarantee away from the program that relies on it — and an argument that is not what the predicate takes produces one or the other: `between(5, 1)` and `len-eq(2.5)` refuse every value, `len-gt(-1)` accepts every one (`v.length > -1` is true of `""`), and `one-of()` has nothing to admit. `between(0, "x")` is the sharpest case: the emitted check used to read `v >= 0 && v <= x`, whose second half is not a comparison against a bound but a reference to a name nothing declares, so the first write or the first `error(field=…)` render threw a `ReferenceError`.
+The arity and the shape of each argument are in the table at [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates). A refinement **no** value can satisfy is the same defect as one **every** value satisfies — both take the slot's guarantee away from the program that relies on it — and an argument that is not what the predicate takes produces one or the other: `between(5, 1)` and `len-eq(2.5)` refuse every value, `len-gt(-1)` accepts every one (`v.length > -1` is true of `""`), and `one-of()` has nothing to admit. `between(0, "x")` is the sharpest case: the emitted check used to read `v >= 0 && v <= x`, whose second half is not a comparison against a bound but a reference to a name nothing declares, so the first write or the first `error(field=…)` render threw a `ReferenceError`. `len-lt(0)` takes a legal count and still refuses every text, since no length is below zero.
 
-**Fix**: Write the arguments the predicate takes — numeric bounds for `between`, a whole non-negative count for the `len-*` family, a pattern that compiles for `regex`, at least one literal for `one-of`.
+The base is the other half of the same rule. Every predicate tests one shape of value and answers `false` for any other ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), so one written over a base of another shape refuses **every** value: `slot name : Text where positive` passes nothing, and each write to it discards its reducer's batch. What each predicate needs:
+
+| Predicate | Tests | Base it needs |
+|---|---|---|
+| `nonempty`, `len-eq`, `len-lt`, `len-gt`, `email`, `url`, `uuid`, `regex` | text | `Text` |
+| `between`, `positive`, `negative` | a number | `Int`, `Float` or `Time` |
+| `one-of` | equality with one of its literals, strictly | `Text` for text literals; `Int`, `Float` or `Time` for numeric ones |
+
+`one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
+
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+
+A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition.
+
+**Fix**: Write the arguments the predicate takes — numeric bounds for `between`, a whole non-negative count for the `len-*` family, a pattern that compiles for `regex`, at least one literal for `one-of` — and write it over the base it tests, or pick the predicate that tests the base you have (`len-gt(0)` rather than `positive` on a text).
