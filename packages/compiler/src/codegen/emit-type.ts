@@ -1,4 +1,3 @@
-import { paramSubstitution, substituteType } from "../assignable.ts";
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import { refinementBodyJs, refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
@@ -136,38 +135,65 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
  * The edges are the ones normalization (`unaliasType`) follows: an alias, a
  * `nominal` wrapper, a `where`, and a program-defined generic applied to its
  * arguments — `type NonEmpty(T) = T where nonempty` makes `NonEmpty(Handle)`
- * carry Handle's predicates and then `nonempty` (#439). The walk stops at a
- * structural type: nothing written inside a record, a union or a container is a
- * refinement of the type itself, and a stdlib constructor (`List`, `Option`, …)
- * has no definition here to follow. `seen` is what makes a name written in
- * terms of itself terminate — a generic is guarded by its name like an alias,
- * and the body it is entered with is the substituted one, so an argument that
- * names the chain again (`type A = NonEmpty(A)`) meets the same guard. The
- * cycle is E0009's to report, and this walk still has to end on the way there.
+ * carry Handle's predicates and then `nonempty`. The walk stops at a structural
+ * type: nothing written inside a record, a union or a container is a refinement
+ * of the type itself, and a stdlib constructor (`List`, `Option`, …) has no
+ * definition here to follow.
+ *
+ * `seen` is what makes a name written in terms of itself terminate: a generic
+ * is guarded by its name like an alias. Its body is walked under `seen` plus
+ * that name, but an argument is not part of the body — it is syntax of the
+ * application site — so a parameter the body reaches is walked in the scope the
+ * application was written in, under the `seen` in force there. Substituting the
+ * argument into the body and walking it under the body's `seen` instead would
+ * let the outer guard swallow a nested application of the same generic:
+ * `NonEmpty(NonEmpty(Short))` would lose Short's predicates and the inner
+ * `nonempty`. Arguments are sub-expressions of the caller's syntax, so the walk
+ * still ends — `type Loop(T) = Loop(T) where nonempty` stops at the inner
+ * `Loop`, and `type A = NonEmpty(A)` at the argument `A`. The cycle is E0009's
+ * to report, and this walk still has to end on the way there.
  */
-export function refinementsOf(
-  t: TypeExpr,
-  gen: GenCtx,
-  seen: ReadonlySet<string> = new Set(),
-): Refinement[] {
+export function refinementsOf(t: TypeExpr, gen: Pick<GenCtx, "types">): Refinement[] {
+  return collectRefinements(t, gen, { seen: new Set(), params: new Map() });
+}
+
+/**
+ * Where a type expression is read: the names already entered on the way to it
+ * and, inside a generic's body, what each parameter was applied to and where.
+ * A parameter is looked up here before the program's definitions, so one that
+ * shares its name with a top-level type reads as its argument; one with no
+ * argument (an arity mismatch, the checker's to report) reads as nothing.
+ */
+type Scope = {
+  seen: ReadonlySet<string>;
+  params: ReadonlyMap<string, { arg: TypeExpr; scope: Scope } | undefined>;
+};
+
+function collectRefinements(t: TypeExpr, gen: Pick<GenCtx, "types">, scope: Scope): Refinement[] {
   switch (t.kind) {
     case "TypeRef":
     case "TypeApp": {
-      if (seen.has(t.name)) return [];
+      if (t.kind === "TypeRef" && scope.params.has(t.name)) {
+        const bound = scope.params.get(t.name);
+        return bound ? collectRefinements(bound.arg, gen, bound.scope) : [];
+      }
+      if (scope.seen.has(t.name)) return [];
       const def = gen.types.get(t.name);
       if (!def) return [];
-      // Substituted for the reason `unaliasType` substitutes: a parameter may
-      // share its name with a top-level definition, and an unsubstituted
-      // `TypeRef` would resolve against that instead of the argument.
-      const body =
-        t.kind === "TypeApp"
-          ? substituteType(def.body, paramSubstitution(def.params, t.args))
-          : def.body;
-      return refinementsOf(body, gen, new Set([...seen, t.name]));
+      // A plain alias's body has no parameters; a generic's are bound to the
+      // arguments as written here, to be read back in this scope.
+      const params = new Map<string, { arg: TypeExpr; scope: Scope } | undefined>();
+      if (t.kind === "TypeApp") {
+        def.params.forEach((p, i) => {
+          const arg = t.args[i];
+          params.set(p, arg ? { arg, scope } : undefined);
+        });
+      }
+      return collectRefinements(def.body, gen, { seen: new Set([...scope.seen, t.name]), params });
     }
     case "TypeNominal":
     case "TypeRefinement": {
-      const inner = refinementsOf(t.inner, gen, seen);
+      const inner = collectRefinements(t.inner, gen, scope);
       return t.refinement ? [...inner, t.refinement] : inner;
     }
     // A type in its own right. Listed rather than defaulted so `assertNever`

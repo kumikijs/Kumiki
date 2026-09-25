@@ -4,8 +4,8 @@
       "label": "both slots start on values their generic types accept",
       "expect": {
         "noErrors": true,
-        "state": { "name": "ada", "tag": "ku" },
-        "domIncludes": ["name: ada", "tag: ku"]
+        "state": { "name": "ada", "tag": "ku", "deep": "ku" },
+        "domIncludes": ["name: ada", "tag: ku", "deep: ku"]
       }
     },
     {
@@ -36,6 +36,21 @@
         "state": { "tag": "kukiki" },
         "domIncludes": ["tag: kukiki"],
         "errorIncludes": ["slot \"tag\" cannot hold \"kukikikiki\" (len-lt(7))"]
+      }
+    },
+    {
+      "label": "a generic applied inside itself commits under the argument's bound",
+      "do": { "clickText": "deepen" },
+      "expect": { "noErrors": true, "state": { "deep": "kukiki" } }
+    },
+    {
+      "label": "and refuses past it — the innermost argument's predicate is not lost to the outer application",
+      "do": { "clickText": "deepen" },
+      "expect": {
+        "noErrors": true,
+        "state": { "deep": "kukiki" },
+        "domIncludes": ["deep: kukiki"],
+        "errorIncludes": ["slot \"deep\" cannot hold \"kukikikiki\" (len-lt(7))"]
       }
     }
   ]

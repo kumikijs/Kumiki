@@ -19,7 +19,6 @@ import { compile } from "@kumikijs/compiler";
 import type { AppShape, SlotMeta } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { TypeDef } from "../src/ast.ts";
-import type { GenCtx } from "../src/codegen/context.ts";
 import { refinementsOf } from "../src/codegen/emit-type.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
@@ -64,6 +63,8 @@ slot ng  : NonEmpty(Text)   = "kumiki"
 slot nh  : NonEmpty(Short)  = "kumiki"
 slot nn  : Named(Handle)    = "kumiki"
 slot hh  : Hands(Text)      = "kumiki"
+slot gg  : NonEmpty(NonEmpty(Short)) = "ku"
+slot gn  : NonEmpty(Named(Short))    = "ku"
 
 tile App = text("x")
 
@@ -220,7 +221,7 @@ describe("a type's predicates conjoin", () => {
 // (spec/language.md §1.3.6, inv. 2), exactly as an alias is: `unaliasType`
 // follows it with the arguments substituted, so the checker reads
 // `NonEmpty(Text)` as `Text where nonempty`. Codegen stopped at the
-// application and emitted no `refine` at all, so every write landed (#439).
+// application and emitted no `refine` at all, so every write landed.
 describe("a refinement written on a generic alias", () => {
   it("gates the slot the generic declares", () => {
     const refine = refineOf("ng");
@@ -251,6 +252,32 @@ describe("a refinement written on a generic alias", () => {
     expect(meta("nn").refineAll?.map((r) => r.args)).toEqual([[3], [9], [], [1]]);
   });
 
+  it("keeps the argument's predicates when a generic is applied inside itself", () => {
+    // The inner `NonEmpty(Short)` is an argument of the outer `NonEmpty`, not a
+    // step of its body: its own predicates are read where it is written, so the
+    // outer application's name guard does not hide `Short`'s `len-lt` or the
+    // inner `nonempty`.
+    expect(meta("gg").refineAll?.map((r) => r.kind)).toEqual(["len-lt", "nonempty", "nonempty"]);
+    const refine = refineOf("gg");
+    expect(refine("ku")).toBe(true);
+    expect(refine("kukikikikiki")).toBe(false); // len-lt(9), from the innermost argument
+    expect(refine("")).toBe(false);
+  });
+
+  it("keeps every predicate of a generic reached again through another one", () => {
+    // `Named(Short)` is `nominal NonEmpty(Short) where len-gt(1)`, applied as the
+    // outer `NonEmpty`'s argument: Short's, the inner `nonempty`, Named's own,
+    // then the outer `nonempty`.
+    expect(meta("gn").refineAll?.map((r) => r.kind)).toEqual([
+      "len-lt",
+      "nonempty",
+      "len-gt",
+      "nonempty",
+    ]);
+    expect(meta("gn").refineAll?.map((r) => r.args)).toEqual([[9], [], [1], []]);
+    expect(refineOf("gn")("kukikikikiki")).toBe(false);
+  });
+
   it("follows a generic alias to another generic", () => {
     expect(meta("hh").refineKind).toBe("nonempty");
     expect(refineOf("hh")("")).toBe(false);
@@ -263,9 +290,8 @@ describe("a generic alias written in terms of itself", () => {
   const walk = (src: string, root: string): string[] => {
     const types = new Map<string, TypeDef>();
     for (const d of parse(lex(src)).defs) if (d.kind === "TypeDef") types.set(d.name, d);
-    const gen = { types } as GenCtx;
     const pos = { line: 1, col: 1 };
-    return refinementsOf({ kind: "TypeRef", name: root, pos }, gen).map((r) => r.pred);
+    return refinementsOf({ kind: "TypeRef", name: root, pos }, { types }).map((r) => r.pred);
   };
 
   it("collects, and terminates on, a generic that applies itself", () => {

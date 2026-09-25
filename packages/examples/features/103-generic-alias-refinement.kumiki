@@ -6,7 +6,11 @@
 # Short's `len-lt(7)` first and then `nonempty` — the generic is an edge of the
 # chain the type denotes, exactly as an alias is. Codegen used to stop at the
 # application and emit no check at all, so `name := ""` landed on a slot whose
-# type says it cannot be empty, with `check` and `build` both silent (#439).
+# type says it cannot be empty, with `check` and `build` both silent.
+#
+# `NonEmpty(NonEmpty(Short))` applies the generic inside itself. The inner
+# application is the outer one's argument, read where it is written, so Short's
+# `len-lt(7)` still gates `deep` — it is not lost behind the outer `NonEmpty`.
 #
 # Each button's first click writes a value the type accepts, and every click
 # after that one it refuses: `smoke` clicks once and treats any reported error
@@ -16,19 +20,23 @@
 type NonEmpty(T) = T where nonempty
 type Short       = Text where len-lt(7)
 
-slot name : NonEmpty(Text)  = "ada"
-slot tag  : NonEmpty(Short) = "ku"
+slot name : NonEmpty(Text)            = "ada"
+slot tag  : NonEmpty(Short)           = "ku"
+slot deep : NonEmpty(NonEmpty(Short)) = "ku"
 
 reducer clearName on=ui.click(ClearBtn) do= name := if name == "ada" then "grace" else ""
 reducer growTag   on=ui.click(GrowBtn)  do= tag := tag + "kiki"
+reducer growDeep  on=ui.click(DeepBtn)  do= deep := deep + "kiki"
 
 tile ClearBtn = button(text="rename", onClick=clearName)
 tile GrowBtn  = button(text="grow",   onClick=growTag)
+tile DeepBtn  = button(text="deepen", onClick=growDeep)
 
 tile App = column(
              heading("name: " + name),
              text("tag: " + tag),
-             row(ClearBtn, GrowBtn) {gap: "sm"})
+             text("deep: " + deep),
+             row(ClearBtn, GrowBtn, DeepBtn) {gap: "sm"})
            {pad: "lg", gap: "md"}
 
 app GenericAliasRefinement
@@ -47,3 +55,8 @@ test tag-past-its-bound-is-refused =
     reducer-test growTag
         given  = {slots: {tag: "kukiki"}, event: {type: ui.click, target: GrowBtn}}
         expect = {slots: {tag: "kukiki"}, effects: []}
+
+test deep-past-its-bound-is-refused =
+    reducer-test growDeep
+        given  = {slots: {deep: "kukiki"}, event: {type: ui.click, target: DeepBtn}}
+        expect = {slots: {deep: "kukiki"}, effects: []}
