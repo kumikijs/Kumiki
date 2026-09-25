@@ -8,8 +8,7 @@
 #   tile Card in={label: Text} = text($1.label)
 #   Card(())            # E0201 Expected {label: Text} but got Unit
 #
-# That call used to pass `check` and mount `Card` with a `null` it then read
-# `.label` from.
+# `()` lowers to `null`, which `$1.label` cannot read.
 
 slot done   : Unit              = ()
 slot saved  : Result(Unit, Text) = Err("not yet")

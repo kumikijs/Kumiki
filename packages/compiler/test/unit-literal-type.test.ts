@@ -1,12 +1,7 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// `()` had no type (#427). `inferType` answered `null` for it, and `null` is
-// "cannot tell", which every check accepts — so the one value of `Unit` was
-// taken against any declared type. `Card(42)` was E0201 and `Card(())` was
-// not; the latter mounted with `$1 = null` and threw reading `$1.label`.
-//
-// It is a literal, so its type is known: `Unit`, refused where anything else
+// `()` is a literal, so its type is known: `Unit`, refused where anything else
 // is declared and accepted where `Unit` is.
 
 type Diagnostic = { code: string; message: string; text: string };
@@ -33,20 +28,19 @@ app R
 const CARD = `tile Card in={label: Text} = text($1.label)`;
 
 describe("() is refused where a type other than Unit is declared", () => {
+  // Each report is read at its own position, which must be the `()` itself.
+  const reported = (d: Diagnostic[]) => d.map((x) => `${x.code} ${x.message} @ ${x.text}`);
+
   it("at a tile call", () => {
-    const d = diagnose(app(`${CARD}\ntile Host = column(Card(()))`));
-    expect(d.map((x) => `${x.code} ${x.message}`)).toEqual([
-      "E0201 Expected {label: Text} but got Unit",
+    expect(reported(diagnose(app(`${CARD}\ntile Host = column(Card(()))`)))).toEqual([
+      "E0201 Expected {label: Text} but got Unit @ ()))",
     ]);
-    expect(d[0]?.text).toMatch(/^\(\)\)\)/);
   });
 
   it("at a fn call", () => {
     expect(
-      diagnose(app(`fn twice(n: Int) -> Int = n * 2\nslot n : Int = twice(())`)).map(
-        (x) => `${x.code} ${x.message}`,
-      ),
-    ).toEqual(["E0201 Expected Int but got Unit"]);
+      reported(diagnose(app(`fn twice(n: Int) -> Int = n * 2\nslot n : Int = twice(())`))),
+    ).toEqual(["E0201 Expected Int but got Unit @ ())"]);
   });
 
   it("at an emit, under the emit's own code", () => {
@@ -55,24 +49,49 @@ describe("() is refused where a type other than Unit is declared", () => {
 reducer r on=ui.click(B) do= emit save(())`,
       "storage.write",
     );
-    expect(diagnose(src).map((x) => x.code)).toEqual(["E0202"]);
+    expect(reported(diagnose(src))).toEqual(["E0202 Expected Text but got Unit @ ())"]);
   });
 
-  it("at a slot assignment and a slot's initial value", () => {
+  it("at a slot assignment", () => {
     expect(
-      diagnose(app(`slot n : Int = 0\nreducer r on=ui.click(B) do= n := ()`)).map(
-        (x) => `${x.code} ${x.message}`,
-      ),
-    ).toEqual(["E0201 Expected Int but got Unit"]);
-    expect(diagnose(app(`slot t : Text = ()`)).map((x) => `${x.code} ${x.message}`)).toEqual([
-      "E0201 Expected Text but got Unit",
+      reported(diagnose(app(`slot n : Int = 0\nreducer r on=ui.click(B) do= n := ()`))),
+    ).toEqual(["E0201 Expected Int but got Unit @ ()"]);
+  });
+
+  it("at a slot's initial value", () => {
+    expect(reported(diagnose(app(`slot t : Text = ()`)))).toEqual([
+      "E0201 Expected Text but got Unit @ ()",
     ]);
   });
 
   it("inside a container the declared type reaches", () => {
-    expect(
-      diagnose(app(`slot o : Option(Int) = Some(())`)).map((x) => `${x.code} ${x.message}`),
-    ).toEqual(["E0201 Expected Int but got Unit"]);
+    expect(reported(diagnose(app(`slot o : Option(Int) = Some(())`)))).toEqual([
+      "E0201 Expected Int but got Unit @ ())",
+    ]);
+  });
+
+  it("in an if branch the declared type reaches", () => {
+    expect(reported(diagnose(app(`slot n : Int = if true then 1 else ()`)))).toEqual([
+      "E0201 Expected Int but got Unit @ ()",
+    ]);
+  });
+
+  it("in a record field", () => {
+    expect(reported(diagnose(app(`slot r : {a: Int} = {a: ()}`)))).toEqual([
+      "E0201 Expected Int but got Unit @ ()}",
+    ]);
+  });
+
+  it("as a fn body against its declared return type", () => {
+    expect(reported(diagnose(app(`fn f() -> Int = ()`)))).toEqual([
+      "E0201 Expected Int but got Unit @ ()",
+    ]);
+  });
+
+  it("as an operand of an ordering comparison", () => {
+    expect(reported(diagnose(app(`slot b : Bool = () < 1`)))).toEqual([
+      'E0201 Operator "<" cannot compare Unit with Int @ () < 1',
+    ]);
   });
 });
 
@@ -87,5 +106,21 @@ describe("() is accepted where Unit is declared", () => {
 
   it("as a Unit fn parameter", () => {
     expect(diagnose(app(`fn one(u: Unit) -> Int = 1\nslot n : Int = one(())`))).toEqual([]);
+  });
+
+  it("as the else of an if statement whose other branch assigns", () => {
+    expect(
+      diagnose(app(`slot n : Int = 0\nreducer r on=ui.click(B) do= if n > 0 then n := 1 else ()`)),
+    ).toEqual([]);
+  });
+
+  it("as a match arm whose other arm assigns", () => {
+    expect(
+      diagnose(
+        app(`slot n : Int = 0
+slot o : Option(Int) = None
+reducer r on=ui.click(B) do= match o with | Some(x) -> n := x | None -> ()`),
+      ),
+    ).toEqual([]);
   });
 });

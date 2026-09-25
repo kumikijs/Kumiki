@@ -13,7 +13,7 @@
       "do": { "click": "#save" },
       "expect": {
         "noErrors": true,
-        "state": { "saved": { "_tag": "Ok" }, "count": 1 },
+        "state": { "saved": { "_tag": "Ok", "_0": null }, "count": 1 },
         "domIncludes": ["saved: true", "count: 1"]
       }
     }

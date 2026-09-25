@@ -316,9 +316,7 @@ tile Host = column(Card({label: "x"}))`,
     ).toEqual([]);
   });
 
-  it("refuses a `()` where the target declares a record, as a tile call does (#427)", () => {
-    // `()` is a `Unit`, so it is compared like any other value; the tile call
-    // `Card(())` is refused the same way.
+  it("refuses a `()` where the target declares a record, as a tile call does", () => {
     const src = app(
       `test t =
     tile-test Card
