@@ -26,7 +26,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0008` | a name written twice inside one construct (app/effect/tile clause, record key or field, map key, tile argument or prop, fn/type parameter, `for-all` generator, union tag, route pattern) | delete the later one |
 | `E0009` | a `type` resolves to itself — the alias chain returns to a name on it without reaching a record, union, container or primitive | give one name on the chain a body; a recursive type wants a record or union where it names itself |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
-| `E0103` | undefined name / slot | declare it, or fix the spelling |
+| `E0103` | undefined name / slot — including a `let` read outside the `if` branch, `for` body or match arm that declared it | declare it, or fix the spelling; for a name an inner scope declared, declare it before that scope (`let n = if c then … else …`) or move the read inside — a rename is not the repair |
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
@@ -44,7 +44,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0218` | a `for` iterates a `Map` or a `Set` directly | iterate `m.keys` / `s.to-list`; `kumiki fix` appends it |
 | `W0213` | a handler prop sits on a tile that never fires it — a builtin (`row(onClick=r)`), or a user tile whose render tree has no firing kind (`Inner(onClick=r)` where `Inner = box(...)`, message: "renders nothing that fires it (observed in body: …)") | move it onto the button / input — inside the user tile, so its root is the firing one — or subscribe with `on=ui.<ev>(<Tile>)` |
 | `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
-| `E0304` | a slot's initial value reads a slot (its own or another's) | give it a standalone value and derive the rest in a `fn` |
+| `E0304` | a slot's initial value reads a slot (its own or another's, or `route` — directly or through a `fn`) | give it a standalone value and derive the rest in a `fn`; for `route`, fill the slot from a `route.enter` reducer |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
@@ -55,7 +55,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 ## Auto-fix
 
-For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions.
+For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
 
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes

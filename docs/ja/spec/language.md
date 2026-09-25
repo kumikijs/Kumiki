@@ -147,7 +147,7 @@ pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 type Handle = nominal Text where len-gt(3) where len-lt(7)
 ```
 
-`Handle` は 3 文字より長く、**かつ** 7 文字より短い。述語は型が指す連鎖をたどって読まれるので（[§1.3.6](#_1-3-6-不変条件) 不変条件 1）、1 つの型式の上だけでなく名前をまたいでも積み上がる：`type Short = Text where len-lt(7)` に対する `type Handle = nominal Short where len-gt(3)` は両方を持つ。
+`Handle` は 3 文字より長く、**かつ** 7 文字より短い。述語は型が指す連鎖をたどって読まれるので（[§1.3.6](#_1-3-6-不変条件) 不変条件 1）、1 つの型式の上だけでなく名前をまたいでも積み上がる：`type Short = Text where len-lt(7)` に対する `type Handle = nominal Short where len-gt(3)` は両方を持つ。引数をそのまま返すジェネリックも同じ連鎖の一環であり（不変条件 2）、`type NonEmpty(T) = T where nonempty` のもとで `NonEmpty(Short)` は `len-lt(7)`、続いて `nonempty` を持つ。
 
 違反した値は、**連鎖を基底型の側から外側へ読む順**で**最初に失敗した述語**に対して報告される。1 つの型式の中ではそれが書かれた順であり、名前をまたぐ場合は宣言がたどる順である——`Handle` が `Short` の上に宣言されている以上、ファイル内でどちらの定義が先にあろうと `Short` の `len-lt(7)` が `Handle` 自身の `len-gt(3)` より先に来る。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
 
@@ -287,7 +287,7 @@ modifier は最大 1 つ。`volatile` は `transient` がすることをすべ�
 1. **全 slot がグローバル**
 2. 書き換えは **reducer の `do=` からのみ**
 3. 初期値は **純粋式のみ**（effect 実行不可）
-4. **派生 slot は禁止**（派生計算は `fn` レイヤを使う）
+4. **派生 slot は禁止**（派生計算は `fn` レイヤを使う）。runtime の `route` slot も含む。直接読んでも `fn` 呼び出し越しに読んでも同じで、route はすべての初期値が評価された後のマウントで設置される（[E0304](./errors.md#e0304-derived-slot)）
 
 ### 1.4.3 例
 
@@ -598,6 +598,9 @@ pattern      ::= identifier
                | identifier '(' bind (',' bind)* ')'
                | '_'
 ```
+
+**builtin の内容 — 位置引数**:
+- テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
 
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング

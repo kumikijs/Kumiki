@@ -231,5 +231,8 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | コア | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | コア | [§2.2](./stdlib.md#_2-2-コレクションメソッド) |
+| `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | ルーティング | [§E0304](./errors.md#e0304-derived-slot) |
+| `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
+| `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | コア | [§1.7.1](./language.md#_1-7-1-構文) |
 <!-- examples:end -->
 :::
