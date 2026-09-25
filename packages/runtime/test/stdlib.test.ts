@@ -172,3 +172,42 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
     expect(_stdlibCore.fmt(undefined)).toBe("");
   });
 });
+
+// `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read
+// an Option's own representation (`{_tag, _0}`) as a Map and filter its fields.
+// The result was neither a `Some` nor a `None`.
+describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () => {
+  it("keeps a Some whose value passes the predicate", () => {
+    const kept = _stdlibCore.filter(_stdlibCore.Some(3), (x) => (x as number) > 2);
+    expect(kept).toEqual({ _tag: "Some", _0: 3 });
+  });
+
+  it("turns a Some whose value fails the predicate into None", () => {
+    const dropped = _stdlibCore.filter(_stdlibCore.Some(3), (x) => (x as number) > 5);
+    expect(dropped).toEqual({ _tag: "None" });
+    expect(_stdlibCore.variantIs(dropped, "None")).toBe(true);
+  });
+
+  it("calls the predicate with the Option's value, not with its fields", () => {
+    const seen: unknown[][] = [];
+    _stdlibCore.filter(_stdlibCore.Some(3), (...args) => {
+      seen.push(args);
+      return true;
+    });
+    expect(seen).toEqual([[3]]);
+  });
+
+  it("leaves a None a None without calling the predicate", () => {
+    let calls = 0;
+    const out = _stdlibCore.filter(_stdlibCore.None, () => {
+      calls++;
+      return true;
+    });
+    expect(out).toEqual({ _tag: "None" });
+    expect(calls).toBe(0);
+  });
+
+  it("still filters a Map entry-wise", () => {
+    expect(_stdlibCore.filter({ a: 1, b: 2 }, (_k, v) => (v as number) > 1)).toEqual({ b: 2 });
+  });
+});
