@@ -1,15 +1,16 @@
 # Feature (http.md §6.3.1): each value field of app.http has a type, and check
 # holds the field to it.
 #
-#   base-url     Text — a slot of a type built on Text (`Url`) included
-#   timeout      Duration, or an Int of milliseconds
-#   credentials  Text, and a literal is one of omit / same-origin / include
+#   base-url     assignable to Text — a type built on Text (`Url`) included
+#   timeout      assignable to Int, read as milliseconds — a Duration is one
+#   credentials  assignable to Text, and a literal is one of omit /
+#                same-origin / include
 #
 # The values below are the correct shapes. `smoke` makes the request through
 # the real HTTP path against `120-http-config-value-types.http.json`, and there
 # is no `.err` reducer, so a request that failed — the way `timeout: "soon"`
 # made every request abort before it could answer — would surface as an
-# unconsumed effect error instead of passing quietly.
+# unhandled effect error instead of passing quietly.
 
 slot endpoint : Url  = "https://api.example.com"
 slot quote    : Text = ""

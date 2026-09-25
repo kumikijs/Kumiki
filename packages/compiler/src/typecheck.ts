@@ -5382,43 +5382,34 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
-  if (http.baseUrl)
+  // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
+  // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
+  // `Duration`", because a program's own `type Duration` shadows the stdlib one
+  // and may be anything.
+  if (http.baseUrl !== undefined)
     checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
-  if (http.timeout) checkHttpTimeout(http.timeout, sym, errors, fieldCtx);
-  if (http.credentials) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+  if (http.timeout !== undefined)
+    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
+  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
 }
 
-/**
- * `app.http.timeout` is a duration (http.md §6.3.1), and the runtime hands it
- * to `setTimeout` as milliseconds. A `Duration` is milliseconds at run time, and
- * so is the bare `Int` every example writes (`timeout: 5000`), so both are the
- * type; anything else reaches `setTimeout` as `NaN`, which aborts every
- * request before it can answer.
- */
-function checkHttpTimeout(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  const actual = inferType(e, sym, ctx);
-  if (actual === null) return;
-  const duration: TypeExpr = { kind: "TypeRef", name: "Duration", pos: e.pos };
-  if (assignable(actual, prim("Int", e.pos), sym) || assignable(actual, duration, sym)) return;
-  pushMismatch(
-    errors,
-    "E0201",
-    `Expected Duration or Int (milliseconds) but got ${typeToString(actual)}`,
-    e.pos,
-  );
-}
-
-/** The `RequestCredentials` modes of the Fetch standard (http.md §6.9). */
+/** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */
 const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
 
 /**
- * `app.http.credentials` is one of the three Fetch modes. It is a `Text`, so a
- * slot can select it per request, and a literal is checked against the modes as
- * well: a browser refuses a request whose init names any other, so a misspelt
- * mode is as wrong as an `Int`. Only a literal is — a slot's value is decided
- * at run time.
+ * `app.http.credentials` is a `Text`, so a slot can select the mode per
+ * request, and every literal that reaches the field — the field's own value, or
+ * a literal branch of an `if`, at any depth — is also compared with the three
+ * Fetch modes: a browser refuses a request whose init names any other, so a
+ * misspelt mode is as wrong as an `Int`. Anything else (a slot, a call, a
+ * concatenation) is held to `Text` alone; its value is decided at run time.
  */
 function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "IfExpr") {
+    checkHttpCredentials(e.consequent, sym, errors, ctx);
+    checkHttpCredentials(e.alternate, sym, errors, ctx);
+    return;
+  }
   if (e.kind === "Str") {
     if (HTTP_CREDENTIALS.includes(e.value)) return;
     pushMismatch(
