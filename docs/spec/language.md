@@ -287,7 +287,7 @@ The initial value is required. A slot with no `=` would have to hold something b
 1. **All slots are global**
 2. Mutation is **only from a reducer's `do=`**
 3. The initial value is **a pure expression only** (effects cannot be executed)
-4. **Derived slots are prohibited** (use the `fn` layer for derived computation)
+4. **Derived slots are prohibited** (use the `fn` layer for derived computation). This includes the runtime's `route` slot, read directly or through a `fn` call — it is installed by the mount, after every initial value has been evaluated ([E0304](./errors.md#e0304-derived-slot))
 
 ### 1.4.3 Examples
 
