@@ -1021,7 +1021,9 @@ test typo-section =
 > `Refinement between(A, B) has a lower bound above its upper bound, so no value satisfies it`
 > `Refinement regex("<p>") is not a pattern: <reason>`
 > `Refinement len-lt(0) is shorter than every text, so no value satisfies it`
-> `Refinement "<pred>" tests <text | a number> but is written over <base>, so no value satisfies it`
+> `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
+> `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
+> `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
 
 各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。
 
@@ -1031,8 +1033,12 @@ test typo-section =
 |---|---|---|
 | `nonempty`, `len-eq`, `len-lt`, `len-gt`, `email`, `url`, `uuid`, `regex` | テキスト | `Text` |
 | `between`, `positive`, `negative` | 数値 | `Int`・`Float`・`Time` |
-| `one-of` | 所属 | 任意 — 候補そのものが定義域 |
+| `one-of` | いずれかのリテラルとの厳密な一致 | テキストリテラルなら `Text`、数値リテラルなら `Int`・`Float`・`Time` |
 
-基底型は refinement が書かれている連鎖 — 別名・`nominal`・先行する `where` — をたどって読む。したがって `type Handle = nominal Text` に `where positive` を付けると報告され、`nominal Int` に `where between(0, 9)` を付けても報告されない。レコード・union・コンテナはどちらの系統が検査する基底型でもない。型パラメータはジェネリックが適用されるまで基底型について何も言わないので、`type NonEmpty(T) = T where nonempty` は報告されない。
+`one-of` は厳密な所属判定に lower されるので、各リテラルは基底型の値でなければならない：`Text where one-of(1, 2)` はどのテキストとも一致しない候補を並べており、`Bool`・レコード・union にはそもそもリテラルがない。正しいリテラルの中に 1 つだけ誤ったものが混じっている場合も報告される — その候補は決して選ばれない。
+
+基底型は refinement が書かれている連鎖 — 別名・`nominal`・先行する `where` — をたどって読む。したがって `type Handle = nominal Text` に `where positive` を付けると報告され、`nominal Int` に `where between(0, 9)` を付けても報告されない。レコード・union・コンテナはどちらの系統が検査する基底型でもなく、`EffectId` のような不透明な型も同様である：実行時に何で表されていようと、プログラムはその述語が問う対象となる値をその型として持たない。
+
+型パラメータはそれ自体では基底型について何も言わないので、定義 `type NonEmpty(T) = T where nonempty` は報告されない。報告されるのはその**適用**である：引数を本体へ代入し — 入れ子の適用・レコードのフィールド・union のペイロードを通して — それによって検査できない基底型の上に置かれた refinement を適用箇所で報告する。`slot n : NonEmpty(Int)` や `type N = NonEmpty(Int)` の `NonEmpty(Int)`、`type W(T) = nominal T where positive` に対する `W(Text)` がそれである。引数によらず定義そのものが持つ問題は、定義で 1 度だけ報告される。
 
 **修正**：述語が取る引数を書く — `between` には数値の境界、`len-*` 系には 0 以上の整数、`regex` にはコンパイルできるパターン、`one-of` には 1 個以上のリテラル — そして述語が検査する基底型の上に書くか、手元の基底型を検査する述語を選ぶ（テキストには `positive` ではなく `len-gt(0)`）。

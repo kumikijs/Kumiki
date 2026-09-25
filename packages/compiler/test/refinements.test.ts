@@ -237,48 +237,175 @@ describe("arguments a predicate cannot be built from are reported", () => {
   }
 });
 
-// Every predicate lowers to a check guarded by the shape it tests (#352), so
-// one written over a base type it cannot test refuses every value — the slot
-// takes nothing from then on, and only the smoke tier ever saw it (#440). It is
-// E0804's own defect reached from the other side: not arguments no value can
-// satisfy, but a base no value of which can.
+// Every predicate lowers to a check guarded by the shape it tests, so one
+// written over a base type it cannot test refuses every value — the slot takes
+// nothing from then on. It is E0804's own defect reached from the other side:
+// not arguments no value can satisfy, but a base no value of which can.
 describe("a predicate over a base type it cannot test is reported", () => {
-  const bad: [string, string][] = [
+  /** Every diagnostic, as `code line:col`, for the program and the shared tail. */
+  const diagnostics = (src: string): string[] =>
+    check(parse(lex(`${src}\n${TAIL}`))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`);
+
+  // Each of these is otherwise a valid program, so the whole list is exactly
+  // one E0804 — at the `where` that asks the question, or at the application
+  // that puts a generic's question over the wrong base.
+  const bad: [string, string, string][] = [
     // One row per column of the §1.3.3 pairing: the text family over a number…
-    ["nonempty over Int", `slot n : Int where nonempty = 1`],
-    ["len-eq over Int", `slot n : Int where len-eq(2) = 1`],
-    ["len-lt over Float", `slot n : Float where len-lt(2) = 1.0`],
-    ["len-gt over Time", `slot n : Time where len-gt(2) = 0`],
-    ["email over Int", `slot n : Int where email = 1`],
-    ["url over Bool", `slot b : Bool where url = true`],
-    ["uuid over Int", `slot n : Int where uuid = 1`],
-    ["regex over Int", `slot n : Int where regex("[0-9]+") = 1`],
+    ["nonempty over Int", `slot n : Int where nonempty = 1`, "1:20"],
+    ["len-eq over Int", `slot n : Int where len-eq(2) = 1`, "1:20"],
+    ["len-lt over Float", `slot n : Float where len-lt(2) = 1.0`, "1:22"],
+    ["len-gt over Time", `slot n : Time where len-gt(2) = now`, "1:21"],
+    ["email over Int", `slot n : Int where email = 1`, "1:20"],
+    ["url over Bool", `slot b : Bool where url = true`, "1:21"],
+    ["uuid over Int", `slot n : Int where uuid = 1`, "1:20"],
+    ["regex over Int", `slot n : Int where regex("[0-9]+") = 1`, "1:20"],
     // …and the numeric family over text.
-    ["between over Text", `slot s : Text where between(0, 3) = "a"`],
-    ["positive over Text", `slot s : Text where positive = "ada"`],
-    ["negative over Text", `slot s : Text where negative = "a"`],
+    ["between over Text", `slot s : Text where between(0, 3) = "a"`, "1:21"],
+    ["positive over Text", `slot s : Text where positive = "ada"`, "1:21"],
+    ["negative over Text", `slot s : Text where negative = "a"`, "1:21"],
     // A structural type is not a base either predicate tests.
-    ["nonempty over a record", `slot r : {a: Text} where nonempty = {a: "x"}`],
-    ["positive over a list", `slot l : List(Int) where positive = []`],
+    ["nonempty over a record", `slot r : {a: Text} where nonempty = {a: "x"}`, "1:26"],
+    ["positive over a list", `slot l : List(Int) where positive = []`, "1:26"],
+    ["nonempty over a union", `type Sz = Sm | Md\nslot u : Sz where nonempty = Sm`, "2:19"],
     // The base is read through the chain the refinement is: an alias, a
     // `nominal`, an earlier `where`.
     [
       "positive under a nominal over Text",
       `type Handle = nominal Text\nslot h : Handle where positive = "a"`,
+      "2:23",
     ],
     [
       "nonempty over an alias of Int",
       `type Count = Int where between(0, 9)\nslot c : Count where nonempty = 1`,
+      "2:22",
     ],
-    ["a second where over the wrong base", `slot s : Text where nonempty where positive = "a"`],
-    ["a predicate folded onto a nominal", `type Id = nominal Int where uuid\nslot i : Id = 1`],
+    [
+      "a second where over the wrong base",
+      `slot s : Text where nonempty where positive = "a"`,
+      "1:36",
+    ],
+    [
+      "a predicate folded onto a nominal",
+      `type Id = nominal Int where uuid\nslot i : Id = 1`,
+      "1:29",
+    ],
+    // A refinement is judged wherever a type is written, not only on a slot.
+    ["a record field", `slot r : {a: Text where positive} = {a: "x"}`, "1:25"],
+    ["a union payload", `type U = Idle | Got(Text where positive)\nslot u : U = Idle`, "1:32"],
+    ["a fn parameter", `fn f(x: Text where positive) -> Int = 1`, "1:20"],
+    ["a tile's in=", `tile T in=Text where positive = text($1)`, "1:22"],
+    // A generic's own parameter says nothing until it is applied — and then
+    // the argument is the base, judged at the application.
+    [
+      "a generic applied over the wrong base",
+      `type NonEmpty(T) = T where nonempty\nslot n : NonEmpty(Int) = 1`,
+      "2:10",
+    ],
+    [
+      "a generic applied through an alias",
+      `type NonEmpty(T) = T where nonempty\ntype N = NonEmpty(Int)\nslot n : N = 1`,
+      "2:10",
+    ],
+    [
+      "a nominal generic applied over the wrong base",
+      `type W(T) = nominal T where positive\nslot w : W(Text) = "a"`,
+      "2:10",
+    ],
+    [
+      "a generic whose body applies another generic",
+      `type NonEmpty(T) = T where nonempty\ntype W(T) = NonEmpty(T)\nslot w : W(Int) = 1`,
+      "3:10",
+    ],
+    [
+      "a generic whose refinement is on a record field",
+      `type Box(T) = {v: T where positive}\nslot b : Box(Text) = {v: "a"}`,
+      "2:10",
+    ],
+    [
+      "a generic applied inside a container in another generic",
+      `type NonEmpty(T) = T where nonempty\ntype L(T) = List(NonEmpty(T))\nslot l : L(Int) = []`,
+      "3:10",
+    ],
+    [
+      "a generic applied inside a fn parameter",
+      `type NonEmpty(T) = T where nonempty\nfn f(x: NonEmpty(Int)) -> Int = 1`,
+      "2:9",
+    ],
+    // `one-of` lowers to a strict `includes`, so a choice whose type is not
+    // the base's is one no value of the slot equals.
+    ["one-of numbers over Text", `slot s : Text where one-of(1, 2) = "a"`, "1:21"],
+    ["one-of text over Int", `slot n : Int where one-of("1") = 1`, "1:20"],
+    [
+      "one-of with one choice of the wrong type",
+      `slot s : Text where one-of("a", 1) = "a"`,
+      "1:21",
+    ],
+    ["one-of over Bool", `slot b : Bool where one-of("x") = true`, "1:21"],
+    [
+      "one-of over a nominal Text",
+      `type Size = nominal Text\nslot s : Size where one-of(1) = "a"`,
+      "2:21",
+    ],
+    [
+      "one-of applied through a generic",
+      `type Pick(T) = T where one-of("a", "b")\nslot p : Pick(Int) = 1`,
+      "2:10",
+    ],
   ];
 
-  for (const [label, src] of bad) {
+  for (const [label, src, at] of bad) {
     it(`reports ${label}`, () => {
-      expect(codes(src)).toContain("E0804");
+      expect(diagnostics(src)).toEqual([`E0804 ${at}`]);
     });
   }
+
+  // Both applications put `nonempty` over `Int`: the inner one directly, the
+  // outer one through its argument. Each is its own refinement no value of the
+  // slot satisfies, so each is reported where it was applied.
+  it("reports each application of a nested generic", () => {
+    expect(
+      diagnostics(`type NonEmpty(T) = T where nonempty\nslot n : NonEmpty(NonEmpty(Int)) = 1`),
+    ).toEqual(["E0804 2:10", "E0804 2:19"]);
+  });
+
+  // `P2(T, Int)` puts `nonempty` over `Int` whatever `T` is, so the definition
+  // of `W` is where it is wrong and where it is reported; applying `W` brings
+  // nothing new and reports nothing more.
+  it("reports a problem no argument brings once, where it is written", () => {
+    expect(
+      diagnostics(`type P2(A, B) = B where nonempty\ntype W(T) = P2(T, Int)\nslot w : W(Text) = 1`),
+    ).toEqual(["E0804 2:13"]);
+  });
+
+  // Two `where`s, each over a base it cannot test: two refinements, two
+  // reports, each at its own `where`.
+  it("reports every refinement of a chain at its own position", () => {
+    expect(diagnostics(`slot s : Text where positive where negative = "a"`)).toEqual([
+      "E0804 1:36",
+      "E0804 1:21",
+    ]);
+  });
+
+  // A chain that closes on itself has no base to judge: E0009 names it, and
+  // an E0804 on top would describe a type that does not exist.
+  it("leaves a cycle to E0009", () => {
+    expect(diagnostics(`type A = B where positive\ntype B = A\nslot a : A = 1`)).toEqual([
+      "E0009 1:10",
+    ]);
+    expect(
+      diagnostics(`type NonEmpty(T) = T where nonempty\ntype A = NonEmpty(A)\nslot a : A = "x"`),
+    ).toEqual(["E0009 2:19"]);
+  });
+
+  // An undefined constructor is as opaque as an undefined name: E0117 is the
+  // report, and the base it would have named does not exist.
+  it("leaves an undefined type application to E0117", () => {
+    const codes = check(parse(lex(`slot x : Foo(Int) where nonempty = 1\n${TAIL}`))).map(
+      (e) => e.code,
+    );
+    expect(codes).toContain("E0117");
+    expect(codes).not.toContain("E0804");
+  });
 
   it("names what the predicate tests and the base it was written over", () => {
     const messageFor = (src: string): string =>
@@ -292,6 +419,18 @@ describe("a predicate over a base type it cannot test is reported", () => {
     expect(messageFor(`slot n : Int where nonempty = 1`)).toBe(
       'Refinement "nonempty" tests text but is written over Int, so no value satisfies it',
     );
+    expect(messageFor(`slot b : Bool where one-of("x") = true`)).toBe(
+      'Refinement "one-of" tests text or a number but is written over Bool, so no value satisfies it',
+    );
+    expect(messageFor(`slot s : Text where one-of("a", 1) = "a"`)).toBe(
+      'Refinement "one-of" lists 1 (argument 2) but is written over Text, so no value equals it',
+    );
+    expect(messageFor(`type NonEmpty(T) = T where nonempty\nslot n : NonEmpty(Int) = 1`)).toBe(
+      'Refinement "nonempty" tests text but NonEmpty(Int) applies it over Int, so no value satisfies it',
+    );
+    expect(messageFor(`type Pick(T) = T where one-of("a", "b")\nslot p : Pick(Int) = 1`)).toBe(
+      'Refinement "one-of" lists "a" (argument 1) but Pick(Int) applies it over Int, so no value equals it',
+    );
   });
 
   // `len-lt(0)` is well formed — `0` is a count — and still refuses every
@@ -299,21 +438,30 @@ describe("a predicate over a base type it cannot test is reported", () => {
   // reached through a legal argument.
   it("reports len-lt(0)", () => {
     const errors = check(parse(lex(`slot s : Text where len-lt(0) = ""\n${TAIL}`)));
-    expect(errors.filter((e) => e.code === "E0804").map((e) => e.message)).toEqual([
-      "Refinement len-lt(0) is shorter than every text, so no value satisfies it",
+    expect(errors.map((e) => [e.code, e.message])).toEqual([
+      ["E0804", "Refinement len-lt(0) is shorter than every text, so no value satisfies it"],
     ]);
   });
 
+  // Each of these is a valid program, so nothing at all is reported.
   const good = [
     `type Handle = nominal Text\nslot h : Handle where nonempty = "a"`,
     `type Cents = nominal Int\nslot c : Cents where between(0, 9) = 1`,
-    `slot t : Time where positive = 1`,
+    `slot t : Time where positive = now`,
     `slot f : Float where negative = -1.0`,
-    // `one-of` is excluded by design: its choices are the domain, over any base.
-    `slot t : Time where one-of(0, 1000) = 0`,
+    `slot t : Time where one-of(0, 1000) = now`,
     `slot n : Int where one-of(1, 2) = 1`,
+    `slot f : Float where one-of(0.5, 1) = 0.5`,
+    `type Size = nominal Text\nslot s : Size where one-of("sm", "md") = "sm"`,
     // A parameter says nothing about the base until the generic is applied.
     `type NonEmpty(T) = T where nonempty\nslot s : NonEmpty(Text) = "a"`,
+    `type NonEmpty(T) = T where nonempty\ntype N = NonEmpty(Text)\nslot s : N = "a"`,
+    `type NonEmpty(T) = T where nonempty\nslot s : NonEmpty(NonEmpty(Text)) = "a"`,
+    `type W(T) = nominal T where positive\nslot w : W(Int) = 1`,
+    `type Box(T) = {v: T where positive}\nslot b : Box(Float) = {v: 1.5}`,
+    `type Pick(T) = T where one-of(1, 2)\nslot p : Pick(Int) = 1`,
+    // …nor inside another generic's body, where the argument is itself a parameter.
+    `type NonEmpty(T) = T where nonempty\ntype W(U) = NonEmpty(U)\nslot w : W(Text) = "a"`,
     // A parameter spelled like a top-level type is still the parameter (§1.3.6 inv. 5).
     `type Cents = Int\ntype Wrap(Cents) = Cents where nonempty\nslot s : Wrap(Text) = "a"`,
     `slot s : Text where len-lt(1) = ""`,
@@ -321,7 +469,7 @@ describe("a predicate over a base type it cannot test is reported", () => {
 
   for (const src of good) {
     it(`accepts ${src.split("\n").slice(-1)[0]}`, () => {
-      expect(codes(src)).not.toContain("E0804");
+      expect(diagnostics(src)).toEqual([]);
     });
   }
 });
