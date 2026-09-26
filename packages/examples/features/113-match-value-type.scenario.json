@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "label": "nothing picked, so the None arm keeps the owner",
+      "do": { "click": "#adopt" },
+      "expect": { "noErrors": true, "state": { "owner": "u-0" }, "domIncludes": ["owner: u-0"] }
+    },
+    {
+      "label": "an Err reads as the Err arm's Int",
+      "do": { "click": "#read-count" },
+      "expect": { "noErrors": true, "state": { "count": -1 }, "domIncludes": ["count: -1"] }
+    },
+    {
+      "label": "picking fills the Option, the union and the Result",
+      "do": { "click": "#pick" },
+      "expect": { "noErrors": true, "state": { "picked": { "_tag": "Some", "_0": "u-1" } } }
+    },
+    {
+      "label": "the Some arm's id is a UserId, and lands in the UserId slot",
+      "do": { "click": "#adopt" },
+      "expect": { "noErrors": true, "state": { "owner": "u-1" }, "domIncludes": ["owner: u-1"] }
+    },
+    {
+      "label": "a user union's payload arm lands the same way",
+      "do": { "click": "#adopt-choice" },
+      "expect": { "noErrors": true, "state": { "owner": "u-2" }, "domIncludes": ["owner: u-2"] }
+    },
+    {
+      "label": "an Ok reads as its payload",
+      "do": { "click": "#read-count" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 7, "post": "p-0" },
+        "domIncludes": ["count: 7", "post: p-0"]
+      }
+    }
+  ]
+}

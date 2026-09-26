@@ -56,6 +56,14 @@ const READINGS: ReadonlySet<string> = new Set<ParseReading>([
   "Bytes",
 ]);
 
+/**
+ * The bases a text has a reading as, spelt for a diagnostic —
+ * `Int, Float, Time, Bool, Text or Bytes`. Every message that names them reads
+ * this, so a reading added above reaches each of them at once.
+ */
+export const PARSE_READINGS_PHRASE = ((names: readonly string[]) =>
+  `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`)([...READINGS]);
+
 function isParseReading(name: string): name is ParseReading {
   return READINGS.has(name);
 }
@@ -67,7 +75,8 @@ function isParseReading(name: string): name is ParseReading {
  * - `none` — the qualifier names a type, and no text spells a value of it: a
  *   record, a union, a container, `File`, `EffectId`, `Unit`, a nominal over
  *   any of them, or a type constructor written without its arguments. The call
- *   is the checker's to report (E0802).
+ *   is the checker's to report: E0124 for the constructor, which is no type at
+ *   all and is reported before its reading is asked, E0802 for the rest.
  * - `unresolved` — the qualifier names nothing, or a definition whose body
  *   resolves to nothing (an alias of an undefined name, a cycle). That is
  *   E0117's / E0009's to report where it is written, and the parse has no base

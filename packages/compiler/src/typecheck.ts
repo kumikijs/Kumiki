@@ -18,6 +18,7 @@ import type {
   Expr,
   FnDef,
   Lvalue,
+  MatchArm,
   Pattern,
   Pos,
   Program,
@@ -57,9 +58,9 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
-import { parseQualifier, qualifierType } from "./parse-reading.ts";
+import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { refinementProblem } from "./refinements.ts";
+import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
@@ -996,6 +997,19 @@ function innerScope(ctx: Ctx): Ctx {
 }
 
 /**
+ * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
+ * typed from the scrutinee. For the positions that only *read* an arm — a
+ * value's type, a destination's check — so a pattern's own mistakes are
+ * dropped here: `checkExpr`'s `MatchExpr` case walks the same pattern with the
+ * real list, and reporting it twice would double every E0207/E0208/E0209.
+ */
+function armScope(arm: MatchArm, scrutType: TypeExpr | null, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner = innerScope(ctx);
+  checkPatternAgainstType(arm.pattern, scrutType, sym, [], inner);
+  return inner;
+}
+
+/**
  * `button(type=…)` takes one of the three HTML values. A literal outside them
  * is worth reporting because of which way it fails: an invalid `type`
  * attribute resolves to `submit`, so `type="submmit"` on a button written NOT
@@ -1388,7 +1402,7 @@ function checkHandlerBinding(
  * anywhere in the render tree is the answer that reports.
  *
  * That under-reports rather than over-reports, deliberately: codegen merges
- * these props onto the node the tile renders as its ROOT (`_attachProps`), so
+ * these props onto the node the tile renders as its ROOT (`tileCallJs`), so
  * `Card = box(button(…))` drops the handler too and is not reported here,
  * because the walk does not tell a root from a descendant. Every case it does
  * report is a certain drop — a tree with no firing kind in it has no firing
@@ -1461,7 +1475,7 @@ function inertHandler(
  * true answer: codegen propagates `ui.click(TodoRow)` down to the `check` of
  * `TodoRow = row(check(...), …)`, so finding one means the subscription is
  * wired. For `W0213` it is deliberate under-reporting: an explicit handler
- * prop lands on the ROOT node and nowhere else (`_attachProps`), so a firing
+ * prop lands on the ROOT node and nowhere else (`tileCallJs`), so a firing
  * descendant does NOT mean the handler is wired — only that this walk cannot
  * prove it is dropped.
  */
@@ -1669,6 +1683,33 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
   }
 }
 
+/**
+ * The type `$1` holds in an `effect-name.ok(…)` trigger — the value the
+ * effect's `out=` says a success delivers (language.md §1.6.5): the Ok payload
+ * of a `Result(T, E)`, or the whole value of any other `out=`.
+ *
+ * `.err` stays undecided. What arrives there is the runtime's failure record
+ * (`{message: …}` from the storage / indexed handlers and the dispatcher's
+ * catch), which the declared `E` does not describe; typing `$e` as `E` would
+ * reject the read that matches it and accept the one that does not. A
+ * built-in effect has no `out=` to read, and a `Result` of the wrong arity is
+ * already reported where it is written, so neither is guessed at.
+ */
+function effectPayloadType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  if (outcome === "err") return null;
+  const out = sym.effects.get(effect)?.outType;
+  if (!out) return null;
+  const u = unaliasType(out, sym);
+  if (u?.kind === "TypeApp" && u.name === "Result") {
+    return u.args.length === 2 ? (u.args[0] ?? null) : null;
+  }
+  return out;
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -1682,7 +1723,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     // Both checks a bind is subject to today are asked here, in the walk that
     // puts the names into scope, so the answer to one cannot drift from the
     // answer to the other. Whichever of them fires, the name still enters the
-    // scope — that is what `ctx.localBinds.add` below the branch is for, and
+    // scope — that is what `bindLocal` below the branch is for, and
     // why it sits outside it: the body's reads are then that binding, so a
     // `$route` bind does not also collect an E0119 apiece for every read.
     //
@@ -1691,7 +1732,8 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     // since it stands for a positional rather than skipping one, which is the
     // index `emit-reducer.ts` reads the payload at.
     const boundAt = new Map<string, number>();
-    r.on.binds.forEach((b, i) => {
+    const trigger = r.on;
+    trigger.binds.forEach((b, i) => {
       if (b.name === "_") return;
       if (RESERVED_BIND_NAMES.has(b.name)) {
         // §1.6.5 — codegen declares these three in every reducer body, whatever
@@ -1722,7 +1764,14 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
             pos: b.pos,
           });
       }
-      ctx.localBinds.add(b.name);
+      // `$1` is the effect's result; the positionals after it (the request key)
+      // stay untyped. A reserved name is not this bind's to type — the body
+      // reads the compiler's own declaration of it.
+      const type =
+        i === 0 && !RESERVED_BIND_NAMES.has(b.name)
+          ? effectPayloadType(trigger.effect, trigger.outcome, sym)
+          : null;
+      bindLocal(ctx, b.name, type);
     });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
@@ -2154,13 +2203,45 @@ function checkCallee(
       });
       return;
     }
+    // A name can be a type's and still not be a type: `List`, `Map`, `Tuple`
+    // and a `type Box(T) = …` want their arguments first. The call has no type
+    // to mint (`fresh`) or read into (`parse`), and each check above declines
+    // it on its own terms — the name resolves, the callee resolves, and the
+    // inference answers nothing — so `slot n : Int = Box.fresh()` stored a uuid
+    // string in an `Int` slot with no report at all.
+    // `constructorArity` answers `null` for variadic `Tuple` and for a name that
+    // is no type at all, so it is asked only of a name `isKnownTypeName` holds.
+    const typeArity =
+      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
+        ? constructorArity(qualifier, sym)
+        : 0;
+    if (typeArity !== 0) {
+      const wanted =
+        typeArity === null
+          ? "type arguments"
+          : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
+      // A `parse` repaired to any applied type can still land on E0802 below —
+      // `type IntList = List(Int)` has no reading of a text either — so its
+      // message names both halves of the repair in the one round.
+      const readable =
+        callee.slice(dot + 1) === "parse"
+          ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
+          : "";
+      errors.push({
+        code: "E0124",
+        kind: "type-constructor-qualifier",
+        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none${readable}`,
+        pos,
+      });
+      return;
+    }
     // `parse` lowers by the base the qualifier unaliases to, and a record, a
-    // union, `File`, `EffectId`, `Unit` or a constructor written without its
-    // arguments has no reading of a text — codegen has nothing of the call's
-    // type to produce. `parseQualifier` is the one answer both sides read, so
-    // every qualifier that passed E0117 above and has no reading is reported
-    // here, and none reaches the lowering. A qualifier whose definition
-    // resolves to nothing is left to the report at that definition.
+    // union, `File`, `EffectId` or `Unit` has no reading of a text — codegen
+    // has nothing of the call's type to produce. `parseQualifier` is the one
+    // answer both sides read, so every qualifier that passed E0117 and E0124
+    // above and has no reading is reported here, and none reaches the
+    // lowering. A qualifier whose definition resolves to nothing is left to
+    // the report at that definition.
     if (
       callee.slice(dot + 1) === "parse" &&
       isQualifierName(qualifier) &&
@@ -2169,7 +2250,7 @@ function checkCallee(
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
-        message: `"${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`,
+        message: `"${qualifier}" has no reading of a text — parse into ${PARSE_READINGS_PHRASE} and build it in a fn`,
         pos,
       });
       return;
@@ -2927,6 +3008,19 @@ function checkAgainst(
     // reporting at the `if`.
     checkAgainst(e.consequent, declared, sym, errors, ctx, code);
     checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    return;
+  }
+  if (e.kind === "MatchExpr") {
+    // Every arm lands here too, for the same reason as `if` — and each arm is
+    // read in its own scope, so `Some(id) -> id` is checked as the payload type
+    // the scrutinee gives `id`. Arm by arm rather than through `inferType`:
+    // a `UserId` arm beside a `PostId` arm gives the whole `match` the base
+    // they share, `Text`, and a `PostId` destination accepts `Text` — so a
+    // whole-match comparison would pass the wrong arm without a word.
+    const scrutType = inferType(e.scrutinee, sym, ctx);
+    for (const arm of e.arms) {
+      checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
+    }
     return;
   }
   if (
@@ -3826,6 +3920,17 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     }
     case "IfExpr": {
       return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
+    }
+    case "MatchExpr": {
+      // The arm values are what the `match` evaluates to, whatever the
+      // scrutinee is — an `Option`, a `Result` or a user union alike. Arms
+      // that disagree give the base they share, nominal dropped; one
+      // undecidable arm leaves the whole `match` undecidable (`commonType`).
+      const scrutType = inferType(e.scrutinee, sym, ctx);
+      return commonType(
+        e.arms.map((arm) => inferType(arm.body, sym, armScope(arm, scrutType, sym, ctx))),
+        sym,
+      );
     }
     case "EmitExpr":
       // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
@@ -5360,6 +5465,11 @@ function checkApp(
  * the read throws inside the request, the dispatcher turns the throw into an
  * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
  * would pass check, build and smoke alike.
+ *
+ * Three of the four also have a type (http.md §6.3.1), checked after the walk:
+ * a value of the wrong one runs and does the wrong thing rather than failing.
+ * `headers` is a record of whatever the author sends, and has none to hold it
+ * to here.
  */
 function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
@@ -5377,6 +5487,45 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
+  // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
+  // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
+  // `Duration`", because a program's own `type Duration` shadows the stdlib one
+  // and may be anything.
+  if (http.baseUrl !== undefined)
+    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
+  if (http.timeout !== undefined)
+    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
+  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+}
+
+/** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */
+const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
+
+/**
+ * `app.http.credentials` is a `Text`, so a slot can select the mode per
+ * request, and every literal that reaches the field — the field's own value, or
+ * a literal branch of an `if`, at any depth — is also compared with the three
+ * Fetch modes: a browser refuses a request whose init names any other, so a
+ * misspelt mode is as wrong as an `Int`. Anything else (a slot, a call, a
+ * concatenation) is held to `Text` alone; its value is decided at run time.
+ */
+function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "IfExpr") {
+    checkHttpCredentials(e.consequent, sym, errors, ctx);
+    checkHttpCredentials(e.alternate, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "Str") {
+    if (HTTP_CREDENTIALS.includes(e.value)) return;
+    pushMismatch(
+      errors,
+      "E0201",
+      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
+      e.pos,
+    );
+    return;
+  }
+  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
 }
 
 /**
@@ -5453,6 +5602,7 @@ function resolveType(
           });
         } else {
           checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+          checkApplication(t, sym, typeParams, errors);
         }
       }
       for (const a of t.args) resolveType(a, sym, errors, typeParams);
@@ -5466,11 +5616,8 @@ function resolveType(
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
-      checkRefinement(t.refinement, errors);
-      resolveType(t.inner, sym, errors, typeParams);
-      return;
     case "TypeRefinement":
-      checkRefinement(t.refinement, errors);
+      checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
@@ -5495,11 +5642,25 @@ function resolveType(
  *    with nothing in it. These are reachable, and each used to reach the
  *    runtime — as a check that refuses every value, one that accepts every
  *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
- *    `v <= x` half of what `between(0, "x")` lowered to.
+ *    `v <= x` half of what `between(0, "x")` lowered to. A legal count that is
+ *    still below every length, `len-lt(0)`, refuses every value the same way.
+ *    Also E0804, a predicate over a base it cannot test (`Text where
+ *    positive`, `Text where one-of(1)`): every body is guarded by the shape it
+ *    tests, and `one-of` compares strictly, so that slot refuses every write.
+ *    The base is `inner` read through the chain the refinement is, with the
+ *    definition's type parameters left opaque — they say nothing about the
+ *    shape until the generic is applied, which {@link checkApplication}
+ *    judges.
  */
-function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void {
+function checkRefinement(
+  r: Refinement | undefined,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
   if (!r) return;
-  const problem = refinementProblem(r);
+  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
   if (!problem) return;
   // Written out rather than looked up: `spec-drift.test.ts` reads the codes
   // this file emits off `code: "E…"`, so a code assembled anywhere but at the
@@ -5519,6 +5680,136 @@ function checkRefinement(r: Refinement | undefined, errors: KumikiError[]): void
     message: problem.message,
     pos: r.pos,
   });
+}
+
+/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
+function baseProblem(
+  r: Refinement,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+): RefinementProblem | undefined {
+  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const message = base ? refinementBaseProblem(r, base) : undefined;
+  return message ? { kind: "refinement-args-invalid", message } : undefined;
+}
+
+/** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
+function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
+  return new Map([...params].map((p) => [p, unknownType(pos)]));
+}
+
+/**
+ * `t` in the form a refinement's base is judged against, or `undefined` when
+ * nothing can be concluded from it: a chain that closes on itself (E0009's to
+ * report), or an application of a name that resolves to nothing (E0117's) —
+ * as opaque as the bare unresolved name `refinementBaseProblem` passes.
+ */
+function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
+  const base = unaliasType(t, sym);
+  if (base === null) return undefined;
+  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
+  return base;
+}
+
+/**
+ * E0804 for the refinements a generic's application puts over a base they
+ * cannot test.
+ *
+ * A generic's definition is checked with its parameters opaque, so
+ * `type NonEmpty(T) = T where nonempty` is silent there: `T` may be `Text`.
+ * The application is where the argument arrives, and `NonEmpty(Int)` is a
+ * type whose check refuses every value. So the body is walked here with the
+ * arguments substituted — into nested applications, record fields and union
+ * payloads alike — and each refinement is judged over the base the
+ * application gives it, reported at the application, which is what the
+ * author wrote wrong.
+ *
+ * `app`'s own arguments may name the parameters of a definition around it;
+ * those are opaque for the same reason, and are judged where that definition
+ * is applied in turn.
+ */
+function checkApplication(
+  app: TypeExpr & { kind: "TypeApp" },
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  const def = sym.types.get(app.name);
+  if (!def) return;
+  const opaque = opaqueParams(typeParams, app.pos);
+  const args = app.args.map((a) => substituteType(a, opaque));
+  const unapplied = def.params.map(() => unknownType(app.pos));
+  for (const message of appliedBaseProblems(app.name, args, unapplied, typeToString(app), sym)) {
+    errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
+  }
+}
+
+/**
+ * The messages for {@link checkApplication}: `name` applied to `args`, set
+ * against `judged`, the same application as the definitions around it were
+ * already checked with — every parameter still opaque there, opaque. A
+ * refinement whose base already had a problem under `judged` was reported
+ * where that definition was checked, and one whose base is no different is
+ * not the application's to report; only a problem the arguments bring is.
+ */
+function appliedBaseProblems(
+  name: string,
+  args: TypeExpr[],
+  judged: TypeExpr[],
+  shown: string,
+  sym: SymbolTable,
+  seen: ReadonlySet<string> = new Set(),
+): string[] {
+  const def = sym.types.get(name);
+  // A mismatched arity is E0210's, and a parameter with no argument would be
+  // read as whatever top-level type shares its name. Re-entering a name is a
+  // chain E0009 reports, and the walk has to end on the way there.
+  if (!def || seen.has(name) || def.params.length !== args.length) return [];
+  const applied = paramSubstitution(def.params, args);
+  const before = paramSubstitution(def.params, judged);
+  const inside = new Set([...seen, name]);
+  const out: string[] = [];
+  const walk = (t: TypeExpr): void => {
+    switch (t.kind) {
+      case "TypePrim":
+      case "TypeRef":
+        return;
+      case "TypeApp": {
+        const nested = t.args.map((a) => substituteType(a, applied));
+        const nestedBefore = t.args.map((a) => substituteType(a, before));
+        out.push(...appliedBaseProblems(t.name, nested, nestedBefore, shown, sym, inside));
+        for (const a of t.args) walk(a);
+        return;
+      }
+      case "TypeRecord":
+        for (const f of t.fields) walk(f.type);
+        return;
+      case "TypeUnion":
+        for (const v of t.variants) for (const p of v.payloads) walk(p);
+        return;
+      case "TypeNominal":
+      case "TypeRefinement": {
+        const r = t.refinement;
+        // A problem with the arguments is the definition's, reported there.
+        if (r && !refinementProblem(r)) {
+          const was = judgedBase(substituteType(t.inner, before), sym);
+          const now = judgedBase(substituteType(t.inner, applied), sym);
+          if (now && !(was && refinementBaseProblem(r, was))) {
+            const over = `${shown} applies it over ${typeToString(now)}`;
+            const message = refinementBaseProblem(r, now, over);
+            if (message) out.push(message);
+          }
+        }
+        walk(t.inner);
+        return;
+      }
+      default:
+        assertNever(t);
+    }
+  };
+  walk(def.body);
+  return out;
 }
 
 /**

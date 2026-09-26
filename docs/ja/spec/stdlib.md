@@ -93,9 +93,10 @@ m.get-or(k, default)         # Map: 値がなければ default
 opt.get-or(default)          # Option: None なら default、Some(v) なら v
 ```
 
-`.filter` は **List と Map の両方に対して使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
+`.filter` は **List・Map・Option のいずれに対しても使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
 - 受信側が List → 各要素について `pred($1)` を評価、`true` の要素だけ残す
 - 受信側が Map  → 各エントリについて `pred($1, $2)` (key, value) を評価、`true` のエントリだけ残す
+- 受信側が Option → `Some(v)` なら `pred($1=v)` を評価し、`true` ならその `Some(v)`、`false` なら `None`。`None` は `pred` を評価せず `None` のまま ([§2.2.4](#_2-2-4-option-t))
 
 例えば `m.keys.filter(...)` のようにチェーンしたとき、`m.keys` は `List(K)` を返すため `filter` は List のシグネチャで動く。混在チェーンを書いても型に応じた挙動になる。
 
@@ -424,6 +425,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 TypeName.fresh()           : T            ; nominal 型の新 ID（UUIDv7）
 ```
 
+`TypeName` は引数を取らない型である。型引数なしで書かれた型コンストラクタ — `List`、`Map`、`Tuple`、`type Box(T) = …` に対する `Box` — は `fresh` が生成すべき型を指しておらず、`Box.fresh()` は [E0124](./errors.md#e0124-type-constructor-qualifier) になる。先に適用を名付け、その名前で修飾する: `type IntBox = Box(Int)` とし、`IntBox.fresh()` と書く。[§2.4.3](#_2-4-3-型変換) の `parse` と `show` の qualifier についても同じである。
+
 ### 2.4.2 時刻
 
 ```
@@ -436,6 +439,8 @@ now                        : Time          ; 現在時刻
 TypeName.parse(text)       : Option(T)    ; nominal 型の文字列パース
 TypeName.show(value)       : Text         ; 値の文字列表現
 ```
+
+[§2.4.1](#_2-4-1-id-生成) と同じく、`TypeName` は引数を取らない型である。型引数なしで書かれた型コンストラクタは、`parse` でも `show` でも [E0124](./errors.md#e0124-type-constructor-qualifier) になる。
 
 `TypeName.show(value)` は [§2.2](#_2-2-コレクションメソッド) の `.show` メソッドを修飾子付きで書いたものであり、修飾子は捨てられる。`Duration.show(d)` と `d.show` は同じ式であり、同じ `Text` である。これは [`Duration`](#_2-2-9-duration) や [`Bytes`](#_2-2-10-bytes) を含むすべての `TypeName` について成り立つ。これらの他のメンバはコンストラクタだが `show` はそうではなく、コンストラクタとして読んだために `Text` スロットへの代入が [E0201](./errors.md#e0201-type-mismatch) で拒否されていた。`parse` は逆で、その `Option(T)` は修飾子の型そのものである。両者を分けて書いているのはそのためである。
 
@@ -456,7 +461,7 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 引数は `Text` であり、それ以外は [E0201](./errors.md#e0201-type-mismatch) になる。
 
-それ以外の基底型 — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、型引数なしで書かれた型コンストラクタ（`List`、`type Box(T) = …` に対する `Box`）も同様である。それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
+それ以外の基底型 — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。型引数なしで書かれた型コンストラクタ（`List`、`type Box(T) = …` に対する `Box`）はそもそも型ではなく、それに対する `T.parse` はこれではなく [E0124](./errors.md#e0124-type-constructor-qualifier) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
 
 ### 2.4.4 乱数
 

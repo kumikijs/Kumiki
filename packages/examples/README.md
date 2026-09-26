@@ -23,7 +23,7 @@ From small to large. Shows how features combine in real apps.
 | App | Lines | Main takeaways |
 |---|---|---|
 | [01-counter](./apps/01-counter/) | 26 lines | slot / reducer / tile / events |
-| [02-todomvc](./apps/02-todomvc/) | 161 lines | lists, filters, `bind`, localStorage persistence |
+| [02-todomvc](./apps/02-todomvc/) | 163 lines | lists, filters, `bind`, localStorage persistence |
 | [03-blog](./apps/03-blog/) | 418 lines | routing, HTTP fetch, suspense |
 | [04-issue-tracker](./apps/04-issue-tracker/) | 727 lines | CRUD, `Map`, `Option` variants, forms, dates |
 | [05-project-management](./apps/05-project-management/) | 1254 lines | nested data, kanban, comments, tags, theme switching |

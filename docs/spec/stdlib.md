@@ -93,9 +93,10 @@ m.get-or(k, default)         # Map: default if there is no value
 opt.get-or(default)          # Option: default if None, v if Some(v)
 ```
 
-`.filter` **can be used on both List and Map**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):
+`.filter` **can be used on a List, a Map, or an Option**, and the runtime dispatches automatically by looking at the receiver's type (polymorphic dispatch):
 - Receiver is List → evaluate `pred($1)` for each element, keep only elements that are `true`
 - Receiver is Map  → evaluate `pred($1, $2)` (key, value) for each entry, keep only entries that are `true`
+- Receiver is Option → for `Some(v)`, evaluate `pred($1=v)`: `true` keeps that `Some(v)`, `false` gives `None`; a `None` stays `None` without evaluating `pred` ([§2.2.4](#_2-2-4-option-t))
 
 For example, when you chain like `m.keys.filter(...)`, `m.keys` returns `List(K)`, so `filter` runs with the List signature. Even if you write a mixed chain, the behavior follows the type.
 
@@ -425,6 +426,8 @@ Both rendering paths write them: what a mounted element carries, a served page c
 TypeName.fresh()           : T            ; a new ID for a nominal type (UUIDv7)
 ```
 
+`TypeName` is a type that takes no arguments. A type constructor written without its arguments — `List`, `Map`, `Tuple`, or `Box` for a `type Box(T) = …` — names no type for `fresh` to mint, and `Box.fresh()` is [E0124](./errors.md#e0124-type-constructor-qualifier). Name the application first and qualify with that: `type IntBox = Box(Int)`, then `IntBox.fresh()`. The same holds for the qualifier of `parse` and `show` in [§2.4.3](#_2-4-3-type-conversion).
+
 ### 2.4.2 Time
 
 ```
@@ -437,6 +440,8 @@ now                        : Time          ; the current time
 TypeName.parse(text)       : Option(T)    ; string parsing of a nominal type
 TypeName.show(value)       : Text         ; the string representation of a value
 ```
+
+As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no arguments; a type constructor written without its arguments is [E0124](./errors.md#e0124-type-constructor-qualifier) on `parse` and `show` alike.
 
 `TypeName.show(value)` is the qualified spelling of the `.show` method of [§2.2](#_2-2-collection-methods), and the qualifier is discarded: `Duration.show(d)` and `d.show` are the same expression and the same `Text`. That holds for every `TypeName`, [`Duration`](#_2-2-9-duration) and [`Bytes`](#_2-2-10-bytes) included — their other members are constructors, but `show` is not one of them, and reading it as one made a `Text` slot refuse the call with [E0201](./errors.md#e0201-type-mismatch). `parse` is the opposite case: its `Option(T)` *is* the qualifier's, which is why the two are written apart here.
 
@@ -457,7 +462,7 @@ The value read is then held to every `where` refinement `T` carries ([Language �
 
 The argument is a `Text`; anything else is [E0201](./errors.md#e0201-type-mismatch).
 
-Any other base — a record, a union, a container, `File`, `EffectId`, `Unit`, or a `nominal` over one of them — has no reading of a text, and neither has a type constructor written without its arguments (`List`, or `Box` for a `type Box(T) = …`). `T.parse` on one is [E0802](./errors.md#e0802-unimplemented-function). Those used to answer the raw text wrapped in `Some`, which the call's own type claims is a `T`.
+Any other base — a record, a union, a container, `File`, `EffectId`, `Unit`, or a `nominal` over one of them — has no reading of a text, and `T.parse` on one is [E0802](./errors.md#e0802-unimplemented-function). A type constructor written without its arguments (`List`, or `Box` for a `type Box(T) = …`) is not a type at all, and `T.parse` on one is [E0124](./errors.md#e0124-type-constructor-qualifier) instead. Those used to answer the raw text wrapped in `Some`, which the call's own type claims is a `T`.
 
 ### 2.4.4 Randomness
 

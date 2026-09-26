@@ -82,6 +82,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | コア |
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | コア |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
+| [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -232,9 +233,16 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `97-get-or-two-readings.kumiki` | slot, reducer, tile | コア | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `98-receiver-decided-results.kumiki` | slot, reducer, tile | コア | [§2.2](./stdlib.md#_2-2-コレクションメソッド) |
 | `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | ルーティング | [§E0304](./errors.md#e0304-derived-slot) |
+| `100-option-filter.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | コア | [§1.7.1](./language.md#_1-7-1-構文) |
+| `108-call-site-handler-joins-lifted.kumiki` | slot, reducer, tile | コア | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `109-control-key-focus-blur-selectors.kumiki` | slot, reducer, tile | コア | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |
+| `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§E0124](./errors.md#e0124-type-constructor-qualifier) |
+| `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | コア | [§1.9](./language.md#_1-9-式言語) |
+| `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.4](./http.md#_6-4-cancellation) |
+| `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 <!-- examples:end -->
 :::

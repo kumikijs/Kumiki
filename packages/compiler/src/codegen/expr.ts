@@ -5,6 +5,7 @@ import {
   bindRef,
   declareBind,
   type EvalCtx,
+  type GenCtx,
   jsBinding,
   jsProperty,
   makeEvalCtx,
@@ -77,7 +78,8 @@ function readingJs(reading: ParseReading, a: string): string {
  * `None`. An `Option(Cents)` never meets a slot-write guard, so without this
  * `Cents.parse("-5")` handed the program a `Cents` its own type refuses.
  *
- * `parseQualifier` is the answer the checker reports E0802 from, so a qualifier
+ * `parseQualifier` is the answer the checker reports E0802 from (E0124 first,
+ * for a constructor written without its arguments), so a qualifier
  * with no reading never reaches here from a checked program; the throw is for
  * `codegen()` called without `check()`, which would otherwise lower to a value
  * of the wrong kind.
@@ -818,33 +820,68 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
 }
 
 /**
- * `emit X(args)` used as an expression (spec http.md §6.4, stdlib §2.1.1.1)
- * — push the same `{effect, args}` record the statement form pushes, then
- * yield the dispatched effect's `EffectId`. The id format mirrors the
- * runtime effect dispatcher (`core.ts`'s `keyOf` / `id = "name:key"`
- * derivation): `name:_` by default, `name:String(keyOf(input))` for
- * `latest-per-key`. Each arg is lowered ONCE into a local (`__a0` / `__a1`
- * / …) so a side-effecting expr (`now()`, `T.fresh()`, …) cannot diverge
- * between the value pushed onto `_emits` and the value the EffectId is
- * computed from — otherwise the reducer's captured id wouldn't match the
- * inflight key the launch path registers, and `emit cancel(id)` would
- * silently no-op.
+ * `emit X(args)` used as an expression (spec http.md §6.4, stdlib §2.1.1.1):
+ * queue the emit exactly as the statement form does, then yield the dispatched
+ * effect's `EffectId`, `"<effect>:" + key`.
  */
 export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
-  const effect = e.effect;
+  const { stmts, idJs } = reducerEmitJs(e.effect, e.args, ctx);
+  return `((() => { ${stmts} return ${idJs}; })())`;
+}
+
+/**
+ * One `emit` in a reducer body, statement or expression: the statements that
+ * push its record onto `_emits`, and the `EffectId` that names it.
+ *
+ * The key is `"_"` unless the effect has `policy=latest-per-key(<key>)`. Then
+ * it is evaluated here, once, where the emit runs (http.md §6.4): the record
+ * carries it to the dispatcher, which runs the request under it, and the id is
+ * built from the same value — so `emit cancel(id)` names the request in flight
+ * even when the body writes the key slot after emitting. Each argument is
+ * bound once (`__a0`, `__a1`, …) for the same reason: `now()` or `T.fresh()`
+ * evaluated twice would give the record and the key two different inputs.
+ *
+ * The key reads slots in reducer scope unconditionally rather than from
+ * `ctx.reducerScope`. `_emits`, which this pushes to, is declared beside
+ * `_next` in the reducer body (`emit-reducer.ts`), so `_next` is in scope
+ * wherever this code runs — and a lowering on the way here that rebuilt the
+ * `EvalCtx` without the flag would otherwise make the key read `_live` and miss
+ * the body's own writes.
+ */
+export function reducerEmitJs(
+  effect: string,
+  args: Expr[],
+  ctx: EvalCtx,
+): { stmts: string; idJs: string } {
   const effectJson = JSON.stringify(effect);
-  const argBinds = e.args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
-  const argRefs = e.args.map((_, i) => `__a${i}`).join(", ");
-  const inputRef = e.args[0] ? "__a0" : "null";
-  const eff = ctx.gen.effects.find((d) => d.name === effect);
-  let keyJs: string;
-  if (eff?.policy?.kind === "PolLatestKey") {
-    const keyCtx = makeEvalCtx(ctx.gen, ["$1"]);
-    keyJs = `String((((${bindRef(keyCtx, "$1")}) => ${jsOfExpr(eff.policy.key, keyCtx)})(${inputRef})))`;
-  } else {
-    keyJs = `"_"`;
+  const policy = ctx.gen.effects.find((d) => d.name === effect)?.policy;
+  if (policy?.kind !== "PolLatestKey") {
+    const argsJs = args.map((a) => jsOfExpr(a, ctx)).join(", ");
+    return {
+      stmts: `_emits.push({ effect: ${effectJson}, args: [${argsJs}] });`,
+      idJs: JSON.stringify(`${effect}:_`),
+    };
   }
-  return `((() => { ${argBinds} _emits.push({ effect: ${effectJson}, args: [${argRefs}] }); return ${JSON.stringify(`${effect}:`)} + ${keyJs}; })())`;
+  const argBinds = args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
+  const argRefs = args.map((_, i) => `__a${i}`).join(", ");
+  const inputRef = args[0] ? "__a0" : "null";
+  const keyJs = `${policyKeyOfJs(policy.key, ctx.gen, true)}(${inputRef})`;
+  return {
+    stmts: `${argBinds} const __k = ${keyJs}; _emits.push({ effect: ${effectJson}, args: [${argRefs}], key: __k });`,
+    idJs: `${JSON.stringify(`${effect}:`)} + __k`,
+  };
+}
+
+/**
+ * A `policy=latest-per-key(<key>)` key as a function of the effect's input,
+ * answering the key as text. `reducerScope` says whether its slot reads may
+ * name `_next`: true only for code placed inside a reducer body, where that
+ * binding exists. The effect table's `keyOf` (`policyJs`) is built inside
+ * `createApp()`, outside every reducer body, so it passes false.
+ */
+export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): string {
+  const keyCtx = makeEvalCtx(gen, ["$1"], reducerScope);
+  return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
 }
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
@@ -881,8 +918,12 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
 // Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
 // nested element guards) and a series of `const … = scVar[i]…;` bindings.
 // Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
-// the indexed access path. `inheritReducerScope` lets MatchStmt callers carry
-// the reducer's slot-write scope through; matchExpr / TileMatch leave it off.
+// the indexed access path. `inheritReducerScope` carries the caller's
+// reducer-scope flag into the arm; with it off, a slot read in the arm lowers to
+// `_live[...]`. A `match` statement passes true. TileMatch passes false because
+// a tile renders outside every reducer body. `matchExpr` passes false too, and
+// so drops the flag inside a reducer body as well — as its binding and variant
+// arms do by rebuilding the context — which is a known gap, not a rule.
 export function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,

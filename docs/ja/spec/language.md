@@ -188,9 +188,9 @@ one-of(v1, v2, ...)
 | `regex("p")` | `p` が値**全体**にマッチする。パターンは両端がアンカーされるため、`regex("[0-9]{4}")` は `"AB1234"` を拒否する | パターンとして解釈できるテキストリテラル 1 個 |
 | `one-of(v1, ...)` | 値が列挙されたリテラルのいずれか | リテラル 1 個以上 |
 
-述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。
+述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とする。`one-of` は厳密に比較するので、リテラルがテキストなら `Text`、数値なら `Int`・`Float`・`Time` の基底型を必要とする。ジェネリックの型パラメータは適用箇所で判定される：`type NonEmpty(T) = T where nonempty` は問題なく、`NonEmpty(Int)` は E0804 である。
 
-述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数の長さ、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
+述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数や負の長さ、`len-lt(0)`（あらゆるテキストより短い）、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
 
 任意 Boolean 述語は禁止。理由：AI が証明を書く必要が生じるとデバッグループが壊れる。
 
@@ -337,6 +337,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   `$route` はここでは名前ではない
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
+  reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
+  （[http.md §6.4](./http.md#_6-4-cancellation)）
 
 ### 1.5.3 例
 
@@ -452,7 +455,7 @@ reducer typed on=ui.key(RefBox) do= ...          # どちらでも input に配�
 
 subscription が届く tile を決めるのは、その子孫が「どの経路で描画されたか」であって子孫そのものではない。`RefBox` の*隣*に描画された `Leaf` はその内側ではないので、ハンドラを受け取らない。1 つの子孫に対して複数の外側 tile が同じイベントを subscribe している場合は、通常どおり [§1.6.4](#_1-6-4-不変条件) Invariant 3 が適用され、マッチしたすべてが定義順で発火する。
 
-> **既知の未対応 ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: 同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は結合されずに**置き換えられる**ため、外側 tile の reducer が発火しない。修正されるまでは、1 つの要素に対してセレクタと明示ハンドラ prop を混在させず、両方の tile で `ui.<ev>(<Tile>)` を使うこと。
+同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。したがってコンテナへの subscription は、そのイベントを発火する子孫の*すべて*に届き、自分のハンドラを持つボタンも例外ではない：チェックボックスと削除ボタンを持つ行に対する `ui.click(TodoRow)` は、その両方で実行される。行全体ではなく、そのイベントが意味する最も狭い tile を subscribe すること — `tile TodoCheck = check(...)` に対する `ui.click(TodoCheck)` のように。
 
 ### 1.6.3 lvalue の意味論
 
@@ -519,6 +522,8 @@ issue.copy(status=Done, priority=High)
 
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
+> **`.ok` では、最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` ではその値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` の最初の束縛は `out=` から型付けされない。そこに届くのは capability の失敗値であり、組み込みの storage / session / indexed ハンドラ、provider 未登録の capability、invoke 中の例外はいずれも `E` の宣言にかかわらず `{message: Text}` レコードを渡す（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、`$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
 ### 1.6.6 例
 
 ```kumiki fragment
@@ -530,7 +535,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -626,7 +631,7 @@ pattern      ::= identifier
 
 ### 1.7.3 イベントハンドラ props {#_1-7-3-event-handler-props}
 
-イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノードにマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
+イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノード（本体が一覧を描画する `for` なら、その各ノード）にマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。ここでのマージは**結合**を意味する：そのハンドラは、そのノードが同じイベントに対して既に持っているもの — builtin 自身に書かれたハンドラ、そのノードをルートとする別の呼び出し側に書かれたハンドラ、そのノードに持ち上げられたすべての `ui.<ev>(<Tile>)` subscription（[§1.6.2](#_1-6-2-セレクタ)）— に加わる。マッチした各 reducer は 1 回ずつ、すべて**定義順**で実行される。これは [§1.6.4](#_1-6-4-不変条件) Invariant 3 が同じイベントにマッチする reducer 一般について述べていることであり、ハンドラがどこに書かれたかは実行順を決めない。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
@@ -641,9 +646,11 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 ### 1.7.4 例
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 
@@ -784,6 +791,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+`if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
 ### 1.9.1 禁止事項
 

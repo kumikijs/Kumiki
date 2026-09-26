@@ -1,0 +1,18 @@
+{
+  "effects": { "load": [{ "outcome": "ok", "value": "note b" }] },
+  "steps": [
+    {
+      "label": "nothing emitted yet",
+      "expect": { "noErrors": true, "state": { "noteKey": "a", "lastId": "", "status": "idle" } }
+    },
+    {
+      "label": "the id is built from the key the same reducer staged, not the one it replaced",
+      "do": { "click": "#open" },
+      "expect": {
+        "noErrors": true,
+        "state": { "noteKey": "b", "lastId": "load:b", "status": "note b" },
+        "domIncludes": ["load:b", "note b"]
+      }
+    }
+  ]
+}

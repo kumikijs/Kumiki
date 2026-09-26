@@ -345,21 +345,22 @@ app A
     init   = []
 `;
 
-  // The premise, not an assumption: `_attachProps` merges the prop onto the
-  // node `Card` renders as its root, which is the `box`. Nothing puts it on
-  // the `button` inside, so the click really is dead — a scenario clicking
-  // the button never runs `open`.
+  // The premise, not an assumption: the call site's handler is merged onto the
+  // node `Card` renders as its root, which is the `box` — handed down into
+  // that node's own props, where it joins whatever else the box dispatches.
+  // Nothing puts it on the `button` inside, so the click really is dead — a
+  // scenario clicking the button never runs `open`.
   it("codegen puts the handler on the root box, not on the button inside", () => {
     const js = build(src('tile Card = box(button(text="go"))'));
     // Counted rather than matched literally, because the fixture's two routes
     // both name `App` and codegen inlines the tree once per route: what has to
-    // hold is that EVERY `onClick` in the output arrived through the root
-    // merge, so none of them is on the button.
-    const rootMerges = js.match(/_attachProps\(\(\{ kind: "box"/g) ?? [];
+    // hold is that EVERY `onClick` in the output is the box's own, so none of
+    // them is on the button.
+    const onBox =
+      js.match(/\{ kind: "box", children: \[[^\]]*\], props: \{ onClick: _h\("open"\) \}/g) ?? [];
     const handlers = js.match(/onClick:/g) ?? [];
-    expect(rootMerges.length).toBeGreaterThan(0);
-    expect(handlers).toHaveLength(rootMerges.length);
-    expect(js).toContain('{ onClick: _h("open") })');
+    expect(onBox.length).toBeGreaterThan(0);
+    expect(handlers).toHaveLength(onBox.length);
   });
 
   it("and says nothing about it, nested or through another tile", () => {

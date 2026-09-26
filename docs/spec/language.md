@@ -188,9 +188,9 @@ Every one of them is a **runtime check**: the value is tested on its way into th
 | `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
 | `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
 
-A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number.
+A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` compares strictly, so its literals need a `Text` base when they are text and an `Int`, `Float` or `Time` one when they are numbers. A generic's parameter is judged where the generic is applied: `type NonEmpty(T) = T where nonempty` is fine, and `NonEmpty(Int)` is E0804.
 
-The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional length, a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
+The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional or negative length, `len-lt(0)` (shorter than every text), a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
 
 Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to write proofs, the debugging loop breaks down.
 
@@ -337,6 +337,9 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   a slot and a `fn` are readable, and `$route` is not a name here
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
+  sees the reducer body's writes up to that statement and none after it
+  ([http.md §6.4](./http.md#_6-4-cancellation))
 
 ### 1.5.3 Examples
 
@@ -456,7 +459,7 @@ reducer typed on=ui.key(RefBox) do= ...          # wired onto the input, both wa
 
 The tiles a subscription reaches are decided by the path a descendant is rendered under, not by the descendant alone: a `Leaf` rendered *beside* `RefBox` is not inside it and receives no handler from it. When several enclosing tiles subscribe to one event on one descendant, [§1.6.4](#_1-6-4-invariants) Invariant 3 applies as usual — every match fires, in definition order.
 
-> **Known gap ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: writing the handler for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) currently **replaces** the lifted subscriptions instead of joining them, so the enclosing tile's reducer does not fire. Until that is fixed, subscribe with `ui.<ev>(<Tile>)` on both tiles rather than mixing a selector with an explicit handler prop on one element.
+A handler written for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) **joins** the lifted subscriptions rather than replacing them: `r` and every enclosing tile's reducer all fire, in definition order ([§1.7.3](#_1-7-3-event-handler-props)). So a subscription on a container reaches *every* descendant that fires the event, a button with its own handler included: `ui.click(TodoRow)` on a row holding a checkbox and a delete button runs on both. Subscribe to the narrowest tile the event means — `ui.click(TodoCheck)` with `tile TodoCheck = check(...)` — rather than to the row around it.
 
 ### 1.6.3 lvalue Semantics
 
@@ -523,6 +526,8 @@ issue.copy(status=Done, priority=High)
 
 > **A bind list's names must be distinct.** A bind list names the payload's positionals in order, so two binds naming one thing leaves the other positional with no name to read it by — `on=load.ok(dup, dup)` is **E0123**. `_` is exempt however often it is written, and occupies a position rather than skipping one: it is the spelling for a positional the reducer does not read.
 
+> **On `.ok`, the first bind has the type the effect's `out=` declares.** On `out=Result(T, E)`, `load.ok($v, _)` binds `$v : T`; any other `out=` is the whole value. So `session := $v` into a slot of another type is **E0201**, and a member call on `$v` answers from `T` as it would on a slot of that type. The first bind on `.err` is not typed from `out=`: what arrives there is the capability's failure value — a built-in storage / session / indexed handler, a provider with none registered and a thrown invoke all deliver a `{message: Text}` record ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), whatever `E` declares — so reads of `$e` are not checked. The second bind (the request key) and a built-in effect's result have no declared type either.
+
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
 ### 1.6.6 Examples
@@ -536,7 +541,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -634,7 +639,7 @@ pattern      ::= identifier
 
 ### 1.7.3 Event Handler props
 
-An event handler **takes a reducer name**, and may be written on a user tile as well as on a builtin. On a user tile it is a prop like any other: it is merged onto the node that tile renders, so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are the same wiring, and whether it fires is a question about what `Btn` renders. [W0213](./errors.md#w0213-handler-on-inert-tile-warning) asks that question at both kinds of call site, by walking the tile's render tree: a handler on a user tile that renders no kind able to fire it is reported the same way one written on an inert builtin is. A named argument is never the tile's input — that is the positional one — so a tile declaring `in=` still takes it: `Row(onClick=tap, label)` passes `label` as `$1`.
+An event handler **takes a reducer name**, and may be written on a user tile as well as on a builtin. On a user tile it is a prop like any other: it is merged onto the node that tile renders — onto each of them, when the body is a `for` that renders a list — so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are the same wiring, and whether it fires is a question about what `Btn` renders. Merged means **joined**: the handler adds to whatever that node already dispatches for the event — a handler written on the builtin itself, one written on another call site the node is the root of, and every `ui.<ev>(<Tile>)` subscription lifted onto it ([§1.6.2](#_1-6-2-selectors)). Each matching reducer runs once, and all of them run in **definition order**, as [§1.6.4](#_1-6-4-invariants) Invariant 3 says of any reducers matching one event; where a handler happens to be written does not decide what runs first. [W0213](./errors.md#w0213-handler-on-inert-tile-warning) asks that question at both kinds of call site, by walking the tile's render tree: a handler on a user tile that renders no kind able to fire it is reported the same way one written on an inert builtin is. A named argument is never the tile's input — that is the positional one — so a tile declaring `in=` still takes it: `Row(onClick=tap, label)` passes `label` as `$1`.
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
@@ -654,9 +659,11 @@ the argument as `$1`. **`$1` is available only when `in=` is declared** — usin
 argument positionally: `TodoRow(id)`.
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 
@@ -797,6 +804,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
 ### 1.9.1 Prohibitions
 
