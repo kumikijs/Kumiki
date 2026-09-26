@@ -477,6 +477,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
+> `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
@@ -486,7 +487,9 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、ペイロードを伴う variant タグ（`onClick=Some(1)`）、引数を伴う tile call（`onClick=box(text("z"))`）、props を伴う tile call（`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+
+このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 
 `.get-or` のフォールバックはレシーバではなく**呼び出しが返す型**と照合する：空のケースで呼び出しが返す値そのものだから、結果型を担うのはフォールバックである。その結果型はレシーバの型引数から出る — `Option(T)` と `Result(T, E)` は `T`、`Map(K, V)` は `V` — ものであり、だからこそ `Option(S)` の slot に対する `opt := opt.get-or(None)` は 2 回報告される：フォールバックが `S` でないこと、そして `S` は `Option(S)` ではないこと。2 つの読みのどちらを取るかは引数の個数が決める（[Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。したがってレシーバに合わない個数の呼び出しは**ここでは**解決せず、照合する相手も持たない。ただし下げは行われる — 与えられたレシーバに対し、個数が名指す方の読みで — ので、これは沈黙ではなくそれ自体が欠陥である。
 
