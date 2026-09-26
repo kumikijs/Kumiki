@@ -208,10 +208,21 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // shape mounted twice does not show one view's refusal in the other, and
     // pruning of controls that left the page. The other 158 is the shared
     // input helper holding a refusal back until an IME composition ends.
+    //
+    // 59,000 from 58,000 (58,070 measured, from 57,489): an index into a List
+    // names an element or panics, on both sides of `:=` (language.md §1.6.3).
+    // On its own that was 416 (57,025 from 56,609); on top of the refused-bind
+    // work above it measures 581. It is the one range rule both sides ask
+    // (`listPosition`), the `_s.index` read every `xs[i]` now lowers to, and
+    // the setter's two panics for an index that meets no List. A counter
+    // indexes nothing and still ships them: the alternative is an
+    // out-of-range write that lands nowhere and a read that hands `undefined`
+    // to whatever comes next. Each change fit under 58,000 alone; together
+    // they pass it by 70 bytes, so the budget takes the next thousand.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(58_000);
+    expect(total).toBeLessThan(59_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

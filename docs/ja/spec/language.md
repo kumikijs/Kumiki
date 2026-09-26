@@ -477,6 +477,14 @@ editor := editor.map($1.copy(body="Body"))
 
 **`.get` 経由は安全**: Option が `None` のときの代入は no-op（panic しない）。明示的に panic させたい場合は `editor := Some(editor.get.copy(body="Body"))` と書く。`.get` は読み取り時と同じ多相 unwrap（[標準ライブラリ §2.2.4](./stdlib.md#_2-2-4-option-t)）であり、`Result` も同様に振る舞う — `Ok` の payload を書き換え、`Err` は素通りする。安全なのは*代入*だけである点に注意: 右辺が `None` の `editor.get` を読めば従来どおり panic する。
 
+**インデックスのステップはレシーバ内の場所を指し**、何を指すかはレシーバによって決まる：
+
+- **`Map(K, V)`** — そのキーのエントリ。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。
+- **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
+- **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member) である。所属は `.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
+
+> **既知の未対応 ([#519](https://github.com/kumikijs/Kumiki/issues/519))**: 存在しない `k` に対する `m[k].f := v` は、現状では何も書き込まずに済ませるのではなく、`f` だけを持つエントリを挿入してしまう。
+
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
 `bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させること。

@@ -481,6 +481,14 @@ editor := editor.map($1.copy(body="Body"))
 
 **Going via `.get` is safe**: assigning when the Option is `None` is a no-op (does not panic). If you want to explicitly panic, write `editor := Some(editor.get.copy(body="Body"))`. `.get` is the same polymorphic unwrap it is when read ([Standard Library §2.2.4](./stdlib.md#_2-2-4-option-t)), so a `Result` behaves alike: the write edits an `Ok` payload and skips an `Err`. Note that only the *assignment* is safe — a right-hand side that reads `editor.get` while the Option is `None` still panics.
 
+**An index step names a place in its receiver**, and what it names depends on the receiver:
+
+- **`Map(K, V)`** — the entry at the key. `m[k] := v` inserts or replaces it; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does.
+- **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
+- **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+
+> **Known gap ([#519](https://github.com/kumikijs/Kumiki/issues/519))**: `m[k].f := v` on an absent `k` currently inserts an entry holding only `f`, rather than writing nothing.
+
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
 A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached.

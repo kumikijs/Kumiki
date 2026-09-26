@@ -123,7 +123,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 ### 7.2.2 想定外のエラー（panic） {#_7-2-2-unexpected-errors-panic}
 
 - reducer 内での `Option.get` で None を取った
-- `List.get(i)` で範囲外
+- インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
 - `Result.get` で Err
 - `panic(msg)` の明示呼び出し
 
