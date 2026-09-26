@@ -56,10 +56,9 @@ reducer start on=ui.click(Start)
 reducer stretch on=ui.click(Stretch)
     do= draft.get.length := 99
 
-# An index step, the third member of the closed set. A Map, which is the shape
-# §1.6.3's own example uses — an index write into a List is a separate defect
-# of the runtime's setter, which spreads the array into an object literal, and
-# is tracked on its own rather than widened into this rule.
+# An index step, the third member of the closed set, here on a Map — the shape
+# §1.6.3's own example uses. `101-list-index-write.kumiki` writes through an
+# index into a List.
 reducer mark on=ui.click(Mark)
     do= marks["a"] := 1
 

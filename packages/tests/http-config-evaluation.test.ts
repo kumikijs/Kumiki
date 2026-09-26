@@ -16,7 +16,8 @@
 // shape of all four fields on inline source, and the sibling
 // `packages/tests/app-http.test.ts` mounts `07-app-http` and asserts the URL,
 // one header and `credentials` reach `fetch` — not `timeout`, which is pinned
-// end-to-end only here.
+// end-to-end only here: as an `Int` slot through example 81, and as a
+// `Duration` literal through example 120.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,13 @@ import { loadApp } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = join(here, "..", "examples", "features", "81-http-config-from-slots.kumiki");
+const DURATION_EXAMPLE = join(
+  here,
+  "..",
+  "examples",
+  "features",
+  "120-http-config-value-types.kumiki",
+);
 
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -103,6 +111,42 @@ describe("app.http fields that read a slot", () => {
       await tick(300);
 
       expect((app.live as Record<string, unknown>).status).toBe("error");
+      dispose();
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("reads a Duration timeout as milliseconds, so a slow answer still arrives", async () => {
+    // Example 120 writes `timeout: Duration.s(5)`, which is 5000 ms at run time.
+    // The answer below takes 100 ms: it arrives only if the abort was armed
+    // with more than that. Were `Duration.s(5)` ever read as 5 ms, the abort
+    // would win and the quote would never render — while check, build and the
+    // typecheck of the field all stayed green.
+    const app = await loadApp(DURATION_EXAMPLE);
+    double = stubFetch(
+      (call) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve(new Response("Simplicity is a great virtue.")),
+            100,
+          );
+          call.init.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }));
+          });
+        }),
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const { dispose } = mount(app, root);
+
+      clickByText(root, "Load quote");
+      await tick(300);
+
+      expect(double.calls.map((c) => c.url)).toEqual(["https://api.example.com/quote"]);
+      expect((app.live as Record<string, unknown>).quote).toBe("Simplicity is a great virtue.");
       dispose();
     } finally {
       root.remove();

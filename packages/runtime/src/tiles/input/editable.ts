@@ -33,7 +33,7 @@ export const editableTile: TileRenderer<"editable"> = (node) => {
     const value = div.textContent ?? "";
     if (state?.bind) {
       const app = liveApp(div);
-      if (app) writeBind(app, state.bind, state.bindPath, value);
+      if (app) writeBind(app, div, state.bind, state.bindPath, value);
     }
     if (state?.onInput) state.onInput({ ...(state.el ?? {}), value });
   });

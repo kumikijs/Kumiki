@@ -1363,7 +1363,11 @@ const ROOT_ATTR = "data-kumiki-root";
  */
 export type MountedApp = AppShape & {
   _dispatch: (name: string, el: Record<string, unknown>) => void;
-  _setSlot: (name: string, value: unknown) => void;
+  /**
+   * Write a slot through its refinement: `true` when the value was taken,
+   * `false` when the refinement refused it and nothing changed.
+   */
+  _setSlot: (name: string, value: unknown) => boolean;
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;
@@ -1379,6 +1383,91 @@ export type MountedApp = AppShape & {
 };
 
 const appByRoot = new WeakMap<Element, MountedApp>();
+
+/**
+ * A value a `bind` wrote and its slot's refinement refused (forms.md §5.1.2):
+ * the slot value the write would have produced, and what the control was
+ * showing when it was refused.
+ */
+type RefusedBind = { slot: string; value: unknown; shown: string };
+
+/**
+ * Per app, the controls whose shown value their slot refused. A refused bind
+ * leaves the slot as it was and the control as the user left it, so the two
+ * disagree; this is what lets `error(field=…)` speak for what the field shows
+ * rather than for the value the slot kept.
+ *
+ * Keyed by the app, not the view: every view of a shape (runtime.md §10.9.1)
+ * shares this map, so a lookup is scoped to the view being rendered — a value
+ * refused in one view is not what another view's field shows.
+ */
+const refusedBinds = new WeakMap<object, Map<HTMLElement, RefusedBind>>();
+
+/** What a bound control shows: its value, or an editable's text. */
+function shownValue(el: HTMLElement): string {
+  return "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? "");
+}
+
+/**
+ * Record the outcome of a `bind` write from `el`: a refused one is remembered
+ * against the control, an accepted one clears whatever was. Entries whose
+ * control has left the page are dropped on the way past, so a refused write on
+ * a control nothing ever asks about (no `error(field=…)` for its slot) does not
+ * keep the detached element alive for the app's lifetime.
+ */
+export function noteBindWrite(
+  app: object,
+  el: HTMLElement,
+  slot: string,
+  value: unknown,
+  accepted: boolean,
+): void {
+  let byEl = refusedBinds.get(app);
+  if (byEl) {
+    for (const other of byEl.keys()) if (!other.isConnected) byEl.delete(other);
+  }
+  if (accepted) {
+    byEl?.delete(el);
+    return;
+  }
+  if (!byEl) {
+    byEl = new Map();
+    refusedBinds.set(app, byEl);
+  }
+  byEl.set(el, { slot, value, shown: shownValue(el) });
+}
+
+/**
+ * The refused value a control bound to `slot` inside `view` is still showing,
+ * if any. An entry whose control has left the page, or no longer shows what
+ * was refused — a reducer rewrote the slot and the control followed it — is
+ * stale, and every stale entry for the slot is dropped here rather than by
+ * every path that can move a control. A live entry in another view is kept
+ * and not returned.
+ */
+export function refusedBindShown(
+  app: object,
+  slot: string,
+  view: Node | undefined,
+): { value: unknown } | undefined {
+  const byEl = refusedBinds.get(app);
+  if (!byEl) return undefined;
+  let found: { value: unknown } | undefined;
+  for (const [el, r] of byEl) {
+    if (r.slot !== slot) continue;
+    if (!el.isConnected || shownValue(el) !== r.shown) {
+      byEl.delete(el);
+      continue;
+    }
+    if (!found && view?.contains(el)) found = { value: r.value };
+  }
+  return found;
+}
+
+/** The controls a refused bind is remembered against, for `app`. */
+export function refusedBindControls(app: object): HTMLElement[] {
+  return [...(refusedBinds.get(app)?.keys() ?? [])];
+}
 
 /**
  * The live mount of an `AppShape`, if it has one. A shape carries the app's
@@ -1531,6 +1620,30 @@ function shadowHost(el: Element): Element | null {
 /** The app whose synchronous render pass is currently executing, if any. */
 export function getRenderingApp(): MountedApp | undefined {
   return renderingApp ?? undefined;
+}
+
+/** Non-null only while one view's render pass is running: that view's host. */
+let renderingView: Element | null = null;
+
+/**
+ * The host of the view whose render pass is executing, if any. A shape
+ * mounted twice renders each view in turn under one `withRenderingApp`, so
+ * this — not the app — is what tells render-time state that belongs to one
+ * view (a refused bind, forms.md §5.1.2) which view is asking.
+ */
+export function getRenderingView(): Element | undefined {
+  return renderingView ?? undefined;
+}
+
+/** Bracket one view's render pass; saved/restored like {@link withRenderingApp}. */
+function withRenderingView<T>(view: Element, fn: () => T): T {
+  const prev = renderingView;
+  renderingView = view;
+  try {
+    return fn();
+  } finally {
+    renderingView = prev;
+  }
 }
 
 /**
@@ -1782,7 +1895,7 @@ export function mountCore(
     views.push(view);
     registerAppRoot(into, app);
     withRenderingApp(app, () => {
-      renderPass(view);
+      withRenderingView(view.target, () => renderPass(view));
     });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
   };
@@ -1811,7 +1924,8 @@ export function mountCore(
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
-        const pass = renderPass(views[i]!);
+        const view = views[i]!;
+        const pass = withRenderingView(view.target, () => renderPass(view));
         if (i === 0) tree = pass.tree;
         touched.push(...pass.touched);
       }
@@ -2601,14 +2715,15 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  (app as AppShape & { _setSlot?: (name: string, value: unknown) => void })._setSlot = (
+  (app as AppShape & { _setSlot?: (name: string, value: unknown) => boolean })._setSlot = (
     name: string,
     value: unknown,
   ) => {
     const meta = app.slots[name];
-    if (meta?.refine && !meta.refine(value)) return;
+    if (meta?.refine && !meta.refine(value)) return false;
     slotValues[name] = value;
     render();
+    return true;
   };
   (app as AppShape & { _navigate?: (path: string, replace?: boolean) => void })._navigate = (
     path: string,
@@ -3251,6 +3366,20 @@ function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
 }
 
 /**
+ * The element of `list` an index names, or a panic when it names none
+ * (lifecycle.md §7.2.2). One rule for `xs[i]` on both sides of `:=`: the read
+ * (`_stdlibCore.index`) and the write (`_setPathHelper`) ask it the same way,
+ * so they cannot disagree about which indices are in range.
+ */
+export function listPosition(list: readonly unknown[], index: unknown): number {
+  if (typeof index === "number" && Number.isInteger(index) && index >= 0 && index < list.length) {
+    return index;
+  }
+  const shown = typeof index === "string" ? JSON.stringify(index) : String(index);
+  throw new KumikiPanic(`Index ${shown} is out of range for a List of length ${list.length}`);
+}
+
+/**
  * Immutably set a (possibly nested) path on a value. Shared by `bind=`
  * write-back and by the assignment a reducer lowers to, so the two ways to
  * write a slot cannot disagree about what a path means.
@@ -3280,6 +3409,28 @@ export function _setPathHelper(
       }
     }
     return _setPathHelper(obj, rest, value);
+  }
+  // A List stays a List: the element at the index is replaced in a copy
+  // (language.md §1.6.3). An index that names no element panics, as does an
+  // element that is not there to write through — the object spread below
+  // would turn the array into an object keyed by its indices, and a missing
+  // element into a record with one field.
+  if (Array.isArray(obj)) {
+    const at = listPosition(obj, head);
+    const element = obj[at];
+    if (rest.length > 0 && (element === undefined || element === null)) {
+      throw new KumikiPanic(`Index ${at} of a List holds no value to write through`);
+    }
+    const out = [...obj];
+    out[at] = _setPathHelper(element, rest, value);
+    return out;
+  }
+  // A number is a List index or a `Map(Int, V)` key. Where the value is neither
+  // an array nor an object — absent after a restore or a decode — there is no
+  // List to index and no Map to insert into, and building an object would
+  // leave `{"0": v}` where a List was declared.
+  if (typeof head === "number" && (obj === null || typeof obj !== "object")) {
+    throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
   return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };
@@ -3944,8 +4095,32 @@ function reconcileNode(
       diag?.fallback({ reason: "no-patcher" }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
+  } else if (newNode.kind === "error") {
+    // Every own field compared equal, which leaves the element mounted
+    // untouched — except for a tile whose output reads state its node does
+    // not carry. `error(field=…)` renders the message for what its field
+    // *shows*, and a `bind` its refinement refused changes that without
+    // changing the slot the node is built from (forms.md §5.1.2), so its
+    // patcher re-derives the message on every pass, equal node or not.
+    //
+    // It is also what makes the tile follow its slot at all. A compiled app
+    // gets that today by accident: codegen emits `error(field=contact)` with
+    // `props: { field: _live["contact"], … }`, so the node is never equal
+    // across a change of the slot and the patcher above runs. This branch is
+    // what keeps the message right if that argument stopped leaking into
+    // `props`.
+    //
+    // Guarded like the patcher call above, so the two exits cannot drift.
+    try {
+      patchers.error?.(oldEl, oldNode as never, newNode as never, ctx);
+    } catch (e) {
+      if (e instanceof PatchRequiresRebuild) {
+        return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+      }
+      throw e;
+    }
   }
-  // No `else`: when every own field compares equal the element stays mounted
+  // Otherwise, when every own field compares equal the element stays mounted
   // untouched, and that is unconditionally safe — handlers compare by identity
   // (§10.3.13), so reaching here means the mounted element already holds the
   // handlers this render produced.

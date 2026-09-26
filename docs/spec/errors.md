@@ -524,6 +524,7 @@ A value does not have the type its position requires.
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
+> `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
@@ -533,11 +534,15 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a variant tag carrying a payload (`onClick=Some(1)`), a tile call carrying arguments (`onClick=box(text("z"))`) or props (`onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+
+One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
 Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed, and a `where` refinement is transparent: this check never evaluates one. On `type Volume = nominal Int where between(0, 11)`, `volume := 50` is not this error — whether a value is in range is decided at validation ([Forms §5.6](./forms.md#_5-6-validation-strategy)).
+
+`()` is a value like any other: it is the one value of `Unit` ([stdlib §2.1](./stdlib.md#_2-1-built-in-types)), so it is accepted where `Unit` is declared and is this error against any other declared type (an `emit` argument reports E0202, and `emit e(())` on an `in=Unit` effect is E0213, since that effect takes no argument). `Card(())` against `tile Card in={label: Text}` reports `Expected {label: Text} but got Unit` at the `()`: `()` runs as `null`, which a tile reading `$1.label` cannot use.
 
 `nominal` is the exception, and the one rule in this code that reports where *every* value of the actual type is a valid value of the declared one: `1.5` is not an `Int` and `{a, b}` is not an `{a: Int}`, but every `Yen` is a perfectly good `Cents`. A nominal type is identified by the name it is declared under ([§1.3.5](./language.md#_1-3-5-type-canonicalization)), so two declarations over one base reject each other — `Cents := Yen`, `postId := userId`. A type carrying no nominal name of its own still meets any nominal declared over it in both directions, which is what leaves `slot c : Cents = 1` and `c := c + 1` legal; a nominal declared over another nominal goes one way, toward the one it was declared as.
 
@@ -676,7 +681,7 @@ The checker descends into all four control-flow bodies (`for` / `when` / `if` / 
 
 ### W0212 `ui-event-tile-mismatch` (warning)
 
-A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. One half of the cascade is still open: when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`), that prop replaces the lifted subscription rather than joining it, and the container's reducer does not fire — [#407](https://github.com/kumikijs/Kumiki/issues/407).
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
@@ -799,6 +804,16 @@ A `Map` holds two lists and they bind different things: `for k in m.keys` binds 
 Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
+
+### E0219 `bind-strict-prop`
+
+A `strict` prop is written on a control `bind` writes back from — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`, `editable` — as an argument or in the props block.
+
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+
+An earlier revision of [Forms §5.1.2](./forms.md#_5-1-2-handling-of-refinement) specified `strict=false` as a second mode: take a value the refinement refuses, and turn a form-level `valid` flag false. Nothing implemented it, and the flag had no reader anywhere in the language, so the prop passed `check` and did nothing — an author who wrote it to relax a field got the strict behaviour with no sign of it. The chapter has one mode now: a bind its refinement refuses leaves the slot as it was, the field keeps what was typed, and `error(field=…)` renders the message for it.
+
+**Fix**: Remove the prop, and put `error(field=<slot>)` beside the control to show the user why a value was not taken. To let the slot hold such a value, loosen the slot's type and validate in a reducer ([§5.6](./forms.md#_5-6-validation-strategy)).
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -933,7 +948,7 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 ### E0602 `unassignable-member`
 
-An lvalue step names a **stdlib member** of the receiver rather than a field. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index, and `.get` on an `Option` / `Result` — so a member cannot be written through: the segment would become a literal key and the write would replace the slot with a record. `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
+An lvalue step names no place in its receiver: a **stdlib member** where a field was expected, or an **index into a `Set`**. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index into a `Map` or a `List`, and `.get` on an `Option` / `Result` — so neither can be written through. A member segment would become a literal key and the write would replace the slot with a record: `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
 
 > `Cannot assign through ".<member>": it is a member of "<T>", not a field`
 
@@ -941,9 +956,13 @@ An lvalue step names a **stdlib member** of the receiver rather than a field. Th
 
 The name is dispatched, not reserved: a record that declares a field named `length` is still written through it. Conversely a record does not declare `.show`, so the dispatch falls through to the stdlib and `rec.show := "x"` is E0602 like any other member.
 
-E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.
+For a member, E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.
 
-**Fix**: Write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists.
+For an index, E0602 is raised when the receiver's type is known to be a `Set` — declared directly, through an alias or `nominal`, or reached through a field, a `List` element, a `Map` value or `.get`. An index names a place — an entry of a `Map`, a position of a `List` — and a Set has membership and no places, so `tags[x] := v` has nowhere to land:
+
+> `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+
+**Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
 
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 

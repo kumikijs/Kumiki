@@ -1,0 +1,39 @@
+# Feature (stdlib.md §2.1): `()` is the one value of `Unit`, and it is typed
+# like any other literal.
+#
+# It goes where `Unit` is declared — a `Unit` slot, the ok side of a
+# `Result(Unit, E)`, a `Unit` parameter — and nowhere else. Written where a
+# record is wanted it is E0201 at the `()`:
+#
+#   tile Card in={label: Text} = text($1.label)
+#   Card(())            # E0201 Expected {label: Text} but got Unit
+#
+# `()` lowers to `null`, which `$1.label` cannot read.
+
+slot done   : Unit              = ()
+slot saved  : Result(Unit, Text) = Err("not yet")
+slot count  : Int               = 0
+
+fn tally(u: Unit, n: Int) -> Int = n + 1
+
+tile Card in={label: Text} = text($1.label)
+
+reducer save on=ui.click(Save)
+    do= done  := ()
+        saved := Ok(())
+        count := tally((), count)
+
+tile Save = button(text="save") {id: "save"}
+
+tile App
+    = column(
+        heading("the Unit value"),
+        Save,
+        Card({label: "saved: " + saved.is-ok.show}),
+        text("count: " + count.show))
+      {pad: "lg", gap: "md"}
+
+app UnitValue
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

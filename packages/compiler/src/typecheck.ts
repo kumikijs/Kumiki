@@ -1003,6 +1003,45 @@ function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
+/** The controls `bind` writes back from (forms.md §5.1.1, plus `editable`). */
+const BIND_CONTROLS = new Set([
+  "input",
+  "textarea",
+  "select",
+  "slider",
+  "check",
+  "switch",
+  "radio",
+  "editable",
+]);
+
+/**
+ * E0219: `strict` on a bind control kind (`BIND_CONTROLS`), with or without a
+ * `bind` — it is not a prop of these tiles at all. forms.md §5.1.2 used to specify
+ * `strict=false` — take a value the refinement refuses and turn a form-level
+ * `valid` flag false — and nothing ever implemented it: the flag has no reader
+ * in the language, so the prop passed `check` and did nothing (#443). The
+ * chapter now has one mode, and the prop an author carries over from the old
+ * text is reported where it is written, as an argument or in the props block.
+ */
+function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  if (!BIND_CONTROLS.has(t.name)) return;
+  const written = [
+    ...t.args.flatMap((a) =>
+      a.name === "strict" ? [{ pos: a.namePos ?? (a.value as Expr).pos }] : [],
+    ),
+    ...t.props.flatMap((p) => (p.name === "strict" ? [{ pos: p.pos }] : [])),
+  ];
+  for (const { pos } of written) {
+    errors.push({
+      code: "E0219",
+      kind: "bind-strict-prop",
+      message: `"strict" is not a prop of ${t.name}: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`,
+      pos,
+    });
+  }
+}
+
 /**
  * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
  * typed from the scrutinee. For the positions that only *read* an arm — a
@@ -1250,6 +1289,7 @@ function checkTileCall(
   checkA11y(t, sym, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
+  checkBindStrictProp(t, errors);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");
@@ -1409,7 +1449,7 @@ function checkHandlerBinding(
  * anywhere in the render tree is the answer that reports.
  *
  * That under-reports rather than over-reports, deliberately: codegen merges
- * these props onto the node the tile renders as its ROOT (`_attachProps`), so
+ * these props onto the node the tile renders as its ROOT (`tileCallJs`), so
  * `Card = box(button(…))` drops the handler too and is not reported here,
  * because the walk does not tell a root from a descendant. Every case it does
  * report is a certain drop — a tree with no firing kind in it has no firing
@@ -1482,7 +1522,7 @@ function inertHandler(
  * true answer: codegen propagates `ui.click(TodoRow)` down to the `check` of
  * `TodoRow = row(check(...), …)`, so finding one means the subscription is
  * wired. For `W0213` it is deliberate under-reporting: an explicit handler
- * prop lands on the ROOT node and nowhere else (`_attachProps`), so a firing
+ * prop lands on the ROOT node and nowhere else (`tileCallJs`), so a firing
  * descendant does NOT mean the handler is wired — only that this walk cannot
  * prove it is dropped.
  */
@@ -2044,8 +2084,10 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
-  if (lv.kind === "LIndex") checkExpr(lv.index, sym, errors, ctx);
-  else {
+  if (lv.kind === "LIndex") {
+    checkExpr(lv.index, sym, errors, ctx);
+    checkIndexLvalue(lv, sym, errors, ctx);
+  } else {
     // Record the same decision `classifyFieldAccess` records for a read, so
     // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
     // the base type is unknown, as it is there — the name-based reading then
@@ -2057,6 +2099,46 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
+}
+
+/**
+ * An index step on the left of `:=`. A `List` index names a position, so it is
+ * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
+ * membership and nothing else, so `s[x] := v` has no place to write — the same
+ * refusal §1.6.3 gives a member, and reported by the same code. Membership is
+ * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ */
+function checkIndexLvalue(
+  lv: Lvalue & { kind: "LIndex" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  checkListIndex(base, lv.index, sym, errors, ctx);
+  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    pos: lv.pos,
+  });
+}
+
+/**
+ * A `List` index is an `Int`, on either side of `:=` — the read and the write
+ * name the same element (language.md §1.6.3). `base` is the receiver's type,
+ * already unaliased; any other receiver is left alone.
+ */
+function checkListIndex(
+  base: TypeExpr | null,
+  index: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (base?.kind !== "TypeApp" || base.name !== "List") return;
+  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
 }
 
 /**
@@ -2609,6 +2691,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Index":
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
+      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
       return;
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
@@ -3462,7 +3545,9 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     return null;
   }
   if (base.kind === "TypeApp") {
-    if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
+    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
+    // a right-hand side to be checked against.
+    if (base.name === "List") return base.args[0] ?? null;
     if (base.name === "Map") return base.args[1] ?? null;
   }
   return null;
@@ -3904,6 +3989,11 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return { kind: "TypePrim", name: "Text", pos: e.pos };
     case "Bool":
       return { kind: "TypePrim", name: "Bool", pos: e.pos };
+    case "Unit":
+      // `()` is the one value of `Unit`, and a known type like any other
+      // literal's. Answering `null` here would accept it against every
+      // declared type, and `()` runs as `null`.
+      return prim("Unit", e.pos);
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
@@ -5603,6 +5693,11 @@ function checkApp(
  * the read throws inside the request, the dispatcher turns the throw into an
  * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
  * would pass check, build and smoke alike.
+ *
+ * Three of the four also have a type (http.md §6.3.1), checked after the walk:
+ * a value of the wrong one runs and does the wrong thing rather than failing.
+ * `headers` is a record of whatever the author sends, and has none to hold it
+ * to here.
  */
 function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
@@ -5620,6 +5715,45 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
+  // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
+  // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
+  // `Duration`", because a program's own `type Duration` shadows the stdlib one
+  // and may be anything.
+  if (http.baseUrl !== undefined)
+    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
+  if (http.timeout !== undefined)
+    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
+  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+}
+
+/** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */
+const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
+
+/**
+ * `app.http.credentials` is a `Text`, so a slot can select the mode per
+ * request, and every literal that reaches the field — the field's own value, or
+ * a literal branch of an `if`, at any depth — is also compared with the three
+ * Fetch modes: a browser refuses a request whose init names any other, so a
+ * misspelt mode is as wrong as an `Int`. Anything else (a slot, a call, a
+ * concatenation) is held to `Text` alone; its value is decided at run time.
+ */
+function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "IfExpr") {
+    checkHttpCredentials(e.consequent, sym, errors, ctx);
+    checkHttpCredentials(e.alternate, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "Str") {
+    if (HTTP_CREDENTIALS.includes(e.value)) return;
+    pushMismatch(
+      errors,
+      "E0201",
+      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
+      e.pos,
+    );
+    return;
+  }
+  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
 }
 
 /**

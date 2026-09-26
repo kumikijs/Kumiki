@@ -459,7 +459,7 @@ reducer typed on=ui.key(RefBox) do= ...          # wired onto the input, both wa
 
 The tiles a subscription reaches are decided by the path a descendant is rendered under, not by the descendant alone: a `Leaf` rendered *beside* `RefBox` is not inside it and receives no handler from it. When several enclosing tiles subscribe to one event on one descendant, [§1.6.4](#_1-6-4-invariants) Invariant 3 applies as usual — every match fires, in definition order.
 
-> **Known gap ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: writing the handler for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) currently **replaces** the lifted subscriptions instead of joining them, so the enclosing tile's reducer does not fire. Until that is fixed, subscribe with `ui.<ev>(<Tile>)` on both tiles rather than mixing a selector with an explicit handler prop on one element.
+A handler written for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) **joins** the lifted subscriptions rather than replacing them: `r` and every enclosing tile's reducer all fire, in definition order ([§1.7.3](#_1-7-3-event-handler-props)). So a subscription on a container reaches *every* descendant that fires the event, a button with its own handler included: `ui.click(TodoRow)` on a row holding a checkbox and a delete button runs on both. Subscribe to the narrowest tile the event means — `ui.click(TodoCheck)` with `tile TodoCheck = check(...)` — rather than to the row around it.
 
 ### 1.6.3 lvalue Semantics
 
@@ -480,6 +480,14 @@ editor := editor.map($1.copy(body="Body"))
 ```
 
 **Going via `.get` is safe**: assigning when the Option is `None` is a no-op (does not panic). If you want to explicitly panic, write `editor := Some(editor.get.copy(body="Body"))`. `.get` is the same polymorphic unwrap it is when read ([Standard Library §2.2.4](./stdlib.md#_2-2-4-option-t)), so a `Result` behaves alike: the write edits an `Ok` payload and skips an `Err`. Note that only the *assignment* is safe — a right-hand side that reads `editor.get` while the Option is `None` still panics.
+
+**An index step names a place in its receiver**, and what it names depends on the receiver:
+
+- **`Map(K, V)`** — the entry at the key. `m[k] := v` inserts or replaces it; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does.
+- **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
+- **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+
+> **Known gap ([#519](https://github.com/kumikijs/Kumiki/issues/519))**: `m[k].f := v` on an absent `k` currently inserts an entry holding only `f`, rather than writing nothing.
 
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
@@ -541,7 +549,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -639,7 +647,7 @@ pattern      ::= identifier
 
 ### 1.7.3 Event Handler props
 
-An event handler **takes a reducer name**, and may be written on a user tile as well as on a builtin. On a user tile it is a prop like any other: it is merged onto the node that tile renders, so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are the same wiring, and whether it fires is a question about what `Btn` renders. [W0213](./errors.md#w0213-handler-on-inert-tile-warning) asks that question at both kinds of call site, by walking the tile's render tree: a handler on a user tile that renders no kind able to fire it is reported the same way one written on an inert builtin is. A named argument is never the tile's input — that is the positional one — so a tile declaring `in=` still takes it: `Row(onClick=tap, label)` passes `label` as `$1`.
+An event handler **takes a reducer name**, and may be written on a user tile as well as on a builtin. On a user tile it is a prop like any other: it is merged onto the node that tile renders — onto each of them, when the body is a `for` that renders a list — so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are the same wiring, and whether it fires is a question about what `Btn` renders. Merged means **joined**: the handler adds to whatever that node already dispatches for the event — a handler written on the builtin itself, one written on another call site the node is the root of, and every `ui.<ev>(<Tile>)` subscription lifted onto it ([§1.6.2](#_1-6-2-selectors)). Each matching reducer runs once, and all of them run in **definition order**, as [§1.6.4](#_1-6-4-invariants) Invariant 3 says of any reducers matching one event; where a handler happens to be written does not decide what runs first. [W0213](./errors.md#w0213-handler-on-inert-tile-warning) asks that question at both kinds of call site, by walking the tile's render tree: a handler on a user tile that renders no kind able to fire it is reported the same way one written on an inert builtin is. A named argument is never the tile's input — that is the positional one — so a tile declaring `in=` still takes it: `Row(onClick=tap, label)` passes `label` as `$1`.
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
@@ -659,9 +667,11 @@ the argument as `$1`. **`$1` is available only when `in=` is declared** — usin
 argument positionally: `TodoRow(id)`.
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 

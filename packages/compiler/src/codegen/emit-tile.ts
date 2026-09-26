@@ -12,7 +12,7 @@ import {
 } from "./context.ts";
 import { jsOfExpr, tupleArm } from "./expr.ts";
 import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
-import { keyFor, propsFor } from "./selector.ts";
+import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
   const ctx = makeEvalCtx(gen, new Set(tile.in ? ["$1"] : []));
@@ -122,6 +122,12 @@ export function tileExprJs(
   // transparently through TileWhen / TileIf / TileMatch arms; resets at
   // user-tile boundaries (see `tileCallJs`).
   implicitKeyExpr?: string,
+  // Explicit handlers written on the user-tile call sites whose tree `t` is the
+  // root of, for every node `t` renders at its root to join (see
+  // `explicitHandlers`). It follows the arms of a branch and each iteration of
+  // a `for`, and continues through a nested call site; a child is not the
+  // root, so it goes no further than that.
+  rootHandlers?: HandlerWiring,
 ): string {
   switch (t.kind) {
     case "TileFor": {
@@ -130,13 +136,13 @@ export function tileExprJs(
       const bind = declareBind(inner, t.bind);
       const impl = `_s.show(${bind})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl)}))`;
+      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
-      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.body, gen, ctx, enclosingTiles, implicitKeyExpr)}) : null)`;
+      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.body, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}) : null)`;
     case "TileIf":
-      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.consequent, gen, ctx, enclosingTiles, implicitKeyExpr)}) : (${tileExprJs(t.alternate, gen, ctx, enclosingTiles, implicitKeyExpr)}))`;
+      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.consequent, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}) : (${tileExprJs(t.alternate, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}))`;
     case "TileMatch": {
       const sc = jsOfExpr(t.scrutinee, ctx);
       const arms = t.arms
@@ -148,22 +154,22 @@ export function tileExprJs(
                 b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
               )
               .join(" ");
-            return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr)}; }`;
+            return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
           if (arm.pattern.kind === "PBind") {
             const inner = makeEvalCtx(gen, ctx.localBinds);
             const bind = declareBind(inner, arm.pattern.name);
-            return `if (true) { const ${bind} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr)}; }`;
+            return `if (true) { const ${bind} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
           if (arm.pattern.kind === "PWildcard") {
-            return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTiles, implicitKeyExpr)}; }`;
+            return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
           // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
           // no reducerScope here (tile-match runs in pure render context), so the
           // helper's `inheritReducerScope=false` path is what we want.
           {
             const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
-            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr)}; }`;
+            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
         })
         .join(" else ");
@@ -179,6 +185,7 @@ export function tileExprJs(
         ctx,
         enclosingTiles,
         implicitKeyExpr,
+        rootHandlers,
       );
   }
 }
@@ -221,6 +228,7 @@ function tileCallJs(
   ctx: EvalCtx,
   enclosingTiles?: EnclosingTiles,
   implicitKeyExpr?: string,
+  rootHandlers?: HandlerWiring,
 ): string {
   const name = t.name;
   // Explicit `{key: <expr>}` on the tile call wins over the enclosing
@@ -242,6 +250,14 @@ function tileCallJs(
     // rendered tree (lifecycle.md §7.1.6). Builtin tiles are NOT named — only
     // user-defined tile boundaries fire mount/unmount.
     const nameLit = JSON.stringify(def.name);
+    // The handlers written here — plus any handed down from call sites this one
+    // is the root of — belong to the nodes the body renders at its root, so
+    // they go down to each one's `propsFor` and join what is wired there. The
+    // props left for `_attachProps` to merge are data only: a handler spread
+    // over the finished node would replace the ones it already has.
+    const handlers = explicitHandlers(t, rootHandlers);
+    const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
+    const bodyHandlers = handlers.size > 0 ? handlers : undefined;
     if (arg1) {
       const v = arg1.value;
       if (isTileExpr(v)) {
@@ -256,17 +272,31 @@ function tileCallJs(
       // as arguments so the inner IIFE can rebind `_d_1` without colliding
       // with the outer scope.
       const oneJs = jsOfExpr(v as Expr, ctx);
-      const propsJs = propsFor(t, ctx);
+      const propsJs = callSiteProps();
       const bodyCtx = addBind(inner, "$1");
-      const bodyJs = tileExprJs(def.body, gen, bodyCtx, under(enclosingTiles, def.name));
+      const bodyJs = tileExprJs(
+        def.body,
+        gen,
+        bodyCtx,
+        under(enclosingTiles, def.name),
+        undefined,
+        bodyHandlers,
+      );
       return wrap(
         wrapBoundary(
           `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
         ),
       );
     }
-    const propsJs = propsFor(t, ctx);
-    const bodyJs = tileExprJs(def.body, gen, inner, under(enclosingTiles, def.name));
+    const propsJs = callSiteProps();
+    const bodyJs = tileExprJs(
+      def.body,
+      gen,
+      inner,
+      under(enclosingTiles, def.name),
+      undefined,
+      bodyHandlers,
+    );
     return wrap(wrapBoundary(`_named(_attachProps(${bodyJs}, ${propsJs}), ${nameLit})`));
   }
 
@@ -275,7 +305,7 @@ function tileCallJs(
   // uniformly picks up `_wk(..., key)` when the call site has an explicit or
   // implicit key, without touching each individual case.
   gen.usedTiles.add(name);
-  const propsObj = propsFor(t, ctx, enclosingTiles);
+  const propsObj = propsFor(t, ctx, enclosingTiles, explicitHandlers(t, rootHandlers));
   const emitBuiltin = (): string => {
     switch (name) {
       case "page":

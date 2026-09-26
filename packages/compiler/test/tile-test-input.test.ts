@@ -316,13 +316,7 @@ tile Host = column(Card({label: "x"}))`,
     ).toEqual([]);
   });
 
-  it("lets a `()` through, as every other call site does — known gap, see #427", () => {
-    // `checkAgainst` accepts the unit literal against any declared type, so
-    // this one value reaches the runtime and the `$1.label` read throws the
-    // bare TypeError with no position. It is not a tile-test defect: the same
-    // `()` written as the tile call `Card(())` passes `check` too and dies on
-    // mount, which `kumiki smoke` catches. Pinned so the day #427 closes, this
-    // is the test that says the tile-test path came with it.
+  it("refuses a `()` where the target declares a record, as a tile call does", () => {
     const src = app(
       `test t =
     tile-test Card
@@ -333,7 +327,11 @@ tile Host = column(Card({label: "x"}))`,
 tile Card in={label: Text} = text($1.label)
 tile Host = column(Card({label: "x"}))`,
     );
-    expect(diagnose(src)).toEqual([]);
+    const d = diagnose(src);
+    expect(d.map((e) => `${e.code} ${e.message}`)).toEqual([
+      "E0201 Expected {label: Text} but got Unit",
+    ]);
+    expect(d[0] && textAt(src, d[0])).toMatch(/^\(\)\}/);
   });
 
   it("leaves the count to E0213 rather than typing an argument that is not there", () => {

@@ -502,6 +502,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
+> `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
@@ -511,11 +512,15 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、ペイロードを伴う variant タグ（`onClick=Some(1)`）、引数を伴う tile call（`onClick=box(text("z"))`）、props を伴う tile call（`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+
+このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 
 `.get-or` のフォールバックはレシーバではなく**呼び出しが返す型**と照合する：空のケースで呼び出しが返す値そのものだから、結果型を担うのはフォールバックである。その結果型はレシーバの型引数から出る — `Option(T)` と `Result(T, E)` は `T`、`Map(K, V)` は `V` — ものであり、だからこそ `Option(S)` の slot に対する `opt := opt.get-or(None)` は 2 回報告される：フォールバックが `S` でないこと、そして `S` は `Option(S)` ではないこと。2 つの読みのどちらを取るかは引数の個数が決める（[Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。したがってレシーバに合わない個数の呼び出しは**ここでは**解決せず、照合する相手も持たない。ただし下げは行われる — 与えられたレシーバに対し、個数が名指す方の読みで — ので、これは沈黙ではなくそれ自体が欠陥である。
 
 代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿り、`where` の refinement は透過する：この検査が refinement を評価することはない。`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` はこのエラーではなく、値が範囲内かどうかはバリデーションが決める（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）。
+
+`()` も他の値と同じく扱われる。`()` は `Unit` の唯一の値であり（[stdlib §2.1](./stdlib.md#_2-1-ビルトイン型)）、`Unit` が宣言された位置では受け入れられ、それ以外の宣言型に対してはこのエラーになる（`emit` の引数では E0202 を報告し、`in=Unit` の effect への `emit e(())` はその effect が引数を取らないので E0213 になる）。`tile Card in={label: Text}` に対する `Card(())` は `()` の位置で `Expected {label: Text} but got Unit` を報告する：`()` は実行時に `null` であり、`$1.label` を読むタイルはそれを使えない。
 
 `nominal` はその例外であり、このコードの中で唯一、**実型のあらゆる値が宣言型の値として妥当である**ケースを報告する規則である：`1.5` は `Int` ではなく `{a, b}` は `{a: Int}` ではないが、どの `Yen` も申し分ない `Cents` である。nominal 型を同定するのは宣言された名前であり（[§1.3.5](./language.md#_1-3-5-型の一意化)）、同じ基底型に対する 2 つの宣言は互いを拒否する — `Cents := Yen`、`postId := userId`。自身の nominal 名を持たない型は、その上に宣言されたどの nominal とも双方向に受理し合うので、`slot c : Cents = 1` と `c := c + 1` は成立したままである。nominal の上に宣言された nominal は、自身が宣言された側へ向かう一方向だけ通る。
 
@@ -654,7 +659,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、対象 tile の
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
-reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DOM 上で発火し得る要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。ただし cascade の片側は未対応で、同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合、その prop は持ち上げられた subscription を結合せず置き換えるため、コンテナ側の reducer は発火しない — [#407](https://github.com/kumikijs/Kumiki/issues/407)。
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DOM 上で発火し得る要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
@@ -777,6 +782,16 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 ループの両方の形 — タイルの中と reducer の `do=` ブロックの中 — で報告される。型が決定できない対象は報告しない。
 
 **修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する。`kumiki fix` が接尾辞を提案する。
+
+### E0219 `bind-strict-prop`
+
+`bind` が書き戻すコントロール — `input`・`textarea`・`select`・`slider`・`check`・`switch`・`radio`・`editable` — に、引数または props ブロックとして `strict` prop が書かれている。
+
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+
+[フォーム §5.1.2](./forms.md#_5-1-2-refinement-の扱い) の以前の版は、第 2 のモードとして `strict=false` を規定していた：refinement が拒否する値を受け取り、フォーム単位の `valid` フラグを false にする。これを実装したものはなく、そのフラグを読むものも言語のどこにもなかったので、この prop は `check` を通り、何もしなかった — フィールドを緩めるつもりでこれを書いた作者は、その兆候もないまま厳格な挙動を得ていた。現在の章のモードは 1 つである：refinement に拒否された bind は slot をそのままにし、フィールドは入力されたものを表示し続け、`error(field=…)` がそのメッセージを出す。
+
+**修正**：prop を取り除き、値が受け取られなかった理由をユーザーに示すため `error(field=<slot>)` をコントロールの隣に置く。そのような値を slot に保持させたいなら、slot の型を緩めて reducer で検証する（[§5.6](./forms.md#_5-6-バリデーション戦略)）。
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -911,7 +926,7 @@ keyframe ストップが閉じたアニメ可能集合（`opacity`, `translate-x
 
 ### E0602 `unassignable-member`
 
-lvalue のステップが、レシーバのフィールドではなく**標準ライブラリのメンバー**を指している。lvalue のステップ集合は閉じている（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）— フィールド、インデックス、そして `Option` / `Result` への `.get` の3つだけ — ので、メンバーを通した書き込みはできない。そのセグメントはリテラルのキーになり、書き込みは slot をレコードで置き換えてしまう。`Text` に対する `name.length := 9` は、slot に `{"length": 9}` を残していた。
+lvalue のステップがレシーバ内のどの場所も指していない：フィールドが来るべき位置の**標準ライブラリのメンバー**、または **`Set` へのインデックス**である。lvalue のステップ集合は閉じている（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）— フィールド、`Map` または `List` へのインデックス、そして `Option` / `Result` への `.get` だけ — ので、どちらを通しても書き込めない。メンバーのセグメントはリテラルのキーになり、書き込みは slot をレコードで置き換えてしまう。`Text` に対する `name.length := 9` は、slot に `{"length": 9}` を残していた。
 
 > `Cannot assign through ".<member>": it is a member of "<T>", not a field`
 
@@ -919,9 +934,13 @@ lvalue のステップが、レシーバのフィールドではなく**標準�
 
 名前は予約ではなくディスパッチされる：`length` という名前のフィールドを宣言したレコードは、今まで通りそのフィールドへ書き込める。逆にレコードは `.show` を宣言しないので、ディスパッチは標準ライブラリへ落ち、`rec.show := "x"` は他のメンバーと同じく E0602 になる。
 
-E0602 は「その名前はこのレシーバの**メンバーである**」と述べるので、その文が真であるときにだけ報告される。このレシーバのメンバーではない名前は、`:=` のどちら側でも [E0108](#e0108-undef-member) になる。単に存在しない名前（`name.frist`）と、別のレシーバに属する名前の両方がこれにあたる — `.abs` は `Int` / `Float` のメソッドなので、`Text` に対しては代入できないのではなく未定義である。型が決定できないレシーバ — ユニオンや不透明な型引数 — ではどちらも報告しない。読み側と同じく、動的なレシーバに対する誤ったエラーは沈黙より悪いからである。
+メンバーについて、E0602 は「その名前はこのレシーバの**メンバーである**」と述べるので、その文が真であるときにだけ報告される。このレシーバのメンバーではない名前は、`:=` のどちら側でも [E0108](#e0108-undef-member) になる。単に存在しない名前（`name.frist`）と、別のレシーバに属する名前の両方がこれにあたる — `.abs` は `Int` / `Float` のメソッドなので、`Text` に対しては代入できないのではなく未定義である。型が決定できないレシーバ — ユニオンや不透明な型引数 — ではどちらも報告しない。読み側と同じく、動的なレシーバに対する誤ったエラーは沈黙より悪いからである。
 
-**対処**：そのメンバーが導出するはずだった値を直接書く（`name.length := 9` ではなく `name := "some text"`）。レシーバがレコードなら、実在するフィールドを使う。
+インデックスについては、レシーバの型が `Set` だと分かるときに E0602 が報告される — 直接の宣言でも、エイリアスや `nominal` を通しても、フィールド・`List` の要素・`Map` の値・`.get` を経由して到達しても同じである。インデックスは場所 — `Map` のエントリ、`List` の位置 — を指すが、Set にあるのは所属だけで場所は無いので、`tags[x] := v` には着地する場所が無い：
+
+> `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+
+**対処**：メンバーなら、そのメンバーが導出するはずだった値を直接書く（`name.length := 9` ではなく `name := "some text"`）。レシーバがレコードなら、実在するフィールドを使う。Set なら、インデックスではなく所属を変える：`tags := tags.add(x)`、あるいはその位置に `.remove(x)` / `.toggle(x)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
 
 ## E07xx — オプトイン検査（a11y／strict-icons／テスト DSL 不変条件）
 

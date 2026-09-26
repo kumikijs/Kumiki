@@ -11,8 +11,15 @@ function _children(...xs) {
   }
   return out;
 }
+// _attachProps — merges a user-tile call site's data props onto what the
+// tile's body rendered. A body that renders a list (a for) gets them on every
+// node in it, as _named does; merging into the array itself made an object of
+// its indices with no kind. No props leaves the node exactly as it was.
 function _attachProps(node, props) {
-  if (!node || !props) return node;
+  if (node === null || node === undefined || !props) return node;
+  if (Array.isArray(node)) return node.map((n) => _attachProps(n, props));
+  if (typeof node !== "object" || typeof node.kind !== "string") return node;
+  if (Object.keys(props).length === 0) return node;
   return { ...node, props: { ...(node.props || {}), ...props } };
 }
 function _named(node, name) {

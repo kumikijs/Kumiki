@@ -1,0 +1,42 @@
+{
+  "steps": [
+    {
+      "label": "a valid address commits, and there is nothing to say",
+      "do": { "fill": "#contact", "value": "grace@example.com" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "grace@example.com" },
+        "domIncludes": ["holding: grace@example.com"],
+        "domExcludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "an edit the refinement refuses leaves the slot, and the field says why",
+      "do": { "fill": "#contact", "value": "grace@examplecom" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "grace@example.com" },
+        "domIncludes": ["holding: grace@example.com", "Invalid email format"]
+      }
+    },
+    {
+      "label": "an unrelated reducer does not make the field fall silent",
+      "do": { "clickText": "save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "grace@example.com", "saved": 1 },
+        "domIncludes": ["saved: 1", "Invalid email format"]
+      }
+    },
+    {
+      "label": "finishing the address commits it and clears the message",
+      "do": { "fill": "#contact", "value": "grace@example.org" },
+      "expect": {
+        "noErrors": true,
+        "state": { "contact": "grace@example.org" },
+        "domIncludes": ["holding: grace@example.org"],
+        "domExcludes": ["Invalid email format"]
+      }
+    }
+  ]
+}
