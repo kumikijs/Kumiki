@@ -58,7 +58,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
-import { parseQualifier, qualifierType } from "./parse-reading.ts";
+import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
@@ -2278,13 +2278,45 @@ function checkCallee(
       });
       return;
     }
+    // A name can be a type's and still not be a type: `List`, `Map`, `Tuple`
+    // and a `type Box(T) = …` want their arguments first. The call has no type
+    // to mint (`fresh`) or read into (`parse`), and each check above declines
+    // it on its own terms — the name resolves, the callee resolves, and the
+    // inference answers nothing — so `slot n : Int = Box.fresh()` stored a uuid
+    // string in an `Int` slot with no report at all.
+    // `constructorArity` answers `null` for variadic `Tuple` and for a name that
+    // is no type at all, so it is asked only of a name `isKnownTypeName` holds.
+    const typeArity =
+      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
+        ? constructorArity(qualifier, sym)
+        : 0;
+    if (typeArity !== 0) {
+      const wanted =
+        typeArity === null
+          ? "type arguments"
+          : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
+      // A `parse` repaired to any applied type can still land on E0802 below —
+      // `type IntList = List(Int)` has no reading of a text either — so its
+      // message names both halves of the repair in the one round.
+      const readable =
+        callee.slice(dot + 1) === "parse"
+          ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
+          : "";
+      errors.push({
+        code: "E0124",
+        kind: "type-constructor-qualifier",
+        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none${readable}`,
+        pos,
+      });
+      return;
+    }
     // `parse` lowers by the base the qualifier unaliases to, and a record, a
-    // union, `File`, `EffectId`, `Unit` or a constructor written without its
-    // arguments has no reading of a text — codegen has nothing of the call's
-    // type to produce. `parseQualifier` is the one answer both sides read, so
-    // every qualifier that passed E0117 above and has no reading is reported
-    // here, and none reaches the lowering. A qualifier whose definition
-    // resolves to nothing is left to the report at that definition.
+    // union, `File`, `EffectId` or `Unit` has no reading of a text — codegen
+    // has nothing of the call's type to produce. `parseQualifier` is the one
+    // answer both sides read, so every qualifier that passed E0117 and E0124
+    // above and has no reading is reported here, and none reaches the
+    // lowering. A qualifier whose definition resolves to nothing is left to
+    // the report at that definition.
     if (
       callee.slice(dot + 1) === "parse" &&
       isQualifierName(qualifier) &&
@@ -2293,7 +2325,7 @@ function checkCallee(
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
-        message: `"${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`,
+        message: `"${qualifier}" has no reading of a text — parse into ${PARSE_READINGS_PHRASE} and build it in a fn`,
         pos,
       });
       return;
@@ -5509,6 +5541,11 @@ function checkApp(
  * the read throws inside the request, the dispatcher turns the throw into an
  * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
  * would pass check, build and smoke alike.
+ *
+ * Three of the four also have a type (http.md §6.3.1), checked after the walk:
+ * a value of the wrong one runs and does the wrong thing rather than failing.
+ * `headers` is a record of whatever the author sends, and has none to hold it
+ * to here.
  */
 function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
@@ -5526,6 +5563,45 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
+  // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
+  // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
+  // `Duration`", because a program's own `type Duration` shadows the stdlib one
+  // and may be anything.
+  if (http.baseUrl !== undefined)
+    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
+  if (http.timeout !== undefined)
+    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
+  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+}
+
+/** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */
+const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
+
+/**
+ * `app.http.credentials` is a `Text`, so a slot can select the mode per
+ * request, and every literal that reaches the field — the field's own value, or
+ * a literal branch of an `if`, at any depth — is also compared with the three
+ * Fetch modes: a browser refuses a request whose init names any other, so a
+ * misspelt mode is as wrong as an `Int`. Anything else (a slot, a call, a
+ * concatenation) is held to `Text` alone; its value is decided at run time.
+ */
+function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "IfExpr") {
+    checkHttpCredentials(e.consequent, sym, errors, ctx);
+    checkHttpCredentials(e.alternate, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "Str") {
+    if (HTTP_CREDENTIALS.includes(e.value)) return;
+    pushMismatch(
+      errors,
+      "E0201",
+      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
+      e.pos,
+    );
+    return;
+  }
+  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
 }
 
 /**
