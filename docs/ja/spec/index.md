@@ -102,6 +102,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | コア |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | コア |
 | [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | フォーム |
+| [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | ライフサイクル |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
@@ -247,5 +248,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.4](./http.md#_6-4-cancellation) |
 | `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
+| `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 <!-- examples:end -->
 :::
