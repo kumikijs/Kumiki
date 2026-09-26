@@ -10,13 +10,13 @@
           "kept": [3, 2],
           "sorted": [3, 2, -1],
           "first": 3,
-          "total": 4,
+          "total": 292,
           "scores": { "ada": 2 },
           "halved": { "_tag": "Some", "_0": 2 },
           "reason": "bad!",
           "title": "fn names"
         },
-        "domIncludes": ["title: fn names", "total: 4", "reason: bad!"]
+        "domIncludes": ["title: fn names", "total: 292", "reason: bad!"]
       }
     }
   ]

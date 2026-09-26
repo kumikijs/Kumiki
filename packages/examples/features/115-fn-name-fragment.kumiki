@@ -9,8 +9,10 @@
 #
 # The one place a bare name is right is the fragment argument of a
 # higher-order method. There it stands for the call the method makes with its
-# own positionals: `xs.map(double)` is `xs.map(double($1))`, and `add` in a
-# `fold` is `add($1, $2)` — accumulator, then element.
+# own positionals: `xs.map(double)` is `xs.map(double($1))`, and `shift` in a
+# `fold` is `shift($1, $2)` — accumulator, then element. `shift` is not
+# commutative, so the order shows: 292 over [3, -1, 2], where the swapped
+# order would give 40.
 
 slot xs     : List(Int)         = [3, -1, 2]
 slot scores : Map(Text, Int)    = {"ada": 1}
@@ -29,7 +31,7 @@ slot title   : Text        = ""
 fn double(n: Int) -> Int = n * 2
 fn positive(n: Int) -> Bool = n > 0
 fn negate(n: Int) -> Int = 0 - n
-fn add(acc: Int, n: Int) -> Int = acc + n
+fn shift(acc: Int, n: Int) -> Int = acc * 10 + n
 fn half(n: Int) -> Option(Int) = if n % 2 == 0 then Some((n / 2).to-int) else None
 fn loud(t: Text) -> Text = t + "!"
 fn heading-text() -> Text = "fn names"
@@ -39,7 +41,7 @@ reducer run on=ui.click(Run)
         kept    := xs.filter(positive)
         sorted  := xs.sort-by(negate)
         first   := xs.find(positive).get-or(0)
-        total   := xs.fold(0, add)
+        total   := xs.fold(0, shift)
         scores  := scores.update("ada", double)
         halved  := picked.flat-map(half)
         reason  := match parsed.map-err(loud) with

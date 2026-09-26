@@ -397,19 +397,29 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
 
 /**
  * The argument of each higher-order method that is an expression fragment
- * rather than a value, and how many positionals (`$1`, `$2`) the lambda it is
- * lowered into binds. A bare `fn` name there is the one place a `fn` name is
- * not a value (language.md §1.8.6): `xs.map(double)` means `xs.map(double($1))`,
- * so `methodCallJs` lowers it as that call and the checker lets it through
- * instead of reporting E0127. One table so the two cannot disagree about which
- * position is which.
+ * rather than a value, how many positionals (`$1`, `$2`) the lambda it is
+ * lowered into binds, and what the second one is. A bare `fn` name there is
+ * the one place a `fn` name is not a value (language.md §1.8.6):
+ * `xs.map(double)` means `xs.map(double($1))`, so `methodCallJs` lowers it as
+ * that call and the checker lets it through instead of reporting E0127. One
+ * table so the two cannot disagree about which position is which.
+ *
+ * `second` is why the checker cannot read `binds` alone. `fold` binds the
+ * element as `$2` on every receiver, so a `fn` that stops at the accumulator
+ * drops every element. The list methods bind `$2` to the value of a key/value
+ * pair — a `Map`, or a `List` of pairs from `.entries` — and on any other
+ * receiver `argFnList` fills it with the JS index or the element again, which
+ * no `fn` written for it means.
  */
-export const FRAGMENT_ARGUMENTS: ReadonlyMap<string, { index: number; binds: number }> = new Map([
-  ["filter", { index: 0, binds: 2 }],
-  ["map", { index: 0, binds: 2 }],
-  ["find", { index: 0, binds: 2 }],
-  ["sort-by", { index: 0, binds: 2 }],
-  ["fold", { index: 1, binds: 2 }],
+export const FRAGMENT_ARGUMENTS: ReadonlyMap<
+  string,
+  { index: number; binds: 1 | 2; second?: "element" | "pair-value" }
+> = new Map([
+  ["filter", { index: 0, binds: 2, second: "pair-value" }],
+  ["map", { index: 0, binds: 2, second: "pair-value" }],
+  ["find", { index: 0, binds: 2, second: "pair-value" }],
+  ["sort-by", { index: 0, binds: 2, second: "pair-value" }],
+  ["fold", { index: 1, binds: 2, second: "element" }],
   ["flat-map", { index: 0, binds: 1 }],
   ["update", { index: 1, binds: 1 }],
   ["map-err", { index: 0, binds: 1 }],
@@ -594,9 +604,10 @@ export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
 /**
  * A bare `fn` name in a fragment position, rewritten as the call the fragment
  * stands for — `double` becomes `double($1)`, `add` in a `fold` becomes
- * `add($1, $2)`. Lowered as it was written it is the generated function
- * itself, so `xs.map(double)` built a list of functions. A name a local or a
- * slot shadows is that value, not the `fn`, exactly as a `Ref` resolves.
+ * `add($1, $2)`. The rewrite is needed because a `Ref` to a `fn` lowers to the
+ * generated function itself, and a list of functions is not what
+ * `xs.map(double)` means. A name a local or a slot shadows is that value, not
+ * the `fn`, exactly as a `Ref` resolves.
  */
 function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
   if (FRAGMENT_ARGUMENTS.get(method)?.index !== index || a.kind !== "Ref") return null;
