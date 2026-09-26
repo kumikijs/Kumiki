@@ -1402,7 +1402,7 @@ function checkHandlerBinding(
  * anywhere in the render tree is the answer that reports.
  *
  * That under-reports rather than over-reports, deliberately: codegen merges
- * these props onto the node the tile renders as its ROOT (`_attachProps`), so
+ * these props onto the node the tile renders as its ROOT (`tileCallJs`), so
  * `Card = box(button(…))` drops the handler too and is not reported here,
  * because the walk does not tell a root from a descendant. Every case it does
  * report is a certain drop — a tree with no firing kind in it has no firing
@@ -1475,7 +1475,7 @@ function inertHandler(
  * true answer: codegen propagates `ui.click(TodoRow)` down to the `check` of
  * `TodoRow = row(check(...), …)`, so finding one means the subscription is
  * wired. For `W0213` it is deliberate under-reporting: an explicit handler
- * prop lands on the ROOT node and nowhere else (`_attachProps`), so a firing
+ * prop lands on the ROOT node and nowhere else (`tileCallJs`), so a firing
  * descendant does NOT mean the handler is wired — only that this walk cannot
  * prove it is dropped.
  */
