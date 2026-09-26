@@ -30,6 +30,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
+| `E0124` | `T.fresh()` / `T.parse(t)` / `T.show(v)` qualified by a type constructor (`List`, `Map`, `Tuple`, a `type Box(T)`) | name the application as a type — `type IntBox = Box(Int)` — and qualify with that: `IntBox.fresh()`. For `parse` the applied type also needs a base with a text reading — a container has none (E0802), so parse the parts and build it in a `fn`. `kumiki_fix` skips it |
 | `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
 | `E0119` | `$route` in a reducer the runtime does not bind one in (anything but `route.enter` / `route.leave` / `route.error` and a link's prefetch target) | read the `route` slot instead; try `kumiki_fix` |
 | `E0120` | `route` or `$route` in an `app.init` argument — those are evaluated while the app object is built, before any mount installs a route | move the read into a `route.enter` reducer; reading the `route` slot does **not** help here |
@@ -49,7 +50,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
 | `E0801` | `obj.method(...)` calls a method the runtime doesn't implement (typo, or unimplemented/wrong-type method like `Option.to-result`) | fix the name or rewrite with an implemented op (`match`, `fold`, …); see `KNOWN_METHODS` / docs/spec/stdlib.md |
-| `E0804` | a `where` refinement's arguments cannot build a check — a text bound on `between`, a fractional or negative length, a `regex` pattern that does not compile, an empty `one-of` | write the arguments the predicate takes; the table is in docs/spec/language.md §1.3.3 |
+| `E0804` | a `where` refinement cannot build a check that passes anything — a text bound on `between`, a fractional or negative length, `len-lt(0)`, a `regex` pattern that does not compile, an empty `one-of` or one whose literals are not values of its base (`Text where one-of(1)`), or a predicate over a base it does not test (`Text where positive`, `Int where nonempty`, a generic applied as `NonEmpty(Int)`) | write the arguments the predicate takes, over the base it tests; the tables are in docs/spec/language.md §1.3.3 and errors.md E0804 |
 | `E0000` | parse error (from the lexer/parser) | check the position; look for a missing `)` / wrong keyword |
 | `W0212` | `ui.<ev>(Tile)` reducer subscribes to a tile whose root builtin never fires `<ev>` — silent no-op | re-target the selector at a focusable/event-capable tile, or wire the handler explicitly (`input(onFocus=r)`). See docs/spec/errors.md for the per-event allowed-kinds table. |
 

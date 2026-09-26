@@ -205,15 +205,14 @@ reducer keep on=ui.click(B) do= n := $event.get-or("not an Int")`),
     ).toEqual([]);
   });
 
-  it("an effect payload bind carries no type, so unwrapping one is not checked", () => {
+  it("an effect payload bind is a receiver like a slot: unwrapping one is the same pair", () => {
     // The shape this defect was found in: an `Option` restored from storage,
-    // unwrapped into the slot that declares it. `$s` is bound by the event and
-    // nothing gives it the effect's `out=` type, so the receiver decides
-    // nothing. A limit of how far the types reach, not a decision about
-    // `.get-or` — and the reason the fix does not reach the program that
-    // prompted it.
+    // unwrapped into the slot that declares it. `$s` has the Ok type of the
+    // effect's `out=`, so the receiver decides the result exactly as an
+    // `Option(Session)` slot would. `effect-payload-bind-type.test.ts` owns
+    // the bind's type; this pins that `.get-or` reaches it.
     expect(
-      errsOf(
+      diagnostics(
         `type Session = {email: Text}
 slot session : Option(Session) = None
 effect loadSession cap=storage.read
@@ -229,6 +228,9 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []`,
       ),
-    ).toEqual([]);
+    ).toEqual([
+      'E0201 Expected Session but got variant "None"',
+      "E0201 Expected Option(Session) but got Session",
+    ]);
   });
 });

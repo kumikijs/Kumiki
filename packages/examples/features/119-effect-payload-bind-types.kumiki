@@ -1,0 +1,50 @@
+# Feature (language.md §1.6.5): an effect-event bind has the type the effect's
+# `out=` gives a success. On a `Result(T, E)`, `.ok($v, _)` binds `$v : T`;
+# any other `out=` is the whole value on `.ok`.
+#
+# So the `.ok` read below is checked like any slot read: `$s` is an
+# `Option(Session)` and is stored as one. Writing `session := $s.get-or(None)`
+# — unwrapping the Option into the slot that declares it — or `label := $s` is
+# E0201, where it used to pass `check` and leave the slot holding a value of
+# another type.
+#
+# `.err($e, _)` is not typed from `out=`: what a failed `storage.read` delivers
+# is the runtime's failure record `{message: …}`, not the declared `Text`, so
+# the reducer reads `$e.message`.
+
+type Session = {email: Text}
+
+slot session : Option(Session) = None
+slot problem : Text            = ""
+
+effect loadSession cap=storage.read
+                   in=Unit
+                   out=Result(Option(Session), Text)
+                   map-request={key: "session", decode: Decoder.Json(Session)}
+
+effect saveSession cap=storage.write
+                   in=Session
+                   out=Result(Unit, Text)
+                   map-request={key: "session", value: $1}
+
+reducer boot     on=app.start               do= emit loadSession()
+reducer restored on=loadSession.ok($s, _)   do= session := $s
+reducer failed   on=loadSession.err($e, _)  do= problem := $e.message
+reducer signIn   on=ui.click(SignIn)        do= emit saveSession({email: "a@example.com"})
+reducer stored   on=saveSession.ok(_, _)    do= emit loadSession()
+reducer reload   on=ui.click(Reload)        do= emit loadSession()
+
+tile SignIn = button(text="sign in") {id: "sign-in"}
+tile Reload = button(text="reload")  {id: "reload"}
+
+tile Who
+    = match session with
+        | Some(s) -> text("signed in as " + s.email)
+        | None    -> text("signed out")
+
+tile App = column(Who, SignIn, Reload, text("problem: " + problem)) {pad: "lg", gap: "md"}
+
+app EffectPayloadBindTypes
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
