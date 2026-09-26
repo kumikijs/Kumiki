@@ -188,6 +188,32 @@ Every one of them is a **runtime check**: the value is tested on its way into th
 | `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
 | `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
 
+A predicate is checked **wherever in the type it is written**, not only on the type itself: a record field, a union variant's payload, and a container's element (`List` / `Set` members, `Map` keys and values, `Option`'s `Some`, `Result`'s `Ok` / `Err`, a `Tuple`'s members) are positions of the value, and a value is accepted only when every predicate holds at every position it has. On
+
+```kumiki fragment
+type Contact = {email: Text where email, age: Int where between(0, 120)}
+slot form : Contact = {email: "ada@example.com", age: 36}
+```
+
+`form.email := "nope"` is refused exactly as `form := {email: "nope", age: 36}` is, and so is `age := 999` by way of either. The positions nest and recurse — `List(Contact)`, a recursive `type Tree = {label: Text where nonempty, kids: List(Tree)}` — and the check walks the value, which is finite. A refused value is reported against the first predicate it fails, fields in declaration order, with the **path** to where it failed: `(email at .email)`, `(nonempty at .kids[1].label)`, `(nonempty at .Found)` for a variant's payload, `(len-lt(6) at [1])` for a list element. The `error` tile renders that predicate's message ([Forms §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
+A path is the list of steps from the slot's value inward — `RefinementFailure.path` in the runtime — and the report writes each step this way:
+
+| Step | Written | Position |
+|---|---|---|
+| a field | `.email` | a record's field |
+| an index | `[1]` | a `List` element, a `Tuple` member |
+| a variant | `.Found`, `.Pair[1]` | a union / `Option` / `Result` payload, by index when the variant carries several |
+| a key | `.keys["k"]` | a `Map` key itself |
+| an entry | `["k"]` | the `Map` value stored under `k`, as Kumiki's own index reads it |
+| a member | `{"x"}` | a `Set` member |
+
+A key, an entry and a member hold the value as the key type reads it, so an `Int` key is `[3]` rather than `["3"]`. The written form is for reading: the steps are distinct values, so a `Map` key is never mistaken for a field named `keys`, nor an entry under `1` for a list index.
+
+Each position checks the value's shape before its predicates: a record and a `Map` are objects, a `List` and a `Tuple` arrays, a union / `Option` / `Result` value one of its variants. A value of the wrong shape there — a decoded `{}` where a list belongs, a payload missing a field — answers the position's predicates `false`, as the paragraph below says of any predicate, and is reported against the first of them.
+
+Two positions are not walked. A `Set` member whose type is neither text nor a number (`Set({n: Text where nonempty})`) is not checked: the runtime keys a set by the member's text, and a record does not come back out of that. And a generic that applies itself to a growing argument (`type T(A) = {v: A, next: Option(T(List(A)))}`) is a new type to lower at every level, so a slot whose refinement lies along one more than 32 levels deep is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that stops partway. Distinct named types nest to any depth.
+
 A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` compares strictly, so its literals need a `Text` base when they are text and an `Int`, `Float` or `Time` one when they are numbers. A generic's parameter is judged where the generic is applied: `type NonEmpty(T) = T where nonempty` is fine, and `NonEmpty(Int)` is E0804.
 
 The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional or negative length, `len-lt(0)` (shorter than every text), a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.

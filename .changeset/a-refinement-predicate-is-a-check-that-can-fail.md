@@ -78,8 +78,7 @@ honoured, so a minimised case can sit outside the domain `for-all` declares
 (#441). The refinements `stdlib-types.ts` declares never pass through the
 checker that would report them (#442). A `bind` the predicate refuses leaves the
 input and the slot disagreeing with no message, and the `strict` prop the spec
-offers as the escape hatch is unimplemented (#443). A refinement written inside
-a record, a union or a container gates nothing (#444). The generation descriptor
+offers as the escape hatch is unimplemented (#443). The generation descriptor
 is one wire format with two unrelated types (#445).
 
 **A program can stop working**, and it was already not doing what it said: a

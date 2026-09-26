@@ -9,6 +9,7 @@ import {
   getRenderingApp,
   getRenderingView,
   refusedBindShown,
+  slotAccepts,
 } from "./core.ts";
 
 /**
@@ -25,7 +26,7 @@ function resolveFieldError(field: string): string {
   const app = getRenderingApp();
   if (!app || !field) return "";
   const meta = app.slots?.[field];
-  if (!meta?.refine) return "";
+  if (!meta) return "";
   // A field showing a value its slot refused speaks for what it shows: the
   // slot kept the last value it accepted, and a message computed from that
   // one would be about a value the user is no longer looking at (#443).
@@ -33,7 +34,7 @@ function resolveFieldError(field: string): string {
   // view of the same shape shows the slot's own value.
   const refused = refusedBindShown(app, field, getRenderingView());
   const value = refused?.value ?? app.live?.[field] ?? meta.value;
-  if (meta.refine(value)) return "";
+  if (slotAccepts(meta, value)) return "";
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.
   const failed = failedRefinement(value, meta);

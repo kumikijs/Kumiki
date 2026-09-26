@@ -57,7 +57,9 @@
           "tags": ["kumiki"]
         }
       }
-    ]
+    ],
+    "logout": [{ "outcome": "ok", "value": { "_tag": "Ok", "_0": null } }],
+    "login": [{ "outcome": "err", "value": { "status": 0, "message": "aborted", "body": "" } }]
   },
   "steps": [
     {
@@ -93,6 +95,27 @@
         "noErrors": true,
         "state": { "editSaving": false, "editor": { "_tag": "None" } },
         "domIncludes": ["Keys and identity, revised"]
+      }
+    },
+    {
+      "label": "logging out clears the session and lands on the login form",
+      "do": { "clickText": "Logout" },
+      "expect": {
+        "noErrors": true,
+        "state": { "session": { "_tag": "None" } },
+        "domIncludes": ["Log in"]
+      }
+    },
+    {
+      "label": "a login the runtime aborts answers with status 0 (http.md §6.4.1), and the slot holding the HttpError accepts it — the spinner stops and the message shows",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "loginPending": false,
+          "loginError": { "_tag": "Some", "_0": { "status": 0, "message": "aborted" } }
+        },
+        "domIncludes": ["aborted"]
       }
     }
   ]

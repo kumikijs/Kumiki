@@ -25,6 +25,7 @@ import {
   type TestResult,
 } from "@kumikijs/runtime";
 import {
+  clearStorage,
   type HttpFixture,
   installTestDoubles,
   readHttpFixture,
@@ -132,6 +133,7 @@ export async function smokeSource(
   } = {},
 ): Promise<SmokeReport> {
   await ensureDom();
+  clearStorage();
   // Effects run for real here (unlike `runScenario`, which replaces every
   // `invoke`), so the http capability is answered by the example's own
   // `.http.json`. Without a path there is no fixture, and any request reports
@@ -222,6 +224,7 @@ export async function runScenarioSource(
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
   await ensureDom();
+  clearStorage();
   // A scenario scripts effects at the `invoke` boundary, so http never reaches
   // `fetch` — the fixture is here for a capability the runner does not wrap,
   // and to keep a stray request reported rather than live.

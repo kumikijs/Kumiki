@@ -9,22 +9,29 @@ const BLOG = resolve(here, "../../examples/apps/03-blog/app.kumiki");
 
 const flush = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 
+// The ids are uuids because the blog declares them so (`PostId` / `UserId` are
+// `nominal Text where uuid`), and a refinement inside a type is checked where
+// it is written (language.md §1.3.3): a `Map(PostId, …)` keyed by "p001"
+// refuses every write, so the index would never render.
+const P1 = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+const P2 = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
 function mockFetch(): void {
   const fixtures: Record<string, unknown> = {
-    "/api/posts": ["p001", "p002"],
-    "/api/posts/p001": {
-      id: "p001",
+    "/api/posts": [P1, P2],
+    [`/api/posts/${P1}`]: {
+      id: P1,
       title: "Hello Kumiki",
       body: "Hello body content",
-      authorId: "u001",
+      authorId: "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
       publishedAt: 1779000000000,
       tags: ["intro"],
     },
-    "/api/posts/p002": {
-      id: "p002",
+    [`/api/posts/${P2}`]: {
+      id: P2,
       title: "Routing demo",
       body: "Routing body content",
-      authorId: "u002",
+      authorId: "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
       publishedAt: 1779050000000,
       tags: ["routing"],
     },
@@ -115,7 +122,7 @@ describe("blog e2e (built from .kumiki)", () => {
     ).find((a) => a.textContent === "Hello Kumiki");
     expect(link).toBeDefined();
     link?.click();
-    expect(location.pathname).toBe("/posts/p001");
+    expect(location.pathname).toBe(`/posts/${P1}`);
     expect(app.live?.route).toMatchObject({ pattern: "/posts/:id" });
   });
 
