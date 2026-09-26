@@ -147,8 +147,10 @@ describe("typecheck", () => {
       app App caps=[] routes={"/" -> A, "/404" -> A} init=[]
     `;
     const errors = checkSrc(src);
+    // The whole set: an unresolved boundary is E0105 alone, and nothing else
+    // about the clause — E0220 has no fallback to judge — piles on.
+    expect(errors.map((e) => e.code)).toEqual(["E0105"]);
     const found = errors.filter((e) => e.code === "E0105");
-    expect(found).toHaveLength(1);
     expect(found[0]?.message).toBe('Tile "A" declares error-boundary "Nope", which is not a tile');
     // Reported at the clause rather than at the definition, so a tile with
     // several of them is not ambiguous.

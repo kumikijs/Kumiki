@@ -78,6 +78,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
 | `E0123` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent — as for E0122, whose rule this is at the trigger. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
+| `E0220` | no | The fallback's `in=` is fixed, but whether its body reads the panic the way `PanicInfo` gives it is user intent. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
 | `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
@@ -814,6 +815,25 @@ A `strict` prop is written on a control `bind` writes back from — `input`, `te
 An earlier revision of [Forms §5.1.2](./forms.md#_5-1-2-handling-of-refinement) specified `strict=false` as a second mode: take a value the refinement refuses, and turn a form-level `valid` flag false. Nothing implemented it, and the flag had no reader anywhere in the language, so the prop passed `check` and did nothing — an author who wrote it to relax a field got the strict behaviour with no sign of it. The chapter has one mode now: a bind its refinement refuses leaves the slot as it was, the field keeps what was typed, and `error(field=…)` renders the message for it.
 
 **Fix**: Remove the prop, and put `error(field=<slot>)` beside the control to show the user why a value was not taken. To let the slot hold such a value, loosen the slot's type and validate in a reducer ([§5.6](./forms.md#_5-6-validation-strategy)).
+
+### E0220 `boundary-fallback-input`
+
+A tile names an `error-boundary` fallback that declares an `in=` that `PanicInfo` does not fit, or no `in=` at all while its body reads `$1`.
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= but reads $1 — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+A fallback is applied to the panic ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)): codegen binds its `$1` to the `PanicInfo` the runtime builds, whatever the fallback declares. So the type is not the author's to choose. A fallback declaring `in=Text` had its `$1` checked as a `Text` while the value was a record — `text("recovered: " + $1)` passed `check` and `smoke` and rendered `recovered: [object Object]`. One declaring no `in=` could not name the panic it read: its `$1` is [E0103](#e0103-undef-ref-undef-slot), whose hint — declare an `in=` — led to the first shape, and that E0103 is still reported beside this one.
+
+This is the same reasoning [E0119](#e0119-route-bind-out-of-scope) applies to `$route`, applied to `$1`: what the name holds is decided by where the tile is applied, and a boundary is the one position that applies a tile to a value the author never wrote.
+
+`PanicInfo` has to be assignable to the declared type — one-sided, like every `assignable` call, and unless a program shadows `PanicInfo` with a type of its own. Concretely that admits `PanicInfo` itself, an alias of it (`type Crash = PanicInfo`), a `nominal` over it, or a record declaring exactly its five fields ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). A narrower record such as `{message: Text}` is not accepted: a record type matches only the same field set. An `in=` naming no type at all is [E0117](#e0117-undef-type) alone.
+
+A fallback that declares no `in=` and never reads `$1` is not reported. The value it is applied to goes unread, and the tile stays one that renders with nothing — which is what a route or `sub-routes` target has to be ([E0213](#e0213-call-arity-mismatch)), so one tile can be both.
+
+The report is attached to the clause, not to the tile: two clauses naming the same fallback are two reports.
+
+**Fix**: Declare `in=PanicInfo` on the fallback, and read the panic through `$1.message`, `$1.location` and the other fields [Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) defines.
 
 ### W0213 `handler-on-inert-tile` (warning)
 

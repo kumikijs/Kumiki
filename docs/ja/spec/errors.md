@@ -62,6 +62,7 @@ type KumikiError = {
 | `E0122` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図。 |
 | `E0123` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図 — E0122 と同じであり、その規則をトリガに適用したものだからである。 |
 | `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
+| `E0220` | なし | フォールバックの `in=` は決まっているが、その body が `PanicInfo` の与える形で panic を読むかは作者の意図である。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
 | `E0004` | なし | どちらの app が意図されたものか、もう一方の routes を統合すべきかはユーザの意図である。 |
@@ -792,6 +793,25 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 [フォーム §5.1.2](./forms.md#_5-1-2-refinement-の扱い) の以前の版は、第 2 のモードとして `strict=false` を規定していた：refinement が拒否する値を受け取り、フォーム単位の `valid` フラグを false にする。これを実装したものはなく、そのフラグを読むものも言語のどこにもなかったので、この prop は `check` を通り、何もしなかった — フィールドを緩めるつもりでこれを書いた作者は、その兆候もないまま厳格な挙動を得ていた。現在の章のモードは 1 つである：refinement に拒否された bind は slot をそのままにし、フィールドは入力されたものを表示し続け、`error(field=…)` がそのメッセージを出す。
 
 **修正**：prop を取り除き、値が受け取られなかった理由をユーザーに示すため `error(field=<slot>)` をコントロールの隣に置く。そのような値を slot に保持させたいなら、slot の型を緩めて reducer で検証する（[§5.6](./forms.md#_5-6-バリデーション戦略)）。
+
+### E0220 `boundary-fallback-input`
+
+tile が `error-boundary` に指定したフォールバックが、`PanicInfo` の当てはまらない `in=` を宣言しているか、`in=` をまったく宣言せずに body で `$1` を読んでいる。
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= but reads $1 — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+フォールバックは panic に適用される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）：codegen はフォールバックが何を宣言していても、その `$1` にランタイムが組み立てた `PanicInfo` を束縛する。したがって型は作者が選ぶものではない。`in=Text` を宣言したフォールバックでは、値がレコードであるのに `$1` が `Text` として検査されていた — `text("recovered: " + $1)` は `check` も `smoke` も通り、`recovered: [object Object]` を描画した。`in=` を宣言しないフォールバックは、読んでいる panic を名指すことができない：その `$1` は [E0103](#e0103-undef-ref-undef-slot) であり、そのヒント — `in=` を宣言せよ — に従うと最初の形に行き着いた。この E0103 は本エラーと並んで引き続き報告される。
+
+これは [E0119](#e0119-route-bind-out-of-scope) が `$route` に適用するのと同じ理屈を `$1` に適用したものである：名前が何を保持するかは tile がどこで適用されるかで決まり、境界は tile を作者が書いたことのない値に適用する唯一の位置である。
+
+`PanicInfo` は宣言された型に代入可能でなければならない — すべての `assignable` 呼び出しと同じく片側だけの条件であり、プログラムが独自の型で `PanicInfo` をシャドウしない限りにおいてである。具体的に受け入れられるのは、`PanicInfo` そのもの、その別名（`type Crash = PanicInfo`）、それに対する `nominal`、またはその 5 つのフィールドをちょうど宣言したレコード（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）である。`{message: Text}` のようなより狭いレコードは受け入れられない：レコード型は同じフィールド集合とのみ一致する。どの型も名指さない `in=` は [E0117](#e0117-undef-type) のみとなる。
+
+`in=` を宣言せず `$1` も読まないフォールバックは報告されない。適用される値は読まれず、その tile は何も渡されずに描画される tile のままである —— route や `sub-routes` のターゲットはそうでなければならない（[E0213](#e0213-call-arity-mismatch)）ので、1 つの tile が両方を兼ねられる。
+
+報告は tile ではなく句に付く：同じフォールバックを名指す 2 つの句は 2 つの報告になる。
+
+**修正**：フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message`、`$1.location` など [ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) が定めるフィールドで読む。
 
 ### W0213 `handler-on-inert-tile` (warning)
 

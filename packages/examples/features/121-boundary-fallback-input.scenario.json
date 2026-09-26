@@ -1,0 +1,23 @@
+{
+  "steps": [
+    {
+      "label": "nothing has panicked, so the fallback is not shown",
+      "expect": { "noErrors": true, "domExcludes": ["recovered:"] }
+    },
+    {
+      "label": "clicking reveal makes Risky read secret.get on None, a render panic the fallback reads through the alias",
+      "do": { "click": "#reveal" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "recovered: get called on None",
+          "location: Risky",
+          "category: tile-render",
+          "episode: (none)",
+          "cause: (none)"
+        ],
+        "domExcludes": ["[object Object]", "undefined"]
+      }
+    }
+  ]
+}
