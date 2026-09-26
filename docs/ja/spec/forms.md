@@ -34,16 +34,16 @@ tile Compose = column(
 
 ### 5.1.2 refinement の扱い
 
-`slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えると：
+`slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えるとその値は**拒否**される：slot は最後に受け取った値を保つ。モードは 1 つで、意図的に静かである — 入力途中の値は欠陥ではなく想定内なので、何も報告しない。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
 
-- **デフォルト**: 入力を弾く（slot は更新されない）
-- **`strict=false`**: slot は更新するが、フォームの `valid` フラグが false になる
+コントロールは入力されたものを表示し続けるので、フィールドが slot の受け取る値に編集されるまで、フィールドと slot は食い違う。`error(field=draft)` は**フィールドが表示しているもの**について語る（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）：refinement が拒否した値をフィールドが表示している間は、その値のメッセージを出す。slot を書き換える reducer はフィールドも一緒に動かし、メッセージは再び slot に従う。したがって、フィールドが slot の保持していない値を表示するのは、その理由を述べるメッセージと一緒のときだけである。この規則には 2 つの補足がある。対象のフィールドは同じビューのものである — 1 つの app を複数のホストにマウントした場合（[runtime.md §10.9](./runtime.md#_10-9-ランタイム-api-埋め込み用)）、各ビューの `error(field=…)` は自分のビューのフィールドについて語り、他のビューのフィールドは slot の値を表示したままである。また IME の変換中は、変換が経由する途中の値ごとにメッセージを再計算せず、変換が確定したときに一度だけ決める。
 
 ```kumiki snippet
-input(bind=draft, strict=false)
+input(bind=draft)
+error(field=draft)
 ```
 
-この 2 つの挙動はどちらも `bind` に固有のもので、どちらも意図的に静かである。入力途中の値は欠陥ではなく想定内だからだ。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
+本節の以前の版が第 2 のモードとして規定していた `strict` prop（拒否された値を受け取り、フォーム単位の `valid` フラグを false にする）は [E0219](./errors.md#e0219-bind-strict-prop) である。そのフラグを読むものは存在せず、自身の型が拒否する値を slot が保持することは、そこへ至る他のすべての経路が防ぐように作られている状態である。
 
 ---
 
@@ -97,7 +97,6 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 - すべての `bind` された slot がバリデーションを通過していれば `ui.submit(WrapperTile)` reducer が呼ばれる
 - 1 つでも失敗していれば呼ばれない（個別の error 表示は出る）
-- 厳密モード切替が必要なら `strict=false` を該当入力に
 - `button(type="submit")` をクリックするか、`input` で Enter キーで発火
 - `type` は `submit` / `button` / `reset` のいずれかで、そのまま DOM に書かれ、意味を持つのは form の中だけである。`type` を書かなかったボタンは HTML の既定に従う — すなわち `submit` になるので、form の中にあって送信させたくないボタンには `type="button"` が必要である。3 つ以外のリテラルは [E0201](./errors.md#e0201-type-mismatch) になる：不正な `type` 属性は `submit` に解決されるので、綴り間違いは送信してしまう
 
@@ -117,7 +116,6 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 | `required` | `Bool` | 必須 |
 | `auto-focus` | `Bool` | マウント時にフォーカス |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off` 等 |
-| `strict` | `Bool` | refinement 違反時に入力を弾くか（デフォルト true） |
 | `id` | `Text` | HTML id（label の `for` で参照） |
 
 ### 5.3.1 input type 別
@@ -243,7 +241,7 @@ refinement 層は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)
 2 つの書き込み経路は、検査内容ではなく報告の大きさが異なる：
 
 - **代入**（reducer 内の `age := …`）はバッチ全体を破棄し、報告する — slot は書かれず、effect も発行されない（[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）。
-- **`bind`** はそのフィールドの値だけを受け取らず、何も言わない。入力途中の値は欠陥ではなく想定内だからである（[§5.1.2](#_5-1-2-refinement-の扱い)）。
+- **`bind`** はそのフィールドの値だけを受け取らず、何も報告しない。入力途中の値は欠陥ではなく想定内だからである。フィールドはその値を表示し続け、`error(field=…)` がそのメッセージを出す（[§5.1.2](#_5-1-2-refinement-の扱い)）。
 
 どちらも**宣言時の初期値**は通さない： `slot email : Email = ""` は自分自身の refinement が拒否する値から始まり、それが未入力のフォームにメッセージを出す仕組みである（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）。
 
@@ -288,7 +286,7 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` は対象 slot の現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、slot の**現在の**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。したがって型に refinement を持たない slot には表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。
+`error(field=...)` は対象フィールドの現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、フィールドが**表示している**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。それは slot の現在の値だが、bind されたコントロールが refinement に拒否された値を表示している間は、その値が判定される（[§5.1.2](#_5-1-2-refinement-の扱い)）。したがって型に refinement を持たない slot には表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。
 
 述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、§1.3.1 が与える順で、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
 

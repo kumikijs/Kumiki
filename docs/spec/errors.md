@@ -655,7 +655,7 @@ The checker descends into all four control-flow bodies (`for` / `when` / `if` / 
 
 ### W0212 `ui-event-tile-mismatch` (warning)
 
-A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. One half of the cascade is still open: when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`), that prop replaces the lifted subscription rather than joining it, and the container's reducer does not fire — [#407](https://github.com/kumikijs/Kumiki/issues/407).
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
@@ -777,6 +777,16 @@ A `Map` holds two lists and they bind different things: `for k in m.keys` binds 
 Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
+
+### E0219 `bind-strict-prop`
+
+A `strict` prop is written on a control `bind` writes back from — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`, `editable` — as an argument or in the props block.
+
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+
+An earlier revision of [Forms §5.1.2](./forms.md#_5-1-2-handling-of-refinement) specified `strict=false` as a second mode: take a value the refinement refuses, and turn a form-level `valid` flag false. Nothing implemented it, and the flag had no reader anywhere in the language, so the prop passed `check` and did nothing — an author who wrote it to relax a field got the strict behaviour with no sign of it. The chapter has one mode now: a bind its refinement refuses leaves the slot as it was, the field keeps what was typed, and `error(field=…)` renders the message for it.
+
+**Fix**: Remove the prop, and put `error(field=<slot>)` beside the control to show the user why a value was not taken. To let the slot hold such a value, loosen the slot's type and validate in a reducer ([§5.6](./forms.md#_5-6-validation-strategy)).
 
 ### E0220 `boundary-fallback-input`
 

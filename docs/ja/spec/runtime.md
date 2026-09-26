@@ -169,7 +169,7 @@ reducer bump on=ui.click(Btn)
 refinement が門番を**しない**ものが 2 つある:
 
 - **宣言時の初期値**。`slot email : Text where email = ""` は自身の refinement が拒否する値を最初から保持する。これこそが、手つかずのフォームで `error(field=email)` にメッセージを出させている仕組みである（[エラー表示](./forms.md#_5-7-エラー表示)）。
-- **双方向 `bind`**。入力の拒否はフィールド単位で、報告も出ない（[refinement の扱い](./forms.md#_5-1-2-refinement-の扱い)）。入力途中の値は欠陥ではなく想定内だからである。デフォルトでは slot は以前の値を保つが、`strict=false` では新しい値を取り、代わりにフォームの `valid` フラグが false になる。
+- **双方向 `bind`**。入力の拒否はフィールド単位で、報告も出ない（[refinement の扱い](./forms.md#_5-1-2-refinement-の扱い)）。入力途中の値は欠陥ではなく想定内だからである。slot は以前の値を保ち、フィールドは入力されたものを表示し続け、`error(field=…)` はフィールドが表示しているものについてメッセージを出す。
 
 **この 2 つは組み合わさると罠になる**。宣言時の初期値が自身の refinement に違反している slot は、reducer からその初期値に*リセット*できない。`Text where nonempty` の slot に対する `name := ""` は他と変わらない書き込みなので、バッチを破棄する。slot の型を広げて境界で refine するか、空のケースを `Option` でモデル化すること:
 

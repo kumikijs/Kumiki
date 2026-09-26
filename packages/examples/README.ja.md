@@ -23,7 +23,7 @@
 | アプリ | 行数 | 主に学べること |
 |---|---|---|
 | [01-counter](./apps/01-counter/) | 26 行 | slot / reducer / tile / イベント |
-| [02-todomvc](./apps/02-todomvc/) | 161 行 | リスト・フィルタ・`bind`・localStorage 永続化 |
+| [02-todomvc](./apps/02-todomvc/) | 163 行 | リスト・フィルタ・`bind`・localStorage 永続化 |
 | [03-blog](./apps/03-blog/) | 418 行 | ルーティング・HTTP fetch・サスペンス |
 | [04-issue-tracker](./apps/04-issue-tracker/) | 727 行 | CRUD・`Map`・`Option` バリアント・フォーム・日付 |
 | [05-project-management](./apps/05-project-management/) | 1254 行 | 入れ子データ・カンバン・コメント・タグ・テーマ切替 |
