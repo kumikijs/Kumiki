@@ -9,6 +9,7 @@ import {
   currentEpisodeId,
   isPanic,
   KumikiPanic,
+  listPosition,
   type PathSegment,
   panicInfo,
   type RefinementNaming,
@@ -420,6 +421,15 @@ export const _stdlibCore = {
    */
   setPath(obj: unknown, path: readonly PathSegment[], value: unknown): unknown {
     return _setPathHelper(obj, path, value);
+  },
+  /**
+   * `recv[key]` read (language.md §1.6.3). On a List it is the element the
+   * same index names on the left of `:=`, and it panics where that write
+   * panics; a Map is read by key.
+   */
+  index(recv: unknown, key: unknown): unknown {
+    if (Array.isArray(recv)) return recv[listPosition(recv, key)];
+    return (recv as Record<PropertyKey, unknown>)[key as PropertyKey];
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */
   panic(message: unknown): never {

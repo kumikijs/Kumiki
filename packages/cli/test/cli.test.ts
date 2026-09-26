@@ -221,6 +221,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // parallel branches, each measured against its own base, and together
     // they cost what each did — `slotAccepts` / `showRefinementPath` beside
     // the refused-bind memory, which reads a slot's gate through the former.
+    // Still 59,000 (58,927 measured): an index into a List names an element
+    // or panics, on both sides of `:=` (language.md §1.6.3). On its own that
+    // was 416 (57,025 from 56,609); on top of the refused-bind work above it
+    // measured 581. It is the one range rule both sides ask (`listPosition`),
+    // the `_s.index` read every `xs[i]` now lowers to, and the setter's two
+    // panics for an index that meets no List. A counter indexes nothing and
+    // still ships them: the alternative is an out-of-range write that lands
+    // nowhere and a read that hands `undefined` to whatever comes next. It
+    // landed on a branch parallel to the paragraph above, which had already
+    // taken the budget to 59,000 for its own reason; together they fit under it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

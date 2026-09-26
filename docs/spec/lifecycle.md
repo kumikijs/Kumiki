@@ -123,7 +123,7 @@ Expressed via the `Result(T, E)` type. When an effect's return value is `Result.
 ### 7.2.2 Unexpected Errors (panic)
 
 - `Option.get` returned None inside a reducer
-- `List.get(i)` was out of range
+- An index `xs[i]`, read or written, named no element of a `List` (past the end, or negative)
 - `Result.get` was an Err
 - An explicit call to `panic(msg)`
 

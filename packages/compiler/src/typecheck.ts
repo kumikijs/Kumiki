@@ -2079,8 +2079,10 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
-  if (lv.kind === "LIndex") checkExpr(lv.index, sym, errors, ctx);
-  else {
+  if (lv.kind === "LIndex") {
+    checkExpr(lv.index, sym, errors, ctx);
+    checkIndexLvalue(lv, sym, errors, ctx);
+  } else {
     // Record the same decision `classifyFieldAccess` records for a read, so
     // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
     // the base type is unknown, as it is there — the name-based reading then
@@ -2092,6 +2094,46 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
+}
+
+/**
+ * An index step on the left of `:=`. A `List` index names a position, so it is
+ * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
+ * membership and nothing else, so `s[x] := v` has no place to write — the same
+ * refusal §1.6.3 gives a member, and reported by the same code. Membership is
+ * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ */
+function checkIndexLvalue(
+  lv: Lvalue & { kind: "LIndex" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  checkListIndex(base, lv.index, sym, errors, ctx);
+  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    pos: lv.pos,
+  });
+}
+
+/**
+ * A `List` index is an `Int`, on either side of `:=` — the read and the write
+ * name the same element (language.md §1.6.3). `base` is the receiver's type,
+ * already unaliased; any other receiver is left alone.
+ */
+function checkListIndex(
+  base: TypeExpr | null,
+  index: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (base?.kind !== "TypeApp" || base.name !== "List") return;
+  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
 }
 
 /**
@@ -2628,6 +2670,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Index":
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
+      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
       return;
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
@@ -3403,7 +3446,9 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     return null;
   }
   if (base.kind === "TypeApp") {
-    if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
+    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
+    // a right-hand side to be checked against.
+    if (base.name === "List") return base.args[0] ?? null;
     if (base.name === "Map") return base.args[1] ?? null;
   }
   return null;
