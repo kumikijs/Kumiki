@@ -1,0 +1,37 @@
+{
+  "steps": [
+    {
+      "label": "nothing has run yet",
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "one click runs the lifted ui.click(Row) and the call site's btnOwn, in definition order",
+      "do": { "click": "#both" },
+      "expect": { "noErrors": true, "state": { "log": "RB" }, "domIncludes": ["log: RB"] }
+    },
+    {
+      "label": "and again on the next click: the joined handler is not a one-shot",
+      "do": { "click": "#both" },
+      "expect": { "noErrors": true, "state": { "log": "RBRB" } }
+    },
+    {
+      "label": "each button a for-bodied tile renders gets the joined handler too",
+      "do": { "click": "#c2" },
+      "expect": { "noErrors": true, "state": { "log": "RBRBRB" } }
+    },
+    {
+      "label": "btnOwn's own subscription is Other, outside Row: it adds B alone",
+      "do": { "click": "#other" },
+      "expect": { "noErrors": true, "state": { "log": "RBRBRBB" } }
+    },
+    {
+      "label": "a button outside Row gets its own subscription only",
+      "do": { "click": "#plain" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "RBRBRBBP" },
+        "domIncludes": ["log: RBRBRBBP"]
+      }
+    }
+  ]
+}

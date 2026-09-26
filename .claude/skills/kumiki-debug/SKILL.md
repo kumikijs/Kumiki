@@ -30,6 +30,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
+| `E0124` | `T.fresh()` / `T.parse(t)` / `T.show(v)` qualified by a type constructor (`List`, `Map`, `Tuple`, a `type Box(T)`) | name the application as a type — `type IntBox = Box(Int)` — and qualify with that: `IntBox.fresh()`. For `parse` the applied type also needs a base with a text reading — a container has none (E0802), so parse the parts and build it in a `fn`. `kumiki_fix` skips it |
 | `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
 | `E0119` | `$route` in a reducer the runtime does not bind one in (anything but `route.enter` / `route.leave` / `route.error` and a link's prefetch target) | read the `route` slot instead; try `kumiki_fix` |
 | `E0120` | `route` or `$route` in an `app.init` argument — those are evaluated while the app object is built, before any mount installs a route | move the read into a `route.enter` reducer; reading the `route` slot does **not** help here |
@@ -42,6 +43,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
 | `E0218` | a `for` iterates a `Map` or a `Set` directly | iterate `m.keys` / `s.to-list`; `kumiki fix` appends it |
+| `E0219` | `strict` on a bind control kind — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`, `editable` — with or without `bind=` (`input(bind=s, strict=false)`) — a prop an earlier forms spec described and nothing implemented | remove it; a refused bind is always refused, and `error(field=s)` beside the control shows why |
 | `W0213` | a handler prop sits on a tile that never fires it — a builtin (`row(onClick=r)`), or a user tile whose render tree has no firing kind (`Inner(onClick=r)` where `Inner = box(...)`, message: "renders nothing that fires it (observed in body: …)") | move it onto the button / input — inside the user tile, so its root is the firing one — or subscribe with `on=ui.<ev>(<Tile>)` |
 | `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
 | `E0304` | a slot's initial value reads a slot (its own or another's, or `route` — directly or through a `fn`) | give it a standalone value and derive the rest in a `fn`; for `route`, fill the slot from a `route.enter` reducer |

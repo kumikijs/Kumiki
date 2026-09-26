@@ -1,6 +1,6 @@
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
-import { jsOfExpr } from "./expr.ts";
+import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
 /**
  * The built-in implementation call for a standard capability, given the request
@@ -96,10 +96,14 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
   switch (p.kind) {
     case "PolLatest":
       return `{ kind: "latest" }`;
-    case "PolLatestKey": {
-      const keyCtx = makeEvalCtx(gen, ["$1"]);
-      return `{ kind: "latest-per-key", keyOf: ((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(p.key, keyCtx)})) }`;
-    }
+    case "PolLatestKey":
+      // Not reducer scope: this lands in the effect table inside `createApp()`,
+      // where `_next` is unbound — it is local to each reducer's generated body
+      // — so a slot read here must be `_live[...]`. The dispatcher calls
+      // `keyOf` only for an emit that carries no key of its own, such as an
+      // `app.init` entry; a reducer's emit carries the key it was given where
+      // it ran (`reducerEmitJs`).
+      return `{ kind: "latest-per-key", keyOf: ${policyKeyOfJs(p.key, gen, false)} }`;
     case "PolQueue":
       return `{ kind: "queue" }`;
     case "PolDebounce":

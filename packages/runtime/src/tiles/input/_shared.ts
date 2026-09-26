@@ -12,6 +12,7 @@ import {
   _setPathHelper,
   attrValue,
   bindLabel,
+  noteBindWrite,
   resolveApp,
   warnUnresolvedEvent,
 } from "../../core.ts";
@@ -23,19 +24,48 @@ export function liveApp(el: Element): MountedApp | undefined {
   return app;
 }
 
+/**
+ * Write what control `el` now holds back to its slot (forms.md §5.1). A value
+ * the slot's refinement refuses is refused for this field alone and reported
+ * nowhere — a half-typed value is expected — but it is not forgotten: the
+ * control keeps showing it, so `error(field=…)` has to speak for it, and the
+ * pass that re-renders is what lets it.
+ *
+ * Except mid-composition: every intermediate value of an IME composition
+ * comes through here, and a strict refinement refuses most of them, so
+ * settling each one would flash the message while the user is still
+ * composing. The refusal is held until `compositionend` settles it (see
+ * {@link installCompositionGuard}); an accepted write in between drops it.
+ */
 export function writeBind(
   app: MountedApp,
+  el: HTMLElement,
   slotName: string,
   bindPath: BindSegment[] | undefined,
   value: unknown,
 ): void {
-  if (bindPath && bindPath.length > 0) {
-    const current = app.live[slotName] ?? {};
-    app._setSlot(slotName, _setPathHelper(current, bindPath, value));
-  } else {
-    app._setSlot(slotName, value);
+  const next =
+    bindPath && bindPath.length > 0
+      ? _setPathHelper(app.live[slotName] ?? {}, bindPath, value)
+      : value;
+  const accepted = app._setSlot(slotName, next);
+  if (!accepted && IME_COMPOSING.has(el)) {
+    PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, next));
+    return;
   }
+  PENDING_REFUSAL.delete(el);
+  if (accepted) noteBindWrite(app, el, slotName, next, true);
+  else settleRefusal(app, el, slotName, next);
 }
+
+/** Remember a refused write against `el` and re-render so its message shows. */
+function settleRefusal(app: MountedApp, el: HTMLElement, slotName: string, next: unknown): void {
+  noteBindWrite(app, el, slotName, next, false);
+  app._rerender();
+}
+
+/** A refused write made mid-composition, settled on `compositionend`. */
+const PENDING_REFUSAL = new WeakMap<HTMLElement, () => void>();
 
 export function bindDataset(
   el: HTMLElement,
@@ -109,13 +139,20 @@ export const INPUT_STATE = new WeakMap<HTMLElement, InputHandlers>();
  */
 export const IME_COMPOSING = new WeakSet<HTMLElement>();
 
-/** Attach `compositionstart` / `compositionend` listeners once at create time. */
+/**
+ * Attach `compositionstart` / `compositionend` listeners once at create time.
+ * `compositionend` also settles a refused bind {@link writeBind} held back
+ * while the composition was in progress.
+ */
 export function installCompositionGuard(el: HTMLElement): void {
   el.addEventListener("compositionstart", () => {
     IME_COMPOSING.add(el);
   });
   el.addEventListener("compositionend", () => {
     IME_COMPOSING.delete(el);
+    const settle = PENDING_REFUSAL.get(el);
+    PENDING_REFUSAL.delete(el);
+    settle?.();
   });
 }
 

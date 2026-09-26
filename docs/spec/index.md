@@ -82,6 +82,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | core |
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
+| [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -100,6 +101,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | core |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | core |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | core |
+| [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | forms |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
@@ -235,8 +237,14 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `100-option-filter.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `101-list-index-write.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
+| `105-refused-bind.kumiki` | slot, reducer, tile | forms | [§5.1.2](./forms.md#_5-1-2-handling-of-refinement) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | core | [§1.7.1](./language.md#_1-7-1-syntax) |
+| `108-call-site-handler-joins-lifted.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
+| `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | stdlib | [§E0124](./errors.md#e0124-type-constructor-qualifier) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | core | [§1.9](./language.md#_1-9-expression-language) |
+| `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | http | [§6.4](./http.md#_6-4-cancellation) |
+| `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 <!-- examples:end -->
 :::

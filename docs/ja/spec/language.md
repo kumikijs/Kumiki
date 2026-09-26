@@ -337,6 +337,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   `$route` はここでは名前ではない
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
+  reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
+  （[http.md §6.4](./http.md#_6-4-cancellation)）
 
 ### 1.5.3 例
 
@@ -452,7 +455,7 @@ reducer typed on=ui.key(RefBox) do= ...          # どちらでも input に配�
 
 subscription が届く tile を決めるのは、その子孫が「どの経路で描画されたか」であって子孫そのものではない。`RefBox` の*隣*に描画された `Leaf` はその内側ではないので、ハンドラを受け取らない。1 つの子孫に対して複数の外側 tile が同じイベントを subscribe している場合は、通常どおり [§1.6.4](#_1-6-4-不変条件) Invariant 3 が適用され、マッチしたすべてが定義順で発火する。
 
-> **既知の未対応 ([#407](https://github.com/kumikijs/Kumiki/issues/407))**: 同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は結合されずに**置き換えられる**ため、外側 tile の reducer が発火しない。修正されるまでは、1 つの要素に対してセレクタと明示ハンドラ prop を混在させず、両方の tile で `ui.<ev>(<Tile>)` を使うこと。
+同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。したがってコンテナへの subscription は、そのイベントを発火する子孫の*すべて*に届き、自分のハンドラを持つボタンも例外ではない：チェックボックスと削除ボタンを持つ行に対する `ui.click(TodoRow)` は、その両方で実行される。行全体ではなく、そのイベントが意味する最も狭い tile を subscribe すること — `tile TodoCheck = check(...)` に対する `ui.click(TodoCheck)` のように。
 
 ### 1.6.3 lvalue の意味論
 
@@ -527,6 +530,8 @@ issue.copy(status=Done, priority=High)
 
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
+> **`.ok` では、最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` ではその値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` の最初の束縛は `out=` から型付けされない。そこに届くのは capability の失敗値であり、組み込みの storage / session / indexed ハンドラ、provider 未登録の capability、invoke 中の例外はいずれも `E` の宣言にかかわらず `{message: Text}` レコードを渡す（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、`$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
 ### 1.6.6 例
 
 ```kumiki fragment
@@ -538,7 +543,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -634,7 +639,7 @@ pattern      ::= identifier
 
 ### 1.7.3 イベントハンドラ props {#_1-7-3-event-handler-props}
 
-イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノードにマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
+イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノード（本体が一覧を描画する `for` なら、その各ノード）にマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。ここでのマージは**結合**を意味する：そのハンドラは、そのノードが同じイベントに対して既に持っているもの — builtin 自身に書かれたハンドラ、そのノードをルートとする別の呼び出し側に書かれたハンドラ、そのノードに持ち上げられたすべての `ui.<ev>(<Tile>)` subscription（[§1.6.2](#_1-6-2-セレクタ)）— に加わる。マッチした各 reducer は 1 回ずつ、すべて**定義順**で実行される。これは [§1.6.4](#_1-6-4-不変条件) Invariant 3 が同じイベントにマッチする reducer 一般について述べていることであり、ハンドラがどこに書かれたかは実行順を決めない。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
@@ -649,9 +654,11 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 ### 1.7.4 例
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 

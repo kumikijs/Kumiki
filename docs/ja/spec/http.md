@@ -157,10 +157,10 @@ app App
 
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
-| `base-url` | 相対 URL のベース | リクエストごと |
+| `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
 | `headers` | 全リクエストに付与 | リクエストごと |
-| `timeout` | デフォルトタイムアウト（duration） | リクエストごと |
-| `credentials` | fetch の credentials モード（[§6.9](#_6-9-default-settings)） | リクエストごと |
+| `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
+| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
 | `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
@@ -175,10 +175,23 @@ app App
 reducer 名の 3 つだけは例外で、そもそも値ではない：コンパイラが `reducer` 定義に
 対して一度だけ解決する。
 
-4 つの式について検査されるのは**名前**である：解決されない名前は書かれた位置で
-[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。**値**は検査されない — フィールドが
-要求する型と与えられた値を突き合わせるものが無いので、`timeout: "soon"` は
-コンパイルを通って `fetch` まで届く。
+4 つの式について検査されるのは名前と値である。解決されない名前は書かれた位置で
+[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。型の合わない値はフィールドの位置で
+[E0201](./errors.md#e0201-type-mismatch) になる：
+
+- `base-url` は `Text` に代入可能なものを取る — `Url` など `Text` の上に作られた型を含む。
+- `timeout` は `Int` に代入可能なものを取り、ミリ秒として読まれる。`Duration` は
+  その 1 つであり（実行時にはミリ秒）、ユーザ定義の `nominal Int` も同様である。
+  `Float` は含まれない。`Text` は `setTimeout` に `NaN` として届いて、すべての
+  リクエストを応答前に中断させる。
+- `credentials` は `Text` に代入可能なものを取り、フィールドに届くリテラル —
+  フィールド自身の値、または `if` のリテラルの分岐 — はすべて Fetch の 3 つの
+  モードのいずれかでなければならない。それ以外を指定した init はブラウザが拒否する。
+
+照合されるのは型であり、`credentials` についてはリテラルも照合される：それ以外の
+方法で計算される値 — slot、呼び出し、連結 — は実行時に決まるので、型の合うものは
+何を保持するかにかかわらず受理される。`timeout: 0` や負の `Int` も `Int` であり、
+受理される。`headers` にはここで照合する型がない。
 
 ### 6.3.2 401 のグローバル処理
 
@@ -214,6 +227,8 @@ reducer cancelSearch
 ```
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
+
+id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
 
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
