@@ -238,5 +238,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | core | [§1.9](./language.md#_1-9-expression-language) |
 | `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | http | [§6.4](./http.md#_6-4-cancellation) |
+| `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 <!-- examples:end -->
 :::
