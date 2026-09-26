@@ -201,10 +201,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `finally`, both of which buy a property the whole file already holds: a
     // throw from inside a panic catch must not displace the panic, and an
     // episode this dispatch opened must close however it exits.
+    //
+    // 58,000 from 57,000 (57,316 measured, from 56,872): a predicate written
+    // inside a slot's type reports *where* it failed (#444). The 444 bytes are
+    // `slotAccepts`, the one reading of a slot's gate that the write wrapper,
+    // the batch backstop, a `bind` write-back and the `error` tile share, and
+    // `showRefinementPath`, which writes the structured path a rejection
+    // carries the way the report always has. A counter has no such slot and
+    // pays for both because they sit on paths every app takes.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(57_000);
+    expect(total).toBeLessThan(58_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
