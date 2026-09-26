@@ -204,6 +204,19 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
     expect(_stdlibCore.mapKeys({ "7": 1, a: 2 })).toEqual(["7", "a"]);
     expect(_stdlibCore.toList(_stdlibCore.setAdd({}, "7"))).toEqual(["7"]);
   });
+
+  // `Map.filter` hands each key to its predicate as `$1`, so it reads keys
+  // too: `m.filter($1 == 3)` on a `Map(Int, _)` compared `"3"` with `3` under a
+  // strict `eq` and kept nothing.
+  it("Map.filter hands its predicate the restored key and keeps the entry under its stored key", () => {
+    const seen: unknown[] = [];
+    const pred = (k: unknown) => {
+      seen.push(k);
+      return k === 3;
+    };
+    expect(_stdlibCore.filter({ 3: "c", 4: "d" }, pred, "number")).toEqual({ 3: "c" });
+    expect(seen).toEqual([3, 4]);
+  });
 });
 
 // `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read

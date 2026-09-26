@@ -1,5 +1,7 @@
 // AST types for Kumiki.
 
+import type { KeyKind } from "@kumikijs/runtime";
+
 export type Pos = { line: number; col: number };
 
 export type Token =
@@ -400,15 +402,19 @@ export type Lvalue =
 
 /**
  * How a `Set` element or a `Map` key reads back at runtime. Both are stored
- * under JavaScript object keys, which are strings, so a reader that hands keys
- * back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries` — is told
- * what its declared key type is represented as. Recorded by the type checker
- * on those readers when the key type is a number (`"number"`) or a `Bool`
- * (`"bool"`); absent for a `Text` key, and wherever the receiver's type is not
- * known — also the case when codegen runs without `check()` — so the string
- * stands.
+ * under JavaScript object keys, which are strings, so a member that hands keys
+ * back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1`
+ * of `Map(K, V).filter` — is told what its declared key type is represented
+ * as. Recorded by the type checker on those members when the key type is a
+ * number (`"number"`) or a `Bool` (`"bool"`); absent for a `Text` key, and
+ * wherever the receiver's type is not known — also the case when codegen runs
+ * without `check()` — so the string stands.
+ *
+ * Defined once, by the runtime that restores the keys (`restoreKey` in
+ * `@kumikijs/runtime`'s `stdlib.ts`), and imported here as a type only, so
+ * the compiler core stays free of runtime code.
  */
-export type KeyKind = "number" | "bool";
+export type { KeyKind };
 
 export type Expr =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }

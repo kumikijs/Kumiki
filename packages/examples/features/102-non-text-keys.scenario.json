@@ -17,7 +17,9 @@
           "bools": [true],
           "words": ["7"],
           "sum": 21,
-          "has8": true
+          "has8": true,
+          "kept": { "2": "two" },
+          "crewed": [[4, 5]]
         },
         "domIncludes": ["sum: 21", "has 8: true", "next: 101", "next: 102"]
       }

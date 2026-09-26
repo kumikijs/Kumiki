@@ -2221,13 +2221,17 @@ function checkCallee(
         typeArity === null
           ? "type arguments"
           : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
-      // A `parse` repaired to any applied type can still land on E0802 below —
-      // `type IntList = List(Int)` has no reading of a text either — so its
-      // message names both halves of the repair in the one round.
+      // A `parse` or `fresh` repaired to any applied type can still land on
+      // E0802 below — `type IntList = List(Int)` has no reading of a text, and
+      // no uuid `Text` goes into it — so the message names both halves of the
+      // repair in the one round.
+      const member = callee.slice(dot + 1);
       const readable =
-        callee.slice(dot + 1) === "parse"
+        member === "parse"
           ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
-          : "";
+          : member === "fresh"
+            ? " and that a Text goes into"
+            : "";
       errors.push({
         code: "E0124",
         kind: "type-constructor-qualifier",
@@ -2252,6 +2256,27 @@ function checkCallee(
         code: "E0802",
         kind: "unimplemented-function",
         message: `"${qualifier}" has no reading of a text — parse into ${PARSE_READINGS_PHRASE} and build it in a fn`,
+        pos,
+      });
+      return;
+    }
+    // `fresh` is the same refusal from the other side: it lowers to one uuid
+    // `Text` whatever the qualifier says, so a type no `Text` goes into has no
+    // value it can mint. Accepted, a `TaskId = nominal Int` id was a string in
+    // an `Int`'s clothing, and a `Set(TaskId)` read back through its declared
+    // key type turned it into `NaN`. `freshResultType` is the one answer to
+    // which qualifiers `fresh` produces; a qualifier that resolves to nothing
+    // is left to the report at its definition, as for `parse`.
+    if (
+      callee.slice(dot + 1) === "fresh" &&
+      isQualifierName(qualifier) &&
+      qualifierType(qualifier, pos, sym) !== null &&
+      freshResultType(qualifier, pos, sym) === null
+    ) {
+      errors.push({
+        code: "E0802",
+        kind: "unimplemented-function",
+        message: `"${qualifier}" is not a Text, and fresh mints a uuid Text — declare the id nominal Text`,
         pos,
       });
       return;
@@ -2655,22 +2680,31 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         }
       }
       checkExpr(e.receiver, sym, errors, ctx);
-      {
-        const kind = keyKindOfReader(inferType(e.receiver, sym, ctx), e.method, sym);
-        if (kind) e.keyKind = kind;
-      }
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
-      for (const a of e.args) {
-        // Inside a method-call argument `$1` / `$2` are the implicit lambda's
-        // parameters, and they SHADOW any outer ones — a tile that declares
-        // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
-        // inside that tile is a different `$1`. The element type is left
-        // undecided: which argument a method binds is per-method, and guessing
-        // wrong costs a diagnostic on a working program.
-        const inner = innerScope(ctx);
-        bindLocal(inner, "$1", null);
-        bindLocal(inner, "$2", null);
-        checkExpr(a, sym, errors, inner);
+      {
+        // Only a key reader or a call with a fragment to bind needs the
+        // receiver's type; an argument-less member that reads no keys skips
+        // the inference.
+        const recvType =
+          e.args.length > 0 || KEY_READER_NAMES.has(e.method)
+            ? inferType(e.receiver, sym, ctx)
+            : null;
+        const kind = keyKindOfReader(recvType, e.method, sym);
+        if (kind) e.keyKind = kind;
+        e.args.forEach((a, i) => {
+          // Inside a method-call argument `$1` / `$2` are the implicit lambda's
+          // parameters, and they SHADOW any outer ones — a tile that declares
+          // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
+          // inside that tile is a different `$1`. What they are bound to is
+          // per method and per receiver, and `fragmentBindings` answers only
+          // where the lowering's own reading is certain: a wrong guess costs a
+          // diagnostic on a working program.
+          const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
+          const inner = innerScope(ctx);
+          bindLocal(inner, "$1", p1);
+          bindLocal(inner, "$2", p2);
+          checkExpr(a, sym, errors, inner);
+        });
       }
       if (e.method === "get-or") {
         // The fallback is the value the call produces on the empty case, so it
@@ -3588,11 +3622,11 @@ function arithmeticResult(
  * `nominal Text`, and a `Text` goes into any nominal over it.
  *
  * Reading the qualifier without that test asserted types the lowering never
- * produces: `slot s : Text = Int.fresh()` became E0201 on a program whose value
- * really is a `Text`, `Point.fresh()` was believed a record (so `p.x` resolved
- * and `p.nope` was E0108) on a string, and a `nominal Int` id answered its own
- * base for a uuid. All three go back to the `null` they had before — no worse
- * than the lowering, which is the most an inference can honestly claim.
+ * produces: `Point.fresh()` was believed a record (so `p.x` resolved and
+ * `p.nope` was E0108) on a string, and a `nominal Int` id answered its own base
+ * for a uuid. Those calls are E0802 at the call (`checkCallee`), which asks this
+ * function which qualifiers it answers for; the `null` here keeps the one
+ * report from cascading into an E0201 at every position the call lands in.
  */
 function freshResultType(qualifier: string, pos: Pos, sym: SymbolTable): TypeExpr | null {
   const named = qualifierType(qualifier, pos, sym);
@@ -3845,6 +3879,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // collection member, so it is answered here rather than in the table of
       // §2.2 members below.
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
+      if (e.method === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
       const decided = receiverMemberResult(
         inferType(e.receiver, sym, ctx),
         e.method,
@@ -3942,6 +3977,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // yields the dispatched effect's EffectId.
       return prim("EffectId", e.pos);
     case "Call": {
+      if (e.callee === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
       const fixed = CALL_RESULT.get(e.callee);
       if (fixed) return prim(fixed, e.pos);
       const dot = e.callee.indexOf(".");
@@ -3992,6 +4028,25 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     default:
       return null;
   }
+}
+
+/**
+ * What `run-reducer(r)` answers in a property-test invariant (testing.md
+ * §8.3): the state after the reducer ran, `{slots: {<slot>: <its type>, …}}`,
+ * which the runner builds from the program's own slots. Typed, a read through
+ * it (`run-reducer(add).slots.tags.to-list`) is decided like a read of the
+ * slot itself — a key reader on it restores its keys, and a slot name the
+ * program does not declare is the E0108 it is anywhere else.
+ */
+function runReducerState(sym: SymbolTable, pos: Pos): TypeExpr {
+  const declared = [...sym.slots.values()].map((s) => ({ name: s.name, type: s.type, pos: s.pos }));
+  // The runtime's own slots (`route`) are in the state too, with a type the
+  // program does not declare — present, and undecided.
+  const reserved = [...RESERVED_SLOT_NAMES.keys()]
+    .filter((name) => !sym.slots.has(name))
+    .map((name) => ({ name, type: unknownType(pos), pos }));
+  const slots: TypeExpr = { kind: "TypeRecord", fields: [...declared, ...reserved], pos };
+  return { kind: "TypeRecord", fields: [{ name: "slots", type: slots, pos }], pos };
 }
 
 /**
@@ -4113,20 +4168,51 @@ function undefMemberError(
   };
 }
 
-/** The members that hand a `Set`'s elements or a `Map`'s keys back. */
+/**
+ * The members that hand a `Set`'s elements or a `Map`'s keys back — as a list
+ * (`to-list`, `keys`, `entries`) or, for `Map.filter`, as the `$1` its
+ * predicate is given for each entry.
+ */
 const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
   Set: new Set(["to-list"]),
-  Map: new Set(["keys", "entries"]),
+  Map: new Set(["keys", "entries", "filter"]),
 };
+
+const KEY_READER_NAMES: ReadonlySet<string> = new Set(
+  Object.values(KEY_READERS).flatMap((names) => [...names]),
+);
+
+/**
+ * How a key of type `key` is represented once it is read back: a string for a
+ * `Text`, a `KeyKind` for a type the runtime restores, `null` for anything
+ * else — a record, a variant, a type parameter — whose stored string is not a
+ * value of the type at all.
+ *
+ * Followed through aliases, `nominal` and `where`, since what matters is how
+ * the key is represented: a `TaskId = nominal Int` key is written from a
+ * number and reads back as one. `Time` is a number at runtime.
+ */
+function keyRepresentation(key: TypeExpr | null, sym: SymbolTable): KeyKind | "text" | null {
+  const t = unaliasType(key, sym);
+  if (t?.kind !== "TypePrim") return null;
+  switch (t.name) {
+    case "Text":
+      return "text";
+    case "Int":
+    case "Float":
+    case "Time":
+      return "number";
+    case "Bool":
+      return "bool";
+    default:
+      return null;
+  }
+}
 
 /**
  * The `KeyKind` a key reader lowers with, or `undefined` when `member` does not
  * read keys on this receiver or the key is already a string. One answer for
  * both spellings — `st.to-list` and `st.to-list()` ask it alike.
- *
- * Followed through aliases, `nominal` and `where`, since what matters is how
- * the key is represented: a `TaskId = nominal Int` key is written from a
- * number and reads back as one. `Time` is a number at runtime.
  */
 function keyKindOfReader(
   recv: TypeExpr | null,
@@ -4135,18 +4221,89 @@ function keyKindOfReader(
 ): KeyKind | undefined {
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp" || !KEY_READERS[t.name]?.has(member)) return undefined;
-  const key = unaliasType(t.args[0] ?? null, sym);
-  if (key?.kind !== "TypePrim") return undefined;
-  switch (key.name) {
-    case "Int":
-    case "Float":
-    case "Time":
-      return "number";
-    case "Bool":
-      return "bool";
+  const rep = keyRepresentation(t.args[0] ?? null, sym);
+  return rep === "number" || rep === "bool" ? rep : undefined;
+}
+
+/**
+ * What the fragment argument at `argIndex` of `recv.method(…)` binds as `$1`
+ * and `$2` (stdlib.md §2.2), read off the receiver's type the way the lowering
+ * hands them over (`methodCallJs`):
+ *
+ * - `List(T)` — `filter` / `map` / `find` / `sort-by`: `$1` is the element. An
+ *   element that is a `Tuple(A, B)` — what `.entries` produces — is taken
+ *   apart, `$1 = A` and `$2 = B`.
+ * - `List(T).fold(init, expr)`: `$2` is the element. `$1` is the accumulator,
+ *   whose type the init only approximates (`[]`, `{}`), so it stays open.
+ * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
+ *   is `T`, taken apart like a `List`'s element except under `flat-map`,
+ *   whose lowering does not; `Result.map-err`: `$1` is `E`.
+ * - `Map(K, V).filter`: `$1` is the key and `$2` the value — the key only when
+ *   it reads back as a value of `K` (`keyRepresentation`); `Map.update(k, expr)`:
+ *   `$1` is the current `V`.
+ *
+ * Everything else is `null`, which binds the name with no type — as every
+ * fragment was bound before. That includes an element whose runtime value may
+ * be a 2-element array without being a `Tuple` (a `List`, a `Set` — whose
+ * literal is an array — or a type parameter): the lowering takes any such
+ * array apart, so the element type is not what `$1` holds there. `Map.map` is absent because its lowering does not iterate a
+ * Map at all.
+ */
+function fragmentBindings(
+  recv: TypeExpr | null,
+  method: string,
+  argIndex: number,
+  sym: SymbolTable,
+): [TypeExpr | null, TypeExpr | null] {
+  const none: [null, null] = [null, null];
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return none;
+  const [a, b] = t.args;
+  switch (t.name) {
+    case "List": {
+      if (!a) return none;
+      if (method === "fold") return argIndex === 1 ? [null, a] : none;
+      if (argIndex !== 0 || !ELEMENT_FRAGMENTS.has(method)) return none;
+      return pairOrElement(a, sym);
+    }
+    case "Option":
+      if (argIndex !== 0 || !a) return none;
+      if (method === "flat-map") return [a, null];
+      return method === "map" || method === "filter" ? pairOrElement(a, sym) : none;
+    case "Result":
+      if (argIndex !== 0) return none;
+      if (method === "map") return a ? pairOrElement(a, sym) : none;
+      return method === "map-err" ? [b ?? null, null] : none;
+    case "Map":
+      if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
+      if (method !== "filter" || argIndex !== 0) return none;
+      return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
     default:
-      return undefined;
+      return none;
   }
+}
+
+/** Containers whose value may be a JavaScript array at runtime. */
+const ARRAY_SHAPED: ReadonlySet<string> = new Set(["List", "Set"]);
+
+/** The `List` members whose fragment is handed each element (`argFnList`). */
+const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(["filter", "map", "find", "sort-by"]);
+
+/**
+ * `$1` / `$2` for a fragment the lowering hands one value through `argFnList`,
+ * which takes any 2-element array apart. A `Tuple(A, B)` is exactly that, so
+ * it binds both; a value that might be such an array without the type saying
+ * so binds nothing.
+ */
+function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+  const u = unaliasType(elem, sym);
+  if (u?.kind === "TypeApp" && u.name === "Tuple") {
+    return u.args.length === 2 ? [u.args[0] ?? null, u.args[1] ?? null] : [elem, null];
+  }
+  if (u === null || u.kind === "TypeRef" || (u.kind === "TypeApp" && ARRAY_SHAPED.has(u.name))) {
+    return [null, null];
+  }
+  return [elem, null];
 }
 
 /**

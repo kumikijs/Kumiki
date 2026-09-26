@@ -79,6 +79,8 @@ filter(pred)                : Map(K, V)        ; pred の中で $1=key, $2=value
 map(expr)                   : Map(K, V')       ; expr の中で $1=key, $2=value
 ```
 
+返されるキー — `keys`・`entries`、および `filter` の `$1` — は、保存されている文字列ではなくキーの型 `K` を持つ。それがどう決まるかは [§2.2.2](#_2-2-2-set-t) を参照。
+
 `.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda はランタイム destructure により `$1=key, $2=value` で扱える：
 
 ```kumiki fragment
@@ -114,7 +116,9 @@ diff(other)                 : Set(T)
 to-list                     : List(T)
 ```
 
-**キーは宣言された型で読み戻される**。実装では Set の要素と Map のキーは JavaScript のオブジェクトキー — 文字列 — として保存されるが、キーを返すリーダー（`Set(T).to-list` / `Map(K, V).keys` / `Map(K, V).entries`）は型が示す値を返す：キーの型が `Int` / `Float` / `Time`（およびそれらの上の `nominal` / `where`）なら数値、`Bool` なら真偽値、`Text` なら文字列そのもの。したがって `tags.add(7).to-list` は `[7]` であり、その後の `contains(7)` / `sort` / 算術はリストの型と一致する。変換は型検査器が記録した受信側の型に基づくので、型を決定できない受信側では文字列のままである。レコードやバリアントなど、それ以外の型のキーはこの変換の対象外である。
+**キーは宣言された型で読み戻される**。実装では Set の要素と Map のキーは JavaScript のオブジェクトキー — 文字列 — として保存されるが、キーを返すメンバー（`Set(T).to-list` / `Map(K, V).keys` / `Map(K, V).entries`、および `Map(K, V).filter` の述語が各エントリについて受け取る `$1`）は型が示す値を返す：キーの型が `Int` / `Float` / `Time`（およびそれらの上の `nominal` / `where`）なら数値、`Bool` なら真偽値、`Text` なら文字列そのもの。したがって `tags.add(7).to-list` は `[7]` であり、その後の `contains(7)` / `sort` / 算術はリストの型と一致し、`Map(Int, V)` に対する `m.filter($1 == 3)` は `3` のエントリを残す。レコードやバリアントなど、それ以外の型のキーはこの変換の対象外である。
+
+何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、それ自体が `List` や `Set` である要素、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
 
 ### 2.2.3 List(T)
 
@@ -427,7 +431,9 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 TypeName.fresh()           : T            ; nominal 型の新 ID（UUIDv7）
 ```
 
-`TypeName` は引数を取らない型である。型引数なしで書かれた型コンストラクタ — `List`、`Map`、`Tuple`、`type Box(T) = …` に対する `Box` — は `fresh` が生成すべき型を指しておらず、`Box.fresh()` は [E0124](./errors.md#e0124-type-constructor-qualifier) になる。先に適用を名付け、その名前で修飾する: `type IntBox = Box(Int)` とし、`IntBox.fresh()` と書く。[§2.4.3](#_2-4-3-型変換) の `parse` と `show` の qualifier についても同じである。
+`TypeName` は引数を取らない型である。型引数なしで書かれた型コンストラクタ — `List`、`Map`、`Tuple`、`type Box(T) = …` に対する `Box` — は `fresh` が生成すべき型を指しておらず、`Box.fresh()` は [E0124](./errors.md#e0124-type-constructor-qualifier) になる。先に適用を名付け、その名前で修飾する: `type Tagged(T) = nominal Text` に対して `type OrderId = Tagged(Int)` とし、`OrderId.fresh()` と書く。[§2.4.3](#_2-4-3-型変換) の `parse` と `show` の qualifier についても同じである。
+
+id は uuid の `Text` なので、`TypeName` は `Text` が入る型である：`Text` 自身、またはその上の `nominal` / `where` — `PostId`、標準ライブラリの `Url` / `Email` / `Uuid`。それ以外の `TypeName` — `Int`、`nominal Int`、レコード、ユニオン — は [E0802](./errors.md#e0802-unimplemented-function) になる：数値である uuid は存在せず、こうして生成された `nominal Int` の id はどこへ行っても文字列であり、それを要素とする `Set` はそれを `NaN` として読み戻していた。
 
 ### 2.4.2 時刻
 

@@ -79,6 +79,8 @@ filter(pred)                : Map(K, V)        ; within pred, $1=key, $2=value
 map(expr)                   : Map(K, V')       ; within expr, $1=key, $2=value
 ```
 
+A key handed back — by `keys`, by `entries`, and as the `$1` of `filter` — has the key type `K`, not the string it is stored under: see [§2.2.2](#_2-2-2-set-t) for how that is decided.
+
 `.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda can handle them as `$1=key, $2=value` via runtime destructuring:
 
 ```kumiki fragment
@@ -114,7 +116,9 @@ diff(other)                 : Set(T)
 to-list                     : List(T)
 ```
 
-**Keys read back as their declared type.** In the implementation a Set's elements and a Map's keys are stored as JavaScript object keys, which are strings, but the readers that hand keys back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries` — answer the values the type says: a number when the key type is `Int` / `Float` / `Time` (or a `nominal` / `where` over one), a boolean for `Bool`, and the string itself for `Text`. So `tags.add(7).to-list` is `[7]`, and a later `contains(7)`, `sort` or arithmetic agrees with the list's type. The conversion follows the receiver's type as the checker resolved it, so a receiver whose type cannot be decided keeps the strings. Keys of other types — a record, a variant — are not covered by this conversion.
+**Keys read back as their declared type.** In the implementation a Set's elements and a Map's keys are stored as JavaScript object keys, which are strings, but the members that hand keys back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1` a `Map(K, V).filter` predicate is given for each entry — answer the values the type says: a number when the key type is `Int` / `Float` / `Time` (or a `nominal` / `where` over one), a boolean for `Bool`, and the string itself for `Text`. So `tags.add(7).to-list` is `[7]`, a later `contains(7)`, `sort` or arithmetic agrees with the list's type, and `m.filter($1 == 3)` on a `Map(Int, V)` keeps the entry at `3`. Keys of other types — a record, a variant — are not covered by this conversion.
+
+What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, an element that is itself a `List` or a `Set`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
 
 ### 2.2.3 List(T)
 
@@ -428,7 +432,9 @@ Both rendering paths write them: what a mounted element carries, a served page c
 TypeName.fresh()           : T            ; a new ID for a nominal type (UUIDv7)
 ```
 
-`TypeName` is a type that takes no arguments. A type constructor written without its arguments — `List`, `Map`, `Tuple`, or `Box` for a `type Box(T) = …` — names no type for `fresh` to mint, and `Box.fresh()` is [E0124](./errors.md#e0124-type-constructor-qualifier). Name the application first and qualify with that: `type IntBox = Box(Int)`, then `IntBox.fresh()`. The same holds for the qualifier of `parse` and `show` in [§2.4.3](#_2-4-3-type-conversion).
+`TypeName` is a type that takes no arguments. A type constructor written without its arguments — `List`, `Map`, `Tuple`, or `Box` for a `type Box(T) = …` — names no type for `fresh` to mint, and `Box.fresh()` is [E0124](./errors.md#e0124-type-constructor-qualifier). Name the application first and qualify with that: `type OrderId = Tagged(Int)` for a `type Tagged(T) = nominal Text`, then `OrderId.fresh()`. The same holds for the qualifier of `parse` and `show` in [§2.4.3](#_2-4-3-type-conversion).
+
+The id is a uuid `Text`, so `TypeName` is a type a `Text` goes into: `Text` itself, or a `nominal` / `where` over it — `PostId`, and the standard library's `Url` / `Email` / `Uuid`. Any other `TypeName` — `Int`, a `nominal Int`, a record, a union — is [E0802](./errors.md#e0802-unimplemented-function): there is no uuid that is a number, and a `nominal Int` id minted this way was a string wherever it went, which a `Set` of it read back as `NaN`.
 
 ### 2.4.2 Time
 

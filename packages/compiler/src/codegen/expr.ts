@@ -572,7 +572,8 @@ export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The trailing argument a key reader (`keys` / `entries` / `to-list`) is given
+ * The trailing argument a key reader (`keys` / `entries` / `to-list`, and a
+ * Map's `filter`) is given
  * so the runtime restores the keys it reads to their declared kind — nothing
  * when the checker recorded none, which leaves the string a key is stored as.
  */
@@ -610,7 +611,8 @@ export function methodCallJs(
       // The receiver may be a List (incl. .entries → [k,v] tuples) or a Map.
       // Dispatch at runtime; the lambda destructures tuples and also accepts
       // the (k, v) calling convention used by mapFilter.
-      return `_s.filter(${recvJs}, ${argFnList(args[0]!)})`;
+      // A Map's predicate is handed each key, restored like any key reader's.
+      return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
       // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples)
       // or Option(T).map (over Some). Runtime distinguishes by variant `_tag`.
