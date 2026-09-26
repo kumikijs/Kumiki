@@ -75,38 +75,42 @@ slot d : Deep   = "b"`;
 /**
  * `fresh` is narrower than `parse`, and the lowering is why: codegen answers
  * every `T.fresh()` with the same `_s.freshId()` — a uuid `Text`, whatever `T`
- * says. So the qualifier can only be believed for a type a `Text` inhabits,
- * which is what stdlib §2.4.1 scopes `fresh` to in the first place.
+ * says. So the call has a value only for a type a `Text` inhabits, which is
+ * what stdlib §2.4.1 scopes `fresh` to in the first place.
  *
- * Read without that test, the inference asserted types no `_s.freshId()` ever
- * produces: a `Text` slot refused `Int.fresh()` though the value it gets really
- * is a `Text`, a record type was positively believed of a string, and a
- * `nominal Int` id answered its own base. Each line below is one of those.
+ * Anywhere else the call is E0802, as `T.parse` on a type with no reading of a
+ * text is: there is no uuid that is an `Int`. It used to be accepted and left
+ * untyped, which stopped being harmless once a key reader restored keys by
+ * their declared type — a `nominal Int` id minted by `fresh` and read back from
+ * a `Set` became `NaN`, with `check` and `build` both saying ok.
  */
-describe("what fresh will not claim, because the lowering cannot produce it", () => {
-  it("says nothing about a primitive that a uuid Text is not", () => {
-    // Clean before this rule and clean after: the value is a `Text`.
-    expect(diagnostics(`slot s : Text = Int.fresh()`)).toEqual([]);
-    expect(diagnostics(`slot n : Int = Int.fresh()`)).toEqual([]);
-    expect(diagnostics(`slot b : Bool = Bool.fresh()`)).toEqual([]);
+describe("fresh on a type a uuid Text is not", () => {
+  const E0802 = (t: string) =>
+    `E0802 "${t}" is not a Text, and fresh mints a uuid Text — declare the id nominal Text`;
+
+  it("reports a nominal declared over Int", () => {
+    const src = `type TaskId = nominal Int\nslot t : TaskId = 1`;
+    expect(inReducer(src, `t := TaskId.fresh()`)).toEqual([E0802("TaskId")]);
+    const cents = `type Cents = nominal Int where positive\nslot c : Cents = 1`;
+    expect(inReducer(cents, `c := Cents.fresh()`)).toEqual([E0802("Cents")]);
+  });
+
+  it("reports a primitive other than Text, whatever the value lands in", () => {
+    expect(diagnostics(`slot s : Text = Int.fresh()`)).toEqual([E0802("Int")]);
+    expect(diagnostics(`slot n : Int = Int.fresh()`)).toEqual([E0802("Int")]);
+    expect(diagnostics(`slot b : Bool = Bool.fresh()`)).toEqual([E0802("Bool")]);
+  });
+
+  it("reports a record or a union", () => {
+    expect(diagnostics(`type Point = {x: Int, y: Int}\nslot s : Text = Point.fresh()`)).toEqual([
+      E0802("Point"),
+    ]);
+    expect(diagnostics(`type S = Idle | Busy\nslot s : Text = S.fresh()`)).toEqual([E0802("S")]);
   });
 
   it("still answers Text itself, which is the one primitive the lowering does produce", () => {
     expect(diagnostics(`slot s : Text = Text.fresh()`)).toEqual([]);
     expect(diagnostics(`slot n : Int = Text.fresh()`)).toEqual(["E0201 Expected Int but got Text"]);
-  });
-
-  it("says nothing about a record or a union, which a uuid Text is not", () => {
-    expect(diagnostics(`type Point = {x: Int, y: Int}\nslot s : Text = Point.fresh()`)).toEqual([]);
-    expect(diagnostics(`type S = Idle | Busy\nslot s : Text = S.fresh()`)).toEqual([]);
-  });
-
-  it("says nothing about a nominal declared over something other than Text", () => {
-    // `Cents.fresh()` is a uuid string, not a `Cents` and not an `Int`. Saying
-    // so would be asserting the declaration over the lowering.
-    const src = `type Cents = nominal Int where positive\nslot c : Cents = 1`;
-    expect(inReducer(src, `c := Cents.fresh()`)).toEqual([]);
-    expect(diagnostics(`${src}\nslot n : Int = Cents.fresh()`)).toEqual([]);
   });
 });
 
@@ -438,15 +442,19 @@ describe("a qualifier that is a type constructor, not a type", () => {
   const E = (name: string, args: string, callee: string) =>
     `E0124 Type "${name}" takes ${args}, so it is not a type on its own — "${callee}" needs one that takes none`;
 
+  // `fresh` repaired to an applied type still lands on E0802 unless a `Text`
+  // goes into it, so its message names that half too, as `parse`'s does.
+  const FRESH = " and that a Text goes into";
+
   it("reports a declared constructor at the call", () => {
     expect(diagnostics(`type Box(T) = nominal List(T)\nslot n : Int = Box.fresh()`)).toEqual([
-      E("Box", "1 type argument", "Box.fresh"),
+      `${E("Box", "1 type argument", "Box.fresh")}${FRESH}`,
     ]);
   });
 
   it("reports the built-in constructors, for every type member", () => {
     expect(diagnostics(`slot l : List(Int) = List.fresh()`)).toEqual([
-      E("List", "1 type argument", "List.fresh"),
+      `${E("List", "1 type argument", "List.fresh")}${FRESH}`,
     ]);
     expect(diagnostics(`slot o : Option(Map(Text, Int)) = Map.parse("a")`)).toEqual([
       `${E("Map", "2 type arguments", "Map.parse")} and whose base has a reading of a text (Int, Float, Time, Bool, Text or Bytes)`,
@@ -458,20 +466,21 @@ describe("a qualifier that is a type constructor, not a type", () => {
 
   it("reports Tuple, whose variadic arity is still not zero", () => {
     expect(diagnostics(`slot t : Text = Tuple.fresh()`)).toEqual([
-      E("Tuple", "type arguments", "Tuple.fresh"),
+      `${E("Tuple", "type arguments", "Tuple.fresh")}${FRESH}`,
     ]);
   });
 
-  it("answers exactly as before for a qualifier that applies the constructor", () => {
+  it("answers exactly as any other type for a qualifier that applies the constructor", () => {
     // Naming the application is the repair: `IntBox` takes no arguments, so it
-    // is a type, and the call goes back to the rules above. `fresh` claims
-    // nothing for it — a uuid `Text` is not a `List(Int)` — which is the
-    // `freshResultType` narrowing, unchanged.
+    // is a type, and the call goes back to the rules above — and `fresh` on it
+    // is the E0802 of any type a uuid `Text` is not.
     expect(
       diagnostics(
         `type Box(T) = nominal List(T)\ntype IntBox = Box(Int)\nslot n : Int = IntBox.fresh()`,
       ),
-    ).toEqual([]);
+    ).toEqual([
+      `E0802 "IntBox" is not a Text, and fresh mints a uuid Text — declare the id nominal Text`,
+    ]);
     expect(diagnostics(`${IDS}\nslot o : Option(PostId) = UserId.parse("a")`)).toEqual([
       "E0201 Expected Option(PostId) but got Option(UserId)",
     ]);

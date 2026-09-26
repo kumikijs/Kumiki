@@ -177,6 +177,8 @@ property-test ::= 'property-test'
                   ('shrink'    '=' bool)?           ; minimize on failure (default true)
 ```
 
+`run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
+
 ### 8.3.2 Generators
 
 Each type has an automatic generator:

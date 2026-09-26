@@ -1,4 +1,4 @@
-import type { Expr, Pattern, Pos } from "../ast.ts";
+import type { Expr, KeyKind, Pattern, Pos } from "../ast.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
@@ -154,9 +154,9 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "is-none") return `(_s.variantIs(${baseJs}, "None"))`;
       if (e.field === "is-ok") return `(_s.variantIs(${baseJs}, "Ok"))`;
       if (e.field === "is-err") return `(_s.variantIs(${baseJs}, "Err"))`;
-      if (e.field === "keys") return `_s.mapKeys(${baseJs})`;
+      if (e.field === "keys") return `_s.mapKeys(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "values") return `_s.mapValues(${baseJs})`;
-      if (e.field === "entries") return `_s.mapEntries(${baseJs})`;
+      if (e.field === "entries") return `_s.mapEntries(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
       // .show on values (variants → _tag, numbers/strings → String)
@@ -179,7 +179,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "head") return `_s.listHead(${baseJs})`;
       if (e.field === "tail") return `_s.listTail(${baseJs})`;
       if (e.field === "last") return `_s.listLast(${baseJs})`;
-      if (e.field === "to-list") return `_s.toList(${baseJs})`;
+      if (e.field === "to-list") return `_s.toList(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "get-err") return `_s.getErr(${baseJs})`;
       if (e.field === "to-option") return `_s.toOption(${baseJs})`;
       if (e.field === "parse-int") return `_s.parseIntOpt(${baseJs})`;
@@ -281,7 +281,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
-      return methodCallJs(e.receiver, e.method, e.args, ctx);
+      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind);
     }
     case "RecordLit": {
       const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${jsOfExpr(f.value, ctx)}`);
@@ -573,7 +573,23 @@ export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
   ...FIELD_ACCESS_SHORTCUTS,
 ]);
 
-export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: EvalCtx): string {
+/**
+ * The trailing argument a key reader (`keys` / `entries` / `to-list`, and a
+ * Map's `filter`) is given
+ * so the runtime restores the keys it reads to their declared kind — nothing
+ * when the checker recorded none, which leaves the string a key is stored as.
+ */
+function keyKindArg(kind: KeyKind | undefined): string {
+  return kind ? `, ${JSON.stringify(kind)}` : "";
+}
+
+export function methodCallJs(
+  recv: Expr,
+  method: string,
+  args: Expr[],
+  ctx: EvalCtx,
+  keyKind?: KeyKind,
+): string {
   // Chained `recv.run-reducer(name)` in a property-test invariant (§8.3): apply
   // the reducer to the receiver state. `_event` is bound in the generated trial.
   if (method === "run-reducer") {
@@ -597,7 +613,8 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
       // The receiver may be a List (incl. .entries → [k,v] tuples) or a Map.
       // Dispatch at runtime; the lambda destructures tuples and also accepts
       // the (k, v) calling convention used by mapFilter.
-      return `_s.filter(${recvJs}, ${argFnList(args[0]!)})`;
+      // A Map's predicate is handed each key, restored like any key reader's.
+      return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
       // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples)
       // or Option(T).map (over Some). Runtime distinguishes by variant `_tag`.
@@ -608,7 +625,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
-      return `_s.mapKeys(${recvJs})`;
+      return `_s.mapKeys(${recvJs}${keyKindArg(keyKind)})`;
     case "has":
       return `_s.setHas(${recvJs}, ${argRaw(args[0]!)})`;
     case "toggle":
@@ -753,7 +770,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "values":
       return `_s.mapValues(${recvJs})`;
     case "entries":
-      return `_s.mapEntries(${recvJs})`;
+      return `_s.mapEntries(${recvJs}${keyKindArg(keyKind)})`;
     case "lower":
       return `(String((${recvJs}) ?? "")).toLowerCase()`;
     case "upper":
@@ -771,7 +788,7 @@ export function methodCallJs(recv: Expr, method: string, args: Expr[], ctx: Eval
     case "last":
       return `_s.listLast(${recvJs})`;
     case "to-list":
-      return `_s.toList(${recvJs})`;
+      return `_s.toList(${recvJs}${keyKindArg(keyKind)})`;
     case "get-err":
       return `_s.getErr(${recvJs})`;
     case "to-option":
