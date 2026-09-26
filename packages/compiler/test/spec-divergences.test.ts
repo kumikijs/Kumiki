@@ -422,6 +422,12 @@ slot size : Size = S
 slot done : Bool = false
 slot hits : Int  = 0`;
 
+  type UiEv = "key" | "focus" | "blur";
+  const HANDLER = { key: "onKeyDown", focus: "onFocus", blur: "onBlur" } as const satisfies Record<
+    UiEv,
+    string
+  >;
+
   const source = (ev: string, tile: string) => `${PRELUDE}
 reducer hit on=ui.${ev}(Ed) do= hits := hits + 1
 tile Ed = ${tile}
@@ -433,14 +439,16 @@ app A
 `;
 
   /**
-   * The same program with the handler written on the tile instead. `/404`
-   * gets a tile of its own here, unlike the fixtures above: a tile body is
-   * inlined once per route that reaches it, so the two-route shape would make
-   * an occurrence count track the route table rather than the emission.
+   * The handler written on the tile AND a selector aimed at it, on the same
+   * tile. `/404` gets a tile of its own here, unlike the fixtures above: a
+   * tile body is inlined once per route that reaches it, so the two-route
+   * shape would make an occurrence count track the route table rather than
+   * the emission.
    */
-  const explicit = (tile: string, handler: string) => `${PRELUDE}
-reducer hit on=app.start do= hits := hits + 1
-tile Ed       = ${tile.replace(/\)(?=[^)]*$)/, `, ${handler}=hit)`)}
+  const explicit = (ev: UiEv, tile: string) => `${PRELUDE}
+reducer hitExplicit on=app.start   do= hits := hits + 1
+reducer hitSelector on=ui.${ev}(Ed) do= hits := hits + 2
+tile Ed       = ${tile.replace(/\)(?=[^)]*$)/, `, ${HANDLER[ev]}=hitExplicit)`)}
 tile App      = column(Ed, text(hits.show))
 tile NotFound = text("nope")
 app A
@@ -461,22 +469,25 @@ app A
     init   = []
 `;
 
-  const HANDLER: Record<string, string> = { key: "onKeyDown", focus: "onFocus", blur: "onBlur" };
-
-  // Each kind, and the events that reach the element its renderer returns.
-  const kinds: ReadonlyArray<{ kind: string; tile: string; evs: readonly string[] }> = [
-    { kind: "editable", tile: "editable(bind=note)", evs: ["key", "focus", "blur"] },
-    { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ["key", "focus", "blur"] },
-    { kind: "link", tile: 'link(to="/", text="home")', evs: ["key", "focus", "blur"] },
-    { kind: "select", tile: "select(bind=size, options=sizes())", evs: ["key"] },
+  // Each kind, and the events that reach the element its renderer returns:
+  // every focusable root takes all three, a label-wrapped control `key` only.
+  const ALL = ["key", "focus", "blur"] as const;
+  const kinds: ReadonlyArray<{ kind: string; tile: string; evs: readonly UiEv[] }> = [
+    { kind: "input", tile: "input(bind=note)", evs: ALL },
+    { kind: "textarea", tile: "textarea(bind=note)", evs: ALL },
+    { kind: "button", tile: 'button(text="b")', evs: ALL },
+    { kind: "editable", tile: "editable(bind=note)", evs: ALL },
+    { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ALL },
+    { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
+    { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
-    { kind: "radio", tile: "radio(value=done)", evs: ["key"] },
+    { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
   ];
 
   for (const { kind, tile, evs } of kinds) {
     for (const ev of evs) {
-      const handler = HANDLER[ev] ?? "";
+      const handler = HANDLER[ev];
 
       it(`says nothing about ui.${ev} on ${kind}`, () => {
         expect(codes(source(ev, tile))).toEqual([]);
@@ -486,12 +497,16 @@ app A
         expect(build(source(ev, tile))).toContain(`${handler}: _h("hit")`);
       });
 
-      it(`keeps emitting a ${handler} written on ${kind} itself, once`, () => {
-        // The explicit spelling is the evidence that the runtime attaches the
-        // listener to this kind at all. With the kind now in the lift row too,
-        // both loops in `propsFor` find it — once, whichever produced it.
-        const js = build(explicit(tile, handler));
-        expect(js.match(new RegExp(`${handler}: _h\\("hit"\\)`, "g"))).toHaveLength(1);
+      it(`merges a ${handler} written on ${kind} with a ui.${ev} selector on it, once`, () => {
+        // §1.6.4: an explicit handler and a selector on the same tile chain
+        // into one listener, explicit first. Before the row listed the kind,
+        // the selector half was dropped and this read `_h("hitExplicit")`.
+        // Emitted once: both loops in `propsFor` see the tile, and two
+        // listeners side by side would run each reducer twice.
+        const js = build(explicit(ev, tile));
+        const merged = `${handler}: _h("hitExplicit", "hitSelector")`;
+        expect(js.split(merged)).toHaveLength(2);
+        expect(js).not.toMatch(new RegExp(`${handler}: _h\\("hitExplicit"\\)`));
       });
 
       it(`lifts ui.${ev} through a container whose leaf is ${kind}`, () => {
@@ -503,8 +518,8 @@ app A
     }
   }
 
-  for (const ev of ["key", "focus", "blur"]) {
-    const handler = HANDLER[ev] ?? "";
+  for (const ev of ALL) {
+    const handler = HANDLER[ev];
     it(`still reports a tile that fires no ${ev} event, and still drops it`, () => {
       // The control for each row: without it, dropping the check entirely
       // would pass the rows above. Both halves, because "silently dropped" is
@@ -515,12 +530,12 @@ app A
   }
 
   for (const kind of ["check", "radio", "switch"]) {
-    for (const ev of ["focus", "blur"]) {
+    for (const ev of ["focus", "blur"] as const) {
       it(`reports ui.${ev} on ${kind}, whose label never receives it`, () => {
         // The other half of the label-wrapped case, and the rule rather than
         // a gap: the listener is on the `<label>`, and `focus` / `blur` from
         // the inner `<input>` do not bubble to it.
-        const tile = `${kind}(value=done)`;
+        const tile = kind === "radio" ? 'radio(group="g", selected=done)' : `${kind}(value=done)`;
         expect(codes(source(ev, tile))).toEqual(["W0212"]);
         expect(build(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
       });

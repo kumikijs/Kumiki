@@ -17,12 +17,11 @@ already worked. What those rows list is where a *selector* lands, so an
 omission there is a gap in the table rather than a fact about the DOM, the
 same shape as #287's `ui.input`.
 
-This moves `editable` only. The same three rows still omit `slider`, `link`,
-and `select` under `key`, each for no recorded reason, and `check` / `radio` /
-`switch` are half a case (their `<label>` sees a bubbled `keydown` but not
-`focus` / `blur`). Those are behaviour changes for kinds #367 did not name, so
-they are tracked separately and the §W0212 note says which blanks are rules
-and which are coverage.
+This change moves `editable` only. The same three rows also left out
+`slider` and `link`, and `select` under `key`, and `check` / `radio` /
+`switch` under `key` (their `<label>` sees a bubbled `keydown`, though not
+`focus` / `blur`). Those kinds are closed in this release as well, in a
+separate entry (#456).
 
 **A subscription that did nothing now runs.** An app carrying a
 `ui.key` / `ui.focus` / `ui.blur` reducer aimed at an `editable` got the W0212

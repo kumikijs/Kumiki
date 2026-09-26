@@ -14,7 +14,11 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *   is decided by where those events arrive at that element — see
  *   `FOCUSABLE_ROOT` and `LABEL_WRAPPED_CONTROL`, which the three rows are
  *   built from. For `click` / `submit` / `change` / `input` each kind's
- *   renderer decides, and an absence there is a fact about the element.
+ *   renderer decides whether it calls the handler, and an absence there
+ *   records that decision. Some are facts about the element (`editable` fires
+ *   no `change`); some are runtime policy (`link` reserves `click` for
+ *   navigation, and `slider` listens for `input` only to write its bind,
+ *   never calling `onInput`). The comment on each row says which.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
@@ -51,8 +55,8 @@ export type UiLift = {
  * - `input` / `textarea` / `button` / `select` / `slider`: form controls (a
  *   `slider` is a bare `<input type="range">`, operated with arrow keys).
  * - `editable`: a `<div contenteditable="true">` is an editing host, so it is
- *   focusable without a `tabindex` (its `tabIndex` reads -1: in no tab order,
- *   focusable anyway).
+ *   focusable without a `tabindex` (its `tabIndex` IDL attribute reads -1,
+ *   the reflection default, which says nothing about the tab order).
  * - `link`: an `<a>` whose `href` is always assigned, so it is focusable and in
  *   the tab order. A keydown on it runs `ui.key(Link)` BEFORE the browser acts
  *   on the key: on Enter the browser then activates the link, and the link's
@@ -78,9 +82,11 @@ const FOCUSABLE_ROOT = [
  * Kinds rendered as a `<label>` wrapping their focusable `<input>`, so the
  * runtime's listeners sit on the label and not on the control that takes
  * focus. The two kinds of event reach the label differently: `keydown`
- * BUBBLES from the checkbox to the label, so a `ui.key` selector lands; `focus`
- * and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on the label
- * ever runs, and W0212 for them is true. These three look like one case with
+ * BUBBLES from the inner `<input>` to the label, so a `ui.key` selector lands;
+ * `focus` and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on
+ * the label ever runs, and W0212 is correct to emit for them. (Its message
+ * says no descendant fires the event, which overstates it: the `<input>` does
+ * fire, the event just never reaches the listener.) These three look like one case with
  * the focusable controls and are two.
  */
 const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
@@ -106,7 +112,9 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   },
   // An `editable` does fire `input`, and its renderer calls the tile's
   // `onInput` from that listener, so a selector lands on it like any other
-  // text control.
+  // text control. `slider` is absent by its renderer's choice, not the DOM's:
+  // an `<input type="range">` fires `input`, and the renderer listens to it
+  // to write the bind but never calls `onInput`.
   { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
   {
     ev: "key",
@@ -145,8 +153,10 @@ function liftTilesFor(handler: string): ReadonlySet<string> | null {
  * one that is neither `contenteditable` nor given a `tabindex` — never fires
  * them, and `keydown` reaches a container only from a focusable descendant.
  * (`editable` is the `contenteditable` case, which is why it sits in those
- * rows of the lift table.) Reporting them would need to know about
- * focusability, which is a different check from this one.
+ * rows of the lift table.) Reporting them would need a focusability answer
+ * for the tile's root. `FOCUSABLE_ROOT` above is one, but this table does not
+ * consult it, and whether it should is an open question rather than a
+ * settled "different check".
  */
 export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
   onClick: liftTilesFor("onClick"),

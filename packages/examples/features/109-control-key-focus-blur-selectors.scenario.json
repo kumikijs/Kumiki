@@ -2,62 +2,165 @@
   "steps": [
     {
       "label": "initial render: nothing has fired",
-      "expect": { "noErrors": true, "state": { "log": "" } }
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        },
+        "domIncludes": ["log: "]
+      }
     },
     {
       "label": "focusing the slider runs its ui.focus reducer",
-      "do": { "focus": "#vol" },
-      "expect": { "noErrors": true, "state": { "log": "sf " } }
+      "do": {
+        "focus": "#vol"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf "
+        }
+      }
     },
     {
       "label": "an arrow key on the slider runs its ui.key reducer",
-      "do": { "key": "#vol", "value": "ArrowRight" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk " } }
+      "do": {
+        "key": "#vol",
+        "value": "ArrowRight"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk "
+        }
+      }
     },
     {
       "label": "leaving the slider runs its ui.blur reducer",
-      "do": { "blur": "#vol" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb " } }
+      "do": {
+        "blur": "#vol"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb "
+        }
+      }
     },
     {
       "label": "the link takes focus, a key and blur the same way",
-      "do": { "focus": "#home" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf " } }
+      "do": {
+        "focus": "#home"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf "
+        }
+      }
     },
     {
-      "label": "a key on the link",
-      "do": { "key": "#home", "value": "Tab" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk " } }
+      "label": "Enter on the link runs its ui.key reducer (a dispatched key event does not activate the link; the real-browser tier checks that the navigation still happens)",
+      "do": {
+        "key": "#home",
+        "value": "Enter"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk "
+        }
+      }
     },
     {
       "label": "leaving the link",
-      "do": { "blur": "#home" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk lb " } }
+      "do": {
+        "blur": "#home"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb "
+        }
+      }
     },
     {
       "label": "a key on the select runs its ui.key reducer",
-      "do": { "key": "#pick", "value": "ArrowDown" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk lb pk " } }
+      "do": {
+        "key": "#pick",
+        "value": "ArrowDown"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb pk "
+        }
+      }
     },
     {
       "label": "a key on the checkbox inside check's label bubbles to the label, where the listener is",
-      "do": { "key": "#done input", "value": " " },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk lb pk ck " } }
+      "do": {
+        "key": "#done input",
+        "value": " "
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb pk ck "
+        },
+        "domIncludes": ["log: sf sk sb lf lk lb pk ck "]
+      }
+    },
+    {
+      "label": "a key on the input inside switch's label bubbles to the label too",
+      "do": {
+        "key": "#toggle input",
+        "value": " "
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb pk ck wk "
+        },
+        "domIncludes": ["log: sf sk sb lf lk lb pk ck wk "]
+      }
     },
     {
       "label": "a key on another tile counts for none of them",
-      "do": { "key": "#away", "value": "a" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk lb pk ck " } }
+      "do": {
+        "key": "#away",
+        "value": "a"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb pk ck wk "
+        }
+      }
     },
     {
       "label": "focus on another tile does not count",
-      "do": { "focus": "#away" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk lb pk ck " } }
+      "do": {
+        "focus": "#away"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb pk ck wk "
+        }
+      }
     },
     {
       "label": "blur on another tile does not count",
-      "do": { "blur": "#away" },
-      "expect": { "noErrors": true, "state": { "log": "sf sk sb lf lk lb pk ck " } }
+      "do": {
+        "blur": "#away"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "sf sk sb lf lk lb pk ck wk "
+        }
+      }
     }
   ]
 }

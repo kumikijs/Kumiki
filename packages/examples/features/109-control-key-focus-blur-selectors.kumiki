@@ -6,9 +6,11 @@
 #   slider   a bare <input type="range">   focusable, so key / focus / blur
 #   link     an <a> whose href is set      focusable, so key / focus / blur
 #   select   a <select>                    focusable, so key / focus / blur
-#   check    a <label> around the checkbox the checkbox's keydown BUBBLES to
-#            the label, so key; focus and blur do not bubble, so neither
-#            reaches the label, and those two stay W0212.
+#   check    a <label> around a checkbox   the input's keydown BUBBLES to the
+#   switch   the same, role="switch"       label, so key; focus and blur do not
+#                                          bubble, so neither reaches the label,
+#                                          and those two stay W0212. (radio is
+#                                          the same shape again.)
 #
 # A keydown on a link runs its `ui.key` reducer first. If the key is Enter,
 # the browser then activates the link and the router navigates as usual. The
@@ -32,13 +34,15 @@ reducer linkFocus   on=ui.focus(Home) do= log := log + "lf "
 reducer linkBlur    on=ui.blur(Home)  do= log := log + "lb "
 reducer selectKey   on=ui.key(Pick)   do= log := log + "pk "
 reducer checkKey    on=ui.key(Done)   do= log := log + "ck "
+reducer switchKey   on=ui.key(Toggle) do= log := log + "wk "
 reducer checked     on=ui.click(Done) do= done := not done
 
-tile Vol  = slider(bind=vol, min=0, max=100, step=5) {id: "vol"}
-tile Home = link(to="/other", text="other page") {id: "home"}
-tile Pick = select(bind=size, options=sizes()) {id: "pick"}
-tile Done = check(value=done) {id: "done"}
-tile Away = button(text="elsewhere") {id: "away"}
+tile Vol    = slider(bind=vol, min=0, max=100, step=5) {id: "vol"}
+tile Home   = link(to="/other", text="other page") {id: "home"}
+tile Pick   = select(bind=size, options=sizes()) {id: "pick"}
+tile Done   = check(value=done) {id: "done"}
+tile Toggle = switch(value=done) {id: "toggle"}
+tile Away   = button(text="elsewhere") {id: "away"}
 
 tile App
     = column(
@@ -47,6 +51,7 @@ tile App
         Home,
         Pick,
         Done,
+        Toggle,
         Away,
         text("log: " + log))
       {pad: "lg", gap: "md"}

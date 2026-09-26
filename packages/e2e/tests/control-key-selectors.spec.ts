@@ -41,10 +41,10 @@ test("Enter on a link runs its ui.key reducer, then the link still navigates", a
   await page.locator("#home").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("the other page")).toBeVisible();
-  // `lf` from the focus, then `lk` from the key, before the navigation. Last,
-  // `lb`: the navigation removes the focused link from the page, and Chromium
-  // blurs it on the way out.
-  expect(await log(page)).toBe("lf lk lb ");
+  // `lf` from the focus, then `lk` from the key, before the navigation. What
+  // follows (a `lb` when the navigation removes the focused link) is browser
+  // behaviour this claim does not rest on, so it is left open.
+  expect(await log(page)).toMatch(/^lf lk /);
 });
 
 test("a key pressed in a check's checkbox bubbles to the label's ui.key", async ({ page }) => {
