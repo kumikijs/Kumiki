@@ -224,7 +224,7 @@ An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other s
 ### 6.4.1 Behavior
 
 - A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation).
-- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`.
+- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
 - A `debounce` timer scheduled for the same effect is cleared by cancel, so a pending-but-not-yet-issued request never lands.
 - A `throttle` window marker is **left intact** by cancel — the original effect has already launched (cancel aborts that in-flight request), and clearing the marker would let an immediate next emit slip past the rate limit before the window closes.
 

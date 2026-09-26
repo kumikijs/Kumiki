@@ -57,7 +57,7 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * these are seeded before the program's definitions, not after.
  */
 export const STDLIB_TYPES: readonly TypeDef[] = [
-  def("HttpStatus", nominal(prim("Int"), "between", [100, 599])),
+  def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
     "HttpError",
     record({
