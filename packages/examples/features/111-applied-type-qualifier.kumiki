@@ -1,0 +1,37 @@
+# Feature (stdlib.md §2.4, errors.md E0124): a type-member call is qualified by
+# a type, and a type constructor is not one.
+#
+# `Tagged` below wants its `T`, the way `List` wants an element and `Map` a key
+# and a value, so there is no type for `fresh` to mint or `parse` to read into:
+#
+#   slot id : OrderId = Tagged.fresh()     E0124 — "Tagged" takes 1 type argument
+#   slot n  : Int     = List.fresh()       E0124
+#
+# Both used to compile with nothing reported, and the second put a uuid string
+# in an `Int` slot. The repair is to name the application as a type: `OrderId`
+# takes no arguments, so it can qualify the call.
+
+type Tagged(T) = nominal Text where uuid
+type OrderId   = Tagged(Int)
+
+slot latest : OrderId         = OrderId.fresh()
+slot parsed : Option(OrderId) = None
+
+reducer remint on=ui.click(Remint)
+    do= let next = OrderId.fresh()
+        latest := next
+        parsed := OrderId.parse(next)
+
+tile Remint = button(text="new order id") {id: "remint"}
+
+tile App = column(
+             text("id length " + latest.length.show),
+             text(match parsed with
+                    | Some(id) -> "parsed " + (id == latest).show
+                    | None     -> "not parsed"),
+             Remint)
+
+app AppliedTypeQualifier
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

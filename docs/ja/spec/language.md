@@ -522,6 +522,8 @@ issue.copy(status=Done, priority=High)
 
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
+> **`.ok` では、最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` ではその値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` の最初の束縛は `out=` から型付けされない。そこに届くのは capability の失敗値であり、組み込みの storage / session / indexed ハンドラ、provider 未登録の capability、invoke 中の例外はいずれも `E` の宣言にかかわらず `{message: Text}` レコードを渡す（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、`$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
 ### 1.6.6 例
 
 ```kumiki fragment

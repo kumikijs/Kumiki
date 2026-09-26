@@ -59,7 +59,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
-import { parseQualifier, qualifierType } from "./parse-reading.ts";
+import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
@@ -1684,6 +1684,33 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
   }
 }
 
+/**
+ * The type `$1` holds in an `effect-name.ok(…)` trigger — the value the
+ * effect's `out=` says a success delivers (language.md §1.6.5): the Ok payload
+ * of a `Result(T, E)`, or the whole value of any other `out=`.
+ *
+ * `.err` stays undecided. What arrives there is the runtime's failure record
+ * (`{message: …}` from the storage / indexed handlers and the dispatcher's
+ * catch), which the declared `E` does not describe; typing `$e` as `E` would
+ * reject the read that matches it and accept the one that does not. A
+ * built-in effect has no `out=` to read, and a `Result` of the wrong arity is
+ * already reported where it is written, so neither is guessed at.
+ */
+function effectPayloadType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  if (outcome === "err") return null;
+  const out = sym.effects.get(effect)?.outType;
+  if (!out) return null;
+  const u = unaliasType(out, sym);
+  if (u?.kind === "TypeApp" && u.name === "Result") {
+    return u.args.length === 2 ? (u.args[0] ?? null) : null;
+  }
+  return out;
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -1697,7 +1724,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     // Both checks a bind is subject to today are asked here, in the walk that
     // puts the names into scope, so the answer to one cannot drift from the
     // answer to the other. Whichever of them fires, the name still enters the
-    // scope — that is what `ctx.localBinds.add` below the branch is for, and
+    // scope — that is what `bindLocal` below the branch is for, and
     // why it sits outside it: the body's reads are then that binding, so a
     // `$route` bind does not also collect an E0119 apiece for every read.
     //
@@ -1706,7 +1733,8 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     // since it stands for a positional rather than skipping one, which is the
     // index `emit-reducer.ts` reads the payload at.
     const boundAt = new Map<string, number>();
-    r.on.binds.forEach((b, i) => {
+    const trigger = r.on;
+    trigger.binds.forEach((b, i) => {
       if (b.name === "_") return;
       if (RESERVED_BIND_NAMES.has(b.name)) {
         // §1.6.5 — codegen declares these three in every reducer body, whatever
@@ -1737,7 +1765,14 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
             pos: b.pos,
           });
       }
-      ctx.localBinds.add(b.name);
+      // `$1` is the effect's result; the positionals after it (the request key)
+      // stay untyped. A reserved name is not this bind's to type — the body
+      // reads the compiler's own declaration of it.
+      const type =
+        i === 0 && !RESERVED_BIND_NAMES.has(b.name)
+          ? effectPayloadType(trigger.effect, trigger.outcome, sym)
+          : null;
+      bindLocal(ctx, b.name, type);
     });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
@@ -2169,13 +2204,45 @@ function checkCallee(
       });
       return;
     }
+    // A name can be a type's and still not be a type: `List`, `Map`, `Tuple`
+    // and a `type Box(T) = …` want their arguments first. The call has no type
+    // to mint (`fresh`) or read into (`parse`), and each check above declines
+    // it on its own terms — the name resolves, the callee resolves, and the
+    // inference answers nothing — so `slot n : Int = Box.fresh()` stored a uuid
+    // string in an `Int` slot with no report at all.
+    // `constructorArity` answers `null` for variadic `Tuple` and for a name that
+    // is no type at all, so it is asked only of a name `isKnownTypeName` holds.
+    const typeArity =
+      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
+        ? constructorArity(qualifier, sym)
+        : 0;
+    if (typeArity !== 0) {
+      const wanted =
+        typeArity === null
+          ? "type arguments"
+          : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
+      // A `parse` repaired to any applied type can still land on E0802 below —
+      // `type IntList = List(Int)` has no reading of a text either — so its
+      // message names both halves of the repair in the one round.
+      const readable =
+        callee.slice(dot + 1) === "parse"
+          ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
+          : "";
+      errors.push({
+        code: "E0124",
+        kind: "type-constructor-qualifier",
+        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none${readable}`,
+        pos,
+      });
+      return;
+    }
     // `parse` lowers by the base the qualifier unaliases to, and a record, a
-    // union, `File`, `EffectId`, `Unit` or a constructor written without its
-    // arguments has no reading of a text — codegen has nothing of the call's
-    // type to produce. `parseQualifier` is the one answer both sides read, so
-    // every qualifier that passed E0117 above and has no reading is reported
-    // here, and none reaches the lowering. A qualifier whose definition
-    // resolves to nothing is left to the report at that definition.
+    // union, `File`, `EffectId` or `Unit` has no reading of a text — codegen
+    // has nothing of the call's type to produce. `parseQualifier` is the one
+    // answer both sides read, so every qualifier that passed E0117 and E0124
+    // above and has no reading is reported here, and none reaches the
+    // lowering. A qualifier whose definition resolves to nothing is left to
+    // the report at that definition.
     if (
       callee.slice(dot + 1) === "parse" &&
       isQualifierName(qualifier) &&
@@ -2184,7 +2251,7 @@ function checkCallee(
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
-        message: `"${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`,
+        message: `"${qualifier}" has no reading of a text — parse into ${PARSE_READINGS_PHRASE} and build it in a fn`,
         pos,
       });
       return;
