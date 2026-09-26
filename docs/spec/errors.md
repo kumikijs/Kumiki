@@ -697,7 +697,7 @@ A **`tile-test`** applies its target the way a tile body does — the lowering a
 
 The count is one half of that application and the type is the other, quieter one: `show` renders an absent value and a wrongly typed one alike as the empty string ([Standard Library §2.4](./stdlib.md#_2-4-built-in-functions)), so the snapshot compares against something indistinguishable from an empty label and *passes*. So `given.in` is compared with the target's `in=` exactly as a tile call's argument is, and reported under the same codes at the value's own position — [E0201](#e0201-type-mismatch) for a value of the wrong type, [E0214](#e0214-missing-record-field) / [E0215](#e0215-unknown-record-field) for a record's fields. A `tile-test` naming a built-in is refused before either question, by [E0105](#e0105-undef-tile).
 
-The count waits for a `given` whose every section was read. A key outside the vocabulary is [E0714](#e0714-test-section-unknown), and an input written under such a name — `given = {slots: {}, input: "Ada"}` — is that mistake rather than a missing argument, at a position that stops existing as soon as the section name is fixed. An `in` the lowering *does* read is a written argument whatever else the `given` misspells, so the other direction is reported either way: at the section itself, which is the text to delete, while a missing one is asked for at the test.
+The count waits for a `given` whose every section was read. A `given` that is not a record at all is [E0713](#e0713-test-shape-invalid), a key outside the vocabulary is [E0714](#e0714-test-section-unknown), and an input written under such a name — `given = {slots: {}, input: "Ada"}` — is that mistake rather than a missing argument, at a position that stops existing as soon as the section name is fixed. An `in` the lowering *does* read is a written argument whatever else the `given` misspells, so the other direction is reported either way: at the section itself, which is the text to delete, while a missing one is asked for at the test.
 
 A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail. The parentheses are not what makes it a call and so not what makes it counted: `Duration.s` written bare is the same zero-argument call and the same E0213, which is the one spelling that used to reach that timer with the count enforced.
 
@@ -954,9 +954,9 @@ An `episode-test` `mocks` record binds an effect to a policy value that is not o
 
 ### E0713 `test-shape-invalid`
 
-A test-body position holds a value whose shape the lowering does not read, and whose fallback is an assertion of its own rather than a failure.
+A test-body position holds a value whose shape the lowering does not read, and whose fallback is not a failure: the test silently asserts something else, or nothing.
 
-Three positions have one today:
+Three kinds of position have one today:
 
 - A `reducer-test`'s `given.mocks` binds an effect to something other than `ok(...)`, `err(...)` or `delay(<ms>, ok(...)|err(...))`. `mockScriptJs` answers anything else with `{outcome: "ok", value: null}`, so a mock written to drive the failure path drove the success one — and a test asserting what happens when an effect fails passed, permanently, having never failed it. ([E0712](#e0712-episode-mock-invalid) is the same rule for an `episode-test`, whose vocabulary also includes `from-log` and `ignore`.)
 - An `expect.effects` that is not a list. `effectListJs` lowers a non-list to `[]`, which is not an absent assertion but the assertion *no effects were emitted* — so `effects: persist(count)`, a forgotten pair of brackets, passes against a reducer that emits nothing, and the effect named inside it is never resolved.
@@ -971,7 +971,7 @@ Three positions have one today:
 > `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
 > `` `given.event` must be a record, `{type: …, target: …}` ``
 
-A `given` that is not a record draws this alone. Nothing inside it is resolved, and a `tile-test` does not also count its argument as missing.
+E0713 is reported once, at the clause, and no name inside it is resolved as a section, so a `tile-test` does not also count its argument as missing. A rule that holds wherever it is written still applies inside: a wildcard in a `given` is still [E0109](#e0109-test-wildcard-misuse), and a `<slots.X>` naming no slot in a `reducer-test`'s `expect` is still [E0103](#e0103-undef-ref-undef-slot).
 
 **Fix**: Write the accepted shape. Every one of these positions also throws at codegen, so a caller that skips `check` gets a named failure rather than a silently rewritten assertion.
 

@@ -142,6 +142,12 @@ export function isSectionName<K extends TestKind, P extends TestPart>(
  * `TestDef` is not discriminated by it: passing the literal is what ties the
  * `name` argument to the table, so a section this file does not list is a type
  * error at the call site rather than a silent `undefined` at run time.
+ *
+ * A `given` that is written but is not a record throws (E0713) rather than
+ * answering `undefined`, which is the silent empty record this replaced. The
+ * lowering runs only on checked programs, so the throw is for a caller that
+ * skipped `check`; a checker-side caller, which does see such a program, must
+ * guard with `isRecordValue` first.
  */
 export function givenSection<K extends TestKind>(
   t: TestDef,
@@ -151,7 +157,10 @@ export function givenSection<K extends TestKind>(
   return recordFieldsAt(t.given, "given").find((f) => f.name === name)?.value;
 }
 
-/** The value of one section of a test's `expect`. See `givenSection`. */
+/**
+ * The value of one section of a test's `expect`. See `givenSection`, including
+ * the throw on an `expect` that is written but is not a record.
+ */
 export function expectSection<K extends TestKind>(
   t: TestDef,
   kind: K,

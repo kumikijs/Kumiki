@@ -14,4 +14,4 @@ Every reader of these clauses asks them for their fields. A name or a literal ha
 
 The same rule covers the `mocks` and `event` sections of a `given`, which the lowering reads the same way. `{}` is still accepted as the empty record. A `tile-test`'s `expect` (a tile expression) and a `property-test`'s `invariant` are unaffected.
 
-A `given` that is not a record is reported once, at the clause. Nothing inside it is resolved, and a `tile-test` does not also report its argument as missing. The lowering now throws the same message instead of answering `{}`, so a caller that skips `check` gets a named failure.
+E0713 is reported once, at the clause, and no name inside it is resolved as a section, so a `tile-test` does not also report its argument as missing. A wildcard there is still E0109, and an undefined `<slots.X>` in a `reducer-test`'s `expect` is still E0103. The lowering now throws the same message instead of answering `{}`, so a caller that skips `check` gets a named failure.

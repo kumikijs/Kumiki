@@ -4586,8 +4586,9 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     // §8.5: each `given.mocks` key must name a declared effect — a typo would
     // otherwise silently never match an emit (the M1-review no-silent-typo rule).
     // The section is read through the shared table for the same reason codegen
-    // is: a second spelling of "mocks" in this file is a second vocabulary. A
-    // `given` that is not a record has no sections, and is E0713's.
+    // is: a second spelling of "mocks" in this file is a second vocabulary. The
+    // guard is there because `givenSection` throws on a `given` that is not a
+    // record, which has no sections and is E0713's (`checkTestNames`).
     const mocks = isRecordValue(t.given) ? givenSection(t, "reducer-test", "mocks") : undefined;
     if (mocks?.kind === "RecordLit") {
       for (const m of mocks.fields) {
@@ -4684,13 +4685,13 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
   }
   // A section the vocabulary does not list is already an E0714 (and a `given`
   // that is no record at all an E0713), and it is where the missing argument
-  // went: `given = {slots: {}, input: "Ada"}` wrote the
-  // input under a name nothing reads. Counting it as absent as well is one
-  // mistake named twice, at a position that stops existing as soon as the first
-  // is fixed — so the count waits for a `given` every section of which was
-  // read. An `in` that *is* read is a written argument whatever else the given
-  // misspells, so the other direction is reported either way.
-  if (got === 0 && hasUnreadSection(t)) return;
+  // went: `given = {slots: {}, input: "Ada"}` wrote the input under a name
+  // nothing reads. Counting it as absent as well is one mistake named twice, at
+  // a position that stops existing as soon as the first is fixed — so the count
+  // waits for a `given` every section of which was read. An `in` that *is* read
+  // is a written argument whatever else the given misspells, so the other
+  // direction is reported either way.
+  if (got === 0 && hasUnreadGiven(t)) return;
   errors.push({
     code: "E0213",
     kind: "call-arity-mismatch",
@@ -4706,7 +4707,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
  * Whether some of `t`'s `given` is read by nothing: a section that names none
  * of a tile-test's (E0714), or a `given` that is not a record at all (E0713).
  */
-function hasUnreadSection(t: TestDef): boolean {
+function hasUnreadGiven(t: TestDef): boolean {
   if (!isRecordValue(t.given)) return true;
   return recordFieldsOf(t.given).some((f) => !isSectionName("tile-test", "given", f.name));
 }
@@ -4761,8 +4762,11 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
 
   // A clause that is not a record has no sections to read, and the loops below
-  // would read it as an empty one; E0713 says so instead, once, at the clause.
-  // Nothing inside it is resolved — it is not a value anything evaluates.
+  // would read it as an empty one; E0713 says so instead, once, at the clause,
+  // and no name inside it is resolved — it is not a value anything evaluates.
+  // A wildcard there is still E0109 (and an undefined `<slots.X>` in a
+  // reducer-test `expect` still E0103): `checkTest` walks the whole clause for
+  // those whatever its shape, because they are wrong wherever they are written.
   requireRecord(t.given, "given", errors);
   if (t.testKind === "reducer-test" || t.testKind === "episode-test") {
     requireRecord(t.expect, "expect", errors);
