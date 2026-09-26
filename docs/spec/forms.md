@@ -34,16 +34,16 @@ tile Compose = column(
 
 ### 5.1.2 Handling of refinement
 
-For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters:
+For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters the value is **refused**: the slot keeps the last value it accepted. There is one mode, and it is deliberately quiet — a half-typed value is expected, not a defect, so nothing is reported. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
 
-- **Default**: the input is rejected (the slot is not updated)
-- **`strict=false`**: the slot is updated, but the form's `valid` flag becomes false
+The control keeps what was typed, so the field and the slot disagree until the field is edited to a value the slot accepts. `error(field=draft)` speaks for **what the field shows** ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)): while the field shows a value the refinement refused, the message is that value's. A reducer that rewrites the slot moves the field with it, and the message then follows the slot again. So the field shows a value the slot does not hold only together with the message saying why. Two refinements of that rule: the field in question is the one in the same view — with one app mounted into several hosts ([runtime.md §10.9](./runtime.md#_10-9-runtime-api-for-embedding)), each view's `error(field=…)` speaks for its own view's field, which in every other view still shows the slot's value; and during an IME composition the message is settled once, when the composition ends, not re-derived for every intermediate value the composition passes through.
 
 ```kumiki snippet
-input(bind=draft, strict=false)
+input(bind=draft)
+error(field=draft)
 ```
 
-Both shapes are specific to `bind`, and both are deliberately quiet: a half-typed value is expected, not a defect. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
+A `strict` prop, which an earlier revision of this section specified as a second mode (take the refused value and turn a form-level `valid` flag false), is [E0219](./errors.md#e0219-bind-strict-prop). Nothing ever read that flag, and a slot that holds a value its own type refuses is what every other path to it is built to prevent.
 
 ---
 
@@ -97,7 +97,6 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 - If all `bind`ed slots pass validation, the `ui.submit(WrapperTile)` reducer is called
 - If even one fails, it is not called (individual error displays do appear)
-- If strict-mode switching is needed, apply `strict=false` to the relevant input
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
 - `type` is one of `submit` / `button` / `reset`, written through to the DOM verbatim, and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`. A literal outside the three is [E0201](./errors.md#e0201-type-mismatch): an invalid `type` attribute resolves to `submit`, so the typo submits
 
@@ -117,7 +116,6 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 | `required` | `Bool` | Required |
 | `auto-focus` | `Bool` | Focus on mount |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off`, etc. |
-| `strict` | `Bool` | Whether to reject input on a refinement violation (default true) |
 | `id` | `Text` | HTML id (referenced by a label's `for`) |
 
 ### 5.3.1 By input type
@@ -243,7 +241,7 @@ The refinement layer covers **every** predicate [§1.3.3](./language.md#_1-3-3-r
 The two write paths differ in how loud they are, not in what they check:
 
 - **Assignment** (`age := …` in a reducer) discards the whole batch and reports it — no slot written, no effect emitted ([Runtime §10.3.3](./runtime.md#_10-3-3-batching)).
-- **`bind`** refuses the value for that field alone and says nothing, because a half-typed value is expected rather than a defect ([§5.1.2](#_5-1-2-handling-of-refinement)).
+- **`bind`** refuses the value for that field alone and reports nothing, because a half-typed value is expected rather than a defect. The field keeps showing it, and `error(field=…)` renders its message ([§5.1.2](#_5-1-2-handling-of-refinement)).
 
 Neither gates the **declared default**: `slot email : Email = ""` starts out holding a value its own refinement rejects, which is what puts a message on a pristine form ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)).
 
@@ -288,7 +286,7 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` is a built-in tile that renders the target slot's current validation error: it reads the predicate off the slot and renders the message for it whenever the slot's **current** value fails, and nothing otherwise. A slot whose type carries no refinement therefore has no message to show — which is a statement about the slot, not about the value in it.
+`error(field=...)` is a built-in tile that renders the target field's current validation error: it reads the predicate off the slot and renders the message for it whenever the value the field **shows** fails, and nothing otherwise. That is the slot's current value, except while a bound control shows a value the refinement refused ([§5.1.2](#_5-1-2-handling-of-refinement)), which is judged instead. A slot whose type carries no refinement therefore has no message to show — which is a statement about the slot, not about the value in it.
 
 A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) renders the message of the **first one the current value fails**, in the order §1.3.1 gives them. On `slot draft : Text where nonempty where len-lt(7) = ""` a pristine field reads "Required", not a bound the empty value is well inside.
 

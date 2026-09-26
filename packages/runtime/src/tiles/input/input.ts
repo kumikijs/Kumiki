@@ -51,7 +51,7 @@ export const inputTile: TileRenderer<"input"> = (node) => {
     const state = INPUT_STATE.get(inp);
     if (state?.bind && inp.type !== "file") {
       const app = liveApp(inp);
-      if (app) writeBind(app, state.bind, state.bindPath, inp.value);
+      if (app) writeBind(app, inp, state.bind, state.bindPath, inp.value);
     }
     if (state?.onInput) state.onInput({ ...(state.el ?? {}), value: inp.value });
   });

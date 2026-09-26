@@ -3,7 +3,7 @@
 // carry an index segment, which is an arbitrary runtime value — so the segments
 // this has to survive are not only the ones a compiler emits deliberately.
 
-import { _setPathHelper, bindLabel, type PathSegment } from "@kumikijs/runtime";
+import { _setPathHelper, bindLabel, KumikiPanic, type PathSegment } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 /** Written as `unknown[]` where a case is deliberately outside the type. */
@@ -56,6 +56,130 @@ describe("a segment that is not a field name", () => {
 
   it("takes a numeric segment as a key", () => {
     expect(_setPathHelper({ 2: "a" }, seg([2]), "b")).toEqual({ 2: "b" });
+  });
+});
+
+// language.md §1.6.3 says what an index into a List writes: the element at the
+// position, in a copy that is still a List. An index that names no element is
+// a panic (lifecycle.md §7.2.2), so the dispatch rolls back and reaches
+// `app.error` rather than writing somewhere the type does not describe.
+describe("an index into a List", () => {
+  it("replaces the element at the index and leaves a List", () => {
+    const out = _setPathHelper([1, 2, 3], [0], 7);
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toEqual([7, 2, 3]);
+  });
+
+  it("does not edit the list it was given", () => {
+    const xs = [1, 2, 3];
+    _setPathHelper(xs, [1], 9);
+    expect(xs).toEqual([1, 2, 3]);
+  });
+
+  it("writes through the element at the index, keeping both levels a List and a record", () => {
+    const out = _setPathHelper(
+      {
+        rows: [
+          { n: 1, t: "a" },
+          { n: 2, t: "b" },
+        ],
+      },
+      ["rows", 1, "n"],
+      9,
+    );
+    expect(out).toEqual({
+      rows: [
+        { n: 1, t: "a" },
+        { n: 9, t: "b" },
+      ],
+    });
+    expect(Array.isArray((out as { rows: unknown }).rows)).toBe(true);
+  });
+
+  it("reaches a List inside a List", () => {
+    expect(
+      _setPathHelper(
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        [1, 0],
+        0,
+      ),
+    ).toEqual([
+      [1, 2],
+      [0, 4],
+    ]);
+  });
+});
+
+describe("an index that names no element of a List", () => {
+  it("panics for an index past the end", () => {
+    expect(() => _setPathHelper([1, 2, 3], [3], 7)).toThrow(KumikiPanic);
+    expect(() => _setPathHelper([1, 2, 3], [3], 7)).toThrow(
+      "Index 3 is out of range for a List of length 3",
+    );
+  });
+
+  it("panics for an index past the end with more of the path behind it", () => {
+    expect(() => _setPathHelper([{ n: 1 }], [5, "n"], 7)).toThrow(KumikiPanic);
+  });
+
+  it("panics for a negative index", () => {
+    expect(() => _setPathHelper([1, 2, 3], [-1], 7)).toThrow(
+      "Index -1 is out of range for a List of length 3",
+    );
+  });
+
+  // The checker requires an `Int` for a List index, so these reach the setter
+  // only through a value the types do not describe.
+  it("panics for a number that is not a whole one", () => {
+    expect(() => _setPathHelper([1, 2, 3], [0.5], 7)).toThrow(KumikiPanic);
+    expect(() => _setPathHelper([1, 2, 3], seg([Number.NaN]), 7)).toThrow(KumikiPanic);
+  });
+
+  it("panics for a whole number spelled as text", () => {
+    expect(() => _setPathHelper([1, 2, 3], seg(["0"]), 7)).toThrow(KumikiPanic);
+  });
+});
+
+// A List-typed value that is not there at runtime — a field missing after a
+// restore or a decode — has no element to replace. Building an object in its
+// place would produce `{"0": 7}`, the shape an index write into a List must
+// never leave.
+describe("an index that meets no List", () => {
+  it("panics when the value is undefined or null", () => {
+    expect(() => _setPathHelper(undefined, [0], 7)).toThrow(KumikiPanic);
+    expect(() => _setPathHelper(null, [0], 7)).toThrow(KumikiPanic);
+    expect(() => _setPathHelper({ doc: {} }, ["doc", "xs", 0], 7)).toThrow(KumikiPanic);
+  });
+
+  it("panics when the element to write through is missing", () => {
+    expect(() => _setPathHelper({ rows: [{ n: 1 }, undefined] }, ["rows", 1, "n"], 9)).toThrow(
+      KumikiPanic,
+    );
+  });
+});
+
+// The paths the List branch must not disturb: a Map is a plain object, and
+// `todos[id].done` (§1.6.3's own example) goes through the object branch it
+// always did.
+describe("an index into a Map", () => {
+  it("writes the entry and leaves a plain object", () => {
+    expect(_setPathHelper({ a: 1 }, ["b"], 2)).toEqual({ a: 1, b: 2 });
+  });
+
+  it("writes a field of an entry", () => {
+    expect(_setPathHelper({ t1: { done: false, x: 1 } }, ["t1", "done"], true)).toEqual({
+      t1: { done: true, x: 1 },
+    });
+  });
+
+  // A `Map(Int, V)` key is a number at runtime, exactly like a List index. A
+  // shortcut that treated every numeric segment as a List index would make
+  // this insert a no-op or a panic.
+  it("inserts under a numeric key", () => {
+    expect(_setPathHelper({}, [5], "x")).toEqual({ 5: "x" });
   });
 });
 

@@ -4,6 +4,7 @@
 // here even if the compiler's smoke / examples test happens to skip the path.
 
 import { describe, expect, it } from "vitest";
+import { KumikiPanic } from "../src/core.ts";
 import { _stdlibCore } from "../src/stdlib.ts";
 
 describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
@@ -255,5 +256,27 @@ describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () =
 
   it("still filters a Map entry-wise", () => {
     expect(_stdlibCore.filter({ a: 1, b: 2 }, (_k, v) => (v as number) > 1)).toEqual({ b: 2 });
+  });
+});
+
+// `xs[i]` reads the element the same write names (language.md §1.6.3), so an
+// index that names no element panics on both sides of `:=`. A Map is a plain
+// object and is read by key.
+describe("an index read (docs/spec/language.md §1.6.3)", () => {
+  it("reads the element of a List at the index", () => {
+    expect(_stdlibCore.index([10, 20, 30], 1)).toBe(20);
+  });
+
+  it("panics for an index past the end or a negative one", () => {
+    expect(() => _stdlibCore.index([10, 20, 30], 7)).toThrow(KumikiPanic);
+    expect(() => _stdlibCore.index([10, 20, 30], 7)).toThrow(
+      "Index 7 is out of range for a List of length 3",
+    );
+    expect(() => _stdlibCore.index([10, 20, 30], -1)).toThrow(KumikiPanic);
+  });
+
+  it("reads a Map entry by key, a numeric key included", () => {
+    expect(_stdlibCore.index({ a: 1 }, "a")).toBe(1);
+    expect(_stdlibCore.index({ 5: "x" }, 5)).toBe("x");
   });
 });
