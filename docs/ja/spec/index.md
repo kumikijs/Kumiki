@@ -83,6 +83,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | コア |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
+| [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -245,6 +246,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§E0124](./errors.md#e0124-type-constructor-qualifier) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | コア | [§1.9](./language.md#_1-9-式言語) |
 | `114-unit-value.kumiki` | slot, reducer, fn, tile | 標準ライブラリ | [§2.1](./stdlib.md#_2-1-ビルトイン型) |
+| `115-fn-name-fragment.kumiki` | slot, reducer, fn, tile | コア | [§1.8.6](./language.md#_1-8-6-部分適用と高階関数) |
 | `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.4](./http.md#_6-4-cancellation) |
 | `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |

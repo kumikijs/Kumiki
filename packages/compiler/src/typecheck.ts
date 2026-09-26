@@ -46,6 +46,7 @@ import { BUILTIN_TILES } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
+  FRAGMENT_ARGUMENTS,
   KNOWN_MEMBERS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
@@ -1012,6 +1013,12 @@ type Ctx = {
    * every diagnostic the gate produces here is discarded.
    */
   routeReadsSeen?: { name: string; pos: Pos }[];
+  /**
+   * Where the `MethodCall` case records each bare `fn` name it lowers as a
+   * call in a fragment position, for `fnCallsIn`. Shared with every narrower
+   * scope the same way `routeReadsSeen` is, and set only by that probe.
+   */
+  fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   /**
    * Where the tile branch of E0103 records each `$1` it finds unbound, for a
    * caller that wants the answer rather than the diagnostic. Set only by
@@ -2598,7 +2605,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Bool":
     case "Unit":
       return;
-    case "Ref":
+    case "Ref": {
       // An `app.init` argument is evaluated while `createApp()` builds the app
       // object; the route is installed later, by whichever mount follows. Both
       // spellings therefore read nothing here, and both get the same answer —
@@ -2669,7 +2676,22 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         }
         return;
       }
-      if (sym.fns.has(e.name)) return;
+      const fn = sym.fns.get(e.name);
+      if (fn) {
+        // A `fn` is not a value (§1.9.1: no lambdas), so its bare name here is
+        // always the same mistake — the call's parentheses are missing. The
+        // name lowers to the generated function itself, which reaches whatever
+        // reads it, a capability boundary included, as a function. The
+        // fragment argument of a higher-order method is the one position a
+        // name is right, and the `MethodCall` case keeps it from reaching here.
+        errors.push({
+          code: "E0127",
+          kind: "fn-as-value",
+          message: `"${e.name}" is a fn, and a fn is not a value — write the call: ${e.name}(${fn.params.map((p) => p.name).join(", ")})`,
+          pos: e.pos,
+        });
+        return;
+      }
       // Could be a built-in like `route`
       if (e.name === "route" || e.name === "now" || e.name === "self") return;
       // `$1` in a tile is bound only when the tile declares `in=`; reaching here
@@ -2691,6 +2713,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         pos: e.pos,
       });
       return;
+    }
     case "Variant":
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
@@ -2759,7 +2782,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
-    case "MethodCall":
+    case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === "run-reducer") {
         checkExpr(e.receiver, sym, errors, ctx);
@@ -2814,7 +2837,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
-      for (const a of e.args) {
+      const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+      for (const [i, a] of e.args.entries()) {
+        if (fragment?.index === i && isFragmentFnName(a, sym, ctx)) {
+          checkFragmentFnArity(a, e.method, fragment, inferType(e.receiver, sym, ctx), sym, errors);
+          ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+          continue;
+        }
         // Inside a method-call argument `$1` / `$2` are the implicit lambda's
         // parameters, and they SHADOW any outer ones — a tile that declares
         // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
@@ -2840,6 +2869,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         if (want !== null && fallback !== undefined) checkAgainst(fallback, want, sym, errors, ctx);
       }
       return;
+    }
     case "Wildcard":
       // In the two positions `checkTest`'s dedicated passes walk — anywhere in
       // a `given`, and a reducer-test `expect` — reporting here as well would
@@ -2925,6 +2955,77 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       return;
   }
+}
+
+/**
+ * Whether `a` is a bare `fn` name — the one thing a fragment argument may be
+ * besides an expression (§1.8.6). Resolved the way a `Ref` is: a local bind or
+ * a slot of the same name shadows the `fn`, and is then an ordinary value.
+ */
+function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
+  return (
+    a.kind === "Ref" && !ctx.localBinds.has(a.name) && !sym.slots.has(a.name) && sym.fns.has(a.name)
+  );
+}
+
+/**
+ * A `fn` named as a fragment is applied to the positionals the fragment binds
+ * (`FRAGMENT_ARGUMENTS`), as many as it declares, so the count it declares has
+ * to be one the method means:
+ *
+ * - none drops the element, and more than the method binds leaves a
+ *   parameter unbound;
+ * - `fold`'s `fn` takes both, because the element is the second;
+ * - a list method's `$2` is the value of a key/value pair, so a `fn` of two
+ *   takes it only over a `Map` or a `List` of pairs. Over any other receiver
+ *   the second argument would be the JS index or the element again. A
+ *   receiver whose type cannot be decided is given the benefit of the doubt.
+ */
+function checkFragmentFnArity(
+  a: Expr & { kind: "Ref" },
+  method: string,
+  fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
+  receiver: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const n = sym.fns.get(a.name)?.params.length ?? 0;
+  const report = (why: string): void => {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Function "${a.name}" expects ${n} argument(s) but ${why}`,
+      pos: a.pos,
+    });
+  };
+  if (fragment.second === "element") {
+    if (n !== 2) report(`.${method} supplies exactly 2 — the accumulator and the element`);
+    return;
+  }
+  if (n === 0) report(`.${method} needs at least 1`);
+  else if (n > fragment.binds) report(`.${method} supplies at most ${fragment.binds}`);
+  else if (n === 2 && fragment.second === "pair-value" && bindsPairs(receiver, sym) === false) {
+    const on = receiver ? ` on "${typeToString(receiver)}"` : "";
+    report(
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)`,
+    );
+  }
+}
+
+/**
+ * Whether a list method over `receiver` binds `$2` to the value of a key/value
+ * pair: `true` for a `Map` or a `List` of 2-tuples, `false` for any other
+ * receiver it can decide, `null` when it cannot tell.
+ */
+function bindsPairs(receiver: TypeExpr | null, sym: SymbolTable): boolean | null {
+  const t = unaliasType(receiver, sym);
+  if (t === null || t.kind === "TypeRef") return null;
+  if (t.kind !== "TypeApp") return false;
+  if (t.name === "Map") return true;
+  if (t.name !== "List") return false;
+  const el = unaliasType(t.args[0] ?? null, sym);
+  if (el === null || el.kind === "TypeRef") return null;
+  return el.kind === "TypeApp" && el.name === "Tuple" && el.args.length === 2;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -5410,16 +5511,35 @@ function routeReadsIn(
   params: readonly { name: string; type: TypeExpr }[] = [],
   positional: readonly string[] = [],
 ): { name: string; pos: Pos }[] {
-  const seen: { name: string; pos: Pos }[] = [];
+  return preMountProbe(e, sym, params, positional).routeReads;
+}
+
+/**
+ * One `checkExpr` run over `e` in the `app-init` position, with its
+ * diagnostics discarded, for the two answers the pre-mount checks need from
+ * the checker's own scoping: the route reads (`routeReadsIn`) and the bare
+ * `fn` names lowered as calls in a fragment position (`fnCallsIn`). A name a
+ * parameter, a local bind or a slot shadows is neither, and the walk that
+ * builds the scopes is the one place that knows.
+ */
+function preMountProbe(
+  e: Expr,
+  sym: SymbolTable,
+  params: readonly { name: string; type: TypeExpr }[],
+  positional: readonly string[],
+): { routeReads: { name: string; pos: Pos }[]; fragmentFnCalls: { name: string; pos: Pos }[] } {
+  const routeReads: { name: string; pos: Pos }[] = [];
+  const fragmentFnCalls: { name: string; pos: Pos }[] = [];
   const ctx: Ctx = {
     kind: "app-init",
     localBinds: new Set([...params.map((p) => p.name), ...positional]),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
-    routeReadsSeen: seen,
+    routeReadsSeen: routeReads,
+    fragmentFnCallsSeen: fragmentFnCalls,
   };
   checkExpr(e, sym, [], ctx);
-  return seen;
+  return { routeReads, fragmentFnCalls };
 }
 
 /**
@@ -5427,17 +5547,26 @@ function routeReadsIn(
  * positioned at the call rather than at the expression that contains it — two
  * calls in one argument are two things to fix.
  *
- * Deliberately narrower than the edges the cycle check follows: those come from
- * `referencesIn`, which counts a bare `fn` name as a reference too. A bare name
- * lowers to the function itself and is never applied, so nothing it mentions is
- * evaluated — counting one here would report a call that does not happen.
+ * A call is a `Call` node, or a bare `fn` name in the fragment argument of a
+ * higher-order method: `xs.map(here)` lowers to `xs.map(here($1))`, so `here`
+ * runs wherever the method does (`FRAGMENT_ARGUMENTS`). A bare name anywhere
+ * else is a value, E0127, and is never applied, so nothing it mentions is
+ * evaluated — which is why this is narrower than `referencesIn`, whose edges
+ * the cycle check follows. `params` and `positional` are the binds in scope,
+ * as for `routeReadsIn`: a parameter named like a `fn` shadows it.
  */
-function fnCallsIn(e: Expr, sym: SymbolTable): { name: string; pos: Pos }[] {
+function fnCallsIn(
+  e: Expr,
+  sym: SymbolTable,
+  params: readonly { name: string; type: TypeExpr }[] = [],
+  positional: readonly string[] = [],
+): { name: string; pos: Pos }[] {
   const out: { name: string; pos: Pos }[] = [];
   walkExpr(e, (n) => {
     if (n.kind === "Call" && sym.fns.has(n.callee)) out.push({ name: n.callee, pos: n.pos });
   });
-  return out;
+  out.push(...preMountProbe(e, sym, params, positional).fragmentFnCalls);
+  return out.sort((a, b) => a.pos.line - b.pos.line || a.pos.col - b.pos.col);
 }
 
 type RouteChainResolver = (start: string) => { chain: string[]; name: string } | null;
@@ -5470,8 +5599,9 @@ function routeReachedThroughCalls(
  * has to terminate on its own. Re-entering a name cannot add reachability,
  * which is what makes the visited set safe to prune with.
  *
- * The per-`fn` answer is memoised across every position that asks — each
- * `app.init` argument and each slot initializer. The search is not: it is a
+ * The per-`fn` answers — the route read its body makes, and the `fn`s it
+ * calls — are memoised across every position that asks: each `app.init`
+ * argument and each slot initializer. The search is not: it is a
  * walk over a graph the memo already answers for, and each call site is
  * reported by the caller either way.
  */
@@ -5485,6 +5615,14 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
       ? (routeReadsIn(fn.body, sym, fn.params, ["$1", "$2"])[0]?.name ?? null)
       : null;
     direct.set(name, answer);
+    return answer;
+  };
+  const calls = new Map<string, readonly { name: string }[]>();
+  const callsOf = (fn: FnDef): readonly { name: string }[] => {
+    const cached = calls.get(fn.name);
+    if (cached !== undefined) return cached;
+    const answer = fnCallsIn(fn.body, sym, fn.params, ["$1", "$2"]);
+    calls.set(fn.name, answer);
     return answer;
   };
 
@@ -5507,7 +5645,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
       }
       const fn = sym.fns.get(name);
       if (!fn) continue;
-      for (const callee of fnCallsIn(fn.body, sym)) {
+      for (const callee of callsOf(fn)) {
         if (parent.has(callee.name)) continue;
         parent.set(callee.name, name);
         queue.push(callee.name);

@@ -462,6 +462,31 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 **修正**：適用を型として名付け、その名前で呼び出しを修飾する — `type IntBox = Box(Int)` とし、`IntBox.fresh()` と書く。`parse` の場合、適用した型はさらにテキストの読み方がある基底型を持たなければならない（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）: `type Tagged(T) = nominal Text` に対する `type OrderId = Tagged(Int)` は `Text` として読むが、コンテナには読み方がない — `type IntList = List(Int)` に対する `IntList.parse(t)` は [E0802](#e0802-unimplemented-function) になる — ので、`List.parse` や `Map.parse` などは、部品を `Int`、`Text` … にパースして `fn` で値を組み立てる。`kumiki fix` はこれを修復しない: どの引数を適用するかは作者が決めることであり、skip 理由がそう伝える。
 
+### E0127 `fn-as-value`
+
+値が来る位置に `fn` の名前が括弧なしで書かれている。`fn` は値ではない — ラムダは無い（[言語 §1.9.1](./language.md#_1-9-1-禁止事項)）— ので、括弧のない名前はいつも同じ誤り、すなわち呼び出しの書き忘れである。
+
+> `"<name>" is a fn, and a fn is not a value — write the call: <name>(<params>)`
+
+このチェックがなければ、名前は生成された関数そのものへ lowering されていた。`emit load(label)` は、effect が `in=Text` と宣言している位置へ *関数* を渡して dispatch した：storage のキーは関数のソース文字列になり、HTTP の body は `undefined` にシリアライズされたままリクエストが送られた。どの層もこれを報告しなかった — 値の型をチェッカが決められず、すべての比較が沈黙した — し、`app.init = [load(label)]` はアプリがマウントされる前に同じ場所へ到達した。
+
+同名のローカル束縛（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）・パラメータ・slot がシャドーイングしている名前はその値であり、`fn` ではなく、報告されない。
+
+**括弧のない `fn` 名が正しい唯一の位置**は、高階メソッドの式断片の引数である（[言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数)）。そこでは値ではなく、メソッドが自身の positional で行う呼び出しを表し、その呼び出しへ lowering される：
+
+| メソッド | 式断片の引数 | 束縛する positional |
+|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | 唯一の引数 | `$1`（要素）。`Map` または対の `List`（`.entries`）の上では `$1`（キー）と `$2`（値） |
+| `fold(init, f)` | 2 番目 | `$1`（アキュムレータ）, `$2`（要素） |
+| `flat-map`, `map-err` | 唯一の引数 | `$1` |
+| `update(k, f)` | 2 番目 | `$1`（現在の値） |
+
+`xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の `fn` はちょうど 2 つを宣言する。要素は 2 番目だからであり、1 つの `fn` は何も畳み込まない。リストのメソッドの `fn` が 2 つを宣言できるのはキーと値の対の上だけである。チェッカが型を決められるそれ以外のレシーバの上では、2 番目のパラメータは JS のインデックスか要素そのものを再び受け取るので、これも E0213 である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
+
+比べるのは数だけである。`fn` のパラメータの型は要素の型と照合されない — インラインの `f($1)` と同じである：`List(Int)` の上の `xs.map(loud)` は、`fn loud(t: Text)` であっても報告されない。
+
+**修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -674,6 +699,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| 式断片に `fn` 名を渡す `x.m(f)`（[E0127](#e0127-fn-as-value)） | 式断片が束縛する positional の数、ただし 1 つ以上 | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>`（または `needs at least 1`、`.fold` では `supplies exactly 2 — the accumulator and the element`、キーと値の対ではないレシーバの上では `on "<T>" supplies 1 — …`） |
 | `x.get-or(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `x.get(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get" on "<T>" …, but got <m> — "…" is the "<U>" reading` |
 | `app.routes` の `"/p" -> T` | 引数無し、したがって `in=` も無し | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |

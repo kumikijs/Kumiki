@@ -83,6 +83,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
+| [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -245,6 +246,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | stdlib | [§E0124](./errors.md#e0124-type-constructor-qualifier) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | core | [§1.9](./language.md#_1-9-expression-language) |
 | `114-unit-value.kumiki` | slot, reducer, fn, tile | stdlib | [§2.1](./stdlib.md#_2-1-built-in-types) |
+| `115-fn-name-fragment.kumiki` | slot, reducer, fn, tile | core | [§1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions) |
 | `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | http | [§6.4](./http.md#_6-4-cancellation) |
 | `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |

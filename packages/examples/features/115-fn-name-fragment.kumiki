@@ -1,0 +1,66 @@
+# Feature (language.md §1.8.6): a `fn` name is a call, not a value.
+#
+# There are no lambdas, so a `fn` is never a value. Written without its
+# parentheses in a value position, its name is E0127 — the parentheses are
+# missing:
+#
+#   emit load(label)      # E0127 "label" is a fn, and a fn is not a value
+#                         #       — write the call: label()
+#
+# The one place a bare name is right is the fragment argument of a
+# higher-order method. There it stands for the call the method makes with its
+# own positionals: `xs.map(double)` is `xs.map(double($1))`, and `shift` in a
+# `fold` is `shift($1, $2)` — accumulator, then element. `shift` is not
+# commutative, so the order shows: 292 over [3, -1, 2], where the swapped
+# order would give 40.
+
+slot xs     : List(Int)         = [3, -1, 2]
+slot scores : Map(Text, Int)    = {"ada": 1}
+slot picked : Option(Int)       = Some(4)
+slot parsed : Result(Int, Text) = Err("bad")
+
+slot doubled : List(Int)   = []
+slot kept    : List(Int)   = []
+slot sorted  : List(Int)   = []
+slot first   : Int         = 0
+slot total   : Int         = 0
+slot halved  : Option(Int) = None
+slot reason  : Text        = ""
+slot title   : Text        = ""
+
+fn double(n: Int) -> Int = n * 2
+fn positive(n: Int) -> Bool = n > 0
+fn negate(n: Int) -> Int = 0 - n
+fn shift(acc: Int, n: Int) -> Int = acc * 10 + n
+fn half(n: Int) -> Option(Int) = if n % 2 == 0 then Some((n / 2).to-int) else None
+fn loud(t: Text) -> Text = t + "!"
+fn heading-text() -> Text = "fn names"
+
+reducer run on=ui.click(Run)
+    do= doubled := xs.map(double)
+        kept    := xs.filter(positive)
+        sorted  := xs.sort-by(negate)
+        first   := xs.find(positive).get-or(0)
+        total   := xs.fold(0, shift)
+        scores  := scores.update("ada", double)
+        halved  := picked.flat-map(half)
+        reason  := match parsed.map-err(loud) with
+            | Ok(n)  -> n.show
+            | Err(e) -> e
+        title   := heading-text()
+
+tile Run = button(text="run") {id: "run"}
+
+tile App
+    = column(
+        heading("fragments"),
+        Run,
+        text("title: " + title),
+        text("total: " + total.show),
+        text("reason: " + reason))
+      {pad: "lg", gap: "md"}
+
+app FnNameFragment
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -484,6 +484,31 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 **Fix**: Name the application as a type and qualify the call with that — `type IntBox = Box(Int)`, then `IntBox.fresh()`. For `parse`, the applied type also needs a base with a reading of a text ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)): `type Tagged(T) = nominal Text` then `type OrderId = Tagged(Int)` reads by `Text`, but a container never has one — `type IntList = List(Int)` then `IntList.parse(t)` is [E0802](#e0802-unimplemented-function) — so for `List.parse`, `Map.parse` and the like, parse the parts into `Int`, `Text`, … and build the value in a `fn`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
 
+### E0127 `fn-as-value`
+
+A `fn` name is written without its parentheses where a value goes. A `fn` is not a value — there are no lambdas ([Language §1.9.1](./language.md#_1-9-1-prohibitions)) — so the bare name is always the same mistake: the call is missing.
+
+> `"<name>" is a fn, and a fn is not a value — write the call: <name>(<params>)`
+
+Without this check the name lowered to the generated function itself. `emit load(label)` dispatched a *function* where the effect declares `in=Text`: a storage key stringified to the function's source, an HTTP body serialised to `undefined` and the request went out anyway. Nothing reported it at any tier — the value was of no type the checker could decide, so every comparison was silent — and `app.init = [load(label)]` reached the same place before the app had mounted.
+
+A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), a parameter or a slot of the same name shadows is that value, not the fn, and is not reported.
+
+**The one position a bare `fn` name is right** is the fragment argument of a higher-order method ([Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions)). There it is not a value but the call the method makes with its own positionals, and it lowers to that call:
+
+| Method | Fragment argument | Positionals it binds |
+|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | the only one | `$1` (the element); over a `Map` or a `List` of pairs (`.entries`), `$1` (the key) and `$2` (the value) |
+| `fold(init, f)` | the second | `$1` (accumulator), `$2` (element) |
+| `flat-map`, `map-err` | the only one | `$1` |
+| `update(k, f)` | the second | `$1` (the current value) |
+
+`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A list method's `fn` declares two only over a key/value pair; over any other receiver whose type the checker can decide, a second parameter would receive the JS index or the element again, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
+
+The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
+
+**Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -696,6 +721,7 @@ An application passes a different number of arguments than the thing it applies 
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| `x.m(f)` with a `fn` name as the fragment ([E0127](#e0127-fn-as-value)) | the positionals the fragment binds, at least one | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>` (or `needs at least 1`, `supplies exactly 2 — the accumulator and the element` on `.fold`, `on "<T>" supplies 1 — …` over a receiver that is not a key/value pair) |
 | `x.get-or(...)` | the **receiver**, which selects the reading | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `x.get(...)` | the **receiver**, which selects the reading | `Method ".get" on "<T>" …, but got <m> — "…" is the "<U>" reading` |
 | `"/p" -> T` in `app.routes` | no argument, so no `in=` | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |
