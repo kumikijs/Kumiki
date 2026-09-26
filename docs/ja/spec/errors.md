@@ -61,8 +61,8 @@ type KumikiError = {
 | `E0121` | なし | 代わりの名前を選び、body 内のすべての読みを書き換えるのは作者の意図であり、静的修復の外。 |
 | `E0122` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図。 |
 | `E0123` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図 — E0122 と同じであり、その規則をトリガに適用したものだからである。 |
-| `E0130` | なし | フォールバックの `in=` は決まっているが、その body が `PanicInfo` の与える形で panic を読むかは作者の意図である。 |
 | `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
+| `E0220` | なし | フォールバックの `in=` は決まっているが、その body が `PanicInfo` の与える形で panic を読むかは作者の意図である。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
 | `E0004` | なし | どちらの app が意図されたものか、もう一方の routes を統合すべきかはユーザの意図である。 |
@@ -449,22 +449,6 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 **修正**：2つの束縛のどちらかの名前を変えるか、reducer が読まない positional には `_` を書く。
 
-
-### E0130 `boundary-fallback-input`
-
-tile が `error-boundary` に指定したフォールバックが `in=PanicInfo` を宣言していない — 別の型を宣言しているか、`in=` がまったく無い。
-
-> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
-> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
-
-フォールバックは panic に適用される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）：codegen はフォールバックが何を宣言していても、その `$1` にランタイムが組み立てた `PanicInfo` を束縛する。したがって型は作者が選ぶものではない。`in=Text` を宣言したフォールバックは、値がレコードであるのに `$1` を `Text` として検査されていた — `text("recovered: " + $1)` は `check` も `smoke` も通り、`recovered: [object Object]` を描画した。`in=` を宣言しないフォールバックは panic を名指すことすらできない：その `$1` は [E0103](#e0103-undef-ref-undef-slot) であり、そのヒント — `in=` を宣言せよ — に従うと最初の形に行き着いた。
-
-これは [E0119](#e0119-route-bind-out-of-scope) が `$route` について述べる位置の規則を `$1` に当てはめたものである：名前が何を保持するかは tile がどこで適用されるかで決まり、boundary は tile を作者の書いていないものに適用する唯一の位置である。`PanicInfo` が宣言された型に代入可能であればよいので、その別名（`type Crash = PanicInfo`）も同じ宣言である。
-
-`error-boundary` 句の位置に、句ごとに1回報告する：tile をこの位置に置くのは句であり、同じ tile が他の場所で描画されるなら、呼び出し側が渡すものに適用される普通の tile である。
-
-**修正**: フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message` / `$1.location` などのフィールドで読む。
-
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -755,6 +739,25 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 ループの両方の形 — タイルの中と reducer の `do=` ブロックの中 — で報告される。型が決定できない対象は報告しない。
 
 **修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する。`kumiki fix` が接尾辞を提案する。
+
+### E0220 `boundary-fallback-input`
+
+tile が `error-boundary` に指定したフォールバックが、`PanicInfo` の当てはまらない `in=` を宣言しているか、`in=` をまったく宣言せずに body で `$1` を読んでいる。
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= but reads $1 — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+フォールバックは panic に適用される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）：codegen はフォールバックが何を宣言していても、その `$1` にランタイムが組み立てた `PanicInfo` を束縛する。したがって型は作者が選ぶものではない。`in=Text` を宣言したフォールバックでは、値がレコードであるのに `$1` が `Text` として検査されていた — `text("recovered: " + $1)` は `check` も `smoke` も通り、`recovered: [object Object]` を描画した。`in=` を宣言しないフォールバックは、読んでいる panic を名指すことができない：その `$1` は [E0103](#e0103-undef-ref-undef-slot) であり、そのヒント — `in=` を宣言せよ — に従うと最初の形に行き着いた。この E0103 は本エラーと並んで引き続き報告される。
+
+これは [E0119](#e0119-route-bind-out-of-scope) が `$route` に適用するのと同じ理屈を `$1` に適用したものである：名前が何を保持するかは tile がどこで適用されるかで決まり、境界は tile を作者が書いたことのない値に適用する唯一の位置である。
+
+`PanicInfo` は宣言された型に代入可能でなければならない — すべての `assignable` 呼び出しと同じく片側だけの条件であり、プログラムが独自の型で `PanicInfo` をシャドウしない限りにおいてである。具体的に受け入れられるのは、`PanicInfo` そのもの、その別名（`type Crash = PanicInfo`）、それに対する `nominal`、またはその 5 つのフィールドをちょうど宣言したレコード（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）である。`{message: Text}` のようなより狭いレコードは受け入れられない：レコード型は同じフィールド集合とのみ一致する。どの型も名指さない `in=` は [E0117](#e0117-undef-type) のみとなる。
+
+`in=` を宣言せず `$1` も読まないフォールバックは報告されない。適用される値は読まれず、その tile は何も渡されずに描画される tile のままである —— route や `sub-routes` のターゲットはそうでなければならない（[E0213](#e0213-call-arity-mismatch)）ので、1 つの tile が両方を兼ねられる。
+
+報告は tile ではなく句に付く：同じフォールバックを名指す 2 つの句は 2 つの報告になる。
+
+**修正**：フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message`、`$1.location` など [ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) が定めるフィールドで読む。
 
 ### W0213 `handler-on-inert-tile` (warning)
 

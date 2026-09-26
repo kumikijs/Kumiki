@@ -735,23 +735,34 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
  * codegen binds its `$1` to the `PanicInfo` the runtime builds (lifecycle.md
  * §7.3). So the fallback's `in=` is not the author's to choose — one that
  * declares another type has a `$1` that is not the value the checker reasons
- * about, and one that declares none cannot name the panic at all.
+ * about, and one that declares none but reads `$1` cannot name the panic it
+ * reads.
+ *
+ * A fallback that declares no `in=` and never reads `$1` is not reported: the
+ * value it is applied to goes unread, and it stays a tile that renders with
+ * nothing — which a route or `sub-routes` target has to be (E0213).
  *
  * `PanicInfo` has to be assignable to what the fallback declares, which is the
- * guarantee the checker's reading of `$1` rests on. Reported at the clause,
- * because the clause is what puts the tile in this position: the same tile
- * rendered anywhere else is an ordinary tile with an ordinary `in=`.
+ * condition the checker's reading of `$1` rests on — one-sided, like every
+ * `assignable` call, and unless a program shadows `PanicInfo` with a type of
+ * its own. The report is attached to the clause, not to the tile: two clauses
+ * naming the same fallback are two reports.
  */
 function checkBoundaryFallback(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   if (tile.errorBoundary === undefined) return;
   const fallback = sym.tiles.get(tile.errorBoundary);
   if (fallback === undefined) return; // E0105
-  const panicInfo: TypeExpr = { kind: "TypeRef", name: "PanicInfo", pos: fallback.pos };
-  if (fallback.in !== undefined && assignable(panicInfo, fallback.in, sym)) return;
-  const declared =
-    fallback.in === undefined ? "declares no in=" : `declares in=${typeToString(fallback.in)}`;
+  let declared: string;
+  if (fallback.in === undefined) {
+    if (!readsUndeclaredInput(fallback, sym)) return;
+    declared = "declares no in= but reads $1";
+  } else {
+    const panicInfo: TypeExpr = { kind: "TypeRef", name: "PanicInfo", pos: fallback.pos };
+    if (assignable(panicInfo, fallback.in, sym)) return;
+    declared = `declares in=${typeToString(fallback.in)}`;
+  }
   errors.push({
-    code: "E0130",
+    code: "E0220",
     kind: "boundary-fallback-input",
     message:
       `Tile "${tile.name}" uses "${fallback.name}" as its error-boundary, which ${declared} — ` +
@@ -759,6 +770,29 @@ function checkBoundaryFallback(tile: TileDef, sym: SymbolTable, errors: KumikiEr
       `in=PanicInfo`,
     pos: tile.errorBoundaryPos ?? tile.pos,
   });
+}
+
+/**
+ * Whether a tile that declares no `in=` reads `$1` — asked of E0103's own tile
+ * branch, so that a `$1` a method call's implicit argument binds does not
+ * count, and which `$1` counts is decided in one place.
+ *
+ * Running the check over the body a second time is safe for the reason
+ * `routeReadsIn` gives: the scope built here is the one `checkTile` builds for
+ * a tile without `in=`, so every write the check makes onto the tree is the
+ * write it already makes.
+ */
+function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
+  const seen: Pos[] = [];
+  const ctx: Ctx = {
+    kind: "tile",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+    undeclaredInputReads: seen,
+  };
+  checkTileExpr(tile.body, sym, [], ctx);
+  return seen.length > 0;
 }
 
 /**
@@ -978,6 +1012,15 @@ type Ctx = {
    * every diagnostic the gate produces here is discarded.
    */
   routeReadsSeen?: { name: string; pos: Pos }[];
+  /**
+   * Where the tile branch of E0103 records each `$1` it finds unbound, for a
+   * caller that wants the answer rather than the diagnostic. Set only by
+   * `readsUndeclaredInput`, the probe that asks whether a fallback declaring
+   * no `in=` reads the panic; a scope that leaves it unset is unaffected.
+   * Nested reads reach it the way they reach `routeReadsSeen`, and for the
+   * same reason.
+   */
+  undeclaredInputReads?: Pos[];
 };
 
 /**
@@ -2483,6 +2526,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // `$1` in a tile is bound only when the tile declares `in=`; reaching here
       // means it didn't (in= adds `$1` to localBinds). Point at the real fix.
       if (e.name === "$1" && ctx.kind === "tile") {
+        ctx.undeclaredInputReads?.push(e.pos);
         errors.push({
           code: "E0103",
           kind: "undef-ref",

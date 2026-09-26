@@ -187,7 +187,7 @@ tile ErrorFallback
 
 When you write `error-boundary = X` in a tile definition, a panic during rendering under that tile calls the X tile with `in=PanicInfo` and shows the fallback.
 
-So `X` must declare `in=PanicInfo` (or a type `PanicInfo` is assignable to, such as an alias of it). Its `$1` is the panic whatever it declares, so a fallback that declares another `in=`, or none, is [E0130](./errors.md#e0130-boundary-fallback-input), reported at the `error-boundary` clause.
+So a fallback that reads `$1` must declare `in=PanicInfo` (or a type `PanicInfo` is assignable to, such as an alias of it). Its `$1` is the panic whatever it declares, so one that declares another `in=`, or reads `$1` without declaring one, is [E0220](./errors.md#e0220-boundary-fallback-input), reported at the `error-boundary` clause. A fallback that never reads `$1` may declare no `in=`, which lets the same tile also be a route or `sub-routes` target.
 
 The boundary belongs to the **tile**, not to the place it was written: it holds wherever that tile renders, including where a route names it as its target and where a `sub-routes` entry does.
 
