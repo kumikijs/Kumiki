@@ -49,13 +49,13 @@ describe("UI_LIFTS", () => {
       new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
     );
     expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea", "editable"]));
-    expect(byEv.get("key")?.tiles).toEqual(new Set(["input", "textarea", "button", "editable"]));
-    expect(byEv.get("focus")?.tiles).toEqual(
-      new Set(["input", "textarea", "button", "select", "editable"]),
-    );
-    expect(byEv.get("blur")?.tiles).toEqual(
-      new Set(["input", "textarea", "button", "select", "editable"]),
-    );
+    // Every kind whose element is itself focusable is in all three; the
+    // label-wrapped controls in `key` only, because a keydown bubbles to the
+    // label and a focus / blur does not.
+    const focusable = ["input", "textarea", "button", "select", "slider", "editable", "link"];
+    expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
+    expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
+    expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
   });
 });
 

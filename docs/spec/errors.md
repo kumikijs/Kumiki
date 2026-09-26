@@ -658,7 +658,7 @@ A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant th
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-The allowed root builtins per event are (current toolchain coverage; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
+The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
 
 | `ui.<ev>` | allowed root tile kinds |
 |---|---|
@@ -666,20 +666,20 @@ The allowed root builtins per event are (current toolchain coverage; the impleme
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button`, `editable` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `editable` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `editable` |
+| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `check`, `radio`, `switch` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
 | `hover`  | any tile |
 
 **Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
 
 The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
 
-**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
+**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
 
 **Note on `editable` and `change`**: `editable` is listed under `input`, `key`, `focus` and `blur` and **not** under `change`, and that one absence is the rule rather than a gap. A `<div contenteditable="true">` is an editing host, so it is focusable without a `tabindex` and the browser fires `focus`, `blur`, `keydown` and `input` on it — what differs between them is only which layer listens (`applyUiEventHandlers` for the first three, the `editable` renderer's own listener for `input`). It fires no `change` event at all, which no table row can supply. `ui.change(<editable tile>)` is therefore W0212 for a reason that is true; subscribe to `ui.input` and compare the new text against the slot holding the previous value, or use `ui.blur` if the wanted moment is when editing ends.
 
-A blank elsewhere in the `key` / `focus` / `blur` rows is **not** a rule of that kind. Those three are attached to whatever element a renderer returned, so those rows record current coverage: `slider` and `link` are absent from all three and `select` from `key`, each focusable or key-receiving for the same reason `editable` is — [#456](https://github.com/kumikijs/Kumiki/issues/456) tracks them. A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
+**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable` and `link`. `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them (its message says the tile has no descendant that fires the event; what is true is that the event never reaches the listener — [#526](https://github.com/kumikijs/Kumiki/issues/526)). The converse is not claimed: `video` (a `<video>` rendered with `controls`) and `details` (whose `<summary>` takes focus inside the returned `<details>`, the same shape as `check`) are not yet listed although those events plausibly reach them — [#525](https://github.com/kumikijs/Kumiki/issues/525). A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
 
 ### E0213 `call-arity-mismatch`
 

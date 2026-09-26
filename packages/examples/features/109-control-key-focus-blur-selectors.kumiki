@@ -1,0 +1,64 @@
+# Feature (errors.md §W0212): `ui.key` / `ui.focus` / `ui.blur` reach every
+# control a user can focus. The runtime attaches these three listeners to the
+# element a tile renders, so a selector lands wherever that element receives
+# the event:
+#
+#   slider   a bare <input type="range">   focusable, so key / focus / blur
+#   link     an <a> whose href is set      focusable, so key / focus / blur
+#   select   a <select>                    focusable, so key / focus / blur
+#   check    a <label> around a checkbox   the input's keydown BUBBLES to the
+#   switch   the same, role="switch"       label, so key; focus and blur do not
+#                                          bubble, so neither reaches the label,
+#                                          and those two stay W0212. (radio is
+#                                          the same shape again.)
+#
+# A keydown on a link runs its `ui.key` reducer first. If the key is Enter,
+# the browser then activates the link and the router navigates as usual. The
+# reducer sees the key; it does not stop the navigation.
+
+type Size = S | M
+
+fn sizes() -> List({label: Text, value: Size})
+   = [{label: "Small", value: S}, {label: "Medium", value: M}]
+
+slot vol  : Int  = 50
+slot size : Size = S
+slot done : Bool = false
+slot log  : Text = ""
+
+reducer sliderKey   on=ui.key(Vol)    do= log := log + "sk "
+reducer sliderFocus on=ui.focus(Vol)  do= log := log + "sf "
+reducer sliderBlur  on=ui.blur(Vol)   do= log := log + "sb "
+reducer linkKey     on=ui.key(Home)   do= log := log + "lk "
+reducer linkFocus   on=ui.focus(Home) do= log := log + "lf "
+reducer linkBlur    on=ui.blur(Home)  do= log := log + "lb "
+reducer selectKey   on=ui.key(Pick)   do= log := log + "pk "
+reducer checkKey    on=ui.key(Done)   do= log := log + "ck "
+reducer switchKey   on=ui.key(Toggle) do= log := log + "wk "
+reducer checked     on=ui.click(Done) do= done := not done
+
+tile Vol    = slider(bind=vol, min=0, max=100, step=5) {id: "vol"}
+tile Home   = link(to="/other", text="other page") {id: "home"}
+tile Pick   = select(bind=size, options=sizes()) {id: "pick"}
+tile Done   = check(value=done) {id: "done"}
+tile Toggle = switch(value=done) {id: "toggle"}
+tile Away   = button(text="elsewhere") {id: "away"}
+
+tile App
+    = column(
+        heading("key / focus / blur on every focusable control"),
+        Vol,
+        Home,
+        Pick,
+        Done,
+        Toggle,
+        Away,
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+tile Other = column(heading("the other page"), text("log: " + log)) {pad: "lg"}
+
+app ControlKeyFocusBlurSelectors
+    caps   = []
+    routes = {"/" -> App, "/other" -> Other, "/404" -> App}
+    init   = []

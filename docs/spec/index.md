@@ -237,6 +237,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | core | [§1.7.1](./language.md#_1-7-1-syntax) |
 | `108-call-site-handler-joins-lifted.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
+| `109-control-key-focus-blur-selectors.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
 | `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | stdlib | [§E0124](./errors.md#e0124-type-constructor-qualifier) |
 | `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | core | [§1.9](./language.md#_1-9-expression-language) |
