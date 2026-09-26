@@ -20,7 +20,7 @@
 // `mocks: {persist: err("x")}` is not one either. Each position is checked as
 // what codegen lowers it as, and this file is the record of which is which.
 
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 
@@ -424,6 +424,224 @@ describe("a shape whose fallback is an assertion of its own", () => {
         expect = {slots-equal: from-log, no-panics: true}`);
     expect(codes(src)).toEqual([]);
     expect(codes(src.replace("ignore", "fail(1)"))).toEqual(["E0712"]);
+  });
+});
+
+describe("a clause read as a record of sections is a record", () => {
+  // Every reader of a `given` / `expect` / `mocks` asks it for its fields, and
+  // a value that is not a record literal has none — so the whole clause was
+  // read as empty. A `given` that sets nothing runs the reducer from the
+  // declared defaults, an `expect` that asserts nothing passes, and a `mocks`
+  // that scripts nothing leaves every effect to the log.
+
+  // E0713 is shared with the mock-shape and `expect.effects` rules, so the code
+  // alone does not say which position was named. These are the sentences, as
+  // `docs/spec/errors.md` lists them; the checker reports them and the
+  // lowering throws them.
+  const SAYS = {
+    given: "`given` must be a record, `{<section>: …}`",
+    expect: "`expect` must be a record, `{<section>: …}`",
+    mocks: "`mocks` must be a record, `{<effect>: <policy>}`",
+    "given.mocks": "`given.mocks` must be a record, `{<effect>: <outcome>}`",
+    "given.event": "`given.event` must be a record, `{type: …, target: …}`",
+  } as const;
+
+  const at = (src: string): { code: string; message: string; text: string }[] => {
+    const lines = src.split("\n");
+    return check(parse(lex(src))).map((e) => ({
+      code: e.code,
+      message: e.message,
+      text: (lines[e.pos.line - 1] ?? "").slice(e.pos.col - 1),
+    }));
+  };
+  const e0713 = (position: keyof typeof SAYS, text: string) => ({
+    code: "E0713",
+    message: SAYS[position],
+    text,
+  });
+
+  it("reports a reducer-test `given` that is a name, at the clause, and nothing else", () => {
+    // `setup` resolves to nothing, but it is the clause's shape that is wrong:
+    // a `given` is never a value to be looked up, so one diagnostic.
+    expect(at(reducerTest("setup", EXPECT))).toEqual([e0713("given", "setup")]);
+  });
+
+  it("reports a reducer-test `given` that is a literal", () => {
+    expect(at(reducerTest("41", EXPECT))).toEqual([e0713("given", "41")]);
+  });
+
+  it("reports a `given` written as a map, whose string keys name no section", () => {
+    // `{"slots": …}` parses as a map literal, not a record, and nothing reads a
+    // map's entries as sections: the slots it seeds were dropped just the same.
+    expect(at(reducerTest(`{"slots": {count: 5}}`, EXPECT))).toEqual([
+      e0713("given", `{"slots": {count: 5}}`),
+    ]);
+  });
+
+  it("reports a reducer-test `expect` that is not a record", () => {
+    expect(at(reducerTest(GIVEN, "41"))).toEqual([e0713("expect", "41")]);
+  });
+
+  it("reports a tile-test `given` that is not a record", () => {
+    const src = withTest(`    tile-test Greeting
+        given  = 41
+        expect = heading("Hi, Ada")`);
+    expect(at(src)).toEqual([e0713("given", "41")]);
+  });
+
+  it("reports a property-test `given` that is not a record", () => {
+    expect(at(property("{n: Int}", "41", "n == n"))).toEqual([e0713("given", "41")]);
+  });
+
+  it("reports an episode-test `mocks` that is not a record", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = 41
+        expect = {no-panics: true}`);
+    expect(at(src)).toEqual([e0713("mocks", "41")]);
+  });
+
+  it("reports an episode-test `expect` that is not a record", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {persist: ignore}
+        expect = 41`);
+    expect(at(src)).toEqual([e0713("expect", "41")]);
+  });
+
+  it("reports a reducer-test `given.mocks` that is not a record", () => {
+    const src = reducerTest(
+      `{slots: {count: 0}, event: {type: ui.click, target: B}, mocks: 41}`,
+      EXPECT,
+    );
+    expect(at(src)).toEqual([e0713("given.mocks", "41}")]);
+  });
+
+  it("reports a `given.event` that is not a record", () => {
+    const src = reducerTest(`{slots: {count: 0}, event: 41}`, EXPECT);
+    expect(at(src)).toEqual([e0713("given.event", "41}")]);
+  });
+
+  it("still reports a wildcard in a non-record `given` as E0109, beside E0713", () => {
+    // Nothing in the clause is resolved as a section, but a wildcard outside a
+    // reducer-test `expect` is wrong wherever it is written, and its rule walks
+    // the whole `given` without asking for its shape.
+    expect(at(reducerTest("<any-id>", EXPECT)).map((e) => e.code)).toEqual(["E0713", "E0109"]);
+  });
+
+  it("still reports an undefined `<slots.X>` in a non-record reducer-test `expect`", () => {
+    // The same holds for E0103: `<slots.nope>` names no slot in any position.
+    expect(at(reducerTest(GIVEN, "<slots.nope>")).map((e) => e.code)).toEqual(["E0713", "E0103"]);
+  });
+
+  it("accepts `{}`, the empty record as written, which parses as an empty map", () => {
+    expect(codes(reducerTest("{}", `{slots: {count: 1}, effects: []}`))).toEqual([]);
+  });
+
+  it("leaves a tile-test `expect` and a property-test `invariant` to their own rules", () => {
+    const tile = withTest(`    tile-test Greeting
+        given  = {slots: {}, in: "Ada"}
+        expect = heading("Hi, Ada")`);
+    expect(codes(tile)).toEqual([]);
+    expect(codes(property("{n: Int}", "{slots: {count: n}}", "n == n"))).toEqual([]);
+  });
+
+  describe("a caller that skips `check` gets a throw, not an empty record", () => {
+    const lower = (src: string) => () =>
+      codegen(parse(lex(src)), { runtimeSpecifier: "@kumikijs/runtime", includeTests: true });
+    const throws = (position: keyof typeof SAYS) => `E0713 ${SAYS[position]}`;
+
+    it("throws on a `given` that is not a record", () => {
+      expect(lower(reducerTest("setup", EXPECT))).toThrow(throws("given"));
+    });
+
+    it("throws on a `given` written as a map", () => {
+      expect(lower(reducerTest(`{"slots": {count: 5}}`, EXPECT))).toThrow(throws("given"));
+    });
+
+    it("throws on an `expect` that is not a record", () => {
+      expect(lower(reducerTest(GIVEN, "41"))).toThrow(throws("expect"));
+    });
+
+    it("throws on a tile-test `given` that is not a record", () => {
+      const src = withTest(`    tile-test Greeting
+        given  = 41
+        expect = heading("Hi, Ada")`);
+      expect(lower(src)).toThrow(throws("given"));
+    });
+
+    it("throws on a property-test `given` that is not a record", () => {
+      expect(lower(property("{n: Int}", "41", "n == n"))).toThrow(throws("given"));
+    });
+
+    it("throws on a property-test `given.event` that is not a record", () => {
+      const src = property("{n: Int}", "{slots: {count: n}, event: 41}", "n == n");
+      expect(lower(src)).toThrow(throws("given.event"));
+    });
+
+    it("throws on an episode-test `mocks` that is not a record", () => {
+      const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = 41
+        expect = {no-panics: true}`);
+      expect(lower(src)).toThrow(throws("mocks"));
+    });
+
+    it("throws on an episode-test `expect` that is not a record", () => {
+      const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {persist: ignore}
+        expect = 41`);
+      expect(lower(src)).toThrow(throws("expect"));
+    });
+
+    it("throws on a `given.mocks` that is not a record", () => {
+      const src = reducerTest(
+        `{slots: {count: 0}, event: {type: ui.click, target: B}, mocks: 41}`,
+        EXPECT,
+      );
+      expect(lower(src)).toThrow(throws("given.mocks"));
+    });
+
+    it("throws on a `given.event` that is not a record", () => {
+      expect(lower(reducerTest(`{slots: {count: 0}, event: 41}`, EXPECT))).toThrow(
+        throws("given.event"),
+      );
+    });
+
+    it("lowers `{}` as the empty record in every position that takes one", () => {
+      // `{}` parses as an empty map, so the lowering takes a branch of its own
+      // for it. Only the checker accepting it would leave `build` free to throw
+      // on a program `check` passed.
+      const src = withTest(`    reducer-test inc
+        given  = {slots: {count: 0}, event: {}, mocks: {}}
+        expect = {}
+test t2 =
+    reducer-test inc
+        given  = {}
+        expect = {slots: {count: 1}}
+test t3 =
+    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {}
+test t4 =
+    tile-test B
+        given  = {}
+        expect = button(text="+", onClick=inc)
+test t5 =
+    property-test
+        for-all   = {n: Int}
+        given     = {}
+        invariant = n == n
+test t6 =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {}}
+        invariant = n == n`);
+      expect(codes(src)).toEqual([]);
+      expect(lower(src)).not.toThrow();
+    });
   });
 });
 

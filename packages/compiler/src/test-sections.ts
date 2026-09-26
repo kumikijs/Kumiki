@@ -66,10 +66,51 @@ export type GivenSection<K extends TestKind> = SectionName<K, "given">;
 /** The sections a kind's `expect` accepts. */
 export type ExpectSection<K extends TestKind> = SectionName<K, "expect">;
 
-/** The fields of `e` when it is a record literal, and none when it is not. */
-function fieldsOf(e: Expr | TileExpr | undefined): { name: string; value: Expr }[] {
-  if (e === undefined || isTileExpr(e) || e.kind !== "RecordLit") return [];
-  return e.fields;
+/**
+ * The positions of a test body whose value is read as a record of named parts,
+ * and the shape each one takes. Every reader asks such a position for its
+ * fields, and a value that is not a record literal has none — so a `given`
+ * written as `setup` or `41` was read as empty and the setup never happened, an
+ * `expect` asserted nothing, and a `mocks` scripted nothing, each without a
+ * word. The checker reports E0713 at any of them that is not a record, and the
+ * lowering throws the same sentence for a caller that skipped `check`.
+ */
+const RECORD_POSITIONS = {
+  given: "{<section>: …}",
+  expect: "{<section>: …}",
+  mocks: "{<effect>: <policy>}",
+  "given.mocks": "{<effect>: <outcome>}",
+  "given.event": "{type: …, target: …}",
+} as const;
+
+export type RecordPosition = keyof typeof RECORD_POSITIONS;
+
+/** What E0713 says about a record position holding something else. */
+export function notARecordMessage(position: RecordPosition): string {
+  return `\`${position}\` must be a record, \`${RECORD_POSITIONS[position]}\``;
+}
+
+/**
+ * Whether `e` holds a value a record position can be read from. `{}` parses as
+ * an empty map — nothing in it tells the two apart — and is the empty record
+ * as written, so it counts as one.
+ */
+export function isRecordValue(e: Expr | TileExpr): boolean {
+  if (isTileExpr(e)) return false;
+  return e.kind === "RecordLit" || (e.kind === "MapLit" && e.entries.length === 0);
+}
+
+/**
+ * The fields of the record written at `position`, none when nothing is written
+ * there, and a throw when something that is not a record is.
+ */
+export function recordFieldsAt(
+  e: Expr | TileExpr | undefined,
+  position: RecordPosition,
+): (Expr & { kind: "RecordLit" })["fields"] {
+  if (e === undefined) return [];
+  if (!isRecordValue(e)) throw new Error(`E0713 ${notARecordMessage(position)}`);
+  return !isTileExpr(e) && e.kind === "RecordLit" ? e.fields : [];
 }
 
 /** The names a kind's part accepts, in the order the table lists them. */
@@ -101,22 +142,31 @@ export function isSectionName<K extends TestKind, P extends TestPart>(
  * `TestDef` is not discriminated by it: passing the literal is what ties the
  * `name` argument to the table, so a section this file does not list is a type
  * error at the call site rather than a silent `undefined` at run time.
+ *
+ * A `given` that is written but is not a record throws (E0713) rather than
+ * answering `undefined`, which is the silent empty record this replaced. The
+ * lowering runs only on checked programs, so the throw is for a caller that
+ * skipped `check`; a checker-side caller, which does see such a program, must
+ * guard with `isRecordValue` first.
  */
 export function givenSection<K extends TestKind>(
   t: TestDef,
   kind: K,
   name: GivenSection<K>,
 ): Expr | undefined {
-  return fieldsOf(t.given).find((f) => f.name === name)?.value;
+  return recordFieldsAt(t.given, "given").find((f) => f.name === name)?.value;
 }
 
-/** The value of one section of a test's `expect`. See `givenSection`. */
+/**
+ * The value of one section of a test's `expect`. See `givenSection`, including
+ * the throw on an `expect` that is written but is not a record.
+ */
 export function expectSection<K extends TestKind>(
   t: TestDef,
   kind: K,
   name: ExpectSection<K>,
 ): Expr | undefined {
-  return fieldsOf(t.expect).find((f) => f.name === name)?.value;
+  return recordFieldsAt(t.expect, "expect").find((f) => f.name === name)?.value;
 }
 
 /**

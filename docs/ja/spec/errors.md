@@ -691,7 +691,7 @@ tile と effect とルートの形は、これまで報告されていなかっ�
 
 個数はこの適用の半分でしかなく、もう半分——より静かな方——が型である：`show` は値が無い場合も型が違う場合も等しく空文字列として描画する（[標準ライブラリ §2.4](./stdlib.md#_2-4-builtin-functions)）ので、snapshot は「中身が空のラベル」と区別の付かないものと比較して*通ってしまう*。そこで `given.in` は、tile 呼び出しの引数とまったく同じように宣言された `in=` と照合し、同じ code で値自身の位置に報告する——型が合わなければ [E0201](#e0201-type-mismatch)、レコードのフィールドなら [E0214](#e0214-missing-record-field) / [E0215](#e0215-unknown-record-field)。組み込み tile を名指した `tile-test` は、どちらの問いより前に [E0105](#e0105-undef-tile) が退ける。
 
-この個数は、`given` のすべてのセクションが読まれるまで数えない。語彙に無いキーは [E0714](#e0714-test-section-unknown) であり、そういう名前の下に書かれた入力——`given = {slots: {}, input: "Ada"}`——は引数の欠落ではなくそちらの間違いである（セクション名を直した瞬間に消える位置で報告することになる）。lowering が実際に読む `in` は、`given` が他に何を綴り間違えていても書かれた引数なので、もう一方の向きはいずれにしても報告する：削除すべきテキストであるセクション自身の位置で。欠落の側は、位置を持たないのでテストの位置で要求する。
+この個数は、`given` のすべてのセクションが読まれるまで数えない。そもそもレコードでない `given` は [E0713](#e0713-test-shape-invalid)、語彙に無いキーは [E0714](#e0714-test-section-unknown) であり、そういう名前の下に書かれた入力——`given = {slots: {}, input: "Ada"}`——は引数の欠落ではなくそちらの間違いである（セクション名を直した瞬間に消える位置で報告することになる）。lowering が実際に読む `in` は、`given` が他に何を綴り間違えていても書かれた引数なので、もう一方の向きはいずれにしても報告する：削除すべきテキストであるセクション自身の位置で。欠落の側は、位置を持たないのでテストの位置で要求する。
 
 組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は何も読まずセンチネルへ落ちる。引数の*型*も検査しない——センチネルはそれを無視する。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。呼び出しにしているのは括弧ではなく、したがって数えられる理由も括弧ではない：括弧なしの `Duration.s` も同じ 0 引数の呼び出しであり同じ E0213 で、個数を強制した後もその timer に届いていた唯一の書き方がこれだった。
 
@@ -954,17 +954,26 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 ### E0713 `test-shape-invalid`
 
-テスト本体のある位置が、lowering の読まない形の値を持っている。しかもその fallback は「失敗」ではなく、それ自体がひとつの主張になっている。
+テスト本体のある位置が、lowering の読まない形の値を持っている。しかもその fallback は「失敗」ではない——テストは黙って別のことを主張するか、何も主張しない。
 
-現在 2 箇所ある：
+現在 3 種類ある：
 
 - `reducer-test` の `given.mocks` が、`ok(...)` / `err(...)` / `delay(<ms>, ok(...)|err(...))` 以外を effect に束ねている。`mockScriptJs` はそれ以外を `{outcome: "ok", value: null}` として扱うため、失敗経路を駆動するつもりのモックが成功経路を駆動していた——「effect が失敗したときにどうなるか」を主張するテストが、一度も失敗させないまま永久に緑になる。（[E0712](#e0712-episode-mock-invalid) は `episode-test` に対する同じ規則で、そちらの語彙には `from-log` と `ignore` も含まれる。）
 - `expect.effects` がリストでない。`effectListJs` は非リストを `[]` に降ろすが、これは主張が無いのではなく**「effect は何も emit されなかった」という主張**である——角括弧を忘れた `effects: persist(count)` は、何も emit しない reducer に対して成功し、中の effect 名は解決すらされない。
+- 名前付きの部分からなるレコードとして読まれる位置に、別のものが書かれている：テストの `given`、`reducer-test` / `episode-test` の `expect`、`episode-test` の `mocks`、そして `given` の `mocks` / `event` セクション。読み手はどれもこの位置にフィールドを尋ねるが、名前やリテラルにはフィールドが無いため、節全体が空として読まれていた。`given = setup` は何も設定せず reducer は slot の宣言時の既定値から走り、`expect = 41` は何も主張せず、`mocks = 41` は何も台本にしない——どのテストも、誰も選んでいない状態や結果に対して成功する。`{}` は空のレコードとして受理する。`tile-test` の `expect` は tile 式、`property-test` の `invariant` は式なので、どちらもレコード位置ではない。
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
 
-**修正**：受理される形で書く。どちらの位置も codegen 側で throw するようになったため、`check` を飛ばした呼び出し元は、静かに書き換えられた主張ではなく名前付きの失敗を受け取る。
+> `` `given` must be a record, `{<section>: …}` ``
+> `` `expect` must be a record, `{<section>: …}` ``
+> `` `mocks` must be a record, `{<effect>: <policy>}` ``
+> `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
+> `` `given.event` must be a record, `{type: …, target: …}` ``
+
+E0713 は節の位置で 1 度だけ報告し、中の名前はセクションとして解決しない。そのため `tile-test` が引数の欠落を重ねて数えることもない。ただし、どこに書かれても成り立つ規則は中でも適用される：`given` の中のワイルドカードは引き続き [E0109](#e0109-test-wildcard-misuse)、`reducer-test` の `expect` の中で slot を名指さない `<slots.X>` は引き続き [E0103](#e0103-undef-ref-undef-slot) である。
+
+**修正**：受理される形で書く。これらの位置はすべて codegen 側でも throw するため、`check` を飛ばした呼び出し元は、静かに書き換えられた主張ではなく名前付きの失敗を受け取る。
 
 ### E0714 `test-section-unknown`
 

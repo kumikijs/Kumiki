@@ -206,30 +206,31 @@ tile Host = column(Card({label: "x"}))`,
     expect(codes(src).sort()).toEqual(["E0213", "E0714"]);
   });
 
-  it("still reports when the given is not a record at all", () => {
-    // Nothing is read out of it, so the argument is as absent as the slots the
-    // author meant to seed. Only the count is this rule's to answer.
+  it("leaves a given that is not a record at all to E0713", () => {
+    // Nothing is read out of it — not the argument, not the slots. That is the
+    // one mistake, reported at the clause; counting the argument absent as
+    // well would name it twice, as with the E0714 above.
     expect(
-      messages(
+      codes(
         app(`test t =
     tile-test Card
         given  = 42
         expect = text("x")`),
       ),
-    ).toEqual([`Tile "Card" expects 1 argument(s) but got 0`]);
+    ).toEqual(["E0713"]);
   });
 
-  it("says nothing about a non-record given to a target that declares no in=", () => {
-    // The count agrees — none wanted, none written. That the `slots` setup is
-    // dropped with it is a `given` shape question, and not this rule's.
+  it("reports a non-record given to a target that declares no in=, too", () => {
+    // The count agrees — none wanted, none written — but the `slots` setup is
+    // dropped with it, which is the `given` shape's question.
     expect(
-      diagnose(
+      codes(
         app(`test t =
     tile-test Host
         given  = 42
         expect = column(text("x"))`),
       ),
-    ).toEqual([]);
+    ).toEqual(["E0713"]);
   });
 
   it("checks a reducer-test's target with none of this — it has no in= to declare", () => {
