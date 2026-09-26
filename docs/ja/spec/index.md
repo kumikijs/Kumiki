@@ -101,6 +101,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | コア |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | コア |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | コア |
+| [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
@@ -235,6 +236,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | ルーティング | [§E0304](./errors.md#e0304-derived-slot) |
 | `100-option-filter.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | コア | [§1.3.1](./language.md#_1-3-1-構文) |
+| `105-refused-bind.kumiki` | slot, reducer, tile | フォーム | [§5.1.2](./forms.md#_5-1-2-refinement-の扱い) |
 | `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | コア | [§1.7.1](./language.md#_1-7-1-構文) |
 | `108-call-site-handler-joins-lifted.kumiki` | slot, reducer, tile | コア | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
 | `110-parse-by-base.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.4.3](./stdlib.md#_2-4-3-型変換) |

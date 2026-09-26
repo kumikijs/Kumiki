@@ -2,11 +2,20 @@
 // inline toast tile, and the validation `error` tile.
 
 import type { TilePatchers, TileRenderers } from "./core.ts";
-import { currentTheme, ensureAnimationStyles, failedRefinement, getRenderingApp } from "./core.ts";
+import {
+  currentTheme,
+  ensureAnimationStyles,
+  failedRefinement,
+  getRenderingApp,
+  getRenderingView,
+  refusedBindShown,
+} from "./core.ts";
 
 /**
  * Resolve the current validation message for a slot, for the `error` tile.
- * Returns "" (no error shown) when the slot's value passes its refinement, when
+ * The value judged is the one the field shows: a value a `bind` wrote and the
+ * refinement refused, while its control still shows it, else the slot's own.
+ * Returns "" (no error shown) when that value passes its refinement, when
  * the slot has no refinement, or when no app is mounted. The message text comes
  * from `theme.errors[<pred>]` if overridden, else the spec §5.7.2 default.
  */
@@ -17,7 +26,13 @@ function resolveFieldError(field: string): string {
   if (!app || !field) return "";
   const meta = app.slots?.[field];
   if (!meta?.refine) return "";
-  const value = app.live?.[field] ?? meta.value;
+  // A field showing a value its slot refused speaks for what it shows: the
+  // slot kept the last value it accepted, and a message computed from that
+  // one would be about a value the user is no longer looking at (#443).
+  // Only a control in the view being rendered speaks for this tile: another
+  // view of the same shape shows the slot's own value.
+  const refused = refusedBindShown(app, field, getRenderingView());
+  const value = refused?.value ?? app.live?.[field] ?? meta.value;
   if (meta.refine(value)) return "";
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.

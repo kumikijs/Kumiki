@@ -33,7 +33,7 @@ export const textareaTile: TileRenderer<"textarea"> = (node) => {
     const state = INPUT_STATE.get(ta);
     if (state?.bind) {
       const app = liveApp(ta);
-      if (app) writeBind(app, state.bind, state.bindPath, ta.value);
+      if (app) writeBind(app, ta, state.bind, state.bindPath, ta.value);
     }
     if (state?.onInput) state.onInput({ ...(state.el ?? {}), value: ta.value });
   });

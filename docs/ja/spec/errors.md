@@ -755,6 +755,16 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 **修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する。`kumiki fix` が接尾辞を提案する。
 
+### E0219 `bind-strict-prop`
+
+`bind` が書き戻すコントロール — `input`・`textarea`・`select`・`slider`・`check`・`switch`・`radio`・`editable` — に、引数または props ブロックとして `strict` prop が書かれている。
+
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+
+[フォーム §5.1.2](./forms.md#_5-1-2-refinement-の扱い) の以前の版は、第 2 のモードとして `strict=false` を規定していた：refinement が拒否する値を受け取り、フォーム単位の `valid` フラグを false にする。これを実装したものはなく、そのフラグを読むものも言語のどこにもなかったので、この prop は `check` を通り、何もしなかった — フィールドを緩めるつもりでこれを書いた作者は、その兆候もないまま厳格な挙動を得ていた。現在の章のモードは 1 つである：refinement に拒否された bind は slot をそのままにし、フィールドは入力されたものを表示し続け、`error(field=…)` がそのメッセージを出す。
+
+**修正**：prop を取り除き、値が受け取られなかった理由をユーザーに示すため `error(field=<slot>)` をコントロールの隣に置く。そのような値を slot に保持させたいなら、slot の型を緩めて reducer で検証する（[§5.6](./forms.md#_5-6-バリデーション戦略)）。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。

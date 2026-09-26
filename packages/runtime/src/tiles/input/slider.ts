@@ -32,7 +32,7 @@ export const sliderTile: TileRenderer<"slider"> = (node) => {
     const state = INPUT_STATE.get(inp);
     if (state?.bind) {
       const app = liveApp(inp);
-      if (app) writeBind(app, state.bind, state.bindPath, Number(inp.value));
+      if (app) writeBind(app, inp, state.bind, state.bindPath, Number(inp.value));
     }
   });
   inp.addEventListener("change", () => {
