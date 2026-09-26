@@ -44,6 +44,19 @@ export function ensureDom(): Promise<void> {
   return domReady;
 }
 
+/**
+ * Start a run from an empty browser: every smoke and scenario run is one app's
+ * first visit, but the DOM is registered once per process, so its storage
+ * would otherwise carry whatever the last app wrote. An app that restores a
+ * key another app used (`session`, say) then boots on a value its own type may
+ * refuse — and a refused restore discards its whole batch.
+ */
+function freshStorage(): void {
+  const page = globalThis as { localStorage?: Storage; sessionStorage?: Storage };
+  page.localStorage?.clear();
+  page.sessionStorage?.clear();
+}
+
 async function registerDom(): Promise<void> {
   // Loaded on first use, not at the top: happy-dom is a heavy import, and
   // check / build / the edit verbs never touch a DOM.
@@ -132,6 +145,7 @@ export async function smokeSource(
   } = {},
 ): Promise<SmokeReport> {
   await ensureDom();
+  freshStorage();
   // Effects run for real here (unlike `runScenario`, which replaces every
   // `invoke`), so the http capability is answered by the example's own
   // `.http.json`. Without a path there is no fixture, and any request reports
@@ -222,6 +236,7 @@ export async function runScenarioSource(
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
   await ensureDom();
+  freshStorage();
   // A scenario scripts effects at the `invoke` boundary, so http never reaches
   // `fetch` — the fixture is here for a capability the runner does not wrap,
   // and to keep a stray request reported rather than live.
