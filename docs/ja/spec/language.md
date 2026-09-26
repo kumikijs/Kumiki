@@ -197,6 +197,23 @@ slot form : Contact = {email: "ada@example.com", age: 36}
 
 のもとで `form.email := "nope"` は `form := {email: "nope", age: 36}` とまったく同じように拒否され、どちらの経路でも `age := 999` も同様である。位置は入れ子にも再帰にもなり — `List(Contact)`、再帰型 `type Tree = {label: Text where nonempty, kids: List(Tree)}` — 検査は有限である値をたどる。拒否された値は、フィールドの宣言順で最初に失敗した述語に対して、失敗した場所への**パス**付きで報告される：`(email at .email)`、`(nonempty at .kids[1].label)`、バリアントのペイロードなら `(nonempty at .Found)`、リスト要素なら `(len-lt(6) at [1])`。`error` タイルはその述語のメッセージを描画する（[フォーム §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
 
+パスは slot の値から内側へ向かうステップの列（ランタイムの `RefinementFailure.path`）であり、報告は各ステップを次のように書く：
+
+| ステップ | 表記 | 位置 |
+|---|---|---|
+| フィールド | `.email` | レコードのフィールド |
+| インデックス | `[1]` | `List` の要素、`Tuple` の要素 |
+| バリアント | `.Found`、`.Pair[1]` | union / `Option` / `Result` のペイロード。バリアントが複数持つときは位置で示す |
+| キー | `.keys["k"]` | `Map` のキーそのもの |
+| エントリ | `["k"]` | `k` の下に格納された `Map` の値。Kumiki 自身のインデックスと同じ読み方 |
+| メンバー | `{"x"}` | `Set` の要素 |
+
+キー・エントリ・メンバーはキーの型が読むとおりの値を持つので、`Int` のキーは `["3"]` ではなく `[3]` と書かれる。表記は読むためのものであり、ステップ自体は区別された値なので、`Map` のキーが `keys` という名前のフィールドと取り違えられることも、キー `1` のエントリがリストのインデックスと取り違えられることもない。
+
+各位置は述語より先に値の形を検査する：レコードと `Map` はオブジェクト、`List` と `Tuple` は配列、union / `Option` / `Result` の値はそのバリアントのいずれかである。そこで形の合わない値 — リストのあるべき場所にデコードされた `{}`、フィールドの欠けたペイロード — は、次の段落があらゆる述語について述べるとおりその位置の述語に `false` を返し、そのうち最初のものに対して報告される。
+
+たどられない位置が二つある。型がテキストでも数値でもない `Set` の要素（`Set({n: Text where nonempty})`）は検査されない：ランタイムは集合を要素のテキストをキーにして保持し、レコードはそこから取り出せないからである。また、自分自身を大きくなっていく引数に適用するジェネリック（`type T(A) = {v: A, next: Option(T(List(A)))}`）は段ごとに lowering すべき新しい型になるので、refinement がそれに沿って 32 段より深くにある slot は、途中で止まる検査ではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。互いに異なる名前付き型はいくらでも深く入れ子にできる。
+
 述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とする。`one-of` は厳密に比較するので、リテラルがテキストなら `Text`、数値なら `Int`・`Float`・`Time` の基底型を必要とする。ジェネリックの型パラメータは適用箇所で判定される：`type NonEmpty(T) = T where nonempty` は問題なく、`NonEmpty(Int)` は E0804 である。
 
 述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数や負の長さ、`len-lt(0)`（あらゆるテキストより短い）、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。

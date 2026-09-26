@@ -32,6 +32,8 @@ reducer breakCode    on=ui.click(BreakCodeBtn)    do= code    := 600
 reducer abortCode    on=ui.click(AbortCodeBtn)    do= code    := 0
 reducer addPost      on=ui.click(AddPostBtn)      do= posts["3f2504e0-4f89-11d3-9a0c-0305e82c3301"] := "ok"
 reducer addBadPost   on=ui.click(AddBadPostBtn)   do= posts["p001"] := "draft"
+reducer bothPosts    on=ui.click(BothBtn)         do= code := 201
+                                                     posts["p001"] := "draft"
 
 tile BreakContactBtn = button(text="break-contact", onClick=breakContact)
 tile FixContactBtn   = button(text="fix-contact", onClick=fixContact)
@@ -41,10 +43,11 @@ tile BreakCodeBtn    = button(text="break-code", onClick=breakCode)
 tile AbortCodeBtn    = button(text="abort-code", onClick=abortCode)
 tile AddPostBtn      = button(text="add-post", onClick=addPost)
 tile AddBadPostBtn   = button(text="add-bad-post", onClick=addBadPost)
+tile BothBtn         = button(text="both", onClick=bothPosts)
 
 tile App = column(
              BreakContactBtn, FixContactBtn, BreakHandleBtn, BreakKeyBtn, BreakCodeBtn,
-             AbortCodeBtn, AddPostBtn, AddBadPostBtn,
+             AbortCodeBtn, AddPostBtn, AddBadPostBtn, BothBtn,
              error(field=contact))
 
 app StdlibNominalRefinements
@@ -149,6 +152,18 @@ describe("a slot typed with a stdlib nominal is checked by that nominal's predic
     expect(Object.keys(app.live?.posts as object)).toEqual([
       "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
     ]);
+    expect(errors[0]).toContain('(uuid at .keys["p001"])');
+  });
+
+  // The batch is one unit (runtime.md §10.3.3): a refusal found inside one
+  // slot's value discards the write the same reducer made to another.
+  it("discards a sibling slot's write when a key inside the value is refused", async () => {
+    const { app, root } = await mounted();
+
+    click(root, "both");
+
+    expect(app.live?.code).toBe(200);
+    expect(app.live?.posts).toEqual({});
     expect(errors[0]).toContain('(uuid at .keys["p001"])');
   });
 

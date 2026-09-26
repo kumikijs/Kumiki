@@ -60,6 +60,7 @@ import {
 } from "./def-graph.ts";
 import { parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
+import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
@@ -647,6 +648,7 @@ function checkSlot(
     });
   }
   resolveType(slot.type, sym, errors);
+  checkNestedLowering(slot, sym, errors);
   // Derived slots are prohibited (language.md §1.4.2 inv. 4), and the lowering
   // agrees: a slot read is emitted as a lookup in the live-value table, which
   // is declared after the slot table in the module body — so an initializer
@@ -5510,6 +5512,26 @@ function resolveType(
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
+}
+
+/**
+ * E0803 for a slot whose type has a refinement the gate cannot reach. A
+ * predicate written inside a type is checked by a walk of the value
+ * (language.md §1.3.3), lowered one helper per named type; a program generic
+ * that applies itself to a growing argument needs a new helper at every level,
+ * and past {@link GENERIC_SELF_NESTING_LIMIT} levels the lowering stops. What
+ * lies beyond would be a check that silently passes, which is what E0803
+ * exists to rule out.
+ */
+function checkNestedLowering(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const { cut } = scanPositions(slot.type, sym);
+  if (cut === undefined) return;
+  errors.push({
+    code: "E0803",
+    kind: "unimplemented-refinement",
+    message: `Refinement inside slot "${slot.name}" is not enforced by the runtime: "${cut}" applies itself to a growing argument more than ${GENERIC_SELF_NESTING_LIMIT} levels deep`,
+    pos: slot.pos,
+  });
 }
 
 /**

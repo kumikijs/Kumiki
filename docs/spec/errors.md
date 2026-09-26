@@ -1029,8 +1029,11 @@ A `where` refinement names a predicate [§1.3.3](./language.md#_1-3-3-registered
 
 > `Refinement "<pred>" is documented but not enforced by the runtime`
 > `Refinement "<pred>" is not a registered predicate`
+> `Refinement inside slot "<slot>" is not enforced by the runtime: "<T>" applies itself to a growing argument more than 32 levels deep`
 
 The second message answers a predicate the table does not hold at all. The parser rejects such a name before the checker sees it, so it reaches this code only through an AST built by hand — which is how the compiler's own test drives the diagnostic.
+
+The third is a refinement the toolchain *can* lower, at a position it cannot reach. A predicate written inside a slot's type is checked by a walk of the value, one function per type ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), and a generic that applies itself to a growing argument — `type T(A) = {v: A, next: Option(T(List(A)))}` on `slot t : T(Text where nonempty)` — is a new type at every level. Past 32 levels the lowering stops, and what lies beyond would be a check that silently passes. Unlike the first two, this one is reachable from source; the fix is a type that does not nest itself in a growing argument, or a slot whose type carries no refinement along it.
 
 **No predicate is in this state.** The check exists because of what the alternative was: `refinementToJs` used to end in a `default` arm that lowered anything it did not implement to `(_v) => true`, so seven of the twelve registered predicates reached the runtime as a check that cannot fail — `slot n : Int where positive` accepted `-7`, and `error(field=n)` on it rendered nothing. A refinement is specified as a check the value passes on its way into the slot ([Forms §5.6](./forms.md#_5-6-validation-strategy), [Runtime §10.3.3](./runtime.md#_10-3-3-batching)), so a predicate with no lowering is the document promising something the program does not do — and nothing said so. The parser accepts exactly the names the lowering table holds, which is what makes this unreachable from source today; a predicate added to §1.3.3 without one lands here, at build time, instead.
 

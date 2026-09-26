@@ -15,6 +15,8 @@ import {
   type RefinementRejection,
   readEnv,
   refinementRejectionOf,
+  type SlotGate,
+  slotAccepts,
   tokenRef,
   userPanicInfo,
 } from "./core.ts";
@@ -45,7 +47,10 @@ type PlatformCrypto = {
  * secure context, so a page on plain http falls back here. The result has to
  * pass the `uuid` refinement like any other id `fresh()` returns.
  * `getRandomValues` has no secure-context requirement; `Math.random` is the
- * last resort for a host with no `crypto` at all.
+ * last resort whenever that is missing too, `crypto` itself or not. That
+ * branch is not cryptographically random, which is acceptable because a fresh
+ * id only has to be distinct among the ids one app mints, never unguessable —
+ * nothing may treat it as a secret.
  */
 function uuidV4(c: PlatformCrypto | undefined): string {
   const bytes = new Uint8Array(16);
@@ -70,14 +75,13 @@ export const _stdlibCore = {
    * is already doomed and nothing it produces will be applied.
    */
   slotWrite(
-    metas: Record<string, { refine?: (v: unknown) => boolean } & RefinementNaming>,
+    metas: Record<string, SlotGate & RefinementNaming>,
     rejected: RefinementRejection[],
     name: string,
     value: unknown,
   ): unknown {
     const meta = metas[name];
-    if (meta?.refine && !meta.refine(value))
-      rejected.push(refinementRejectionOf(name, value, meta));
+    if (meta && !slotAccepts(meta, value)) rejected.push(refinementRejectionOf(name, value, meta));
     return value;
   },
   /**

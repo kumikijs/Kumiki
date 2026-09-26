@@ -536,7 +536,8 @@ function shrinkCounterexample(
  * naming fields are load-bearing rather than decorative — `batchRejections`
  * resolves the failed predicate from `refineAll` (core.ts), so a shape that
  * left them out would have this tier name a different predicate than the live
- * mount for the same rejected value.
+ * mount for the same rejected value — and `refineFailure` among them is, for
+ * a type with a predicate written inside it, the gate itself (`slotAccepts`).
  */
 type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
 
