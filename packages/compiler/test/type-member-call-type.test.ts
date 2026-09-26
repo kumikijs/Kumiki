@@ -145,9 +145,10 @@ describe("<Type>.parse(t) is an Option(<Type>)", () => {
  * `parse` is lowered by the base its qualifier unaliases to, not by its name,
  * so the types it reads are exactly the bases that have a reading of a text:
  * `Int`, `Float`, `Time`, `Bool`, `Text` and `Bytes`. Anything else — a record,
- * a union, `File`, `EffectId`, `Unit`, a type constructor written without its
- * arguments — has nothing of its type to produce, so the call is reported where
- * it is written instead of being answered with one.
+ * a union, `File`, `EffectId`, `Unit` — has nothing of its type to produce, so
+ * the call is reported where it is written instead of being answered with one.
+ * A type constructor written without its arguments is not a type at all, and
+ * that is reported first, as E0124, on `parse` as on every other member.
  */
 describe("a parse whose qualifier has no reading of a text", () => {
   const E = (qualifier: string) =>
@@ -174,14 +175,32 @@ describe("a parse whose qualifier has no reading of a text", () => {
   // A constructor still wanting its arguments names no complete type, so the
   // call has no `Option(T)` to infer and nothing to lower to. It is a type name,
   // so E0117 does not answer it either — and `check` used to say `ok` while
-  // `build` threw on it.
+  // `build` threw on it. It is not a type at all, which is the one thing to say
+  // about it: E0124, and no E0802 on top for the reading it cannot have.
+  // The repair has to land on a type `parse` can read into, not just any type:
+  // `type IntList = List(Int)` then `IntList.parse` is E0802 on the next
+  // round, so the message names the second half of the repair up front.
+  const PARSE_BASE =
+    " and whose base has a reading of a text (Int, Float, Time, Bool, Text or Bytes)";
   it("reports a type constructor written without its arguments", () => {
-    for (const q of ["List", "Option", "Map", "Result", "Set", "Tuple"]) {
-      expect(inReducer(`slot o : Option(Int) = None`, `o := ${q}.parse("x")`), q).toEqual([E(q)]);
+    const E0124 = (q: string, args: string) =>
+      `E0124 Type "${q}" takes ${args}, so it is not a type on its own — "${q}.parse" needs one that takes none${PARSE_BASE}`;
+    const wanted: Record<string, string> = {
+      List: "1 type argument",
+      Option: "1 type argument",
+      Map: "2 type arguments",
+      Result: "2 type arguments",
+      Set: "1 type argument",
+      Tuple: "type arguments",
+    };
+    for (const [q, args] of Object.entries(wanted)) {
+      expect(inReducer(`slot o : Option(Int) = None`, `o := ${q}.parse("x")`), q).toEqual([
+        E0124(q, args),
+      ]);
     }
     expect(
       inReducer(`type Box(T) = {v: T}\nslot o : Option(Int) = None`, `o := Box.parse("x")`),
-    ).toEqual([E("Box")]);
+    ).toEqual([E0124("Box", "1 type argument")]);
   });
 
   it("accepts every base that has a reading, directly and through a nominal", () => {
@@ -403,19 +422,58 @@ describe("a qualifier that names no type infers nothing", () => {
       'E0116 Call to undefined function "Post-Id.fresh"',
     ]);
   });
+});
 
-  it("known gap: a constructor that still wants its arguments reports nothing at all", () => {
-    // `Box` names a type but `Box` alone is not one, so there is no type to
-    // answer with — an unapplied `TypeRef` would unalias into an unsubstituted
-    // body and mismatch against every real type, which is the half of
-    // `qualifierType`'s guard that carries weight.
-    //
-    // The empty list is the pre-existing state, not a correct answer: E0117
-    // declines (the name *is* a type's), E0116 declines (the callee resolves),
-    // and E0201 declines (nothing to compare), so a uuid string lands in an
-    // `Int` slot unremarked. #432 is the report that does not exist yet; these
-    // two flip to it when it does.
-    expect(diagnostics(`type Box(T) = nominal List(T)\nslot n : Int = Box.fresh()`)).toEqual([]);
-    expect(diagnostics(`slot l : List(Int) = List.fresh()`)).toEqual([]);
+/**
+ * A qualifier that names a type *constructor* is not a type: `Box` wants its
+ * `T`, `List` its element, `Tuple` however many it is given. There is no type
+ * for `fresh` to mint or `show` to name, and three separate checks each
+ * declined the call — E0117 (the name *is* a type's), E0116 (the callee
+ * resolves), E0201 (nothing to compare) — so `slot n : Int = Box.fresh()`
+ * put a uuid string in an `Int` slot with nothing reported. `parse` was
+ * reported, but as a type with no reading of a text, which a phantom-parameter
+ * nominal over `Text` is not; the missing arguments are the earlier mistake.
+ */
+describe("a qualifier that is a type constructor, not a type", () => {
+  const E = (name: string, args: string, callee: string) =>
+    `E0124 Type "${name}" takes ${args}, so it is not a type on its own — "${callee}" needs one that takes none`;
+
+  it("reports a declared constructor at the call", () => {
+    expect(diagnostics(`type Box(T) = nominal List(T)\nslot n : Int = Box.fresh()`)).toEqual([
+      E("Box", "1 type argument", "Box.fresh"),
+    ]);
+  });
+
+  it("reports the built-in constructors, for every type member", () => {
+    expect(diagnostics(`slot l : List(Int) = List.fresh()`)).toEqual([
+      E("List", "1 type argument", "List.fresh"),
+    ]);
+    expect(diagnostics(`slot o : Option(Map(Text, Int)) = Map.parse("a")`)).toEqual([
+      `${E("Map", "2 type arguments", "Map.parse")} and whose base has a reading of a text (Int, Float, Time, Bool, Text or Bytes)`,
+    ]);
+    expect(diagnostics(`slot s : Text = Option.show(None)`)).toEqual([
+      E("Option", "1 type argument", "Option.show"),
+    ]);
+  });
+
+  it("reports Tuple, whose variadic arity is still not zero", () => {
+    expect(diagnostics(`slot t : Text = Tuple.fresh()`)).toEqual([
+      E("Tuple", "type arguments", "Tuple.fresh"),
+    ]);
+  });
+
+  it("answers exactly as before for a qualifier that applies the constructor", () => {
+    // Naming the application is the repair: `IntBox` takes no arguments, so it
+    // is a type, and the call goes back to the rules above. `fresh` claims
+    // nothing for it — a uuid `Text` is not a `List(Int)` — which is the
+    // `freshResultType` narrowing, unchanged.
+    expect(
+      diagnostics(
+        `type Box(T) = nominal List(T)\ntype IntBox = Box(Int)\nslot n : Int = IntBox.fresh()`,
+      ),
+    ).toEqual([]);
+    expect(diagnostics(`${IDS}\nslot o : Option(PostId) = UserId.parse("a")`)).toEqual([
+      "E0201 Expected Option(PostId) but got Option(UserId)",
+    ]);
   });
 });

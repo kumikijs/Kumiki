@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "an id minted through the applied type is a uuid",
+      "expect": {
+        "noErrors": true,
+        "state": { "parsed": { "_tag": "None" } },
+        "domIncludes": ["id length 36", "not parsed"]
+      }
+    },
+    {
+      "label": "a fresh id reads back through the same applied type",
+      "do": { "click": "#remint" },
+      "expect": { "noErrors": true, "domIncludes": ["id length 36", "parsed true"] }
+    }
+  ]
+}
