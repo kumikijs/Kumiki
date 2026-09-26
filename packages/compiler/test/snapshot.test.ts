@@ -58,7 +58,7 @@ describe("compile output snapshots", () => {
         "ReducerDef": 8,
         "SlotDef": 4,
         "ThemeDef": 1,
-        "TileDef": 10,
+        "TileDef": 11,
         "TypeDef": 3,
       }
     `);

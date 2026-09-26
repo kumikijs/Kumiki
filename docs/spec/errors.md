@@ -499,6 +499,7 @@ A value does not have the type its position requires.
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
+> `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
@@ -508,7 +509,9 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a variant tag carrying a payload (`onClick=Some(1)`), a tile call carrying arguments (`onClick=box(text("z"))`) or props (`onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+
+One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
@@ -651,7 +654,7 @@ The checker descends into all four control-flow bodies (`for` / `when` / `if` / 
 
 ### W0212 `ui-event-tile-mismatch` (warning)
 
-A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. One half of the cascade is still open: when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`), that prop replaces the lifted subscription rather than joining it, and the container's reducer does not fire — [#407](https://github.com/kumikijs/Kumiki/issues/407).
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
@@ -773,6 +776,16 @@ A `Map` holds two lists and they bind different things: `for k in m.keys` binds 
 Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
+
+### E0219 `bind-strict-prop`
+
+A `strict` prop is written on a control `bind` writes back from — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`, `editable` — as an argument or in the props block.
+
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+
+An earlier revision of [Forms §5.1.2](./forms.md#_5-1-2-handling-of-refinement) specified `strict=false` as a second mode: take a value the refinement refuses, and turn a form-level `valid` flag false. Nothing implemented it, and the flag had no reader anywhere in the language, so the prop passed `check` and did nothing — an author who wrote it to relax a field got the strict behaviour with no sign of it. The chapter has one mode now: a bind its refinement refuses leaves the slot as it was, the field keeps what was typed, and `error(field=…)` renders the message for it.
+
+**Fix**: Remove the prop, and put `error(field=<slot>)` beside the control to show the user why a value was not taken. To let the slot hold such a value, loosen the slot's type and validate in a reducer ([§5.6](./forms.md#_5-6-validation-strategy)).
 
 ### W0213 `handler-on-inert-tile` (warning)
 

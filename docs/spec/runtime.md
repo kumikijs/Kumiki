@@ -169,7 +169,7 @@ reducer bump on=ui.click(Btn)
 Two things a refinement does **not** gate:
 
 - **The declared default.** `slot email : Text where email = ""` starts out holding a value its own refinement rejects — that is what makes `error(field=email)` show a message on a pristine form ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
-- **Two-way `bind`.** Input rejection is per field and never reports ([Handling of refinement](./forms.md#_5-1-2-handling-of-refinement)) — a half-typed value is expected, not a defect. By default the slot keeps its previous value; under `strict=false` it takes the new one and the form's `valid` flag goes false instead.
+- **Two-way `bind`.** Input rejection is per field and never reports ([Handling of refinement](./forms.md#_5-1-2-handling-of-refinement)) — a half-typed value is expected, not a defect. The slot keeps its previous value, the field keeps what was typed, and `error(field=…)` renders the message for what the field shows.
 
 **The two combine into a trap.** A slot whose declared default violates its own refinement cannot be *reset* to that default from a reducer: `name := ""` on a `Text where nonempty` slot is a write like any other, so it discards the batch. Either widen the slot's type and refine at the boundary, or model the empty case with `Option`:
 

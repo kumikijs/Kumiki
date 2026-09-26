@@ -157,10 +157,10 @@ app App
 
 | http field | Meaning | Evaluated |
 |---|---|---|
-| `base-url` | Base for relative URLs | per request |
+| `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
 | `headers` | Applied to all requests | per request |
-| `timeout` | Default timeout (duration) | per request |
-| `credentials` | fetch credentials mode ([§6.9](#_6-9-default-settings)) | per request |
+| `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
+| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
@@ -177,10 +177,27 @@ at mount.
 The three reducer names are the exception, and are not values at all: they are
 resolved once, by the compiler, against the `reducer` definitions.
 
-What is checked in the four expressions is the names: one that resolves to
-nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), reported where it is written. The
-**values** are not — nothing compares what a field is given against what it
-needs, so `timeout: "soon"` compiles and reaches `fetch`.
+What is checked in the four expressions is the names and the values. A name
+that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), reported where it is
+written. A value of the wrong type is [E0201](./errors.md#e0201-type-mismatch), reported at the
+field:
+
+- `base-url` takes anything assignable to `Text` — a type built on `Text`,
+  such as `Url`, included.
+- `timeout` takes anything assignable to `Int`, read as milliseconds. A
+  `Duration` is one (it is milliseconds at run time), and so is a user
+  `nominal Int`; a `Float` is not. A `Text` would reach `setTimeout` as `NaN`
+  and abort every request before it can answer.
+- `credentials` takes anything assignable to `Text`, and every literal that
+  reaches the field — the field's own value, or a literal branch of an `if` —
+  must be one of the three Fetch modes, since a browser refuses a request whose
+  init names any other.
+
+What is compared is the type, and for `credentials` the literals: a value
+computed any other way — a slot, a call, a concatenation — is decided at run
+time, so one of the right type is accepted whatever it will hold. `timeout: 0`
+and a negative `Int` are an `Int`, and are accepted too. `headers` has no type
+to hold it to here.
 
 ### 6.3.2 Global Handling of 401
 

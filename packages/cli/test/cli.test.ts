@@ -209,10 +209,22 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `showRefinementPath`, which writes the structured path a rejection
     // carries the way the report always has. A counter has no such slot and
     // pays for both because they sit on paths every app takes.
+    //
+    // 58,000 from 57,000 (57,490 measured, from 56,930): the memory of refused
+    // binds that `error(field=…)` speaks for (forms.md §5.1.2) got its edges.
+    // 402 of it is core — the lookup scoped to the view being rendered, so a
+    // shape mounted twice does not show one view's refusal in the other, and
+    // pruning of controls that left the page. The other 158 is the shared
+    // input helper holding a refusal back until an IME composition ends.
+    //
+    // 59,000 from 58,000 (58,350 measured): the two paragraphs above landed on
+    // parallel branches, each measured against its own base, and together
+    // they cost what each did — `slotAccepts` / `showRefinementPath` beside
+    // the refused-bind memory, which reads a slot's gate through the former.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(58_000);
+    expect(total).toBeLessThan(59_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
