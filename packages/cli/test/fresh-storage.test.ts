@@ -16,10 +16,7 @@ describe("a smoke run starts from empty storage", () => {
     await ensureDom();
     // What `features/119-effect-payload-bind-types` saves under `session`: a
     // shape the blog's `Option(Session)` refuses at `.Some.userId`.
-    localStorage.setItem(
-      "session",
-      JSON.stringify({ _tag: "Some", _0: { email: "a@example.com" } }),
-    );
+    localStorage.setItem("session", JSON.stringify({ email: "a@example.com" }));
     sessionStorage.setItem("leftover", "1");
 
     const report = await smokeFile(BLOG);
