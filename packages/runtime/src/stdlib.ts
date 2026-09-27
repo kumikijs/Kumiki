@@ -7,6 +7,7 @@
 import {
   _setPathHelper,
   currentEpisodeId,
+  isEntryOf,
   isPanic,
   KumikiPanic,
   listPosition,
@@ -458,11 +459,16 @@ export const _stdlibCore = {
   /**
    * `recv[key]` read (language.md §1.6.3). On a List it is the element the
    * same index names on the left of `:=`, and it panics where that write
-   * panics; a Map is read by key.
+   * panics. On a Map it is the entry at the key, and a key the Map does not
+   * hold is a panic too (lifecycle.md §7.2.2) — the value it would answer is
+   * no `V`, and the next read through it was a raw `TypeError`. `m.get(k)` is
+   * the read that answers `None` there instead.
    */
   index(recv: unknown, key: unknown): unknown {
     if (Array.isArray(recv)) return recv[listPosition(recv, key)];
-    return (recv as Record<PropertyKey, unknown>)[key as PropertyKey];
+    if (isEntryOf(recv, key)) return (recv as Record<string, unknown>)[String(key)];
+    const shown = typeof key === "string" ? JSON.stringify(key) : String(key);
+    throw new KumikiPanic(`Key ${shown} is not in the Map`);
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */
   panic(message: unknown): never {

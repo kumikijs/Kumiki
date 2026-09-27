@@ -1,0 +1,58 @@
+# Feature (language.md §1.6.3): an index step into a Map at a key it does
+# not hold.
+#
+# `m[k].f := v` is `m := m.update(k, $1.copy(f=v))`, and `update` writes
+# nothing when `k` is absent. So the write through a missing key leaves the
+# Map as it was, and it does not insert an entry holding only `f`, a value
+# the declared type `Todo` does not describe. `m[k] := v` still inserts or
+# replaces the entry.
+#
+# The read `m[k]` at a key the Map does not hold is a panic (lifecycle.md
+# §7.2.2), as `xs[i]` past the end of a List is: the reducer's writes roll
+# back and `app.error` runs. `m.get(k)` is the read that answers `None`
+# there instead.
+#
+# The panicking read is armed by entering a route rather than by a button,
+# because `smoke` drives every button and fails on any reported panic.
+
+type Todo = { title: Text, done: Bool }
+
+slot todos  : Map(Text, Todo) = {}
+slot tries  : Int  = 0
+slot picked : Text = "-"
+slot failed : Text = "-"
+
+reducer add on=ui.click(Add)
+    do= todos["t1"] := {title: "write docs", done: false}
+
+reducer mark on=ui.click(Mark)
+    do= todos["t1"].done := true
+
+reducer mark-missing on=ui.click(MarkMissing)
+    do= todos["t9"].done := true
+
+reducer read-missing on=route.enter("/read-missing")
+    do= tries := tries + 1
+        picked := todos["zz"].title
+
+reducer on-panic on=app.error
+    do= failed := $event.message
+
+tile Add  = button(text="add")  {id: "add"}
+tile Mark = button(text="mark") {id: "mark"}
+tile MarkMissing = button(text="mark missing") {id: "mark-missing"}
+
+tile App
+    = column(
+        Add,
+        Mark,
+        MarkMissing,
+        text("count: " + todos.size.show),
+        text("t9: " + todos.has("t9").show),
+        text("tries: " + tries.show),
+        text("failed: " + failed))
+
+app MapIndexAbsentKey
+    caps   = []
+    routes = {"/" -> App, "/read-missing" -> App, "/404" -> App}
+    init   = []

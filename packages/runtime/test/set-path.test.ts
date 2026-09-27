@@ -183,6 +183,47 @@ describe("an index into a Map", () => {
   });
 });
 
+// A reducer's `[…]` step arrives as `{at: key}`, apart from a field step, so
+// the setter can tell a missing Map entry from a missing record field: the
+// first is `m.update(k, …)` on an absent `k`, which writes nothing (language.md
+// §1.6.3); the second is a level to build.
+describe("an index step", () => {
+  const todos = { t1: { title: "a", done: false } };
+
+  it("writes a field of the entry at a key the Map holds", () => {
+    expect(_setPathHelper(todos, [{ at: "t1" }, "done"], true)).toEqual({
+      t1: { title: "a", done: true },
+    });
+  });
+
+  it("writes nothing through a key the Map does not hold", () => {
+    expect(_setPathHelper(todos, [{ at: "t9" }, "done"], true)).toBe(todos);
+  });
+
+  it("does not take an Object.prototype member for an entry", () => {
+    expect(_setPathHelper(todos, [{ at: "toString" }, "done"], true)).toBe(todos);
+  });
+
+  it("inserts or replaces the entry when it is the last step", () => {
+    expect(_setPathHelper(todos, [{ at: "t9" }], { title: "b", done: true })).toEqual({
+      ...todos,
+      t9: { title: "b", done: true },
+    });
+    expect(_setPathHelper({}, [{ at: 5 }], "x")).toEqual({ 5: "x" });
+  });
+
+  it("indexes a List the way a bare numeric step does", () => {
+    expect(_setPathHelper([{ n: 1 }, { n: 2 }], [{ at: 1 }, "n"], 9)).toEqual([{ n: 1 }, { n: 9 }]);
+    expect(() => _setPathHelper([1, 2, 3], [{ at: 3 }], 7)).toThrow(
+      "Index 3 is out of range for a List of length 3",
+    );
+  });
+
+  it("leaves a field step building the level it finds missing", () => {
+    expect(_setPathHelper({}, ["t9", "done"], true)).toEqual({ t9: { done: true } });
+  });
+});
+
 describe("an unwrap segment", () => {
   it("edits the payload of a Some and leaves the tag", () => {
     expect(_setPathHelper({ _tag: "Some", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({

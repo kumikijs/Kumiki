@@ -238,10 +238,20 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // 61,000 from 60,000 (59,536 measured, from 59,181): an index step reaches
+    // the setter apart from a field step (language.md §1.6.3), so a write
+    // through a Map key that is absent writes nothing and a read there panics.
+    // The 355 bytes are `isIndexSegment` and the no-write branch in
+    // `_setPathHelper`, `isEntryOf` which both sides of `:=` ask, and the panic
+    // in `_stdlibCore.index`. A counter indexes nothing and still ships them,
+    // because the setter and the stdlib sit on paths every app loads. The open
+    // PRs beside this one take the measurement to about 59,900 without it,
+    // which this would push over.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

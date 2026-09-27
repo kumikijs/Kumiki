@@ -279,4 +279,17 @@ describe("an index read (docs/spec/language.md §1.6.3)", () => {
     expect(_stdlibCore.index({ a: 1 }, "a")).toBe(1);
     expect(_stdlibCore.index({ 5: "x" }, 5)).toBe("x");
   });
+
+  // An absent key answered `undefined`, which no `V` is, and the next read
+  // through it (`todos["zz"].title`) was a raw TypeError outside the panic
+  // model. It is a panic, as an index past the end of a List is.
+  it("panics for a key the Map does not hold", () => {
+    expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow(KumikiPanic);
+    expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow('Key "zz" is not in the Map');
+    expect(() => _stdlibCore.index({ 5: "x" }, 6)).toThrow("Key 6 is not in the Map");
+  });
+
+  it("does not read an Object.prototype member as an entry", () => {
+    expect(() => _stdlibCore.index({}, "toString")).toThrow(KumikiPanic);
+  });
 });
