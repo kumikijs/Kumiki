@@ -366,6 +366,15 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
+   When the body renders a **list** (its body is a `for`), the call site's key
+   — explicit or implicit — names the list, not one node, and one key on every
+   node would collapse them onto a single identity. Each node takes the pair
+   of the call site's key and its own key (its position when it has none),
+   encoded as the JSON array `[callKey, nodeKey]`, so the nodes stay distinct
+   and two pairs never spell the same string. A reorder of the outer list
+   moves each node's element; a reorder inside the list moves them by their
+   own keys. The list's nodes are children of the container the call sits in,
+   however deeply the `for`s that produced them nest.
 4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
    flows through the branch that emits the tile.
 

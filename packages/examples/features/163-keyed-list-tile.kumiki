@@ -1,0 +1,39 @@
+# Feature (runtime.md §10.3.10): a key on a call to a user tile whose body is
+# a `for` keys each node that list renders.
+#
+# `Tags` renders a list — one `text` per tag. The key written at a call site
+# (`Tags {key: "k"}`), or the one a surrounding `for` stamps on the call
+# (`for g in groups TagGroup(g)`), names the whole list. One key on every node
+# would collapse them onto a single identity in the keyed reconciler, so each
+# node takes the call site's key paired with its own key (or its position):
+# they stay distinct, and reordering `groups` moves each group's elements
+# instead of rebuilding them, as reordering `tags` moves each tag's. (The
+# reconciler matches by key when every sibling is keyed, so each list sits in
+# a column of its own.)
+
+type Group = {name: Text, tags: List(Text)}
+
+slot tags   : List(Text)  = ["a", "b"]
+slot groups : List(Group) = [{name: "x", tags: ["x1", "x2"]}, {name: "y", tags: ["y1"]}]
+
+reducer flip on=ui.click(Flip) do= groups := groups.reverse
+reducer swap on=ui.click(Swap) do= tags := tags.reverse
+
+tile Tags = for t in tags text("tag:" + t)
+tile GroupTags in=Group = for t in $1.tags text($1.name + "/" + t)
+tile Flip = button(text="flip", onClick=flip)
+tile Swap = button(text="swap", onClick=swap)
+
+tile App
+    = column(
+        column(Tags {key: "k"}),
+        column(for g in groups GroupTags(g)),
+        Flip,
+        Swap,
+        text("end"))
+      {pad: "lg", gap: "md"}
+
+app KeyedListTile
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
