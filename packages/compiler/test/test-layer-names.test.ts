@@ -444,6 +444,9 @@ describe("a clause read as a record of sections is a record", () => {
     mocks: "`mocks` must be a record, `{<effect>: <policy>}`",
     "given.mocks": "`given.mocks` must be a record, `{<effect>: <outcome>}`",
     "given.event": "`given.event` must be a record, `{type: …, target: …}`",
+    "given.slots": "`given.slots` must be a record, `{<slot>: …}`",
+    "expect.slots": "`expect.slots` must be a record, `{<slot>: …}`",
+    "expect.slots-equal": "`expect.slots-equal` must be a record, `{<slot>: …}`, or `from-log`",
   } as const;
 
   const at = (src: string): { code: string; message: string; text: string }[] => {
@@ -520,6 +523,51 @@ describe("a clause read as a record of sections is a record", () => {
   it("reports a `given.event` that is not a record", () => {
     const src = reducerTest(`{slots: {count: 0}, event: 41}`, EXPECT);
     expect(at(src)).toEqual([e0713("given.event", "41}")]);
+  });
+
+  // One level down, a `slots` section is read as slot → value pairs the same
+  // way. A value that is not a record seeded no slot and asserted no slot, so
+  // `given = {slots: 41, …}` with `expect = {slots: 41}` passed.
+  it("reports a reducer-test `given.slots` that is not a record", () => {
+    expect(at(reducerTest(`{slots: 41, event: {type: ui.click, target: B}}`, EXPECT))).toEqual([
+      e0713("given.slots", "41, event: {type: ui.click, target: B}}"),
+    ]);
+  });
+
+  it("reports a reducer-test `expect.slots` that is not a record", () => {
+    expect(at(reducerTest(GIVEN, `{slots: 41}`))).toEqual([e0713("expect.slots", "41}")]);
+  });
+
+  it("reports a `given.slots` that is a slot's name, without resolving it", () => {
+    expect(at(reducerTest(`{slots: count}`, EXPECT))).toEqual([e0713("given.slots", "count}")]);
+  });
+
+  it("reports a tile-test and a property-test `given.slots` that is not a record", () => {
+    const tile = withTest(`    tile-test B
+        given  = {slots: 41}
+        expect = button(text="+", onClick=inc)`);
+    expect(at(tile)).toEqual([e0713("given.slots", "41}")]);
+    expect(at(property("{n: Int}", "{slots: n}", "n == n"))).toEqual([e0713("given.slots", "n}")]);
+  });
+
+  it("reports an episode-test `slots-equal` that is neither a record nor `from-log`", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: 41}`);
+    expect(at(src)).toEqual([e0713("expect.slots-equal", "41}")]);
+  });
+
+  it("accepts `from-log`, a record and `{}` as `slots-equal`, and `{}` as `slots`", () => {
+    const episode = (v: string) =>
+      withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: ${v}}`);
+    expect(codes(episode("from-log"))).toEqual([]);
+    expect(codes(episode("{count: 1}"))).toEqual([]);
+    expect(codes(episode("{}"))).toEqual([]);
+    expect(codes(reducerTest(`{slots: {}}`, `{slots: {}}`))).toEqual([]);
   });
 
   it("still reports a wildcard in a non-record `given` as E0109, beside E0713", () => {
@@ -607,6 +655,24 @@ describe("a clause read as a record of sections is a record", () => {
       expect(lower(reducerTest(`{slots: {count: 0}, event: 41}`, EXPECT))).toThrow(
         throws("given.event"),
       );
+    });
+
+    it("throws on a `given.slots` or `expect.slots` that is not a record", () => {
+      expect(lower(reducerTest(`{slots: 41}`, EXPECT))).toThrow(throws("given.slots"));
+      expect(lower(reducerTest(GIVEN, `{slots: 41}`))).toThrow(throws("expect.slots"));
+      const tile = withTest(`    tile-test B
+        given  = {slots: 41}
+        expect = button(text="+", onClick=inc)`);
+      expect(lower(tile)).toThrow(throws("given.slots"));
+      expect(lower(property("{n: Int}", "{slots: n}", "n == n"))).toThrow(throws("given.slots"));
+    });
+
+    it("throws on a `slots-equal` that is neither a record nor `from-log`", () => {
+      const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: 41}`);
+      expect(lower(src)).toThrow(throws("expect.slots-equal"));
     });
 
     it("lowers `{}` as the empty record in every position that takes one", () => {

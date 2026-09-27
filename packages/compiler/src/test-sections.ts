@@ -68,26 +68,36 @@ export type ExpectSection<K extends TestKind> = SectionName<K, "expect">;
 
 /**
  * The positions of a test body whose value is read as a record of named parts,
- * and the shape each one takes. Every reader asks such a position for its
- * fields, and a value that is not a record literal has none — so a `given`
- * written as `setup` or `41` was read as empty and the setup never happened, an
- * `expect` asserted nothing, and a `mocks` scripted nothing, each without a
- * word. The checker reports E0713 at any of them that is not a record, and the
- * lowering throws the same sentence for a caller that skipped `check`.
+ * the shape each one takes, and the one bare name a position accepts in its
+ * place, if any. Every reader asks such a position for its fields, and a value
+ * that is not a record literal has none — so a `given` written as `setup` or
+ * `41` was read as empty and the setup never happened, an `expect` asserted
+ * nothing, and a `mocks` scripted nothing, each without a word. A `slots`
+ * section is read as slot → value pairs the same way, one level down: a
+ * `given.slots` that is not a record seeded no slot, and an `expect.slots`
+ * asserted none. The checker reports E0713 at any of them that is not a
+ * record, and the lowering throws the same sentence for a caller that skipped
+ * `check`.
  */
 const RECORD_POSITIONS = {
-  given: "{<section>: …}",
-  expect: "{<section>: …}",
-  mocks: "{<effect>: <policy>}",
-  "given.mocks": "{<effect>: <outcome>}",
-  "given.event": "{type: …, target: …}",
-} as const;
+  given: { shape: "{<section>: …}" },
+  expect: { shape: "{<section>: …}" },
+  mocks: { shape: "{<effect>: <policy>}" },
+  "given.mocks": { shape: "{<effect>: <outcome>}" },
+  "given.event": { shape: "{type: …, target: …}" },
+  "given.slots": { shape: "{<slot>: …}" },
+  "expect.slots": { shape: "{<slot>: …}" },
+  // `from-log` takes the log's own final values as the expectation.
+  "expect.slots-equal": { shape: "{<slot>: …}", or: "from-log" },
+} as const satisfies Record<string, { shape: string; or?: string }>;
 
 export type RecordPosition = keyof typeof RECORD_POSITIONS;
 
 /** What E0713 says about a record position holding something else. */
 export function notARecordMessage(position: RecordPosition): string {
-  return `\`${position}\` must be a record, \`${RECORD_POSITIONS[position]}\``;
+  const p: { shape: string; or?: string } = RECORD_POSITIONS[position];
+  const or = p.or === undefined ? "" : `, or \`${p.or}\``;
+  return `\`${position}\` must be a record, \`${p.shape}\`${or}`;
 }
 
 /**
@@ -98,6 +108,22 @@ export function notARecordMessage(position: RecordPosition): string {
 export function isRecordValue(e: Expr | TileExpr): boolean {
   if (isTileExpr(e)) return false;
   return e.kind === "RecordLit" || (e.kind === "MapLit" && e.entries.length === 0);
+}
+
+/** Whether `e` is what `position` accepts: a record, or its one bare name. */
+export function fitsRecordPosition(e: Expr | TileExpr, position: RecordPosition): boolean {
+  if (isRecordValue(e)) return true;
+  const p: { shape: string; or?: string } = RECORD_POSITIONS[position];
+  return p.or !== undefined && !isTileExpr(e) && e.kind === "Ref" && e.name === p.or;
+}
+
+/**
+ * The value written at `position`, for a lowering that reads it whole; a throw
+ * when it is not what the position accepts.
+ */
+export function recordValueAt(e: Expr, position: RecordPosition): Expr {
+  if (!fitsRecordPosition(e, position)) throw new Error(`E0713 ${notARecordMessage(position)}`);
+  return e;
 }
 
 /**
