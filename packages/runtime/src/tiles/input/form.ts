@@ -9,8 +9,39 @@ import type {
   TileProps,
   TileRenderer,
 } from "../../core.ts";
+import { resolveApp, shownSlotValue, slotAccepts } from "../../core.ts";
 import type { InputHandlers } from "./_shared.ts";
 import { INPUT_STATE, inputHandlers, reconcileId, setHandlers, tileId } from "./_shared.ts";
+
+/**
+ * Does every slot a control inside `form` binds pass its validation, judged on
+ * what the controls show (forms.md §5.2.2)? The same judgement `error(field=…)`
+ * makes — the slot's value, or a refused value a control in the form still
+ * shows — so a form whose fields show a message does not submit, and one whose
+ * fields show none does.
+ *
+ * "Inside the form" is the set of controls the form's own query finds, handed
+ * over as the view rather than the form itself: happy-dom's `<form>` answers
+ * `contains` false for its own descendants, which would quietly let every
+ * refused value through the scenario and smoke tiers.
+ */
+function boundSlotsValid(form: HTMLFormElement): boolean {
+  const app = resolveApp(form);
+  if (!app) return true;
+  const controls = new Set<Node>();
+  const slots = new Set<string>();
+  for (const el of form.querySelectorAll<HTMLElement>("[data-kumiki-bind]")) {
+    const slot = INPUT_STATE.get(el)?.bind;
+    if (!slot) continue;
+    controls.add(el);
+    slots.add(slot);
+  }
+  const inForm = { contains: (el: Node | null) => el !== null && controls.has(el) };
+  for (const slot of slots) {
+    if (!slotAccepts(app.slots[slot], shownSlotValue(app, slot, inForm))) return false;
+  }
+  return true;
+}
 
 // form.onSubmit lives directly on props (not through a change-shaped event),
 // so store it in the handler slot alongside the shared fields. Both `create`
@@ -35,7 +66,7 @@ export const formTile: TileRenderer<"form"> = (node, ctx: TileCtx) => {
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const state = INPUT_STATE.get(form);
-    if (state?.onSubmit) state.onSubmit(state.el ?? {});
+    if (state?.onSubmit && boundSlotsValid(form)) state.onSubmit(state.el ?? {});
   });
   for (const child of node.children as TileNode[]) {
     if (child != null) form.appendChild(ctx.render(child));

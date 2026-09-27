@@ -95,8 +95,9 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 ### 5.2.2 submit の挙動
 
-- すべての `bind` された slot がバリデーションを通過していれば `ui.submit(WrapperTile)` reducer が呼ばれる
+- form の中のコントロールが bind しているすべての slot がバリデーションを通過していれば `ui.submit(WrapperTile)` reducer が呼ばれる
 - 1 つでも失敗していれば呼ばれない（個別の error 表示は出る）
+- 判定するのは各コントロールが**表示している**値であり、`error(field=…)` と同じ判定である（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot 自身の値、または refinement に拒否された値を form の中のコントロールがまだ表示していればその値。したがって、宣言時の初期値が refinement を満たさない未入力のフィールドも form の送信を止め（[§5.6](#_5-6-バリデーション戦略)）、拒否された編集を表示しているフィールドも止める — そうでなければ reducer はフィールドが表示していない、slot が最後に受け入れた値を読むことになる。数えるのは form の中で bind されている slot だけであり、form のコントロールが bind していない slot は問わない
 - `button(type="submit")` をクリックするか、`input` で Enter キーで発火
 - `type` は `submit` / `button` / `reset` のいずれかで、そのまま DOM に書かれ、意味を持つのは form の中だけである。`type` を書かなかったボタンは HTML の既定に従う — すなわち `submit` になるので、form の中にあって送信させたくないボタンには `type="button"` が必要である。3 つ以外のリテラルは [E0201](./errors.md#e0201-type-mismatch) になる：不正な `type` 属性は `submit` に解決されるので、綴り間違いは送信してしまう
 

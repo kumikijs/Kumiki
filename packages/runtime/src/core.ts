@@ -1532,6 +1532,9 @@ export function noteBindWrite(
   byEl.set(el, { slot, value, shown: shownValue(el) });
 }
 
+/** Where a refused value counts as shown: a view's root, or any set of controls. */
+export type BindView = Pick<Node, "contains">;
+
 /**
  * The refused value a control bound to `slot` inside `view` is still showing,
  * if any. An entry whose control has left the page, or no longer shows what
@@ -1543,7 +1546,7 @@ export function noteBindWrite(
 export function refusedBindShown(
   app: object,
   slot: string,
-  view: Node | undefined,
+  view: BindView | undefined,
 ): { value: unknown } | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
@@ -1557,6 +1560,17 @@ export function refusedBindShown(
     if (!found && view?.contains(el)) found = { value: r.value };
   }
   return found;
+}
+
+/**
+ * The value `slot` shows inside `view` (forms.md §5.1.2): a refused value a
+ * control bound to it there still shows, else the slot's own. It is what
+ * `error(field=…)` renders a message for and what a form's submit is gated on
+ * (§5.2.2), so the two cannot disagree about whether a field is valid.
+ */
+export function shownSlotValue(app: AppShape, slot: string, view: BindView | undefined): unknown {
+  const held = app.live?.[slot] ?? app.slots?.[slot]?.value;
+  return refusedBindShown(app, slot, view)?.value ?? held;
 }
 
 /** The controls a refused bind is remembered against, for `app`. */

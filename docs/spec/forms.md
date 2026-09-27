@@ -95,8 +95,9 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 ### 5.2.2 Submit Behavior
 
-- If all `bind`ed slots pass validation, the `ui.submit(WrapperTile)` reducer is called
+- If every slot a control inside the form binds passes validation, the `ui.submit(WrapperTile)` reducer is called
 - If even one fails, it is not called (individual error displays do appear)
+- What is judged is what each control **shows** — the judgement `error(field=…)` makes ([§5.1.2](#_5-1-2-handling-of-refinement)): the slot's own value, or a value the refinement refused that a control inside the form still shows. So a pristine field whose declared default fails its refinement holds the form back ([§5.6](#_5-6-validation-strategy)), and so does a field showing a refused edit — the reducer would otherwise read the slot's last accepted value, which is not what the field shows. Only slots bound inside the form count; a slot the form's controls do not bind is not asked about
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
 - `type` is one of `submit` / `button` / `reset`, written through to the DOM verbatim, and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`. A literal outside the three is [E0201](./errors.md#e0201-type-mismatch): an invalid `type` attribute resolves to `submit`, so the typo submits
 

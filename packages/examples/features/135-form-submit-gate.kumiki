@@ -1,0 +1,26 @@
+# Feature (forms.md §5.2.2): a form's `ui.submit` reducer runs only when every
+# slot a control inside it binds passes its validation — judged on what the
+# control shows, the same judgement `error(field=…)` makes. A pristine address
+# that fails its refinement, and a typed one the refinement refused, both keep
+# the reducer from running, while the message says why. Before this, the
+# submit listener called the reducer unconditionally, and it read the slot's
+# last accepted value — not what the field showed.
+
+slot email : Text where email = ""
+slot name  : Text             = ""
+slot sent  : Text             = "(nothing)"
+
+reducer send on=ui.submit(Signup) do= sent := name + " <" + email + ">"
+
+tile Signup = form(column(
+    input(bind=name, id="name"),
+    input(bind=email, id="email"),
+    error(field=email),
+    button(text="Send", type="submit")))
+
+tile App = column(Signup, text("sent: " + sent))
+
+app FormSubmitGate
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
