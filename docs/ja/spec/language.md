@@ -558,6 +558,8 @@ issue.copy(status=Done, priority=High)
 
 > **`.ok` では、最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` ではその値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` の最初の束縛は `out=` から型付けされない。そこに届くのは capability の失敗値であり、組み込みの storage / session / indexed ハンドラ、provider 未登録の capability、invoke 中の例外はいずれも `E` の宣言にかかわらず `{message: Text}` レコードを渡す（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、`$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
 
+> **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
+
 ### 1.6.6 例
 
 ```kumiki fragment
