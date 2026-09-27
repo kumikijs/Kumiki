@@ -132,6 +132,20 @@ export function jsProperty(name: string): string {
 }
 
 /**
+ * The key a Kumiki field name has on a JS object that the program itself reads
+ * by field: a record, and the `$el` payload a tile hands its handlers. The
+ * source spelling, quoted — `item-name` stays `"item-name"` — because a field
+ * read (`r.item-name`, `$el.item-name`) is lowered with this same key. The
+ * writer and the reader take it from here so they cannot disagree.
+ *
+ * Not {@link jsProperty}: that one rewrites `-` to `_` for names the runtime
+ * defines, which a program's own field is not.
+ */
+export function fieldKey(name: string): string {
+  return JSON.stringify(name);
+}
+
+/**
  * The generated identifier holding one tile family's renderer map. It lives
  * here rather than next to the import header because the reserved-name list
  * below has to enumerate it, and `imports.ts` is downstream of this module.

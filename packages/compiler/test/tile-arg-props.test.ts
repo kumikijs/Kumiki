@@ -69,7 +69,7 @@ describe("a named argument reaches props (#251)", () => {
   it("puts it in the $el payload too, as the id fold always did", () => {
     const js = propsOf(emit('button(text="go", disabled=true)'));
     expect(js).toContain("el: {");
-    expect(js.slice(js.indexOf("el: {"))).toContain("disabled: true");
+    expect(js.slice(js.indexOf("el: {"))).toContain(`"disabled": true`);
   });
 
   it("does not lower a tile-valued argument as if it were prop data", () => {
