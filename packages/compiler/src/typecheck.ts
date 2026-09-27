@@ -4831,7 +4831,11 @@ function checkPatternAgainstType(
   if (pat.kind === "PWildcard") return;
 
   if (pat.kind === "PBind") {
-    bindLocal(scope, pat.name, t);
+    // The type as written, not its normal form: normalising strips `nominal`,
+    // so binding `t` gave a `UserId` scrutinee a `Text` binder that went into
+    // any nominal over `Text` (language.md §1.9 — each arm is read with the
+    // types its pattern binds). A type with no normal form binds as unknown.
+    bindLocal(scope, pat.name, t === null ? null : scrutType);
     return;
   }
 
