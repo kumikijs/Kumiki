@@ -1,6 +1,8 @@
-import type { Expr, TileArg, TileDef, TileExpr } from "../ast.ts";
+import { unaliasType } from "../assignable.ts";
+import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
+import type { ParseReading } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
@@ -10,7 +12,7 @@ import {
   type GenCtx,
   makeEvalCtx,
 } from "./context.ts";
-import { jsOfExpr, tupleArm } from "./expr.ts";
+import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
 import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
@@ -222,6 +224,67 @@ export function extractBindPath(
   return { root, path, readJs: readRaw, readJsRaw: readRaw };
 }
 
+/**
+ * The reading an `input`'s text is parsed by before it is written to the slot
+ * it binds (forms.md §5.1.1): `Int` / `Float` for a `type="number"` field,
+ * `Time` for a `type="date"` / `datetime` one. The bound position's type is
+ * followed from the slot through the path — a record field, an `Option`'s
+ * payload — to the base it unaliases to, as `T.parse` resolves its qualifier.
+ * `null` for `Text`, which is written as typed, and for a position whose type
+ * cannot be read.
+ */
+function boundReading(
+  bindInfo: { root: string; path: BindSegment[] },
+  gen: GenCtx,
+): "Int" | "Float" | "Time" | null {
+  let t: TypeExpr | null = gen.slots.find((s) => s.name === bindInfo.root)?.type ?? null;
+  for (const seg of bindInfo.path) {
+    const u = unaliasType(t, gen);
+    if (typeof seg === "string") {
+      t = u?.kind === "TypeRecord" ? (u.fields.find((f) => f.name === seg)?.type ?? null) : null;
+    } else {
+      t =
+        u?.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
+          ? (u.args[0] ?? null)
+          : null;
+    }
+  }
+  const base = unaliasType(t, gen);
+  if (base?.kind !== "TypePrim") return null;
+  return base.name === "Int" || base.name === "Float" || base.name === "Time" ? base.name : null;
+}
+
+const readerName = (reading: ParseReading): string => `_read${reading}`;
+
+/**
+ * One reader per reading an app's bound inputs use, declared once inside
+ * `createApp()`: `(text) => Option(T)`, the same reading `T.parse` lowers to.
+ */
+export function bindReaderDecls(readings: ReadonlySet<ParseReading>): string[] {
+  return [...readings].sort().map((r) => `const ${readerName(r)} = (_t) => ${readingJs(r, "_t")};`);
+}
+
+/**
+ * What a bound `input` shows. A `Time` is a millisecond number, and a date
+ * field takes `yyyy-MM-dd` (a datetime one `yyyy-MM-ddTHH:mm`) on the local
+ * clock `Time.parse` reads a zone-less string on — so the text the field shows
+ * reads back as the instant it came from. Everything else shows as `show` does.
+ */
+function boundInputValueJs(
+  reading: ParseReading | null,
+  t: TileExpr & { kind: "TileCall" },
+  readJs: string,
+): string {
+  if (reading === "Time") {
+    const typeArg = t.args.find((a) => a.name === "type")?.value as Expr | undefined;
+    const kind = typeArg?.kind === "Str" ? typeArg.value : "";
+    const pattern =
+      kind === "date" ? "yyyy-MM-dd" : kind.startsWith("datetime") ? "yyyy-MM-ddTHH:mm" : null;
+    if (pattern) return `_s.formatTime(${readJs}, ${JSON.stringify(pattern)})`;
+  }
+  return `_s.show(${readJs})`;
+}
+
 function tileCallJs(
   t: TileExpr & { kind: "TileCall" },
   gen: GenCtx,
@@ -367,7 +430,12 @@ function tileCallJs(
           if (bindInfo.path.length > 0) {
             fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
           }
-          fields.push(`value: _s.show(${bindInfo.readJs})`);
+          const reading = boundReading(bindInfo, gen);
+          if (reading) {
+            gen.usedReaders.add(reading);
+            fields.push(`parse: ${readerName(reading)}`);
+          }
+          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.readJs)}`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;

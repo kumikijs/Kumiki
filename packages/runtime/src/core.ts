@@ -280,6 +280,12 @@ export type TileNode = (
       props?: TileProps;
       bind?: string;
       bindPath?: BindSegment[];
+      /**
+       * How the field's text reads as a value of the bound slot's type, for a
+       * slot that is not `Text` (forms.md §5.1.1): `Some(value)` to write, or
+       * `None` for text that spells no value of it, which is refused.
+       */
+      parse?: (text: string) => { _tag: string; _0?: unknown };
       value?: string;
       type?: string;
       placeholder?: string;

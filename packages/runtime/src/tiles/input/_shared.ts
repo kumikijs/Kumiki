@@ -43,12 +43,19 @@ export function writeBind(
   slotName: string,
   bindPath: BindSegment[] | undefined,
   value: unknown,
+  parse?: InputHandlers["parse"],
 ): void {
+  // Text that spells no value of the slot's type is refused the way a value
+  // its refinement refuses is: the slot keeps what it had, the field what was
+  // typed. What is remembered for `error(field=…)` is the text itself.
+  const read = parse?.(String(value));
+  const readable = read === undefined || read._tag === "Some";
+  const written = read?._tag === "Some" ? read._0 : value;
   const next =
     bindPath && bindPath.length > 0
-      ? _setPathHelper(app.live[slotName] ?? {}, bindPath, value)
-      : value;
-  const accepted = app._setSlot(slotName, next);
+      ? _setPathHelper(app.live[slotName] ?? {}, bindPath, written)
+      : written;
+  const accepted = readable && app._setSlot(slotName, next);
   if (!accepted && IME_COMPOSING.has(el)) {
     PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, next));
     return;
@@ -124,6 +131,8 @@ export type InputHandlers = {
   selectOptions?: Array<{ label: unknown; value: unknown }>;
   // Slider-specific — write `Number(inp.value)` back rather than the string.
   isSlider?: boolean;
+  // Input-specific — how the text reads as the bound slot's type, when not Text.
+  parse?: (text: string) => { _tag: string; _0?: unknown };
 };
 
 export const INPUT_STATE = new WeakMap<HTMLElement, InputHandlers>();

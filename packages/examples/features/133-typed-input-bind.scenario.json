@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "label": "a number field bound to an Int stores the Int",
+      "do": { "fill": "#age", "value": "5" },
+      "expect": { "noErrors": true, "state": { "age": 5 }, "domIncludes": ["next=6"] }
+    },
+    {
+      "label": "a number field bound to a Float stores the Float",
+      "do": { "fill": "#price", "value": "2.5" },
+      "expect": { "noErrors": true, "state": { "price": 2.5 }, "domIncludes": ["double=5"] }
+    },
+    {
+      "label": "an emptied Int field is refused, and the slot keeps its value",
+      "do": { "fill": "#age", "value": "" },
+      "expect": { "noErrors": true, "state": { "age": 5 }, "domIncludes": ["next=6"] }
+    },
+    {
+      "label": "a fraction is no Int, and is refused too",
+      "do": { "fill": "#age", "value": "1.5" },
+      "expect": { "noErrors": true, "state": { "age": 5 }, "domIncludes": ["next=6"] }
+    },
+    {
+      "label": "a record field bound through a path is read by its own type",
+      "do": { "fill": "#qty", "value": "3" },
+      "expect": {
+        "noErrors": true,
+        "state": { "order": { "qty": 3, "note": "" } },
+        "domIncludes": ["qty+1=4"]
+      }
+    },
+    {
+      "label": "a date field bound to a Time stores the instant",
+      "do": { "fill": "#day", "value": "2026-03-04" },
+      "expect": { "noErrors": true, "domIncludes": ["day=2026-03-04"] }
+    },
+    {
+      "label": "a reducer that moves the Time moves the field",
+      "do": { "clickText": "next day" },
+      "expect": { "noErrors": true, "domIncludes": ["day=2026-03-05"] }
+    }
+  ]
+}

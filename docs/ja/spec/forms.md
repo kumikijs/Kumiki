@@ -32,6 +32,8 @@ tile Compose = column(
 | `check` / `switch` | `Bool` |
 | `radio` | union 型のいずれか |
 
+`Int` / `Float` / `Time` に bind した `input` は、テキストを `Int.parse` / `Float.parse` / `Time.parse` と同じように読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、読んだ値を書き込む。型は bind した位置の型であり、レコードのフィールドや `Option` のペイロードを辿った先の型である。その型の値を表さないテキスト（`""`、`Int` に対する `"1.5"` など）は refinement 違反と同じく拒否される（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot は最後に受け入れた値を保ち、フィールドは入力されたテキストを保つ。`Time` は `type="date"` のフィールドには `yyyy-MM-dd`、`datetime` のフィールドには `yyyy-MM-ddTHH:mm` として、`Time.parse` がゾーンなし文字列を読むのと同じローカル時刻で表示される。
+
 ### 5.1.2 refinement の扱い
 
 `slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えるとその値は**拒否**される：slot は最後に受け取った値を保つ。モードは 1 つで、意図的に静かである — 入力途中の値は欠陥ではなく想定内なので、何も報告しない。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。

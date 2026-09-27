@@ -32,6 +32,8 @@ tile Compose = column(
 | `check` / `switch` | `Bool` |
 | `radio` | One of a union type |
 
+An `input` bound to an `Int`, `Float` or `Time` reads its text the way `Int.parse` / `Float.parse` / `Time.parse` do ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)) and writes the value it reads — the type is the bound position's, through a record field or an `Option`'s payload. Text that spells no value of the type (`""`, or `"1.5"` for an `Int`) is refused as a refinement violation is ([§5.1.2](#_5-1-2-handling-of-refinement)): the slot keeps the last value it accepted and the field keeps what was typed. A `Time` is shown to a `type="date"` field as `yyyy-MM-dd`, and to a `datetime` one as `yyyy-MM-ddTHH:mm`, on the local clock `Time.parse` reads a zone-less string on.
+
 ### 5.1.2 Handling of refinement
 
 For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters the value is **refused**: the slot keeps the last value it accepted. There is one mode, and it is deliberately quiet — a half-typed value is expected, not a defect, so nothing is reported. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
