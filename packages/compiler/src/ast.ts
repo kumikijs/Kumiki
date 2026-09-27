@@ -1,5 +1,7 @@
 // AST types for Kumiki.
 
+import type { KeyKind } from "@kumikijs/runtime";
+
 export type Pos = { line: number; col: number };
 
 export type Token =
@@ -398,6 +400,22 @@ export type Lvalue =
 
 // ----- Expressions -----
 
+/**
+ * How a `Set` element or a `Map` key reads back at runtime. Both are stored
+ * under JavaScript object keys, which are strings, so a member that hands keys
+ * back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1`
+ * of `Map(K, V).filter` — is told what its declared key type is represented
+ * as. Recorded by the type checker on those members when the key type is a
+ * number (`"number"`) or a `Bool` (`"bool"`); absent for a `Text` key, and
+ * wherever the receiver's type is not known — also the case when codegen runs
+ * without `check()` — so the string stands.
+ *
+ * Defined once, by the runtime that restores the keys (`restoreKey` in
+ * `@kumikijs/runtime`'s `stdlib.ts`), and imported here as a type only, so
+ * the compiler core stays free of runtime code.
+ */
+export type { KeyKind };
+
 export type Expr =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
@@ -425,10 +443,20 @@ export type Expr =
        * the case when codegen runs without `check()`).
        */
       accessKind?: "field" | "shortcut";
+      /** See {@link KeyKind}. Filled in by the type checker. */
+      keyKind?: KeyKind;
     }
   | { kind: "Index"; base: Expr; index: Expr; pos: Pos }
   | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, Duration.ms, ...)
-  | { kind: "MethodCall"; receiver: Expr; method: string; args: Expr[]; pos: Pos }
+  | {
+      kind: "MethodCall";
+      receiver: Expr;
+      method: string;
+      args: Expr[];
+      pos: Pos;
+      /** See {@link KeyKind}. Filled in by the type checker. */
+      keyKind?: KeyKind;
+    }
   | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
   | { kind: "ListLit"; items: Expr[]; pos: Pos }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit

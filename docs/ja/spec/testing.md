@@ -145,6 +145,8 @@ property-test ::= 'property-test'
                   ('shrink'    '=' bool)?           ; 失敗時の最小化（デフォルト true）
 ```
 
+`run-reducer(name)` は reducer が残す状態 `{slots: {…}}` を返し、その `slots` はプログラムが宣言した slot（とランタイムの `route`）で型付けされる。これを通した読み取りは slot そのものの読み取りと同じように検査される: `Set(Int)` に対する `run-reducer(add).slots.tags.to-list` はキーが数値として読み戻される `List(Int)` であり（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、プログラムが宣言していない slot 名は、property を反例として失敗させる `undefined` ではなく [E0108](./errors.md#e0108-undef-member) になる。
+
 ### 8.3.2 ジェネレータ
 
 各型は自動生成器を持つ：

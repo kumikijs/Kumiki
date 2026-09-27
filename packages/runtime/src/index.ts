@@ -182,7 +182,7 @@ export {
   renderToString,
 } from "./ssr.ts";
 export { renderTileToString } from "./ssr-render.ts";
-export { _stdlibCore } from "./stdlib.ts";
+export { _stdlibCore, type KeyKind } from "./stdlib.ts";
 export {
   _stdlibTest,
   type EnvDrift,

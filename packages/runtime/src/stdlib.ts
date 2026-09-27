@@ -21,6 +21,38 @@ import {
 } from "./core.ts";
 
 /**
+ * How a `Set` element or a `Map` key reads back from the string it is stored
+ * under — the checker records it from the receiver's declared key type, and
+ * codegen passes it to the readers (`keys` / `entries` / `to-list`, and the
+ * predicate of a Map's `filter`). Absent means the key is `Text`, or a type the
+ * checker could not decide, and the string is the value.
+ *
+ * This is the one definition: the compiler's AST (`KeyKind` in
+ * `@kumikijs/compiler`'s `ast.ts`) imports it as a type, so a kind added here
+ * is one the checker can record and `restoreKey` has to handle.
+ */
+export type KeyKind = "number" | "bool";
+
+/** A stored object key, restored to the kind of value it was written from. */
+function restoreKey(key: string, kind: KeyKind | undefined): unknown {
+  switch (kind) {
+    case undefined:
+      return key;
+    case "number":
+      return Number(key);
+    case "bool":
+      return key === "true";
+    default:
+      return assertNeverKind(kind);
+  }
+}
+
+/** Unreachable while `restoreKey` handles every `KeyKind`; a type error otherwise. */
+function assertNeverKind(kind: never): never {
+  throw new Error(`unknown key kind ${String(kind)}`);
+}
+
+/**
  * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
  *
  * A blank — `null`, `undefined`, `""`, whitespace — is not zero here. `Number`
@@ -131,14 +163,14 @@ export const _stdlibCore = {
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
-  mapKeys(m: Record<string, unknown> | undefined | null): string[] {
-    return m ? Object.keys(m) : [];
+  mapKeys(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
+    return m ? Object.keys(m).map((k) => restoreKey(k, kind)) : [];
   },
   mapValues(m: Record<string, unknown> | undefined | null): unknown[] {
     return m ? Object.values(m) : [];
   },
-  mapEntries(m: Record<string, unknown> | undefined | null): unknown[] {
-    return m ? Object.entries(m) : [];
+  mapEntries(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
+    return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
   mapGet(m: Record<string, unknown> | undefined | null, k: string): unknown {
     return m ? m[k] : undefined;
@@ -183,9 +215,10 @@ export const _stdlibCore = {
    * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
    * so it has to be told apart before the Map branch reads its `_tag` / `_0`
    * fields as entries; other objects (Maps in Kumiki) fall back to the
-   * (k, v) → boolean predicate of mapFilter.
+   * (k, v) → boolean predicate of mapFilter, with `k` restored to the key's
+   * declared kind as `keys` restores it.
    */
-  filter(coll: unknown, pred: (...args: unknown[]) => boolean): unknown {
+  filter(coll: unknown, pred: (...args: unknown[]) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
     if (_stdlibCore.variantIs(coll, "Some")) {
       const value = (coll as { _0: unknown })._0;
@@ -195,7 +228,7 @@ export const _stdlibCore = {
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        if (pred(k, v)) out[k] = v;
+        if (pred(restoreKey(k, kind), v)) out[k] = v;
       }
       return out;
     }
@@ -580,7 +613,7 @@ export const _stdlibCore = {
     return a.length > 0 ? _stdlibCore.Some(a[a.length - 1]) : _stdlibCore.None;
   },
   /** Set(T).to-list / Option(T).to-list → List(T). */
-  toList(v: unknown): unknown[] {
+  toList(v: unknown, kind?: KeyKind): unknown[] {
     if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
       // Option: Some(x) → [x], None → [].
       const o = v as { _tag: string; _0?: unknown };
@@ -589,8 +622,11 @@ export const _stdlibCore = {
     // Return a fresh copy so the result never aliases a slot array, matching
     // listHead/listTail/listLast which all produce new values.
     if (Array.isArray(v)) return [...v];
-    // Set is stored as `{ [key]: true }` (keys are stringified, like the other set ops).
-    if (v && typeof v === "object") return Object.keys(v as Record<string, unknown>);
+    // Set is stored as `{ [key]: true }` (keys are stringified, like the other
+    // set ops), so the element is read back through its recorded kind.
+    if (v && typeof v === "object") {
+      return Object.keys(v as Record<string, unknown>).map((k) => restoreKey(k, kind));
+    }
     return [];
   },
   /** Result(T,E).get-err → E; panics (KumikiPanic) if the value is Ok. */
