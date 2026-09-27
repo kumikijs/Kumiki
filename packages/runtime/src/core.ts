@@ -467,8 +467,12 @@ export type SlotMeta = {
    * for a type that carries a refinement below its own chain — the walk checks
    * the chain's predicates too — and emits the three fields above only for a
    * type whose predicates all sit on the type itself.
+   *
+   * Given a `bind` path as `at`, it answers only a failure on that path —
+   * along it, or below where it ends — so a write to one field of a record is
+   * not refused for a sibling the user has not reached yet (forms.md §5.6).
    */
-  refineFailure?: (v: unknown) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
 };
 
 /**
@@ -530,9 +534,17 @@ export type SlotGate = {
  * that every check shares — a reducer's write, the batch backstop, a `bind`
  * write-back, the `error` tile — so a slot built with `refineFailure` alone is
  * gated as fully as one codegen emitted.
+ *
+ * `at` is the path a `bind` wrote through: only a failure on it refuses the
+ * write. A predicate on the slot's own type is on every path, so a type whose
+ * predicates all sit there (`refine`) is judged whole either way.
  */
-export function slotAccepts(meta: SlotGate | undefined, value: unknown): boolean {
-  if (meta?.refineFailure) return meta.refineFailure(value) === undefined;
+export function slotAccepts(
+  meta: SlotGate | undefined,
+  value: unknown,
+  at?: readonly BindSegment[],
+): boolean {
+  if (meta?.refineFailure) return meta.refineFailure(value, at) === undefined;
   return meta?.refine ? meta.refine(value) : true;
 }
 
@@ -546,7 +558,7 @@ export type RefinementNaming = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
-  refineFailure?: (v: unknown) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
 };
 
 /**
@@ -1462,7 +1474,7 @@ export type MountedApp = AppShape & {
    * Write a slot through its refinement: `true` when the value was taken,
    * `false` when the refinement refused it and nothing changed.
    */
-  _setSlot: (name: string, value: unknown) => boolean;
+  _setSlot: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;
@@ -1481,10 +1493,15 @@ const appByRoot = new WeakMap<Element, MountedApp>();
 
 /**
  * A value a `bind` wrote and its slot's refinement refused (forms.md §5.1.2):
- * the slot value the write would have produced, and what the control was
- * showing when it was refused.
+ * the value written, the path inside the slot it was written to (`[]` for the
+ * slot itself), and what the control was showing when it was refused.
+ *
+ * The field's value and not the slot value the write would have produced: a
+ * bind into one field of a record is judged at that field (§5.6), so its
+ * siblings go on being written, and what the field shows has to be laid over
+ * the record as it is now rather than as it was when the refusal happened.
  */
-type RefusedBind = { slot: string; value: unknown; shown: string };
+type RefusedBind = { slot: string; path: readonly BindSegment[]; value: unknown; shown: string };
 
 /**
  * Per app, the controls whose shown value their slot refused. A refused bind
@@ -1516,6 +1533,7 @@ export function noteBindWrite(
   slot: string,
   value: unknown,
   accepted: boolean,
+  path: readonly BindSegment[] = [],
 ): void {
   let byEl = refusedBinds.get(app);
   if (byEl) {
@@ -1529,32 +1547,45 @@ export function noteBindWrite(
     byEl = new Map();
     refusedBinds.set(app, byEl);
   }
-  byEl.set(el, { slot, value, shown: shownValue(el) });
+  byEl.set(el, { slot, path, value, shown: shownValue(el) });
 }
 
 /**
- * The refused value a control bound to `slot` inside `view` is still showing,
- * if any. An entry whose control has left the page, or no longer shows what
- * was refused — a reducer rewrote the slot and the control followed it — is
+ * The value `slot` shows inside `view`: `held` — the slot's own value — with
+ * every refused value a control bound into it is still showing laid over it at
+ * the path that control writes, or `undefined` when no control there shows a
+ * refused one. Two controls showing refused values at the same path are one
+ * field shown twice, and the first speaks for it.
+ *
+ * An entry whose control has left the page, or no longer shows what was
+ * refused — a reducer rewrote the slot and the control followed it — is
  * stale, and every stale entry for the slot is dropped here rather than by
  * every path that can move a control. A live entry in another view is kept
- * and not returned.
+ * and not used.
  */
 export function refusedBindShown(
   app: object,
   slot: string,
   view: Node | undefined,
+  held?: unknown,
 ): { value: unknown } | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
   let found: { value: unknown } | undefined;
+  const laid = new Set<string>();
   for (const [el, r] of byEl) {
     if (r.slot !== slot) continue;
     if (!el.isConnected || shownValue(el) !== r.shown) {
       byEl.delete(el);
       continue;
     }
-    if (!found && view?.contains(el)) found = { value: r.value };
+    const at = JSON.stringify(r.path);
+    if (!view?.contains(el) || laid.has(at)) continue;
+    laid.add(at);
+    const base = found ? found.value : held;
+    found = {
+      value: r.path.length > 0 ? _setPathHelper(base ?? {}, r.path, r.value) : r.value,
+    };
   }
   return found;
 }
@@ -2810,11 +2841,12 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  (app as AppShape & { _setSlot?: (name: string, value: unknown) => boolean })._setSlot = (
-    name: string,
-    value: unknown,
-  ) => {
-    if (!slotAccepts(app.slots[name], value)) return false;
+  (
+    app as AppShape & {
+      _setSlot?: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
+    }
+  )._setSlot = (name: string, value: unknown, at?: readonly BindSegment[]) => {
+    if (!slotAccepts(app.slots[name], value, at)) return false;
     slotValues[name] = value;
     render();
     return true;

@@ -32,8 +32,8 @@ function resolveFieldError(field: string): string {
   // one would be about a value the user is no longer looking at (#443).
   // Only a control in the view being rendered speaks for this tile: another
   // view of the same shape shows the slot's own value.
-  const refused = refusedBindShown(app, field, getRenderingView());
-  const value = refused?.value ?? app.live?.[field] ?? meta.value;
+  const held = app.live?.[field] ?? meta.value;
+  const value = refusedBindShown(app, field, getRenderingView(), held)?.value ?? held;
   if (slotAccepts(meta, value)) return "";
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.

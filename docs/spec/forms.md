@@ -245,6 +245,8 @@ The two write paths differ in how loud they are, not in what they check:
 
 Neither gates the **declared default**: `slot email : Email = ""` starts out holding a value its own refinement rejects, which is what puts a message on a pristine form ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)).
 
+A `bind` into part of a slot — `input(bind=form.age)`, `input(bind=draft.nick.get)` — is judged **at the path it writes**: the predicates along that path, on the slot's own type included, and every one below where it ends. A predicate on a sibling is not on that path, so a sibling that fails does not refuse the write. That is what lets a record whose default fails several fields be filled in any order. The field that shows a refused value is laid over the slot as it is now when `error(field=…)` judges it, so a sibling written afterwards does not bring back a message that field no longer deserves.
+
 ### 5.6.1 Cross-Form Example
 
 ```kumiki snippet

@@ -48,19 +48,27 @@ export function writeBind(
     bindPath && bindPath.length > 0
       ? _setPathHelper(app.live[slotName] ?? {}, bindPath, value)
       : value;
-  const accepted = app._setSlot(slotName, next);
+  // Judged at the bound field: a sibling that fails its own refinement is not
+  // this field's to refuse (forms.md §5.6).
+  const accepted = app._setSlot(slotName, next, bindPath);
   if (!accepted && IME_COMPOSING.has(el)) {
-    PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, next));
+    PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, value, bindPath));
     return;
   }
   PENDING_REFUSAL.delete(el);
-  if (accepted) noteBindWrite(app, el, slotName, next, true);
-  else settleRefusal(app, el, slotName, next);
+  if (accepted) noteBindWrite(app, el, slotName, value, true);
+  else settleRefusal(app, el, slotName, value, bindPath);
 }
 
 /** Remember a refused write against `el` and re-render so its message shows. */
-function settleRefusal(app: MountedApp, el: HTMLElement, slotName: string, next: unknown): void {
-  noteBindWrite(app, el, slotName, next, false);
+function settleRefusal(
+  app: MountedApp,
+  el: HTMLElement,
+  slotName: string,
+  value: unknown,
+  bindPath: BindSegment[] | undefined,
+): void {
+  noteBindWrite(app, el, slotName, value, false, bindPath);
   app._rerender();
 }
 

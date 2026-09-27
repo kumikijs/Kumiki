@@ -84,13 +84,14 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
   // right there in the URL.
   const hash = loc.hash ? someOf(loc.hash.slice(1)) : NONE;
   if (!routes) return { path, pattern: path, params: {}, query, hash };
-  for (const r of ranked(routes)) {
+  // First pass: non-redirect routes.
+  for (const r of routes) {
     if ("redirectTo" in r) continue;
     const m = matchPattern(r.pattern, path);
     if (m) {
       // §3.6: when the parent declares sub-routes, re-match within them.
       if (r.subRoutes && r.subRoutes.length > 0) {
-        for (const sr of ranked(r.subRoutes)) {
+        for (const sr of r.subRoutes) {
           if ("redirectTo" in sr) continue;
           const cm = matchPattern(sr.pattern, path);
           if (cm)
@@ -145,64 +146,23 @@ function parentBare(pattern: string): string | null {
 function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
   if (!routes) return null;
   const path = loc.pathname || "/";
-  const order = ranked(routes);
-  for (const r of order) {
+  for (const r of routes) {
     if ("redirectTo" in r) {
       if (matchPattern(r.pattern, path)) return r.redirectTo;
     }
   }
-  for (const r of order) {
+  for (const r of routes) {
     if ("redirectTo" in r) continue;
+    if (!r.subRoutes) continue;
     if (matchPattern(r.pattern, path)) {
-      if (!r.subRoutes) return null;
-      for (const sr of ranked(r.subRoutes)) {
+      for (const sr of r.subRoutes) {
         if ("redirectTo" in sr && matchPattern(sr.pattern, path)) return sr.redirectTo;
       }
-      // Only the route that owns the path (the one parseLocation renders) is
-      // scanned — stop here.
+      // Only the FIRST matching parent owns the path — stop scanning here.
       return null;
     }
   }
   return null;
-}
-
-type RouteList = NonNullable<AppShape["routes"]>;
-
-/** A segment's rank in §3.1.2's order: static 0, parameter 1, wildcard 2. */
-function segmentRank(seg: string | undefined): number {
-  // A pattern that ends here only matches a path that ends here too, which
-  // is as exact as a static segment.
-  if (seg === undefined) return 0;
-  return seg === "*" ? 2 : seg.startsWith(":") ? 1 : 0;
-}
-
-/** Negative when `a` is the more specific pattern (§3.1.2), 0 on a tie. */
-function compareSpecificity(a: string, b: string): number {
-  const as = a.split("/").filter(Boolean);
-  const bs = b.split("/").filter(Boolean);
-  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
-    const d = segmentRank(as[i]) - segmentRank(bs[i]);
-    if (d !== 0) return d;
-    // A wildcard swallows the rest of the path, so segments past it never compare.
-    if (as[i] === "*") return 0;
-  }
-  return 0;
-}
-
-const rankedCache = new WeakMap<RouteList, RouteList>();
-
-/**
- * `list` in match order (§3.1.2): most specific first, definition order among
- * equals (`sort` is stable). Every lookup — the rendered route, its sub-route,
- * and the redirects — walks this one order, on the client and in SSR alike.
- */
-function ranked<T extends RouteList>(list: T): T {
-  let out = rankedCache.get(list);
-  if (!out) {
-    out = [...list].sort((a, b) => compareSpecificity(a.pattern, b.pattern));
-    rankedCache.set(list, out);
-  }
-  return out as T;
 }
 
 function matchPattern(pattern: string, path: string): Record<string, string> | null {

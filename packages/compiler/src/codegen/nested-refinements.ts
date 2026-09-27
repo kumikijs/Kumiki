@@ -61,6 +61,8 @@ export type NestedRefinements = {
   /**
    * The name of a module-level function answering the first predicate a value
    * of `t` fails, with its path, or `undefined` when `t` carries none at all.
+   * Given a bind path as its second argument, it answers the first failure on
+   * that path — along it or below its end — and passes over the rest.
    * Defined whenever `carriesNestedRefinement(t)` holds.
    */
   explainerOf(t: TypeExpr): string | undefined;
@@ -76,9 +78,15 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
   /**
    * One step into a position: `f` is the failure found there. The check is
    * called by name — an inline arrow would be a closure built on every call.
+   *
+   * `o` is the focus a `bind` write is judged by (forms.md §5.6): the bind
+   * path still to walk, or absent for a whole-value check. While it has steps
+   * left, only the position it names is entered — `onPath` says whether this
+   * step is that one — so a sibling's failure cannot refuse a write to a field
+   * beside it. Once it is used up, everything below is checked.
    */
-  const at = (stepJs: string, check: string, valueJs: string): string =>
-    `if ((f = ${named$(check)}(${valueJs}))) return { ...f, path: [${stepJs}, ...f.path] };`;
+  const at = (stepJs: string, check: string, valueJs: string, onPath = "false"): string =>
+    `if ((!o?.length || ${onPath}) && (f = ${named$(check)}(${valueJs}, o?.slice(1)))) return { ...f, path: [${stepJs}, ...f.path] };`;
 
   /** `check` as a helper's name, declaring it first when it is an arrow. */
   const named$ = (check: string): string => (isHelper(check) ? check : hoist(check));
@@ -110,7 +118,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         // before the predicate written on top of it.
         const steps: string[] = [];
         const inner = explain(t.inner, generics);
-        if (inner) steps.push(`if ((f = ${named$(inner)}(v))) return f;`);
+        if (inner) steps.push(`if ((f = ${named$(inner)}(v, o))) return f;`);
         const r = t.refinement;
         const body = r ? refinementBodyJs(r) : undefined;
         if (r && body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
@@ -123,7 +131,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
           t.fields.flatMap((field) => {
             const check = explain(field.type, generics);
             const name = JSON.stringify(field.name);
-            return check ? [at(name, check, `v[${name}]`)] : [];
+            return check ? [at(name, check, `v[${name}]`, `o[0] === ${name}`)] : [];
           }),
         );
       case "TypeUnion":
@@ -176,7 +184,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     if (fn === undefined) {
       throw new Error(`nested refinement lowering: "${t.name}" carries a refinement with no walk`);
     }
-    decls.push(`const ${name} = ${isHelper(fn) ? `(v) => ${fn}(v)` : fn};`);
+    decls.push(`const ${name} = ${isHelper(fn) ? `(v, o) => ${fn}(v, o)` : fn};`);
     return name;
   };
 
@@ -200,8 +208,10 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     const tagged = (tag: string, x: TypeExpr | undefined): string[] => {
       const check = sub(x);
       const name = JSON.stringify(tag);
+      // A bind reaches a payload through `.get`, which unwraps `Some` / `Ok`.
+      const onPath = tag === "Err" ? "false" : "o[0]?.get === true";
       return check
-        ? [`if (v._tag === ${name}) { ${at(`{ variant: ${name} }`, check, "v._0")} }`]
+        ? [`if (v._tag === ${name}) { ${at(`{ variant: ${name} }`, check, "v._0", onPath)} }`]
         : [];
     };
     const object = 'v !== null && typeof v === "object"';
@@ -286,7 +296,7 @@ function fnOf(steps: string[]): string | undefined {
   if (steps.length === 0) return undefined;
   const body = steps.join(" ");
   const local = body.includes("(f = ") ? "let f; " : "";
-  return `(v) => { ${local}${body} return undefined; }`;
+  return `(v, o) => { ${local}${body} return undefined; }`;
 }
 
 const isHelper = (fn: string): boolean => /^_rq\d+$/.test(fn);
