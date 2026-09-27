@@ -367,6 +367,8 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["flat-map", 1],
   ["fold", 2],
   ["format", 1],
+  // The keyed reading's floor. The unwrapping one takes none and its lowering
+  // reads none, so the checker judges `.get` by its receiver, not by this.
   ["get", 1],
   // One shape takes a default, the other a key AND a default; the lowering
   // branches on the count, so one is the floor.
@@ -684,7 +686,12 @@ export function methodCallJs(
     case "toggle":
       return `_s.setToggle(${recvJs}, ${argRaw(args[0]!)})`;
     case "get":
-      // Spec: Map(K,V).get returns Option(V). Wrap the raw lookup result.
+      // One name, two readings, told apart by the count the checker judged
+      // against the receiver (`checkGetArity`): `Option(T).get()` /
+      // `Result(T, E).get()` take nothing and unwrap — the same member as the
+      // paren-free `o.get` — and `Map(K, V).get(k)` / `List(T).get(i)` take
+      // one and answer `Option(V)`, so the raw lookup is wrapped.
+      if (args.length === 0) return `_s.unwrap(${recvJs})`;
       return `((_v) => _v === undefined ? _s.None : _s.Some(_v))(_s.mapGet(${recvJs}, ${argRaw(args[0]!)}))`;
     case "get-or":
       // Two shapes:
