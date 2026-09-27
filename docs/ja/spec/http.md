@@ -40,6 +40,8 @@ effect http-post cap=http.post
 # put / patch / delete も同じ形
 ```
 
+`query` は URL のクエリ文字列として送られる。各エントリは URL エンコードされ（`URLSearchParams` による。空白は `+` に、値の中の `&` はエスケープされる）、`url` が既に持つクエリ文字列の後ろ・フラグメントの前に付け足される。空の `query` は `url` をそのまま残す。
+
 `http.get` 等は **未指定なら使えない**（capability ガード）。`app.caps` に列挙必須。
 
 ### 6.1.3 HttpBody 型
