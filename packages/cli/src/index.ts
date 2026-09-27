@@ -35,6 +35,7 @@ export {
 } from "./harness.ts";
 export {
   addDef,
+  type DefSpec,
   describeEdit,
   type EditReport,
   editDef,

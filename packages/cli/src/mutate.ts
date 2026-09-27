@@ -46,6 +46,11 @@ export type OpLogEntry = {
   cascade?: boolean;
   /** Every definition a cascade deleted, the requested one first (§9.4.1). */
   removed?: string[];
+  /**
+   * The definitions an `add` restores together with the named one — the
+   * inverse of a cascade, which is one op in both directions.
+   */
+  with?: DefSpec[];
   patch?: unknown;
   author: string;
   ts: number;
@@ -62,8 +67,12 @@ type RawOp = {
   newName?: string;
   cascade?: boolean;
   removed?: string[];
+  with?: DefSpec[];
   patch?: unknown;
 };
+
+/** One definition as an `add` writes it: its layer, its name and its body. */
+export type DefSpec = { layer: string; name: string; body: string };
 
 function opLogPath(path: string): string {
   return `${path}.kumiki-ops.jsonl`;
@@ -155,6 +164,7 @@ function logOp(path: string, op: RawOp): string {
     ...(op.newName !== undefined ? { newName: op.newName } : {}),
     ...(op.cascade !== undefined ? { cascade: op.cascade } : {}),
     ...(op.removed !== undefined ? { removed: op.removed } : {}),
+    ...(op.with !== undefined ? { with: op.with } : {}),
     ...(op.patch !== undefined ? { patch: op.patch } : {}),
     author: authorOf(),
     ts: Date.now(),
@@ -289,12 +299,23 @@ export function describeEdit(report: EditReport): string {
 }
 
 export function addDef(path: string, layer: string, name: string, body: string): string {
-  enforceLock(path, `${layer}.${name}`);
+  return addDefs(path, [{ layer, name, body }]);
+}
+
+/**
+ * Add one or more definitions as a single op: one write, one validation, one
+ * log entry. The first is the op's own `layer` / `name` / `body`; the rest are
+ * its `with`. Validated together because they may reference each other — a
+ * cascade's dependents are exactly the definitions that cannot be added before
+ * the one they depend on.
+ */
+function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+  for (const d of defs) enforceLock(path, `${d.layer}.${d.name}`);
   const src = readFileSync(path, "utf8");
   // Compose definition syntax for the requested layer. The body argument is
   // the right-hand side (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for
   // a fn). Layer-specific assembly is small enough to inline here.
-  const inserted = assemble(layer, name, body);
+  const inserted = defs.map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
   const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
   writeFileSync(path, next);
   const v = validate(path);
@@ -303,7 +324,8 @@ export function addDef(path: string, layer: string, name: string, body: string):
     writeFileSync(path, src);
     throw new Error(`add rejected: ${v.message}`);
   }
-  return logOp(path, { op: "add", layer, name, body });
+  const [main, ...rest] = defs;
+  return logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) });
 }
 
 export function replaceDef(path: string, qname: string, body: string): string {
@@ -330,6 +352,7 @@ export function removeDef(
   path: string,
   qname: string,
   cascade: boolean,
+  exactly?: readonly string[],
 ): { opId: string; removed: RemovedNames } {
   enforceLock(path, qname);
   const store = load(path);
@@ -361,6 +384,17 @@ export function removeDef(
         }
       }
       frontier = next;
+    }
+  }
+  // An inverse of a bundled `add` removes the set that op added and nothing
+  // else. Anything outside it that has come to depend on one of them since is
+  // an edit this revert would destroy, so it is refused before any write.
+  if (exactly !== undefined) {
+    const extra = [...toRemove].filter((q) => !exactly.includes(q)).sort();
+    if (extra.length > 0) {
+      throw new Error(
+        `remove rejected: ${qname} is now also referenced by ${extra.join(", ")}, which the op did not add`,
+      );
     }
   }
   // Remove from bottom up so line numbers stay valid.
@@ -660,7 +694,7 @@ function applyOne(path: string, op: RawOp): string {
   switch (op.op) {
     case "add":
       if (op.body === undefined) throw new Error("add op missing body");
-      return addDef(path, op.layer, op.name, op.body);
+      return addDefs(path, [{ layer: op.layer, name: op.name, body: op.body }, ...(op.with ?? [])]);
     case "replace":
       if (op.body === undefined) throw new Error("replace op missing body");
       return replaceDef(path, `${op.layer}.${op.name}`, op.body);
@@ -688,18 +722,35 @@ export function patchRevert(path: string, opId: string): string {
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
   const target = log[idx]!;
   switch (target.op) {
-    case "add":
-      // Inverse of add = remove.
-      return removeDef(path, `${target.layer}.${target.name}`, false).opId;
+    case "add": {
+      // Inverse of add = remove. An add that restored a cascade removes the
+      // same set again, and only that set.
+      const main = `${target.layer}.${target.name}`;
+      if (target.with === undefined) return removeDef(path, main, false).opId;
+      const set = [main, ...target.with.map((d) => `${d.layer}.${d.name}`)];
+      return removeDef(path, main, true, set).opId;
+    }
     case "remove": {
-      // Inverse of remove = add. The removed body was the previous replace/add body.
-      const prev = priorBody(log, idx, target.layer, target.name);
-      if (prev === undefined) {
+      // Inverse of remove = add, of every definition the op removed — a
+      // cascade is one op (§9.4.1), so its inverse is one too. Each body is
+      // the last one the log recorded for that name before the remove; if any
+      // is missing, nothing is written rather than restoring part of the op.
+      const removed = target.removed ?? [`${target.layer}.${target.name}`];
+      const defs: DefSpec[] = [];
+      const missing: string[] = [];
+      for (const q of removed) {
+        const [layer, name] = splitQname(q);
+        const body = priorBody(log, idx, layer, name);
+        if (body === undefined) missing.push(q);
+        else defs.push({ layer, name, body });
+      }
+      const [first, ...rest] = defs;
+      if (missing.length > 0 || first === undefined) {
         throw new Error(
-          `patch revert: cannot reconstruct body of removed ${target.layer}.${target.name}`,
+          `patch revert: cannot reconstruct the body of ${missing.join(", ")} removed by ${opId}; nothing was written`,
         );
       }
-      return addDef(path, target.layer, target.name, prev);
+      return addDefs(path, [first, ...rest]);
     }
     case "replace": {
       const prev = priorBody(log, idx, target.layer, target.name);
@@ -736,6 +787,8 @@ function priorBody(
   for (let i = idx - 1; i >= 0; i--) {
     const e = log[i]!;
     if (e.layer === layer && e.name === name && typeof e.body === "string") return e.body;
+    const restored = e.with?.find((d) => d.layer === layer && d.name === name);
+    if (restored) return restored.body;
   }
   return undefined;
 }

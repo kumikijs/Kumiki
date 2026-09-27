@@ -150,6 +150,8 @@ The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isErr
 | `op-id` | the op's ULID |
 | `parent-ops` | id of the immediately preceding op this op relies on (CRDT ordering guarantee) |
 | `depends-on` | hashes of other definitions the body references (for referential integrity verification) |
+| `removed` | `remove --cascade` only: every definition the op deleted, the requested one first ([§9.4.1](#_9-4-1-pre-check-at-op-issuance)) |
+| `with` | `add` only: further definitions `{layer, name, body}` added in the same op — how the revert of a cascade restores its dependents |
 
 ### 9.3.3 op Convergence Guarantees
 
@@ -187,6 +189,8 @@ kumiki remove slot.draft
 ```
 
 `--cascade` includes the dependents in the same op bundle and removes them too. `--force` tolerates dangling (emits a warning).
+
+The cascade's `remove` op lists every definition it took in `removed`, the requested one first. `kumiki patch revert` of that op restores all of them as **one** `add` op: the requested definition is its `layer` / `name` / `body`, and the dependents are its `with` list. Each body is the last one the op log recorded for that name before the remove. If any of them cannot be reconstructed, the revert writes nothing, exits `1`, and names the definitions it could not restore; it never reports a partial restore as success. Reverting that `add` removes the same set again, and is refused if something outside the set has come to reference it since.
 
 ### 9.4.2 Post-Check at op Application
 

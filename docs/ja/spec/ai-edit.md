@@ -152,6 +152,8 @@ MCP サーバ（[§9.7](#_9-7-mcp-server)）は同じ問いに `isError` で答�
 | `op-id` | op の ULID |
 | `parent-ops` | この op が依拠する直前 op の id（CRDT 順序保証） |
 | `depends-on` | 本体が参照する他定義の hash（参照整合性検証用） |
+| `removed` | `remove --cascade` のみ：op が削除したすべての定義。要求された定義が先頭（[§9.4.1](#_9-4-1-pre-check-at-op-issuance)） |
+| `with` | `add` のみ：同じ op で追加される他の定義 `{layer, name, body}`。cascade の revert が依存先を復元する手段 |
 
 ### 9.3.3 op の収束保証
 
@@ -189,6 +191,8 @@ kumiki remove slot.draft
 ```
 
 `--cascade` で依存先も同一 op バンドルに含めて remove する。`--force` は dangling 許容（warning 出力）。
+
+cascade の `remove` op は、取り除いたすべての定義を `removed` に列挙する（要求された定義が先頭）。その op を `kumiki patch revert` すると、それらすべてを **1 つの** `add` op として復元する：要求された定義がその `layer` / `name` / `body` になり、依存先はその `with` リストになる。各本体は、remove より前に op ログがその名前について記録した最後のものである。どれか 1 つでも復元できなければ、revert は何も書き込まずに `1` で終了し、復元できなかった定義を名指しする。部分的な復元を成功として報告することはない。その `add` を revert すると同じ集合を再び取り除く。その後に集合の外の定義がそれを参照するようになっていれば拒否される。
 
 ### 9.4.2 op 適用時の事後検査
 
