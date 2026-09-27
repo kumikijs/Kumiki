@@ -135,7 +135,7 @@ concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
 sort                        : List(T)          ; T is Ord
-sort-by(expr)               : List(T)
+sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
 unique                      : List(T)
 map(expr)                   : List(T')
 filter(pred)                : List(T)
@@ -161,6 +161,8 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 **The lambda arguments of `map` / `filter` / `sort-by`**:
 - For a List element, `$1` is bound; for the `[k, v]` pair after `.entries`, `$1=key, $2=value` are bound (the runtime destructures automatically)
 - Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`
+
+**`sort-by(expr)` orders by the key the way `<` orders two values** ([language §1.9.4](./language.md#_1-9-4-operator-types)): a number or a `Time` numerically, a `Text` as `<` compares two `Text`s. Elements whose keys are equal keep the order they had. A key with no order — a record, a variant, a `Bool`, a container — is [E0201](./errors.md#e0201-type-mismatch), as `a < b` on the same two values would be.
 
 ### 2.2.4 Option(T)
 

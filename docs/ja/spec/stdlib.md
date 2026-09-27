@@ -135,7 +135,7 @@ concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
 sort                        : List(T)          ; T は Ord
-sort-by(expr)               : List(T)
+sort-by(expr)               : List(T)          ; expr の昇順（< の順）、安定
 unique                      : List(T)
 map(expr)                   : List(T')
 filter(pred)                : List(T)
@@ -161,6 +161,8 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 **`map` / `filter` / `sort-by` の lambda 引数**:
 - List 要素には `$1` を、`.entries` 後の `[k, v]` ペアには `$1=key, $2=value` を束縛します（ランタイムが自動 destructure）
 - 例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`
+
+**`sort-by(expr)` はキーを `<` が 2 値を並べる順で並べる**（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。数値と `Time` は数値として、`Text` は `<` が 2 つの `Text` を比べる順で並べる。キーが等しい要素は元の順を保つ。順序を持たないキー（record、variant、`Bool`、コンテナ）は、同じ 2 値の `a < b` と同じく [E0201](./errors.md#e0201-type-mismatch)。
 
 ### 2.2.4 Option(T)
 

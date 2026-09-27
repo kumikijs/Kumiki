@@ -2897,6 +2897,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           bindLocal(inner, "$1", p1);
           bindLocal(inner, "$2", p2);
           checkExpr(a, sym, errors, inner);
+          if (e.method === "sort-by" && i === 0) checkSortKey(a, recvType, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
@@ -3086,6 +3087,33 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
   if (isPrimNamed(t, sym, "Text")) return "text";
   if (isPrimNamed(t, sym, "Time")) return "time";
   return null;
+}
+
+/**
+ * `List(T).sort-by(expr)` orders the list by `expr` the way `<` orders two
+ * values (stdlib.md §2.2.3), so the key has to be one `<` accepts: numeric,
+ * `Text` or `Time` (language.md §1.9.4). A record, a variant, a `Bool` or a
+ * container has no such order, and the runtime would leave the list as it
+ * found it; that is reported here as the comparison it stands for would be.
+ * A key the checker cannot type is left alone.
+ */
+function checkSortKey(
+  key: Expr,
+  recv: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const r = unaliasType(recv, sym);
+  if (r?.kind !== "TypeApp" || r.name !== "List") return;
+  const t = inferType(key, sym, ctx);
+  if (!isKnown(t, sym) || orderingFamily(t, sym) !== null) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
+    pos: key.pos,
+  });
 }
 
 function binOpResult(e: Expr & { kind: "BinOp" }, sym: SymbolTable, ctx: Ctx): TypeExpr | null {

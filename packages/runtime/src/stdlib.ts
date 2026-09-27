@@ -301,8 +301,20 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  listSortBy<T>(xs: T[], keyOf: (x: T) => number): T[] {
-    return [...(xs ?? [])].sort((a, b) => keyOf(a) - keyOf(b));
+  /**
+   * `List(T).sort-by(expr)` (stdlib.md §2.2.3): ascending by the key, in the
+   * order `<` gives it (language.md §1.9.4) — a number, a `Time` (a number at
+   * runtime) or a `Text`, which the checker requires. JavaScript's `<` orders
+   * both, so the comparator asks it rather than subtracting, which answered
+   * `NaN` — "equal" — for every pair of Text keys. `Array.prototype.sort` is
+   * stable, so equal keys keep their order.
+   */
+  listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
+    return [...(xs ?? [])].sort((a, b) => {
+      const ka = keyOf(a) as number | string;
+      const kb = keyOf(b) as number | string;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
   },
   /**
    * `List(T).sort` — polymorphic. Numeric elements sort numerically (so
