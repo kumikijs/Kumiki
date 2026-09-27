@@ -571,36 +571,11 @@ export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The members that only a number has (docs/spec/stdlib.md §2.2.7).
- *
- * `KNOWN_MEMBERS` is flat — it answers "does the runtime understand this name
- * on some receiver", not "on this one" — so without this set every arithmetic
- * name was a member of `Text`, of a `List`, of anything the checker recognised.
- * `someText.round` passed and lowered to `Math.round("hello")`: `NaN` into
- * whatever it was assigned to, with nothing reported anywhere.
- */
-export const NUMERIC_MEMBERS: ReadonlySet<string> = new Set([
-  "abs",
-  "neg",
-  "min",
-  "max",
-  "clamp",
-  "floor",
-  "ceil",
-  "round",
-  "sqrt",
-  "log",
-  "exp",
-  "pow",
-  "to-float",
-  "to-int",
-]);
-
-/**
  * Every member name the runtime understands on a stdlib receiver — the union of
- * the method-call methods and the no-paren shortcuts. Used by the type checker
- * (ADR-002) to decide whether `recv.m` on a *known* receiver type is a real
- * member (→ shortcut) or an unknown one (→ E0108). Flat, not per-type.
+ * the method-call methods and the no-paren shortcuts. Flat, not per-type: it is
+ * the name-based dispatch §2.2.3 keeps for a receiver whose type the checker
+ * cannot decide. Which names a *known* receiver has is `RECEIVER_MEMBERS`
+ * (`stdlib-members.ts`), per receiver.
  */
 export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
   ...KNOWN_METHODS,

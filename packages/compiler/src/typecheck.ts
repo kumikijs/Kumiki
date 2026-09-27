@@ -48,10 +48,8 @@ import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
   FRAGMENT_ARGUMENTS,
-  KNOWN_MEMBERS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
-  NUMERIC_MEMBERS,
 } from "./codegen.ts";
 import {
   aliasTarget,
@@ -65,6 +63,14 @@ import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
+import {
+  hasMember,
+  isReceiver,
+  type MemberOf,
+  type Receiver,
+  receiversOf,
+  UNIVERSAL_MEMBERS,
+} from "./stdlib-members.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   type GivenSection,
@@ -2202,10 +2208,11 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
     // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
     // the base type is unknown, as it is there — the name-based reading then
     // stands, on both sides alike.
-    const base = unaliasType(lvalueType(lv.base, sym), sym);
+    const raw = lvalueType(lv.base, sym);
+    const base = unaliasType(raw, sym);
     if (base) {
       lv.accessKind = "shortcut";
-      checkMemberLvalue(lv, base, sym, errors);
+      checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
   checkLvalue(lv.base, sym, errors, ctx);
@@ -2266,11 +2273,12 @@ function checkListIndex(
  */
 function checkMemberLvalue(
   lv: Lvalue & { kind: "LField" },
+  raw: TypeExpr | null,
   base: TypeExpr,
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  switch (classifyMember(base, lv.field, sym)) {
+  switch (classifyMember(raw, lv.field, sym)) {
     case "field":
       // A record's own field, or a prim's structural field (`File.name`).
       // Recorded rather than left as "shortcut" so the annotation says what
@@ -2297,10 +2305,6 @@ function checkMemberLvalue(
     // through — the name is undefined here, which is the read side's answer
     // and now the write side's too. Calling it E0602 would have put a false
     // sentence in the message: `.abs` is not "a member of Text".
-    case "numeric-only":
-      errors.push(undefMemberError(base, lv.field, lv.pos, sym, true));
-      return;
-
     case "unknown":
       errors.push(undefMemberError(base, lv.field, lv.pos, sym));
       return;
@@ -2857,19 +2861,18 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           pos: e.pos,
         });
       }
-      // `Math.round("hello")` is `NaN`, and the method-call branch asked only
-      // whether the runtime knows the *name*. Same rule as the field-access
-      // branch below, and it has to be in both: the two spellings of one
-      // member cannot disagree about whose member it is.
-      if (NUMERIC_MEMBERS.has(e.method)) {
-        const rt = inferType(e.receiver, sym, ctx);
-        if (isKnown(rt, sym) && !isNumeric(rt, sym)) {
-          errors.push({
-            code: "E0108",
-            kind: "undef-member",
-            message: `Type "${typeName(rt, sym)}" has no member ".${e.method}" — it is a method of Int / Float`,
-            pos: e.pos,
-          });
+      // Whose member the name is, asked of the same classifier the
+      // field-access branch asks: the two spellings of one member cannot
+      // disagree about it. A name the runtime does not know at all is E0801
+      // above, and saying E0108 as well would be the same mistake twice.
+      else {
+        const raw = inferType(e.receiver, sym, ctx);
+        const rt = unaliasType(raw, sym);
+        // A record's `copy` is the record-update form (language.md §1.6.3),
+        // which names the record's fields rather than a member.
+        const recordUpdate = e.method === "copy" && rt?.kind === "TypeRecord";
+        if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
+          errors.push(undefMemberError(rt, e.method, e.pos, sym));
         }
       }
       {
@@ -3794,9 +3797,6 @@ const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
 // inference never guesses, so an untyped receiver keeps the historical
 // name-based shortcut dispatch with no diagnostic.
 
-const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes", "File"]);
-const STDLIB_CONTAINERS = new Set(["List", "Map", "Set", "Option", "Result"]);
-
 /**
  * Structural fields exposed by built-in prim types. `File` is treated as a
  * scalar at the type system level (its handle is opaque, never inspected by
@@ -3966,6 +3966,12 @@ function receiverMemberResult(
 ): TypeExpr | null {
   const t = unaliasType(recv, sym);
   if (!t) return null;
+  // The table decides whether this is a member at all, so a result is never
+  // answered for a name the receiver does not have — and each `switch` below
+  // is typed by its receiver's row, so a case the row does not list is a
+  // compile error here rather than a second list.
+  const receiver = t.kind === "TypePrim" || t.kind === "TypeApp" ? t.name : "";
+  if (!isReceiver(receiver) || !hasMember(receiver, member)) return null;
 
   // One name, two readings, told apart by the count — and already resolved by
   // a function that takes both, so it is asked here rather than copied.
@@ -3978,7 +3984,7 @@ function receiverMemberResult(
   const option = (of: TypeExpr) => container("Option", [of], pos);
 
   if (t.kind === "TypePrim" && t.name === "Text") {
-    switch (member) {
+    switch (member as MemberOf<"Text">) {
       case "length":
         return int();
       case "is-empty":
@@ -4015,7 +4021,7 @@ function receiverMemberResult(
 
   switch (t.name) {
     case "Map":
-      switch (member) {
+      switch (member as MemberOf<"Map">) {
         case "size":
           return int();
         case "is-empty":
@@ -4041,7 +4047,7 @@ function receiverMemberResult(
           return null;
       }
     case "Set":
-      switch (member) {
+      switch (member as MemberOf<"Set">) {
         case "size":
           return int();
         case "has":
@@ -4059,7 +4065,7 @@ function receiverMemberResult(
           return null;
       }
     case "List":
-      switch (member) {
+      switch (member as MemberOf<"List">) {
         case "length":
           return int();
         case "is-empty":
@@ -4090,7 +4096,7 @@ function receiverMemberResult(
           return null;
       }
     case "Option":
-      switch (member) {
+      switch (member as MemberOf<"Option">) {
         case "is-some":
         case "is-none":
           return bool();
@@ -4107,7 +4113,7 @@ function receiverMemberResult(
           return null;
       }
     case "Result":
-      switch (member) {
+      switch (member as MemberOf<"Result">) {
         case "is-ok":
         case "is-err":
           return bool();
@@ -4394,29 +4400,37 @@ function sharedBase(
 }
 
 /**
- * What `recv.field` names on a receiver of type `t`, for both sides of `:=`.
+ * What `recv.field` names on a receiver of type `raw`, for a read, a call, and
+ * the left of `:=`.
  *
  * ADR-002 makes `recv.member` a dispatch rather than a keyword — a record's
  * own field wins, and otherwise the name is looked up in the stdlib — so
- * "field or member?" is one question with one answer, asked once for a read
- * and once for a write. It used to be asked twice, by two ladders that had
+ * "field or member?" is one question with one answer, whichever spelling asks
+ * it. It used to be asked twice, by two ladders that had
  * drifted: the write side knew only how to answer it for a record, and treated
  * every numeric-only member as a member of whatever receiver it was written
  * on. Now the ladder is here and the callers only decide what to do with the
  * verdict.
  *
- * - `field`        — a real field, and therefore a real lvalue step.
- * - `member`       — a stdlib member of this receiver.
- * - `numeric-only` — a member, but of `Int` / `Float`, and this receiver is
- *                    neither. Not a member here, and the message says so.
- * - `unknown`      — the receiver is understood and has no such name.
- * - `undecidable`  — a union, an opaque type parameter, or no type at all. We
- *                    only speak about types we fully understand, because a
- *                    false error on a dynamic receiver is worse than silence.
+ * - `field`       — a real field, and therefore a real lvalue step.
+ * - `member`      — a stdlib member of this receiver (stdlib.md §2.2).
+ * - `unknown`     — the receiver is understood and has no such name, even if
+ *                   another receiver does: `Result` has no `filter` because
+ *                   `Map` has one.
+ * - `undecidable` — a union, an opaque type parameter, or no type at all. We
+ *                   only speak about types we fully understand, because a
+ *                   false error on a dynamic receiver is worse than silence.
+ *                   The runtime's flat name list answers for these, in
+ *                   codegen, exactly as §2.2.3 says it does.
+ *
+ * `raw` is the receiver's type as written, before aliases and `nominal`s are
+ * followed, because one of the receivers is a `nominal`: a `Duration` is an
+ * `Int` with `to-ms` besides.
  */
-type MemberClass = "field" | "member" | "numeric-only" | "unknown" | "undecidable";
+type MemberClass = "field" | "member" | "unknown" | "undecidable";
 
-function classifyMember(t: TypeExpr | null, field: string, sym: SymbolTable): MemberClass {
+function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolTable): MemberClass {
+  const t = unaliasType(raw, sym);
   if (!t) return "undecidable";
 
   if (t.kind === "TypeRecord") {
@@ -4424,24 +4438,45 @@ function classifyMember(t: TypeExpr | null, field: string, sym: SymbolTable): Me
     // The one member every value has, including a record — the dispatch falls
     // through to the stdlib for any name the record does not declare, and
     // `.show` is the name that resolves there.
-    if (field === "show") return "member";
-    return "unknown";
+    return UNIVERSAL_MEMBERS.has(field) ? "member" : "unknown";
   }
 
-  const isKnownReceiver =
-    (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
-    (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
-  if (!isKnownReceiver) return "undecidable";
+  const receivers = memberReceivers(raw, t, sym);
+  if (receivers === null) return "undecidable";
 
   // A prim's structural field (`File.name`) — a field the type system does not
   // see in the type, because `File` is a scalar to it and a record to the
   // runtime (stdlib.md §2.1).
   if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[field]) return "field";
 
-  if (KNOWN_MEMBERS.has(field)) {
-    return NUMERIC_MEMBERS.has(field) && !isNumeric(t, sym) ? "numeric-only" : "member";
+  return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
+}
+
+/**
+ * The rows of the member table a receiver reads, or `null` for a type the
+ * table does not speak for. Only the standard library's own `Duration` adds
+ * its row: a program's own `type Duration` shadows it and may be anything.
+ */
+function memberReceivers(raw: TypeExpr | null, t: TypeExpr, sym: SymbolTable): Receiver[] | null {
+  const name = t.kind === "TypePrim" || t.kind === "TypeApp" ? t.name : null;
+  if (name === null || !isReceiver(name)) return null;
+  return isStdlibDuration(raw, sym) ? [name, "Duration"] : [name];
+}
+
+const STDLIB_DURATION = STDLIB_TYPES.find((d) => d.name === "Duration");
+
+/** True when `t`, followed through aliases, names the standard library's `Duration`. */
+function isStdlibDuration(t: TypeExpr | null, sym: SymbolTable): boolean {
+  const seen = new Set<string>();
+  let cur = t;
+  while (cur?.kind === "TypeRef" && !seen.has(cur.name)) {
+    const def = sym.types.get(cur.name);
+    if (def === undefined) return false;
+    if (def === STDLIB_DURATION) return true;
+    seen.add(cur.name);
+    cur = def.body;
   }
-  return "unknown";
+  return false;
 }
 
 /**
@@ -4450,21 +4485,16 @@ function classifyMember(t: TypeExpr | null, field: string, sym: SymbolTable): Me
  * `:=` it landed on. A record says "record type" because naming its shape adds
  * nothing a reader of the line does not already have.
  */
-function undefMemberError(
-  t: TypeExpr,
-  field: string,
-  pos: Pos,
-  sym: SymbolTable,
-  numericOnly = false,
-): KumikiError {
+function undefMemberError(t: TypeExpr, field: string, pos: Pos, sym: SymbolTable): KumikiError {
   const head =
     t.kind === "TypeRecord"
       ? `Record type has no field or method ".${field}"`
       : `Type "${typeName(t, sym)}" has no member ".${field}"`;
+  const owners = receiversOf(field);
   return {
     code: "E0108",
     kind: "undef-member",
-    message: numericOnly ? `${head} — it is a method of Int / Float` : head,
+    message: owners.length > 0 ? `${head} — it is a member of ${owners.join(" / ")}` : head,
     pos,
   };
 }
@@ -4625,10 +4655,11 @@ function classifyFieldAccess(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const t = unaliasType(inferType(e.base, sym, ctx), sym);
+  const raw = inferType(e.base, sym, ctx);
+  const t = unaliasType(raw, sym);
   if (!t) return; // dynamic — keep name-based shortcut dispatch, no diagnostic
 
-  switch (classifyMember(t, e.field, sym)) {
+  switch (classifyMember(raw, e.field, sym)) {
     case "field":
       e.accessKind = "field";
       return;
@@ -4655,10 +4686,6 @@ function classifyFieldAccess(
       if (kind) e.keyKind = kind;
       return;
     }
-
-    case "numeric-only":
-      errors.push(undefMemberError(t, e.field, e.pos, sym, true));
-      return;
 
     case "unknown":
       errors.push(undefMemberError(t, e.field, e.pos, sym));

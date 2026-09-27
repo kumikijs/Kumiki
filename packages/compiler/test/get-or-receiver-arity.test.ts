@@ -134,14 +134,16 @@ describe("a receiver the checker cannot decide stays silent", () => {
   // AC 3, for a count that *is* one of the two readings: which one is right is
   // the receiver's to say, so a receiver that says nothing gets no report.
   //
-  // `$1` inside a method-call argument is the honest example. The checker
-  // binds it with no type on purpose — which argument a method binds is
-  // per-method, and guessing wrong costs a diagnostic on a working program —
-  // so there is genuinely nothing here to decide, and the whole result can be
-  // asserted.
-  it("says nothing about a lambda parameter, whose type is undecided by design", () => {
+  // A `$1` bound to an element that is itself a `List` is the honest example:
+  // the checker leaves it untyped (stdlib.md §2.2.2), so there is genuinely
+  // nothing here to decide, and the whole result can be asserted. (A `$1`
+  // over a `List(Int)` is an `Int` now, and `.get-or` on it is E0108.)
+  it("says nothing about a lambda parameter whose type is undecided", () => {
     const errs = errsOf(
-      withCall(`slot xs : List(Int) = []\nslot sink : List(Int) = []`, `xs.map($1.get-or(0))`),
+      withCall(
+        `slot xss : List(List(Int)) = []\nslot sink : List(Int) = []`,
+        `xss.map($1.get-or(0))`,
+      ),
     );
     expect(errs).toEqual([]);
   });

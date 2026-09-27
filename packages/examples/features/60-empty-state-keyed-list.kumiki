@@ -49,7 +49,7 @@ tile Filter = column(for f in filter text(f) {key: f}) {gap: "sm"}
 tile App = column(
              heading("empty state to first result"),
              row(QueryInput, SearchBtn, ClearBtn) {gap: "sm"},
-             text("results: " + results.size.show),
+             text("results: " + results.length.show),
              Results,
              heading("a list that never empties"),
              DropBtn,

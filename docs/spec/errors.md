@@ -288,9 +288,11 @@ A tile's `motion: "<name>"` prop refers to a motion that no `motion <name> = {�
 
 ### E0108 `undef-member`
 
-A `recv.member` access where the **inferred type** of `recv` is known, but `member` is neither a field of that type nor a stdlib method/shortcut for it (ADR-002). This catches a typo (`list.frist`) or a member used on the wrong shape (`record.head` where the record has no `head` field). When the receiver type can't be inferred, no error is raised — the name-based shortcut dispatch is used instead.
+A `recv.member` access where the **inferred type** of `recv` is known, but `member` is neither a field of that type nor a stdlib method/shortcut for it (ADR-002). This catches a typo (`list.frist`), a member used on the wrong shape (`record.head` where the record has no `head` field), and a member of another receiver (`res.filter(…)` on a `Result`, `xs.size` on a `List`): which members a receiver has is its own list in Standard Library §2.2, not every name any receiver has ([§2.2.3's dispatch rule](./stdlib.md#_2-2-3-list-t)). The same holds for both spellings, `recv.m` and `recv.m(…)`. When the receiver type can't be inferred, no error is raised — the name-based shortcut dispatch is used instead.
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
+
+When the name is a member of other receivers, the message ends with `— it is a member of <receivers>`, naming them (`Type "Result" has no member ".filter" — it is a member of Map / List / Option`).
 
 **Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [List(T)](./stdlib.md#_2-2-3-list-t).
 

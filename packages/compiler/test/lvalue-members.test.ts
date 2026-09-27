@@ -55,7 +55,7 @@ describe("a member is not an assignable lvalue", () => {
 
   // Each of these used to pass `check` and replace the slot with a record.
   it.each([
-    [`slot xs : List(Int) = []`, `xs.size := 0`, ".size"],
+    [`slot xs : List(Int) = []`, `xs.length := 0`, ".length"],
     [`slot xs : List(Int) = []`, `xs.head := 1`, ".head"],
     [`slot s : Text = ""`, `s.upper := "X"`, ".upper"],
     [`slot n : Int = 0`, `n.abs := 1`, ".abs"],

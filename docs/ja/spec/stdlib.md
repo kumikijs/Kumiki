@@ -156,7 +156,7 @@ fn empty() -> Bool = todos.is-empty           # 同上
 fn norm() -> List(Todo) = todos.reverse       # 同上
 ```
 
-> **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
+> **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。メンバーとは §2.2.1–§2.2.10 で**その**受け手に列挙された名前（と、すべての値が持つ `show`、§2.2.7）であり、別の受け手に列挙された名前はメンバーではない：`List` にあるのは `length` で `size` ではなく、`Map` に `filter` があっても `Result` に `filter` はない。`Duration` は `nominal Int` なので、`Int` のメンバーと `to-ms` を持つ。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
 
 **`map` / `filter` / `sort-by` の lambda 引数**:
 - List 要素には `$1` を、`.entries` 後の `[k, v]` ペアには `$1=key, $2=value` を束縛します（ランタイムが自動 destructure）
@@ -237,6 +237,7 @@ plus(duration)              : Time
 minus(duration)             : Time
 diff(other)                 : Duration
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
+to-ms                       : Int             ; Unix エポックからのミリ秒
 ```
 
 `format` は以下のトークンをその時刻のフィールドに置き換え、パターンの残りはそのまま出力する。したがって `"dd/MM/yyyy"` も `"[on] dd"` もパターンである。

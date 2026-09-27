@@ -26,10 +26,10 @@ tile App = column(
     heading("lower():   " + t.lower()),
     heading("upper():   " + t.upper()),
     heading("sort()[0]: " + xs.sort().head().get-or(0).show),
-    heading("ms():      " + du.ms().show),
-    heading("from-text:    " + bt.length.show),
-    heading("from-base64:  " + bb.length.show),
-    heading("from-bytes:   " + bx.length.show)
+    heading("to-ms():   " + du.to-ms().show),
+    heading("from-text:    " + bt.show),
+    heading("from-base64:  " + bb.show),
+    heading("from-bytes:   " + bx.show)
 ) {pad: "lg", gap: "sm"}
 
 app StdlibParenMethods

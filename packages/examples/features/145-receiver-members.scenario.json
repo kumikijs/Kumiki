@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "label": "nothing is filtered before the click",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["kept: 0", "opt: 1", "big: 0", "set: 3"]
+      }
+    },
+    {
+      "label": "the Result is filtered as an Option and the Set mapped as a List",
+      "do": { "clickText": "run" },
+      "expect": {
+        "noErrors": true,
+        "state": { "kept": { "_tag": "Some", "_0": 3 }, "big": [4, 6] },
+        "domIncludes": ["kept: 3", "big: 2"]
+      }
+    }
+  ]
+}
