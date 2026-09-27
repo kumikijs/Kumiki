@@ -1,0 +1,37 @@
+{
+  "steps": [
+    {
+      "label": "ticking a box that starts ticked writes false",
+      "do": { "click": "#agree input" },
+      "expect": { "noErrors": true, "state": { "agreed": false }, "domIncludes": ["agreed=false"] }
+    },
+    {
+      "label": "ticking it again writes true",
+      "do": { "click": "#agree input" },
+      "expect": { "noErrors": true, "state": { "agreed": true }, "domIncludes": ["agreed=true"] }
+    },
+    {
+      "label": "a switch writes its Bool the same way",
+      "do": { "click": "#sw input" },
+      "expect": { "noErrors": true, "state": { "lit": true }, "domIncludes": ["lit=true"] }
+    },
+    {
+      "label": "choosing a radio writes its value into the union slot",
+      "do": { "click": "#rAll input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "All" } },
+        "domIncludes": ["filter=All"]
+      }
+    },
+    {
+      "label": "a reducer that rewrites the slots is what the controls follow",
+      "do": { "clickText": "reset" },
+      "expect": {
+        "noErrors": true,
+        "state": { "agreed": true, "lit": false, "filter": { "_tag": "Done" } },
+        "domIncludes": ["filter=Done", "lit=false"]
+      }
+    }
+  ]
+}

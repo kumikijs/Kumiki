@@ -4,11 +4,15 @@
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
 import {
   applyControlState,
+  bindDataset,
+  clearBindDataset,
   INPUT_STATE,
   inputHandlers,
+  liveApp,
   reconcileId,
   setHandlers,
   tileId,
+  writeBind,
 } from "./_shared.ts";
 
 export const radioTile: TileRenderer<"radio"> = (node) => {
@@ -27,9 +31,16 @@ export const radioTile: TileRenderer<"radio"> = (node) => {
     span.textContent = labelText;
     wrap.appendChild(span);
   }
-  setHandlers(inp, inputHandlers(node));
+  if (node.bind) bindDataset(inp, node.bind, node.bindPath);
+  setHandlers(inp, { ...inputHandlers(node), bindValue: node.value });
   inp.addEventListener("change", () => {
     const state = INPUT_STATE.get(inp);
+    // Only the radio being chosen writes: the one losing the selection fires
+    // no `change` of its own, and would have nothing true to write if it did.
+    if (state?.bind && inp.checked) {
+      const app = liveApp(inp);
+      if (app) writeBind(app, inp, state.bind, state.bindPath, state.bindValue);
+    }
     if (state?.onClick) state.onClick(state.el ?? {});
     if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
   });
@@ -51,7 +62,9 @@ export const radioPatcher: TilePatcher<"radio"> = (el, _oldNode, newNode) => {
     if (inp.name !== nextName) inp.name = nextName;
     const nextChecked = !!newNode.selected;
     if (inp.checked !== nextChecked) inp.checked = nextChecked;
-    setHandlers(inp, inputHandlers(newNode));
+    if (newNode.bind) bindDataset(inp, newNode.bind, newNode.bindPath);
+    else clearBindDataset(inp);
+    setHandlers(inp, { ...inputHandlers(newNode), bindValue: newNode.value });
   }
   // Reconcile the trailing label span if the label text changed.
   const nextLabel = (newNode.props?.label as string | undefined) ?? "";

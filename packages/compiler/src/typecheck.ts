@@ -1124,6 +1124,41 @@ function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
 }
 
 /**
+ * The type a `check` / `switch` / `radio` bind holds (forms.md §5.1.1): a
+ * `check` or `switch` writes the box's `Bool`, and a `radio` writes its own
+ * `value=` when chosen, so that value has to be one the bound slot takes — a
+ * variant of another union written there would land in the slot as a value its
+ * type does not have. A bind whose type cannot be read is left alone.
+ */
+function checkToggleBindType(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (t.name !== "check" && t.name !== "switch" && t.name !== "radio") return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const bindExpr = bindArg.value;
+  const bound = inferType(bindExpr, sym, ctx);
+  if (bound === null) return;
+  if (t.name === "radio") {
+    const valueArg = t.args.find((a) => a.name === "value");
+    if (valueArg && !isTileExpr(valueArg.value)) {
+      checkAgainst(valueArg.value, bound, sym, errors, ctx);
+    }
+    return;
+  }
+  if (assignable(bound, prim("Bool", bindExpr.pos), sym)) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `${t.name}(bind=…) writes a Bool, but the bound value is ${typeToString(bound)} (see docs/spec/forms.md §5.1.1)`,
+    bindExpr.pos,
+  );
+}
+
+/**
  * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
  * typed from the scrutinee. For the positions that only *read* an arm — a
  * value's type, a destination's check — so a pattern's own mistakes are
@@ -1371,6 +1406,7 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
+  checkToggleBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");

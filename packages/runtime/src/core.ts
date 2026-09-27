@@ -299,7 +299,20 @@ export type TileNode = (
       placeholder?: string;
       id?: string;
     }
-  | { kind: "check"; checked: boolean; props?: TileProps }
+  | {
+      kind: "check";
+      checked: boolean;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
+  | {
+      kind: "switch";
+      checked: boolean;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
   | { kind: "spinner"; props?: TileProps }
   | { kind: "skeleton"; props?: TileProps }
   | { kind: "form"; children: TileNode[]; props?: TileProps }
@@ -326,7 +339,15 @@ export type TileNode = (
       options?: Array<{ label: unknown; value: unknown }>;
       placeholder?: string;
     }
-  | { kind: "radio"; props?: TileProps; group?: string; value?: unknown; selected?: boolean }
+  | {
+      kind: "radio";
+      props?: TileProps;
+      group?: string;
+      value?: unknown;
+      selected?: boolean;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
   | {
       kind: "grid" | "stack" | "region" | "scroll" | "panel" | "fieldset" | "overlay";
       children: TileNode[];
@@ -370,7 +391,6 @@ export type TileNode = (
       max?: number;
       step?: number;
     }
-  | { kind: "switch"; checked: boolean; props?: TileProps }
   | { kind: "error"; field: string; props?: TileProps }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
   | {
@@ -1498,9 +1518,11 @@ type RefusedBind = { slot: string; value: unknown; shown: string };
  */
 const refusedBinds = new WeakMap<object, Map<HTMLElement, RefusedBind>>();
 
-/** What a bound control shows: its value, or an editable's text. */
+/** What a bound control shows: a box's tick, its value, or an editable's text. */
 function shownValue(el: HTMLElement): string {
-  return "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? "");
+  const inp = el as HTMLInputElement;
+  if (inp.type === "checkbox" || inp.type === "radio") return String(inp.checked);
+  return "value" in el ? String(inp.value) : (el.textContent ?? "");
 }
 
 /**

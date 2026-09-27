@@ -222,6 +222,36 @@ export function extractBindPath(
   return { root, path, readJs: readRaw, readJsRaw: readRaw };
 }
 
+/** The `bind` / `bindPath` fields of a bound control's node. */
+function bindFields(bindInfo: { root: string; path: BindSegment[] }): string[] {
+  const fields = [`bind: ${JSON.stringify(bindInfo.root)}`];
+  if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
+  return fields;
+}
+
+/**
+ * `check` / `switch`: a box that is ticked from `bind=` when it has one — the
+ * `Bool` it writes back on change (forms.md §5.1.1) — and from `value=` when it
+ * does not.
+ */
+function toggleJs(
+  kind: "check" | "switch",
+  t: TileExpr & { kind: "TileCall" },
+  ctx: EvalCtx,
+  propsObj: string,
+): string {
+  const bindInfo = extractBindPath(t.args);
+  const fields = [`kind: ${JSON.stringify(kind)}`];
+  if (bindInfo) {
+    fields.push(...bindFields(bindInfo), `checked: !!(${bindInfo.readJsRaw})`);
+  } else {
+    const valArg = t.args.find((a) => a.name === "value");
+    fields.push(`checked: !!(${valArg ? jsOfExpr(asExpr(valArg.value), ctx) : "false"})`);
+  }
+  fields.push(`props: ${propsObj}`);
+  return `({ ${fields.join(", ")} })`;
+}
+
 function tileCallJs(
   t: TileExpr & { kind: "TileCall" },
   gen: GenCtx,
@@ -393,11 +423,9 @@ function tileCallJs(
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
-      case "check": {
-        const valArg = t.args.find((a) => a.name === "value");
-        const checked = valArg ? jsOfExpr(asExpr(valArg.value), ctx) : "false";
-        return `({ kind: "check", checked: !!(${checked}), props: ${propsObj} })`;
-      }
+      case "check":
+      case "switch":
+        return toggleJs(name, t, ctx, propsObj);
       case "select": {
         const fields: string[] = [`kind: "select"`];
         const bindInfo = extractBindPath(t.args);
@@ -427,12 +455,23 @@ function tileCallJs(
       }
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
+        const bindInfo = extractBindPath(t.args);
+        let valueJs: string | undefined;
         for (const arg of t.args) {
-          if (!arg.name) continue;
+          if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
           if (arg.name === "group") fields.push(`group: ${valJs}`);
-          else if (arg.name === "value") fields.push(`value: ${valJs}`);
-          else if (arg.name === "selected") fields.push(`selected: !!(${valJs})`);
+          else if (arg.name === "value") valueJs = valJs;
+          // A bind decides the selection itself, below; `selected=` beside
+          // one would be a second answer to the same question.
+          else if (arg.name === "selected" && !bindInfo) fields.push(`selected: !!(${valJs})`);
+        }
+        if (valueJs !== undefined) fields.push(`value: ${valueJs}`);
+        if (bindInfo) {
+          fields.push(...bindFields(bindInfo));
+          // Chosen exactly when the bound slot holds this radio's value
+          // (forms.md §5.5.2), compared as `==` compares.
+          fields.push(`selected: _s.eq(${bindInfo.readJsRaw}, ${valueJs ?? "undefined"})`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
@@ -596,11 +635,6 @@ function tileCallJs(
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
-      }
-      case "switch": {
-        const valArg = t.args.find((a) => a.name === "value");
-        const checked = valArg ? jsOfExpr(asExpr(valArg.value), ctx) : "false";
-        return `({ kind: "switch", checked: !!(${checked}), props: ${propsObj} })`;
       }
       case "error": {
         const fieldArg = t.args.find((a) => a.name === "field");

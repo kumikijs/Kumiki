@@ -32,6 +32,8 @@ tile Compose = column(
 | `check` / `switch` | `Bool` |
 | `radio` | One of a union type |
 
+`check` / `switch` show the bound `Bool` and write the box's new state back when it is ticked; `radio(group=…, bind=b, value=V)` is selected exactly when `b == V` and writes `V` when it is chosen. All three go through the same write-back as `input` — the refinement refusal of [§5.1.2](#_5-1-2-handling-of-refinement) included. A `bind` of another type on `check` / `switch`, or a radio `value` that is not a value of the bound type, is reported at `check` ([E0201](./errors.md#e0201-type-mismatch), or [E0216](./errors.md#e0216-unknown-variant) for a variant of another union).
+
 ### 5.1.2 Handling of refinement
 
 For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters the value is **refused**: the slot keeps the last value it accepted. There is one mode, and it is deliberately quiet — a half-typed value is expected, not a defect, so nothing is reported. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).

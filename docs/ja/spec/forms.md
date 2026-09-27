@@ -32,6 +32,8 @@ tile Compose = column(
 | `check` / `switch` | `Bool` |
 | `radio` | union 型のいずれか |
 
+`check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `check` で報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。
+
 ### 5.1.2 refinement の扱い
 
 `slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えるとその値は**拒否**される：slot は最後に受け取った値を保つ。モードは 1 つで、意図的に静かである — 入力途中の値は欠陥ではなく想定内なので、何も報告しない。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。

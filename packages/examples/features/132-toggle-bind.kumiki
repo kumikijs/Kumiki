@@ -1,0 +1,36 @@
+# Feature (forms.md §5.1.1, §5.5.2): `check` / `switch` bind a `Bool`, and
+# `radio(group=…, bind=…, value=V)` binds one variant of a union — the box
+# shows the slot, and ticking it writes the slot back. The radios start on
+# `Done`, not the first variant, so the selection is read from the slot.
+# Before this, all three passed `check` and dropped the bind: every box
+# rendered unticked and clicking one wrote nothing.
+
+type Filter = All | Active | Done
+
+slot agreed : Bool   = true
+slot lit    : Bool   = false
+slot filter : Filter = Done
+
+tile ResetBtn = button(text="reset") {id: "reset"}
+
+reducer reset
+    on=ui.click(ResetBtn)
+    do= agreed := true
+        lit := false
+        filter := Done
+
+tile App = column(
+    check(bind=agreed) {id: "agree"},
+    switch(bind=lit) {id: "sw"},
+    radio(group="filter", bind=filter, value=All)    {label: "All", id: "rAll"},
+    radio(group="filter", bind=filter, value=Active) {label: "Active", id: "rActive"},
+    radio(group="filter", bind=filter, value=Done)   {label: "Done", id: "rDone"},
+    ResetBtn,
+    text("agreed=" + agreed.show),
+    text("lit=" + lit.show),
+    text("filter=" + filter.show))
+
+app ToggleBind
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
