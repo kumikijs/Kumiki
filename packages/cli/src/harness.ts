@@ -231,3 +231,16 @@ function installIntersectionObserverDouble(): void {
   (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
     IntersectingObserver as unknown as typeof IntersectionObserver;
 }
+
+/**
+ * Start a run from an empty browser. Every smoke or scenario run is one app's
+ * first visit, but a process registers its DOM once, so `localStorage` and
+ * `sessionStorage` would otherwise carry whatever the previous app wrote — and
+ * an app restoring a key another app used (`session`, say) boots on that app's
+ * value, which its own type may refuse, discarding the whole restore.
+ */
+export function clearStorage(): void {
+  const page = globalThis as { localStorage?: Storage; sessionStorage?: Storage };
+  page.localStorage?.clear();
+  page.sessionStorage?.clear();
+}

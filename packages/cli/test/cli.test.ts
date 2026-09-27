@@ -202,6 +202,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // throw from inside a panic catch must not displace the panic, and an
     // episode this dispatch opened must close however it exits.
     //
+    // 58,000 from 57,000 (57,316 measured, from 56,872): a predicate written
+    // inside a slot's type reports *where* it failed (#444). The 444 bytes are
+    // `slotAccepts`, the one reading of a slot's gate that the write wrapper,
+    // the batch backstop, a `bind` write-back and the `error` tile share, and
+    // `showRefinementPath`, which writes the structured path a rejection
+    // carries the way the report always has. A counter has no such slot and
+    // pays for both because they sit on paths every app takes.
+    //
     // 58,000 from 57,000 (57,490 measured, from 56,930): the memory of refused
     // binds that `error(field=…)` speaks for (forms.md §5.1.2) got its edges.
     // 402 of it is core — the lookup scoped to the view being rendered, so a
@@ -209,16 +217,20 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // pruning of controls that left the page. The other 158 is the shared
     // input helper holding a refusal back until an IME composition ends.
     //
-    // 59,000 from 58,000 (58,070 measured, from 57,489): an index into a List
-    // names an element or panics, on both sides of `:=` (language.md §1.6.3).
-    // On its own that was 416 (57,025 from 56,609); on top of the refused-bind
-    // work above it measures 581. It is the one range rule both sides ask
-    // (`listPosition`), the `_s.index` read every `xs[i]` now lowers to, and
-    // the setter's two panics for an index that meets no List. A counter
-    // indexes nothing and still ships them: the alternative is an
-    // out-of-range write that lands nowhere and a read that hands `undefined`
-    // to whatever comes next. Each change fit under 58,000 alone; together
-    // they pass it by 70 bytes, so the budget takes the next thousand.
+    // 59,000 from 58,000 (58,350 measured): the two paragraphs above landed on
+    // parallel branches, each measured against its own base, and together
+    // they cost what each did — `slotAccepts` / `showRefinementPath` beside
+    // the refused-bind memory, which reads a slot's gate through the former.
+    // Still 59,000 (58,927 measured): an index into a List names an element
+    // or panics, on both sides of `:=` (language.md §1.6.3). On its own that
+    // was 416 (57,025 from 56,609); on top of the refused-bind work above it
+    // measured 581. It is the one range rule both sides ask (`listPosition`),
+    // the `_s.index` read every `xs[i]` now lowers to, and the setter's two
+    // panics for an index that meets no List. A counter indexes nothing and
+    // still ships them: the alternative is an out-of-range write that lands
+    // nowhere and a read that hands `undefined` to whatever comes next. It
+    // landed on a branch parallel to the paragraph above, which had already
+    // taken the budget to 59,000 for its own reason; together they fit under it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

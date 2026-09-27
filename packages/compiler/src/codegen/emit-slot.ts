@@ -1,14 +1,42 @@
-import type { SlotDef } from "../ast.ts";
+import type { SlotDef, TypeExpr } from "../ast.ts";
+import { carriesNestedRefinement } from "../refinement-positions.ts";
 import { type GenCtx, makeEvalCtx } from "./context.ts";
 import { refinementJs, refinementsOf, refinementToJs } from "./emit-type.ts";
 import { jsOfExpr } from "./expr.ts";
+import { nestedRefinements } from "./nested-refinements.ts";
+
+/**
+ * How a write to a slot of type `t` is checked: by a walk of the value, when
+ * a predicate is written anywhere inside the type (language.md §1.3.3); by the
+ * predicates on the type's own chain; or not at all. The one classification
+ * both the slot table and the reducer's write wrapper read, so a slot cannot be
+ * gated by one and waved through by the other. Pure — it reads the program's
+ * types and builds nothing — so the reducer can ask it per write.
+ */
+export function slotGate(t: TypeExpr, gen: GenCtx): "walk" | "chain" | "none" {
+  if (carriesNestedRefinement(t, gen)) return "walk";
+  return refinementJs(t, gen) !== undefined ? "chain" : "none";
+}
 
 /** Emit the `_slots = { ... }` object literal body for all slot definitions. */
 export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
   const lines: string[] = [];
+  const nested = nestedRefinements(gen);
   lines.push("const _slots = {");
   for (const s of slots) {
-    const refine = refinementJs(s.type, gen);
+    // A predicate written inside the type — a record field, a union payload, a
+    // container element — is a check on the value as much as one on the type
+    // itself (language.md §1.3.3), and only a walk of the value can say where
+    // it failed. Such a slot's gate is that walk, alone: the runtime reads it
+    // through `slotAccepts`, so it carries no `refine` or `refineAll` to
+    // disagree with it. One whose predicates all sit on its own chain keeps the
+    // conjunction below, byte for byte.
+    const gate = slotGate(s.type, gen);
+    const deep = gate === "walk" ? nested.explainerOf(s.type) : undefined;
+    if (gate === "walk" && deep === undefined) {
+      throw new Error(`slot "${s.name}": a type carrying a nested refinement lowered to no walk`);
+    }
+    const refine = gate === "chain" ? refinementJs(s.type, gen) : undefined;
     const rs = refinementsOf(s.type, gen);
     const first = rs[0];
     const init = jsOfExpr(s.init, makeEvalCtx(gen, new Set()));
@@ -19,7 +47,8 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
     // the failed predicate's message (default text + `theme.errors` override).
     const meta = [`value: ${init}`];
     if (refine) meta.push(`refine: ${refine}`);
-    if (first) {
+    if (deep) meta.push(`refineFailure: ${deep}`);
+    if (first && gate === "chain") {
       meta.push(`refineKind: ${JSON.stringify(first.pred)}`);
       meta.push(`refineArgs: ${JSON.stringify(first.args)}`);
     }
@@ -45,7 +74,7 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
               `refine: ${js} }`,
           ];
     });
-    if (parts.length > 1) {
+    if (gate === "chain" && parts.length > 1) {
       meta.push(`refineAll: [${parts.join(", ")}]`);
     }
     // `volatile` (language.md §1.4.1): excludes the slot from SlotDiff records
@@ -56,5 +85,5 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
     lines.push(`  ${JSON.stringify(s.name)}: { ${meta.join(", ")} },`);
   }
   lines.push("};");
-  return lines;
+  return [...nested.decls, ...lines];
 }

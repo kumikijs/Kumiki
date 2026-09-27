@@ -1,0 +1,66 @@
+{
+  "steps": [
+    {
+      "label": "every slot starts on a value its type accepts at every position",
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "email": "ada@example.com", "age": 36 }, "tags": [] },
+        "domIncludes": ["email: ada@example.com", "age: 36", "tags: 0"]
+      }
+    },
+    {
+      "label": "a path write the field's predicate accepts commits",
+      "do": { "clickText": "email" },
+      "expect": { "noErrors": true, "domIncludes": ["email: grace@example.com"] }
+    },
+    {
+      "label": "one it refuses is discarded, and the report says where",
+      "do": { "clickText": "email" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["email: grace@example.com"],
+        "errorIncludes": ["(email at .email)"]
+      }
+    },
+    {
+      "label": "a whole-record write is checked field by field",
+      "do": { "clickText": "age" },
+      "expect": { "noErrors": true, "domIncludes": ["age: 37"] }
+    },
+    {
+      "do": { "clickText": "age" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["age: 37"],
+        "errorIncludes": ["(between(0, 120) at .age)"]
+      }
+    },
+    {
+      "label": "a union payload is checked for the variant that carries it",
+      "do": { "clickText": "find" },
+      "expect": { "noErrors": true, "state": { "lookup": { "_tag": "Found", "_0": "ada" } } }
+    },
+    {
+      "do": { "clickText": "find" },
+      "expect": {
+        "noErrors": true,
+        "state": { "lookup": { "_tag": "Found", "_0": "ada" } },
+        "errorIncludes": ["(nonempty at .Found)"]
+      }
+    },
+    {
+      "label": "a container's elements are checked one by one",
+      "do": { "clickText": "tag" },
+      "expect": { "noErrors": true, "state": { "tags": ["kumi"] }, "domIncludes": ["tags: 1"] }
+    },
+    {
+      "do": { "clickText": "tag" },
+      "expect": {
+        "noErrors": true,
+        "state": { "tags": ["kumi"] },
+        "domIncludes": ["tags: 1"],
+        "errorIncludes": ["(len-lt(6) at [1])"]
+      }
+    }
+  ]
+}

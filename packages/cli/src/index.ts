@@ -25,6 +25,7 @@ export {
   type SkipReason,
 } from "./fix.ts";
 export {
+  clearStorage,
   type HttpFixture,
   type HttpResponseFixture,
   httpRequests,

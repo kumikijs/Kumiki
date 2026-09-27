@@ -1,0 +1,65 @@
+# Feature: a refinement written inside a type — on a record field, a union
+# payload, a container element — is checked on the way into the slot like one
+# written on the type itself (spec/language.md §1.3.3).
+#
+# Codegen used to gate a slot only on the predicates of its own type, so
+# `form.email := "nope"` committed on a field declared `Text where email`, and
+# so did `age := 999` on `Int where between(0, 120)` — the author wrote the
+# constraint and nothing kept it (#444). The three positions fail the same way,
+# so one slot each drives them here.
+#
+# Each button's first click writes a value the type accepts, and every click
+# after that one a value it refuses: `smoke` clicks once and treats a reported
+# error as fatal, and the scenario beside this file clicks again and asserts
+# the refusal — the whole batch is discarded, and the report names the
+# predicate and where inside the value it failed.
+
+type Contact = {email: Text where email, age: Int where between(0, 120)}
+type Lookup  = Pending | Found(Text where nonempty)
+
+slot form   : Contact                     = {email: "ada@example.com", age: 36}
+slot lookup : Lookup                      = Pending
+slot tags   : List(Text where len-lt(6))  = []
+
+reducer editEmail on=ui.click(EmailBtn)
+    do= form.email := if form.email == "ada@example.com" then "grace@example.com" else "nope"
+
+reducer editAge on=ui.click(AgeBtn)
+    do= form := form.copy(age = if form.age == 36 then 37 else 999)
+
+reducer find on=ui.click(FindBtn)
+    do= lookup := match lookup with
+                   | Pending  -> Found("ada")
+                   | Found(_) -> Found("")
+
+reducer addTag on=ui.click(TagBtn)
+    do= tags := tags.push(if tags.size == 0 then "kumi" else "kumiki")
+
+tile EmailBtn = button(text="email", onClick=editEmail)
+tile AgeBtn   = button(text="age",   onClick=editAge)
+tile FindBtn  = button(text="find",  onClick=find)
+tile TagBtn   = button(text="tag",   onClick=addTag)
+
+tile App = column(
+             text("email: " + form.email),
+             text("age: " + form.age.show),
+             text("tags: " + tags.size.show),
+             row(EmailBtn, AgeBtn, FindBtn, TagBtn) {gap: "sm"})
+           {pad: "lg", gap: "md"}
+
+app NestedRefinements
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+# A refused write leaves every slot at its `given` value in this tier too.
+
+test a-field-write-is-refused =
+    reducer-test editEmail
+        given  = {slots: {form: {email: "grace@example.com", age: 36}}, event: {type: ui.click, target: EmailBtn}}
+        expect = {slots: {form: {email: "grace@example.com", age: 36}}, effects: []}
+
+test an-element-is-refused =
+    reducer-test addTag
+        given  = {slots: {tags: ["kumi"]}, event: {type: ui.click, target: TagBtn}}
+        expect = {slots: {tags: ["kumi"]}, effects: []}

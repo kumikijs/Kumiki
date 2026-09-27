@@ -250,6 +250,54 @@ describe("a refused bind is judged by what its control shows", () => {
   }
 });
 
+// A slot whose predicate is written inside its type — here a record field,
+// `pick : {email: Text where email}` — carries `refineFailure` and no `refine`
+// (language.md §1.3.3): every gate reads it through `slotAccepts`. A bind into
+// such a slot is refused and remembered like any other, so a `select` whose
+// options are records shows the refused one's message; a reading of `refine`
+// alone would take the write and leave the tile silent.
+
+describe("a refused bind into a slot gated by a predicate inside its type", () => {
+  it("is refused, and its error tile names the field's predicate", () => {
+    const ok = { email: "ada@example.com" };
+    const bad = { email: "nope" };
+    const c: ControlCase = {
+      name: "select",
+      meta: {
+        value: ok,
+        refineFailure: (v) =>
+          EMAIL.test(String((v as { email?: unknown }).email))
+            ? undefined
+            : { kind: "email", args: [], path: ["email"] },
+      },
+      node: (v) => ({
+        kind: "select",
+        bind: "f",
+        value: v,
+        options: [
+          { label: "ada", value: ok },
+          { label: "broken", value: bad },
+          { label: "grace", value: { email: "grace@example.com" } },
+        ],
+      }),
+      refuse: (el) => {
+        (el as HTMLSelectElement).selectedIndex = 1;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      message: "Invalid email format",
+      resetTo: { email: "grace@example.com" },
+    };
+    const { app, control, error } = mountControl(c);
+    expect(error()).toBe("");
+    c.refuse(control);
+    expect(app.live.f).toEqual(ok);
+    expect(error()).toBe(c.message);
+    app._dispatch("reset", {});
+    expect(app.live.f).toEqual({ email: "grace@example.com" });
+    expect(error()).toBe("");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // One shape mounted twice is two views of one app (runtime.md §10.9.1). What a
 // user typed into one view's field belongs to that view: the other view's

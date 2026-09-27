@@ -458,7 +458,83 @@ export type SlotMeta = {
    * for a type with one predicate, where `refineKind`/`refineArgs` name it.
    */
   refineAll?: RefinementPart[];
+  /**
+   * The first predicate a value fails **anywhere inside it** — a record field,
+   * a union payload, a container element — with the path to where, or
+   * `undefined` when it passes (language.md §1.3.3). When present it is the
+   * whole gate: {@link slotAccepts} reads it in place of `refine`, and a value
+   * is accepted exactly when it answers `undefined`. Codegen emits it, alone,
+   * for a type that carries a refinement below its own chain — the walk checks
+   * the chain's predicates too — and emits the three fields above only for a
+   * type whose predicates all sit on the type itself.
+   */
+  refineFailure?: (v: unknown) => RefinementFailure | undefined;
 };
+
+/**
+ * One step from a slot's value towards the part of it a predicate refused
+ * (language.md §1.3.3). A string and a number mean what they mean in a
+ * {@link PathSegment} — a record field, a `List` / `Tuple` index — and the
+ * objects name the steps a write path never takes: which variant's payload,
+ * and whether a `Map` step is the key itself or the value stored under it.
+ */
+export type RefinementStep =
+  | string
+  | number
+  | { readonly variant: string; readonly payload?: number }
+  | { readonly key: string | number }
+  | { readonly entry: string | number }
+  | { readonly member: string | number };
+
+/**
+ * Where a value fails a predicate written inside its type: the predicate, and
+ * the steps from the slot's value to the part that fails it, outermost first.
+ * `[]` is the value itself.
+ */
+export type RefinementFailure = {
+  kind: string;
+  args: (number | string)[];
+  path: readonly RefinementStep[];
+};
+
+/**
+ * A path as the rejection report and the spec write it: `.email` for a
+ * field, `[2]` for an index, `.Some` / `.Pair[1]` for a variant's payload,
+ * `.keys["k"]` for a `Map` key, `["k"]` for the value under it, `{"x"}` for a
+ * `Set` member — joined outward-in (`.rows[2].email`).
+ */
+export function showRefinementPath(path: readonly RefinementStep[]): string {
+  return path
+    .map((step) => {
+      if (typeof step === "string") return `.${step}`;
+      if (typeof step === "number") return `[${step}]`;
+      if ("variant" in step)
+        return step.payload === undefined
+          ? `.${step.variant}`
+          : `.${step.variant}[${step.payload}]`;
+      if ("key" in step) return `.keys[${JSON.stringify(step.key)}]`;
+      if ("entry" in step) return `[${JSON.stringify(step.entry)}]`;
+      return `{${JSON.stringify(step.member)}}`;
+    })
+    .join("");
+}
+
+/** The slot fields that decide whether a value is let in. */
+export type SlotGate = {
+  refine?: RefinementCheck;
+  refineFailure?: RefinementNaming["refineFailure"];
+};
+
+/**
+ * Does the slot's type let `value` in? The one reading of the gate fields
+ * that every check shares — a reducer's write, the batch backstop, a `bind`
+ * write-back, the `error` tile — so a slot built with `refineFailure` alone is
+ * gated as fully as one codegen emitted.
+ */
+export function slotAccepts(meta: SlotGate | undefined, value: unknown): boolean {
+  if (meta?.refineFailure) return meta.refineFailure(value) === undefined;
+  return meta?.refine ? meta.refine(value) : true;
+}
 
 /**
  * The slot fields that name a refusal, as every reader of them takes them.
@@ -470,6 +546,7 @@ export type RefinementNaming = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
+  refineFailure?: (v: unknown) => RefinementFailure | undefined;
 };
 
 /**
@@ -483,7 +560,14 @@ export type RefinementNaming = {
 export function failedRefinement(
   value: unknown,
   meta: RefinementNaming | undefined,
-): { kind?: string; args?: (number | string)[] } {
+): { kind?: string; args?: (number | string)[]; path?: readonly RefinementStep[] } {
+  // A type with predicates below its own chain answers with the failure
+  // itself, which is the only reader that can say *where* inside the value.
+  if (meta?.refineFailure) {
+    const deep = meta.refineFailure(value);
+    if (!deep) return {};
+    return deep.path.length === 0 ? { kind: deep.kind, args: deep.args } : deep;
+  }
   const part = meta?.refineAll?.find((p) => !p.refine(value));
   if (part) return { kind: part.kind, args: part.args ?? [] };
   const named: { kind?: string; args?: (number | string)[] } = {};
@@ -1184,6 +1268,11 @@ export type RefinementRejection = {
   /** The predicate name + args, when the slot carries them (`between`, [0, 3]). */
   kind?: string;
   args?: (number | string)[];
+  /**
+   * Where inside the value the predicate failed, when that is not the value
+   * itself — see {@link RefinementFailure}.
+   */
+  path?: readonly RefinementStep[];
 };
 
 /**
@@ -1197,9 +1286,10 @@ export function refinementRejectionOf(
   meta: RefinementNaming,
 ): RefinementRejection {
   const rejection: RefinementRejection = { slot, value };
-  const { kind, args } = failedRefinement(value, meta);
+  const { kind, args, path } = failedRefinement(value, meta);
   if (kind !== undefined) rejection.kind = kind;
   if (args !== undefined) rejection.args = args;
+  if (path !== undefined) rejection.path = path;
   return rejection;
 }
 
@@ -1224,7 +1314,7 @@ export function refinementRejections(
   const out: RefinementRejection[] = [];
   for (const [k, v] of Object.entries(next)) {
     const meta = slotMetas[k];
-    if (!meta?.refine || meta.refine(v)) continue;
+    if (!meta || slotAccepts(meta, v)) continue;
     out.push(refinementRejectionOf(k, v, meta));
   }
   return out;
@@ -1259,7 +1349,11 @@ export function batchRejections(
   return out;
 }
 
-/** `slot "count" cannot hold 4 (between(0, 3))`. */
+/**
+ * `slot "count" cannot hold 4 (between(0, 3))`, and for a predicate written
+ * inside the slot's type, where it failed:
+ * `slot "form" cannot hold {"email":"nope"} (email at .email)`.
+ */
 function describeRejection(r: RefinementRejection): string {
   const pred =
     r.kind === undefined
@@ -1267,7 +1361,8 @@ function describeRejection(r: RefinementRejection): string {
       : r.args && r.args.length > 0
         ? `${r.kind}(${r.args.join(", ")})`
         : r.kind;
-  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred})`;
+  const at = r.path && r.path.length > 0 ? ` at ${showRefinementPath(r.path)}` : "";
+  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred}${at})`;
 }
 
 /**
@@ -2719,8 +2814,7 @@ export function mountCore(
     name: string,
     value: unknown,
   ) => {
-    const meta = app.slots[name];
-    if (meta?.refine && !meta.refine(value)) return false;
+    if (!slotAccepts(app.slots[name], value)) return false;
     slotValues[name] = value;
     render();
     return true;
