@@ -1,14 +1,14 @@
 // `check` and `build` must never disagree about a method call: whatever the
-// checker accepts, codegen lowers. A lowering that dereferences an argument the
-// call was not given crashes `compile()` with a bare `TypeError` naming no file
-// or line — after `check` has already said ok.
+// checker accepts, codegen lowers. A lowering that reads an argument the call
+// was not given throws a bare `TypeError` out of `compile()`, naming no file or
+// line.
 //
-// The arity rules live in the checker (`METHOD_MIN_ARGS`, and the receiver-
-// decided counts of `.get` / `.get-or`) and the argument reads live in
-// `methodCallJs`, so this walks every method the runtime knows, on every kind
-// of receiver the checker tells apart (including one it cannot decide), at
-// every small count. A call the checker rejects is fine; a call it accepts
-// has to compile.
+// The argument counts are stated in codegen (`METHOD_MIN_ARGS`, next to the
+// lowering that reads them) and enforced by the checker, which also decides
+// `.get` / `.get-or` by receiver. So this walks every method codegen lowers
+// (`KNOWN_METHODS`), on a spread of receivers — the four `.get` has readings
+// on, an undecided one, and two it has none on — at every small count. A call
+// the checker rejects is fine; a call it accepts has to compile.
 
 import { compile, KNOWN_METHODS } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,9 @@ const RECEIVERS: ReadonlyArray<[label: string, decl: string, recv: string]> = [
   ["a Result", "slot v : Result(Int, Text) = Ok(1)", "v"],
   ["a Map", "slot v : Map(Text, Int) = {}", "v"],
   ["a List", "slot v : List(Int) = []", "v"],
+  // Two receivers `.get` has no reading on. The checker does not refuse
+  // `.get` on them yet, so all this walk asks of such a call is that it
+  // compiles — not that it is right.
   ["a Text", 'slot v : Text = ""', "v"],
   ["an Int", "slot v : Int = 0", "v"],
 ];
@@ -56,5 +59,21 @@ describe("every method call check accepts is one build compiles", () => {
     // The walk reached codegen at all: a harness whose every program the
     // checker rejects would pass the line above without lowering anything.
     expect(compiled).toBeGreaterThan(0);
+  });
+});
+
+// The walk above passes whether or not a call reaches codegen, so it would
+// stay green if the checker began rejecting `.get`'s readings. Each reading
+// is pinned here as compiling on the receivers that have it.
+describe(".get compiles in the reading its receiver has", () => {
+  it.each([
+    ["the unwrap on an Option", "slot v : Option(Int) = Some(1)", "v.get()"],
+    ["the unwrap on a Result", "slot v : Result(Int, Text) = Ok(1)", "v.get()"],
+    ["the unwrap on an undecided receiver", "", "$el.x.get()"],
+    ["the lookup on a Map", "slot v : Map(Text, Int) = {}", 'v.get("k")'],
+    ["the lookup on a List", "slot v : List(Int) = []", "v.get(0)"],
+  ])("%s", (_label, decl, call) => {
+    const r = compile(program(decl, call), { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind === "fail" ? r.errors.map((e) => e.code) : []).toEqual([]);
   });
 });

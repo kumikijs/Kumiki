@@ -1,14 +1,11 @@
-// stdlib.md §2.2.4 / §2.2.5 declare `get : T` on `Option` and `Result` — the
-// polymorphic unwrap — and §2.2.3's parenthesis-free shortcut makes `o.get` an
-// alternative spelling of `o.get()`, not a different member.
-//
-// The checker has accepted `o.get()` since `.get`'s arity became receiver-
-// decided, but the lowering only knew the keyed reading, `Map.get(k)` /
-// `List.get(i)`, and read an argument the call did not have: `check` said ok,
-// then `build` and `smoke` died with a bare `TypeError` naming no file or line.
-// The checker's side of the agreement is walked method by method in
-// `packages/compiler/test/method-check-build-agree.test.ts`; this file pins what
-// the built app does.
+// stdlib.md §2.2.4 / §2.2.5 declare `get : T` on `Option` and `Result`, the
+// polymorphic unwrap, which the Panic-semantics note (§2.2.5) says is "also
+// written paren-free as `value.get`". So a zero-argument `.get()` the checker
+// accepts lowers to the unwrap: it answers what `.get` answers, panics where
+// `.get` panics, and on a receiver the checker cannot decide it is the unwrap
+// rather than the keyed lookup. Which counts compile is walked method by
+// method in `packages/compiler/test/method-check-build-agree.test.ts`; this
+// file pins what the built app does.
 
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
