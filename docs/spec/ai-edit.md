@@ -340,6 +340,8 @@ kumiki lock agent-1 'slot.todos*,reducer.todo-*'
 
 If another agent issues an op in the same namespace, it is rejected.
 
+The lock is checked against **every definition the op touches**, not only the one the verb names: each dependent a `remove --cascade` removes, the new name a `rename` creates, and each definition whose text a `rename` rewrites. One locked definition among them rejects the whole op before anything is written (exit `1`, the file byte-identical), and the message names the first locked definition and its owner. `patch apply` and the MCP tools go through the same check.
+
 ## 9.9 The Relationship Between episode and op
 
 The runtime episode log is recorded against the build artifact. ops are **the edit history of the source graph**. The two are separated:

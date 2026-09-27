@@ -342,6 +342,8 @@ kumiki lock agent-1 'slot.todos*,reducer.todo-*'
 
 同名空間に他エージェントが op を出すと reject される。
 
+ロックは verb が名指しした定義だけでなく、**op が触れるすべての定義**に対して検査される：`remove --cascade` が取り除く各依存先、`rename` が作る新しい名前、`rename` が本文を書き換える各定義。そのうち 1 つでもロックされていれば、何かを書き込む前に op 全体が reject され（exit `1`、ファイルはバイト単位で元のまま）、メッセージは最初にロックされていた定義とその所有者を名指しする。`patch apply` と MCP ツールも同じ検査を通る。
+
 ## 9.9 episode と op の関係
 
 実行時の episode log はビルド成果物に対して記録される。op は **ソース graph の編集履歴**。両者は分離されている：

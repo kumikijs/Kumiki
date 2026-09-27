@@ -220,17 +220,28 @@ function patternToRegExp(pattern: string): RegExp {
   return new RegExp(`^(${reSrc})$`);
 }
 
-function enforceLock(path: string, qname: string): void {
+/**
+ * Refuse the op if another agent holds a lock on any definition it touches.
+ *
+ * `qnames` is every definition the op creates, removes or rewrites, not only
+ * the one the verb was named with (§9.8.3): a cascade removes its dependents
+ * and a rename rewrites its referrers, and a lock that saw only the named
+ * definition could be reached around through either. Called before any write,
+ * and the first locked name in the order given is the one reported.
+ */
+function enforceLock(path: string, ...qnames: string[]): void {
   const locks = readLocks(path);
   if (locks.entries.length === 0) return;
   const me = authorOf();
-  for (const e of locks.entries) {
-    if (e.agent === me) continue;
-    for (const pat of e.patterns) {
-      if (patternToRegExp(pat).test(qname)) {
-        throw new Error(
-          `lock violation: ${qname} is locked by ${e.agent} (pattern "${pat}"). Set KUMIKI_AUTHOR=${e.agent} to edit.`,
-        );
+  for (const qname of qnames) {
+    for (const e of locks.entries) {
+      if (e.agent === me) continue;
+      for (const pat of e.patterns) {
+        if (patternToRegExp(pat).test(qname)) {
+          throw new Error(
+            `lock violation: ${qname} is locked by ${e.agent} (pattern "${pat}"). Set KUMIKI_AUTHOR=${e.agent} to edit.`,
+          );
+        }
       }
     }
   }
@@ -363,6 +374,9 @@ export function removeDef(
       frontier = next;
     }
   }
+  // The cascade removes each dependent as part of this op, so each is checked
+  // against the lock table as the requested one was.
+  enforceLock(path, ...[...toRemove].filter((q) => q !== qname).sort());
   // Remove from bottom up so line numbers stay valid.
   const removalEntries = [...toRemove]
     .map((q) => store.byQName.get(q))
@@ -436,11 +450,19 @@ export function renameDef(path: string, qname: string, newName: string): string 
   }
 
   const sites: Pos[] = [defNamePos(store, entry, old)];
+  const rewritten = new Set<string>();
   for (const e of store.defs) {
     for (const r of referenceSites(store, `${e.layer}.${e.name}`)) {
-      if (r.layer === entry.layer && r.name === old && r.pos) sites.push(r.pos);
+      if (r.layer === entry.layer && r.name === old && r.pos) {
+        sites.push(r.pos);
+        rewritten.add(`${e.layer}.${e.name}`);
+      }
     }
   }
+  // The new name is a definition this op creates, and each referrer is one it
+  // rewrites; both are checked before anything is written.
+  rewritten.delete(qname);
+  enforceLock(path, `${entry.layer}.${newName}`, ...[...rewritten].sort());
 
   const lines = store.lines.slice();
   // Right-to-left within a line so earlier columns keep their positions.
