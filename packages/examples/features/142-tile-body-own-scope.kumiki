@@ -1,0 +1,26 @@
+# Feature (language.md §1.7.2 / §1.6.7): a user tile is a pure function of the
+# slots and its `in` argument, and its body is not inside its caller's `for`.
+#
+# The filter bar below is the common shape: the loop variable and the slot
+# share the name `filter`. The loop variable reaches each button as its `$1`;
+# inside `FilterBtn`, `filter` is still the slot, so exactly one button is
+# marked current, and clicking another moves the mark.
+
+type Filter = All | Active | Done
+
+slot filter  : Filter       = All
+slot filters : List(Filter) = [All, Active, Done]
+
+reducer pick on=ui.click(FilterBtn) do= filter := $el.choice
+
+tile FilterBtn in=Filter =
+    button(text=$1.show + (if $1 == filter then " (current)" else "")) {id: $1.show, choice: $1}
+
+tile App = column(
+    text("showing: " + filter.show),
+    row(for filter in filters FilterBtn(filter)))
+
+app TileBodyOwnScope
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
