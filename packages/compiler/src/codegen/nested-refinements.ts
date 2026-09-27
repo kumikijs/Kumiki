@@ -1,6 +1,6 @@
-import { type TypeEnv, unaliasType } from "../assignable.ts";
-import { keyRepresentation } from "../key-representation.ts";
+import type { TypeEnv } from "../assignable.ts";
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
+import { keyRepresentation } from "../key-representation.ts";
 import {
   containerPositions,
   expandNamed,
