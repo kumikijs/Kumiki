@@ -148,6 +148,8 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 | `route.enter(pattern)` | 新ルートに入った直後 |
 | `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
+最初のルート以降のナビゲーションはすべて切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。表示中と同じパスへのナビゲーションも両方を発火する。`route.enter` だけを発火するのは、離れる先の無い初期ルートのみである。
+
 ```kumiki fragment
 reducer loadTodoOnEnter
     on=route.enter("/todos/:id")

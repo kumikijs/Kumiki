@@ -2633,10 +2633,13 @@ export function mountCore(
       scrollSaved.set(oldRoute.path, { x: sx, y: sy });
     }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
-    // gate the transition. We observe whether any leave reducer emitted
+    // gate the transition. Every sync that will fire route.enter is a
+    // transition (routing.md §3.4), including one to the same pattern with new
+    // params or a sibling sub-route, so leave runs whenever there is a route to
+    // leave; only the initial mount has none. We observe whether any leave reducer emitted
     // `confirm` — if so, we hold off updating slotValues.route and firing
     // route.enter until the confirm modal resolves via `_resolveLeave`.
-    if (oldRoute && oldRoute.pattern !== newRoute.pattern) {
+    if (oldRoute) {
       observeLeaveConfirm = true;
       leaveAskedConfirm = false;
       try {

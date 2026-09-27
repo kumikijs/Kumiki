@@ -1,0 +1,56 @@
+# Feature (routing.md §3.4, §3.5.2): every navigation that fires `route.enter`
+# for the route it lands on fires `route.leave` for the route it leaves first,
+# even when both are the same pattern. Moving from `/todos/1/edit` to
+# `/todos/2/edit` leaves todo 1 (`$route` is the old route) and enters todo 2,
+# so an unsaved-changes guard on `route.leave("/todos/:id/edit")` holds a
+# "next item" link behind `confirm` like any other way out of the page.
+# Within a `sub-routes` parent, switching child leaves and re-enters the parent.
+
+slot dirty   : Bool = false
+slot enters  : Int  = 0
+slot leaves  : Int  = 0
+slot left    : Text = ""
+slot sEnters : Int  = 0
+slot sLeaves : Int  = 0
+
+reducer edit      on=ui.input(EditField) do= dirty := true
+reducer loadEdit  on=route.enter("/todos/:id/edit") do= enters := enters + 1
+reducer countLeave on=route.leave("/todos/:id/edit")
+    do= leaves := leaves + 1
+        left   := $route.params.get-or("id", "?")
+reducer guardEdit on=route.leave("/todos/:id/edit")
+    do= if dirty
+        then emit confirm({title: "Discard changes?",
+                           message: "You have unsaved edits.",
+                           onYes: continueLeave,
+                           onNo:  stayHere})
+        else ()
+reducer continueLeave on=ui.click(_) do= dirty := false
+reducer stayHere      on=ui.click(_) do= ()
+
+reducer enterSettings on=route.enter("/settings/*") do= sEnters := sEnters + 1
+reducer leaveSettings on=route.leave("/settings/*") do= sLeaves := sLeaves + 1
+
+tile EditField = textarea(placeholder="Notes", onInput=edit)
+tile Edit = page(heading("Edit " + route.params.get-or("id", "?")),
+                 text("dirty: " + dirty.show),
+                 EditField,
+                 link(to="/todos/1/edit") {text: "todo one"},
+                 link(to="/todos/2/edit") {text: "todo two"})
+tile Account  = page(heading("Account settings"))
+tile Billing  = page(heading("Billing settings"))
+tile Settings
+    sub-routes = {"/settings/account" -> Account, "/settings/billing" -> Billing}
+    = page(heading("Settings"), route-outlet())
+tile Home     = page(heading("Home"))
+tile NotFound = page(heading("404"))
+
+app LeaveOnParamChange
+    caps   = [notification.show, nav.push, nav.replace]
+    routes = {
+        "/"               -> Home,
+        "/todos/:id/edit" -> Edit,
+        "/settings/*"     -> Settings,
+        "/404"            -> NotFound
+    }
+    init   = []

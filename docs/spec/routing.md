@@ -148,6 +148,8 @@ Events fired on route switches:
 | `route.enter(pattern)` | Just after entering the new route |
 | `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
 
+Every navigation after the first route is a switch, and fires both events in that order: `route.leave` for the route being left, then `route.enter` for the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves and re-enters the parent's pattern. A navigation to the path already shown fires both as well. Only the initial route fires `route.enter` alone, since there is nothing to leave.
+
 ```kumiki fragment
 reducer loadTodoOnEnter
     on=route.enter("/todos/:id")
