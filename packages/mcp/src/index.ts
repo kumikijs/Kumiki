@@ -150,8 +150,7 @@ function errText(e: unknown) {
  * `apply` closure from every `AutoPatch`, convert `KumikiError[]` →
  * `Diagnostic[]`, and preserve the discriminated union so the client can
  * `switch (r.status)` on the response. The `applied` variant always carries
- * `regressed: string[]` (may be empty) — the client never has to fall back to
- * `?? []`.
+ * `regressed: []`: a patch that would regress a test is `test-blocked`.
  */
 function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
@@ -219,6 +218,18 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         regressed: o.regressed,
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
+    case "test-blocked": {
+      const b = o.blocked;
+      return {
+        ...base,
+        patch: patchWire(o.patch),
+        blocked:
+          b.reason === "introduced"
+            ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
+            : b,
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+    }
     case "write-failed":
       // I/O failure surfaces on the wire so MCP callers see it as a
       // structured outcome rather than a transport-level error. `phase`
@@ -906,7 +917,7 @@ export function createServer(): McpServer {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; nothing landed on disk.",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, a tier-2 patch is written only when the patched source compiles, the named test passes and no other test regresses; otherwise the outcome is `test-blocked`, the file is unchanged, and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw`, `still-fails` (with the test's result) or `regressed` (with the test names). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; nothing landed on disk.",
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),

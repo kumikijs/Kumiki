@@ -317,12 +317,16 @@ FAIL  counter-display
 
 ### 8.7.2 Fixing from a failing test
 
-`kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it and re-run (reporting whether the test now passes and whether any other test regressed). It repairs only what it can prove deterministically:
+`kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it once it is known to make the test pass without breaking another. It repairs only what it can prove deterministically:
 
 - If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run. **Through the same regression gate**: the composed source is re-parsed and re-typechecked, and the write is rolled back unless it resolves a reported diagnostic and introduces none — or does not parse at all, which is reported as what it is rather than as a pointless repair. A repair refused this way leaves the file byte-identical and says so — it is not "no patch available", and the diagnostics it then reports are the file's own, never the ones the refused patch would have added. The count it reports for a write is the number of patches that changed the source; a dry run reports what it proposes.
-- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the [Output](#_8-7-1-output) snapshot case).
+- If a tile-test or reducer-test fails on a scalar leaf, it looks for the one source literal the actual value came from, outside every `test` body — preferring the tested definition, then what it references — and proposes replacing it with the expected value:
+  - a **string, number or boolean leaf** whose actual value is written as a *unique* literal (the [Output](#_8-7-1-output) snapshot case, and a constant such as `fn step() -> Int = 1`). A candidate is a **whole token**: the `1` inside `Btn1`, inside `10`, inside a string or inside a comment is never one;
+  - a **string leaf** whose actual and expected values differ in one middle stretch that a single string literal contains, which is rewritten in place;
+  - a **numeric slot** written by exactly one reducer, in the shape `slot := slot + N`, `- N` or `* N`, whose operand is solved from the two values.
+- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way leaves the file byte-identical and says why — it does not parse, it introduces a diagnostic (listed), the named test still fails, or it would make another test fail (named). A refusal is reported as such, never as an applied fix and never as a raw compile error.
 
-Non-literal divergences (numeric slots, wrong operators, effect-list mismatches) are reported as a diff rather than guessed.
+Every other divergence (wrong operators, effect-list mismatches, a value no single literal accounts for) is reported as a diff rather than guessed.
 
 A **warning is not a compile error** here. A file whose only diagnostic is a `W02xx` compiles, so the test runs and the behavioural repair is proposed with the warning listed under it.
 

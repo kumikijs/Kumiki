@@ -378,15 +378,16 @@ describe("kumiki_auto_patch", () => {
     expect(after).not.toContain('greeting := "world"');
   });
 
-  it("applied variant reports regressed test names when the patch breaks another test", {
+  it("refuses a patch that would break another test, and leaves the file alone", {
     timeout: 30000,
   }, async () => {
     const file = join(workdir, "regression.kumiki");
     copyFileSync(FIX_REGRESSION, file);
+    const original = readFileSync(file, "utf8");
     await withClient(async (client) => {
-      // Test A wants message="planet", impl says "world" — Tier-2 replaces
-      // "world" with "planet" everywhere outside test bodies. Test B was
-      // asserting on "world" so it now fails: `regressed` must list "B".
+      // Test A wants message="planet", impl says "world" — Tier-2 would
+      // replace "world" with "planet". Test B asserts on "world", so the
+      // patch would make it fail: the gate refuses it and names "B".
       const out = await callTool(client, "kumiki_auto_patch", {
         path: file,
         testName: "A",
@@ -395,16 +396,15 @@ describe("kumiki_auto_patch", () => {
       const parsed = JSON.parse(out) as {
         ok: boolean;
         status: string;
-        pass: boolean;
-        regressed: string[];
+        patch: { code: string };
+        blocked: { reason: string; regressed?: string[] };
       };
-      expect(parsed.status).toBe("applied");
-      expect(parsed.pass).toBe(true);
-      expect(parsed.regressed).toEqual(["B"]);
-      // ok:false because a regression was introduced, even though the
-      // named test now passes.
+      expect(parsed.status).toBe("test-blocked");
       expect(parsed.ok).toBe(false);
+      expect(parsed.patch.code).toBe("TEST");
+      expect(parsed.blocked).toEqual({ reason: "regressed", regressed: ["B"] });
     });
+    expect(readFileSync(file, "utf8")).toBe(original);
   });
 
   it("returns a JSON error envelope for a bad path", async () => {

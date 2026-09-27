@@ -749,8 +749,7 @@ describe("planTestPatch: deterministic literal repair from a failing test", () =
   });
 });
 
-// `iterStringLiterals` is the shared regex helper feeding both
-// `stringLiteralSpans` (numeric-hit rejection) and the partial-string tier.
+// `iterStringLiterals` is the regex helper feeding the partial-string tier.
 // The tiers exercise it indirectly, but a direct microtest guards the tricky
 // shapes (consecutive literals, escaped quotes, empty body) from refactor
 // regressions in the single-source `/"(?:[^"\\]|\\.)*"/g` regex.
@@ -949,8 +948,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
   it("does not match a numeric leaf inside a string literal (I4)", () => {
     // The failing reducer emits actual=-1; a `text="-1"` on a tile
     // dependency contains the same `-1` characters. The exact-literal tier
-    // must NOT rewrite inside the string — that's the very defense the
-    // `stringLiteralSpans` filter provides.
+    // must NOT rewrite inside the string — no token starts there.
     const { source, store } = writeAndLoad(
       [
         "slot count : Int = 0",
@@ -987,12 +985,8 @@ describe("planTestPatch: relaxed repair tiers", () => {
     // test above, at the *tightest* possible fit: the string literal `"7"`
     // occupies exactly 3 source chars (`"`, `7`, `"`), so the numeric actual
     // `7` lands at digit offset `lo+1` and ends at `hi-1` — the smallest
-    // containment case. `combinedExcluded` is only exercised for
-    // non-string leaves (numeric / boolean `actualLit`s never contain `"`),
-    // so `>=`/`<=` and `>`/`<` are behaviorally identical here; the strict
-    // form is a documentation choice, not a behavior change. This test
-    // guards against future refactors that widen `combinedExcluded` to
-    // string leaves or narrow the filter past the body edges.
+    // containment case: the digit is neither where a token starts (the
+    // string's opening quote is) nor where one ends.
     const { source, store } = writeAndLoad(
       [
         "slot count : Int = 0",

@@ -7,7 +7,7 @@
 // stays named — no test needs to mock reads.
 import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
-import type { KumikiError, Pos, TestDef } from "@kumikijs/compiler";
+import type { KumikiError, Pos, TestDef, Token } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
   calleeCandidates,
@@ -20,7 +20,7 @@ import {
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
-import { testFile } from "./smoke.ts";
+import { runTestsSource, testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
 
 /**
@@ -1349,12 +1349,30 @@ type FixFromTestStatus =
       compileFixes?: number;
     }
   | {
-      ok: boolean;
+      /**
+       * The tier-2 patch passed the gate and is on disk: the file compiles,
+       * the named test passes, and no test that passed before fails.
+       * `regressed` is therefore always empty — a patch that would have
+       * regressed a test is `test-blocked` instead.
+       */
+      ok: true;
       status: "applied";
-      pass: boolean;
+      pass: true;
       patch: AutoPatch;
-      /** Names of other tests that were passing before the write and now fail. Always populated (may be []). */
       regressed: string[];
+      compileFixes?: number;
+    }
+  | {
+      /**
+       * A tier-2 patch was found and the gate refused it, so the file on disk
+       * is byte-identical to before the write was attempted. The tier-2
+       * counterpart of `compile-blocked`: `blocked` says which condition
+       * refused it.
+       */
+      ok: false;
+      status: "test-blocked";
+      patch: AutoPatch;
+      blocked: TestPatchBlock;
       compileFixes?: number;
     }
   | {
@@ -1375,6 +1393,21 @@ type FixFromTestStatus =
       compileFixes?: number;
       patch?: AutoPatch;
     };
+
+/**
+ * Why the tier-2 gate refused a behavioural patch. `parse-error` and
+ * `introduced` are the patched source failing to parse or typecheck —
+ * `introduced` lists its errors, since the file compiled before the patch.
+ * `still-fails` carries the named test's result on the patched source;
+ * `regressed` names the tests that passed before and would fail after;
+ * `test-runner-threw` is the runner itself failing on the patched source.
+ */
+export type TestPatchBlock =
+  | { reason: "parse-error"; message: string }
+  | { reason: "introduced"; introduced: KumikiError[] }
+  | { reason: "test-runner-threw"; message: string }
+  | { reason: "still-fails"; failingTest: TestResult }
+  | { reason: "regressed"; regressed: string[] };
 
 /**
  * One of the statuses above, plus the advisory diagnostics from the last
@@ -1714,10 +1747,8 @@ function pickScopedHit(
  * Every `"..."` string literal in `source`, one pass. `start` / `end` are the
  * quote-inclusive source offsets; `body` is the raw inner slice (no quotes,
  * no decoding — callers that need the runtime string must call
- * `decodeKumikiStringBody`). Shared by `stringLiteralSpans` (needs only the
- * spans, to reject numeric hits landing inside a string) and the partial-
- * string tier (needs the decoded body to match the divergent middle), so the
- * `"(?:[^"\\]|\\.)*"` regex lives in exactly one place.
+ * `decodeKumikiStringBody`). Used by the partial-string tier, which needs the
+ * decoded body to match the divergent middle.
  */
 export function iterStringLiterals(
   source: string,
@@ -1735,14 +1766,45 @@ export function iterStringLiterals(
 }
 
 /**
- * True at offsets that sit inside a `"..."` string literal. Number / boolean
- * exact-literal searches must reject these so a leaf like `-1` doesn't get
- * matched against the substring `-1` inside a source string like `text="-1"`.
- * Cached per call via a closure — pre-scanning the whole source once beats
- * re-checking every candidate hit.
+ * Where the source's tokens begin and end, as character offsets.
+ *
+ * A literal the exact-literal tier replaces has to be a whole token (or, for a
+ * negative number, the `-` and the number right after it): a hit is a run of
+ * source that starts where a token starts and ends where a token ends. The `1`
+ * in `Btn1` starts inside an identifier, the `1` in `10` ends inside a number,
+ * and a `1` inside a string or a comment is not the start of any token at all
+ * — so one rule answers all of them, from the lexer that decides what the
+ * program's tokens are, rather than a character-class guess next to it.
+ *
+ * `null` when the source does not lex, which leaves nothing to replace.
  */
-function stringLiteralSpans(source: string): Array<[number, number]> {
-  return iterStringLiterals(source).map((l) => [l.start, l.end]);
+function tokenBounds(source: string): { starts: Set<number>; ends: Set<number> } | null {
+  let tokens: ReturnType<typeof lex>;
+  try {
+    tokens = lex(source);
+  } catch {
+    return null;
+  }
+  const lineStarts = [0];
+  for (let i = 0; i < source.length; i++) if (source[i] === "\n") lineStarts.push(i + 1);
+  const starts = new Set<number>();
+  const ends = new Set<number>();
+  for (const t of tokens) {
+    if (t.kind === "eof") continue;
+    const start = (lineStarts[t.pos.line - 1] ?? 0) + t.pos.col - 1;
+    starts.add(start);
+    ends.add(start + tokenLength(source, t, start));
+  }
+  return { starts, ends };
+}
+
+/** The source length of one token: a string's is read back from its quotes. */
+function tokenLength(source: string, t: Exclude<Token, { kind: "eof" }>, start: number): number {
+  if (t.kind === "num") return t.raw.length;
+  if (t.kind !== "str") return t.value.length;
+  let i = start + 1;
+  while (i < source.length && source[i] !== '"') i += source[i] === "\\" ? 2 : 1;
+  return i + 1 - start;
 }
 
 type PatchOrReason = { patch: AutoPatch } | { patch: null; reason: string };
@@ -1760,21 +1822,11 @@ function planExactLiteralPatchExplained(
   const expectedLit = leafLit(expected);
   if (actualLit === null || expectedLit === null)
     return { patch: null, reason: "leaf-not-a-kumiki-literal" };
-  // For non-string leaves, hits inside string literals are false positives
-  // (e.g. numeric `-1` matching inside `text="-1"`). Build a rejection filter
-  // that composes with `inExcluded`. The `[lo, hi]` span is quote-inclusive,
-  // so we reject only when the candidate sits *strictly* between the quotes
-  // (`offset > lo && offset + len < hi`) — landing on a quote itself is
-  // impossible for a numeric/boolean actualLit but the strict form documents
-  // the "inside the body, not the quotes" intent for future readers.
-  const isStringLeaf = typeof actual === "string";
-  const spans = isStringLeaf ? null : stringLiteralSpans(source);
-  const combinedExcluded = spans
-    ? (offset: number): boolean =>
-        inExcluded(offset) ||
-        spans.some(([lo, hi]) => offset > lo && offset + actualLit.length < hi)
-    : inExcluded;
-  const hit = pickScopedHit(source, actualLit, combinedExcluded, scope);
+  const bounds = tokenBounds(source);
+  if (bounds === null) return { patch: null, reason: "no-scoped-literal-hit" };
+  const notWholeToken = (offset: number): boolean =>
+    inExcluded(offset) || !bounds.starts.has(offset) || !bounds.ends.has(offset + actualLit.length);
+  const hit = pickScopedHit(source, actualLit, notWholeToken, scope);
   if (hit === null) return { patch: null, reason: "no-scoped-literal-hit" };
   return {
     patch: {
@@ -2143,6 +2195,21 @@ export async function runFixFromTest(
   // land in the `write-failed` variant, which is reserved for filesystem
   // errors the caller can act on (retry, elevate permissions, free space).
   const patched = patch.apply(curSource);
+  // The same contract the tier-1 write keeps — the file comes out repaired or
+  // byte-identical — held by gating before the write rather than rolling back
+  // after it. The patched source is parsed, typechecked and tested in memory,
+  // and only a source that compiles, passes the named test and fails nothing
+  // that passed before reaches disk.
+  const refused = await gateTestPatch(patched, testName, before, path, capabilities);
+  if (refused !== null) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: refused,
+      ...(compileFixes ? { compileFixes } : {}),
+    });
+  }
   try {
     atomicWriteFileSync(path, patched);
   } catch (e) {
@@ -2155,21 +2222,54 @@ export async function runFixFromTest(
       ...(compileFixes ? { compileFixes } : {}),
     });
   }
-  const after = await testFile(path, capabilities);
-  const nowPass = after.find((r) => r.name === testName)?.pass === true;
+  return stamp({
+    ok: true,
+    status: "applied",
+    pass: true,
+    patch,
+    regressed: [],
+    ...(compileFixes ? { compileFixes } : {}),
+  });
+}
+
+/**
+ * Why the tier-2 gate refused a patch, or `null` when it may be written. The
+ * conditions are checked in the order a reader would ask them: does it parse,
+ * does it typecheck, does the named test run and pass, did anything that
+ * passed before stop passing.
+ */
+async function gateTestPatch(
+  patched: string,
+  testName: string,
+  before: readonly TestResult[],
+  path: string,
+  capabilities: string[],
+): Promise<TestPatchBlock | null> {
+  let parsed: ReturnType<typeof parse>;
+  try {
+    parsed = parse(lex(patched));
+  } catch (e) {
+    return { reason: "parse-error", message: e instanceof Error ? e.message : String(e) };
+  }
+  const introduced = repairable(check(parsed, { capabilities }));
+  if (introduced.length > 0) return { reason: "introduced", introduced };
+  let after: TestResult[];
+  try {
+    after = await runTestsSource(patched, capabilities, { sourcePath: path });
+  } catch (e) {
+    return { reason: "test-runner-threw", message: e instanceof Error ? e.message : String(e) };
+  }
+  const named = after.find((r) => r.name === testName);
+  if (named?.pass !== true) {
+    return named
+      ? { reason: "still-fails", failingTest: named }
+      : { reason: "test-runner-threw", message: `test "${testName}" did not run` };
+  }
   const regressed = after
     .filter((r) => !r.pass && before.find((b) => b.name === r.name)?.pass === true)
     .map((r) => r.name);
-  return stamp({
-    ok: nowPass && regressed.length === 0,
-    status: "applied",
-    pass: nowPass,
-    patch,
-    // Always populated: `[]` means "checked, none regressed" — never absent
-    // on the `applied` branch. Baked into the type by the discriminated union.
-    regressed,
-    ...(compileFixes ? { compileFixes } : {}),
-  });
+  if (regressed.length > 0) return { reason: "regressed", regressed };
+  return null;
 }
 
 export async function fixFromTest(
@@ -2295,17 +2395,23 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       return;
     }
     case "applied": {
-      const nowPass = outcome.pass === true;
-      console.log(
-        verdict(
-          `applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`,
-          outcome.warnings,
-        ),
-      );
-      if (outcome.regressed && outcome.regressed.length > 0) {
-        console.log(
-          `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,
-        );
+      console.log(verdict(`applied fix — test "${testName}" now PASSES`, outcome.warnings));
+      return;
+    }
+    case "test-blocked": {
+      console.log(`refused fix for "${testName}" — file left unchanged:`);
+      console.log(`  ${outcome.patch.description}`);
+      console.log(`  reason: ${outcome.blocked.reason}`);
+      const b = outcome.blocked;
+      if (b.reason === "introduced")
+        for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
+      else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
+        console.error(`  ${b.message}`);
+      else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
+      else {
+        const t = b.failingTest;
+        if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
+        if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
       }
       return;
     }
