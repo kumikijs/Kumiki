@@ -1,0 +1,26 @@
+{
+  "effects": {
+    "seedLegacy": [{ "outcome": "ok", "value": null }],
+    "loadNotes": [
+      {
+        "outcome": "err",
+        "value": { "message": "decode failed: uuid at .keys[\"legacy-1\"]" }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "label": "the refused restore reaches .err, so the app starts empty instead of loading forever",
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "started empty" },
+        "domIncludes": ["status: started empty", "notes: 0"]
+      }
+    },
+    {
+      "label": "and it is usable: a note can be added",
+      "do": { "click": "#add" },
+      "expect": { "noErrors": true, "domIncludes": ["notes: 1"] }
+    }
+  ]
+}

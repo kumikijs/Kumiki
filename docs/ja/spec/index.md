@@ -256,5 +256,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 | `129-http-decode-failure.kumiki` | type, slot, effect, reducer, tile | HTTP/Storage | [§6.5](./http.md#_6-5-リトライ) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `164-decode-refused-value.kumiki` | type, slot, effect, reducer, tile | HTTP/Storage | [§6.7.2](./http.md#_6-7-2-宣言-localstorage) |
 <!-- examples:end -->
 :::

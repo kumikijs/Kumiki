@@ -256,5 +256,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
 | `129-http-decode-failure.kumiki` | type, slot, effect, reducer, tile | http | [§6.5](./http.md#_6-5-retry) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `164-decode-refused-value.kumiki` | type, slot, effect, reducer, tile | http | [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage) |
 <!-- examples:end -->
 :::

@@ -51,7 +51,8 @@ export type NestedRefinements = {
    * The module-level helper declarations the explainers handed out so far
    * refer to. The slot table names them by bare identifier (`refineFailure:
    * _rq0`), and a `const` is in its temporal dead zone for a plain reference as
-   * much as for a call — so these have to precede the slot table. Each is a
+   * much as for a call — so these have to precede the slot table (codegen puts
+   * them ahead of everything that names one). Each is a
    * `const` arrow, including the one a name aliasing another helper gets
    * (`(v) => _rq3(v)`, never an eager `= _rq3`, whose target may not be
    * declared yet), so they refer to one another only when they run and their
@@ -61,7 +62,8 @@ export type NestedRefinements = {
   /**
    * The name of a module-level function answering the first predicate a value
    * of `t` fails, with its path, or `undefined` when `t` carries none at all.
-   * Defined whenever `carriesNestedRefinement(t)` holds.
+   * Defined whenever `carriesNestedRefinement(t)` holds, and the same name for
+   * every `t` that spells the same type.
    */
   explainerOf(t: TypeExpr): string | undefined;
 };
@@ -272,11 +274,19 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return name;
   };
 
+  // What each type asked about so far answered, so a `Map(TodoId, Todo)` that
+  // is both a slot's type and a decoder's is one helper rather than two copies.
+  const answered = new Map<string, string | undefined>();
+
   return {
     decls,
     explainerOf: (t) => {
+      const key = typeKey(t);
+      if (answered.has(key)) return answered.get(key);
       const fn = explain(t, []);
-      return fn === undefined || isHelper(fn) ? fn : hoist(fn);
+      const name = fn === undefined || isHelper(fn) ? fn : hoist(fn);
+      answered.set(key, name);
+      return name;
     },
   };
 }

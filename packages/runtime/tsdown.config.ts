@@ -20,8 +20,9 @@ import { publishedOutputOptions } from "../../tsdown.shared.ts";
 //   `PER_TILE_FAMILIES` has one entry PER TILE (`tiles-text-link`) instead of
 //   one for the family, so an app with a heading does not download the link
 //   tile's URL-disposition check. `core`, `stdlib` and
-//   `testkit` are entries of the same build — as is `tiles/input/_shared.ts`,
-//   which ten tile entries import — so cross-module imports resolve to those
+//   `testkit` are entries of the same build — as are `tiles/input/_shared.ts`,
+//   which ten tile entries import, and `effects-decode.ts`, which the three
+//   decoding effect handlers import — so cross-module imports resolve to those
 //   entry chunks and no anonymous shared chunk may appear. One would be fatal
 //   rather than merely untidy: `kumiki build` copies modules by NAME from the
 //   compiler's list, so a generated chunk name it cannot know ships as a
@@ -69,6 +70,7 @@ export default defineConfig([
       stdlib: "src/stdlib.ts",
       testkit: "src/testkit.ts",
       router: "src/router.ts",
+      "effects-decode": "src/effects-decode.ts",
       "effects-storage": "src/effects-storage.ts",
       "effects-indexed": "src/effects-indexed.ts",
       "effects-http": "src/effects-http.ts",

@@ -1,5 +1,6 @@
 import type { AppDef, EffectDef, ReducerDef } from "../ast.ts";
 import {
+  EFFECT_HANDLERS_SHARED,
   isPerTileFamily,
   PER_TILE_FAMILY_SHARED,
   TILE_FAMILY,
@@ -113,6 +114,7 @@ export function analyzeRuntimeUsage(
     ...(storage.length > 0 ? ["effects-storage"] : []),
     ...(indexed.length > 0 ? ["effects-indexed"] : []),
     ...(http ? ["effects-http"] : []),
+    ...(storage.length > 0 || indexed.length > 0 || http ? [EFFECT_HANDLERS_SHARED] : []),
     ...(toast ? ["effects-toast"] : []),
     ...(confirm ? ["effects-confirm"] : []),
     ...families.map((f) => `tiles-${f}`),

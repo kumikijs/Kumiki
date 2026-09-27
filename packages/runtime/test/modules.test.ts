@@ -197,6 +197,24 @@ describe("builtin effect modules", () => {
     });
   });
 
+  it("a read whose Decoder.Json check refuses the value is an err naming where (§6.7.2)", async () => {
+    // What codegen passes for `Decoder.Json(T)` when `T` carries a predicate.
+    const check = (v: unknown) =>
+      (v as { id?: unknown }).id === "ok"
+        ? undefined
+        : { kind: "len-lt", args: [3], path: ["id"] as const };
+    await storageWrite({ key: "dec", value: { id: "nope" } });
+    await sessionWrite({ key: "dec", value: { id: "ok" } });
+    expect(await storageRead({ key: "dec", decode: check })).toEqual({
+      kind: "err",
+      value: { message: "decode failed: len-lt(3) at .id" },
+    });
+    expect(await sessionRead({ key: "dec", decode: check })).toEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: { id: "ok" } },
+    });
+  });
+
   it("builtinEffects (index) aliases the granular effect exports", () => {
     expect(builtinEffects.storageRead).toBe(storageRead);
     expect(builtinEffects.storageWrite).toBe(storageWrite);

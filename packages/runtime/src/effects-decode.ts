@@ -1,0 +1,34 @@
+// The check a `Decoder.Json(T)` carries (http.md §6.1.4): shipped only with
+// the handlers that decode — storage, IndexedDB and HTTP.
+
+import { type RefinementFailure, showRefinementPath } from "./core.ts";
+
+/**
+ * What `Decoder.Json(T)` lowers to when `T` carries a predicate anywhere in it:
+ * the walk a slot of type `T` is gated by (language.md §1.3.3), answering the
+ * first predicate a value fails and where, or `undefined` when it passes. A
+ * `T` with no predicate lowers to the `"json"` sentinel instead.
+ */
+export type DecodeCheck = (v: unknown) => RefinementFailure | undefined;
+
+/** A request's `decode`: a sentinel naming the decoding, or the check above. */
+export type Decode = string | DecodeCheck;
+
+/** Whether `decode` parses the body as JSON — the sentinel, or a `Decoder.Json(T)` check. */
+export function decodesJson(decode: Decode): boolean {
+  return decode === "json" || typeof decode === "function";
+}
+
+/**
+ * Why `decode` refuses a parsed value, as the `.err`'s `message` says it —
+ * `decode failed: uuid at .keys["k1"]` — or `undefined` when it accepts it.
+ * The predicate and the path are spelled as a refused reducer write spells
+ * them (runtime.md §10.3.3), since the value is refused by the same check.
+ */
+export function decodeRefusal(decode: Decode | undefined, value: unknown): string | undefined {
+  const f = typeof decode === "function" ? decode(value) : undefined;
+  if (!f) return undefined;
+  const pred = f.args.length > 0 ? `${f.kind}(${f.args.join(", ")})` : f.kind;
+  const at = f.path.length > 0 ? ` at ${showRefinementPath(f.path)}` : "";
+  return `decode failed: ${pred}${at}`;
+}

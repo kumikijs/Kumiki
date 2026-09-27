@@ -64,6 +64,8 @@ Decoder.None         # discard the response body
 
 Response decoding is type-safe. If you specify `Decoder.Json(User)`, the response JSON is decoded into the `User` type. A body that fails to decode is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)).
 
+The decoded value is also checked against `T`: every predicate `T` carries, at every position it is written at — the check a write to a slot of type `T` gets ([§10.3.3](./runtime.md#_10-3-3-batching)). A value it refuses is the same `HttpError`, with a `message` that names the predicate and where the value failed it (`decode failed: uuid at .id`). Only the predicates are checked: a position where `T` carries none is taken as it arrives.
+
 ### 6.1.5 Common props (auto-applied)
 
 All HTTP effects automatically apply the following:
@@ -319,6 +321,8 @@ effect storage-clear  cap=storage.write
                       out=Result(Unit, Text)
 ```
 
+A stored value is always parsed as JSON. When the read's `Decoder.Json(T)` refuses what it parsed, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `message` starting `decode failed:`, as it is for a value that does not parse. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
+
 ### 6.7.3 Example
 
 ```kumiki snippet
@@ -352,7 +356,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` has the same shape. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`.
+`session-*` has the same shape. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`. A refused `Decoder.Json(T)` is `.err` on `session-read` and `indexed-read` as on `storage-read`; IndexedDB holds structured values, so nothing is parsed there, but the check still runs.
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read

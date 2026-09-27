@@ -3,7 +3,6 @@ import { carriesNestedRefinement } from "../refinement-positions.ts";
 import { type GenCtx, makeEvalCtx } from "./context.ts";
 import { refinementJs, refinementsOf, refinementToJs } from "./emit-type.ts";
 import { jsOfExpr } from "./expr.ts";
-import { nestedRefinements } from "./nested-refinements.ts";
 
 /**
  * How a write to a slot of type `t` is checked: by a walk of the value, when
@@ -21,7 +20,7 @@ export function slotGate(t: TypeExpr, gen: GenCtx): "walk" | "chain" | "none" {
 /** Emit the `_slots = { ... }` object literal body for all slot definitions. */
 export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
   const lines: string[] = [];
-  const nested = nestedRefinements(gen);
+  const nested = gen.refinements;
   lines.push("const _slots = {");
   for (const s of slots) {
     // A predicate written inside the type — a record field, a union payload, a
@@ -85,5 +84,5 @@ export function emitSlots(slots: SlotDef[], gen: GenCtx): string[] {
     lines.push(`  ${JSON.stringify(s.name)}: { ${meta.join(", ")} },`);
   }
   lines.push("};");
-  return [...nested.decls, ...lines];
+  return lines;
 }

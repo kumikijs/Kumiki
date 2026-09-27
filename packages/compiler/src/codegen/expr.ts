@@ -1,5 +1,6 @@
-import type { Expr, KeyKind, Pattern, Pos } from "../ast.ts";
+import type { Expr, KeyKind, Pattern, Pos, TypeExpr } from "../ast.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
+import { PRIM_TYPES } from "../parser.ts";
 import {
   addBind,
   bindRef,
@@ -17,6 +18,33 @@ export function reducerNameArg(e: Expr | undefined): string {
   if (e?.kind === "Ref") return e.name;
   if (e?.kind === "Variant") return e.name;
   return "";
+}
+
+/**
+ * The type a `Decoder.Json(T)` names. `T` is parsed in expression position, so
+ * `Map(TodoId, Todo)` arrives as variants and `{id: TodoId}` as a record
+ * literal; this reads them back as the type they spell. Anything else names no
+ * type the decoder can check, and `undefined` leaves the decode unchecked.
+ */
+function decodedType(e: Expr | undefined): TypeExpr | undefined {
+  if (e?.kind === "Variant") {
+    if (e.payload.length === 0) {
+      return PRIM_TYPES.has(e.name)
+        ? { kind: "TypePrim", name: e.name as "Text", pos: e.pos }
+        : { kind: "TypeRef", name: e.name, pos: e.pos };
+    }
+    const args = e.payload.map(decodedType);
+    if (!args.every((a): a is TypeExpr => a !== undefined)) return undefined;
+    return { kind: "TypeApp", name: e.name, args, pos: e.pos };
+  }
+  if (e?.kind === "RecordLit") {
+    const fields = e.fields.map((f) => ({ name: f.name, type: decodedType(f.value), pos: f.pos }));
+    if (!fields.every((f): f is { name: string; type: TypeExpr; pos: Pos } => !!f.type)) {
+      return undefined;
+    }
+    return { kind: "TypeRecord", fields, pos: e.pos };
+  }
+  return undefined;
 }
 
 /**
@@ -242,10 +270,21 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // `text` / `none`, everything else falling through to text. Emitting no
       // sentinel therefore means json, not "no decoding" — which is what made
       // the paren-less form parse a body that was meant to be discarded.
-      // The storage handler is a different matter: it never receives a decoder
-      // at all and always `JSON.parse`s, so `decode` on a `storage.*` effect is
-      // documented and dropped.
-      if (cn === "Decoder.Json") return `"json"`;
+      // The storage handlers always `JSON.parse`, and read `decode` only for
+      // the check below.
+      //
+      // `Decoder.Json(T)` for a `T` that carries a predicate anywhere in it is
+      // that check in place of the sentinel: the walk a slot of type `T` is
+      // gated by, answering the first predicate the decoded value fails. A
+      // handler that gets a function parses JSON and makes a refused value the
+      // effect's `.err` (http.md §6.1.4), so a restore of data the type refuses
+      // reaches the program as a failure it can handle, rather than as an `.ok`
+      // whose writes the reducer's batch then refuses whole (runtime.md
+      // §10.3.3). A `T` with no predicate keeps the sentinel, byte for byte.
+      if (cn === "Decoder.Json") {
+        const t = decodedType(e.args[0]);
+        return (t && ctx.gen.refinements.explainerOf(t)) ?? `"json"`;
+      }
       if (cn === "Decoder.Text") return `"text"`;
       if (cn === "Decoder.Bytes") return `"bytes"`;
       if (cn === "Decoder.None") return `"none"`;

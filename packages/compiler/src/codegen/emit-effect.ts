@@ -12,7 +12,7 @@ export function builtinEffectCall(eff: EffectDef, reqVar: string): string | null
   // handler from its feature module; the assembled runtime entry exports the
   // same names top-level for the monolith/inlining path (#71).
   if (eff.cap === "storage.read") {
-    return `storageRead(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
+    return `storageRead(${eff.mapRequest ? `{ key: ${reqVar}.key, decode: ${reqVar}.decode }` : reqVar})`;
   }
   if (eff.cap === "storage.write") {
     return `storageWrite(${
@@ -20,7 +20,7 @@ export function builtinEffectCall(eff: EffectDef, reqVar: string): string | null
     })`;
   }
   if (eff.cap === "session.read") {
-    return `sessionRead(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
+    return `sessionRead(${eff.mapRequest ? `{ key: ${reqVar}.key, decode: ${reqVar}.decode }` : reqVar})`;
   }
   if (eff.cap === "session.write") {
     return `sessionWrite(${

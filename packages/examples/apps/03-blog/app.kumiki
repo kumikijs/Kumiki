@@ -38,7 +38,7 @@ effect loadSession cap=storage.read
                    in=Unit
                    out=Result(Option(Session), Text)
                    policy=once
-                   map-request={key: "session", decode: Decoder.Json(Option(Session))}
+                   map-request={key: "session", decode: Decoder.Json(Session)}
 
 effect saveSession cap=storage.write
                    in=Option(Session)

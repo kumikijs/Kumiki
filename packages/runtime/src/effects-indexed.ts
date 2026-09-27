@@ -3,6 +3,7 @@
 // apps that never actually run an effect don't trigger an upgrade transaction.
 
 import type { EffectResult } from "./core.ts";
+import { type Decode, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 export type IndexedDbStore = { name: string; key: string; indexes?: string[] };
@@ -67,12 +68,18 @@ export async function indexedRead(input: unknown, cfg?: IndexedDbCfg): Promise<E
   // `indexed-read` (point lookup, returns Option) and `indexed-query` (range,
   // returns List). Dispatch by input shape — a `key` means point lookup.
   const x = input as { store: string; key?: unknown };
-  if (x.key !== undefined) return pointRead(x as { store: string; key: string }, cfg);
+  if (x.key !== undefined)
+    return pointRead(x as { store: string; key: string; decode?: Decode }, cfg);
   return indexedQuery(input, cfg);
 }
 
+/**
+ * A stored record is a structured clone, not JSON, so nothing is parsed; a
+ * `Decoder.Json(T)` whose `T` refuses the record makes the read an `err`, as a
+ * refused `storage.read` is (http.md §6.7.4).
+ */
 async function pointRead(
-  input: { store: string; key: string },
+  input: { store: string; key: string; decode?: Decode },
   cfg?: IndexedDbCfg,
 ): Promise<EffectResult> {
   if (!ensureCfg(cfg)) {
@@ -83,6 +90,8 @@ async function pointRead(
     const tx = db.transaction(input.store, "readonly");
     const value = await reqToPromise(tx.objectStore(input.store).get(input.key));
     if (value === undefined) return { kind: "ok", value: _stdlibCore.None };
+    const refused = decodeRefusal(input.decode, value);
+    if (refused) return { kind: "err", value: { message: refused } };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
     return { kind: "err", value: { message: String(e) } };
