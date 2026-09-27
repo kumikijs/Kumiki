@@ -231,10 +231,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // nowhere and a read that hands `undefined` to whatever comes next. It
     // landed on a branch parallel to the paragraph above, which had already
     // taken the budget to 59,000 for its own reason; together they fit under it.
+    //
+    // 60,000 from 59,000 (59,181 measured, from 58,927): a Set / Map key reads
+    // back as its declared type (stdlib.md §2.2.2). The checker names the key's
+    // representation and the key readers (`toList`, `mapKeys`, `mapEntries`,
+    // `Map.filter`) restore each key through `restoreKey`. A counter keys
+    // nothing and still ships them, because they sit in the stdlib module every
+    // app loads. It was measured on a base without the paragraph above.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(59_000);
+    expect(total).toBeLessThan(60_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
