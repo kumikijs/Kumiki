@@ -43,7 +43,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES } from "./builtins.ts";
+import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
@@ -1351,6 +1351,15 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
+/**
+ * Whether a positional argument of `name` is a child tile: a builtin that is
+ * not a value-arg builtin. A user tile's positional argument is its input, a
+ * value.
+ */
+function takesChildren(name: string): boolean {
+  return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -1423,6 +1432,22 @@ function checkTileCall(
     }
     if (isTileExpr(v)) {
       checkTileExpr(v, sym, errors, ctx);
+      continue;
+    }
+    // A positional argument of a builtin that takes children is a child, and
+    // `let` is not a tile (§1.7.1). It parses there as a value, which codegen
+    // renders as nothing, so the tile under it was neither checked nor shown.
+    // Nothing inside it is checked on top: a tile call there is read as a
+    // `fn` call, and would report a second, wrong diagnostic.
+    if (v.kind === "LetIn" && arg.name === undefined && takesChildren(t.name)) {
+      errors.push({
+        code: "E0128",
+        kind: "let-in-tile",
+        message:
+          "A `let` is not a tile: a tile body has no local bindings, so a `let` written as a " +
+          "child renders nothing. Write the value where it is used, or compute it in a `fn`",
+        pos: v.pos,
+      });
       continue;
     }
     checkExpr(v, sym, errors, ctx);

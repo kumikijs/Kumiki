@@ -510,6 +510,18 @@ The count is all the check compares. The `fn`'s parameter types are not checked 
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
 
+### E0128 `let-in-tile`
+
+A `let` is written as a child tile — a positional argument of a builtin that takes children (`column`, `row`, `card`, …). `let` is not a `tile-expr` ([Language §1.7.1](./language.md#_1-7-1-syntax)): a tile body has no local bindings ([§1.13](./language.md#_1-13-counterexamples)).
+
+> ``A `let` is not a tile: a tile body has no local bindings, so a `let` written as a child renders nothing. Write the value where it is used, or compute it in a `fn` ``
+
+In that position the parser reads a `let` as a value argument, and codegen renders a value argument of a container as nothing. So `column(let x = 42 in Card(x))` passed `check` and mounted an empty root, and the tile call under the `let` was never checked: `Card`'s argument was not compared with its `in=`, and a builtin there was looked up as a `fn` (E0116). The diagnostic is at the `let`, and nothing inside it is reported on top.
+
+A `let` where a value belongs is a value and is not reported: the content of a text builtin (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. As the whole tile body (`tile Foo = let x = 0 in …`) it is a parse error, since the body is a `tile-expr`.
+
+**Fix**: Write the value where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`

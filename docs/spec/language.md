@@ -648,6 +648,7 @@ pattern      ::= identifier
 - `( … )` is the **argument & children list**: positional child tiles (`column(A, B)`), value arguments (`heading("Hi")`), and named arguments (`button(text="Save", onClick=r)`, `input(bind=draft)`). A child tile or another tile call goes **here**.
 - `{ … }` is the **props block**: `key: value` pairs only — style/layout/ARIA props and event-handler bindings (`{pad: "lg", gap: "md"}`, `{todoId: $1}`, `{onClick: r}`). It contains **no tile calls and no children**. Writing a tile call inside `{ … }` (e.g. `link(to="/x") {text("Home")}`) is a parse error.
 - A tile's **label/content** is passed in `( … )`: it is the first **positional** value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) — a named argument is a prop wherever it is written, so `heading(level=2, title)` says `title` and `level` stays a prop — and a **named** arg for the interactive builtins (`button(text="Save")`, `link(to="/x", text="Home")`). The canonical place for a label is the `text=` **argument**, consistent across `button` and `link`. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; both compile to the same node.)
+- A `let` is not a `tile-expr`: a tile body has no local bindings. Written as a child — `column(let x = 42 in Card(x))` — it is [E0128](./errors.md#e0128-let-in-tile); write the value where it is used, or compute it in a `fn`. Where a value belongs (a text builtin's content, a user tile's input, a named argument) a `let` is an ordinary value.
 
 **Semantics of `when(cond, tile)`**:
 - `cond` is true → render `tile`
@@ -997,7 +998,7 @@ There is no reducer around these arguments either, so an `emit` expression is no
 
 ```kumiki snippet
 # ❌ local state
-tile Foo = let x = 0 in button(text=x.show)   # assignment inside a tile is not allowed (let binds an expression, but is not a substitute for a slot)
+tile Foo = let x = 0 in button(text=x.show)   # a tile body has no local bindings: a parse error here, E0128 as a child (let binds an expression, but is not a substitute for a slot)
 
 # ❌ direct effect call
 reducer r on=ui.click(B) do= http.get("/")   # emit required

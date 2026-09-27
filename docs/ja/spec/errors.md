@@ -488,6 +488,18 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 **修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
 
+### E0128 `let-in-tile`
+
+子 tile の位置 —— 子を取る builtin（`column`・`row`・`card` など）の位置引数 —— に `let` が書かれている。`let` は `tile-expr` ではない（[言語 §1.7.1](./language.md#_1-7-1-構文)）：tile 本体にはローカルな束縛がない（[§1.13](./language.md#_1-13-反例)）。
+
+> ``A `let` is not a tile: a tile body has no local bindings, so a `let` written as a child renders nothing. Write the value where it is used, or compute it in a `fn` ``
+
+この位置ではパーサが `let` を値の引数として読み、codegen はコンテナの値引数を何も描画しない。そのため `column(let x = 42 in Card(x))` は `check` を通り、空のルートをマウントしていた。`let` の下の tile 呼び出しも検査されなかった：`Card` の引数は `in=` と照合されず、そこに書いた builtin は `fn` として探された（E0116）。診断は `let` の位置に出し、中身について重ねて報告はしない。
+
+値の位置にある `let` は値であり、報告しない：テキスト系 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。tile 本体そのもの（`tile Foo = let x = 0 in …`）としては、本体が `tile-expr` なのでパースエラーになる。
+
+**修正**：値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`

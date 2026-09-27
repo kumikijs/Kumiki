@@ -84,6 +84,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | core |
+| [E0128](./errors.md#e0128-let-in-tile) | `let-in-tile` | tile | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
