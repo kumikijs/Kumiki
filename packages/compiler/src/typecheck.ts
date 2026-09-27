@@ -1,4 +1,3 @@
-import { fnScope } from "./fn-scope.ts";
 import {
   assignable,
   constructorArity,
@@ -61,6 +60,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { fnScope } from "./fn-scope.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
