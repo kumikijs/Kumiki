@@ -984,6 +984,12 @@ For an index, E0602 is raised when the receiver's type is known to be a `Set` �
 
 > `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
 
+A **`bind=` target** is written through the same way — it is the place the control writes to ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)) — and its steps are a path's, written without parentheses. A step written as a call names the value the call answers, not a place, so it is E0602 at the call, on any receiver:
+
+> `Cannot bind through ".get()": a bind target is a path, and a call is not a step of one — the unwrap step is written ".get"`
+
+Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
+
 **Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
 
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)

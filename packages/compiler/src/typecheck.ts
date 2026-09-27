@@ -1097,6 +1097,34 @@ const BIND_CONTROLS = new Set([
 ]);
 
 /**
+ * E0602 on a `bind=` target: a step written as a call. A bind target is the
+ * place the control writes to — a path (language.md §1.6.3, forms.md §5.1),
+ * whose steps are written without parentheses. `bind=d.get().title` names the
+ * value `.get()` answers, not a place in `d`, and the lowering, which reads
+ * only paren-free steps, dropped the whole bind without a word: the input
+ * rendered empty and wrote nowhere. The unwrap step is `.get`.
+ */
+function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const bind = t.args.find((a) => a.name === "bind");
+  let cur = bind?.value as Expr | undefined;
+  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
+    if (cur.kind === "MethodCall") {
+      const hint =
+        cur.method === "get" && cur.args.length === 0
+          ? ' — the unwrap step is written ".get"'
+          : " — a member derives a value, so there is no place in the receiver for the control to write";
+      errors.push({
+        code: "E0602",
+        kind: "unassignable-member",
+        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+        pos: cur.pos,
+      });
+    }
+    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+  }
+}
+
+/**
  * E0219: `strict` on a bind control kind (`BIND_CONTROLS`), with or without a
  * `bind` — it is not a prop of these tiles at all. forms.md §5.1.2 used to specify
  * `strict=false` — take a value the refinement refuses and turn a form-level
@@ -1406,6 +1434,7 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
+  checkBindTargetSteps(t, errors);
   checkToggleBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
