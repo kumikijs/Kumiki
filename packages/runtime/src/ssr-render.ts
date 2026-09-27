@@ -15,6 +15,7 @@
 
 import type { BindSegment, StyleDecl, TileNode, TileProps } from "./core.ts";
 import { attrValue, bindLabel, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
+import { gridTracks } from "./tiles-layout.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 
@@ -134,10 +135,10 @@ function baseDecls(node: TileNode): StyleDecl[] {
       return token ? [["font-size", token]] : [];
     }
     case "grid": {
-      const rows = gridTracks(node.props?.rows);
+      const { cols, rows } = gridTracks(node.props, pickBaseValue);
       return [
         ["display", "grid"],
-        ["grid-template-columns", gridTracks(node.props?.cols) ?? "repeat(3, 1fr)"],
+        ["grid-template-columns", cols],
         ...(rows ? ([["grid-template-rows", rows]] as StyleDecl[]) : []),
       ];
     }
@@ -224,13 +225,6 @@ function overlayLayerStyle(align: string): string {
     ["justify-content", has("left") ? "flex-start" : has("right") ? "flex-end" : "center"],
   ];
   return decls.map(([k, v]) => `${k}: ${v}`).join("; ");
-}
-
-/** A grid track list: a count divides the axis equally, a string is CSS already. */
-function gridTracks(v: unknown): string | undefined {
-  if (typeof v === "number") return `repeat(${v}, 1fr)`;
-  if (typeof v === "string") return v;
-  return undefined;
 }
 
 /**

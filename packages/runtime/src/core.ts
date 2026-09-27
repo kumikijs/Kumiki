@@ -5160,18 +5160,34 @@ export const pickBaseValue: ResponsivePick = (raw) => {
   return asScalar((raw as Record<string, unknown>).base);
 };
 
-/** The largest matching breakpoint, falling back to the base. */
-const pickForViewport: ResponsivePick = (raw) => {
+/** style.md §4.2's breakpoints, for a theme that declares none of its own. */
+const DEFAULT_BREAKPOINTS: Record<string, ThemeValue> = {
+  sm: "640px",
+  md: "768px",
+  lg: "1024px",
+  xl: "1280px",
+};
+
+/**
+ * The largest matching breakpoint, falling back to the base. The breakpoints
+ * are the active theme's (style.md §4.5), over the §4.2 defaults for any key
+ * it leaves out, so a theme can move `md` or add a key of its own.
+ */
+export const pickForViewport: ResponsivePick = (raw) => {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
   const m = raw as Record<string, unknown>;
-  const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
-    ["xl", "(min-width: 1280px)"],
-    ["lg", "(min-width: 1024px)"],
-    ["md", "(min-width: 768px)"],
-    ["sm", "(min-width: 640px)"],
-  ];
-  for (const [bp, q] of order) {
-    if (m[bp] !== undefined && window.matchMedia(q).matches) return asScalar(m[bp]);
+  const declared = currentTheme()?.breakpoints;
+  const bps = {
+    ...DEFAULT_BREAKPOINTS,
+    ...(declared && typeof declared === "object" ? declared : {}),
+  };
+  const widest = Object.entries(bps)
+    .map(([k, w]): [string, string] => [k, typeof w === "number" ? `${w}px` : String(w)])
+    .sort((a, b) => Number.parseFloat(b[1]) - Number.parseFloat(a[1]));
+  for (const [bp, w] of widest) {
+    if (m[bp] !== undefined && window.matchMedia(`(min-width: ${w})`).matches) {
+      return asScalar(m[bp]);
+    }
   }
   return asScalar(m.base);
 };

@@ -261,6 +261,8 @@ grid(A, B, C, D) {
 
 The keys are `base` plus the keys of theme.breakpoints (`sm`, `md`, `lg`, `xl`).
 
+The breakpoints are the **active theme's**: its `breakpoints` over the [§4.2](#_4-2-design-tokens) defaults (`sm` 640px, `md` 768px, `lg` 1024px, `xl` 1280px) for any key it leaves out, so a theme can move `md` or add a key of its own (`wide: "1800px"`). A map resolves to the value of the widest breakpoint whose minimum width the viewport reaches, and to `base` below all of them. A grid's `cols` and `rows` take a map the same way as `gap` / `pad`. Server rendering has no viewport and serves `base` ([runtime §10.6.1](./runtime.md#_10-6-1-ssr)).
+
 ---
 
 ## 4.6 Dark Mode
