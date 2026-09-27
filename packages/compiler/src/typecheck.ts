@@ -44,7 +44,12 @@ import {
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
 import { BUILTIN_TILES } from "./builtins.ts";
-import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
+import {
+  BUILTIN_EFFECT_CAPS,
+  BUILTIN_EFFECTS,
+  type BuiltinEffect,
+  STANDARD_CAPABILITIES,
+} from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
   FRAGMENT_ARGUMENTS,
@@ -3718,7 +3723,8 @@ function checkEmitTarget(
   pos: Pos,
 ): void {
   const eff = sym.effects.get(effect);
-  if (!eff && !BUILTIN_EFFECT_CAPS.has(effect)) {
+  const builtin = eff ? undefined : BUILTIN_EFFECTS.get(effect);
+  if (!eff && !builtin) {
     errors.push({
       code: "E0104",
       kind: "undef-effect",
@@ -3727,11 +3733,11 @@ function checkEmitTarget(
     });
     return;
   }
-  // A built-in effect has no `effect` declaration to read a `cap=` off, so the
-  // requirement comes from the table instead — the DOM runtime gates it either
+  // A built-in effect has no `effect` declaration to read a `cap=` or an `in=`
+  // off, so both come from the table instead — the DOM runtime gates it either
   // way. `null` is the one entry that asks for nothing; an empty `cap=` on a
   // declared effect is not that, and stays reportable.
-  const cap = eff ? eff.cap : (BUILTIN_EFFECT_CAPS.get(effect) ?? null);
+  const cap = eff ? eff.cap : (builtin?.cap ?? null);
   if (cap !== null && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
@@ -3740,12 +3746,13 @@ function checkEmitTarget(
       pos,
     });
   }
-  if (!eff) return;
+  const inType = eff ? eff.inType : builtin?.in;
+  if (!inType) return;
   // `in=Unit` is the "no input" declaration, so the effect takes no argument;
   // every other `in=` takes exactly one. Codegen destructures the argument, so
   // a missing one is `Cannot destructure property 'key' of 'input'` at the
   // first dispatch rather than a diagnostic.
-  const wants = isPrimNamed(eff.inType, sym, "Unit") ? 0 : 1;
+  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",
@@ -3759,7 +3766,7 @@ function checkEmitTarget(
   if (!arg) return;
   // The EffectId case keeps its own wording: the fix is never "convert the
   // value" but "pass the handle an earlier emit returned".
-  if (isPrimNamed(eff.inType, sym, "EffectId")) {
+  if (isPrimNamed(inType, sym, "EffectId")) {
     const actual = inferType(arg, sym, ctx);
     if (actual && !isPrimNamed(actual, sym, "EffectId")) {
       errors.push({
@@ -3771,7 +3778,36 @@ function checkEmitTarget(
     }
     return;
   }
-  checkAgainst(arg, eff.inType, sym, errors, ctx, "E0202");
+  const declared = builtin ? builtinInputFor(builtin, arg, sym, ctx) : inType;
+  checkAgainst(arg, declared, sym, errors, ctx, "E0202");
+}
+
+/**
+ * The `in=` a built-in effect holds `arg` to: its record with the fields a call
+ * may leave out removed, when `arg` leaves them out (stdlib.md §2.6). A field
+ * typed `Option(T)` may always be omitted and reads as `None`; the entry's
+ * `defaulted` ones (`navigate`'s `params` / `query`, routing.md §3.7) default.
+ * Which fields `arg` has is read off a record literal, or off its type when
+ * that is a record; anything else is held to the whole record.
+ */
+function builtinInputFor(builtin: BuiltinEffect, arg: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr {
+  const declared = builtin.in;
+  if (declared.kind !== "TypeRecord") return declared;
+  const actual = arg.kind === "RecordLit" ? null : unaliasType(inferType(arg, sym, ctx), sym);
+  const written =
+    arg.kind === "RecordLit"
+      ? new Set(arg.fields.map((f) => f.name))
+      : actual?.kind === "TypeRecord"
+        ? new Set(actual.fields.map((f) => f.name))
+        : null;
+  if (written === null) return declared;
+  const omittable = (f: { name: string; type: TypeExpr }): boolean =>
+    (builtin.defaulted ?? []).includes(f.name) ||
+    (f.type.kind === "TypeApp" && f.type.name === "Option");
+  return {
+    ...declared,
+    fields: declared.fields.filter((f) => written.has(f.name) || !omittable(f)),
+  };
 }
 
 // Closed set of theme token namespaces (spec/style.md §4.2). The token name

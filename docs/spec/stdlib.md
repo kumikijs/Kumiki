@@ -595,13 +595,15 @@ The standard effect corresponding to each capability. If the capability is in `a
 
 The converse is checked too: emitting one of these without its capability in `app.caps` is [E0301](./errors.md#e0301-missing-capability). They have no `effect` declaration to read a `cap=` off — the runtime registers them itself — so the requirement comes from the capability each is registered behind, written with each effect below. This section lists all of them, and it is the list the compiler holds.
 
+The `in=` written with each is held the same way a declared effect's is: an `emit` passes one argument, or none when `in=` is `Unit` ([E0213](./errors.md#e0213-call-arity-mismatch)), and the argument is checked against the `in=` ([E0202](./errors.md#e0202-emit-arg-type-mismatch)) — `emit navigate("/about")` is a `Text` where a record is taken. A record argument may leave a field out when its type is `Option(T)`, which then reads as `None` (`toast({kind: "info", text: "Saved"})`), and where this section or the one it points to gives a default: `navigate`'s and `navigate-replace`'s `params` and `query` default to `{}` ([Routing §3.7](./routing.md#_3-7-query-parameters)), and `confirm`'s `message` to none. Every other field is required, and a field the `in=` does not have is [E0215](./errors.md#e0215-unknown-record-field).
+
 → For the detailed specification, see [HTTP / Storage](./http.md).
 
 ### 2.6.1 Navigation
 
 ```kumiki fragment
-effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text)}  out=Unit
-effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text)} out=Unit
+effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text), query: Map(Text, Text)}  out=Unit
+effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text), query: Map(Text, Text)} out=Unit
 effect navigate-back   cap=nav.back  in=Unit  out=Unit
 ```
 
@@ -632,7 +634,7 @@ The one standard effect with no capability: it moves the viewport of the page th
 ### 2.6.5 Confirm
 
 ```kumiki fragment
-effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
+effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
 Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. → [Lifecycle §7.6](./lifecycle.md#_7-6-confirmation-dialogs).

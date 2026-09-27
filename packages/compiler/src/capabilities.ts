@@ -1,7 +1,11 @@
-// Capability model: the standard set (docs/spec/stdlib.md §2.5) plus parsing for the
-// `kumiki.caps.json` manifest that registers project-specific capabilities.
+// Capability model: the standard set (docs/spec/stdlib.md §2.5), the standard
+// effects gated on it (§2.6), and parsing for the `kumiki.caps.json` manifest
+// that registers project-specific capabilities.
 // Pure (no I/O) so it stays browser-safe; the file-resolving wrapper lives in
 // the node-only submodule (`@kumikijs/compiler/node`).
+
+import type { TypeExpr } from "./ast.ts";
+import { synthType } from "./stdlib-types.ts";
 
 /** Capabilities that may appear in `app.caps` without any manifest. */
 export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
@@ -35,26 +39,67 @@ export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
   "socket.send",
 ]);
 
+const { prim, ref, app, record } = synthType;
+const text = prim("Text");
+const textMap = app("Map", text, text);
+
+/** A standard effect: the capability it is gated on and the input it takes. */
+export type BuiltinEffect = {
+  /** `null` for the one that needs none. */
+  readonly cap: string | null;
+  /** Its `in=`, as stdlib.md §2.6 declares it. */
+  readonly in: TypeExpr;
+  /**
+   * Record fields a call may leave out beside the `Option(T)` ones, which may
+   * always be: `navigate`'s `params` and `query` default to `{}` (routing.md
+   * §3.7), and `confirm`'s `message` to none.
+   */
+  readonly defaulted?: readonly string[];
+};
+
+const navigation: BuiltinEffect["in"] = record({ path: text, params: textMap, query: textMap });
+
 /**
- * The effects the runtime registers itself (docs/spec/stdlib.md §2.6), mapped
- * to the capability each one is gated on — `null` for the one that needs none.
+ * The effects the runtime registers itself (docs/spec/stdlib.md §2.6): what
+ * each is gated on and what it takes, in one table.
  *
  * They are not `effect` declarations, so nothing in a program says what they
- * require; without this table the capability check has no capability to look
- * at and passes. The runtime has no such gap: an undeclared capability there
- * refuses the effect and reports the refusal (runtime.md §10.4.2), so
- * `emit navigate(…)` under `caps=[]` compiles and mounts, and the first sign
- * it cannot work is a panic at run time.
+ * require or accept. Without the capability the check had nothing to look at
+ * and passed — the runtime refuses the effect and reports the refusal
+ * (runtime.md §10.4.2), so `emit navigate(…)` under `caps=[]` compiled and the
+ * first sign it could not work was a panic at run time. Without the input type
+ * `emit navigate("/about")` compiled too, and the router read `.path` off a
+ * string and never moved. An entry cannot have one without the other.
  */
-export const BUILTIN_EFFECT_CAPS: ReadonlyMap<string, string | null> = new Map([
-  ["navigate", "nav.push"],
-  ["navigate-replace", "nav.replace"],
-  ["navigate-back", "nav.back"],
-  ["scroll-to", null],
-  ["toast", "notification.show"],
-  ["confirm", "notification.show"],
-  ["log", "log.write"],
+export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<string, BuiltinEffect>([
+  // `query` is routing.md §3.7's extension of the §2.6.1 `in=`.
+  ["navigate", { cap: "nav.push", in: navigation, defaulted: ["params", "query"] }],
+  ["navigate-replace", { cap: "nav.replace", in: navigation, defaulted: ["params", "query"] }],
+  ["navigate-back", { cap: "nav.back", in: prim("Unit") }],
+  ["scroll-to", { cap: null, in: record({ x: prim("Int"), y: prim("Int") }) }],
+  [
+    "toast",
+    {
+      cap: "notification.show",
+      in: record({ kind: text, text, duration: app("Option", ref("Duration")) }),
+    },
+  ],
+  [
+    "confirm",
+    {
+      cap: "notification.show",
+      // `message` is lifecycle.md §7.6's; left out, the dialog shows the title.
+      in: record({ title: text, message: text, onYes: ref("Reducer"), onNo: ref("Reducer") }),
+      defaulted: ["message"],
+    },
+  ],
+  ["log", { cap: "log.write", in: record({ level: text, message: text, data: textMap }) }],
 ]);
+
+/** Each standard effect's capability, read off `BUILTIN_EFFECTS`. */
+export const BUILTIN_EFFECT_CAPS: ReadonlyMap<string, string | null> = new Map(
+  [...BUILTIN_EFFECTS].map(([name, e]) => [name, e.cap]),
+);
 
 export type CapabilityManifest = { capabilities: string[] };
 

@@ -538,7 +538,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 ### E0202 `emit-arg-type-mismatch`
 
-`emit` の引数が、その effect の宣言する `in=` 型と一致しない。
+`emit` の引数が、その effect の宣言する `in=` 型と一致しない。標準 effect（`navigate`・`toast`・`log` など）には `effect` 宣言が無く、[標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が与える `in=` と、その節が省略を認めるフィールドとで照合される：`emit navigate("/about")` はこのコードである。
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`

@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "label": "starts on the home page",
+      "expect": { "noErrors": true, "domIncludes": ["Home page", "notices: 0"] }
+    },
+    {
+      "label": "toast runs with its duration left out",
+      "do": { "clickText": "Notify" },
+      "expect": { "noErrors": true, "state": { "notices": 1 } }
+    },
+    {
+      "label": "scroll-to takes its record",
+      "do": { "clickText": "Top" },
+      "expect": { "noErrors": true }
+    },
+    {
+      "label": "navigate with only a path moves the route",
+      "do": { "clickText": "Go" },
+      "expect": { "noErrors": true, "domIncludes": ["About page"] }
+    },
+    {
+      "label": "navigate-replace with a query and no params moves it back",
+      "do": { "clickText": "Home" },
+      "expect": { "noErrors": true, "domIncludes": ["Home page"] }
+    }
+  ]
+}

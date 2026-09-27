@@ -565,13 +565,15 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 逆向きも検査される：これらを capability 無しで emit すると [E0301](./errors.md#e0301-missing-capability) になる。これらには `cap=` を読み取る `effect` 宣言が無い — ランタイム自身が登録するものだからである — ので、要求元は各 effect が登録されているケイパビリティであり、以下の各 effect に併記してある。この節はその全件であり、コンパイラが保持している一覧そのものである。
 
+各 effect に併記した `in=` も、宣言された effect のものと同じように照合される：`emit` は引数を 1 つ渡す（`in=` が `Unit` なら渡さない —— [E0213](./errors.md#e0213-call-arity-mismatch)）、そして引数は `in=` と照合される（[E0202](./errors.md#e0202-emit-arg-type-mismatch)）—— `emit navigate("/about")` はレコードを取る位置への `Text` である。レコードの引数は、型が `Option(T)` のフィールドを省略してよく、その場合は `None` として読まれる（`toast({kind: "info", text: "Saved"})`）。この節またはこの節が指す先で既定値が与えられているフィールドも省略してよい：`navigate` と `navigate-replace` の `params` と `query` は `{}`（[ルーティング §3.7](./routing.md#_3-7-query-parameters)）、`confirm` の `message` は無し。それ以外のフィールドは必須であり、`in=` に無いフィールドは [E0215](./errors.md#e0215-unknown-record-field) である。
+
 → 詳細仕様は [HTTP / Storage](./http.md)。
 
 ### 2.6.1 ナビゲーション
 
 ```kumiki fragment
-effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text)}  out=Unit
-effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text)} out=Unit
+effect navigate    cap=nav.push     in={path: Text, params: Map(Text, Text), query: Map(Text, Text)}  out=Unit
+effect navigate-replace cap=nav.replace in={path: Text, params: Map(Text, Text), query: Map(Text, Text)} out=Unit
 effect navigate-back   cap=nav.back  in=Unit  out=Unit
 ```
 
@@ -602,7 +604,7 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 ### 2.6.5 確認ダイアログ
 
 ```kumiki fragment
-effect confirm     cap=notification.show  in={title: Text, onYes: Reducer, onNo: Reducer}  out=Unit
+effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: Reducer, onNo: Reducer}  out=Unit
 ```
 
 ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。

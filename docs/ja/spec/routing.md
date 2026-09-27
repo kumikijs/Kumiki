@@ -248,7 +248,7 @@ tile SettingsLayout
 
 ---
 
-## 3.7 クエリパラメータ
+## 3.7 クエリパラメータ {#_3-7-query-parameters}
 
 クエリは `route.query` から読む。書き込みは `navigate` の `params` には含まれず、別フィールド `query` で渡す。
 

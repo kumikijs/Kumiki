@@ -560,7 +560,7 @@ The identity is read at the **top level** of each operand only, which is where t
 
 ### E0202 `emit-arg-type-mismatch`
 
-An `emit` argument does not match the effect's declared `in=` type.
+An `emit` argument does not match the effect's declared `in=` type. A standard effect (`navigate`, `toast`, `log`, …) has no `effect` declaration, and is held to the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it, with the fields that section lets a call leave out: `emit navigate("/about")` is this code.
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
