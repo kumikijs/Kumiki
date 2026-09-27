@@ -401,19 +401,35 @@ app A
   });
 });
 
-// The gap the `ui.input` row had, in three more rows: the fix directly above
-// moved `input` alone and left `key` / `focus` / `blur` listing the same
-// `input` / `textarea` / `button` (/ `select`) they always had.
+// The gap the `ui.input` row had, in three more rows: `key` / `focus` / `blur`
+// listed `input` / `textarea` / `button` (/ `select`) and nothing else.
 //
-// The runtime attaches those three to whatever element a tile produced, and a
-// `<div contenteditable="true">` is an editing host — focusable without a
-// `tabindex` — so all three reach it, which is why writing the handler on the
-// tile already worked. What the rows list is where a *selector* lands, so an
-// omission there is a gap in the table, not a fact about the DOM, and W0212
-// reported it as the latter.
-describe("a ui.key / ui.focus / ui.blur selector reaches an editable", () => {
-  const source = (ev: string, tile: string) => `slot note : Text = ""
-slot hits : Int = 0
+// The runtime attaches those three to whatever element a tile produced, so a
+// selector lands wherever that element receives the event. `editable` (#367)
+// was the first kind found missing: a `<div contenteditable="true">` is
+// focusable, which is why writing the handler on the tile already worked.
+// `slider`, `link` and `select` (#456) are the same case — an
+// `<input type="range">`, an `<a href>` and a `<select>` are all focusable —
+// and `check` / `radio` / `switch` are half of it: their listener sits on a
+// `<label>` that a bubbled `keydown` reaches and a `focus` / `blur` never does.
+// W0212 reported every one of these as "no descendant fires the event".
+describe("a ui.key / ui.focus / ui.blur selector reaches every kind that receives it", () => {
+  const PRELUDE = `type Size = S | M
+fn sizes() -> List({label: Text, value: Size})
+   = [{label: "Small", value: S}, {label: "Medium", value: M}]
+slot note : Text = ""
+slot vol  : Int  = 5
+slot size : Size = S
+slot done : Bool = false
+slot hits : Int  = 0`;
+
+  type UiEv = "key" | "focus" | "blur";
+  const HANDLER = { key: "onKeyDown", focus: "onFocus", blur: "onBlur" } as const satisfies Record<
+    UiEv,
+    string
+  >;
+
+  const source = (ev: string, tile: string) => `${PRELUDE}
 reducer hit on=ui.${ev}(Ed) do= hits := hits + 1
 tile Ed = ${tile}
 tile App = column(Ed, text(hits.show))
@@ -424,15 +440,16 @@ app A
 `;
 
   /**
-   * The same program with the handler written on the tile instead. `/404`
-   * gets a tile of its own here, unlike the fixtures above: a tile body is
-   * inlined once per route that reaches it, so the two-route shape would make
-   * an occurrence count track the route table rather than the emission.
+   * The handler written on the tile AND a selector aimed at it, on the same
+   * tile. `/404` gets a tile of its own here, unlike the fixtures above: a
+   * tile body is inlined once per route that reaches it, so the two-route
+   * shape would make an occurrence count track the route table rather than
+   * the emission.
    */
-  const explicit = (handler: string) => `slot note : Text = ""
-slot hits : Int = 0
-reducer hit on=app.start do= hits := hits + 1
-tile Ed       = editable(bind=note, ${handler}=hit)
+  const explicit = (ev: UiEv, tile: string) => `${PRELUDE}
+reducer hitExplicit on=app.start   do= hits := hits + 1
+reducer hitSelector on=ui.${ev}(Ed) do= hits := hits + 2
+tile Ed       = ${tile.replace(/\)(?=[^)]*$)/, `, ${HANDLER[ev]}=hitExplicit)`)}
 tile App      = column(Ed, text(hits.show))
 tile NotFound = text("nope")
 app A
@@ -442,10 +459,9 @@ app A
 `;
 
   /** `tile Card = box(Ed)` — the selector names the container, not the leaf. */
-  const throughAncestor = (ev: string) => `slot note : Text = ""
-slot hits : Int = 0
+  const throughAncestor = (ev: string, tile: string) => `${PRELUDE}
 reducer hit on=ui.${ev}(Card) do= hits := hits + 1
-tile Ed   = editable(bind=note)
+tile Ed   = ${tile}
 tile Card = box(Ed)
 tile App  = column(Card, text(hits.show))
 app A
@@ -454,58 +470,88 @@ app A
     init   = []
 `;
 
-  const cases: ReadonlyArray<[string, string]> = [
-    ["key", "onKeyDown"],
-    ["focus", "onFocus"],
-    ["blur", "onBlur"],
+  // Each kind, and the events that reach the element its renderer returns:
+  // every focusable root takes all three, a label-wrapped control `key` only.
+  const ALL = ["key", "focus", "blur"] as const;
+  const kinds: ReadonlyArray<{ kind: string; tile: string; evs: readonly UiEv[] }> = [
+    { kind: "input", tile: "input(bind=note)", evs: ALL },
+    { kind: "textarea", tile: "textarea(bind=note)", evs: ALL },
+    { kind: "button", tile: 'button(text="b")', evs: ALL },
+    { kind: "editable", tile: "editable(bind=note)", evs: ALL },
+    { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ALL },
+    { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
+    { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
+    { kind: "check", tile: "check(value=done)", evs: ["key"] },
+    { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
+    { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
   ];
 
-  for (const [ev, handler] of cases) {
-    it(`says nothing about ui.${ev}`, () => {
-      expect(codes(source(ev, "editable(bind=note)"))).toEqual([]);
-    });
+  for (const { kind, tile, evs } of kinds) {
+    for (const ev of evs) {
+      const handler = HANDLER[ev];
 
-    it(`emits the ${handler} the ui.${ev} subscription asked for`, () => {
-      expect(build(source(ev, "editable(bind=note)"))).toContain(`${handler}: _h("hit")`);
-    });
+      it(`says nothing about ui.${ev} on ${kind}`, () => {
+        expect(codes(source(ev, tile))).toEqual([]);
+      });
 
+      it(`emits the ${handler} the ui.${ev} subscription on ${kind} asked for`, () => {
+        expect(build(source(ev, tile))).toContain(`${handler}: _h("hit")`);
+      });
+
+      it(`merges a ${handler} written on ${kind} with a ui.${ev} selector on it, once`, () => {
+        // §1.6.4: an explicit handler and a selector on the same tile chain
+        // into one listener, explicit first. Before the row listed the kind,
+        // the selector half was dropped and this read `_h("hitExplicit")`.
+        // Emitted once: both loops in `propsFor` see the tile, and two
+        // listeners side by side would run each reducer twice.
+        const js = build(explicit(ev, tile));
+        const merged = `${handler}: _h("hitExplicit", "hitSelector")`;
+        expect(js.split(merged)).toHaveLength(2);
+        expect(js).not.toMatch(new RegExp(`${handler}: _h\\("hitExplicit"\\)`));
+      });
+
+      it(`lifts ui.${ev} through a container whose leaf is ${kind}`, () => {
+        // `focus` / `blur` do not bubble, so a handler that landed on the `box`
+        // would be a dead listener both `check` and `build` accept.
+        expect(codes(throughAncestor(ev, tile))).toEqual([]);
+        expect(build(throughAncestor(ev, tile))).toContain(`${handler}: _h("hit")`);
+      });
+    }
+  }
+
+  for (const ev of ALL) {
+    const handler = HANDLER[ev];
     it(`still reports a tile that fires no ${ev} event, and still drops it`, () => {
       // The control for each row: without it, dropping the check entirely
-      // would pass the two above. Both halves, because "silently dropped" is
-      // a claim about the warning AND about the handler — a change that kept
-      // warning while wiring the listener anyway would pass on the code alone.
+      // would pass the rows above. Both halves, because "silently dropped" is
+      // a claim about the warning AND about the handler.
       expect(codes(source(ev, "box(text(note))"))).toEqual(["W0212"]);
       expect(build(source(ev, "box(text(note))"))).not.toContain(`${handler}: _h("hit")`);
     });
-
-    it(`keeps emitting a ${handler} written on the tile itself`, () => {
-      // The evidence that the event reaches an editable at all is that this
-      // spelling already worked — and it was pinned nowhere. It also changed
-      // code path here: `propsFor` used to reach it only through the
-      // explicit-flush loop, and now the lift loop finds it too. Once,
-      // whichever loop produced it — the two emitting it side by side is the
-      // failure this count exists for.
-      const js = build(explicit(handler));
-      expect(js).toContain(`${handler}: _h("hit")`);
-      expect(js.match(new RegExp(`${handler}: _h\\("hit"\\)`, "g"))).toHaveLength(1);
-    });
-
-    it(`lifts ui.${ev} through a container whose leaf is the editable`, () => {
-      // `focus` / `blur` do not bubble, so a handler that landed on the `box`
-      // would be a dead listener both `check` and `build` accept. The checker
-      // walks into the referenced tile, and codegen lifts through the same
-      // edge — newly true for `editable`, and the place those two would come
-      // apart again.
-      expect(codes(throughAncestor(ev))).toEqual([]);
-      expect(build(throughAncestor(ev))).toContain(`${handler}: _h("hit")`);
-    });
   }
 
-  it("leaves ui.change alone, which is the rule rather than the same gap", () => {
+  for (const kind of ["check", "radio", "switch"]) {
+    for (const ev of ["focus", "blur"] as const) {
+      it(`reports ui.${ev} on ${kind}, whose label never receives it`, () => {
+        // The other half of the label-wrapped case, and the rule rather than
+        // a gap: the listener is on the `<label>`, and `focus` / `blur` from
+        // the inner `<input>` do not bubble to it.
+        const tile = kind === "radio" ? 'radio(group="g", selected=done)' : `${kind}(value=done)`;
+        expect(codes(source(ev, tile))).toEqual(["W0212"]);
+        expect(build(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
+      });
+    }
+  }
+
+  it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {
     // The row a reader expects to move with these three. It must not: a
     // `<div contenteditable>` fires no `change` event at all, so there is
     // nothing for a selector to reach and the warning is true.
     expect(codes(source("change", "editable(bind=note)"))).toEqual(["W0212"]);
+  });
+
+  it("leaves ui.click on a link alone: the link reserves click for navigation", () => {
+    expect(codes(source("click", 'link(to="/", text="home")'))).toEqual(["W0212"]);
   });
 });
 
