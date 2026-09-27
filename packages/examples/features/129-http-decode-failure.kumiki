@@ -1,0 +1,34 @@
+# Feature (http.md §6.1.4 / §6.5): a response that arrived but does not decode
+# is an `HttpError` with the response's own status, and it is not retried.
+#
+# The server below accepts the order (201) but answers with an HTML page, so
+# `Decoder.Json(Order)` fails. The request was delivered, so it is neither a 5xx
+# nor a connection error, and `retry=` leaves it alone: one POST, and `.err`
+# sees `status 201` with the undecodable text in `body`. It used to come back as
+# `status 0`, the connection-error value, and was sent three times.
+#
+# `smoke` makes the request through the real HTTP path against
+# `129-http-decode-failure.http.json`.
+
+type Order = {id: Text}
+
+slot status : Text = "idle"
+
+effect placeOrder cap=http.post
+                  in=Text
+                  out=Result(Order, HttpError)
+                  retry=exponential(3, 50ms, 2.0)
+                  map-request={url: "/orders", body: {sku: $1}, decode: Decoder.Json(Order)}
+
+reducer buy     on=ui.click(BuyBtn)        do= emit placeOrder("book")
+reducer ordered on=placeOrder.ok($o, _)    do= status := "ordered " + $o.id
+reducer failed  on=placeOrder.err($e, _)   do= status := "failed with status " + $e.status.show
+
+tile BuyBtn = button(text="Buy") {id: "buy"}
+
+tile App = column(BuyBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app HttpDecodeFailure
+    caps   = [http.post]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
