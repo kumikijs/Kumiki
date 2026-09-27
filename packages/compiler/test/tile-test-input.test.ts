@@ -206,30 +206,31 @@ tile Host = column(Card({label: "x"}))`,
     expect(codes(src).sort()).toEqual(["E0213", "E0714"]);
   });
 
-  it("still reports when the given is not a record at all", () => {
-    // Nothing is read out of it, so the argument is as absent as the slots the
-    // author meant to seed. Only the count is this rule's to answer.
+  it("leaves a given that is not a record at all to E0713", () => {
+    // Nothing is read out of it — not the argument, not the slots. That is the
+    // one mistake, reported at the clause; counting the argument absent as
+    // well would name it twice, as with the E0714 above.
     expect(
-      messages(
+      codes(
         app(`test t =
     tile-test Card
         given  = 42
         expect = text("x")`),
       ),
-    ).toEqual([`Tile "Card" expects 1 argument(s) but got 0`]);
+    ).toEqual(["E0713"]);
   });
 
-  it("says nothing about a non-record given to a target that declares no in=", () => {
-    // The count agrees — none wanted, none written. That the `slots` setup is
-    // dropped with it is a `given` shape question, and not this rule's.
+  it("reports a non-record given to a target that declares no in=, too", () => {
+    // The count agrees — none wanted, none written — but the `slots` setup is
+    // dropped with it, which is the `given` shape's question.
     expect(
-      diagnose(
+      codes(
         app(`test t =
     tile-test Host
         given  = 42
         expect = column(text("x"))`),
       ),
-    ).toEqual([]);
+    ).toEqual(["E0713"]);
   });
 
   it("checks a reducer-test's target with none of this — it has no in= to declare", () => {
@@ -316,13 +317,7 @@ tile Host = column(Card({label: "x"}))`,
     ).toEqual([]);
   });
 
-  it("lets a `()` through, as every other call site does — known gap, see #427", () => {
-    // `checkAgainst` accepts the unit literal against any declared type, so
-    // this one value reaches the runtime and the `$1.label` read throws the
-    // bare TypeError with no position. It is not a tile-test defect: the same
-    // `()` written as the tile call `Card(())` passes `check` too and dies on
-    // mount, which `kumiki smoke` catches. Pinned so the day #427 closes, this
-    // is the test that says the tile-test path came with it.
+  it("refuses a `()` where the target declares a record, as a tile call does", () => {
     const src = app(
       `test t =
     tile-test Card
@@ -333,7 +328,11 @@ tile Host = column(Card({label: "x"}))`,
 tile Card in={label: Text} = text($1.label)
 tile Host = column(Card({label: "x"}))`,
     );
-    expect(diagnose(src)).toEqual([]);
+    const d = diagnose(src);
+    expect(d.map((e) => `${e.code} ${e.message}`)).toEqual([
+      "E0201 Expected {label: Text} but got Unit",
+    ]);
+    expect(d[0] && textAt(src, d[0])).toMatch(/^\(\)\}/);
   });
 
   it("leaves the count to E0213 rather than typing an argument that is not there", () => {

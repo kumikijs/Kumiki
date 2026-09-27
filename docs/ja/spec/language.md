@@ -760,6 +760,8 @@ fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
 
+式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
+
 ---
 
 ## 1.9 式言語

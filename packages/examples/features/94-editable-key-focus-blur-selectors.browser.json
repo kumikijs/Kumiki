@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "initial render — a contenteditable div whose tabIndex reads -1: it is in no tab order, and is focusable anyway because it is an editing host. That is the whole premise these three lift rows rest on, and the next step is what proves it",
+      "label": "initial render — a contenteditable div whose tabIndex IDL attribute reads -1 (the reflection default, which says nothing about the tab order), and which is focusable because it is an editing host. That is the whole premise these three lift rows rest on, and the next step is what proves it",
       "expect": {
         "noErrors": true,
         "state": { "keys": 0, "focuses": 0, "blurs": 0 },

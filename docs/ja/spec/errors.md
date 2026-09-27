@@ -62,6 +62,7 @@ type KumikiError = {
 | `E0122` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図。 |
 | `E0123` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図 — E0122 と同じであり、その規則をトリガに適用したものだからである。 |
 | `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
+| `E0220` | なし | フォールバックの `in=` は決まっているが、その body が `PanicInfo` の与える形で panic を読むかは作者の意図である。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列へ追記する。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
 | `E0004` | なし | どちらの app が意図されたものか、もう一方の routes を統合すべきかはユーザの意図である。 |
@@ -462,6 +463,31 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 **修正**：適用を型として名付け、その名前で呼び出しを修飾する — `type Tagged(T) = nominal Text` に対して `type OrderId = Tagged(Int)` とし、`OrderId.fresh()` と書く。`fresh` の場合、適用した型は `Text` が入る型でなければならない（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)）: `type Box(T) = nominal List(T)` に対する `type IntBox = Box(Int)` は型を名付けるが、`IntBox.fresh()` は [E0802](#e0802-unimplemented-function) になる。`parse` の場合、適用した型はさらにテキストの読み方がある基底型を持たなければならない（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）: `type Tagged(T) = nominal Text` に対する `type OrderId = Tagged(Int)` は `Text` として読むが、コンテナには読み方がない — `type IntList = List(Int)` に対する `IntList.parse(t)` は [E0802](#e0802-unimplemented-function) になる — ので、`List.parse` や `Map.parse` などは、部品を `Int`、`Text` … にパースして `fn` で値を組み立てる。`kumiki fix` はこれを修復しない: どの引数を適用するかは作者が決めることであり、skip 理由がそう伝える。
 
+### E0127 `fn-as-value`
+
+値が来る位置に `fn` の名前が括弧なしで書かれている。`fn` は値ではない — ラムダは無い（[言語 §1.9.1](./language.md#_1-9-1-禁止事項)）— ので、括弧のない名前はいつも同じ誤り、すなわち呼び出しの書き忘れである。
+
+> `"<name>" is a fn, and a fn is not a value — write the call: <name>(<params>)`
+
+このチェックがなければ、名前は生成された関数そのものへ lowering されていた。`emit load(label)` は、effect が `in=Text` と宣言している位置へ *関数* を渡して dispatch した：storage のキーは関数のソース文字列になり、HTTP の body は `undefined` にシリアライズされたままリクエストが送られた。どの層もこれを報告しなかった — 値の型をチェッカが決められず、すべての比較が沈黙した — し、`app.init = [load(label)]` はアプリがマウントされる前に同じ場所へ到達した。
+
+同名のローカル束縛（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）・パラメータ・slot がシャドーイングしている名前はその値であり、`fn` ではなく、報告されない。
+
+**括弧のない `fn` 名が正しい唯一の位置**は、高階メソッドの式断片の引数である（[言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数)）。そこでは値ではなく、メソッドが自身の positional で行う呼び出しを表し、その呼び出しへ lowering される：
+
+| メソッド | 式断片の引数 | 束縛する positional |
+|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | 唯一の引数 | `$1`（要素）。`Map` または対の `List`（`.entries`）の上では `$1`（キー）と `$2`（値） |
+| `fold(init, f)` | 2 番目 | `$1`（アキュムレータ）, `$2`（要素） |
+| `flat-map`, `map-err` | 唯一の引数 | `$1` |
+| `update(k, f)` | 2 番目 | `$1`（現在の値） |
+
+`xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の `fn` はちょうど 2 つを宣言する。要素は 2 番目だからであり、1 つの `fn` は何も畳み込まない。リストのメソッドの `fn` が 2 つを宣言できるのはキーと値の対の上だけである。チェッカが型を決められるそれ以外のレシーバの上では、2 番目のパラメータは JS のインデックスか要素そのものを再び受け取るので、これも E0213 である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
+
+比べるのは数だけである。`fn` のパラメータの型は要素の型と照合されない — インラインの `f($1)` と同じである：`List(Int)` の上の `xs.map(loud)` は、`fn loud(t: Text)` であっても報告されない。
+
+**修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -495,6 +521,8 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 `.get-or` のフォールバックはレシーバではなく**呼び出しが返す型**と照合する：空のケースで呼び出しが返す値そのものだから、結果型を担うのはフォールバックである。その結果型はレシーバの型引数から出る — `Option(T)` と `Result(T, E)` は `T`、`Map(K, V)` は `V` — ものであり、だからこそ `Option(S)` の slot に対する `opt := opt.get-or(None)` は 2 回報告される：フォールバックが `S` でないこと、そして `S` は `Option(S)` ではないこと。2 つの読みのどちらを取るかは引数の個数が決める（[Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。したがってレシーバに合わない個数の呼び出しは**ここでは**解決せず、照合する相手も持たない。ただし下げは行われる — 与えられたレシーバに対し、個数が名指す方の読みで — ので、これは沈黙ではなくそれ自体が欠陥である。
 
 代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿り、`where` の refinement は透過する：この検査が refinement を評価することはない。`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` はこのエラーではなく、値が範囲内かどうかはバリデーションが決める（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）。
+
+`()` も他の値と同じく扱われる。`()` は `Unit` の唯一の値であり（[stdlib §2.1](./stdlib.md#_2-1-ビルトイン型)）、`Unit` が宣言された位置では受け入れられ、それ以外の宣言型に対してはこのエラーになる（`emit` の引数では E0202 を報告し、`in=Unit` の effect への `emit e(())` はその effect が引数を取らないので E0213 になる）。`tile Card in={label: Text}` に対する `Card(())` は `()` の位置で `Expected {label: Text} but got Unit` を報告する：`()` は実行時に `null` であり、`$1.label` を読むタイルはそれを使えない。
 
 `nominal` はその例外であり、このコードの中で唯一、**実型のあらゆる値が宣言型の値として妥当である**ケースを報告する規則である：`1.5` は `Int` ではなく `{a, b}` は `{a: Int}` ではないが、どの `Yen` も申し分ない `Cents` である。nominal 型を同定するのは宣言された名前であり（[§1.3.5](./language.md#_1-3-5-型の一意化)）、同じ基底型に対する 2 つの宣言は互いを拒否する — `Cents := Yen`、`postId := userId`。自身の nominal 名を持たない型は、その上に宣言されたどの nominal とも双方向に受理し合うので、`slot c : Cents = 1` と `c := c + 1` は成立したままである。nominal の上に宣言された nominal は、自身が宣言された側へ向かう一方向だけ通る。
 
@@ -637,7 +665,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage。実装側の source of truth は `packages/compiler/src/ui-lifts.ts` の `UI_LIFTS` で、`packages/compiler/src/codegen/selector.ts` の `propsFor`（ハンドラ生成ゲート）と `typecheck.ts` の W0212 検査の両方がこれを参照する。runtime 側の DOM イベント面は `packages/runtime/src/tiles/input/` 配下の tile モジュール群が持ち、共有のリスナ登録は `_shared.ts`、`tiles-input.ts` はファミリの集約にすぎない。加えて `core.ts` の `applyUiEventHandlers` が普遍的に配線する）:
+各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage。載っている kind にはいずれもそのイベントが届き、空白が規則であるのは下の注記がそう述べる箇所だけである。実装側の source of truth は `packages/compiler/src/ui-lifts.ts` の `UI_LIFTS` で、`packages/compiler/src/codegen/selector.ts` の `propsFor`（ハンドラ生成ゲート）と `typecheck.ts` の W0212 検査の両方がこれを参照する。runtime 側の DOM イベント面は `packages/runtime/src/tiles/input/` 配下の tile モジュール群が持ち、共有のリスナ登録は `_shared.ts`、`tiles-input.ts` はファミリの集約にすぎない。加えて `core.ts` の `applyUiEventHandlers` が普遍的に配線する）:
 
 | `ui.<ev>` | 許容される root tile |
 |---|---|
@@ -645,20 +673,20 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button`, `editable` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `editable` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `editable` |
+| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `check`, `radio`, `switch` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
 | `hover`  | 任意の tile |
 
 **修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
 
 検査は `for` / `when` / `if` / `match` の body も descend する: `if` の then/else 両分岐、`match` の全 arm が観測 root 集合に寄与する。したがって `tile Dyn = for n in xs box(...)` は W0212 を発火（到達可能な root は `box` のみ）、一方 `tile T = if c then input(...) else button(...)` は警告しない（両分岐とも allowed root を寄与）。tile body 全体が解決不能（循環、未定義名）の場合は観測集合が空になり、警告は抑制される — 偽陽性より「警告しない」を優先する。
 
-**`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。
+**`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。この予約は `click` だけの話である：`<a href>` は focusable でタブ順にも入るので、`link` は `key` / `focus` / `blur` に載る。link 上の keydown は、ブラウザがそのキーを処理する**前に** `ui.key` の reducer を実行する。Enter ならその後ブラウザが link を活性化し、router はいつもどおり遷移する。reducer はキーを受け取るが、遷移を取り消すことはできない。
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-`key` / `focus` / `blur` の各行にある他の空白は、これと同じ意味の規則では**ない**。この 3 つはレンダラが返した要素そのものに付けられるので、これらの行が記録しているのは現状の coverage である。`slider` と `link` は 3 行すべてから、`select` は `key` から欠けているが、いずれも `editable` と同じ理由で focusable あるいは keydown を受け取る — [#456](https://github.com/kumikijs/Kumiki/issues/456) で追跡する。また、行に載っている kind でも個々のインスタンスが発火できないことはある。`disabled` な control は focusable ではなく、それはコンパイル時の表には見えない。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` — は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい（ただしメッセージは「そのイベントを発火する子孫がない」と述べており、正確には「イベントがリスナに届かない」である — [#526](https://github.com/kumikijs/Kumiki/issues/526)）。逆は主張しない：`video`（`controls` 付きで描画された `<video>`）と `details`（返される `<details>` の中で `<summary>` が focus を受ける、`check` と同じ形）にもこれらのイベントは届くと考えられるが、まだ載っていない — [#525](https://github.com/kumikijs/Kumiki/issues/525)。また、行に載っている kind でも個々のインスタンスが発火できないことはある。`disabled` な control は focusable ではなく、それはコンパイル時の表には見えない。
 
 ### E0213 `call-arity-mismatch`
 
@@ -672,6 +700,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| 式断片に `fn` 名を渡す `x.m(f)`（[E0127](#e0127-fn-as-value)） | 式断片が束縛する positional の数、ただし 1 つ以上 | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>`（または `needs at least 1`、`.fold` では `supplies exactly 2 — the accumulator and the element`、キーと値の対ではないレシーバの上では `on "<T>" supplies 1 — …`） |
 | `x.get-or(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `x.get(...)` | **レシーバ**（どの読みかを選ぶ） | `Method ".get" on "<T>" …, but got <m> — "…" is the "<U>" reading` |
 | `app.routes` の `"/p" -> T` | 引数無し、したがって `in=` も無し | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |
@@ -692,7 +721,7 @@ tile と effect とルートの形は、これまで報告されていなかっ�
 
 個数はこの適用の半分でしかなく、もう半分——より静かな方——が型である：`show` は値が無い場合も型が違う場合も等しく空文字列として描画する（[標準ライブラリ §2.4](./stdlib.md#_2-4-builtin-functions)）ので、snapshot は「中身が空のラベル」と区別の付かないものと比較して*通ってしまう*。そこで `given.in` は、tile 呼び出しの引数とまったく同じように宣言された `in=` と照合し、同じ code で値自身の位置に報告する——型が合わなければ [E0201](#e0201-type-mismatch)、レコードのフィールドなら [E0214](#e0214-missing-record-field) / [E0215](#e0215-unknown-record-field)。組み込み tile を名指した `tile-test` は、どちらの問いより前に [E0105](#e0105-undef-tile) が退ける。
 
-この個数は、`given` のすべてのセクションが読まれるまで数えない。語彙に無いキーは [E0714](#e0714-test-section-unknown) であり、そういう名前の下に書かれた入力——`given = {slots: {}, input: "Ada"}`——は引数の欠落ではなくそちらの間違いである（セクション名を直した瞬間に消える位置で報告することになる）。lowering が実際に読む `in` は、`given` が他に何を綴り間違えていても書かれた引数なので、もう一方の向きはいずれにしても報告する：削除すべきテキストであるセクション自身の位置で。欠落の側は、位置を持たないのでテストの位置で要求する。
+この個数は、`given` のすべてのセクションが読まれるまで数えない。そもそもレコードでない `given` は [E0713](#e0713-test-shape-invalid)、語彙に無いキーは [E0714](#e0714-test-section-unknown) であり、そういう名前の下に書かれた入力——`given = {slots: {}, input: "Ada"}`——は引数の欠落ではなくそちらの間違いである（セクション名を直した瞬間に消える位置で報告することになる）。lowering が実際に読む `in` は、`given` が他に何を綴り間違えていても書かれた引数なので、もう一方の向きはいずれにしても報告する：削除すべきテキストであるセクション自身の位置で。欠落の側は、位置を持たないのでテストの位置で要求する。
 
 組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は何も読まずセンチネルへ落ちる。引数の*型*も検査しない——センチネルはそれを無視する。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。呼び出しにしているのは括弧ではなく、したがって数えられる理由も括弧ではない：括弧なしの `Duration.s` も同じ 0 引数の呼び出しであり同じ E0213 で、個数を強制した後もその timer に届いていた唯一の書き方がこれだった。
 
@@ -765,6 +794,25 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 [フォーム §5.1.2](./forms.md#_5-1-2-refinement-の扱い) の以前の版は、第 2 のモードとして `strict=false` を規定していた：refinement が拒否する値を受け取り、フォーム単位の `valid` フラグを false にする。これを実装したものはなく、そのフラグを読むものも言語のどこにもなかったので、この prop は `check` を通り、何もしなかった — フィールドを緩めるつもりでこれを書いた作者は、その兆候もないまま厳格な挙動を得ていた。現在の章のモードは 1 つである：refinement に拒否された bind は slot をそのままにし、フィールドは入力されたものを表示し続け、`error(field=…)` がそのメッセージを出す。
 
 **修正**：prop を取り除き、値が受け取られなかった理由をユーザーに示すため `error(field=<slot>)` をコントロールの隣に置く。そのような値を slot に保持させたいなら、slot の型を緩めて reducer で検証する（[§5.6](./forms.md#_5-6-バリデーション戦略)）。
+
+### E0220 `boundary-fallback-input`
+
+tile が `error-boundary` に指定したフォールバックが、`PanicInfo` の当てはまらない `in=` を宣言しているか、`in=` をまったく宣言せずに body で `$1` を読んでいる。
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= but reads $1 — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+フォールバックは panic に適用される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）：codegen はフォールバックが何を宣言していても、その `$1` にランタイムが組み立てた `PanicInfo` を束縛する。したがって型は作者が選ぶものではない。`in=Text` を宣言したフォールバックでは、値がレコードであるのに `$1` が `Text` として検査されていた — `text("recovered: " + $1)` は `check` も `smoke` も通り、`recovered: [object Object]` を描画した。`in=` を宣言しないフォールバックは、読んでいる panic を名指すことができない：その `$1` は [E0103](#e0103-undef-ref-undef-slot) であり、そのヒント — `in=` を宣言せよ — に従うと最初の形に行き着いた。この E0103 は本エラーと並んで引き続き報告される。
+
+これは [E0119](#e0119-route-bind-out-of-scope) が `$route` に適用するのと同じ理屈を `$1` に適用したものである：名前が何を保持するかは tile がどこで適用されるかで決まり、境界は tile を作者が書いたことのない値に適用する唯一の位置である。
+
+`PanicInfo` は宣言された型に代入可能でなければならない — すべての `assignable` 呼び出しと同じく片側だけの条件であり、プログラムが独自の型で `PanicInfo` をシャドウしない限りにおいてである。具体的に受け入れられるのは、`PanicInfo` そのもの、その別名（`type Crash = PanicInfo`）、それに対する `nominal`、またはその 5 つのフィールドをちょうど宣言したレコード（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）である。`{message: Text}` のようなより狭いレコードは受け入れられない：レコード型は同じフィールド集合とのみ一致する。どの型も名指さない `in=` は [E0117](#e0117-undef-type) のみとなる。
+
+`in=` を宣言せず `$1` も読まないフォールバックは報告されない。適用される値は読まれず、その tile は何も渡されずに描画される tile のままである —— route や `sub-routes` のターゲットはそうでなければならない（[E0213](#e0213-call-arity-mismatch)）ので、1 つの tile が両方を兼ねられる。
+
+報告は tile ではなく句に付く：同じフォールバックを名指す 2 つの句は 2 つの報告になる。
+
+**修正**：フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message`、`$1.location` など [ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) が定めるフィールドで読む。
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -969,17 +1017,26 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 ### E0713 `test-shape-invalid`
 
-テスト本体のある位置が、lowering の読まない形の値を持っている。しかもその fallback は「失敗」ではなく、それ自体がひとつの主張になっている。
+テスト本体のある位置が、lowering の読まない形の値を持っている。しかもその fallback は「失敗」ではない——テストは黙って別のことを主張するか、何も主張しない。
 
-現在 2 箇所ある：
+現在 3 種類ある：
 
 - `reducer-test` の `given.mocks` が、`ok(...)` / `err(...)` / `delay(<ms>, ok(...)|err(...))` 以外を effect に束ねている。`mockScriptJs` はそれ以外を `{outcome: "ok", value: null}` として扱うため、失敗経路を駆動するつもりのモックが成功経路を駆動していた——「effect が失敗したときにどうなるか」を主張するテストが、一度も失敗させないまま永久に緑になる。（[E0712](#e0712-episode-mock-invalid) は `episode-test` に対する同じ規則で、そちらの語彙には `from-log` と `ignore` も含まれる。）
 - `expect.effects` がリストでない。`effectListJs` は非リストを `[]` に降ろすが、これは主張が無いのではなく**「effect は何も emit されなかった」という主張**である——角括弧を忘れた `effects: persist(count)` は、何も emit しない reducer に対して成功し、中の effect 名は解決すらされない。
+- 名前付きの部分からなるレコードとして読まれる位置に、別のものが書かれている：テストの `given`、`reducer-test` / `episode-test` の `expect`、`episode-test` の `mocks`、そして `given` の `mocks` / `event` セクション。読み手はどれもこの位置にフィールドを尋ねるが、名前やリテラルにはフィールドが無いため、節全体が空として読まれていた。`given = setup` は何も設定せず reducer は slot の宣言時の既定値から走り、`expect = 41` は何も主張せず、`mocks = 41` は何も台本にしない——どのテストも、誰も選んでいない状態や結果に対して成功する。`{}` は空のレコードとして受理する。`tile-test` の `expect` は tile 式、`property-test` の `invariant` は式なので、どちらもレコード位置ではない。
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
 
-**修正**：受理される形で書く。どちらの位置も codegen 側で throw するようになったため、`check` を飛ばした呼び出し元は、静かに書き換えられた主張ではなく名前付きの失敗を受け取る。
+> `` `given` must be a record, `{<section>: …}` ``
+> `` `expect` must be a record, `{<section>: …}` ``
+> `` `mocks` must be a record, `{<effect>: <policy>}` ``
+> `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
+> `` `given.event` must be a record, `{type: …, target: …}` ``
+
+E0713 は節の位置で 1 度だけ報告し、中の名前はセクションとして解決しない。そのため `tile-test` が引数の欠落を重ねて数えることもない。ただし、どこに書かれても成り立つ規則は中でも適用される：`given` の中のワイルドカードは引き続き [E0109](#e0109-test-wildcard-misuse)、`reducer-test` の `expect` の中で slot を名指さない `<slots.X>` は引き続き [E0103](#e0103-undef-ref-undef-slot) である。
+
+**修正**：受理される形で書く。これらの位置はすべて codegen 側でも throw するため、`check` を飛ばした呼び出し元は、静かに書き換えられた主張ではなく名前付きの失敗を受け取る。
 
 ### E0714 `test-section-unknown`
 

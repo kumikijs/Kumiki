@@ -78,6 +78,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
 | `E0123` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent — as for E0122, whose rule this is at the trigger. |
 | `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
+| `E0220` | no | The fallback's `in=` is fixed, but whether its body reads the panic the way `PanicInfo` gives it is user intent. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
 | `E0004` | no | Which of the apps is the intended one, and whether the other's routes should be merged in, is user intent. |
@@ -484,6 +485,31 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 **Fix**: Name the application as a type and qualify the call with that — `type OrderId = Tagged(Int)` for a `type Tagged(T) = nominal Text`, then `OrderId.fresh()`. For `fresh`, the applied type has to be one a `Text` goes into ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)): `type IntBox = Box(Int)` for a `type Box(T) = nominal List(T)` names a type, and `IntBox.fresh()` is then [E0802](#e0802-unimplemented-function). For `parse`, the applied type also needs a base with a reading of a text ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)): `type Tagged(T) = nominal Text` then `type OrderId = Tagged(Int)` reads by `Text`, but a container never has one — `type IntList = List(Int)` then `IntList.parse(t)` is [E0802](#e0802-unimplemented-function) — so for `List.parse`, `Map.parse` and the like, parse the parts into `Int`, `Text`, … and build the value in a `fn`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
 
+### E0127 `fn-as-value`
+
+A `fn` name is written without its parentheses where a value goes. A `fn` is not a value — there are no lambdas ([Language §1.9.1](./language.md#_1-9-1-prohibitions)) — so the bare name is always the same mistake: the call is missing.
+
+> `"<name>" is a fn, and a fn is not a value — write the call: <name>(<params>)`
+
+Without this check the name lowered to the generated function itself. `emit load(label)` dispatched a *function* where the effect declares `in=Text`: a storage key stringified to the function's source, an HTTP body serialised to `undefined` and the request went out anyway. Nothing reported it at any tier — the value was of no type the checker could decide, so every comparison was silent — and `app.init = [load(label)]` reached the same place before the app had mounted.
+
+A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), a parameter or a slot of the same name shadows is that value, not the fn, and is not reported.
+
+**The one position a bare `fn` name is right** is the fragment argument of a higher-order method ([Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions)). There it is not a value but the call the method makes with its own positionals, and it lowers to that call:
+
+| Method | Fragment argument | Positionals it binds |
+|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | the only one | `$1` (the element); over a `Map` or a `List` of pairs (`.entries`), `$1` (the key) and `$2` (the value) |
+| `fold(init, f)` | the second | `$1` (accumulator), `$2` (element) |
+| `flat-map`, `map-err` | the only one | `$1` |
+| `update(k, f)` | the second | `$1` (the current value) |
+
+`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A list method's `fn` declares two only over a key/value pair; over any other receiver whose type the checker can decide, a second parameter would receive the JS index or the element again, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
+
+The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
+
+**Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -517,6 +543,8 @@ One message in this code is not about a type. A `credentials` literal that names
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
 Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed, and a `where` refinement is transparent: this check never evaluates one. On `type Volume = nominal Int where between(0, 11)`, `volume := 50` is not this error — whether a value is in range is decided at validation ([Forms §5.6](./forms.md#_5-6-validation-strategy)).
+
+`()` is a value like any other: it is the one value of `Unit` ([stdlib §2.1](./stdlib.md#_2-1-built-in-types)), so it is accepted where `Unit` is declared and is this error against any other declared type (an `emit` argument reports E0202, and `emit e(())` on an `in=Unit` effect is E0213, since that effect takes no argument). `Card(())` against `tile Card in={label: Text}` reports `Expected {label: Text} but got Unit` at the `()`: `()` runs as `null`, which a tile reading `$1.label` cannot use.
 
 `nominal` is the exception, and the one rule in this code that reports where *every* value of the actual type is a valid value of the declared one: `1.5` is not an `Int` and `{a, b}` is not an `{a: Int}`, but every `Yen` is a perfectly good `Cents`. A nominal type is identified by the name it is declared under ([§1.3.5](./language.md#_1-3-5-type-canonicalization)), so two declarations over one base reject each other — `Cents := Yen`, `postId := userId`. A type carrying no nominal name of its own still meets any nominal declared over it in both directions, which is what leaves `slot c : Cents = 1` and `c := c + 1` legal; a nominal declared over another nominal goes one way, toward the one it was declared as.
 
@@ -659,7 +687,7 @@ A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant th
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-The allowed root builtins per event are (current toolchain coverage; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
+The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
 
 | `ui.<ev>` | allowed root tile kinds |
 |---|---|
@@ -667,20 +695,20 @@ The allowed root builtins per event are (current toolchain coverage; the impleme
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button`, `editable` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `editable` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `editable` |
+| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `check`, `radio`, `switch` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
 | `hover`  | any tile |
 
 **Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
 
 The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
 
-**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround.
+**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
 
 **Note on `editable` and `change`**: `editable` is listed under `input`, `key`, `focus` and `blur` and **not** under `change`, and that one absence is the rule rather than a gap. A `<div contenteditable="true">` is an editing host, so it is focusable without a `tabindex` and the browser fires `focus`, `blur`, `keydown` and `input` on it — what differs between them is only which layer listens (`applyUiEventHandlers` for the first three, the `editable` renderer's own listener for `input`). It fires no `change` event at all, which no table row can supply. `ui.change(<editable tile>)` is therefore W0212 for a reason that is true; subscribe to `ui.input` and compare the new text against the slot holding the previous value, or use `ui.blur` if the wanted moment is when editing ends.
 
-A blank elsewhere in the `key` / `focus` / `blur` rows is **not** a rule of that kind. Those three are attached to whatever element a renderer returned, so those rows record current coverage: `slider` and `link` are absent from all three and `select` from `key`, each focusable or key-receiving for the same reason `editable` is — [#456](https://github.com/kumikijs/Kumiki/issues/456) tracks them. A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
+**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable` and `link`. `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them (its message says the tile has no descendant that fires the event; what is true is that the event never reaches the listener — [#526](https://github.com/kumikijs/Kumiki/issues/526)). The converse is not claimed: `video` (a `<video>` rendered with `controls`) and `details` (whose `<summary>` takes focus inside the returned `<details>`, the same shape as `check`) are not yet listed although those events plausibly reach them — [#525](https://github.com/kumikijs/Kumiki/issues/525). A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
 
 ### E0213 `call-arity-mismatch`
 
@@ -694,6 +722,7 @@ An application passes a different number of arguments than the thing it applies 
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
+| `x.m(f)` with a `fn` name as the fragment ([E0127](#e0127-fn-as-value)) | the positionals the fragment binds, at least one | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>` (or `needs at least 1`, `supplies exactly 2 — the accumulator and the element` on `.fold`, `on "<T>" supplies 1 — …` over a receiver that is not a key/value pair) |
 | `x.get-or(...)` | the **receiver**, which selects the reading | `Method ".get-or" on "<T>" expects <n> argument(s) (…) but got <m> — "…" is the "<U>" reading` |
 | `x.get(...)` | the **receiver**, which selects the reading | `Method ".get" on "<T>" …, but got <m> — "…" is the "<U>" reading` |
 | `"/p" -> T` in `app.routes` | no argument, so no `in=` | `Route "<path>" targets tile "<name>", which expects 1 argument(s) — a route target is rendered with none` |
@@ -716,7 +745,7 @@ A **`tile-test`** applies its target the way a tile body does — the lowering a
 
 The count is one half of that application and the type is the other, quieter one: `show` renders an absent value and a wrongly typed one alike as the empty string ([Standard Library §2.4](./stdlib.md#_2-4-built-in-functions)), so the snapshot compares against something indistinguishable from an empty label and *passes*. So `given.in` is compared with the target's `in=` exactly as a tile call's argument is, and reported under the same codes at the value's own position — [E0201](#e0201-type-mismatch) for a value of the wrong type, [E0214](#e0214-missing-record-field) / [E0215](#e0215-unknown-record-field) for a record's fields. A `tile-test` naming a built-in is refused before either question, by [E0105](#e0105-undef-tile).
 
-The count waits for a `given` whose every section was read. A key outside the vocabulary is [E0714](#e0714-test-section-unknown), and an input written under such a name — `given = {slots: {}, input: "Ada"}` — is that mistake rather than a missing argument, at a position that stops existing as soon as the section name is fixed. An `in` the lowering *does* read is a written argument whatever else the `given` misspells, so the other direction is reported either way: at the section itself, which is the text to delete, while a missing one is asked for at the test.
+The count waits for a `given` whose every section was read. A `given` that is not a record at all is [E0713](#e0713-test-shape-invalid), a key outside the vocabulary is [E0714](#e0714-test-section-unknown), and an input written under such a name — `given = {slots: {}, input: "Ada"}` — is that mistake rather than a missing argument, at a position that stops existing as soon as the section name is fixed. An `in` the lowering *does* read is a written argument whatever else the `given` misspells, so the other direction is reported either way: at the section itself, which is the text to delete, while a missing one is asked for at the test.
 
 A built-in call is counted the same way. What the count describes is what a *call* must supply, which is not always what the lowering reads: `Decoder.Json(User)` lowers to a sentinel that reads nothing at all. Nor is the argument's *type* checked — the sentinel ignores it. That type is nonetheless why `Decoder.Json` requires one argument while `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` require none — it is what makes the decode type-safe ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)), and a decoder written without it was indistinguishable, in the source and in the output alike, from one that had it. Before the count was enforced, a builtin's argument list was whatever its lowering happened to read: `Duration.s()` lowered to `((0) * 1000)`, so a timer written with an empty duration fired immediately and forever, and `Duration.s(1, 2, "x")` dropped the tail. The parentheses are not what makes it a call and so not what makes it counted: `Duration.s` written bare is the same zero-argument call and the same E0213, which is the one spelling that used to reach that timer with the count enforced.
 
@@ -787,6 +816,25 @@ A `strict` prop is written on a control `bind` writes back from — `input`, `te
 An earlier revision of [Forms §5.1.2](./forms.md#_5-1-2-handling-of-refinement) specified `strict=false` as a second mode: take a value the refinement refuses, and turn a form-level `valid` flag false. Nothing implemented it, and the flag had no reader anywhere in the language, so the prop passed `check` and did nothing — an author who wrote it to relax a field got the strict behaviour with no sign of it. The chapter has one mode now: a bind its refinement refuses leaves the slot as it was, the field keeps what was typed, and `error(field=…)` renders the message for it.
 
 **Fix**: Remove the prop, and put `error(field=<slot>)` beside the control to show the user why a value was not taken. To let the slot hold such a value, loosen the slot's type and validate in a reducer ([§5.6](./forms.md#_5-6-validation-strategy)).
+
+### E0220 `boundary-fallback-input`
+
+A tile names an `error-boundary` fallback that declares an `in=` that `PanicInfo` does not fit, or no `in=` at all while its body reads `$1`.
+
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares in=<type> — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+> `Tile "<tile>" uses "<fallback>" as its error-boundary, which declares no in= but reads $1 — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo`
+
+A fallback is applied to the panic ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)): codegen binds its `$1` to the `PanicInfo` the runtime builds, whatever the fallback declares. So the type is not the author's to choose. A fallback declaring `in=Text` had its `$1` checked as a `Text` while the value was a record — `text("recovered: " + $1)` passed `check` and `smoke` and rendered `recovered: [object Object]`. One declaring no `in=` could not name the panic it read: its `$1` is [E0103](#e0103-undef-ref-undef-slot), whose hint — declare an `in=` — led to the first shape, and that E0103 is still reported beside this one.
+
+This is the same reasoning [E0119](#e0119-route-bind-out-of-scope) applies to `$route`, applied to `$1`: what the name holds is decided by where the tile is applied, and a boundary is the one position that applies a tile to a value the author never wrote.
+
+`PanicInfo` has to be assignable to the declared type — one-sided, like every `assignable` call, and unless a program shadows `PanicInfo` with a type of its own. Concretely that admits `PanicInfo` itself, an alias of it (`type Crash = PanicInfo`), a `nominal` over it, or a record declaring exactly its five fields ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). A narrower record such as `{message: Text}` is not accepted: a record type matches only the same field set. An `in=` naming no type at all is [E0117](#e0117-undef-type) alone.
+
+A fallback that declares no `in=` and never reads `$1` is not reported. The value it is applied to goes unread, and the tile stays one that renders with nothing — which is what a route or `sub-routes` target has to be ([E0213](#e0213-call-arity-mismatch)), so one tile can be both.
+
+The report is attached to the clause, not to the tile: two clauses naming the same fallback are two reports.
+
+**Fix**: Declare `in=PanicInfo` on the fallback, and read the panic through `$1.message`, `$1.location` and the other fields [Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) defines.
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -991,17 +1039,26 @@ An `episode-test` `mocks` record binds an effect to a policy value that is not o
 
 ### E0713 `test-shape-invalid`
 
-A test-body position holds a value whose shape the lowering does not read, and whose fallback is an assertion of its own rather than a failure.
+A test-body position holds a value whose shape the lowering does not read, and whose fallback is not a failure: the test silently asserts something else, or nothing.
 
-Two positions have one today:
+Three kinds of position have one today:
 
 - A `reducer-test`'s `given.mocks` binds an effect to something other than `ok(...)`, `err(...)` or `delay(<ms>, ok(...)|err(...))`. `mockScriptJs` answers anything else with `{outcome: "ok", value: null}`, so a mock written to drive the failure path drove the success one — and a test asserting what happens when an effect fails passed, permanently, having never failed it. ([E0712](#e0712-episode-mock-invalid) is the same rule for an `episode-test`, whose vocabulary also includes `from-log` and `ignore`.)
 - An `expect.effects` that is not a list. `effectListJs` lowers a non-list to `[]`, which is not an absent assertion but the assertion *no effects were emitted* — so `effects: persist(count)`, a forgotten pair of brackets, passes against a reducer that emits nothing, and the effect named inside it is never resolved.
+- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, and the `mocks` and `event` sections of a `given`. Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, and `mocks = 41` scripts nothing, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
 
-**Fix**: Write the accepted shape. Both positions also throw at codegen now, so a caller that skips `check` gets a named failure rather than a silently rewritten assertion.
+> `` `given` must be a record, `{<section>: …}` ``
+> `` `expect` must be a record, `{<section>: …}` ``
+> `` `mocks` must be a record, `{<effect>: <policy>}` ``
+> `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
+> `` `given.event` must be a record, `{type: …, target: …}` ``
+
+E0713 is reported once, at the clause, and no name inside it is resolved as a section, so a `tile-test` does not also count its argument as missing. A rule that holds wherever it is written still applies inside: a wildcard in a `given` is still [E0109](#e0109-test-wildcard-misuse), and a `<slots.X>` naming no slot in a `reducer-test`'s `expect` is still [E0103](#e0103-undef-ref-undef-slot).
+
+**Fix**: Write the accepted shape. Every one of these positions also throws at codegen, so a caller that skips `check` gets a named failure rather than a silently rewritten assertion.
 
 ### E0714 `test-section-unknown`
 

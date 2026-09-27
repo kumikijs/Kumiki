@@ -773,6 +773,8 @@ fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
 
+A fn name in a fragment position is the call the method makes with the fragment's positionals: `items.map(double)` is `items.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. It is the **only** position a bare fn name is right — a fn is not a value, so `label` written where a value goes is [E0127](./errors.md#e0127-fn-as-value), and the call is `label()`. The positions, and how many positionals each binds, are listed under E0127.
+
 ---
 
 ## 1.9 Expression Language

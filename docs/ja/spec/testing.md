@@ -50,7 +50,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`run-reducer(<reducer>)` が取るのは値ではなく reducer 名であり、呼べるのは property-test の invariant だけである（[§8.3](#_8-3-property-tests)）：trial の束縛を読む形に lowering されるため、それ以外の場所では、生成モジュールがどのテストも結果を出す前に死ぬ。
 
-2 つの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になる。
+いくつかの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になり、`given` / `expect` / `mocks`（や `given` の `mocks` / `event`）がレコードでなければ空のレコードとして読まれ、書いたはずのセットアップ・主張・台本が起きない。
 
 これらが解決されるまで、テスト本体の名前は何を書いても受理され、lowering は読めないものを捨てていた：何も名指さない slot キーはテストを slot の既定値のまま走らせる——**成功**しながら、自分が用意していない前提を主張していた。`invariant` の中の未定義呼び出しはさらに悪い。property ランナーが trial の例外を捕まえて invariant の反証として描画するため、出力は無実のコードを犯人に仕立てていた。
 
