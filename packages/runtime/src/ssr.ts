@@ -29,10 +29,12 @@ import {
   computeSlotDiffs,
   type EffectResult,
   type EmitSpec,
+  type LocationLike,
   NONE,
   type ParsedRoute,
   panicInfo,
   pickRootTile,
+  type RedirectEntry,
   type RoutingImpl,
   readStatus,
   reportCapabilityRefusal,
@@ -118,17 +120,25 @@ export async function renderToString(
   const live = app.live;
   for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
 
+  // §3.10: a static redirect is resolved before anything is rendered, the way
+  // `mount` resolves it before its first route sync (same `findRedirect`, so
+  // server and client agree on where a path lands). Without a routing module
+  // only a redirect written for exactly this path applies, matching the
+  // literal-string fallback below.
+  const requested: LocationLike = { pathname: routePath, search: "", hash: "" };
+  const redirectTo = options.routing
+    ? options.routing.findRedirect(app.routes, requested)
+    : (app.routes?.find((r): r is RedirectEntry => "redirectTo" in r && r.pattern === routePath)
+        ?.redirectTo ?? null);
+  const servedPath = redirectTo ?? routePath;
+
   // Dynamic-route matching when the host hands us a routing implementation.
   // Without it we fall back to literal string matching (the path becomes
   // its own pattern) — static routes still work; dynamic ones won't.
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
-      ? options.routing.parseLocation(app.routes, {
-          pathname: routePath,
-          search: "",
-          hash: "",
-        })
-      : { path: routePath, pattern: routePath, params: {}, query: {}, hash: NONE };
+      ? options.routing.parseLocation(app.routes, locationOf(servedPath))
+      : { path: servedPath, pattern: servedPath, params: {}, query: {}, hash: NONE };
   live.route = parsedRoute;
 
   const now = options.now ?? (() => Date.now());
@@ -167,7 +177,7 @@ export async function renderToString(
 
     const snapshot: RenderedSnapshot = {
       kumiki: 1,
-      route: routePath,
+      route: servedPath,
       slots,
       bootstrap,
       renderedAt: now(),
@@ -180,6 +190,12 @@ export async function renderToString(
     // restored before this call returns.
     for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
   }
+}
+
+/** Split a path (a redirect target may carry a query or hash) the way a router reads it. */
+function locationOf(path: string): LocationLike {
+  const u = new URL(path, "http://ssr.invalid");
+  return { pathname: u.pathname, search: u.search, hash: u.hash };
 }
 
 /**

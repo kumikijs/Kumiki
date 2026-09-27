@@ -310,7 +310,7 @@ reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 
 ---
 
-## 3.10 リダイレクト（静的）
+## 3.10 リダイレクト（静的） {#_3-10-redirects-static}
 
 ```kumiki fragment
 app App
