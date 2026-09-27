@@ -228,8 +228,8 @@ describe("positions nest, and a type may be recursive", () => {
 });
 
 describe("a Set's members, in either runtime form", () => {
-  // A Set is an object keyed by `String(member)` once `add` / `toggle` built
-  // it, and still an array when it came from a literal; a literal a member was
+  // A Set is an object keyed by `entryKey(member)` once `add` / `toggle`
+  // built it, and still an array when it came from a literal; a literal a member was
   // added to is both at once (the array's entries plus a key).
   it("reads a numeric member back as a number from a key", () => {
     expect(refineOf("nums")({ 1: true, 2: true })).toBe(true);
@@ -250,11 +250,14 @@ describe("a Set's members, in either runtime form", () => {
     expect(refineOf("nums")({ 0: 1, 2: true })).toBe(true);
   });
 
-  it("leaves a member it cannot read back from a key ungated", () => {
-    // A record member is keyed "[object Object]"; no check can see the record
-    // through that, so the position is not walked rather than refusing every write.
-    expect(meta("people").refineFailure).toBeUndefined();
-    expect(meta("people").refine).toBeUndefined();
+  it("reads a record member back from the JSON it is keyed by", () => {
+    expect(refineOf("people")({ '{"n":"ada"}': true })).toBe(true);
+    expect(refineOf("people")([{ n: "ada" }])).toBe(true);
+    expect(failureOf("people", { '{"n":"ada"}': true, '{"n":""}': true })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ member: { n: "" } }, "n"],
+    });
   });
 });
 

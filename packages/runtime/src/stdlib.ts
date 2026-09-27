@@ -7,6 +7,7 @@
 import {
   _setPathHelper,
   currentEpisodeId,
+  entryKey,
   isPanic,
   KumikiPanic,
   listPosition,
@@ -24,16 +25,18 @@ import {
 
 /**
  * How a `Set` element or a `Map` key reads back from the string it is stored
- * under — the checker records it from the receiver's declared key type, and
- * codegen passes it to the readers (`keys` / `entries` / `to-list`, and the
- * predicate of a Map's `filter`). Absent means the key is `Text`, or a type the
- * checker could not decide, and the string is the value.
+ * under (`entryKey` in core.ts) — the checker records it from the receiver's
+ * declared key type, and codegen passes it to the readers (`keys` / `entries`
+ * / `to-list`, and the predicate of a Map's `filter`). `"value"` is a
+ * structured key — a variant, a record, a tuple — stored as its JSON. Absent
+ * means the key is `Text`, or a type the checker could not decide, and the
+ * string is the value.
  *
  * This is the one definition: the compiler's AST (`KeyKind` in
  * `@kumikijs/compiler`'s `ast.ts`) imports it as a type, so a kind added here
  * is one the checker can record and `restoreKey` has to handle.
  */
-export type KeyKind = "number" | "bool";
+export type KeyKind = "number" | "bool" | "value";
 
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
@@ -44,6 +47,8 @@ function restoreKey(key: string, kind: KeyKind | undefined): unknown {
       return Number(key);
     case "bool":
       return key === "true";
+    case "value":
+      return JSON.parse(key);
     default:
       return assertNeverKind(kind);
   }
@@ -198,8 +203,8 @@ export const _stdlibCore = {
   mapEntries(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
     return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
-  mapGet(m: Record<string, unknown> | undefined | null, k: string): unknown {
-    return m ? m[k] : undefined;
+  mapGet(m: Record<string, unknown> | undefined | null, k: unknown): unknown {
+    return m ? m[entryKey(k)] : undefined;
   },
   /** Polymorphic `.get-or(default)` for Option-like values. */
   getOr(v: unknown, fallback: unknown): unknown {
@@ -214,16 +219,19 @@ export const _stdlibCore = {
     }
     return v ?? fallback;
   },
-  mapGetOr(m: Record<string, unknown> | undefined | null, k: string, def: unknown): unknown {
-    if (m && k in m) return m[k];
+  mapGetOr(m: Record<string, unknown> | undefined | null, k: unknown, def: unknown): unknown {
+    const key = entryKey(k);
+    if (m && key in m) return m[key];
     return def;
   },
-  mapInsert(m: Record<string, unknown>, k: string, v: unknown): Record<string, unknown> {
-    return { ...m, [k]: v };
+  mapInsert(m: Record<string, unknown>, k: unknown, v: unknown): Record<string, unknown> {
+    return { ...m, [entryKey(k)]: v };
   },
-  mapRemove(m: Record<string, unknown>, k: string): Record<string, unknown> {
+  /** `Map.remove(k)` and `Set.remove(x)`: every entry but the one `k` is stored under. */
+  mapRemove(m: Record<string, unknown>, k: unknown): Record<string, unknown> {
+    const key = entryKey(k);
     const out: Record<string, unknown> = {};
-    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== k) out[kk] = vv;
+    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
     return out;
   },
   mapFilter(
@@ -328,10 +336,10 @@ export const _stdlibCore = {
     return acc;
   },
   setHas(s: Record<string, true> | undefined, x: unknown): boolean {
-    return !!s && String(x) in s;
+    return !!s && entryKey(x) in s;
   },
   setToggle(s: Record<string, true> | undefined, x: unknown): Record<string, true> {
-    const k = String(x);
+    const k = entryKey(x);
     const cur = { ...(s ?? {}) };
     if (k in cur) {
       delete cur[k];
@@ -462,7 +470,7 @@ export const _stdlibCore = {
    */
   index(recv: unknown, key: unknown): unknown {
     if (Array.isArray(recv)) return recv[listPosition(recv, key)];
-    return (recv as Record<PropertyKey, unknown>)[key as PropertyKey];
+    return (recv as Record<string, unknown>)[entryKey(key)];
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */
   panic(message: unknown): never {
@@ -557,16 +565,17 @@ export const _stdlibCore = {
   /** Map(K,V).update(k, fn): apply fn to the current value of k, no-op if absent. */
   mapUpdate(
     m: Record<string, unknown> | undefined | null,
-    k: string,
+    k: unknown,
     fn: (v: unknown) => unknown,
   ): Record<string, unknown> {
     const obj = m ?? {};
-    if (!(k in obj)) return obj;
-    return { ...obj, [k]: fn(obj[k]) };
+    const key = entryKey(k);
+    if (!(key in obj)) return obj;
+    return { ...obj, [key]: fn(obj[key]) };
   },
-  /** Set(T).add(x). Sets are stored as `{ [String(x)]: true }`. */
+  /** Set(T).add(x). Sets are stored as `{ [entryKey(x)]: true }`. */
   setAdd(s: Record<string, true> | undefined | null, x: unknown): Record<string, true> {
-    return { ...(s ?? {}), [String(x)]: true };
+    return { ...(s ?? {}), [entryKey(x)]: true };
   },
   /** Set(T).union(other). */
   setUnion(
@@ -648,8 +657,8 @@ export const _stdlibCore = {
     // Return a fresh copy so the result never aliases a slot array, matching
     // listHead/listTail/listLast which all produce new values.
     if (Array.isArray(v)) return [...v];
-    // Set is stored as `{ [key]: true }` (keys are stringified, like the other
-    // set ops), so the element is read back through its recorded kind.
+    // Set is stored as `{ [entryKey(x)]: true }`, so the element is read back
+    // through its recorded kind.
     if (v && typeof v === "object") {
       return Object.keys(v as Record<string, unknown>).map((k) => restoreKey(k, kind));
     }

@@ -212,7 +212,7 @@ slot form : Contact = {email: "ada@example.com", age: 36}
 
 各位置は述語より先に値の形を検査する：レコードと `Map` はオブジェクト、`List` と `Tuple` は配列、union / `Option` / `Result` の値はそのバリアントのいずれかである。そこで形の合わない値 — リストのあるべき場所にデコードされた `{}`、フィールドの欠けたペイロード — は、次の段落があらゆる述語について述べるとおりその位置の述語に `false` を返し、そのうち最初のものに対して報告される。
 
-たどられない位置が二つある。型がテキストでも数値でもない `Set` の要素（`Set({n: Text where nonempty})`）は検査されない：ランタイムは集合を要素のテキストをキーにして保持し、レコードはそこから取り出せないからである。また、自分自身を大きくなっていく引数に適用するジェネリック（`type T(A) = {v: A, next: Option(T(List(A)))}`）は段ごとに lowering すべき新しい型になるので、refinement がそれに沿って 32 段より深くにある slot は、途中で止まる検査ではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。互いに異なる名前付き型はいくらでも深く入れ子にできる。
+たどられない位置が二つある。ランタイムが保持するキーから取り出せない型の `Set` の要素 — 型パラメータや `Bytes` — は検査されない。テキスト・数値・真偽値の要素は取り出せ、JSON として保持されるレコード・バリアント・タプルも取り出せる（`Set({n: Text where nonempty})` はたどられる）。また、自分自身を大きくなっていく引数に適用するジェネリック（`type T(A) = {v: A, next: Option(T(List(A)))}`）は段ごとに lowering すべき新しい型になるので、refinement がそれに沿って 32 段より深くにある slot は、途中で止まる検査ではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。互いに異なる名前付き型はいくらでも深く入れ子にできる。
 
 述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とする。`one-of` は厳密に比較するので、リテラルがテキストなら `Text`、数値なら `Int`・`Float`・`Time` の基底型を必要とする。ジェネリックの型パラメータは適用箇所で判定される：`type NonEmpty(T) = T where nonempty` は問題なく、`NonEmpty(Int)` は E0804 である。
 

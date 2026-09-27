@@ -1,4 +1,5 @@
 import { type TypeEnv, unaliasType } from "../assignable.ts";
+import { keyRepresentation } from "../key-representation.ts";
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import {
   containerPositions,
@@ -180,13 +181,22 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return name;
   };
 
-  /** `js`, a key, as the key type reads it: a number when the type is one over a number. */
+  /**
+   * `js`, a stored key, as the key type reads it (`keyRepresentation`): a
+   * number for a type over one, a boolean for `Bool`, the value its JSON
+   * encodes for a structured key, the string itself otherwise.
+   */
   const keyJs = (k: TypeExpr | undefined, js: string): string => {
-    const base = k ? unaliasType(k, env) : null;
-    const numeric =
-      base?.kind === "TypePrim" &&
-      (base.name === "Int" || base.name === "Float" || base.name === "Time");
-    return numeric ? `(typeof ${js} === "number" ? ${js} : Number(${js}))` : js;
+    switch (keyRepresentation(k ?? null, env)) {
+      case "number":
+        return `(typeof ${js} === "number" ? ${js} : Number(${js}))`;
+      case "bool":
+        return `(${js} === true || ${js} === "true")`;
+      case "value":
+        return `JSON.parse(${js})`;
+      default:
+        return js;
+    }
   };
 
   const containerJs = (
@@ -215,8 +225,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         );
       }
       // A set's members are an object's keys at runtime (`setAdd`,
-      // `setToggle`), so they are strings, read back as a number for a member
-      // over one. A set literal is still an array, and a literal a member was
+      // `setToggle`), so they are strings, read back as the member type reads
+      // them (`keyJs`). A set literal is still an array, and a literal a member was
       // added to is that array's entries plus keys: an entry whose value is not
       // the `true` a key maps to is a member held as itself.
       case "Set": {
