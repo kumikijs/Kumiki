@@ -117,7 +117,7 @@ export function tileExprJs(
   ctx: EvalCtx,
   enclosingTiles?: EnclosingTiles,
   // When the enclosing scope is a `TileFor`, this carries the implicit key
-  // expression (`_s.show(<loopVar>)`) that any tile call in the body should
+  // expression (the iteration's entry of `_s.loopKeys`) that any tile call in the body should
   // stamp on itself unless it declared an explicit `{key: …}`. Propagates
   // transparently through TileWhen / TileIf / TileMatch arms; resets at
   // user-tile boundaries (see `tileCallJs`).
@@ -134,9 +134,18 @@ export function tileExprJs(
       const iter = jsOfExpr(t.iter, ctx);
       const inner = makeEvalCtx(gen, ctx.localBinds);
       const bind = declareBind(inner, t.bind);
-      const impl = `_s.show(${bind})`;
+      // The implicit key of each iteration is unique among the siblings it can
+      // meet (runtime.md §10.3.10): `_s.loopKeys` answers, per element, the
+      // loop, the occurrence of this value, and the value's `show`. So a list
+      // that repeats a value, or two loops under one parent that share one,
+      // still keys every child apart. The loop is named by its source
+      // position, which is stable across renders and distinct per loop.
+      const loop = `${t.pos.line}_${t.pos.col}`;
+      const keys = `__fk${loop}`;
+      const index = `__fi${loop}`;
+      const impl = `${keys}[${index}]`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
+      return `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(loop)}); return __xs.map((${bind}, ${index}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)})); })((${iter}) || [])`;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.

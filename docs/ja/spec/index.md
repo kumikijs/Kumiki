@@ -255,5 +255,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 <!-- examples:end -->
 :::

@@ -50,6 +50,33 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
 // (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
 // `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
 // which sorts numerically when every element is a finite number.
+// The implicit key of each tile a `for` renders (runtime.md §10.3.10). It was
+// `show(x)` alone, so equal values keyed two siblings alike and the keyed
+// reconciler refused the render.
+describe("loopKeys (docs/spec/runtime.md §10.3.10)", () => {
+  it("keys equal values apart by their occurrence", () => {
+    const keys = _stdlibCore.loopKeys([7, 3, 7], "4_9");
+    expect(new Set(keys).size).toBe(3);
+    expect(keys).toEqual(["4_9|1|7", "4_9|1|3", "4_9|2|7"]);
+  });
+
+  it("keys two loops' shared value apart by the loop", () => {
+    expect(_stdlibCore.loopKeys([2], "1_1")).not.toEqual(_stdlibCore.loopKeys([2], "1_9"));
+  });
+
+  it("keeps a value's key when the list is reordered", () => {
+    const before = _stdlibCore.loopKeys(["a", "b", "c"], "1_1");
+    const after = _stdlibCore.loopKeys(["c", "a", "b"], "1_1");
+    expect(after).toEqual([before[2], before[0], before[1]]);
+  });
+
+  it("cannot be spelled by another element's value", () => {
+    // A Text value may contain the separator; the count comes first, so the
+    // second "x" and a value spelling "2|x" still differ.
+    expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "1_1")).size).toBe(4);
+  });
+});
+
 describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
   it("sorts a numeric list numerically, not lexicographically", () => {
     expect(_stdlibCore.listSort([3, 1, 2, 10])).toEqual([1, 2, 3, 10]);

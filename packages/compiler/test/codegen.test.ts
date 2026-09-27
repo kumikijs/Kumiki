@@ -845,7 +845,7 @@ describe("codegen", () => {
 
   // Issue #188 — the compiler lifts author-written `{key: expr}` from tile
   // props to a top-level `key` field on the emitted TileNode, and synthesizes
-  // an implicit key (`_s.show(<loopVar>)`) for tile calls inside `for`
+  // an implicit key (the loop's `_s.loopKeys` entry) for tile calls inside `for`
   // iteration bodies that don't declare their own. The runtime uses these
   // keys for stable child reuse across reorder/insert/remove.
   describe("issue #188 — stable tile identity (key)", () => {
@@ -931,6 +931,18 @@ describe("codegen", () => {
       return results;
     }
 
+    /**
+     * The implicit key a `for` binding `bind` hands its body: that loop's
+     * entry of `_s.loopKeys` for the iteration (runtime.md §10.3.10). Read off
+     * the emitted loop itself, so a case names the loop by its variable.
+     */
+    function implicitKeyOf(js: string, bind: string): string {
+      const m = new RegExp(`\\.map\\(\\(${bind}, (__fi\\w+)\\) =>`).exec(js);
+      if (!m) throw new Error(`no for over ${bind} in the emitted JS`);
+      const index = m[1] as string;
+      return `${index.replace("__fi", "__fk")}[${index}]`;
+    }
+
     it("lifts an explicit {key: expr} on a builtin tile call to a top-level `key` field", () => {
       const src = `
         slot xs : List(Int) = [1, 2, 3]
@@ -963,7 +975,7 @@ describe("codegen", () => {
       if (result.kind !== "ok") return;
       const wraps = findWkForBoundary(result.js, "Row");
       expect(wraps.length).toBeGreaterThan(0);
-      for (const w of wraps) expect(w.key).toBe("_s.show(x)");
+      for (const w of wraps) expect(w.key).toBe(implicitKeyOf(result.js, "x"));
     });
 
     it("does not synthesize an implicit key outside of a for iteration", () => {
@@ -996,10 +1008,10 @@ describe("codegen", () => {
       const wraps = findWkForBoundary(result.js, "Cell");
       expect(wraps.length).toBeGreaterThan(0);
       // The Cell call sits under the inner `for i in inner` — its implicit
-      // key must be `_s.show(i)`, not `_s.show(o)`.
+      // key must be the inner loop's, not the outer one's.
       for (const w of wraps) {
-        expect(w.key).toBe("_s.show(i)");
-        expect(w.key).not.toBe("_s.show(o)");
+        expect(w.key).toBe(implicitKeyOf(result.js, "i"));
+        expect(w.key).not.toBe(implicitKeyOf(result.js, "o"));
       }
     });
 
@@ -1015,7 +1027,7 @@ describe("codegen", () => {
       if (result.kind !== "ok") return;
       const wraps = findWkForBoundary(result.js, "Row");
       expect(wraps.length).toBeGreaterThan(0);
-      for (const w of wraps) expect(w.key).toBe("_s.show(x)");
+      for (const w of wraps) expect(w.key).toBe(implicitKeyOf(result.js, "x"));
     });
 
     it("propagates the implicit key through TileMatch (for id in ids match kind with |A -> Row)", () => {
@@ -1034,7 +1046,7 @@ describe("codegen", () => {
       expect(wraps.length).toBeGreaterThan(0);
       // Both match arms sit under \`for id in ids\` — every Row emission must
       // carry the loop var's key, not undefined.
-      for (const w of wraps) expect(w.key).toBe("_s.show(id)");
+      for (const w of wraps) expect(w.key).toBe(implicitKeyOf(result.js, "id"));
     });
 
     it("resets the implicit key at user-tile boundaries (inner for uses its own loop var)", () => {
@@ -1056,14 +1068,14 @@ describe("codegen", () => {
       // The Outer boundary itself is the target of the outer for → key = o.
       const outerWraps = findWkForBoundary(result.js, "Outer");
       expect(outerWraps.length).toBeGreaterThan(0);
-      for (const w of outerWraps) expect(w.key).toBe("_s.show(o)");
+      for (const w of outerWraps) expect(w.key).toBe(implicitKeyOf(result.js, "o"));
       // Cell sits inside Inner's for-body — its key must derive from the
       // inner loop var i, not the outer o (which would be a scope leak).
       const cellWraps = findWkForBoundary(result.js, "Cell");
       expect(cellWraps.length).toBeGreaterThan(0);
       for (const w of cellWraps) {
-        expect(w.key).toBe("_s.show(i)");
-        expect(w.key).not.toBe("_s.show(o)");
+        expect(w.key).toBe(implicitKeyOf(result.js, "i"));
+        expect(w.key).not.toBe(implicitKeyOf(result.js, "o"));
       }
     });
   });

@@ -77,9 +77,10 @@ describe("compile output snapshots", () => {
     // The addTodo reducer should call fresh() and emit saveTodos.
     expect(result.js).toContain("_s.freshId()");
     expect(result.js).toContain('effect: "saveTodos"');
-    // The for/when shape inside TodoList should compile to .map(...) over sorted ids
-    // and a ternary for the filter check.
-    expect(result.js).toMatch(/sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)\.map\(/);
+    // The for/when shape inside TodoList should compile to a keyed .map(...)
+    // over sorted ids and a ternary for the filter check.
+    expect(result.js).toMatch(/_s\.loopKeys\(__xs, "\d+_\d+"\); return __xs\.map\(/);
+    expect(result.js).toMatch(/\}\)\(\(sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)/);
   });
 
   it("counter: variant equality stays correct", () => {

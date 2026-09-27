@@ -357,12 +357,21 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 1. **Author-supplied `{key: <expr>}`** on a tile-call's props block is lifted
    to the emitted `TileNode`'s top-level `key` field. The value is coerced to
    a string via `_s.show(...)`. It does **not** also flow into `props.el`.
+   The author promises it is unique among its siblings: two siblings with one
+   explicit key are a `location: "reconcile"` panic on the next render, as
+   described above, because the runtime cannot tell which of them the key meant.
 2. **Inside `for` iteration**, tile calls that do not declare their own
-   `{key: ...}` receive an implicit key derived from the loop variable —
-   `_s.show(<loopVar>)`. Explicit keys always win. Nested `for` loops
-   overwrite the enclosing implicit key with the inner loop's binding, so a
-   tile call under `for i in inner` gets `_s.show(i)` regardless of any
-   outer `for o in outer`.
+   `{key: ...}` receive an implicit key derived from the loop variable, which is
+   unique among the siblings it can meet. The key is `_s.loopKeys(xs, loop)[i]`:
+   the loop (named by its source position), which occurrence of this value in
+   the list it is (1 for the first `7`, 2 for the second), and `_s.show(<loopVar>)`.
+   A list does not have to hold distinct values. `[7, 3, 7]`, and two loops
+   under one parent that share a value, key every child apart. A reorder of
+   distinct values keeps every key, since each is the first occurrence of its
+   value, so the reuse guarantees above hold as before. Explicit keys always
+   win. Nested `for` loops overwrite the enclosing implicit key with the inner
+   loop's, so a tile call under `for i in inner` is keyed by `i` regardless of
+   any outer `for o in outer`.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.

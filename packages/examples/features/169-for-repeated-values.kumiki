@@ -1,0 +1,37 @@
+# Feature (runtime.md §10.3.10): a `for` over a list that holds a value
+# more than once.
+#
+# Every tile a `for` body renders is keyed so the reconciler can match it
+# across renders (reorder, insert, remove keep their elements). A list may
+# hold equal values, like two equal scores or two loops under one parent that
+# share a value, and each still gets a key unique among its siblings: the
+# value, which occurrence of it this is, and which loop rendered it.
+#
+# So a re-render caused by anything, here an unrelated counter, reconciles
+# in place. The `input` beside the lists keeps its element, and with it focus
+# and caret.
+
+slot scores : List(Int) = [7, 3, 7]
+slot evens  : List(Int) = [2, 4]
+slot primes : List(Int) = [2, 3]
+slot n      : Int       = 0
+slot draft  : Text      = ""
+
+reducer tick on=ui.click(Tick) do= n := n + 1
+reducer more on=ui.click(More) do= scores := scores.push(7)
+
+tile Tick = button(text="tick") {id: "tick"}
+tile More = button(text="more") {id: "more"}
+
+tile App = column(
+  Tick,
+  More,
+  input(bind=draft),
+  text("n=" + n.show),
+  column(for s in scores text("score " + s.show)),
+  column(for e in evens text("even " + e.show), for p in primes text("prime " + p.show)))
+
+app ForRepeatedValues
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

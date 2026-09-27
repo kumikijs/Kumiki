@@ -358,6 +358,24 @@ export const _stdlibCore = {
     }
     return (a as number) + (b as number);
   },
+  /**
+   * The implicit key of each tile a `for` renders (runtime.md §10.3.10): the
+   * loop, the occurrence of the element's value, and its `show`, so equal
+   * values in one list, and loops under one parent that share a value, never
+   * key two siblings alike. The first occurrence of a value keeps its key
+   * wherever it moves, which is what keyed reconcile matches on. The loop and
+   * the count are written before the value, so no value's `show` can spell
+   * another element's key.
+   */
+  loopKeys(xs: readonly unknown[], loop: string): string[] {
+    const seen = new Map<string, number>();
+    return xs.map((x) => {
+      const shown = _stdlibCore.show(x);
+      const n = (seen.get(shown) ?? 0) + 1;
+      seen.set(shown, n);
+      return `${loop}|${n}|${shown}`;
+    });
+  },
   show(v: unknown): string {
     if (v === null || v === undefined) return "";
     if (typeof v === "object" && v && "_tag" in v) {
