@@ -79,7 +79,9 @@ filter(pred)                : Map(K, V)        ; pred の中で $1=key, $2=value
 map(expr)                   : Map(K, V')       ; expr の中で $1=key, $2=value
 ```
 
-返されるキー — `keys`・`entries`、および `filter` の `$1` — は、保存されている文字列ではなくキーの型 `K` を持つ。それがどう決まるかは [§2.2.2](#_2-2-2-set-t) を参照。
+返されるキー — `keys`・`entries`、および `filter` と `map` の `$1` — は、保存されている文字列ではなくキーの型 `K` を持つ。それがどう決まるかは [§2.2.2](#_2-2-2-set-t) を参照。
+
+`map(expr)` は同じキーを持つ Map を返し、各値をそのエントリについて評価した `expr` で置き換える。`{3: "c", 4: "d"}` への `m.map($2 + "!")` は `{3: "c!", 4: "d!"}` であり、`Map(Int, Int)` への `m.map($1 * 10)` は数値のキーから計算する。
 
 `.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda はランタイム destructure により `$1=key, $2=value` で扱える：
 

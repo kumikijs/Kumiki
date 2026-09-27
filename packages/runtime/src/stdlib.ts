@@ -281,14 +281,27 @@ export const _stdlibCore = {
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
   },
-  /** Polymorphic `.map`: over List elements, or over Option/Result Some/Ok. */
-  mapOver(coll: unknown, fn: (x: unknown) => unknown): unknown {
+  /**
+   * Polymorphic `.map`: over List elements, over Option/Result Some/Ok, or
+   * over a Map's entries (stdlib.md §2.2.1) — the same keys, each value
+   * replaced by `fn(key, value)`, the key restored to its declared kind as
+   * `keys` restores it. A Map is a plain object, so it is told apart from a
+   * tagged Option / Result first, as `filter` does.
+   */
+  mapOver(coll: unknown, fn: (x: unknown, y?: unknown) => unknown, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.map(fn);
     if (coll && typeof coll === "object" && "_tag" in (coll as Record<string, unknown>)) {
       const tagged = coll as { _tag: string; _0?: unknown };
       if (tagged._tag === "Some") return { _tag: "Some", _0: fn(tagged._0) };
       if (tagged._tag === "Ok") return { _tag: "Ok", _0: fn(tagged._0) };
       return coll; // None / Err pass through
+    }
+    if (coll && typeof coll === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
+        out[k] = fn(restoreKey(k, kind), v);
+      }
+      return out;
     }
     return coll == null ? [] : fn(coll);
   },

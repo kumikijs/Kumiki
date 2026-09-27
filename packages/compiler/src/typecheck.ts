@@ -4471,12 +4471,12 @@ function undefMemberError(
 
 /**
  * The members that hand a `Set`'s elements or a `Map`'s keys back — as a list
- * (`to-list`, `keys`, `entries`) or, for `Map.filter`, as the `$1` its
- * predicate is given for each entry.
+ * (`to-list`, `keys`, `entries`) or, for `Map.filter` and `Map.map`, as the
+ * `$1` their fragment is given for each entry.
  */
 const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
   Set: new Set(["to-list"]),
-  Map: new Set(["keys", "entries", "filter"]),
+  Map: new Set(["keys", "entries", "filter", "map"]),
 };
 
 const KEY_READER_NAMES: ReadonlySet<string> = new Set(
@@ -4539,7 +4539,7 @@ function keyKindOfReader(
  * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
  *   is `T`, taken apart like a `List`'s element except under `flat-map`,
  *   whose lowering does not; `Result.map-err`: `$1` is `E`.
- * - `Map(K, V).filter`: `$1` is the key and `$2` the value — the key only when
+ * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key only when
  *   it reads back as a value of `K` (`keyRepresentation`); `Map.update(k, expr)`:
  *   `$1` is the current `V`.
  *
@@ -4547,8 +4547,7 @@ function keyKindOfReader(
  * fragment was bound before. That includes an element whose runtime value may
  * be a 2-element array without being a `Tuple` (a `List`, a `Set` — whose
  * literal is an array — or a type parameter): the lowering takes any such
- * array apart, so the element type is not what `$1` holds there. `Map.map` is absent because its lowering does not iterate a
- * Map at all.
+ * array apart, so the element type is not what `$1` holds there.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
@@ -4577,7 +4576,7 @@ function fragmentBindings(
       return method === "map-err" ? [b ?? null, null] : none;
     case "Map":
       if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
-      if (method !== "filter" || argIndex !== 0) return none;
+      if ((method !== "filter" && method !== "map") || argIndex !== 0) return none;
       return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
     default:
       return none;

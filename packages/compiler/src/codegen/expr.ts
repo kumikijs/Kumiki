@@ -673,9 +673,11 @@ export function methodCallJs(
       // A Map's predicate is handed each key, restored like any key reader's.
       return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
-      // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples)
-      // or Option(T).map (over Some). Runtime distinguishes by variant `_tag`.
-      return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)})`;
+      // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples),
+      // Option(T).map (over Some), or Map(K, V).map (over entries, handed
+      // (k, v) with the key restored like any key reader's). Runtime
+      // distinguishes by shape.
+      return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
       return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, inner)}))`;

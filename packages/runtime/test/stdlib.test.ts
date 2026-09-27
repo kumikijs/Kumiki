@@ -220,6 +220,21 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
   });
 });
 
+// `Map(K, V).map` lowers to the polymorphic `_s.mapOver`, which used to call
+// the fragment once with the whole Map, so a `Map(Int, Text)` slot ended up
+// holding the string `"[object Object]!"`.
+describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
+  it("keeps the keys and replaces each value with the fragment's result", () => {
+    const out = _stdlibCore.mapOver({ 3: "c", 4: "d" }, (_k, v) => `${String(v)}!`, "number");
+    expect(out).toEqual({ 3: "c!", 4: "d!" });
+  });
+
+  it("hands the fragment each key restored to its declared kind", () => {
+    const out = _stdlibCore.mapOver({ 3: 1, 4: 2 }, (k) => (k as number) * 10, "number");
+    expect(out).toEqual({ 3: 30, 4: 40 });
+  });
+});
+
 // `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read
 // an Option's own representation (`{_tag, _0}`) as a Map and filter its fields.
 // The result was neither a `Some` nor a `None`.

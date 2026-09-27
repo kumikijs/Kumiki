@@ -1,0 +1,34 @@
+# Feature (stdlib.md §2.2.1): `Map(K, V).map(expr)` maps each entry's value.
+#
+#   Map(K, V).map(expr) : Map(K, V')   ; within expr, $1 = key : K, $2 = value
+#
+# The result has the same keys; each value is `expr` evaluated for that
+# entry. `$1` is the key read back as its declared type, as `keys` reads it,
+# so `$1 * 10` on a `Map(Int, Int)` is arithmetic, not text.
+
+slot names   : Map(Int, Text) = {}
+slot scores  : Map(Int, Int)  = {}
+slot loud    : Map(Int, Text) = {}
+slot scaled  : Map(Int, Int)  = {}
+
+reducer fill on=ui.click(Fill)
+    do= names := names.insert(3, "c").insert(4, "d")
+        scores := scores.insert(3, 1).insert(4, 2)
+
+reducer apply on=ui.click(Apply)
+    do= loud := names.map($2 + "!")
+        scaled := scores.map($1 * 10 + $2)
+
+tile Fill  = button(text="fill", id="fill")
+tile Apply = button(text="apply", id="apply")
+
+tile App = column(
+  Fill,
+  Apply,
+  text("loud: " + loud.values.join(",")),
+  text("scaled: " + scaled.values.map($1.show).join(",")))
+
+app MapMap
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

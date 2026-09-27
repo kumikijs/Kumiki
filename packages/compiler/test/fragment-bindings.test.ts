@@ -67,6 +67,13 @@ describe("$1 / $2 are a Map's key and value, and the halves of an entry", () => 
     ]);
   });
 
+  it("binds the key and value of Map.map's expression", () => {
+    const defs = `fn label(k: Int, v: Text) -> Text = v\nslot m : Map(Text, Text) = {}`;
+    expect(diagnostics(defs, "m.map(label($1, $2))", "Map(Text, Text)", "{}")).toEqual([
+      "E0201 Expected Int but got Text",
+    ]);
+  });
+
   it("takes an entry apart the way the lowering does", () => {
     const defs = `${KEEP("Int")}\nslot m : Map(Text, Int) = {}`;
     expect(diagnostics(defs, "m.entries.filter(keep($1, $2))", "List(Tuple(Text, Int))")).toEqual([

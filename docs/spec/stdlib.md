@@ -79,7 +79,9 @@ filter(pred)                : Map(K, V)        ; within pred, $1=key, $2=value
 map(expr)                   : Map(K, V')       ; within expr, $1=key, $2=value
 ```
 
-A key handed back — by `keys`, by `entries`, and as the `$1` of `filter` — has the key type `K`, not the string it is stored under: see [§2.2.2](#_2-2-2-set-t) for how that is decided.
+A key handed back — by `keys`, by `entries`, and as the `$1` of `filter` and of `map` — has the key type `K`, not the string it is stored under: see [§2.2.2](#_2-2-2-set-t) for how that is decided.
+
+`map(expr)` answers a Map with the same keys, each value replaced by `expr` evaluated for that entry: `m.map($2 + "!")` on `{3: "c", 4: "d"}` is `{3: "c!", 4: "d!"}`, and `m.map($1 * 10)` on a `Map(Int, Int)` computes from the numeric key.
 
 `.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda can handle them as `$1=key, $2=value` via runtime destructuring:
 
