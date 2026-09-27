@@ -34,6 +34,8 @@ app TodoApp
 1. More specific routes take precedence (static > parameter > wildcard)
 2. At equal specificity, **definition order** wins (so behavior does not change under parallel development)
 
+Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. The same order picks the child inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)) and the redirect entry that applies ([§3.10](#_3-10-redirects-static)), on the client and in server rendering alike.
+
 ### 3.1.3 `/404` Is Reserved
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).

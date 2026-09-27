@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "label": "a static segment beats a parameter declared before it",
+      "do": { "navigate": "/todos/new" },
+      "expect": { "noErrors": true, "domIncludes": ["New todo form"], "domExcludes": ["Detail"] }
+    },
+    {
+      "label": "a parameter beats a wildcard declared before it",
+      "do": { "navigate": "/todos/42" },
+      "expect": { "noErrors": true, "domIncludes": ["Detail 42"], "domExcludes": ["Anything else"] }
+    },
+    {
+      "label": "the wildcard still takes what neither of the others can",
+      "do": { "navigate": "/todos/42/comments" },
+      "expect": { "noErrors": true, "domIncludes": ["Anything else under todos"] }
+    }
+  ]
+}
