@@ -255,5 +255,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
 | `123-one-key-per-value.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 <!-- examples:end -->
 :::
