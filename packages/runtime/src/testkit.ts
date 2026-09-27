@@ -666,6 +666,45 @@ function resetLiveFromSlots(app: ReplayApp): void {
   seedRoute(app.live);
 }
 
+/**
+ * The payload the episode's entry reducer ran with (§10.5.3).
+ *
+ * The live runtime records `trigger.payload` as the payload it handed the
+ * reducer — `{$el, $event}` for a UI event, `{$1, $2}` for an effect result —
+ * so it is passed on as it is. A trigger with no payload whose entry reducer
+ * is an `.ok` / `.err` reducer (an `ssr.hydrate` bootstrap, which is opened
+ * by the SSR pass rather than by a reducer) ran on the `effect-end` step
+ * recorded before it, and that step's value is its `$1`. Handing it over
+ * consumes it, so the `from-log` cursor of that effect starts past it.
+ */
+function entryPayload(
+  ep: EpisodeLogEntry,
+  entry: ReducerSpec,
+  firstRed: EpisodeStepLite,
+  cursors: Record<string, number>,
+): Record<string, unknown> {
+  const recorded = ep.trigger.payload;
+  if (recorded !== null && typeof recorded === "object" && !Array.isArray(recorded)) {
+    return recorded as Record<string, unknown>;
+  }
+  if (entry.event.kind !== "effect") return {};
+  const { effect, outcome } = entry.event;
+  let nth = -1;
+  let value: unknown;
+  let found = false;
+  for (const s of ep.steps) {
+    if (s === firstRed) break;
+    if (s.kind !== "effect-end" || s.name !== effect) continue;
+    nth++;
+    if (s.result === outcome) {
+      value = s.value;
+      found = true;
+      cursors[effect] = nth + 1;
+    }
+  }
+  return found ? { $1: value } : {};
+}
+
 function executeEpisode(
   app: ReplayApp,
   ep: EpisodeLogEntry,
@@ -813,9 +852,8 @@ function executeEpisode(
     return list[idx] ?? [];
   };
 
-  const triggerPayload = (ep.trigger.payload as Record<string, unknown> | undefined) ?? {};
   const queue: { reducer: ReducerSpec; payload: Record<string, unknown> }[] = [
-    { reducer: entry, payload: { $el: triggerPayload, $event: triggerPayload } },
+    { reducer: entry, payload: entryPayload(ep, entry, firstRed, cursors) },
   ];
 
   let guard = 0;
