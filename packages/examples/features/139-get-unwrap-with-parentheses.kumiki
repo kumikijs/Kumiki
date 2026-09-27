@@ -1,0 +1,41 @@
+# Feature (stdlib.md §2.2.4 / §2.2.5): `.get` on an Option or a Result is the
+# polymorphic unwrap, "also written paren-free as `value.get`" (§2.2.5's
+# Panic-semantics note) — `o.get()` and `o.get` are one member.
+#
+# `.get` is also the Map / List lookup, which takes a key or an index. The
+# argument count is what tells the two readings apart, so a call with no
+# arguments is the unwrap whichever spelling it is written in. Each spelling is
+# used on each receiver below, and each answer is asserted.
+
+slot opt : Option(Int)       = Some(5)
+slot res : Result(Int, Text) = Ok(10)
+slot stock : Map(Text, Int)  = {"apple": 7}
+
+reducer bump-opt on=ui.click(BumpOpt)
+    do= opt := Some(opt.get() + 1)
+
+reducer bump-opt-bare on=ui.click(BumpOptBare)
+    do= opt := Some(opt.get + 1)
+
+reducer bump-res on=ui.click(BumpRes)
+    do= res := Ok(res.get() + 1)
+
+reducer bump-res-bare on=ui.click(BumpResBare)
+    do= res := Ok(res.get + 1)
+
+tile BumpOpt     = button(text="opt.get()") {id: "bump-opt"}
+tile BumpOptBare = button(text="opt.get") {id: "bump-opt-bare"}
+tile BumpRes     = button(text="res.get()") {id: "bump-res"}
+tile BumpResBare = button(text="res.get") {id: "bump-res-bare"}
+
+tile App = column(
+    row(BumpOpt, BumpOptBare, BumpRes, BumpResBare),
+    text("opt: " + opt.get-or(0).show),
+    text("res: " + res.get-or(0).show),
+    # The keyed reading, one argument: a lookup that answers an Option.
+    text("apple: " + stock.get("apple").get-or(0).show))
+
+app GetUnwrapWithParentheses
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
