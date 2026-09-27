@@ -246,6 +246,10 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
+A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
+
+> `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`
+
 A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and each branch of an `if`, a `for` body and each match arm is a scope of its own. So a name one `if` branch declares is undefined in the other branch and on every statement after the `if`, just as one a `for` body or match arm declares is undefined after it. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
 
 **Fix**: Confirm that the referenced slot / binding is declared.

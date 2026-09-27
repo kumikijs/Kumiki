@@ -224,6 +224,10 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
+1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値 — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
+
+> `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`
+
 `let` は書かれたスコープに宣言され（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）、`if` の各枝・`for` の本体・match の各 arm はそれぞれ独立したスコープである。したがって `if` の一方の枝で宣言した名前は、もう一方の枝でも `if` の後のどの文でも未定義であり、`for` の本体や match arm で宣言した名前もその後では未定義である。条件で値を選ぶなら、`if` の前で `if` 式を使って一度だけ宣言する — `let n = if c then "a" else "b"` — か、読み出しを枝の中へ移す。
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。

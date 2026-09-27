@@ -416,6 +416,14 @@ export type Lvalue =
  */
 export type { KeyKind };
 
+/**
+ * How a list method's fragment binds its positionals (stdlib.md §2.2.3):
+ * `"pair"` takes each `Tuple(A, B)` apart into `$1` / `$2`; `"key-value"` is a
+ * `Map`'s filter, handed the key and the value; `"value"` binds the value
+ * whole as `$1` and nothing as `$2`.
+ */
+export type FragmentShape = "pair" | "key-value" | "value";
+
 export type Expr =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
@@ -456,6 +464,13 @@ export type Expr =
       pos: Pos;
       /** See {@link KeyKind}. Filled in by the type checker. */
       keyKind?: KeyKind;
+      /**
+       * How a `filter` / `map` / `find` / `sort-by` fragment binds `$1` / `$2`,
+       * decided by the type checker from the receiver's type (see
+       * {@link FragmentShape}). Absent when it could not decide, or when
+       * codegen runs without `check()`.
+       */
+      fragmentShape?: FragmentShape;
     }
   | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
   | { kind: "ListLit"; items: Expr[]; pos: Pos }

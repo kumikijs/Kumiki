@@ -17,6 +17,7 @@ import type {
   EffectDef,
   Expr,
   FnDef,
+  FragmentShape,
   KeyKind,
   Lvalue,
   MatchArm,
@@ -1034,6 +1035,12 @@ type Ctx = {
    * same reason.
    */
   undeclaredInputReads?: Pos[];
+  /**
+   * Set inside the fragment of a list method handed one value per call
+   * (`fragmentShape` answered `"value"`), to that method's name, so an
+   * unbound `$2` there says why it is unbound rather than only that it is.
+   */
+  oneValueFragment?: string;
 };
 
 /**
@@ -2766,6 +2773,15 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
         return;
       }
+      if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `"$2" is not bound here — the .${ctx.oneValueFragment} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+          pos: e.pos,
+        });
+        return;
+      }
       errors.push({
         code: "E0103",
         kind: "undef-ref",
@@ -2925,6 +2941,19 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
           bindLocal(inner, "$2", p2);
+          if (fragment?.second === "pair-value" && fragment.index === i) {
+            // Codegen binds the positionals from this decision rather than
+            // from the shape of each value at run time. A fragment handed one
+            // value binds `$1` alone: its `$2` is an error here, not the index
+            // or a second copy of `$1` there.
+            const shape = fragmentShape(recvType, e.method, sym);
+            if (shape) e.fragmentShape = shape;
+            if (shape === "value") {
+              inner.localBinds.delete("$2");
+              inner.localTypes.delete("$2");
+              inner.oneValueFragment = e.method;
+            }
+          }
           checkExpr(a, sym, errors, inner);
         }
       }
@@ -3077,28 +3106,12 @@ function checkFragmentFnArity(
   }
   if (n === 0) report(`.${method} needs at least 1`);
   else if (n > fragment.binds) report(`.${method} supplies at most ${fragment.binds}`);
-  else if (n === 2 && fragment.second === "pair-value" && bindsPairs(receiver, sym) === false) {
+  else if (n === 2 && fragment.second === "pair-value" && !bindsSecond(receiver, method, sym)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     report(
       `.${method}${on} supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)`,
     );
   }
-}
-
-/**
- * Whether a list method over `receiver` binds `$2` to the value of a key/value
- * pair: `true` for a `Map` or a `List` of 2-tuples, `false` for any other
- * receiver it can decide, `null` when it cannot tell.
- */
-function bindsPairs(receiver: TypeExpr | null, sym: SymbolTable): boolean | null {
-  const t = unaliasType(receiver, sym);
-  if (t === null || t.kind === "TypeRef") return null;
-  if (t.kind !== "TypeApp") return false;
-  if (t.name === "Map") return true;
-  if (t.name !== "List") return false;
-  const el = unaliasType(t.args[0] ?? null, sym);
-  if (el === null || el.kind === "TypeRef") return null;
-  return el.kind === "TypeApp" && el.name === "Tuple" && el.args.length === 2;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -4544,11 +4557,11 @@ function keyKindOfReader(
  *   `$1` is the current `V`.
  *
  * Everything else is `null`, which binds the name with no type — as every
- * fragment was bound before. That includes an element whose runtime value may
- * be a 2-element array without being a `Tuple` (a `List`, a `Set` — whose
- * literal is an array — or a type parameter): the lowering takes any such
- * array apart, so the element type is not what `$1` holds there. `Map.map` is absent because its lowering does not iterate a
- * Map at all.
+ * fragment was bound before. That includes an element the checker cannot
+ * decide (a type parameter), which the lowering's fallback may take apart.
+ * `Map.map` is absent because its lowering does not iterate a Map at all.
+ * Which of `$1` / `$2` a fragment binds at all is {@link fragmentShape}'s
+ * answer; this one only types them.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
@@ -4584,9 +4597,6 @@ function fragmentBindings(
   }
 }
 
-/** Containers whose value may be a JavaScript array at runtime. */
-const ARRAY_SHAPED: ReadonlySet<string> = new Set(["List", "Set"]);
-
 /**
  * The `List` members whose fragment is handed each element (`argFnList`) —
  * read off `FRAGMENT_ARGUMENTS`, whose `pair-value` entries are exactly those,
@@ -4597,20 +4607,77 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
 );
 
 /**
- * `$1` / `$2` for a fragment the lowering hands one value through `argFnList`,
- * which takes any 2-element array apart. A `Tuple(A, B)` is exactly that, so
- * it binds both; a value that might be such an array without the type saying
- * so binds nothing.
+ * How the fragment of `recv.method(…)` — a `filter` / `map` / `find` /
+ * `sort-by`, lowered through `argFnList` — binds `$1` and `$2` (stdlib.md
+ * §2.2.3), decided from the receiver's static type:
+ *
+ * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
+ *   from `.entries`, or an `Option` / `Result` holding one — and is taken
+ *   apart, `$1 = A`, `$2 = B`.
+ * - `"key-value"`: `Map(K, V).filter`, handed each entry as the key and the
+ *   value, `$1` and `$2`.
+ * - `"value"`: any other element of a `List` / `Set`, or the value of an
+ *   `Option` / `Result` — `$1` is that value whole, whatever it is (a
+ *   2-element `List` included), and `$2` is not bound.
+ * - `null`: the receiver's type, or its element's, cannot be decided here (a
+ *   type parameter, an untyped payload). The lowering then falls back to
+ *   taking apart any 2-element array at run time — the one place a value's
+ *   shape, not its type, decides the binding.
+ *
+ * The one classifier codegen (through `MethodCall.fragmentShape`), the
+ * positional scope and the arity of a bare `fn` fragment all read.
  */
-function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+function fragmentShape(
+  recv: TypeExpr | null,
+  method: string,
+  sym: SymbolTable,
+): FragmentShape | null {
+  if (!ELEMENT_FRAGMENTS.has(method)) return null;
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return null;
+  const [a] = t.args;
+  switch (t.name) {
+    case "List":
+    case "Set":
+      return elementShape(a ?? null, sym);
+    case "Option":
+      return method === "map" || method === "filter" ? elementShape(a ?? null, sym) : null;
+    case "Result":
+      return method === "map" ? elementShape(a ?? null, sym) : null;
+    case "Map":
+      return method === "filter" ? "key-value" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether the fragment of `recv.method(…)` binds `$2` — `true` also when
+ * {@link fragmentShape} cannot decide, where nothing is reported.
+ */
+function bindsSecond(recv: TypeExpr | null, method: string, sym: SymbolTable): boolean {
+  return fragmentShape(recv, method, sym) !== "value";
+}
+
+/** Whether one element is a pair the lowering takes apart; see {@link fragmentShape}. */
+function elementShape(elem: TypeExpr | null, sym: SymbolTable): "pair" | "value" | null {
   const u = unaliasType(elem, sym);
-  if (u?.kind === "TypeApp" && u.name === "Tuple") {
-    return u.args.length === 2 ? [u.args[0] ?? null, u.args[1] ?? null] : [elem, null];
+  if (u === null || u.kind === "TypeRef") return null;
+  return u.kind === "TypeApp" && u.name === "Tuple" && u.args.length === 2 ? "pair" : "value";
+}
+
+/** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
+function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+  switch (elementShape(elem, sym)) {
+    case "pair": {
+      const u = unaliasType(elem, sym) as TypeExpr & { kind: "TypeApp" };
+      return [u.args[0] ?? null, u.args[1] ?? null];
+    }
+    case "value":
+      return [elem, null];
+    default:
+      return [null, null];
   }
-  if (u === null || u.kind === "TypeRef" || (u.kind === "TypeApp" && ARRAY_SHAPED.has(u.name))) {
-    return [null, null];
-  }
-  return [elem, null];
 }
 
 /**

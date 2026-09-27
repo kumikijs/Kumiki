@@ -1,4 +1,4 @@
-import type { Expr, KeyKind, Pattern, Pos } from "../ast.ts";
+import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
@@ -281,7 +281,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
-      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind);
+      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind, e.fragmentShape);
     }
     case "RecordLit": {
       const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${jsOfExpr(f.value, ctx)}`);
@@ -645,6 +645,7 @@ export function methodCallJs(
   written: Expr[],
   ctx: EvalCtx,
   keyKind?: KeyKind,
+  shape?: FragmentShape,
 ): string {
   // Chained `recv.run-reducer(name)` in a property-test invariant (§8.3): apply
   // the reducer to the receiver state. `_event` is bound in the generated trial.
@@ -658,11 +659,23 @@ export function methodCallJs(
   const p2 = declareBind(inner, "$2");
 
   const recvJs = jsOfExpr(recv, ctx);
-  // For list ops, the element may be a plain T or a [K, V] tuple (from .entries).
-  // Generate a lambda that binds `$1` and `$2` accordingly: for a 2-tuple we
-  // bind ($1=k, $2=v); for any other element we bind $1=elem, $2=undefined.
+  // The lambda a `filter` / `map` / `find` / `sort-by` fragment is lowered
+  // into, binding `$1` / `$2` the way the checker decided from the receiver's
+  // type (`FragmentShape`, stdlib.md §2.2.3): a pair is taken apart, a Map's
+  // filter is handed (key, value), and any other value — a 2-element List
+  // included — is `$1` whole with no `$2`. Only an undecided receiver falls
+  // back to reading the value: any 2-element array is taken apart there.
+  const binds: Record<FragmentShape, string> = {
+    pair: `const ${p1} = __x[0]; const ${p2} = __x[1];`,
+    "key-value": `const ${p1} = __x; const ${p2} = __y;`,
+    value: `const ${p1} = __x; const ${p2} = undefined;`,
+  };
+  const bindJs =
+    shape !== undefined
+      ? binds[shape]
+      : `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`;
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
+    `((__x, __y) => { ${bindJs} return ${jsOfExpr(a, inner)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {

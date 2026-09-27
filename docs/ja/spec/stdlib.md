@@ -81,7 +81,7 @@ map(expr)                   : Map(K, V')       ; expr の中で $1=key, $2=value
 
 返されるキー — `keys`・`entries`、および `filter` の `$1` — は、保存されている文字列ではなくキーの型 `K` を持つ。それがどう決まるかは [§2.2.2](#_2-2-2-set-t) を参照。
 
-`.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda はランタイム destructure により `$1=key, $2=value` で扱える：
+`.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda は各ペアを分解して `$1=key, $2=value` で扱う（[§2.2.3](#_2-2-3-list-t)）：
 
 ```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
@@ -118,7 +118,7 @@ to-list                     : List(T)
 
 **キーは宣言された型で読み戻される**。実装では Set の要素と Map のキーは JavaScript のオブジェクトキー — 文字列 — として保存されるが、キーを返すメンバー（`Set(T).to-list` / `Map(K, V).keys` / `Map(K, V).entries`、および `Map(K, V).filter` の述語が各エントリについて受け取る `$1`）は型が示す値を返す：キーの型が `Int` / `Float` / `Time`（およびそれらの上の `nominal` / `where`）なら数値、`Bool` なら真偽値、`Text` なら文字列そのもの。したがって `tags.add(7).to-list` は `[7]` であり、その後の `contains(7)` / `sort` / 算術はリストの型と一致し、`Map(Int, V)` に対する `m.filter($1 == 3)` は `3` のエントリを残す。レコードやバリアントなど、それ以外の型のキーはこの変換の対象外である。
 
-何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、それ自体が `List` や `Set` である要素、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
+何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
 
 ### 2.2.3 List(T)
 
@@ -158,9 +158,11 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 
 > **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
 
-**`map` / `filter` / `sort-by` の lambda 引数**:
-- List 要素には `$1` を、`.entries` 後の `[k, v]` ペアには `$1=key, $2=value` を束縛します（ランタイムが自動 destructure）
-- 例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`
+**`map` / `filter` / `find` / `sort-by` の lambda 引数**は、実行時の値ではなく受信側の**型**で決まる：
+- `Tuple(A, B)` である要素 — `.entries` が作る `[k, v]` ペア — は分解される：`$1` が前半、`$2` が後半。例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`。`Tuple(A, B)` を持つ `Option` / `Result` も同じく分解される。
+- `Map(K, V).filter` の述語は各エントリを受け取る：`$1=key`, `$2=value`（[§2.2.1](#_2-2-1-map-k-v)）。
+- それ以外の `List` / `Set` の要素、`Option`（`map` / `filter`）や `Result`（`map`）の値は、**丸ごと** `$1` になる — 2 要素の `List` である要素も同じ：`[[1, 2], [3, 4, 5]].map($1.length)` は `[2, 3]`、`Some([1, 2]).filter($1.length > 1)` は `Some([1, 2])`。このようなフラグメントは `$2` を束縛しない：書けば添字や `$1` の複製ではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)（`"$2" is not bound here — …`）になる。
+- 型検査器が要素の型を決定できない場合（型パラメータ、型のない payload）、lowering は値を見て判断する：2 要素の配列は分解し、それ以外は `$1` とする。値の形が決めるのはこの 1 箇所だけであり、型が決定できるようになるにつれて閉じる。
 
 ### 2.2.4 Option(T)
 

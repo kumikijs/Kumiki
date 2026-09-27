@@ -81,7 +81,7 @@ map(expr)                   : Map(K, V')       ; within expr, $1=key, $2=value
 
 A key handed back — by `keys`, by `entries`, and as the `$1` of `filter` — has the key type `K`, not the string it is stored under: see [§2.2.2](#_2-2-2-set-t) for how that is decided.
 
-`.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda can handle them as `$1=key, $2=value` via runtime destructuring:
+`.entries` returns a **sequence of 2-element arrays** as `List(Tuple(K, V))`. A subsequent `map` / `sort-by` / `filter` lambda takes each pair apart as `$1=key, $2=value` ([§2.2.3](#_2-2-3-list-t)):
 
 ```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
@@ -118,7 +118,7 @@ to-list                     : List(T)
 
 **Keys read back as their declared type.** In the implementation a Set's elements and a Map's keys are stored as JavaScript object keys, which are strings, but the members that hand keys back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1` a `Map(K, V).filter` predicate is given for each entry — answer the values the type says: a number when the key type is `Int` / `Float` / `Time` (or a `nominal` / `where` over one), a boolean for `Bool`, and the string itself for `Text`. So `tags.add(7).to-list` is `[7]`, a later `contains(7)`, `sort` or arithmetic agrees with the list's type, and `m.filter($1 == 3)` on a `Map(Int, V)` keeps the entry at `3`. Keys of other types — a record, a variant — are not covered by this conversion.
 
-What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, an element that is itself a `List` or a `Set`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
+What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
 
 ### 2.2.3 List(T)
 
@@ -158,9 +158,11 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 
 > **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
-**The lambda arguments of `map` / `filter` / `sort-by`**:
-- For a List element, `$1` is bound; for the `[k, v]` pair after `.entries`, `$1=key, $2=value` are bound (the runtime destructures automatically)
-- Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`
+**The lambda arguments of `map` / `filter` / `find` / `sort-by`** are decided by the receiver's **type**, not by the value at run time:
+- An element that is a `Tuple(A, B)` — the `[k, v]` pair `.entries` produces — is taken apart: `$1` is its first half, `$2` its second. Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`. An `Option` / `Result` holding a `Tuple(A, B)` is taken apart the same way.
+- A `Map(K, V).filter` predicate is handed each entry: `$1=key`, `$2=value` ([§2.2.1](#_2-2-1-map-k-v)).
+- Any other element of a `List` / `Set`, and the value of an `Option` (`map` / `filter`) or of a `Result` (`map`), is `$1` **whole** — a `List` element with two items included: `[[1, 2], [3, 4, 5]].map($1.length)` is `[2, 3]`, and `Some([1, 2]).filter($1.length > 1)` is `Some([1, 2])`. Such a fragment binds no `$2`: writing one is [E0103](./errors.md#e0103-undef-ref-undef-slot) (`"$2" is not bound here — …`), rather than the index or a second copy of `$1`.
+- Where the checker cannot decide the element type (a type parameter, an untyped payload), the lowering falls back to reading the value: a 2-element array is taken apart, anything else is `$1`. That is the one place the value's shape decides, and it closes as the type becomes decidable.
 
 ### 2.2.4 Option(T)
 
