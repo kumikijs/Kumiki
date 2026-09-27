@@ -545,6 +545,7 @@ issue.copy(status=Done, priority=High)
 6. **The batch commits all-or-nothing**: if any slot's new value violates its type's refinement, the entire reducer application is discarded — no slot write, no `emit`, no `stop-timer` — and the rejection is reported (see [batching](./runtime.md#a-batch-commits-all-or-nothing)). A reachable bound is the program's business: write the guard.
    - `volume := volume + 1` on `Volume = nominal Int where between(0, 11)` ✗ at 11 (rejected and reported)
    - `if volume < 11 then volume := volume + 1` ✓
+7. **A slot read after a write in the same body reads the written value**, wherever the read sits: in a `match` arm, in the body of a `let … in`, in a method's predicate or element lambda (`names.filter($1 == noteKey)`), or at the top of the body. After `noteKey := "b"`, every later read of `noteKey` in that reducer is `"b"`. A read before the write still reads the value the slot held when the reducer started.
 
 ### 1.6.5 Positional Binding
 

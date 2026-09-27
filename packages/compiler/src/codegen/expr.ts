@@ -3,6 +3,7 @@ import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
+  childCtx,
   declareBind,
   type EvalCtx,
   type GenCtx,
@@ -649,7 +650,7 @@ export function methodCallJs(
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
   // Build inner ctx with $1, $2 bound for predicate expression fragments.
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
+  const inner = childCtx(ctx);
   const p1 = declareBind(inner, "$1");
   const p2 = declareBind(inner, "$2");
 
@@ -972,12 +973,12 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     return `if (true) { const ${bindRef(inner, p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
   if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
     return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
   const tag = p.name;
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
+  const inner = childCtx(ctx);
   const bindAssigns: string[] = [];
   for (let i = 0; i < p.binds.length; i++) {
     const name = p.binds[i]!;
@@ -990,23 +991,15 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
 // Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
 // nested element guards) and a series of `const … = scVar[i]…;` bindings.
 // Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
-// the indexed access path. `inheritReducerScope` carries the caller's
-// reducer-scope flag into the arm; with it off, a slot read in the arm lowers to
-// `_live[...]`. A `match` statement passes true. TileMatch passes false because
-// a tile renders outside every reducer body. `matchExpr` passes false too, and
-// so drops the flag inside a reducer body as well — as its binding and variant
-// arms do by rebuilding the context — which is a known gap, not a rule.
+// the indexed access path. The arm is a `childCtx` of the caller's, so it reads
+// the slots the way the caller does: `_next` first inside a reducer body,
+// `_live` in a tile.
 export function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,
   scVar: string,
-  inheritReducerScope: boolean,
 ): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = makeEvalCtx(
-    ctx.gen,
-    ctx.localBinds,
-    inheritReducerScope ? ctx.reducerScope : undefined,
-  );
+  const inner = childCtx(ctx);
   const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
   const binds: string[] = [];
   for (let i = 0; i < p.items.length; i++) {

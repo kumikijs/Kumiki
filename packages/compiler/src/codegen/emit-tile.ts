@@ -166,9 +166,9 @@ export function tileExprJs(
           }
           // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
           // no reducerScope here (tile-match runs in pure render context), so the
-          // helper's `inheritReducerScope=false` path is what we want.
+          // arm reads `_live` like the rest of the tile.
           {
-            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
+            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
             return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
         })

@@ -1,7 +1,14 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { assertNever } from "../ast.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { bindRef, declareBind, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
+import {
+  bindRef,
+  childCtx,
+  declareBind,
+  type EvalCtx,
+  type GenCtx,
+  makeEvalCtx,
+} from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
 import { jsOfExpr, reducerEmitJs, reducerNameArg, tupleArm } from "./expr.ts";
 import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
@@ -262,7 +269,7 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
 export function genStatement(s: Statement, ctx: EvalCtx): string {
   if (s.kind === "ForStmt") {
     const iter = jsOfExpr(s.iter, ctx);
-    const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+    const inner = childCtx(ctx);
     const bind = declareBind(inner, s.bind);
     const body = s.body.map((b) => genStatement(b, inner)).join("\n  ");
     return `for (const ${bind} of ((${iter}) || [])) {\n  ${body}\n}`;
@@ -273,8 +280,8 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
     // statement after the `if` — and in the other branch. Generating both
     // against `ctx` let such a declaration rename the name for code that the
     // declaration does not reach, which reads as `n$1 is not defined`.
-    const thenCtx = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
-    const elseCtx = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+    const thenCtx = childCtx(ctx);
+    const elseCtx = childCtx(ctx);
     const thenBody = s.consequent.map((b) => genStatement(b, thenCtx)).join("\n  ");
     const elseBody = s.alternate.map((b) => genStatement(b, elseCtx)).join("\n  ");
     return `if (${cond}) {\n  ${thenBody}\n} else {\n  ${elseBody}\n}`;
@@ -284,7 +291,7 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
     const arms = s.arms
       .map((arm) => {
         if (arm.pattern.kind === "PVariant") {
-          const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+          const inner = childCtx(ctx);
           const binds = arm.pattern.binds
             .map((b, i) =>
               b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
@@ -294,17 +301,17 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
           return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds}\n  ${body}\n}`;
         }
         if (arm.pattern.kind === "PBind") {
-          const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+          const inner = childCtx(ctx);
           const bind = declareBind(inner, arm.pattern.name);
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (true) { const ${bind} = _v;\n  ${body}\n}`;
         }
         if (arm.pattern.kind === "PTuple") {
-          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", true);
+          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
           const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
           return `if (${guard}) { ${binds}\n  ${body}\n}`;
         }
-        const inner = makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+        const inner = childCtx(ctx);
         const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
         return `if (true) {\n  ${body}\n}`;
       })
