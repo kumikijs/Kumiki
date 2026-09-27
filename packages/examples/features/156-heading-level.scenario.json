@@ -1,0 +1,24 @@
+{
+  "steps": [
+    {
+      "label": "each level renders its own element (clicking a missing one fails the step)",
+      "do": { "click": "h1[data-kumiki-tile='heading']" },
+      "expect": { "noErrors": true, "domIncludes": ["Guide", "Install", "Requirements"] }
+    },
+    { "do": { "click": "h3[data-kumiki-tile='heading']" }, "expect": { "noErrors": true } },
+    {
+      "label": "the slot-driven heading starts as an h2",
+      "do": { "click": "h3 ~ h2[data-kumiki-tile='heading']" },
+      "expect": { "noErrors": true, "domIncludes": ["Moving section"] }
+    },
+    {
+      "do": { "clickText": "Deeper" },
+      "expect": { "noErrors": true, "state": { "depth": 3 } }
+    },
+    {
+      "label": "and is re-created as an h3 once its level changes",
+      "do": { "click": "h3 ~ h3[data-kumiki-tile='heading']" },
+      "expect": { "noErrors": true, "domIncludes": ["Moving section"] }
+    }
+  ]
+}
