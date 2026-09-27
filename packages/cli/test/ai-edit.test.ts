@@ -753,7 +753,7 @@ describe("planTestPatch: deterministic literal repair from a failing test", () =
 // The tiers exercise it indirectly, but a direct microtest guards the tricky
 // shapes (consecutive literals, escaped quotes, empty body) from refactor
 // regressions in the single-source `/"(?:[^"\\]|\\.)*"/g` regex.
-describe("iterStringLiterals: shared string-literal walker", () => {
+describe("iterStringLiterals: string-literal walker", () => {
   it("returns spans and raw bodies for a lone literal", () => {
     const lits = iterStringLiterals('x = "hello"');
     expect(lits).toHaveLength(1);
@@ -984,9 +984,9 @@ describe("planTestPatch: relaxed repair tiers", () => {
     // Sibling of the "does not match a numeric leaf inside a string literal"
     // test above, at the *tightest* possible fit: the string literal `"7"`
     // occupies exactly 3 source chars (`"`, `7`, `"`), so the numeric actual
-    // `7` lands at digit offset `lo+1` and ends at `hi-1` — the smallest
-    // containment case: the digit is neither where a token starts (the
-    // string's opening quote is) nor where one ends.
+    // `7` starts one past the opening quote and ends one before the closing
+    // quote — the smallest containment case: the digit is neither where a
+    // token starts (the string's opening quote is) nor where one ends.
     const { source, store } = writeAndLoad(
       [
         "slot count : Int = 0",
