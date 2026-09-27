@@ -1,0 +1,25 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been ordered yet",
+      "expect": { "noErrors": true, "state": { "status": "idle" } }
+    },
+    {
+      "label": "an answer that does not decode reaches .err with the response's status",
+      "do": { "click": "#buy" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "failed with status 201" },
+        "domIncludes": ["status: failed with status 201"]
+      }
+    }
+  ],
+  "effects": {
+    "placeOrder": [
+      {
+        "outcome": "err",
+        "value": { "status": 201, "message": "decode failed", "body": "<html>Created</html>" }
+      }
+    ]
+  }
+}

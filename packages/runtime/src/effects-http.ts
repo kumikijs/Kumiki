@@ -94,12 +94,20 @@ export async function httpFetch(
       };
     }
     const decode = x.decode ?? "json";
-    let value: unknown;
-    if (decode === "json") value = await res.json();
-    else if (decode === "text") value = await res.text();
-    else if (decode === "none") value = null;
-    else value = await res.text();
-    return { kind: "ok", value };
+    if (decode === "none") return { kind: "ok", value: null };
+    // Reading the body can still fail like a connection (it stays in the outer
+    // catch, status 0). Parsing it cannot: a response arrived, so a decode
+    // failure keeps its status and text (§6.1.4) and is not retried (§6.5).
+    const text = await res.text();
+    if (decode !== "json") return { kind: "ok", value: text };
+    try {
+      return { kind: "ok", value: JSON.parse(text) };
+    } catch (e) {
+      return {
+        kind: "err",
+        value: { status: res.status, message: `decode failed: ${String(e)}`, body: text },
+      };
+    }
   } catch (e) {
     // spec http.md §6.4.1: cancelled / aborted requests normalize to
     // `{status:0, message:"aborted"}` so reducers see the same HttpError

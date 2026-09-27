@@ -62,7 +62,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-レスポンスの decode は型安全。`Decoder.Json(User)` を指定すれば、レスポンス JSON が `User` 型に decode される。失敗は `HttpError` の `body` に格納される。
+レスポンスの decode は型安全。`Decoder.Json(User)` を指定すれば、レスポンス JSON が `User` 型に decode される。decode に失敗した本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。
 
 ### 6.1.5 共通 props（自動付与）
 
@@ -256,7 +256,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | N 回まで、ms 間隔で再試行 |
 | `exponential(N, initial-ms, factor)` | N 回まで、初回 initial-ms、毎回 factor 倍 |
 
-リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。
+リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文の decode に失敗したレスポンスもリトライしない。サーバーは応答しているので、リトライはリクエストをもう一度送ることになる。
 
 ---
 
