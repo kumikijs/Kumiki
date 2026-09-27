@@ -53,6 +53,19 @@ type HttpBody = Json(JsonValue)
               | Empty
 ```
 
+Each variant is sent as what it names:
+
+| variant | request body |
+|---|---|
+| `Json(v)` | `v` as JSON |
+| `Form(m)` | `m` URL-encoded (`a=1&b=2`) |
+| `Multipart(m)` | a `FormData` of `m`; a `FileV` entry is sent as the file |
+| `Text(t)` | `t` as-is |
+| `Bytes(b)` | the bytes of `b` |
+| `Empty` | no body |
+
+A `body` that is not an `HttpBody` variant (a record, a list) is sent as JSON, as `Json` would send it.
+
 ### 6.1.4 The Decoder Type
 
 ```kumiki snippet
@@ -69,11 +82,12 @@ Response decoding is type-safe. If you specify `Decoder.Json(User)`, the respons
 All HTTP effects automatically apply the following:
 
 - `Accept: application/json` (when the Decoder is Json)
-- `Content-Type: application/json` (when the HttpBody is Json)
-- `Content-Type: multipart/form-data` (when Multipart)
+- `Content-Type: application/json` (when the HttpBody is Json, or the body is not an HttpBody variant)
+- `Content-Type: application/x-www-form-urlencoded` (when Form)
+- `Content-Type: multipart/form-data` (when Multipart; written by fetch itself, so that it carries the boundary)
 - `User-Agent: Kumiki`
 
-User-specified headers take precedence.
+User-specified headers take precedence. A header name is compared case-insensitively, so `content-type` set by the program replaces the default.
 
 ---
 

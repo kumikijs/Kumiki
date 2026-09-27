@@ -45,12 +45,9 @@ export async function httpFetch(
     credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
   };
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
-    if (typeof x.body === "string") {
-      init.body = x.body;
-    } else {
-      init.body = JSON.stringify(x.body);
-      if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
-    }
+    const { body, contentType } = encodeBody(x.body);
+    if (body !== undefined) init.body = body;
+    if (contentType && !hasHeader(headers, "Content-Type")) headers["Content-Type"] = contentType;
   }
 
   // Internal controller drives the timeout; an external `signal` (from the
@@ -113,6 +110,57 @@ export async function httpFetch(
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
+}
+
+type Tagged = { _tag: string; _0?: unknown };
+
+/**
+ * What a request body is sent as, and the Content-Type it implies when the
+ * program set none (http.md §6.1.3 / §6.1.5). An `HttpBody` variant is sent as
+ * what it names; a `Multipart` / `Bytes` / `Text` body gets no Content-Type
+ * here, so fetch writes its own (the multipart boundary in particular). Any
+ * other value — a record, a list — is sent as JSON, and a JS string as-is.
+ */
+function encodeBody(body: unknown): { body?: BodyInit; contentType?: string } {
+  if (typeof body === "string") return { body };
+  const t = body as Tagged | null;
+  switch (t !== null && typeof t === "object" ? t._tag : undefined) {
+    case "Json":
+      return { body: JSON.stringify(t?._0), contentType: "application/json" };
+    case "Form":
+      return {
+        body: new URLSearchParams(t?._0 as Record<string, string>).toString(),
+        contentType: "application/x-www-form-urlencoded",
+      };
+    case "Multipart":
+      return { body: formDataOf(t?._0 as Record<string, unknown>) };
+    case "Text":
+      return { body: String(t?._0) };
+    case "Bytes":
+      return { body: t?._0 as BodyInit };
+    case "Empty":
+      return {};
+    default:
+      return { body: JSON.stringify(body), contentType: "application/json" };
+  }
+}
+
+/** A `Multipart(Map(Text, FormValue))` as the `FormData` fetch encodes. */
+function formDataOf(entries: Record<string, unknown>): FormData {
+  const fd = new FormData();
+  for (const [name, v] of Object.entries(entries ?? {})) {
+    const inner = v !== null && typeof v === "object" && "_tag" in v ? (v as Tagged)._0 : v;
+    // `FileV` carries the file record a file input produced; its DOM `File` is `_file`.
+    const file = (inner as { _file?: unknown } | null)?._file ?? inner;
+    if (file instanceof Blob) fd.append(name, file);
+    else fd.append(name, String(inner));
+  }
+  return fd;
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((k) => k.toLowerCase() === lower);
 }
 
 function isAbortError(e: unknown): boolean {

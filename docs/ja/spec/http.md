@@ -53,6 +53,19 @@ type HttpBody = Json(JsonValue)
               | Empty
 ```
 
+各 variant は、その名前が示すものとして送られる：
+
+| variant | リクエスト本文 |
+|---|---|
+| `Json(v)` | `v` の JSON |
+| `Form(m)` | `m` を URL エンコードしたもの（`a=1&b=2`） |
+| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る |
+| `Text(t)` | `t` そのまま |
+| `Bytes(b)` | `b` のバイト列 |
+| `Empty` | 本文なし |
+
+HttpBody の variant でない `body`（レコード・リスト）は、`Json` と同じく JSON で送られる。
+
 ### 6.1.4 Decoder 型
 
 ```kumiki snippet
@@ -69,11 +82,12 @@ Decoder.None         # レスポンス本文を捨てる
 すべての HTTP effect は次を自動付与：
 
 - `Accept: application/json`（Decoder が Json のとき）
-- `Content-Type: application/json`（HttpBody が Json のとき）
-- `Content-Type: multipart/form-data`（Multipart のとき）
+- `Content-Type: application/json`（HttpBody が Json のとき、または本文が HttpBody の variant でないとき）
+- `Content-Type: application/x-www-form-urlencoded`（Form のとき）
+- `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
 - `User-Agent: Kumiki`
 
-ユーザー指定の headers が優先される。
+ユーザー指定の headers が優先される。ヘッダ名は大文字小文字を区別せずに比べるので、プログラムが `content-type` を指定すれば既定値を置き換える。
 
 ---
 
