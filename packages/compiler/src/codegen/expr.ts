@@ -367,6 +367,10 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["flat-map", 1],
   ["fold", 2],
   ["format", 1],
+  // The keyed reading's floor. The unwrapping one takes none and its lowering
+  // reads none, so the method-call check judges `.get` by its receiver
+  // (`checkGetArity`), not by this. The paren-free member check does read this
+  // entry, and passes `o.get` only because `get` is in FIELD_ACCESS_SHORTCUTS.
   ["get", 1],
   // One shape takes a default, the other a key AND a default; the lowering
   // branches on the count, so one is the floor.
@@ -684,7 +688,14 @@ export function methodCallJs(
     case "toggle":
       return `_s.setToggle(${recvJs}, ${argRaw(args[0]!)})`;
     case "get":
-      // Spec: Map(K,V).get returns Option(V). Wrap the raw lookup result.
+      // One name, two readings, and the argument count picks between them:
+      // `Option(T).get()` / `Result(T, E).get()` take nothing and unwrap — the
+      // same lowering as the paren-free `o.get` — while `Map(K, V).get(k)` and
+      // `List(T).get(i)` take one and answer an Option (`Option(V)` /
+      // `Option(T)`), so the raw lookup is wrapped. On a receiver the checker
+      // decides, `checkGetArity` has already made the count fit it; on one it
+      // cannot decide, both counts pass and the count alone picks the reading.
+      if (args.length === 0) return `_s.unwrap(${recvJs})`;
       return `((_v) => _v === undefined ? _s.None : _s.Some(_v))(_s.mapGet(${recvJs}, ${argRaw(args[0]!)}))`;
     case "get-or":
       // Two shapes:
