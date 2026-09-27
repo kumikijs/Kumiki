@@ -1,0 +1,67 @@
+# Feature (language.md §1.9.4, stdlib.md §2.2.3): equality is by value.
+#
+#   a == b              : Bool   (any two values of one shape)
+#   List(T).contains(x) : Bool
+#   List(T).unique      : List(T)
+#
+# Kumiki values are immutable, so a program has no reference identity to
+# compare. Two Lists, records, tuples, Maps, Sets or variants are equal when
+# what they hold is equal, all the way down, and `!=` is the negation.
+# `contains` and `unique` ask the same question as `==`: a List of union
+# values, records or Options finds a member that was built somewhere else,
+# and `unique` keeps the first of each value, in order.
+#
+# The property test at the bottom compares a whole List slot with `==`.
+
+type Pt   = {x: Int, y: Int}
+type Role = Admin | Editor | Viewer
+
+slot xs    : List(Int)          = []
+slot p     : Pt                 = {x: 1, y: 2}
+slot roles : List(Role)         = [Admin, Editor]
+slot picks : List(Role)         = [Admin, Admin, Viewer]
+slot pts   : List(Pt)           = [{x: 1, y: 2}, {x: 1, y: 2}, {x: 3, y: 4}]
+slot opts  : List(Option(Int))  = [Some(1), Some(1), None]
+slot pairs : List(Tuple(Int, Int)) = [(0, 0), (0, 1), (0, 0)]
+slot items : List(Int)          = []
+
+reducer add on=ui.click(AddBtn) do= items := items.push(1)
+
+tile AddBtn = button(text="add") {id: "add"}
+
+tile App = column(
+  AddBtn,
+  text("items: " + items.length.show),
+  text("list-empty: " + (xs == []).show),
+  text("list-eq: " + ([1, 2] == [1, 2]).show),
+  text("list-order: " + ([1, 2] == [2, 1]).show),
+  text("rec-eq: " + (p == {x: 1, y: 2}).show),
+  text("rec-ne: " + (p != {x: 1, y: 3}).show),
+  text("tuple-eq: " + ((0, 0) == (0, 0)).show),
+  text("opt-int-eq: " + (Some(3) == Some(3)).show),
+  text("opt-rec-eq: " + (Some(p) == Some({x: 1, y: 2})).show),
+  text("nested-opt: " + (Some(Some(1)) == Some(Some(1))).show),
+  text("nested-opt-ne: " + (Some(Some(1)) == Some(None)).show),
+  text("is-admin: " + roles.contains(Admin).show),
+  text("is-viewer: " + roles.contains(Viewer).show),
+  text("has-pt: " + pts.contains({x: 3, y: 4}).show),
+  text("has-none: " + opts.contains(None).show),
+  text("has-pair: " + pairs.contains((0, 1)).show),
+  text("unique-roles: " + picks.unique.length.show),
+  text("unique-roles2: " + picks.unique().length.show),
+  text("unique-first: " + (picks.unique == [Admin, Viewer]).show),
+  text("unique-pts: " + pts.unique.length.show),
+  text("unique-opts: " + opts.unique.length.show),
+  text("unique-pairs: " + (pairs.unique == [(0, 0), (0, 1)]).show),
+  text("text-contains: " + "kumiki".contains("mik").show))
+
+app ValueEquality
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
+
+test add-appends-one =
+    property-test
+        for-all   = {n: Int where between(0, 5)}
+        given     = {slots: {items: []}, event: {type: ui.click, target: AddBtn}}
+        invariant = run-reducer(add).slots.items == [1]

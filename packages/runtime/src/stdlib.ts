@@ -55,6 +55,37 @@ function assertNeverKind(kind: never): never {
 }
 
 /**
+ * Value equality — the one answer to "are these two Kumiki values the same",
+ * shared by `==` / `!=`, `List.contains` / `unique`, and the test layer's
+ * comparisons (`testkit.ts`), so none of them can drift from the others.
+ *
+ * Kumiki values are immutable (language.md §1.6.3), so a program has no
+ * reference identity it could mean to compare: a List, tuple, record, Map,
+ * Set or variant equals another when what it holds is equal, recursively.
+ * A List or tuple (a JS array) compares element by element in order; every
+ * other object — a record, a variant (`_tag` is one more field), a Map or a
+ * Set stored as a plain object — by the same set of own keys holding equal
+ * values, whatever order they were written in. Primitives compare with `===`.
+ */
+export function valueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  const aArr = Array.isArray(a);
+  const bArr = Array.isArray(b);
+  if (aArr || bArr) {
+    if (!aArr || !bArr || a.length !== b.length) return false;
+    return a.every((x, i) => valueEqual(x, (b as unknown[])[i]));
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const ak = Object.keys(ao);
+  if (ak.length !== Object.keys(bo).length) return false;
+  // Key presence too: `{a: undefined}` and `{b: undefined}` have equal key
+  // counts but are not equal.
+  return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
+}
+
+/**
  * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
  *
  * A blank — `null`, `undefined`, `""`, whitespace — is not zero here. `Number`
@@ -278,6 +309,20 @@ export const _stdlibCore = {
     const hit = (xs ?? []).find(pred);
     return hit === undefined ? _stdlibCore.None : _stdlibCore.Some(hit);
   },
+  /**
+   * `.contains(x)`: a substring test on `Text`, and membership on a `List`
+   * (stdlib.md §2.2.3), which asks `==`'s question of each element.
+   */
+  contains(recv: unknown, x: unknown): boolean {
+    if (typeof recv === "string") return recv.includes(x as string);
+    return ((recv as unknown[] | null | undefined) ?? []).some((y) => valueEqual(y, x));
+  },
+  /** `List(T).unique`: the first occurrence of each value, by `==`, in order. */
+  listUnique<T>(xs: T[] | undefined | null): T[] {
+    const out: T[] = [];
+    for (const x of xs ?? []) if (!out.some((y) => valueEqual(y, x))) out.push(x);
+    return out;
+  },
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
   },
@@ -389,23 +434,9 @@ export const _stdlibCore = {
       return i < args.length ? _stdlibCore.show(args[i]) : placeholder;
     });
   },
+  /** `==` (language.md §1.9.4): by value, through `valueEqual`. `!=` is its negation. */
   eq(a: unknown, b: unknown): boolean {
-    if (a === b) return true;
-    if (a == null || b == null) return false;
-    if (typeof a === "object" && typeof b === "object") {
-      const ao = a as { _tag?: string };
-      const bo = b as { _tag?: string };
-      if (ao._tag !== undefined || bo._tag !== undefined) {
-        if (ao._tag !== bo._tag) return false;
-        for (const k of Object.keys(ao)) {
-          if (!Object.is((ao as Record<string, unknown>)[k], (bo as Record<string, unknown>)[k])) {
-            return false;
-          }
-        }
-        return true;
-      }
-    }
-    return false;
+    return valueEqual(a, b);
   },
   /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {

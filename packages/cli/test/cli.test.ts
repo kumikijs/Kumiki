@@ -231,10 +231,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // nowhere and a read that hands `undefined` to whatever comes next. It
     // landed on a branch parallel to the paragraph above, which had already
     // taken the budget to 59,000 for its own reason; together they fit under it.
+    //
+    // 60,000 from 59,000 (59,456 measured, from 58,927): equality is by value
+    // (language.md §1.9.4). `valueEqual` is the one recursive comparison `==`,
+    // `List.contains`, `List.unique` and the test layer share, and `contains` /
+    // `listUnique` are the helpers the two List members now lower to instead
+    // of `includes` and `new Set`, which compared by reference. A counter
+    // compares nothing and still ships them, since they sit in the stdlib
+    // module every app imports.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(59_000);
+    expect(total).toBeLessThan(60_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

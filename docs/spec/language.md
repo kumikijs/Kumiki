@@ -899,6 +899,16 @@ keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncati
 [stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
 declare the `Float`.
 
+`==` compares **by value**. Kumiki values are immutable
+([§1.6.3](#_1-6-3-lvalue-semantics)), so a program has no reference
+identity it could mean to compare: two Lists, tuples, records, Maps, Sets or
+variants are equal when what they hold is equal, all the way down — `xs == []` on
+an empty list, `(0, 0) == (0, 0)` and `Some({x: 1}) == Some({x: 1})` are `true`,
+`[1, 2] == [2, 1]` is `false`. A record's fields and a Map's entries compare
+whatever order they were written in. `!=` is the negation. `List.contains` and
+`List.unique` ask the same question ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)),
+and so do the test layer's comparisons.
+
 `==` is total over every *shape* — an `Int` and a `Text`, an `Option` and its
 `None` — and `nominal` is the one exception. Two declarations over one base are
 two types ([§1.3.5](#_1-3-5-type-canonicalization)), so comparing them is the

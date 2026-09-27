@@ -280,3 +280,43 @@ describe("an index read (docs/spec/language.md §1.6.3)", () => {
     expect(_stdlibCore.index({ 5: "x" }, 5)).toBe("x");
   });
 });
+
+describe("value equality (docs/spec/language.md §1.9.4)", () => {
+  const { eq, contains, listUnique } = _stdlibCore;
+
+  it("compares Lists, records, tuples, Maps and variant payloads by value", () => {
+    expect(eq([], [])).toBe(true);
+    expect(eq([1, [2, 3]], [1, [2, 3]])).toBe(true);
+    expect(eq({ x: 1, y: 2 }, { y: 2, x: 1 })).toBe(true);
+    expect(
+      eq(
+        { _tag: "Some", _0: { _tag: "Some", _0: 1 } },
+        { _tag: "Some", _0: { _tag: "Some", _0: 1 } },
+      ),
+    ).toBe(true);
+    expect(eq({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true);
+  });
+
+  it("tells different values apart", () => {
+    expect(eq([1, 2], [2, 1])).toBe(false);
+    expect(eq([1], [1, 1])).toBe(false);
+    expect(eq({ x: 1, y: 2 }, { x: 1, y: 3 })).toBe(false);
+    expect(eq({ a: undefined }, { b: undefined })).toBe(false);
+    expect(eq({ _tag: "Some", _0: 1 }, { _tag: "None" })).toBe(false);
+    expect(eq([1], { 0: 1 })).toBe(false);
+    expect(eq(null, undefined)).toBe(false);
+  });
+
+  it("contains and listUnique ask eq's question, and contains on Text is a substring test", () => {
+    const admin = () => ({ _tag: "Admin" });
+    expect(contains([admin(), { _tag: "Editor" }], admin())).toBe(true);
+    expect(contains([admin()], { _tag: "Viewer" })).toBe(false);
+    expect(contains(null, 1)).toBe(false);
+    expect(contains("kumiki", "mik")).toBe(true);
+    expect(listUnique([admin(), admin(), { _tag: "Viewer" }, admin()])).toEqual([
+      { _tag: "Admin" },
+      { _tag: "Viewer" },
+    ]);
+    expect(listUnique([3, 1, 3, 2, 1])).toEqual([3, 1, 2]);
+  });
+});
