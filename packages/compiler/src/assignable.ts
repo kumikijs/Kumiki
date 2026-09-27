@@ -56,35 +56,81 @@ export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
  * itself returns `null` rather than looping: reporting the cycle is a separate
  * check, and normalisation has to terminate whether or not one exists.
  */
-export function unaliasType(
+export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
+  return unaliasFrom(t, env, new Set(), new WeakMap());
+}
+
+/**
+ * Where each argument substituted into a generic's body was written, as the
+ * names already entered at that point.
+ *
+ * An argument is a sub-expression of the caller's syntax, not of the body it
+ * is substituted into, so it is read with the caller's guard: in
+ * `NonEmpty(NonEmpty(Short))` the inner application is the outer one's
+ * argument and enters `NonEmpty` afresh, where reading it under the body's
+ * guard met `NonEmpty` as a re-entry and answered no type at all. The walk
+ * still ends — every argument is a strict part of the syntax it was written
+ * in, and a name reached through a body rather than an argument
+ * (`type Loop(T) = Loop(T)`) meets the body's guard as before. This is the
+ * reading `refinementsOf` takes in codegen.
+ *
+ * Keyed on a fresh copy of each argument made at the application, so an
+ * argument node shared by two applications carries the guard of each.
+ */
+type ArgOrigins = WeakMap<TypeExpr, ReadonlySet<string>>;
+
+/**
+ * The body of `def` as applied by `t`, with each argument recorded under the
+ * guard in force where it was written.
+ *
+ * Substituted rather than read through a parameter map: a type parameter may
+ * be spelled the same as a top-level definition, and an unsubstituted `TypeRef`
+ * would resolve against that global instead — so `type Alias(Cents) = Cents`
+ * would answer `Cents` for every argument.
+ */
+function applyDef(
+  t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
+  def: TypeDef,
+  seen: ReadonlySet<string>,
+  origins: ArgOrigins,
+): TypeExpr {
+  if (t.kind === "TypeRef") return def.body;
+  const sub = new Map<string, TypeExpr>();
+  def.params.forEach((p, i) => {
+    const arg = t.args[i];
+    if (!arg) return;
+    const copy = { ...arg };
+    origins.set(copy, origins.get(arg) ?? seen);
+    sub.set(p, copy);
+  });
+  return substituteType(def.body, sub);
+}
+
+function unaliasFrom(
   t: TypeExpr | null,
   env: TypeEnv,
-  seen: ReadonlySet<string> = new Set(),
+  outer: ReadonlySet<string>,
+  origins: ArgOrigins,
 ): TypeExpr | null {
   if (!t) return null;
-  if (t.kind === "TypeRef") {
-    if (seen.has(t.name)) return null;
+  const seen = origins.get(t) ?? outer;
+  if (t.kind === "TypeRef" || t.kind === "TypeApp") {
     const def = env.types.get(t.name);
+    // A `TypeRef` naming nothing is opaque; a stdlib constructor (`List`,
+    // `Option`, …) has no definition to expand into and is already in its
+    // comparison form.
     if (!def) return t;
-    return unaliasType(def.body, env, new Set([...seen, t.name]));
-  }
-  if (t.kind === "TypeApp") {
-    const def = env.types.get(t.name);
-    // A stdlib constructor (`List`, `Option`, …) has no definition to expand
-    // into and is already in its comparison form.
-    if (!def) return t;
-    // Re-entry is the `TypeRef` case, and answers the same `null`: the chain
-    // has closed on itself, so there is no normal form to compare against.
-    // Returning the application instead handed comparisons a type that looks
-    // usable and is not — `type A = Alias(B)` / `type B = Alias(A)` reported
-    // `Expected A but got Int` on the literal, blaming the value for a type
-    // with no body. E0009 is what names that.
+    // Re-entry answers `null` for both: the chain has closed on itself, so
+    // there is no normal form to compare against. Returning the application
+    // instead handed comparisons a type that looks usable and is not —
+    // `type A = Alias(B)` / `type B = Alias(A)` reported `Expected A but got
+    // Int` on the literal, blaming the value for a type with no body. E0009 is
+    // what names that.
     if (seen.has(t.name)) return null;
-    const body = substituteType(def.body, paramSubstitution(def.params, t.args));
-    return unaliasType(body, env, new Set([...seen, t.name]));
+    return unaliasFrom(applyDef(t, def, seen, origins), env, new Set([...seen, t.name]), origins);
   }
   if (t.kind === "TypeNominal" || t.kind === "TypeRefinement")
-    return unaliasType(t.inner, env, seen);
+    return unaliasFrom(t.inner, env, seen, origins);
   return t;
 }
 
@@ -120,25 +166,20 @@ function bareType(t: TypeExpr): TypeExpr {
 function nominalDecl(
   t: TypeExpr | null,
   env: TypeEnv,
-  seen: ReadonlySet<string> = new Set(),
+  outer: ReadonlySet<string> = new Set(),
+  origins: ArgOrigins = new WeakMap(),
 ): { readonly name: string; readonly over: TypeExpr } | null {
   if (!t) return null;
-  if (t.kind === "TypeRefinement") return nominalDecl(t.inner, env, seen);
+  const seen = origins.get(t) ?? outer;
+  if (t.kind === "TypeRefinement") return nominalDecl(t.inner, env, seen, origins);
   if (t.kind !== "TypeRef" && t.kind !== "TypeApp") return null;
   if (seen.has(t.name)) return null;
   const def = env.types.get(t.name);
   if (!def) return null;
-  // Substituted for the same reason `unaliasType` substitutes: a type
-  // parameter may be spelled the same as a top-level definition, and an
-  // unsubstituted `TypeRef` would resolve against that global instead — so
-  // `type Alias(Cents) = Cents` would answer `Cents` for every argument.
-  const body =
-    t.kind === "TypeApp"
-      ? substituteType(def.body, paramSubstitution(def.params, t.args))
-      : def.body;
+  const body = applyDef(t, def, seen, origins);
   const bare = bareType(body);
   if (bare.kind === "TypeNominal") return { name: t.name, over: bare.inner };
-  return nominalDecl(body, env, new Set([...seen, t.name]));
+  return nominalDecl(body, env, new Set([...seen, t.name]), origins);
 }
 
 /**
