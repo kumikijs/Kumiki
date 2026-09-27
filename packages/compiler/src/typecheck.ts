@@ -43,7 +43,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES } from "./builtins.ts";
+import { BUILTIN_TILES, contentArg, contentReading } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
@@ -1201,7 +1201,7 @@ function checkIconName(
   errors: KumikiError[],
 ): void {
   if (t.name !== "icon") return;
-  const nameArg = t.args.find((a) => a.name === "name");
+  const nameArg = contentArg(t);
   if (!nameArg) return;
   const v = nameArg.value as Expr;
   if (v.kind !== "Str") return;
@@ -1262,7 +1262,7 @@ function checkA11y(
     }
   }
   if (t.name === "link") {
-    const hasText = t.args.some((a) => a.name === "text") || t.props.some((p) => p.name === "text");
+    const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
     const hasAria = t.props.some((p) => p.name === "aria-label");
     if (!hasText && !hasAria) {
       errors.push({
@@ -1379,6 +1379,50 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
+/**
+ * E0129 at every argument a value builtin is written with as content and
+ * never renders, read off the same table the lowering reads its content from
+ * (`VALUE_BUILTIN_CONTENT`), so the two cannot disagree about which one shows.
+ *
+ * Two shapes. A positional argument past the one the builtin reads — the
+ * second of `text("A", "B")`, or any on `image` / `icon`, which read `src=` /
+ * `name=`. And content written as `text=` on a builtin that reads only a
+ * positional argument (`heading(text=title)`): `text=` is the label argument
+ * of `button` / `link` / `label` / `editable`, and a prop anywhere else, so
+ * the call rendered "" while every tier said ok. With a positional argument
+ * also written, `text=` is just a prop and the call renders its content.
+ */
+function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const reading = contentReading(t.name);
+  if (!reading) return;
+  const positional = t.args.filter((a) => a.name === undefined);
+  const read = reading.positional ? 1 : 0;
+  positional.slice(read).forEach((a, i) => {
+    errors.push({
+      code: "E0129",
+      kind: "unrendered-arg",
+      message: reading.positional
+        ? `${t.name} renders its first positional argument only — positional argument ` +
+          `${i + read + 1} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
+          `each its own ${t.name}`
+        : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
+          `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
+      pos: a.value.pos,
+    });
+  });
+  if (!reading.positional || reading.named !== undefined || positional.length > 0) return;
+  const named = t.args.find((a) => a.name === "text");
+  if (!named) return;
+  errors.push({
+    code: "E0129",
+    kind: "unrendered-arg",
+    message:
+      `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
+      `and never renders (it is the label argument of button, link, label and editable)`,
+    pos: named.namePos ?? named.value.pos,
+  });
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -1396,6 +1440,7 @@ function checkTileCall(
   }
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
+  checkContentArgs(t, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);

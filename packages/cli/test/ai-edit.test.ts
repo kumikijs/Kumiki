@@ -321,6 +321,34 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("makes a text builtin's text= its positional content (E0129)", () => {
+    // `heading(text=title)` renders nothing: `text=` is a prop on a text
+    // builtin. With no positional argument written, dropping `text=` makes the
+    // value the content, and the patched file has to compile.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-content-"));
+    const file = join(dir, "content.kumiki");
+    writeFileSync(
+      file,
+      `slot title : Text = "Hi"
+tile App = column(heading(level=2, text=title), text("A", "B"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([
+      "make the text= value the positional content at 2:36",
+    ]);
+    expect(skipped.map((sk) => sk.reason)).toEqual(["e0129-dropped-argument-has-no-single-repair"]);
+    const patched = patches.reduce((t, p) => p.apply(t), readFileSync(file, "utf8"));
+    expect(patched).toContain("heading(level=2, title)");
+    expect(check(parse(lex(patched))).map((e) => e.code)).toEqual(["E0129"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("rewrites an out-of-scope $route to the slot that holds it (E0119)", () => {
     // The two name the same route. The bind is only filled in for a route
     // lifecycle reducer, and the slot is readable from all of them — so the

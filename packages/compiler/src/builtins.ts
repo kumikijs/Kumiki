@@ -8,6 +8,8 @@
 // that class of drift structurally impossible — a tile listed here must be
 // handled by codegen, or the build fails loudly in CI via the registry test.
 
+import type { TileArg, TileExpr } from "./ast.ts";
+
 /**
  * Every tile the spec documents as built-in (stdlib §2.3). The parser uses this
  * to distinguish built-in tile calls from user-tile references; the typechecker
@@ -203,19 +205,57 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
 };
 
 /**
- * Built-in tiles whose single positional argument is a *value* expression
- * (Text / Number / …) rather than a child tile — e.g. `heading("Hi")`,
- * `code("const x = 1", lang="ts")`. Everything else treats positional args as
- * child tiles.
+ * Where each value builtin reads its content (language.md §1.7.1, stdlib.md
+ * §2.3), and so which of the arguments written as content it renders.
+ *
+ * - `positional`: the first positional argument is the content. A second one
+ *   is never rendered.
+ * - `named`: the named argument read as the content when no positional one is
+ *   written — `label` / `link` / `editable` take their label as `text=`, and
+ *   `image` / `icon`, which read no positional argument at all, take theirs as
+ *   `src=` / `name=`.
+ *
+ * The lowering reads the content through `contentArg`, and the checker reports
+ * every argument this table says is dropped (E0129), so what `check` accepts
+ * is what renders. A builtin in this table is a value builtin: its positional
+ * argument parses as a value, never as a child tile — `heading("Hi")`,
+ * `code("const x = 1", lang="ts")`.
  */
-export const VALUE_ARG_BUILTINS = new Set<string>([
-  "text",
-  "heading",
-  "markdown",
-  "label",
-  "link",
-  "image",
-  "icon",
-  "code",
-  "editable",
-]);
+export const VALUE_BUILTIN_CONTENT = {
+  text: { positional: true },
+  heading: { positional: true },
+  markdown: { positional: true },
+  code: { positional: true },
+  label: { positional: true, named: "text" },
+  link: { positional: true, named: "text" },
+  editable: { positional: true, named: "text" },
+  image: { positional: false, named: "src" },
+  icon: { positional: false, named: "name" },
+} as const satisfies Record<string, { positional: boolean; named?: string }>;
+
+export type ContentReading = { readonly positional: boolean; readonly named?: string };
+
+/** How `name` reads its content, or `undefined` when it is not a value builtin. */
+export function contentReading(name: string): ContentReading | undefined {
+  return Object.hasOwn(VALUE_BUILTIN_CONTENT, name)
+    ? VALUE_BUILTIN_CONTENT[name as keyof typeof VALUE_BUILTIN_CONTENT]
+    : undefined;
+}
+
+/**
+ * Built-in tiles whose positional argument is a *value* expression rather than
+ * a child tile. Everything else treats positional args as child tiles.
+ */
+export const VALUE_ARG_BUILTINS: ReadonlySet<string> = new Set(Object.keys(VALUE_BUILTIN_CONTENT));
+
+/**
+ * The argument a value builtin renders as its content: its first positional
+ * argument when it reads one, else its named content argument; `undefined`
+ * when neither is written or `t` is not a value builtin.
+ */
+export function contentArg(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
+  const reading = contentReading(t.name);
+  if (!reading) return undefined;
+  const positional = reading.positional ? t.args.find((a) => a.name === undefined) : undefined;
+  return positional ?? (reading.named ? t.args.find((a) => a.name === reading.named) : undefined);
+}

@@ -113,7 +113,46 @@ const rows: Row[] = [
     says: "B",
     notSays: "A",
   },
+  // `label` and `link` take their label the same way: the first positional
+  // argument, or `text=` when none is written. The positional one used to be
+  // parsed and then dropped, so both rendered empty.
+  {
+    kind: "label",
+    tile: 'label(test-id="probe", title)',
+    says: "Title",
+    notSays: "probe",
+    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+  },
+  {
+    kind: "label, text= beside a positional",
+    tile: 'label(text="A", "B")',
+    says: "B",
+    notSays: "A",
+  },
+  {
+    kind: "link",
+    tile: 'link(to="/x", title)',
+    says: "Title",
+    notSays: "/x",
+  },
+  {
+    kind: "link, text= beside a positional",
+    tile: 'link(to="/x", text="A", "B")',
+    says: "B",
+    notSays: "A",
+  },
 ];
+
+// The named forms `label` and `link` have always taken still render.
+describe("label and link still take their label as text=", () => {
+  it.each([
+    ['label(text="Named")', "Named"],
+    ['link(to="/x", text="Named")', "Named"],
+    ['link(to="/x") {text: "Prop"}', "Prop"],
+  ])("%s", async (tile, says) => {
+    expect((await render(tile)).textContent).toBe(says);
+  });
+});
 
 describe("a builtin's content is its first positional argument", () => {
   for (const row of rows) {
@@ -127,8 +166,8 @@ describe("a builtin's content is its first positional argument", () => {
 
   // Only the prop half here is a rule: a `test-id` never becomes content. The
   // empty text is today's behaviour for a call that gives no content, and says
-  // nothing about `text(text="…")`, which `check` does not yet report; that
-  // shape is deliberately left unpinned until it gets a diagnostic.
+  // nothing about `text(text="…")`, which is E0129 (see
+  // `packages/compiler/test/builtin-content-args.test.ts`).
   it("text with only a test-id: the test-id is a prop, not the content", async () => {
     const el = await render('text(test-id="probe")');
     expect(el.textContent).toBe("");

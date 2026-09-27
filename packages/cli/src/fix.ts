@@ -669,6 +669,23 @@ export function planFixesExplained(
         apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
       });
     }
+    if (err.code === "E0129") {
+      // Only the `text=` shape has one repair: the builtin reads its first
+      // positional argument and there is none, so the named value becomes it.
+      // The diagnostic points at `text`, and `replaceAt` writes only if
+      // `text=` is what is there. A dropped positional argument has no such
+      // answer — join it, give it its own builtin, or delete it.
+      if (!err.message.startsWith("content is positional")) {
+        skip(err.code, "e0129-dropped-argument-has-no-single-repair", err.message);
+        continue;
+      }
+      add({
+        code: err.code,
+        message: err.message,
+        description: `make the text= value the positional content at ${err.pos.line}:${err.pos.col}`,
+        apply: (text: string) => replaceAt(text, err.pos, "text=", ""),
+      });
+    }
     if (err.code === "E0124") {
       // The repair is a type that applies the constructor — `type IntList =
       // List(Int)`, then `IntList.fresh()` — and which arguments to apply is

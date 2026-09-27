@@ -510,6 +510,21 @@ The count is all the check compares. The `fn`'s parameter types are not checked 
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
 
+### E0129 `unrendered-arg`
+
+A value builtin is written with an argument as content that it never renders. Each one reads its content from one place ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)): `text`, `heading`, `code` and `markdown` from their first positional argument; `link`, `label` and `editable` from their first positional argument, or `text=` when none is written; `image` and `icon` from `src=` and `name=`. What else is written as content goes nowhere:
+
+- A positional argument past the one the builtin reads. `text("A", "B")` renders `A`; `B` is dropped. On `image` and `icon`, which read no positional argument, every one is dropped.
+- `text=` on `text` / `heading` / `code` / `markdown` with no positional argument. `text=` is the label argument of `button`, `link`, `label` and `editable`, and a prop on the text builtins, so `heading(text=title)` renders an empty heading.
+
+> `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
+> `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
+> `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
+
+Each is reported at the dropped argument. `check`, `build` and `smoke` were all green on these: the argument parsed, type-checked and never reached the page. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
+
+**Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)` — and join values meant to show together (`text(a + " " + b)`). `kumiki fix` removes the `text=` of a text builtin that has no positional argument.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
