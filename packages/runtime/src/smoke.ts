@@ -401,7 +401,7 @@ function fire(el: HTMLElement): void {
   if (tag === "input") {
     const inp = el as HTMLInputElement;
     if (inp.type === "checkbox" || inp.type === "radio") {
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     } else {
       // file inputs are filtered out by collectInteractive — see the comment
       // there. Any input reaching here is text-like and tolerates a value
@@ -412,7 +412,7 @@ function fire(el: HTMLElement): void {
     }
     return;
   }
-  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
 function errStr(e: unknown): string {

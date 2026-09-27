@@ -651,7 +651,10 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const target = els.find((e) => (e.textContent ?? "").includes(a.clickText));
     if (!target) throw new Error(`no clickable element with text "${a.clickText}"`);
     refuse("clickText", target);
-    target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    // Cancelable, as a user's click is: a `preventDefault` that cancels a
+    // button's activation (a submit that never happens) is then visible here
+    // too, rather than a no-op this tier alone passes.
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     return;
   }
   if ("click" in a) {
@@ -662,7 +665,7 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
       root.querySelector<HTMLElement>(a.click) ?? document.querySelector<HTMLElement>(a.click);
     if (!el) throw new Error(`no element matching selector ${a.click}`);
     refuse("click", el);
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     return;
   }
   if ("focus" in a) {

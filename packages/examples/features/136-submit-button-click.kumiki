@@ -1,0 +1,36 @@
+# Feature (forms.md §5.2.2): a click reducer on a `type="submit"` button and
+# the form's `ui.submit` are independent — clicking "Log in" runs both. So
+# does a click reducer lifted onto the button from a user tile wrapping it,
+# and an `onClick=` argument. A `type="button"` button with a click reducer
+# still does not submit. Before this, the button renderer cancelled every
+# click it had a handler for, which cancels a submit button's activation, so
+# the form never submitted in a browser.
+
+slot email   : Text = ""
+slot clicks  : Int  = 0
+slot submits : Int  = 0
+
+reducer clicked  on=ui.click(LoginBtn)  do= clicks := clicks + 1
+reducer doLogin  on=ui.submit(LoginForm) do= submits := submits + 1
+reducer wrapped  on=ui.click(Wrapper)   do= clicks := clicks + 10
+reducer doWrap   on=ui.submit(WrapForm) do= submits := submits + 10
+reducer argClick on=ui.click(ArgBtn)    do= clicks := clicks + 100
+reducer doArg    on=ui.submit(ArgForm)  do= submits := submits + 100
+reducer cancel   on=ui.click(CancelBtn) do= clicks := clicks + 1000
+
+tile LoginBtn  = button(text="Log in", type="submit")
+tile LoginForm = form(column(input(bind=email, id="em"), LoginBtn, CancelBtn))
+tile CancelBtn = button(text="Cancel", type="button")
+
+tile Wrapper  = button(text="Wrapped", type="submit")
+tile WrapForm = form(Wrapper)
+
+tile ArgBtn  = button(text="By arg", type="submit", onClick=argClick)
+tile ArgForm = form(ArgBtn)
+
+tile App = column(LoginForm, WrapForm, ArgForm, text("clicks=" + clicks.show + " submits=" + submits.show))
+
+app SubmitButtonClick
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

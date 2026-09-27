@@ -98,6 +98,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 - すべての `bind` された slot がバリデーションを通過していれば `ui.submit(WrapperTile)` reducer が呼ばれる
 - 1 つでも失敗していれば呼ばれない（個別の error 表示は出る）
 - `button(type="submit")` をクリックするか、`input` で Enter キーで発火
+- そのボタンのクリック reducer（ボタン自身への `ui.click`、ボタンを包む tile から持ち上げられたもの、`onClick=` 引数）は submit とは独立している：ボタンをクリックすると、クリック reducer が走り、**かつ** form が送信される。クリック reducer を束縛してもクリックはキャンセルされないので、form の中のボタンに送信させないのは `type` だけである
 - `type` は `submit` / `button` / `reset` のいずれかで、そのまま DOM に書かれ、意味を持つのは form の中だけである。`type` を書かなかったボタンは HTML の既定に従う — すなわち `submit` になるので、form の中にあって送信させたくないボタンには `type="button"` が必要である。3 つ以外のリテラルは [E0201](./errors.md#e0201-type-mismatch) になる：不正な `type` 属性は `submit` に解決されるので、綴り間違いは送信してしまう
 
 ---

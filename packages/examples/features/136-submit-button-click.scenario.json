@@ -1,0 +1,24 @@
+{
+  "steps": [
+    {
+      "label": "a submit button with a click reducer runs it and submits its form",
+      "do": { "clickText": "Log in" },
+      "expect": { "noErrors": true, "state": { "clicks": 1, "submits": 1 } }
+    },
+    {
+      "label": "a click reducer lifted from a wrapping tile does not stop the submit",
+      "do": { "clickText": "Wrapped" },
+      "expect": { "noErrors": true, "state": { "clicks": 11, "submits": 11 } }
+    },
+    {
+      "label": "nor does an onClick= argument",
+      "do": { "clickText": "By arg" },
+      "expect": { "noErrors": true, "state": { "clicks": 111, "submits": 111 } }
+    },
+    {
+      "label": "a type=\"button\" button in the form runs its reducer and does not submit",
+      "do": { "clickText": "Cancel" },
+      "expect": { "noErrors": true, "state": { "clicks": 1111, "submits": 111 } }
+    }
+  ]
+}
