@@ -197,7 +197,8 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 
 `app theme = themeName` のように **slot 名で theme を指定**できる。ランタイムは：
 - `app.themeName` が `app.themes` に存在しなければ、`_live[app.themeName]` を読んで theme 名を解決
-- 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルに反映
+- 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルと注入済みのベーススタイルシートに反映
+- 解決された theme が、マウント済みツリーを塗ったときの theme と違えば、ページを塗り直す。トークン prop（`bg`, `color`, `pad`, `gap`, `radius`, `shadow`、タイポグラフィ等）は tile の描画時にリテラル値へ解決されるため、自身の prop が変わらない tile は放っておくと旧 theme の値のままになる。その描画パスは差分を取らず、ツリーを作り直す。切替をまたいで要素の同一性は保たれない：フォーカス中のコントロールは他の再構築と同じ方法でフォーカスと選択範囲を取り戻し、どの slot も持たない DOM 状態（スクロール位置、制御されていない `<details>`）は初期状態に戻る。アプリのどのビューも、hydration の有無にかかわらず同じように振る舞う
 
 ```kumiki snippet
 slot themeName : Text = "Light"

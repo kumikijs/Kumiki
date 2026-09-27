@@ -1968,6 +1968,13 @@ export function mountCore(
      */
     tree: TileNode | null;
     map: TileElementMap;
+    /**
+     * The theme `tree` was painted under. Token props are resolved to literal
+     * values when a tile renders, so a node that compares equal across a theme
+     * switch still carries the old theme's values; a pass that finds the theme
+     * changed repaints instead of diffing (style.md §4.6).
+     */
+    theme: string | null;
   };
   /** What one pass produced: the tree it painted, and what it freshly built. */
   type PassResult = { tree: TileNode | null; touched: string[] };
@@ -1977,6 +1984,7 @@ export function mountCore(
     root: null,
     tree: null,
     map: new WeakMap(),
+    theme: null,
   });
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
@@ -2087,6 +2095,9 @@ export function mountCore(
     }
 
     maybeReapplyTheme(app);
+    const theme = resolvedThemeName(app) ?? null;
+    const themeChanged = theme !== view.theme;
+    view.theme = theme;
     // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
     // `newMap` (and recursively for its children). Reconcile also writes into
     // `newMap` when it decides to *reuse* an old element (bypassing render).
@@ -2111,7 +2122,7 @@ export function mountCore(
     touched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
-      if (view.tree && view.root) {
+      if (view.tree && view.root && !themeChanged) {
         // Diff path: reuse unchanged tile DOM in place, rebuild only changed
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
         // differ from `view.root` if the root tile itself was rebuilt.
@@ -2144,8 +2155,9 @@ export function mountCore(
           target.replaceChild(dom, view.root);
         }
       } else {
-        // Initial mount, or first render after a panic reset — no old tree
-        // to diff against.
+        // Initial mount, first render after a panic reset, or a theme switch —
+        // no old tree to diff against, or one whose resolved token values are
+        // all stale.
         dom = tileCtx.render(renderedTree);
         if (view.root) {
           target.replaceChild(dom, view.root);

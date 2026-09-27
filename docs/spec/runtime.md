@@ -197,7 +197,8 @@ You can bind to a **nested lvalue path** like `bind=draft.title`. The runtime:
 
 You can **specify the theme by slot name**, like `app theme = themeName`. The runtime:
 - If `app.themeName` does not exist in `app.themes`, reads `_live[app.themeName]` to resolve the theme name
-- Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style
+- Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style and the injected base stylesheet
+- Repaints the page when the resolved theme differs from the one the mounted tree was painted under. Token props (`bg`, `color`, `pad`, `gap`, `radius`, `shadow`, typography, …) are resolved to literal values when a tile renders, so a tile whose own props did not change would otherwise keep the old theme's values; that pass builds the tree afresh instead of diffing it. Element identity is not kept across a switch: a focused control gets its focus and selection back the way it does after any rebuild, and DOM state no slot holds (a scroll offset, an uncontrolled `<details>`) starts over. Every view of the app, hydrated or not, does the same
 
 ```kumiki snippet
 slot themeName : Text = "Light"
