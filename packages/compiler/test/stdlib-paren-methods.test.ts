@@ -45,6 +45,11 @@ const METHODS: ReadonlyArray<{
   { recv: "t", no: ".lower", paren: ".lower()", expect: ".toLowerCase()", spec: "§2.2.6" },
   { recv: "t", no: ".upper", paren: ".upper()", expect: ".toUpperCase()", spec: "§2.2.6" },
   { recv: "xs", no: ".sort", paren: ".sort()", expect: "_s.listSort(", spec: "§2.2.3" },
+  // One helper for every receiver: the lowering cannot tell a Map from a Text
+  // statically, and each spelling used to guess differently.
+  { recv: "m", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.1" },
+  { recv: "xs", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.3" },
+  { recv: "t", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.6" },
 ];
 
 describe("Issue #92: paren-form stdlib methods do not fall through to native JS", () => {

@@ -189,6 +189,19 @@ export const _stdlibCore = {
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
+  /**
+   * `is-empty` on a Map, Set, List or Text (stdlib.md §2.2.1 / §2.2.2 / §2.2.3 /
+   * §2.2.6), for both spellings — `x.is-empty` and `x.is-empty()` are one
+   * member, so they lower to this one helper. A List and a Text are counted by
+   * `length`; a Map and a Set are objects keyed by their entries, which have
+   * none. A missing value is empty.
+   */
+  isEmpty(v: unknown): boolean {
+    if (typeof v === "string" || Array.isArray(v)) return v.length === 0;
+    if (v instanceof Map) return v.size === 0;
+    if (v && typeof v === "object") return Object.keys(v).length === 0;
+    return v === undefined || v === null;
+  },
   mapKeys(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
     return m ? Object.keys(m).map((k) => restoreKey(k, kind)) : [];
   },
