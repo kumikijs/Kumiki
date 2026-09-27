@@ -8,7 +8,9 @@
 // Each row renders one comparison through the real build + mount and reads it
 // off the page. The rows that expect `false` ride along with a `true` of the
 // same shape, so a row pins both halves: equal values compare equal and
-// different ones do not. Example 122 carries the same claims as a scenario;
+// different ones do not; `!=` is asked of both an unequal and an equal pair.
+// No label is a substring of another, since the rows are read off one run of
+// page text. Example 122 carries the same claims as a scenario;
 // the property test at its bottom is run here through `kumiki test`'s path.
 
 import { dirname, join } from "node:path";
@@ -70,11 +72,16 @@ describe("== compares by value", () => {
       },
     ],
   ])("%s equals another holding equal values, and no other", async (_what, rows) => {
-    const text = await render({ ...rows, ne: rows.other.replace("==", "!=") });
+    const text = await render({
+      ...rows,
+      ne: rows.other.replace("==", "!="),
+      not: rows.eq.replace("==", "!="),
+    });
     expect(text).toContain("eq: true");
     expect(text).toContain("same: true");
     expect(text).toContain("other: false");
     expect(text).toContain("ne: true");
+    expect(text).toContain("not: false");
   });
 });
 
@@ -83,14 +90,14 @@ describe("List.contains and unique ask the question == asks", () => {
     const text = await render({
       admin: "roles.contains(Admin)",
       viewer: "roles.contains(Viewer)",
-      pt: "pts.contains({x: 3, y: 4})",
-      opt: "opts.contains(Some(1))",
+      point: "pts.contains({x: 3, y: 4})",
+      option: "opts.contains(Some(1))",
       sub: '"kumiki".contains("mik")',
     });
     expect(text).toContain("admin: true");
     expect(text).toContain("viewer: false");
-    expect(text).toContain("pt: true");
-    expect(text).toContain("opt: true");
+    expect(text).toContain("point: true");
+    expect(text).toContain("option: true");
     expect(text).toContain("sub: true");
   });
 
@@ -98,14 +105,14 @@ describe("List.contains and unique ask the question == asks", () => {
     const text = await render({
       bare: "picks.unique == [Admin, Viewer]",
       call: "picks.unique() == [Admin, Viewer]",
-      pts: "pts.unique.length",
-      opts: "opts.unique == [Some(1), None]",
+      points: "pts.unique.length",
+      options: "opts.unique == [Some(1), None]",
       nums: "[3, 1, 3, 2, 1].unique == [3, 1, 2]",
     });
     expect(text).toContain("bare: true");
     expect(text).toContain("call: true");
-    expect(text).toContain("pts: 2");
-    expect(text).toContain("opts: true");
+    expect(text).toContain("points: 2");
+    expect(text).toContain("options: true");
     expect(text).toContain("nums: true");
   });
 });

@@ -318,5 +318,55 @@ describe("value equality (docs/spec/language.md §1.9.4)", () => {
       { _tag: "Viewer" },
     ]);
     expect(listUnique([3, 1, 3, 2, 1])).toEqual([3, 1, 2]);
+    expect(contains(["ab", "cd"], "b")).toBe(false);
+    expect(contains(["ab", "cd"], "cd")).toBe(true);
+  });
+
+  it("compares Bytes byte by byte", () => {
+    const { bytesFromText } = _stdlibCore;
+    expect(eq(bytesFromText("abc"), bytesFromText("abc"))).toBe(true);
+    expect(eq(bytesFromText("abc"), bytesFromText("abd"))).toBe(false);
+    expect(eq(bytesFromText("ab"), bytesFromText("abc"))).toBe(false);
+    expect(eq(bytesFromText("ab"), [97, 98])).toBe(false);
+    expect(eq(bytesFromText("ab"), { 0: 97, 1: 98 })).toBe(false);
+  });
+
+  // A Blob, File or Date keeps its state outside its own enumerable keys, so
+  // key-wise it is an empty bag and any two would compare equal.
+  it.each([
+    ["a Blob", () => new Blob(["aaa"]), () => new Blob(["bbb"])],
+    ["a File", () => new File(["aaa"], "a.txt"), () => new File(["bbb"], "a.txt")],
+    ["a Date", () => new Date(0), () => new Date(999)],
+  ])("%s equals only itself", (_what, one, other) => {
+    const a = one();
+    expect(eq(a, a)).toBe(true);
+    expect(eq(a, other())).toBe(false);
+    expect(eq(a, one())).toBe(false);
+  });
+
+  it("keeps apart two picked files whose name, size and type agree", () => {
+    const picked = (body: string) => {
+      const file = new File([body], "a.txt", { type: "text/plain" });
+      return { name: file.name, size: file.size, type: file.type, _file: file };
+    };
+    const a = picked("aaa");
+    const b = picked("bbb");
+    expect(eq(a, b)).toBe(false);
+    expect(eq(a, a)).toBe(true);
+    expect(listUnique([a, b, a])).toEqual([a, b]);
+    expect(contains([a], b)).toBe(false);
+  });
+
+  it("answers a nullish or empty List with an empty List", () => {
+    expect(listUnique(null)).toEqual([]);
+    expect(listUnique(undefined)).toEqual([]);
+    expect(listUnique([])).toEqual([]);
+  });
+
+  it("never finds NaN, the way == does not", () => {
+    expect(eq(Number.NaN, Number.NaN)).toBe(false);
+    expect(contains([Number.NaN], Number.NaN)).toBe(false);
+    expect(listUnique([Number.NaN, 1, Number.NaN, 1])).toEqual([Number.NaN, 1, Number.NaN]);
+    expect(listUnique([0, -0, "0", 0])).toEqual([0, "0"]);
   });
 });

@@ -8,6 +8,7 @@ import {
   _setPathHelper,
   currentEpisodeId,
   isPanic,
+  isPlainDataBag,
   KumikiPanic,
   listPosition,
   type PathSegment,
@@ -55,17 +56,25 @@ function assertNeverKind(kind: never): never {
 }
 
 /**
- * Value equality — the one answer to "are these two Kumiki values the same",
- * shared by `==` / `!=`, `List.contains` / `unique`, and the test layer's
- * comparisons (`testkit.ts`), so none of them can drift from the others.
+ * Value equality — the one answer to "are these two Kumiki values the same".
+ * `==` / `!=` and `List.contains` / `unique` ask it here, and so does the test
+ * layer wherever it compares two whole values; the reducer-test `expect` match
+ * keeps its own walk, because a wildcard may sit at any depth of the expected
+ * side and only that walk knows what one matches.
  *
  * Kumiki values are immutable (language.md §1.6.3), so a program has no
- * reference identity it could mean to compare: a List, tuple, record, Map,
- * Set or variant equals another when what it holds is equal, recursively.
- * A List or tuple (a JS array) compares element by element in order; every
- * other object — a record, a variant (`_tag` is one more field), a Map or a
- * Set stored as a plain object — by the same set of own keys holding equal
- * values, whatever order they were written in. Primitives compare with `===`.
+ * reference identity it could mean to compare: a List, tuple, record, Map or
+ * variant equals another when what it holds is equal, recursively. A List or
+ * tuple (a JS array) compares element by element in order, and `Bytes` (a
+ * `Uint8Array`) byte by byte. A plain data bag — a record, a variant (`_tag`
+ * is one more field), a Map — compares by the same set of own keys holding
+ * equal values, regardless of the order they were written in. Anything else
+ * (a DOM `File`, a `Blob`, a `Date`) holds its state outside its own
+ * enumerable keys and would look like an empty bag, so it equals only itself.
+ * Primitives compare with `===`, so `NaN` equals nothing.
+ *
+ * A Set is not promised a by-value answer: it compares as whatever it is
+ * stored as, which depends on how it was built (stdlib.md §2.2.2).
  */
 export function valueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -76,6 +85,13 @@ export function valueEqual(a: unknown, b: unknown): boolean {
     if (!aArr || !bArr || a.length !== b.length) return false;
     return a.every((x, i) => valueEqual(x, (b as unknown[])[i]));
   }
+  const aBytes = a instanceof Uint8Array;
+  const bBytes = b instanceof Uint8Array;
+  if (aBytes || bBytes) {
+    if (!aBytes || !bBytes || a.length !== b.length) return false;
+    return a.every((x, i) => x === (b as Uint8Array)[i]);
+  }
+  if (!isPlainDataBag(a) || !isPlainDataBag(b)) return false;
   const ao = a as Record<string, unknown>;
   const bo = b as Record<string, unknown>;
   const ak = Object.keys(ao);
@@ -317,10 +333,30 @@ export const _stdlibCore = {
     if (typeof recv === "string") return recv.includes(x as string);
     return ((recv as unknown[] | null | undefined) ?? []).some((y) => valueEqual(y, x));
   },
-  /** `List(T).unique`: the first occurrence of each value, by `==`, in order. */
+  /**
+   * `List(T).unique`: the first occurrence of each value, by `==`, in order.
+   *
+   * Not `new Set(xs)`: its SameValueZero cannot see that two separately built
+   * records or variants are equal, and it merges `NaN`s, which `==` never
+   * does. A primitive — which `==` compares with `===` — is still looked up
+   * in a `Set`, so a List of numbers or texts stays linear; a `NaN` is pushed
+   * every time, since no other value equals it. Only an object pays the
+   * pairwise `valueEqual` scan, against the objects kept so far.
+   */
   listUnique<T>(xs: T[] | undefined | null): T[] {
     const out: T[] = [];
-    for (const x of xs ?? []) if (!out.some((y) => valueEqual(y, x))) out.push(x);
+    const seenPrimitives = new Set<unknown>();
+    const keptObjects: unknown[] = [];
+    for (const x of xs ?? []) {
+      if (x !== null && typeof x === "object") {
+        if (keptObjects.some((y) => valueEqual(y, x))) continue;
+        keptObjects.push(x);
+      } else if (!(typeof x === "number" && Number.isNaN(x))) {
+        if (seenPrimitives.has(x)) continue;
+        seenPrimitives.add(x);
+      }
+      out.push(x);
+    }
     return out;
   },
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {

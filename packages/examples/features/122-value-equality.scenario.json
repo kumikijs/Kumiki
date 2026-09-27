@@ -5,16 +5,16 @@
       "expect": {
         "noErrors": true,
         "domIncludes": [
-          "list-empty: true",
-          "list-eq: true",
-          "list-order: false",
-          "rec-eq: true",
-          "rec-ne: true",
-          "tuple-eq: true",
-          "opt-int-eq: true",
-          "opt-rec-eq: true",
-          "nested-opt: true",
-          "nested-opt-ne: false"
+          "empty-list: true",
+          "same-list: true",
+          "swapped-list: false",
+          "equal-record: true",
+          "differs-from-other: true",
+          "differs-from-self: false",
+          "equal-tuple: true",
+          "some-record: true",
+          "some-some: true",
+          "some-none: false"
         ]
       }
     },
@@ -25,23 +25,31 @@
         "domIncludes": [
           "is-admin: true",
           "is-viewer: false",
-          "has-pt: true",
-          "has-none: true",
+          "has-point: true",
+          "has-some-one: true",
           "has-pair: true",
-          "unique-roles: 2",
-          "unique-roles2: 2",
-          "unique-first: true",
-          "unique-pts: 2",
-          "unique-opts: 2",
-          "unique-pairs: true",
-          "text-contains: true"
+          "bare-unique: 2",
+          "called-unique: 2",
+          "first-kept: true",
+          "distinct-points: 2",
+          "distinct-options: 2",
+          "distinct-pairs: true",
+          "substring: true"
         ]
       }
     },
     {
       "label": "a List slot compares with == after a reducer writes it",
-      "do": { "click": "#add" },
-      "expect": { "noErrors": true, "domIncludes": ["items: 1"], "state": { "items": [1] } }
+      "do": {
+        "click": "#add"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["items: 1"],
+        "state": {
+          "items": [1]
+        }
+      }
     }
   ]
 }
