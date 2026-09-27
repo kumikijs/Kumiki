@@ -14,19 +14,13 @@ export function builtinEffectCall(eff: EffectDef, reqVar: string): string | null
   if (eff.cap === "storage.read") {
     return `storageRead(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
   }
-  if (eff.cap === "storage.write") {
-    return `storageWrite(${
-      eff.mapRequest ? `{ key: ${reqVar}.key, value: ${reqVar}.value }` : reqVar
-    })`;
-  }
+  // A write's request goes through whole: whether it carries a `value` field
+  // is what tells a write from a remove (http.md §6.7.2).
+  if (eff.cap === "storage.write") return `storageWrite(${reqVar})`;
   if (eff.cap === "session.read") {
     return `sessionRead(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
   }
-  if (eff.cap === "session.write") {
-    return `sessionWrite(${
-      eff.mapRequest ? `{ key: ${reqVar}.key, value: ${reqVar}.value }` : reqVar
-    })`;
-  }
+  if (eff.cap === "session.write") return `sessionWrite(${reqVar})`;
   if (eff.cap === "indexed.read") return `indexedRead(${reqVar}, _idb)`;
   if (eff.cap === "indexed.write") return `indexedWrite(${reqVar}, _idb)`;
   if (eff.cap === "indexed.delete") return `indexedDelete(${reqVar}, _idb)`;

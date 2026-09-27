@@ -254,5 +254,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
+| `130-storage-remove-clear.kumiki` | slot, effect, reducer, tile | http | [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage) |
 <!-- examples:end -->
 :::

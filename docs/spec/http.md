@@ -319,6 +319,8 @@ effect storage-clear  cap=storage.write
                       out=Result(Unit, Text)
 ```
 
+The three `storage.write` declarations are told apart by the request (the effect's input, or what `map-request` builds): `Unit` clears the storage, a record with a `key` and no `value` field removes that key (a later `storage-read` answers `Ok(None)`), and a record with a `value` field writes it. The value itself does not matter: `None`, `[]` and a record are all written.
+
 ### 6.7.3 Example
 
 ```kumiki snippet

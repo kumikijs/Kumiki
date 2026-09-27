@@ -19,9 +19,21 @@ async function readFrom(storage: Storage, key: string): Promise<EffectResult> {
   }
 }
 
-async function writeTo(storage: Storage, key: string, value: unknown): Promise<EffectResult> {
+/**
+ * One `*.write` capability answers the three declarations of http.md §6.7.2,
+ * told apart by the request: `Unit` clears the storage, a `{key}` with no
+ * `value` field removes the key, and `{key, value}` writes the value — whatever
+ * it is, so a `None` or an empty list is still a write.
+ */
+async function writeTo(storage: Storage, input: unknown): Promise<EffectResult> {
   try {
-    storage.setItem(key, JSON.stringify(value));
+    if (input === null || input === undefined) {
+      storage.clear();
+    } else {
+      const req = input as { key: string; value?: unknown };
+      if ("value" in req) storage.setItem(req.key, JSON.stringify(req.value) ?? "null");
+      else storage.removeItem(req.key);
+    }
     return { kind: "ok", value: null };
   } catch (e) {
     return { kind: "err", value: { message: String(e) } };
@@ -34,8 +46,7 @@ export async function storageRead(input: unknown): Promise<EffectResult> {
 }
 
 export async function storageWrite(input: unknown): Promise<EffectResult> {
-  const { key, value } = input as { key: string; value: unknown };
-  return writeTo(localStorage, key, value);
+  return writeTo(localStorage, input);
 }
 
 export async function sessionRead(input: unknown): Promise<EffectResult> {
@@ -44,6 +55,5 @@ export async function sessionRead(input: unknown): Promise<EffectResult> {
 }
 
 export async function sessionWrite(input: unknown): Promise<EffectResult> {
-  const { key, value } = input as { key: string; value: unknown };
-  return writeTo(sessionStorage, key, value);
+  return writeTo(sessionStorage, input);
 }

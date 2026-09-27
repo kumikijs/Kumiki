@@ -313,6 +313,8 @@ effect storage-clear  cap=storage.write
                       out=Result(Unit, Text)
 ```
 
+3 つの `storage.write` 宣言はリクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`Unit` はストレージを空にし、`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
+
 ### 6.7.3 例
 
 ```kumiki snippet

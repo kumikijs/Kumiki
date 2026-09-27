@@ -1,0 +1,53 @@
+# Feature (http.md §6.7.2 / §6.7.4): `storage.write` answers all three of its
+# declarations, told apart by the request.
+#
+#   in={key: Text, value: JsonValue}   write the value under the key
+#   in={key: Text}                     remove the key
+#   in=Unit                            clear the storage
+#
+# A remove used to store the string "undefined" under the key and report ok,
+# so the next read failed to parse it, and a clear always erred. There is no
+# `.err` reducer below, so `smoke` — which runs the real handlers against the
+# real localStorage — reports any of these that fails.
+
+slot shown : Text = "idle"
+
+effect save cap=storage.write
+            in=Text
+            out=Result(Unit, Text)
+            map-request={key: "note", value: $1}
+
+effect forget cap=storage.write
+              in={key: Text}
+              out=Result(Unit, Text)
+
+effect wipe cap=storage.write
+            in=Unit
+            out=Result(Unit, Text)
+
+effect load cap=storage.read
+            in=Unit
+            out=Result(Option(Text), Text)
+            map-request={key: "note", decode: Decoder.Json(Text)}
+
+reducer goSave   on=ui.click(SaveBtn)   do= emit save("hello")
+reducer goForget on=ui.click(ForgetBtn) do= emit forget({key: "note"})
+reducer goWipe   on=ui.click(WipeBtn)   do= emit wipe()
+reducer goLoad   on=ui.click(LoadBtn)   do= emit load()
+
+reducer saved     on=save.ok(_, _)   do= shown := "saved"
+reducer forgotten on=forget.ok(_, _) do= shown := "forgotten"
+reducer wiped     on=wipe.ok(_, _)   do= shown := "wiped"
+reducer loaded    on=load.ok($o, _)  do= shown := "loaded " + $o.get-or("<none>")
+
+tile SaveBtn   = button(text="Save")   {id: "save"}
+tile ForgetBtn = button(text="Forget") {id: "forget"}
+tile WipeBtn   = button(text="Wipe")   {id: "wipe"}
+tile LoadBtn   = button(text="Load")   {id: "load"}
+
+tile App = column(SaveBtn, ForgetBtn, WipeBtn, LoadBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
+
+app StorageRemoveClear
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
