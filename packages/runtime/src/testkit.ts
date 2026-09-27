@@ -190,9 +190,27 @@ function tileChildren(node: unknown): unknown[] {
 }
 
 /**
- * Structural tile comparison for tile-tests: compares `kind`, `text`, and
- * `children` recursively. Props (styles, onClick handlers, …) are out of scope,
- * per spec §8.4. Returns the first differing path on mismatch.
+ * The fields of a tile node that carry its content — every own field but the
+ * three that are structure rather than content: `kind` (compared first),
+ * `children` (recursed into) and `props`, which holds the styles, classes and
+ * handlers spec §8.4 leaves out of the comparison. A field the node does not
+ * carry, or carries as a function, is not content either.
+ */
+function tileContentFields(node: unknown): string[] {
+  if (node === null || typeof node !== "object") return [];
+  return Object.keys(node).filter((k) => {
+    if (k === "kind" || k === "children" || k === "props") return false;
+    const v = tileField(node, k);
+    return v !== undefined && typeof v !== "function";
+  });
+}
+
+/**
+ * Structural tile comparison for tile-tests (spec §8.4): compares `kind`,
+ * every content field the EXPECTED node carries (`text`, `src`, `to`,
+ * `value`, `checked`, `options`, …), and `children` recursively. A field
+ * only the actual node carries was not asserted, so it is not compared.
+ * Returns the first differing path on mismatch.
  */
 function tileStructEqual(
   expected: unknown,
@@ -205,13 +223,15 @@ function tileStructEqual(
   const ek = tileField(expected, "kind");
   const here = path || String(ek ?? "(root)");
   if (ek !== tileField(actual, "kind")) return { ok: false, path: `${here}.kind` };
-  if (tileField(expected, "text") !== undefined) {
-    const et = String(tileField(expected, "text"));
-    const at = String(tileField(actual, "text"));
-    if (et !== at) {
-      // Carry the scalar leaf values so the runner can print the §8.7.1 value
-      // arrow and `kumiki fix --auto-patch` can locate the responsible literal.
-      return { ok: false, path: `${here}.text`, expectedLeaf: et, actualLeaf: at };
+  for (const k of tileContentFields(expected)) {
+    // `text` is compared as rendered, the way it always was: a node's text
+    // went through `show` on both sides.
+    const ev = k === "text" ? String(tileField(expected, k)) : tileField(expected, k);
+    const av = k === "text" ? String(tileField(actual, k)) : tileField(actual, k);
+    if (!deepEqualValue(ev, av)) {
+      // Carry the leaf values so the runner can print the §8.7.1 value arrow
+      // and `kumiki fix --auto-patch` can locate the responsible literal.
+      return { ok: false, path: `${here}.${k}`, expectedLeaf: ev, actualLeaf: av };
     }
   }
   const ec = tileChildren(expected);
@@ -224,15 +244,22 @@ function tileStructEqual(
   return { ok: true };
 }
 
+/**
+ * One line per tile tree for the `expected:` / `actual:` report: the text
+ * positionally, then every other content field {@link tileStructEqual}
+ * compares as `name=value`, then the children.
+ */
 function serializeTileNode(node: unknown): string {
   if (node == null) return "null";
   const kind = String(tileField(node, "kind"));
-  const kids = tileChildren(node);
-  if (tileField(node, "text") !== undefined && kids.length === 0) {
-    return `${kind}(${_jsonStr(tileField(node, "text"))})`;
+  const parts: string[] = [];
+  const text = tileField(node, "text");
+  if (text !== undefined) parts.push(_jsonStr(text));
+  for (const k of tileContentFields(node)) {
+    if (k !== "text") parts.push(`${k}=${_jsonStr(tileField(node, k))}`);
   }
-  if (kids.length === 0) return `${kind}()`;
-  return `${kind}(${kids.map(serializeTileNode).join(", ")})`;
+  for (const kid of tileChildren(node)) parts.push(serializeTileNode(kid));
+  return `${kind}(${parts.join(", ")})`;
 }
 
 type ReducerExpect =

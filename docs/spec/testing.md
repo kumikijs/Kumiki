@@ -227,6 +227,8 @@ test counter-display =
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
 
+What is compared is the expected node's `kind`, its `children` in order, and **every content field it carries** — its `text`, and whatever else its builtin puts on the node: an `image`'s `src`, a `link`'s `to`, an `input`'s `value`, a `check`'s checked state, a `select`'s `options`. A field the expected node does not carry (an `input(value="x")` states no `placeholder`) is not compared, so a snapshot can assert one field of a tile that renders several. What a builtin fills in for an argument left out *is* carried: `check()` is an unchecked check, and a `select` written with no `options=` has none. A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`, and the `expected:` / `actual:` lines print the compared fields.
+
 `given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
 
 ```kumiki fragment
