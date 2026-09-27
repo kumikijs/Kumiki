@@ -1,0 +1,23 @@
+{
+  "steps": [
+    {
+      "label": "each fn name is applied as the call its fragment stands for",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "doubled": [6, -2, 4],
+          "kept": [3, 2],
+          "sorted": [3, 2, -1],
+          "first": 3,
+          "total": 292,
+          "scores": { "ada": 2 },
+          "halved": { "_tag": "Some", "_0": 2 },
+          "reason": "bad!",
+          "title": "fn names"
+        },
+        "domIncludes": ["title: fn names", "total: 292", "reason: bad!"]
+      }
+    }
+  ]
+}
