@@ -256,6 +256,8 @@ The fields are **local** ones. The result carries no timezone in it, so it is re
 
 `Time.parse` yields the instant as a millisecond number, the same representation [§2.2.9](#_2-2-9-duration) gives every `Time`; text that names no instant — including the empty string — is `None`. A **date-only** string is read as **local** midnight, not the UTC midnight the platform's own parser gives it: `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string.
 
+A date that is not on the calendar names no instant, so `Time.parse("2026-02-30")`, `Time.parse("2026-13-01")` and `Time.parse("2026-00-10")` are `None`, and so is `"2026-02-30T10:00"`. The platform's parser would roll such a date over into the next month (`2026-02-30` as March 2nd), so the result would be a different day. The reading is exact, as it is for every base in [§2.4.3](#_2-4-3-type-conversion): text with blanks around it, such as `" 2026-02-28"`, is `None`. Trim the text first when blanks are expected.
+
 ### 2.2.9 Duration
 
 ```
@@ -459,7 +461,7 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 |---|---|---|
 | `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty |
 | `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
-| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | names no instant |
+| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | names no instant — a date off the calendar (`2026-02-30`), surrounding blanks, empty |
 | `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
 | `Text` | the text itself | is empty |
 | `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |

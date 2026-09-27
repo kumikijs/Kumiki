@@ -70,6 +70,13 @@ function instantOf(value: unknown): number {
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
 }
 
+/** Whether month `m` (1–12) of year `y` has a day `d` — the proleptic Gregorian calendar. */
+function isCalendarDate(y: number, m: number, d: number): boolean {
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const days = m === 2 ? (leap ? 29 : 28) : m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
+  return m >= 1 && m <= 12 && d >= 1 && d <= days;
+}
+
 type PlatformCrypto = {
   randomUUID?: () => string;
   getRandomValues?: (bytes: Uint8Array) => Uint8Array;
@@ -140,11 +147,26 @@ export const _stdlibCore = {
     // No early return for a blank: `Date.parse("")` is already NaN, and a
     // branch that cannot change an answer is a branch the next reader has to
     // re-derive.
-    const raw = String(text ?? "").trim();
-    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-    const ms = dateOnly
-      ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime()
-      : Date.parse(raw);
+    const raw = String(text ?? "");
+    // The reading is exact, like `Int.parse`'s: surrounding blanks are refused
+    // here, since the platform's parser would otherwise accept some of them
+    // (`" 2026-02-28"`, read as UTC) and not others.
+    if (raw !== raw.trim()) return _stdlibCore.None;
+    // The platform rolls a day past the month's end over into the next one
+    // (`2026-02-30` is March 2nd), so a date that names no day is refused
+    // before anything reads it, with a time after it or not.
+    const date = /^(\d{4})-(\d{2})-(\d{2})(?=$|[T ])/.exec(raw);
+    if (date) {
+      const [y, m, d] = [Number(date[1]), Number(date[2]), Number(date[3])];
+      if (!isCalendarDate(y, m, d)) return _stdlibCore.None;
+      if (date[0] === raw) {
+        // Local midnight; `setFullYear` so a year below 100 is not read as 19xx.
+        const local = new Date(2000, 0, 1);
+        local.setFullYear(y, m - 1, d);
+        return _stdlibCore.Some(local.getTime());
+      }
+    }
+    const ms = Date.parse(raw);
     return Number.isFinite(ms) ? _stdlibCore.Some(ms) : _stdlibCore.None;
   },
   /**

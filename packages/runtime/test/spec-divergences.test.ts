@@ -162,6 +162,51 @@ describe("Time.format honours its pattern", () => {
     }
   });
 
+  it("is None for a date outside the calendar, which the platform rolls over", () => {
+    // `new Date(2026, 1, 30)` is March 2nd and `Date.parse` does the same to a
+    // datetime, so each of these used to be `Some` of a different day.
+    for (const bad of [
+      "2026-02-30",
+      "2026-13-01",
+      "2026-00-10",
+      "2026-04-31",
+      "2027-02-29",
+      "2026-02-30T10:00",
+      "2026-02-30 10:00",
+    ]) {
+      expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
+    }
+  });
+
+  it("still reads the last day of each month, and Feb 29th of a leap year", () => {
+    for (const [text, y, m, d] of [
+      ["2026-02-28", 2026, 1, 28],
+      ["2028-02-29", 2028, 1, 29],
+      ["2000-02-29", 2000, 1, 29],
+      ["2026-12-31", 2026, 11, 31],
+    ] as const) {
+      expect(_stdlib.parseTime(text), text).toEqual({
+        _tag: "Some",
+        _0: new Date(y, m, d).getTime(),
+      });
+    }
+  });
+
+  it("reads a year below 100 as itself, not as 19xx", () => {
+    // `new Date(50, 0, 1)` is 1950; the calendar check reads the year as
+    // written, so the instant has to be that year too.
+    const parsed = _stdlib.parseTime("0050-01-01") as { _0: number };
+    expect(new Date(parsed._0).getFullYear()).toBe(50);
+  });
+
+  it("is None for surrounding blanks, as the other readings are", () => {
+    // `Date.parse(" 2026-02-28")` is UTC midnight, not the local midnight the
+    // unpadded text reads as; the reading is exact instead.
+    for (const bad of [" 2026-02-28", "2026-02-28 ", "\t2026-02-28", " 2026-02-28T10:00"]) {
+      expect(_stdlib.parseTime(bad)._tag, JSON.stringify(bad)).toBe("None");
+    }
+  });
+
   it("does not render a blank as the epoch", () => {
     // `Number(null)` and `Number("")` are both 0, so a numeric-first read shows
     // 1970-01-01 for a field that is simply absent — a date that looks real.

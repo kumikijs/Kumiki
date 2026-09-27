@@ -238,10 +238,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // 61,000 from 60,000 (59,463 measured, from 59,181): `Time.parse` refuses a
+    // date that is not on the calendar (stdlib.md §2.2.8). The 282 bytes are
+    // `isCalendarDate` and the branch in `parseTime` that consults it before
+    // the platform's parser can roll `2026-02-30` over into March. A counter
+    // parses no time and still ships it, because `parseTime` sits in the
+    // stdlib module every app loads. The open PRs beside this one take the
+    // measurement to about 59,900 without it, which this would push over.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
