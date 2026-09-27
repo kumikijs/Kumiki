@@ -287,8 +287,10 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${jsOfExpr(f.value, ctx)}`);
       return `{ ${parts.join(", ")} }`;
     }
-    case "ListLit":
-      return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+    case "ListLit": {
+      const items = `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+      return e.asSet ? `_s.setOf(${items})` : items;
+    }
     // The same array a tuple pattern destructures — `tupleArm` guards with
     // `Array.isArray` and reads by index, so the two halves already agreed on
     // the shape before there was a way to write one.

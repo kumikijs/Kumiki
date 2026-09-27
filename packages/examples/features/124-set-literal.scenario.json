@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "every Set member reads a literal the way it reads a Set built by add",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "size: 1",
+          "has5: true",
+          "add5: 1",
+          "add6: 2",
+          "to-list: 5",
+          "remove-a: false",
+          "toggle-b: 1",
+          "union: 3",
+          "intersect: 1",
+          "diff: 1",
+          "bag-x: true"
+        ]
+      }
+    },
+    {
+      "label": "a literal written by a reducer, or passed to a fn, is a Set too",
+      "do": { "click": "#rebuild" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["words: 2 c=true", "fn-arg: 2", "built: true"],
+        "state": { "words": { "c": true, "d": true } }
+      }
+    }
+  ]
+}

@@ -2898,6 +2898,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           bindLocal(inner, "$2", p2);
           checkExpr(a, sym, errors, inner);
         }
+        // `union` / `intersect` / `diff` take another Set of the receiver's
+        // type (stdlib.md §2.2.2), so a list literal there is a Set literal and
+        // is built as one.
+        const other = e.args[0];
+        if (other && SET_OPERANDS.has(e.method) && isSetType(recvType, sym)) {
+          checkAgainst(other, recvType, sym, errors, ctx);
+        }
       }
       if (e.method === "get-or") {
         // The fallback is the value the call produces on the empty case, so it
@@ -3237,6 +3244,14 @@ function pushMismatch(errors: KumikiError[], code: MismatchCode, message: string
  * (E0202) — the diagnostic that already told authors to look at the effect's
  * `in=` type.
  */
+/** The `Set` members whose argument is another `Set` of the receiver's type. */
+const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
+
+function isSetType(t: TypeExpr | null, sym: SymbolTable): boolean {
+  const u = unaliasType(t, sym);
+  return u?.kind === "TypeApp" && u.name === "Set";
+}
+
 function checkAgainst(
   e: Expr,
   declared: TypeExpr | null,
@@ -3259,6 +3274,7 @@ function checkAgainst(
   };
 
   if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
+    if (d.name === "Set") e.asSet = true;
     for (const item of e.items) checkAgainst(item, d.args[0] ?? null, sym, errors, ctx, code);
     return;
   }
@@ -4516,8 +4532,8 @@ function keyKindOfReader(
  *
  * Everything else is `null`, which binds the name with no type — as every
  * fragment was bound before. That includes an element whose runtime value may
- * be a 2-element array without being a `Tuple` (a `List`, a `Set` — whose
- * literal is an array — or a type parameter): the lowering takes any such
+ * be a 2-element array without being a `Tuple` (a `List`, a `Set` that
+ * arrived as JSON, or a type parameter): the lowering takes any such
  * array apart, so the element type is not what `$1` holds there. `Map.map` is absent because its lowering does not iterate a
  * Map at all.
  */
@@ -5576,6 +5592,14 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
       checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
+    // A test's slot value is lowered like the slot's own initializer, so it
+    // needs the annotations `checkAgainst` leaves on the way — a list literal
+    // where the slot holds a `Set` has to be built as one (`asSet`), or a
+    // `given` seeds, and an `expect` compares against, the wrong form. Whether
+    // a test value is reported against its slot's type is a separate question;
+    // the walk's findings are not this function's to report.
+    const slot = sym.slots.get(f.name);
+    if (slot) checkAgainst(f.value, slot.type, sym, [], ctx);
   }
 }
 

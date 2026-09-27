@@ -564,6 +564,16 @@ export const _stdlibCore = {
     if (!(k in obj)) return obj;
     return { ...obj, [k]: fn(obj[k]) };
   },
+  /**
+   * A Set literal (`[1, 2]` where a `Set` is declared): the Set `add` builds
+   * from the same members, so a Set has one runtime form wherever it comes
+   * from (stdlib.md §2.2.2).
+   */
+  setOf(xs: readonly unknown[]): Record<string, true> {
+    let s: Record<string, true> = {};
+    for (const x of xs) s = _stdlibCore.setAdd(s, x);
+    return s;
+  },
   /** Set(T).add(x). Sets are stored as `{ [String(x)]: true }`. */
   setAdd(s: Record<string, true> | undefined | null, x: unknown): Record<string, true> {
     return { ...(s ?? {}), [String(x)]: true };

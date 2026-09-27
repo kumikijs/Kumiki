@@ -458,7 +458,17 @@ export type Expr =
       keyKind?: KeyKind;
     }
   | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
-  | { kind: "ListLit"; items: Expr[]; pos: Pos }
+  | {
+      kind: "ListLit";
+      items: Expr[];
+      pos: Pos;
+      /**
+       * The literal is checked against a `Set` type, so codegen builds the Set
+       * a program's `add` would (`_s.setOf`) rather than an array. Filled in
+       * by the type checker.
+       */
+      asSet?: true;
+    }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit
   // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a
   // reducer-test `expect`; rejected elsewhere (E0109). `<any-id>` matches any

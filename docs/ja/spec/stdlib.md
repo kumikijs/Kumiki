@@ -116,6 +116,8 @@ diff(other)                 : Set(T)
 to-list                     : List(T)
 ```
 
+**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置 — slot、レコードのフィールド、`fn` の引数、reducer の書き込み、`union` / `intersect` / `diff` の引数（別の `Set(T)` なので、そこに `List` を渡すと [E0201](./errors.md#e0201-type-mismatch)）、テストの `given` / `expect` の slot — ではリストリテラルでも書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。
+
 **キーは宣言された型で読み戻される**。実装では Set の要素と Map のキーは JavaScript のオブジェクトキー — 文字列 — として保存されるが、キーを返すメンバー（`Set(T).to-list` / `Map(K, V).keys` / `Map(K, V).entries`、および `Map(K, V).filter` の述語が各エントリについて受け取る `$1`）は型が示す値を返す：キーの型が `Int` / `Float` / `Time`（およびそれらの上の `nominal` / `where`）なら数値、`Bool` なら真偽値、`Text` なら文字列そのもの。したがって `tags.add(7).to-list` は `[7]` であり、その後の `contains(7)` / `sort` / 算術はリストの型と一致し、`Map(Int, V)` に対する `m.filter($1 == 3)` は `3` のエントリを残す。レコードやバリアントなど、それ以外の型のキーはこの変換の対象外である。
 
 何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、それ自体が `List` や `Set` である要素、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
