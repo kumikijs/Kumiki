@@ -56,6 +56,8 @@ Multi-line bodies (a reducer's `do=` block, a fn's multi-line RHS, etc.) must go
 
 A write op is validated by re-parsing and re-typechecking the file, and rolls back on any `severity: "error"` diagnostic — with one exception. A program is built one definition at a time, so it is app-less until the `app` lands; **`E0003 missing-app` does not roll back a write op**. Whether the program is a complete application is what `kumiki check` reports, not what a mid-edit graph must already satisfy.
 
+Write ops on one file are **serialized**. Each takes a write lock on the file (a sibling `<file>.kumiki-write.lock`) for the whole read → validate → write → log sequence. `patch apply` and `patch revert` hold it once for the ops they are made of. The composed source is validated *before* it is written, and it is written by rename, so another reader never sees a half-written file and a rejected op never overwrites anything. A writer that finds the lock held waits for it. If the lock is not released in time, the op is rejected: exit `1`, nothing written, nothing logged. A lock left behind by a process that has exited is taken over. As a result, every op in the op log is reflected in the file, and every op that reported success is in both.
+
 ### 9.2.3 Validation Commands
 
 ```bash

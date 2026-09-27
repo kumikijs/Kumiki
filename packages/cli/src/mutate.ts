@@ -2,7 +2,20 @@
 // file and appends an entry to `<file>.kumiki-ops.jsonl`.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { hostname } from "node:os";
+import { resolve as resolvePath } from "node:path";
 import { check, lex, type Pos, parse } from "@kumikijs/compiler";
 import {
   type DefEntry,
@@ -167,12 +180,11 @@ function logOp(path: string, op: RawOp): string {
 }
 
 /**
- * Validate that after the write the file still parses and typechecks.
+ * Validate that the source a write would leave still parses and typechecks.
  * Returns the error list (empty array = success).
  */
-function validate(path: string): { ok: true } | { ok: false; message: string } {
+function validate(src: string): { ok: true } | { ok: false; message: string } {
   try {
-    const src = readFileSync(path, "utf8");
     const program = parse(lex(src));
     // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
     // warnings (W02xx) describe pre-existing dead code patterns and would
@@ -193,6 +205,141 @@ function validate(path: string): { ok: true } | { ok: false; message: string } {
     return { ok: true };
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
+  }
+}
+
+/**
+ * Validate `next` and, only if it passes, put it on disk.
+ *
+ * The source is checked before it is written rather than written, re-read and
+ * rolled back: a rollback restores a snapshot, and a snapshot restored over a
+ * write the op never read is how one writer erased another's. The write
+ * itself goes through a sibling file and a rename, so a reader that is not
+ * holding the write lock — a `check`, a `list` — sees the old file or the new
+ * one and never a half-written one.
+ */
+function commit(path: string, next: string, verb: string): void {
+  const v = validate(next);
+  if (!v.ok) throw new Error(`${verb} rejected: ${v.message}`);
+  atomicWrite(path, next);
+}
+
+function atomicWrite(path: string, content: string): void {
+  const tmp = `${path}.kumiki-write-${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+function writeLockPath(path: string): string {
+  return `${path}.kumiki-write.lock`;
+}
+
+/**
+ * How long a write waits for another writer to finish before it is rejected.
+ * A write op holds the lock for one parse and typecheck, so this is many
+ * times the longest one; a writer still waiting past it is reported rather
+ * than left to hang.
+ */
+const WRITE_LOCK_WAIT_MS = 30_000;
+
+/** The files this process holds the write lock on, with how deeply it is re-entered. */
+const heldWriteLocks = new Map<string, number>();
+
+/**
+ * Run `fn` holding the write lock on `path`.
+ *
+ * Every write verb reads the file, composes a new one and appends to the op
+ * log, and two of them interleaving lose one's edit while both report success
+ * and both log an op (§9.8.2 allows an op to be rejected, not dropped). The
+ * lock is a sibling file created with `wx`, so exactly one process holds it;
+ * the others wait for it, and give up with an error — nothing written, nothing
+ * logged — if it is not released in time. It is re-entrant within a process,
+ * because `patch apply` and `patch revert` are made of the other verbs.
+ *
+ * A lock whose holder has exited without releasing it is taken over. That is
+ * decided only for a holder on this host, where its pid can be asked about.
+ */
+function withWriteLock<T>(path: string, fn: () => T): T {
+  const key = resolvePath(path);
+  const depth = heldWriteLocks.get(key);
+  if (depth !== undefined) {
+    heldWriteLocks.set(key, depth + 1);
+    try {
+      return fn();
+    } finally {
+      heldWriteLocks.set(key, depth);
+    }
+  }
+  acquireWriteLock(key);
+  heldWriteLocks.set(key, 0);
+  try {
+    return fn();
+  } finally {
+    heldWriteLocks.delete(key);
+    rmSync(writeLockPath(key), { force: true });
+  }
+}
+
+type LockHolder = { pid: number; host: string };
+
+function acquireWriteLock(path: string): void {
+  const lock = writeLockPath(path);
+  const deadline = Date.now() + WRITE_LOCK_WAIT_MS;
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      const fd = openSync(lock, "wx");
+      try {
+        writeSync(fd, JSON.stringify({ pid: process.pid, host: hostname() }));
+      } finally {
+        closeSync(fd);
+      }
+      return;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const holder = readLockHolder(lock);
+    if (holder !== null && holderExited(holder)) {
+      // Re-read before removing: another waiter may have taken the stale lock
+      // over already, and the file now names a live writer.
+      const again = readLockHolder(lock);
+      if (again !== null && again.pid === holder.pid && again.host === holder.host) {
+        rmSync(lock, { force: true });
+      }
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      const who = holder === null ? "another kumiki process" : `kumiki process ${holder.pid}`;
+      throw new Error(`${path} is being written by ${who}; nothing was written. Try again.`);
+    }
+    Atomics.wait(nap, 0, 0, 5 + Math.floor(Math.random() * 20));
+  }
+}
+
+/** The lock's holder, or `null` while it is still being written or is unreadable. */
+function readLockHolder(lock: string): LockHolder | null {
+  try {
+    const parsed = JSON.parse(readFileSync(lock, "utf8")) as Partial<LockHolder>;
+    return typeof parsed.pid === "number" && typeof parsed.host === "string"
+      ? { pid: parsed.pid, host: parsed.host }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function holderExited(holder: LockHolder): boolean {
+  if (holder.host !== hostname()) return false;
+  try {
+    process.kill(holder.pid, 0);
+    return false;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ESRCH";
   }
 }
 
@@ -289,6 +436,10 @@ export function describeEdit(report: EditReport): string {
 }
 
 export function addDef(path: string, layer: string, name: string, body: string): string {
+  return withWriteLock(path, () => addDefLocked(path, layer, name, body));
+}
+
+function addDefLocked(path: string, layer: string, name: string, body: string): string {
   enforceLock(path, `${layer}.${name}`);
   const src = readFileSync(path, "utf8");
   // Compose definition syntax for the requested layer. The body argument is
@@ -296,17 +447,15 @@ export function addDef(path: string, layer: string, name: string, body: string):
   // a fn). Layer-specific assembly is small enough to inline here.
   const inserted = assemble(layer, name, body);
   const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
-  writeFileSync(path, next);
-  const v = validate(path);
-  if (!v.ok) {
-    // roll back
-    writeFileSync(path, src);
-    throw new Error(`add rejected: ${v.message}`);
-  }
+  commit(path, next, "add");
   return logOp(path, { op: "add", layer, name, body });
 }
 
 export function replaceDef(path: string, qname: string, body: string): string {
+  return withWriteLock(path, () => replaceDefLocked(path, qname, body));
+}
+
+function replaceDefLocked(path: string, qname: string, body: string): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -315,18 +464,20 @@ export function replaceDef(path: string, qname: string, body: string): string {
   const after = store.lines.slice(entry.range.endLine);
   const inserted = assemble(entry.layer, entry.name, body).split(/\r?\n/);
   const next = [...before, ...inserted, ...after].join("\n");
-  const original = store.source;
-  writeFileSync(path, next);
-  const v = validate(path);
-  if (!v.ok) {
-    writeFileSync(path, original);
-    throw new Error(`replace rejected: ${v.message}`);
-  }
+  commit(path, next, "replace");
   return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body });
 }
 
 /** Removes `qname`, plus everything that references it when `cascade`. */
 export function removeDef(
+  path: string,
+  qname: string,
+  cascade: boolean,
+): { opId: string; removed: RemovedNames } {
+  return withWriteLock(path, () => removeDefLocked(path, qname, cascade));
+}
+
+function removeDefLocked(
   path: string,
   qname: string,
   cascade: boolean,
@@ -373,13 +524,7 @@ export function removeDef(
     lines = [...lines.slice(0, e.range.startLine - 1), ...lines.slice(e.range.endLine)];
   }
   const next = lines.join("\n");
-  const original = store.source;
-  writeFileSync(path, next);
-  const v = validate(path);
-  if (!v.ok) {
-    writeFileSync(path, original);
-    throw new Error(`remove rejected: ${v.message}`);
-  }
+  commit(path, next, "remove");
   // §9.4.1: a cascade is one op, and it says what it took. Replay could already
   // reproduce the state — `applyOne` re-runs `removeDef` with `cascade`, which
   // re-derives the same dependent set — but nothing in the log or on stdout
@@ -404,6 +549,10 @@ export function removeDef(
 }
 
 export function renameDef(path: string, qname: string, newName: string): string {
+  return withWriteLock(path, () => renameDefLocked(path, qname, newName));
+}
+
+function renameDefLocked(path: string, qname: string, newName: string): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -469,13 +618,7 @@ export function renameDef(path: string, qname: string, newName: string): string 
   }
 
   const next = lines.join("\n");
-  const original = store.source;
-  writeFileSync(path, next);
-  const v = validate(path);
-  if (!v.ok) {
-    writeFileSync(path, original);
-    throw new Error(`rename rejected: ${v.message}`);
-  }
+  commit(path, next, "rename");
   return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
 }
 
@@ -510,11 +653,14 @@ function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
  * outside the range are not touched.
  */
 export function editDef(path: string, qname: string, patch: unknown): string {
+  return withWriteLock(path, () => editDefLocked(path, qname, patch));
+}
+
+function editDefLocked(path: string, qname: string, patch: unknown): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
-  const original = store.source;
   const bodyStart = entry.range.startLine - 1;
   const bodyEnd = entry.range.endLine;
   const before = store.lines.slice(0, bodyStart);
@@ -551,12 +697,7 @@ export function editDef(path: string, qname: string, patch: unknown): string {
     );
   }
   const next = [...before, ...updated, ...after].join("\n");
-  writeFileSync(path, next);
-  const v = validate(path);
-  if (!v.ok) {
-    writeFileSync(path, original);
-    throw new Error(`edit rejected: ${v.message}`);
-  }
+  commit(path, next, "edit");
   // Record the post-edit body so `depends-on` is computable and
   // `patchRevert(editId)` can find a usable prior body via the op log. The
   // recorded body is the *logical* body (the RHS of `assemble`), so feeding
@@ -630,6 +771,10 @@ function isPerLinePatch(p: unknown): p is Record<string, string> {
  * before the call.
  */
 export function patchApplyFile(path: string, opsFile: string): string[] {
+  return withWriteLock(path, () => patchApplyFileLocked(path, opsFile));
+}
+
+function patchApplyFileLocked(path: string, opsFile: string): string[] {
   const original = readFileSync(path, "utf8");
   const originalLog = existsSync(opLogPath(path)) ? readFileSync(opLogPath(path), "utf8") : null;
   const lines = readFileSync(opsFile, "utf8")
@@ -644,7 +789,7 @@ export function patchApplyFile(path: string, opsFile: string): string[] {
     }
     return ids;
   } catch (e) {
-    writeFileSync(path, original);
+    atomicWrite(path, original);
     if (originalLog === null) {
       // Bundle started without an op log — delete the file the partial apply
       // created instead of leaving an empty one behind.
@@ -683,6 +828,10 @@ function applyOne(path: string, op: RawOp): string {
  * is the simplest correct strategy for the PoC; op volume is small.
  */
 export function patchRevert(path: string, opId: string): string {
+  return withWriteLock(path, () => patchRevertLocked(path, opId));
+}
+
+function patchRevertLocked(path: string, opId: string): string {
   const log = readOpLog(path);
   const idx = log.findIndex((e) => e["op-id"] === opId);
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
@@ -778,6 +927,10 @@ function computeHash(store: Store, qname: string, memo: Map<string, string>): st
 }
 
 export function lockDef(path: string, agentId: string, pattern: string): void {
+  withWriteLock(path, () => lockDefLocked(path, agentId, pattern));
+}
+
+function lockDefLocked(path: string, agentId: string, pattern: string): void {
   const locks = readLocks(path);
   const patterns = pattern
     .split(",")
@@ -793,6 +946,10 @@ export function lockDef(path: string, agentId: string, pattern: string): void {
 }
 
 export function unlockDef(path: string, agentId: string): void {
+  withWriteLock(path, () => unlockDefLocked(path, agentId));
+}
+
+function unlockDefLocked(path: string, agentId: string): void {
   const locks = readLocks(path);
   locks.entries = locks.entries.filter((e) => e.agent !== agentId);
   writeLocks(path, locks);
