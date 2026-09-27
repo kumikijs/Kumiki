@@ -184,3 +184,39 @@ fn soon() = "soon"`;
     ).toEqual(["E0201 7:58 Expected Text but got Int"]);
   });
 });
+
+// `headers` is the `Map(Text, Text)` every request's own `headers` is
+// (http.md §6.1.2), so the global ones are held to the same type at the field.
+// A value that is not one used to run: the runtime spreads it into the
+// request's headers, and a number or a string spreads to nothing, so every
+// global header silently disappeared.
+describe("app.http headers is a Map(Text, Text)", () => {
+  it.each([
+    ["an Int", `headers: 42`, "E0201 7:24 Expected Map(Text, Text) but got Int"],
+    ["a Text", `headers: "x"`, "E0201 7:24 Expected Map(Text, Text) but got Text"],
+    ["a value that is not a Text", `headers: {"X-A": 1}`, "E0201 7:32 Expected Text but got Int"],
+  ])("reports %s", (_, http, expected) => {
+    expect(diagnostics(app("", http))).toEqual([expected]);
+  });
+
+  it("reports a slot of the wrong type at the field", () => {
+    expect(diagnostics(app(`slot hs : Map(Text, Int) = {}`, `headers: hs`))).toEqual([
+      "E0201 7:24 Expected Map(Text, Text) but got Map(Text, Int)",
+    ]);
+  });
+
+  it("accepts a map of Text values, computed or read from a slot", () => {
+    expect(
+      diagnostics(
+        app(
+          `slot session : Option(Text) = None
+slot token : Text = "t"
+slot hs : Map(Text, Text) = {}`,
+          `headers: {"Authorization": fmt("Bearer {0}", session.get-or("anon")), "X-Token": token}`,
+        ),
+      ),
+    ).toEqual([]);
+    expect(diagnostics(app(`slot hs : Map(Text, Text) = {}`, `headers: hs`))).toEqual([]);
+    expect(diagnostics(app("", `headers: {}`))).toEqual([]);
+  });
+});

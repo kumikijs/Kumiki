@@ -6024,10 +6024,8 @@ function checkApp(
  * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
  * would pass check, build and smoke alike.
  *
- * Three of the four also have a type (http.md §6.3.1), checked after the walk:
- * a value of the wrong one runs and does the wrong thing rather than failing.
- * `headers` is a record of whatever the author sends, and has none to hold it
- * to here.
+ * All four also have a type (http.md §6.3.1), checked after the walk: a value
+ * of the wrong one runs and does the wrong thing rather than failing.
  */
 function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
@@ -6054,6 +6052,20 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   if (http.timeout !== undefined)
     checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
   if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+  // `headers` is the `Map(Text, Text)` a request's own `headers` is (§6.1.2): the
+  // runtime spreads it into each request, and a value of any other shape
+  // spreads to nothing, dropping every global header without a word.
+  if (http.headers !== undefined) {
+    const pos = http.headers.pos;
+    const text = prim("Text", pos);
+    checkAgainst(
+      http.headers,
+      { kind: "TypeApp", name: "Map", args: [text, text], pos },
+      sym,
+      errors,
+      fieldCtx,
+    );
+  }
 }
 
 /** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */

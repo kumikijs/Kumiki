@@ -14,7 +14,7 @@
 | `http.patch` | PATCH |
 | `http.delete` | DELETE |
 
-### 6.1.2 標準 effect
+### 6.1.2 標準 effect {#_6-1-2-standard-effect}
 
 プログラムは capability に対して自分の effect を宣言する。以下は各メソッドでツールチェインが期待する形 — 名前は任意で、`cap` とレコードがランタイムの dispatch 先を決める：
 
@@ -158,7 +158,7 @@ app App
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
-| `headers` | 全リクエストに付与 | リクエストごと |
+| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
 | `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
 | `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
@@ -187,11 +187,16 @@ reducer 名の 3 つだけは例外で、そもそも値ではない：コンパ
 - `credentials` は `Text` に代入可能なものを取り、フィールドに届くリテラル —
   フィールド自身の値、または `if` のリテラルの分岐 — はすべて Fetch の 3 つの
   モードのいずれかでなければならない。それ以外を指定した init はブラウザが拒否する。
+- `headers` は `Map(Text, Text)` に代入可能なものを取る。リクエスト自身の `headers`
+  （[§6.1.2](#_6-1-2-standard-effect)）と同じ型であり、値がすべて `Text` の
+  リテラル `{"Name": value}` か、その型の slot である。`Text` でない値はその値の位置で、
+  map でないものはフィールドの位置で報告される。ランタイムはこの値を各リクエストの
+  headers に展開するので、数値や文字列は何も展開せず、すべてのグローバル header が失われる。
 
 照合されるのは型であり、`credentials` についてはリテラルも照合される：それ以外の
 方法で計算される値 — slot、呼び出し、連結 — は実行時に決まるので、型の合うものは
 何を保持するかにかかわらず受理される。`timeout: 0` や負の `Int` も `Int` であり、
-受理される。`headers` にはここで照合する型がない。
+受理される。
 
 ### 6.3.2 401 のグローバル処理
 

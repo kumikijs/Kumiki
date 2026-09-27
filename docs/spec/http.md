@@ -158,7 +158,7 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests | per request |
+| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
 | `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
 | `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
@@ -192,12 +192,17 @@ field:
   reaches the field — the field's own value, or a literal branch of an `if` —
   must be one of the three Fetch modes, since a browser refuses a request whose
   init names any other.
+- `headers` takes anything assignable to `Map(Text, Text)`, the type of a
+  request's own `headers` ([§6.1.2](#_6-1-2-standard-effect)): a literal
+  `{"Name": value}` whose every value is a `Text`, or a slot of that type. A
+  value that is not a `Text` is reported at the value, and anything that is not
+  a map at the field. The runtime spreads the value into each request's headers,
+  so a number or a string would spread to nothing and drop every global header.
 
 What is compared is the type, and for `credentials` the literals: a value
 computed any other way — a slot, a call, a concatenation — is decided at run
 time, so one of the right type is accepted whatever it will hold. `timeout: 0`
-and a negative `Int` are an `Int`, and are accepted too. `headers` has no type
-to hold it to here.
+and a negative `Int` are an `Int`, and are accepted too.
 
 ### 6.3.2 Global Handling of 401
 
