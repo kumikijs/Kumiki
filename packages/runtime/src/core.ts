@@ -4959,7 +4959,7 @@ function tileValueEqual(a: unknown, b: unknown): boolean {
  * is the safe direction and deliberately not "fixed" with a `toString` tag
  * check, which would let a genuinely exotic cross-realm value back through.
  */
-function isPlainDataBag(v: object): boolean {
+export function isPlainDataBag(v: object): boolean {
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
 }
