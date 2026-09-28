@@ -238,10 +238,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // 61,000 from 60,000 (60,034 measured, from 59,789): the viewport pick
+    // reads the active theme's breakpoints over the style.md §4.2 defaults
+    // (`DEFAULT_BREAKPOINTS` in core.js); measured on top of value equality.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
