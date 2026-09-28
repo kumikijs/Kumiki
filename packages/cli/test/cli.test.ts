@@ -238,10 +238,15 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // 61,000 from 60,000 (60,185 measured, from 59,789): a Set element or Map
+    // key is one entry per value (stdlib.md §2.2.1) — `entryKey` and its
+    // sorted-JSON encoding in core.js, which every Set / Map member and the
+    // index read and write ask; measured on top of value equality (`valueEqual`).
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
