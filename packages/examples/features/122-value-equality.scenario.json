@@ -1,0 +1,55 @@
+{
+  "steps": [
+    {
+      "label": "equal values compare equal, different ones do not",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "empty-list: true",
+          "same-list: true",
+          "swapped-list: false",
+          "equal-record: true",
+          "differs-from-other: true",
+          "differs-from-self: false",
+          "equal-tuple: true",
+          "some-record: true",
+          "some-some: true",
+          "some-none: false"
+        ]
+      }
+    },
+    {
+      "label": "contains and unique compare the way == does",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "is-admin: true",
+          "is-viewer: false",
+          "has-point: true",
+          "has-some-one: true",
+          "has-pair: true",
+          "bare-unique: 2",
+          "called-unique: 2",
+          "first-kept: true",
+          "distinct-points: 2",
+          "distinct-options: 2",
+          "distinct-pairs: true",
+          "substring: true"
+        ]
+      }
+    },
+    {
+      "label": "a List slot compares with == after a reducer writes it",
+      "do": {
+        "click": "#add"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["items: 1"],
+        "state": {
+          "items": [1]
+        }
+      }
+    }
+  ]
+}
