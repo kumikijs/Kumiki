@@ -254,6 +254,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | HTTP/Storage | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
+| `122-value-equality.kumiki` | type, slot, reducer, tile | コア | [§1.9.4](./language.md#_1-9-4-演算子の型) |
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 <!-- examples:end -->
