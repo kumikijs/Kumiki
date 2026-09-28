@@ -149,6 +149,11 @@ chunk(n)                    : List(List(T))
 zip(other)                  : List(Tuple(T, U))
 ```
 
+`contains(x)` and `unique` compare elements with `==`, which is by value
+([language §1.9.4](./language.md#_1-9-4-operator-types)): `[Admin, Editor].contains(Admin)`
+is `true` and `[Some(1), Some(1), None].unique` is `[Some(1), None]`. `unique` keeps
+the first occurrence of each value, in order.
+
 **Parenthesis-free shortcut**: argument-less methods (`is-empty` / `length` / `reverse` / `sort` / `unique` / `head` / `tail` / `last`) **can omit `()` and be written like a field**:
 
 ```kumiki fragment
