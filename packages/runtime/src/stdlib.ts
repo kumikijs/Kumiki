@@ -8,6 +8,7 @@ import {
   _setPathHelper,
   currentEpisodeId,
   isPanic,
+  isPlainDataBag,
   KumikiPanic,
   listPosition,
   type PathSegment,
@@ -52,6 +53,52 @@ function restoreKey(key: string, kind: KeyKind | undefined): unknown {
 /** Unreachable while `restoreKey` handles every `KeyKind`; a type error otherwise. */
 function assertNeverKind(kind: never): never {
   throw new Error(`unknown key kind ${String(kind)}`);
+}
+
+/**
+ * Value equality — the one answer to "are these two Kumiki values the same".
+ * `==` / `!=` and `List.contains` / `unique` ask it here, and so does the test
+ * layer wherever it compares two whole values; the reducer-test `expect` match
+ * keeps its own walk, because a wildcard may sit at any depth of the expected
+ * side and only that walk knows what one matches.
+ *
+ * Kumiki values are immutable (language.md §1.6.3), so a program has no
+ * reference identity it could mean to compare: a List, tuple, record, Map or
+ * variant equals another when what it holds is equal, recursively. A List or
+ * tuple (a JS array) compares element by element in order, and `Bytes` (a
+ * `Uint8Array`) byte by byte. A plain data bag — a record, a variant (`_tag`
+ * is one more field), a Map — compares by the same set of own keys holding
+ * equal values, regardless of the order they were written in. Anything else
+ * (a DOM `File`, a `Blob`, a `Date`) holds its state outside its own
+ * enumerable keys and would look like an empty bag, so it equals only itself.
+ * Primitives compare with `===`, so `NaN` equals nothing.
+ *
+ * A Set is not promised a by-value answer: it compares as whatever it is
+ * stored as, which depends on how it was built (stdlib.md §2.2.2).
+ */
+export function valueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  const aArr = Array.isArray(a);
+  const bArr = Array.isArray(b);
+  if (aArr || bArr) {
+    if (!aArr || !bArr || a.length !== b.length) return false;
+    return a.every((x, i) => valueEqual(x, (b as unknown[])[i]));
+  }
+  const aBytes = a instanceof Uint8Array;
+  const bBytes = b instanceof Uint8Array;
+  if (aBytes || bBytes) {
+    if (!aBytes || !bBytes || a.length !== b.length) return false;
+    return a.every((x, i) => x === (b as Uint8Array)[i]);
+  }
+  if (!isPlainDataBag(a) || !isPlainDataBag(b)) return false;
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const ak = Object.keys(ao);
+  if (ak.length !== Object.keys(bo).length) return false;
+  // Key presence too: `{a: undefined}` and `{b: undefined}` have equal key
+  // counts but are not equal.
+  return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
 }
 
 /**
@@ -278,6 +325,40 @@ export const _stdlibCore = {
     const hit = (xs ?? []).find(pred);
     return hit === undefined ? _stdlibCore.None : _stdlibCore.Some(hit);
   },
+  /**
+   * `.contains(x)`: a substring test on `Text`, and membership on a `List`
+   * (stdlib.md §2.2.3), which asks `==`'s question of each element.
+   */
+  contains(recv: unknown, x: unknown): boolean {
+    if (typeof recv === "string") return recv.includes(x as string);
+    return ((recv as unknown[] | null | undefined) ?? []).some((y) => valueEqual(y, x));
+  },
+  /**
+   * `List(T).unique`: the first occurrence of each value, by `==`, in order.
+   *
+   * Not `new Set(xs)`: its SameValueZero cannot see that two separately built
+   * records or variants are equal, and it merges `NaN`s, which `==` never
+   * does. A primitive — which `==` compares with `===` — is still looked up
+   * in a `Set`, so a List of numbers or texts stays linear; a `NaN` is pushed
+   * every time, since no other value equals it. Only an object pays the
+   * pairwise `valueEqual` scan, against the objects kept so far.
+   */
+  listUnique<T>(xs: T[] | undefined | null): T[] {
+    const out: T[] = [];
+    const seenPrimitives = new Set<unknown>();
+    const keptObjects: unknown[] = [];
+    for (const x of xs ?? []) {
+      if (x !== null && typeof x === "object") {
+        if (keptObjects.some((y) => valueEqual(y, x))) continue;
+        keptObjects.push(x);
+      } else if (!(typeof x === "number" && Number.isNaN(x))) {
+        if (seenPrimitives.has(x)) continue;
+        seenPrimitives.add(x);
+      }
+      out.push(x);
+    }
+    return out;
+  },
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
   },
@@ -389,23 +470,9 @@ export const _stdlibCore = {
       return i < args.length ? _stdlibCore.show(args[i]) : placeholder;
     });
   },
+  /** `==` (language.md §1.9.4): by value, through `valueEqual`. `!=` is its negation. */
   eq(a: unknown, b: unknown): boolean {
-    if (a === b) return true;
-    if (a == null || b == null) return false;
-    if (typeof a === "object" && typeof b === "object") {
-      const ao = a as { _tag?: string };
-      const bo = b as { _tag?: string };
-      if (ao._tag !== undefined || bo._tag !== undefined) {
-        if (ao._tag !== bo._tag) return false;
-        for (const k of Object.keys(ao)) {
-          if (!Object.is((ao as Record<string, unknown>)[k], (bo as Record<string, unknown>)[k])) {
-            return false;
-          }
-        }
-        return true;
-      }
-    }
-    return false;
+    return valueEqual(a, b);
   },
   /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {
