@@ -236,6 +236,22 @@ export const _stdlibCore = {
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
+  /**
+   * `is-empty` on a Map, List or Text (stdlib.md §2.2.1 / §2.2.3 / §2.2.6), for
+   * both spellings — `x.is-empty` and `x.is-empty()` are one member, so they
+   * lower to this one helper. A List and a Text are counted by `length`; a Map
+   * is an object keyed by its entries, so an empty one has no keys. A missing
+   * value is empty; any other scalar (Int, Float, Bool, Duration) is not.
+   *
+   * The order is load-bearing: a Text is answered first because it is not an
+   * object, and `""` is falsy, so the scalar tail would call the empty Text
+   * not empty.
+   */
+  isEmpty(v: unknown): boolean {
+    if (typeof v === "string" || Array.isArray(v)) return v.length === 0;
+    if (v && typeof v === "object") return Object.keys(v).length === 0;
+    return v === undefined || v === null;
+  },
   mapKeys(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
     return m ? Object.keys(m).map((k) => restoreKey(k, kind)) : [];
   },

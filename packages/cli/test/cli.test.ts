@@ -239,7 +239,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
     //
-    // 61,000 from 60,000 (60,028 measured): a bound `input` reads its text as
+    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
+    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
+    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
+    //
+    // 61,000 from 60,000 (60,153 measured, from 59,914): a bound `input` reads its text as
     // the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
     // write remembers which reading the text failed, so `error(field=…)` can
     // name it before any refinement (§5.7.2). That memory is the refused-bind
