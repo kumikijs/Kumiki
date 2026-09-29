@@ -1,0 +1,74 @@
+{
+  "steps": [
+    {
+      "label": "ticking a box that starts ticked writes false",
+      "do": { "click": "#agree input" },
+      "expect": { "noErrors": true, "state": { "agreed": false }, "domIncludes": ["agreed=false"] }
+    },
+    {
+      "label": "ticking it again writes true",
+      "do": { "click": "#agree input" },
+      "expect": { "noErrors": true, "state": { "agreed": true }, "domIncludes": ["agreed=true"] }
+    },
+    {
+      "label": "a switch writes its Bool the same way",
+      "do": { "click": "#sw input" },
+      "expect": { "noErrors": true, "state": { "lit": true }, "domIncludes": ["lit=true"] }
+    },
+    {
+      "label": "and writes false when it is switched back from the UI",
+      "do": { "click": "#sw input" },
+      "expect": { "noErrors": true, "state": { "lit": false }, "domIncludes": ["lit=false"] }
+    },
+    {
+      "label": "choosing a radio writes its value into the union slot",
+      "do": { "click": "#rAll input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "All" } },
+        "domIncludes": ["filter=All"]
+      }
+    },
+    {
+      "label": "choosing another writes that one's value, and the radio losing the selection writes nothing over it",
+      "do": { "click": "#rActive input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "Active" } },
+        "domIncludes": ["filter=Active"]
+      }
+    },
+    {
+      "label": "a box bound through a path writes its field, and its onClick reads the slot already written",
+      "do": { "click": "#news input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "prefs": { "news": true, "size": { "_tag": "Large" } }, "seen": true },
+        "domIncludes": ["prefs=true/Large", "seen=true"]
+      }
+    },
+    {
+      "label": "a radio bound through a path writes its field and leaves the other alone",
+      "do": { "click": "#sSmall input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "prefs": { "news": true, "size": { "_tag": "Small" } } },
+        "domIncludes": ["prefs=true/Small"]
+      }
+    },
+    {
+      "label": "a reducer that rewrites the slots is what the controls follow",
+      "do": { "clickText": "reset" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "agreed": true,
+          "lit": false,
+          "filter": { "_tag": "Done" },
+          "prefs": { "news": false, "size": { "_tag": "Large" } }
+        },
+        "domIncludes": ["filter=Done", "prefs=false/Large"]
+      }
+    }
+  ]
+}

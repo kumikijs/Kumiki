@@ -63,6 +63,7 @@
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | refinement が reducer のバッチを丸ごと拒否する挙動と、代わりに書くべきガード |
 | [90-refinement-validation](./90-refinement-validation.kumiki) | 登録済み述語がすべて実行時チェックであること — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`、および標準ライブラリの refinement 付き nominal |
 | [105-refused-bind](./105-refused-bind.kumiki) | refinement に拒否された bind フィールドは入力を表示し続け、`error(field=…)` がその理由を示す |
+| [132-toggle-bind](./132-toggle-bind.kumiki) | `check` / `switch` は `Bool` を、`radio` は union の 1 バリアントを bind し、スロットを表示して書き戻す |
 | [135-form-submit-gate](./135-form-submit-gate.kumiki) | form は中で bind したフィールドがすべて妥当な値を表示しているときだけ送信する — 失敗する初期値や拒否された編集は送信を止める |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |
