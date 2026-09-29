@@ -238,10 +238,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // 61,000 from 60,000 (60,052 measured, from 59,889): a `bind` into one
+    // field of a record is judged at that field (forms.md §5.6). `slotAccepts` and
+    // a slot's `refineFailure` take the path the write went through, and a refused
+    // bind keeps that path so what the field shows is laid over the record as it is
+    // now. A counter binds nothing and still ships them, because they sit in the
+    // core module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
