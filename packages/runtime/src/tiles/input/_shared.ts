@@ -129,8 +129,6 @@ export type InputHandlers = {
   el?: Record<string, unknown>;
   // Select-specific — decoded via valueKey lookup on `change`.
   selectOptions?: Array<{ label: unknown; value: unknown }>;
-  // Slider-specific — write `Number(inp.value)` back rather than the string.
-  isSlider?: boolean;
   // Input-specific — how the text reads as the bound slot's type, when not Text.
   parse?: (text: string) => { _tag: string; _0?: unknown };
 };

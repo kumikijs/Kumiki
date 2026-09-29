@@ -193,14 +193,19 @@ export function tileExprJs(
 }
 
 /**
+ * A `bind=` target lowered: the root slot, the static path below it, and a JS
+ * expression reading the value there. Each control decides how it shows that
+ * value — `_s.show(…)` for the text controls, as-is for the others.
+ */
+export type BindInfo = { root: string; path: BindSegment[]; read: string };
+
+/**
  * For `bind=draft` or `bind=draft.get.title`, extract the root slot name, the
  * static path, and a JS expression to read the value.
  * Only static field-access paths are supported (no Index, no dynamic lookups).
  * Returns null if no `bind=` arg exists or the path isn't statically resolvable.
  */
-export function extractBindPath(
-  args: { name?: string; value: unknown }[],
-): { root: string; path: BindSegment[]; readJs: string; readJsRaw: string } | null {
+export function extractBindPath(args: { name?: string; value: unknown }[]): BindInfo | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
   let cur = bindArg.value as Expr;
@@ -221,7 +226,40 @@ export function extractBindPath(
         ? `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`
         : `_s.unwrap(${readRaw})`;
   }
-  return { root, path, readJs: readRaw, readJsRaw: readRaw };
+  return { root, path, read: readRaw };
+}
+
+/**
+ * The `bind` / `bindPath` fields of a bound control's node — every bound kind
+ * goes through here, so `bindPath` is omitted for a bare slot in one place.
+ */
+function bindFields(bindInfo: Pick<BindInfo, "root" | "path">): string[] {
+  const fields = [`bind: ${JSON.stringify(bindInfo.root)}`];
+  if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
+  return fields;
+}
+
+/**
+ * `check` / `switch`: a box that is ticked from `bind=` when it has one — the
+ * `Bool` it writes back on change (forms.md §5.1.1) — and from `value=` when it
+ * does not.
+ */
+function toggleJs(
+  kind: "check" | "switch",
+  t: TileExpr & { kind: "TileCall" },
+  ctx: EvalCtx,
+  propsObj: string,
+): string {
+  const bindInfo = extractBindPath(t.args);
+  const fields = [`kind: ${JSON.stringify(kind)}`];
+  if (bindInfo) {
+    fields.push(...bindFields(bindInfo), `checked: !!(${bindInfo.read})`);
+  } else {
+    const valArg = t.args.find((a) => a.name === "value");
+    fields.push(`checked: !!(${valArg ? jsOfExpr(asExpr(valArg.value), ctx) : "false"})`);
+  }
+  fields.push(`props: ${propsObj}`);
+  return `({ ${fields.join(", ")} })`;
 }
 
 /**
@@ -426,16 +464,13 @@ function tileCallJs(
           else if (arg.name === "multiple") fields.push(`multiple: ${valJs}`);
         }
         if (bindInfo) {
-          fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
-          if (bindInfo.path.length > 0) {
-            fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
-          }
+          fields.push(...bindFields(bindInfo));
           const reading = boundReading(bindInfo, gen);
           if (reading) {
             gen.usedReaders.add(reading);
             fields.push(`parse: ${readerName(reading)}`);
           }
-          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.readJs)}`);
+          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.read)}`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
@@ -451,30 +486,18 @@ function tileCallJs(
           else if (arg.name === "id") fields.push(`id: ${valJs}`);
           else if (arg.name === "rows") fields.push(`rows: ${valJs}`);
         }
-        if (bindInfo) {
-          fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
-          if (bindInfo.path.length > 0) {
-            fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
-          }
-          fields.push(`value: _s.show(${bindInfo.readJs})`);
-        }
+        if (bindInfo) fields.push(...bindFields(bindInfo), `value: _s.show(${bindInfo.read})`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
-      case "check": {
-        const valArg = t.args.find((a) => a.name === "value");
-        const checked = valArg ? jsOfExpr(asExpr(valArg.value), ctx) : "false";
-        return `({ kind: "check", checked: !!(${checked}), props: ${propsObj} })`;
-      }
+      case "check":
+      case "switch":
+        return toggleJs(name, t, ctx, propsObj);
       case "select": {
         const fields: string[] = [`kind: "select"`];
         const bindInfo = extractBindPath(t.args);
         if (bindInfo) {
-          fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
-          if (bindInfo.path.length > 0) {
-            fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
-          }
-          fields.push(`value: ${bindInfo.readJsRaw}`);
+          fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
         } else {
           // No bind=; allow `value=<expr>` for read-only / dispatch-via-reducer selects.
           const valArg = t.args.find((a) => a.name === "value");
@@ -495,12 +518,27 @@ function tileCallJs(
       }
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
+        const bindInfo = extractBindPath(t.args);
+        let valueJs: string | undefined;
         for (const arg of t.args) {
-          if (!arg.name) continue;
+          if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
           if (arg.name === "group") fields.push(`group: ${valJs}`);
-          else if (arg.name === "value") fields.push(`value: ${valJs}`);
-          else if (arg.name === "selected") fields.push(`selected: !!(${valJs})`);
+          else if (arg.name === "value") valueJs = valJs;
+          // A bind decides the selection itself, below; `selected=` beside
+          // one is a second answer to the same question, and is not read
+          // (W0216 says so at `kumiki check` time).
+          else if (arg.name === "selected" && !bindInfo) fields.push(`selected: !!(${valJs})`);
+        }
+        if (valueJs !== undefined) {
+          fields.push(`value: ${valueJs}`);
+          // A bound radio with no `value=` has nothing to write when chosen
+          // and is E0225, so a bind is lowered only beside the value it writes.
+          if (bindInfo) {
+            // Chosen exactly when the bound slot holds this radio's value
+            // (forms.md §5.5.2), compared as `==` compares.
+            fields.push(...bindFields(bindInfo), `selected: _s.eq(${bindInfo.read}, ${valueJs})`);
+          }
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
@@ -657,18 +695,9 @@ function tileCallJs(
           else if (arg.name === "max") fields.push(`max: ${valJs}`);
           else if (arg.name === "step") fields.push(`step: ${valJs}`);
         }
-        if (bindInfo) {
-          fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
-          if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
-          fields.push(`value: ${bindInfo.readJsRaw}`);
-        }
+        if (bindInfo) fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
-      }
-      case "switch": {
-        const valArg = t.args.find((a) => a.name === "value");
-        const checked = valArg ? jsOfExpr(asExpr(valArg.value), ctx) : "false";
-        return `({ kind: "switch", checked: !!(${checked}), props: ${propsObj} })`;
       }
       case "error": {
         const fieldArg = t.args.find((a) => a.name === "field");
@@ -706,11 +735,7 @@ function tileCallJs(
         const textArg = firstPositional(t) ?? t.args.find((a) => a.name === "text");
         const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
         if (bindInfo) {
-          fields.push(`bind: ${JSON.stringify(bindInfo.root)}`);
-          if (bindInfo.path.length > 0) {
-            fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
-          }
-          fields.push(`text: _s.show(${bindInfo.readJs})`);
+          fields.push(...bindFields(bindInfo), `text: _s.show(${bindInfo.read})`);
         } else {
           fields.push(`text: _s.show(${textJs})`);
         }

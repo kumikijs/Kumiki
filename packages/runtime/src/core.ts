@@ -305,7 +305,20 @@ export type TileNode = (
       placeholder?: string;
       id?: string;
     }
-  | { kind: "check"; checked: boolean; props?: TileProps }
+  | {
+      kind: "check";
+      checked: boolean;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
+  | {
+      kind: "switch";
+      checked: boolean;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
   | { kind: "spinner"; props?: TileProps }
   | { kind: "skeleton"; props?: TileProps }
   | { kind: "form"; children: TileNode[]; props?: TileProps }
@@ -332,7 +345,15 @@ export type TileNode = (
       options?: Array<{ label: unknown; value: unknown }>;
       placeholder?: string;
     }
-  | { kind: "radio"; props?: TileProps; group?: string; value?: unknown; selected?: boolean }
+  | {
+      kind: "radio";
+      props?: TileProps;
+      group?: string;
+      value?: unknown;
+      selected?: boolean;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
   | {
       kind: "grid" | "stack" | "region" | "scroll" | "panel" | "fieldset" | "overlay";
       children: TileNode[];
@@ -376,7 +397,6 @@ export type TileNode = (
       max?: number;
       step?: number;
     }
-  | { kind: "switch"; checked: boolean; props?: TileProps }
   | { kind: "error"; field: string; props?: TileProps }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
   | {
@@ -1504,9 +1524,11 @@ type RefusedBind = { slot: string; value: unknown; shown: string };
  */
 const refusedBinds = new WeakMap<object, Map<HTMLElement, RefusedBind>>();
 
-/** What a bound control shows: its value, or an editable's text. */
+/** What a bound control shows: a box's tick, its value, or an editable's text. */
 function shownValue(el: HTMLElement): string {
-  return "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? "");
+  const inp = el as HTMLInputElement;
+  if (inp.type === "checkbox" || inp.type === "radio") return String(inp.checked);
+  return "value" in el ? String(inp.value) : (el.textContent ?? "");
 }
 
 /**
@@ -2233,13 +2255,24 @@ export function mountCore(
       // ", ], or backslash — so it does not need attribute-value escaping
       // here. `snap.id` may be user-authored (`{id: "..."}`) and IS routed
       // through `CSS.escape` below.
-      let sel: Element | null = snap.bind
-        ? target.querySelector(`[data-kumiki-bind="${snap.bind}"]`)
-        : snap.id
-          ? target.querySelector(`#${CSS.escape(snap.id)}`)
-          : null;
-      // Fall back to DOM-path restore for inputs without bind/id (e.g.
-      // `value=`-only search boxes). Identifies the element by its position.
+      //
+      // A marker names the control only when one control carries it. Every
+      // radio of a bound group carries the same one, as do two controls bound
+      // to the same slot, and the first match is then a sibling of the
+      // focused control — so a shared marker falls through to the id and the
+      // DOM path, which tell the siblings apart.
+      const byBind = snap.bind
+        ? target.querySelectorAll(`[data-kumiki-bind="${snap.bind}"]`)
+        : null;
+      let sel: Element | null =
+        byBind?.length === 1
+          ? (byBind[0] ?? null)
+          : snap.id
+            ? target.querySelector(`#${CSS.escape(snap.id)}`)
+            : null;
+      // Fall back to DOM-path restore for inputs without a unique bind or an
+      // id (e.g. `value=`-only search boxes, a bound radio group). Identifies
+      // the element by its position.
       if (!sel && snap.path) sel = elementAtPath(snap.path, target);
       if (
         sel &&

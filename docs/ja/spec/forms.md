@@ -34,6 +34,8 @@ tile Compose = column(
 
 `Int` / `Float` / `Time` に bind した `input` は、テキストを `Int.parse` / `Float.parse` / `Time.parse` と同じように読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、読んだ値を書き込む。型は bind した位置の型であり、レコードのフィールドや `Option` のペイロードを辿った先の型である。その型の値を表さないテキスト（`""`、`Int` に対する `"1.5"` など）は refinement 違反と同じく拒否される（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot は最後に受け入れた値を保ち、フィールドは入力されたテキストを保つ。`Time` は `type="date"` のフィールドには `yyyy-MM-dd`、`datetime` のフィールドには `yyyy-MM-ddTHH:mm` として、`Time.parse` がゾーンなし文字列を読むのと同じローカル時刻で表示される。
 
+`check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。書き戻しはコントロール自身の `onClick` / `onChange` より先に行われるので、ハンドラは書き込み済みの slot を読む：`check(value=b, onClick=toggle)` を `check(bind=b, onClick=toggle)` に移すと `b` は 2 回反転するので、`onClick` は外す必要がある。`bind=` があるとき、bind していないコントロールの選択状態を決める引数 — `check` / `switch` の `value=`、`radio` の `selected=` — は読まれない（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。radio 自身の `value=` は引き続き書き込む値である。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `kumiki check` が報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。書き込む `value=` のない bind した radio も同様である（[E0225](./errors.md#e0225-radio-bind-without-value)）。
+
 ### 5.1.2 refinement の扱い
 
 `slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えるとその値は**拒否**される：slot は最後に受け取った値を保つ。モードは 1 つで、意図的に静かである — 入力途中の値は欠陥ではなく想定内なので、何も報告しない。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
