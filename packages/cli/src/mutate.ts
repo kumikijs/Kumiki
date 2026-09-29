@@ -11,6 +11,7 @@ import {
   load,
   referenceSites,
   type Store,
+  viewDef,
 } from "./store.ts";
 
 // Crockford base32. The mutate-op id is a §9.3.3 ULID — 10-char ms timestamp
@@ -47,6 +48,13 @@ export type OpLogEntry = {
   /** Every definition a cascade deleted, the requested one first (§9.4.1). */
   removed?: string[];
   /**
+   * `remove` only: the source of every definition the op deleted, as it stood
+   * when it was deleted, the requested one first. It is what `patch revert`
+   * restores, so the restore never depends on reconstructing a body from
+   * earlier ops.
+   */
+  bodies?: DefSpec[];
+  /**
    * The definitions an `add` restores together with the named one — the
    * inverse of a cascade, which is one op in both directions.
    */
@@ -67,6 +75,7 @@ type RawOp = {
   newName?: string;
   cascade?: boolean;
   removed?: string[];
+  bodies?: DefSpec[];
   with?: DefSpec[];
   patch?: unknown;
 };
@@ -99,11 +108,62 @@ export function readOpLog(path: string): OpLogEntry[] {
   if (!existsSync(p)) return [];
   const text = readFileSync(p, "utf8");
   const out: OpLogEntry[] = [];
-  for (const line of text.split(/\r?\n/)) {
+  for (const [i, line] of text.split(/\r?\n/).entries()) {
     if (!line.trim()) continue;
-    out.push(JSON.parse(line) as OpLogEntry);
+    const entry = JSON.parse(line) as OpLogEntry;
+    const problem = opShapeProblem(entry);
+    if (problem !== undefined) throw new Error(`${p}:${i + 1}: ${problem}`);
+    out.push(entry);
   }
   return out;
+}
+
+/**
+ * What is wrong with the definition lists an op carries, if anything. An op
+ * read from a patch file or the op log is only JSON; without this a `with`
+ * member missing its `name` was written to the file as `slot undefined`, and a
+ * `with` that is not an array threw a TypeError from deep inside a revert.
+ */
+function opShapeProblem(op: RawOp): string | undefined {
+  const own = `${op.layer}.${op.name}`;
+  if (op.with !== undefined) {
+    if (op.op !== "add") return "`with` is only valid on `add`";
+    const problem = defSpecsProblem(op.with, "with");
+    if (problem !== undefined) return problem;
+  }
+  if (op.bodies !== undefined) {
+    if (op.op !== "remove") return "`bodies` is only valid on `remove`";
+    const problem = defSpecsProblem(op.bodies, "bodies");
+    if (problem !== undefined) return problem;
+    const [first] = op.bodies;
+    if (first === undefined || `${first.layer}.${first.name}` !== own) {
+      return `\`bodies\` must start with the op's own definition ${own}`;
+    }
+  }
+  if (op.removed !== undefined) {
+    if (op.op !== "remove" || op.cascade !== true) {
+      return "`removed` is only valid on a cascade `remove`";
+    }
+    const removed: unknown = op.removed;
+    if (!Array.isArray(removed) || !removed.every((q) => typeof q === "string")) {
+      return "`removed` must be an array of qualified names";
+    }
+    if (removed[0] !== own) return `\`removed\` must start with the op's own definition ${own}`;
+  }
+  return undefined;
+}
+
+function defSpecsProblem(value: unknown, field: string): string | undefined {
+  if (!Array.isArray(value)) return `\`${field}\` must be an array`;
+  for (const [i, d] of value.entries()) {
+    if (typeof d !== "object" || d === null) return `\`${field}\`[${i}] must be an object`;
+    for (const key of ["layer", "name", "body"] as const) {
+      if (typeof (d as Record<string, unknown>)[key] !== "string") {
+        return `\`${field}\`[${i}].${key} must be a string`;
+      }
+    }
+  }
+  return undefined;
 }
 
 function lastOpId(path: string): string | undefined {
@@ -164,6 +224,7 @@ function logOp(path: string, op: RawOp): string {
     ...(op.newName !== undefined ? { newName: op.newName } : {}),
     ...(op.cascade !== undefined ? { cascade: op.cascade } : {}),
     ...(op.removed !== undefined ? { removed: op.removed } : {}),
+    ...(op.bodies !== undefined ? { bodies: op.bodies } : {}),
     ...(op.with !== undefined ? { with: op.with } : {}),
     ...(op.patch !== undefined ? { patch: op.patch } : {}),
     author: authorOf(),
@@ -305,9 +366,9 @@ export function addDef(path: string, layer: string, name: string, body: string):
 /**
  * Add one or more definitions as a single op: one write, one validation, one
  * log entry. The first is the op's own `layer` / `name` / `body`; the rest are
- * its `with`. Validated together because they may reference each other — a
- * cascade's dependents are exactly the definitions that cannot be added before
- * the one they depend on.
+ * its `with`. They are written in one batch and validated once, as a whole,
+ * because they may reference each other: a cascade's dependents do not
+ * typecheck on their own, without the definition they depend on.
  */
 function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   for (const d of defs) enforceLock(path, `${d.layer}.${d.name}`);
@@ -352,7 +413,6 @@ export function removeDef(
   path: string,
   qname: string,
   cascade: boolean,
-  exactly?: readonly string[],
 ): { opId: string; removed: RemovedNames } {
   enforceLock(path, qname);
   const store = load(path);
@@ -368,8 +428,7 @@ export function removeDef(
       `Cannot remove ${qname}: ${refs.length} references (${summary}). Re-run with --cascade.`,
     );
   }
-  // Cascade: collect distinct dependent qnames and remove them too. We do it
-  // in dependency order — remove the leaves first.
+  // Cascade: collect every transitive dependent and remove it too.
   const toRemove = new Set<string>([qname]);
   if (cascade) {
     let frontier = [qname];
@@ -386,55 +445,82 @@ export function removeDef(
       frontier = next;
     }
   }
-  // An inverse of a bundled `add` removes the set that op added and nothing
-  // else. Anything outside it that has come to depend on one of them since is
-  // an edit this revert would destroy, so it is refused before any write.
-  if (exactly !== undefined) {
-    const extra = [...toRemove].filter((q) => !exactly.includes(q)).sort();
-    if (extra.length > 0) {
-      throw new Error(
-        `remove rejected: ${qname} is now also referenced by ${extra.join(", ")}, which the op did not add`,
-      );
+  toRemove.delete(qname);
+  const set: RemovedNames = [qname, ...[...toRemove].sort((a, b) => a.localeCompare(b))];
+  return removeSet(path, store, set, cascade);
+}
+
+/**
+ * Remove exactly `set` as one op, its first member being the op's own
+ * definition. `removeDef` hands it the set a cascade derived; the inverse of a
+ * restoring `add` and the replay of a logged cascade hand it the set the op
+ * recorded, which is not re-derived: what references the first member now may
+ * be more or less than what did when the op was made.
+ *
+ * Refused before anything is written when a member is locked by another agent,
+ * is no longer in the file, or is referenced by a definition outside the set —
+ * removing it would leave that reference dangling.
+ */
+function removeSet(
+  path: string,
+  store: Store,
+  set: RemovedNames,
+  cascade: boolean,
+): { opId: string; removed: RemovedNames } {
+  for (const q of set) enforceLock(path, q);
+  const missing = set.filter((q) => !store.byQName.has(q));
+  if (missing.length > 0) {
+    throw new Error(
+      `remove rejected: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} no longer in the file; nothing was written`,
+    );
+  }
+  const members = new Set<string>(set);
+  const dangling = new Set<string>();
+  for (const q of set) {
+    for (const r of findReferences(store, q)) {
+      if (!members.has(r.qname)) dangling.add(`${r.qname} references ${q}`);
     }
   }
+  if (dangling.size > 0) {
+    throw new Error(
+      `remove rejected: ${[...dangling].sort().join("; ")}, outside the definitions being removed (${set.join(", ")}); nothing was written`,
+    );
+  }
+  const entries = set.map((q) => store.byQName.get(q)).filter((e) => e !== undefined);
+  // Each body as it stands now, so a revert restores exactly this — not the
+  // last body some earlier op happened to log, which a rename of something it
+  // references leaves stale.
+  const [main, ...rest] = entries.map((e) => ({
+    layer: e.layer,
+    name: e.name,
+    body: extractBody(e.layer, e.name, viewDef(store, `${e.layer}.${e.name}`) ?? ""),
+  }));
+  if (main === undefined) throw new Error("remove rejected: nothing to remove");
   // Remove from bottom up so line numbers stay valid.
-  const removalEntries = [...toRemove]
-    .map((q) => store.byQName.get(q))
-    .filter((e): e is NonNullable<typeof e> => !!e)
-    .sort((a, b) => b.range.startLine - a.range.startLine);
   let lines = store.lines.slice();
-  for (const e of removalEntries) {
+  for (const e of [...entries].sort((a, b) => b.range.startLine - a.range.startLine)) {
     lines = [...lines.slice(0, e.range.startLine - 1), ...lines.slice(e.range.endLine)];
   }
-  const next = lines.join("\n");
   const original = store.source;
-  writeFileSync(path, next);
+  writeFileSync(path, lines.join("\n"));
   const v = validate(path);
   if (!v.ok) {
     writeFileSync(path, original);
     throw new Error(`remove rejected: ${v.message}`);
   }
-  // §9.4.1: a cascade is one op, and it says what it took. Replay could already
-  // reproduce the state — `applyOne` re-runs `removeDef` with `cascade`, which
-  // re-derives the same dependent set — but nothing in the log or on stdout
-  // said that removing one definition had removed eight. `removed` is written
+  // §9.4.1: a cascade is one op, and it says what it took. `removed` is written
   // whenever `cascade` was requested, including when it took nothing, so its
   // absence means "not a cascade" rather than "a cascade with no dependents".
-  const removed: RemovedNames = [
-    qname,
-    ...removalEntries
-      .map((e) => `${e.layer}.${e.name}`)
-      .filter((q) => q !== qname)
-      .sort((a, b) => a.localeCompare(b)),
-  ];
+  // A replay removes that recorded set (`applyOne`).
   const opId = logOp(path, {
     op: "remove",
-    layer: entry.layer,
-    name: entry.name,
+    layer: main.layer,
+    name: main.name,
     cascade,
-    ...(cascade ? { removed } : {}),
+    ...(cascade ? { removed: set } : {}),
+    bodies: [main, ...rest],
   });
-  return { opId, removed };
+  return { opId, removed: set };
 }
 
 export function renameDef(path: string, qname: string, newName: string): string {
@@ -691,6 +777,8 @@ export function patchApplyFile(path: string, opsFile: string): string[] {
 }
 
 function applyOne(path: string, op: RawOp): string {
+  const problem = opShapeProblem(op);
+  if (problem !== undefined) throw new Error(problem);
   switch (op.op) {
     case "add":
       if (op.body === undefined) throw new Error("add op missing body");
@@ -704,8 +792,13 @@ function applyOne(path: string, op: RawOp): string {
     case "rename":
       if (!op.newName) throw new Error("rename op missing newName");
       return renameDef(path, `${op.layer}.${op.name}`, op.newName);
-    case "remove":
-      return removeDef(path, `${op.layer}.${op.name}`, op.cascade ?? false).opId;
+    case "remove": {
+      const main = `${op.layer}.${op.name}`;
+      if (op.removed === undefined) return removeDef(path, main, op.cascade ?? false).opId;
+      // `opShapeProblem` checked that the recorded set starts with `main`.
+      const [, ...rest] = op.removed;
+      return removeSet(path, load(path), [main, ...rest], true).opId;
+    }
     default:
       throw new Error(`unknown op kind "${op.op}"`);
   }
@@ -723,33 +816,17 @@ export function patchRevert(path: string, opId: string): string {
   const target = log[idx]!;
   switch (target.op) {
     case "add": {
-      // Inverse of add = remove. An add that restored a cascade removes the
-      // same set again, and only that set.
+      // Inverse of add = remove. An add that restored a cascade removes exactly
+      // the set it added — not what references the named definition now.
       const main = `${target.layer}.${target.name}`;
       if (target.with === undefined) return removeDef(path, main, false).opId;
-      const set = [main, ...target.with.map((d) => `${d.layer}.${d.name}`)];
-      return removeDef(path, main, true, set).opId;
+      const set: RemovedNames = [main, ...target.with.map((d) => `${d.layer}.${d.name}`)];
+      return removeSet(path, load(path), set, true).opId;
     }
     case "remove": {
       // Inverse of remove = add, of every definition the op removed — a
-      // cascade is one op (§9.4.1), so its inverse is one too. Each body is
-      // the last one the log recorded for that name before the remove; if any
-      // is missing, nothing is written rather than restoring part of the op.
-      const removed = target.removed ?? [`${target.layer}.${target.name}`];
-      const defs: DefSpec[] = [];
-      const missing: string[] = [];
-      for (const q of removed) {
-        const [layer, name] = splitQname(q);
-        const body = priorBody(log, idx, layer, name);
-        if (body === undefined) missing.push(q);
-        else defs.push({ layer, name, body });
-      }
-      const [first, ...rest] = defs;
-      if (missing.length > 0 || first === undefined) {
-        throw new Error(
-          `patch revert: cannot reconstruct the body of ${missing.join(", ")} removed by ${opId}; nothing was written`,
-        );
-      }
+      // cascade is one op (§9.4.1), so its inverse is one too.
+      const [first, ...rest] = removedDefs(log, idx, opId);
       return addDefs(path, [first, ...rest]);
     }
     case "replace": {
@@ -778,6 +855,43 @@ export function patchRevert(path: string, opId: string): string {
   }
 }
 
+/**
+ * The definitions a `remove` op deleted, with their bodies. A remove records
+ * them itself (`bodies`). One logged before it did falls back to the last body
+ * the log recorded for each name before the remove; if any is missing, nothing
+ * is restored rather than part of the op.
+ */
+function removedDefs(
+  log: OpLogEntry[],
+  idx: number,
+  opId: string,
+): readonly [DefSpec, ...DefSpec[]] {
+  const target = log[idx]!;
+  const [recorded, ...others] = target.bodies ?? [];
+  if (recorded !== undefined) return [recorded, ...others];
+  if (target.cascade === true && target.removed === undefined) {
+    throw new Error(
+      `patch revert: ${opId} is a cascade that does not record what it removed, so what to restore is unknown; nothing was written`,
+    );
+  }
+  const removed = target.removed ?? [`${target.layer}.${target.name}`];
+  const defs: DefSpec[] = [];
+  const missing: string[] = [];
+  for (const q of removed) {
+    const [layer, name] = splitQname(q);
+    const body = priorBody(log, idx, layer, name);
+    if (body === undefined) missing.push(q);
+    else defs.push({ layer, name, body });
+  }
+  const [first, ...rest] = defs;
+  if (missing.length > 0 || first === undefined) {
+    throw new Error(
+      `patch revert: cannot reconstruct the body of ${missing.join(", ")} removed by ${opId}; nothing was written`,
+    );
+  }
+  return [first, ...rest];
+}
+
 function priorBody(
   log: OpLogEntry[],
   idx: number,
@@ -793,10 +907,19 @@ function priorBody(
   return undefined;
 }
 
-/** Return op log entries for a specific qname in chronological order. */
+/**
+ * Return the op log entries that touched a qname, in chronological order: the
+ * ops named after it, and the ops that took or restored it alongside another
+ * definition (a cascade's `removed`, a restore's `with`).
+ */
 export function viewHistory(path: string, qname: string): OpLogEntry[] {
   const [layer, name] = splitQname(qname);
-  return readOpLog(path).filter((e) => e.layer === layer && e.name === name);
+  return readOpLog(path).filter(
+    (e) =>
+      (e.layer === layer && e.name === name) ||
+      e.removed?.includes(qname) === true ||
+      e.with?.some((d) => d.layer === layer && d.name === name) === true,
+  );
 }
 
 /**
