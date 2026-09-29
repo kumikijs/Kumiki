@@ -6,7 +6,9 @@
 // with `-` rewritten to `_`, while the reducer's `$el.item-name` read the
 // source spelling. The two never met: the reducer read `undefined`, and the
 // slot it wrote dropped out of the state. A prop reaches the payload both from
-// the props block and as a named argument, so both are asserted.
+// the props block and as a named argument, so both are asserted. `ui.input` and
+// `ui.change` hand their reducers the same payload as `ui.click`; they are
+// asserted too, so the payload cannot come to be built differently per event.
 
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -45,6 +47,38 @@ describe("$el.<kebab-name> reads the prop the tile declared", () => {
             noErrors: true,
             state: { picked: "b", picked2: "b" },
             domIncludes: ["picked: b"],
+          },
+        },
+      ],
+    });
+    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+  });
+});
+
+const inputApp = `slot typed   : Text = "-"
+slot changed : Text = "-"
+slot names   : List(Text) = ["a", "b"]
+reducer typing on=ui.input(Field)  do= typed := $el.item-name + "=" + $el.value
+reducer commit on=ui.change(Field) do= changed := $el.item-name
+tile Field in=Text = input(placeholder=$1) {item-name: $1, id: $1}
+tile App = column(text("typed: " + typed), column(for n in names Field(n)))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+describe("$el.<kebab-name> reaches ui.input and ui.change reducers", () => {
+  it("reads the prop in both reducers when the field is filled", async () => {
+    const shape = await loadSource(inputApp);
+    const report = await runScenario(shape, freshRoot(), {
+      steps: [
+        {
+          do: { fill: "#b", value: "x" },
+          expect: {
+            noErrors: true,
+            state: { typed: "b=x", changed: "b" },
+            domIncludes: ["typed: b=x"],
           },
         },
       ],
