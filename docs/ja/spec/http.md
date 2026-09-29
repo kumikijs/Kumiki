@@ -60,14 +60,16 @@ type HttpBody = Json(JsonValue)
 
 | variant | リクエスト本文 |
 |---|---|
-| `Json(v)` | `v` の JSON |
+| `Json(v)` | `v` の JSON。`Unit` の `Json` は `null` |
 | `Form(m)` | `m` を URL エンコードしたもの（`a=1&b=2`） |
-| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る |
+| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（永続化から復元したファイルレコード）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
 | `Text(t)` | `t` そのまま |
 | `Bytes(b)` | `b` のバイト列 |
 | `Empty` | 本文なし |
 
-HttpBody の variant でない `body`（レコード・リスト）は、`Json` と同じく JSON で送られる。
+HttpBody の variant でない `body`（レコード・リスト・素の `Text`）は、`Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。
+
+`GET` と `HEAD` は `body` が何であっても本文を送らない。
 
 ### 6.1.4 Decoder 型
 
@@ -90,7 +92,9 @@ Decoder.None         # レスポンス本文を捨てる
 - `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
 - `User-Agent: Kumiki`
 
-ユーザー指定の headers が優先される。ヘッダ名は大文字小文字を区別せずに比べるので、プログラムが `content-type` を指定すれば既定値を置き換える。
+ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` を置き換え、送られる値はちょうど 1 つになる。
+
+例外は `Multipart` だけである。プログラムが指定した `Content-Type` は捨てられる。このヘッダには fetch だけが知る boundary が必要で、boundary のない `multipart/form-data` はサーバが解析できないからである。
 
 ---
 

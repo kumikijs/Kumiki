@@ -6,12 +6,13 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AppShape, mount } from "@kumikijs/runtime";
+import { type AppShape, type CapabilityRegistry, mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clickByText,
   type FetchCall,
   type FetchDouble,
+  headerValues,
   readHeader,
   stubFetch,
 } from "./helpers/http-double.ts";
@@ -23,16 +24,19 @@ const BLOG = join(here, "..", "examples", "apps", "03-blog", "app.kumiki");
 
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** A one-button `http.post` program whose `map-request` is `request`. */
-function program(request: string): string {
+/**
+ * A one-button `http.post` program whose `map-request` is `request`. The
+ * effect takes `"x"` as a Text, or nothing when `input` is `Unit`.
+ */
+function program(request: string, input: "Text" | "Unit" = "Text", http = ""): string {
   return `slot res : Text = "idle"
 
 effect send cap=http.post
-            in=Text
+            in=${input}
             out=Result(Text, HttpError)
             map-request=${request}
 
-reducer go on=ui.click(Go) do= emit send("x")
+reducer go on=ui.click(Go) do= emit send(${input === "Text" ? '"x"' : ""})
 reducer ok on=send.ok($v, _) do= res := $v
 
 tile Go = button(text="Go")
@@ -42,7 +46,7 @@ app B
     caps = [http.post]
     routes = {"/" -> App, "/404" -> App}
     init = []
-`;
+${http}`;
 }
 
 describe("an HTTP request body is sent as its HttpBody variant names", () => {
@@ -136,16 +140,52 @@ describe("an HTTP request body is sent as its HttpBody variant names", () => {
     );
     const call = await sent(app, "Go");
     expect(call.init.body).toBe("a=x");
-    expect(readHeader(call.init.headers, "content-type")).toBe("text/x-custom");
-    expect(readHeader(call.init.headers, "Content-Type")).toBeNull();
+    expect(headerValues(call.init.headers, "Content-Type")).toEqual(["text/x-custom"]);
+  });
+
+  it("lets an input content-type replace a global Content-Type, whatever the case", async () => {
+    const app = await loadSource(
+      program(
+        `{url: "/f", headers: {"content-type": "text/x-input"}, body: Form({"a": $1}), decode: Decoder.Text}`,
+        "Text",
+        `    http = {headers: {"Content-Type": "text/x-global"}}\n`,
+      ),
+    );
+    const call = await sent(app, "Go");
+    expect(headerValues(call.init.headers, "Content-Type")).toEqual(["text/x-input"]);
+  });
+
+  it("sends a bare Text body as JSON, as any body that is not an HttpBody variant", async () => {
+    const app = await loadSource(program(`{url: "/t", body: $1, decode: Decoder.Text}`));
+    const call = await sent(app, "Go");
+    expect(call.init.body).toBe('"x"');
+    expect(contentType(call)).toBe("application/json");
+  });
+
+  it("sends Json of Unit as JSON null, not an empty body under a JSON Content-Type", async () => {
+    const app = await loadSource(
+      program(`{url: "/j", body: Json($1), decode: Decoder.Text}`, "Unit"),
+    );
+    const call = await sent(app, "Go");
+    expect(call.init.body).toBe("null");
+    expect(contentType(call)).toBe("application/json");
+  });
+
+  it("drops a Content-Type the program set on Multipart, so fetch writes the boundary", async () => {
+    const app = await loadSource(
+      program(
+        `{url: "/up", headers: {"Content-Type": "multipart/form-data"}, body: Multipart({"name": TextV($1)}), decode: Decoder.Text}`,
+      ),
+    );
+    const call = await sent(app, "Go");
+    expect(call.init.body).toBeInstanceOf(FormData);
+    expect(headerValues(call.init.headers, "Content-Type")).toEqual([]);
   });
 
   it("sends 03-blog's login and save payloads, not the Json wrapper", async () => {
     const blog = await loadApp(BLOG);
     double = stubFetch(() => new Response("{}"));
-    const noProvider = { provider: () => undefined } as unknown as Parameters<
-      AppShape["effects"][string]["invoke"]
-    >[1];
+    const noProvider: CapabilityRegistry = { has: () => true, provider: () => undefined };
     const signal = new AbortController().signal;
     const login = blog.effects.login;
     const savePost = blog.effects.savePost;

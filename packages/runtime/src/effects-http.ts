@@ -37,18 +37,34 @@ export async function httpFetch(
   };
   const baseUrl = httpCfg?.baseUrl ?? "";
   const url = withQuery(baseUrl + (x.url ?? ""), x.query);
-  // Header precedence (spec http.md §6.1.5): auto < global < input.
+  // Header precedence (spec http.md §6.1.5): auto < global < input, with
+  // names compared case-insensitively so a global `Content-Type` and an input
+  // `content-type` do not both reach fetch.
+  const headers: Record<string, string> = {};
   const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
-  const headers: Record<string, string> = { ...globalHeaders, ...(x.headers ?? {}) };
+  for (const [k, v] of Object.entries(globalHeaders)) setHeader(headers, k, v);
+  for (const [k, v] of Object.entries(x.headers ?? {})) setHeader(headers, k, v);
   const init: RequestInit = {
     method,
     headers,
     credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
   };
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
-    const { body, contentType } = encodeBody(x.body);
+    let encoded: Encoded;
+    try {
+      encoded = encodeBody(x.body);
+    } catch (e) {
+      // A body that cannot be sent as written fails the effect, before any request.
+      return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
+    }
+    const { body, contentType } = encoded;
     if (body !== undefined) init.body = body;
-    if (contentType && !hasHeader(headers, "Content-Type")) headers["Content-Type"] = contentType;
+    // A `FormData` body's Content-Type must carry the boundary only fetch
+    // knows, so one the program set is dropped (§6.1.5).
+    if (body instanceof FormData) setHeader(headers, "Content-Type");
+    else if (contentType && headerKey(headers, "Content-Type") === undefined) {
+      headers["Content-Type"] = contentType;
+    }
   }
 
   // Internal controller drives the timeout; an external `signal` (from the
@@ -114,20 +130,23 @@ export async function httpFetch(
 }
 
 type Tagged = { _tag: string; _0?: unknown };
+type Encoded = { body?: BodyInit; contentType?: string };
 
 /**
  * What a request body is sent as, and the Content-Type it implies when the
  * program set none (http.md §6.1.3 / §6.1.5). An `HttpBody` variant is sent as
  * what it names; a `Multipart` / `Bytes` / `Text` body gets no Content-Type
  * here, so fetch writes its own (the multipart boundary in particular). Any
- * other value — a record, a list — is sent as JSON, and a JS string as-is.
+ * other value — a record, a list, a bare `Text` — is sent as JSON. Throws when
+ * the body cannot be sent as written (a `FileV` that holds no file).
  */
-function encodeBody(body: unknown): { body?: BodyInit; contentType?: string } {
-  if (typeof body === "string") return { body };
+function encodeBody(body: unknown): Encoded {
   const t = body as Tagged | null;
   switch (t !== null && typeof t === "object" ? t._tag : undefined) {
     case "Json":
-      return { body: JSON.stringify(t?._0), contentType: "application/json" };
+      // `Json` of Unit carries no value; it is sent as JSON `null`, never as an
+      // empty body under a JSON Content-Type.
+      return { body: JSON.stringify(t?._0 ?? null), contentType: "application/json" };
     case "Form":
       return {
         body: new URLSearchParams(t?._0 as Record<string, string>).toString(),
@@ -150,18 +169,35 @@ function encodeBody(body: unknown): { body?: BodyInit; contentType?: string } {
 function formDataOf(entries: Record<string, unknown>): FormData {
   const fd = new FormData();
   for (const [name, v] of Object.entries(entries ?? {})) {
-    const inner = v !== null && typeof v === "object" && "_tag" in v ? (v as Tagged)._0 : v;
-    // `FileV` carries the file record a file input produced; its DOM `File` is `_file`.
-    const file = (inner as { _file?: unknown } | null)?._file ?? inner;
-    if (file instanceof Blob) fd.append(name, file);
-    else fd.append(name, String(inner));
+    const tagged = v !== null && typeof v === "object" && "_tag" in v ? (v as Tagged) : undefined;
+    const inner = tagged ? tagged._0 : v;
+    if (tagged?._tag === "FileV") {
+      // `FileV` carries the file record a file input produced; its DOM `File`
+      // is `_file`. A record that lost it (`{}` after a JSON round trip
+      // through persistence) has nothing to upload.
+      const file = (inner as { _file?: unknown } | null)?._file ?? inner;
+      if (!(file instanceof Blob)) throw new Error(`Multipart field "${name}" holds no file`);
+      fd.append(name, file);
+    } else fd.append(name, String(inner));
   }
   return fd;
 }
 
-function hasHeader(headers: Record<string, string>, name: string): boolean {
+/** The key `headers` holds `name` under, compared case-insensitively. */
+function headerKey(headers: Record<string, string>, name: string): string | undefined {
   const lower = name.toLowerCase();
-  return Object.keys(headers).some((k) => k.toLowerCase() === lower);
+  return Object.keys(headers).find((k) => k.toLowerCase() === lower);
+}
+
+/** Set `name` to `value`, or remove it, replacing it under whatever case it has. */
+function setHeader(headers: Record<string, string>, name: string, value?: string): void {
+  const old = headerKey(headers, name);
+  if (old !== undefined) delete headers[old];
+  if (value !== undefined) headers[name] = value;
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /**
@@ -205,7 +241,7 @@ function safeCallHeaders(thunk: () => Record<string, string>): Record<string, st
     return thunk() ?? {};
   } catch (e) {
     console.error(
-      `app.http.headers threw — the request carries no global headers: ${e instanceof Error ? e.message : String(e)}`,
+      `app.http.headers threw — the request carries no global headers: ${errorText(e)}`,
     );
     return {};
   }

@@ -13,8 +13,16 @@ wrapper.
 
 Now (http.md §6.1.3 / §6.1.5): `Form` is URL-encoded as
 `application/x-www-form-urlencoded`, `Json` sends its payload as
-`application/json`, `Text` sends the text, `Multipart` a `FormData` (fetch
-writes the boundary), `Bytes` the bytes, and `Empty` no body. A plain record or
-list is still JSON. A Content-Type the program sets wins over the default, and
-is now matched case-insensitively, so `content-type` no longer ends up beside a
-second `Content-Type`.
+`application/json` (`Json` of `Unit` sends `null`), `Text` sends the text,
+`Multipart` a `FormData`, `Bytes` the bytes, and `Empty` no body. Any other
+body (a record, a list, a bare `Text`) is JSON, as the spec says; a bare `Text`
+used to go out as the raw string with no Content-Type.
+
+A `Multipart` `FileV` that holds no file (a file record restored from
+persistence) fails the effect with `HttpError{status: 0}` instead of uploading
+`"[object Object]"`. A `Content-Type` set on a `Multipart` body is dropped, so
+fetch writes the one with the boundary.
+
+Header names are compared case-insensitively when the defaults,
+`app.http.headers` and the effect's own `headers` are merged, so a global
+`Content-Type` and an effect's `content-type` no longer both reach the server.
