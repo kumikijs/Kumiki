@@ -319,6 +319,8 @@ effect storage-clear  cap=storage.write
                       out=Result(Unit, Text)
 ```
 
+**The err value is the declared `Text`.** A storage / session / indexed effect that fails delivers the failure's message as a plain `Text` — `"SecurityError: …"` when the backend is blocked, `"app.indexed-db is not declared"` when an `indexed-*` effect runs without one — not a record wrapping it. A throw from the effect's `map-request`, or from a host provider registered for the capability, is delivered as the same `Text`. So `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)): `problem := $e` stores the message, and `$e.message` is E0108.
+
 ### 6.7.3 Example
 
 ```kumiki snippet

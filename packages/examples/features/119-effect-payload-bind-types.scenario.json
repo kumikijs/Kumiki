@@ -18,7 +18,7 @@
       }
     },
     {
-      "label": "mocked err, shaped as the {message} record the storage handler delivers: the reducer reads $e.message and leaves the session alone",
+      "label": "mocked err, the Text the storage handler delivers as out= declares it: the reducer stores $e and leaves the session alone",
       "do": { "click": "#reload" },
       "expect": {
         "noErrors": true,
@@ -34,7 +34,7 @@
     "loadSession": [
       { "outcome": "ok", "value": { "_tag": "None" } },
       { "outcome": "ok", "value": { "_tag": "Some", "_0": { "email": "a@example.com" } } },
-      { "outcome": "err", "value": { "message": "SecurityError: storage blocked" } }
+      { "outcome": "err", "value": "SecurityError: storage blocked" }
     ],
     "saveSession": [{ "outcome": "ok", "value": null }]
   }

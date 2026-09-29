@@ -3,7 +3,9 @@
 // `storage-*` uses localStorage; `session-*` is the same shape over
 // sessionStorage (spec §6.7.4). Both treat backend unavailability
 // (opaque-origin sandbox, private mode, SecurityError) as a clean
-// `err` result so reducers can opt into a `.err` branch (#37).
+// `err` result so reducers can opt into a `.err` branch (#37). The err value
+// is the failure's message as a plain string: the `Text` these effects
+// declare as `E` in `out=Result(T, Text)` (spec §6.7.2).
 
 import type { EffectResult } from "./core.ts";
 import { _stdlibCore } from "./stdlib.ts";
@@ -15,7 +17,7 @@ async function readFrom(storage: Storage, key: string): Promise<EffectResult> {
     const value = JSON.parse(raw);
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 
@@ -24,7 +26,7 @@ async function writeTo(storage: Storage, key: string, value: unknown): Promise<E
     storage.setItem(key, JSON.stringify(value));
     return { kind: "ok", value: null };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 
