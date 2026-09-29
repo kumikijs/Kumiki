@@ -260,5 +260,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | HTTP/Storage | [§6.1.2](./http.md#_6-1-2-標準-effect) |
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 <!-- examples:end -->
 :::
