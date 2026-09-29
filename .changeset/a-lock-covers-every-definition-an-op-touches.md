@@ -30,4 +30,6 @@ Error: replace rejected: lock violation: slot.todosX is locked by agent:a (patte
 ```
 
 `patch apply`, `patch revert` and the MCP tools call the same mutators, so the
-same check applies to them.
+same check applies to them. That includes the revert of a cascade, which puts
+back every definition the cascade took, and the revert of that restore, which
+removes the same recorded set: a locked member anywhere in the set refuses it.

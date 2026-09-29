@@ -20,6 +20,7 @@ import {
   load,
   lockDef,
   patchApplyFile,
+  patchRevert,
   readOpLog,
   removeDef,
   renameDef,
@@ -161,5 +162,32 @@ describe("patch apply", () => {
       /lock violation: tile\.App is locked by agent:a/,
     );
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+});
+
+// Reverting a cascade restores every definition it took as one `add` (with a
+// `with` list), and reverting that restore removes the same recorded set. Only
+// the op's named definition is checked before the write; every other member is
+// caught by what the write shows it touched.
+describe("patch revert", () => {
+  it("cannot restore a cascade member locked by another agent", () => {
+    as("agent:b");
+    const { opId } = removeDef(file, "slot.count", true);
+    lockDef(file, "agent:a", "reducer.inc");
+    refusedUnchanged(
+      () => patchRevert(file, opId),
+      /lock violation: reducer\.inc is locked by agent:a/,
+    );
+  });
+
+  it("cannot revert a restoring add when a member of its set is locked by another agent", () => {
+    as("agent:b");
+    const { opId } = removeDef(file, "slot.count", true);
+    const restoreId = patchRevert(file, opId);
+    lockDef(file, "agent:a", "reducer.inc");
+    refusedUnchanged(
+      () => patchRevert(file, restoreId),
+      /lock violation: reducer\.inc is locked by agent:a/,
+    );
   });
 });
