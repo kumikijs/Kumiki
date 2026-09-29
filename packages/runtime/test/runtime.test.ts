@@ -1622,12 +1622,19 @@ describe("unhandled effect-error contract (#37)", () => {
       getItem: () => {
         throw new Error("SecurityError");
       },
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
     } as unknown as Storage;
     const orig = globalThis.localStorage;
     Object.defineProperty(globalThis, "localStorage", { value: throwing, configurable: true });
     try {
+      // The err value is the `Text` a storage effect's `out=Result(_, Text)`
+      // declares (http.md §6.7.2), not a record wrapping it.
       const r = await builtinEffects.storageRead({ key: "x" });
-      expect(r.kind).toBe("err");
+      expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
+      const w = await builtinEffects.storageWrite({ key: "x", value: 1 });
+      expect(w).toEqual({ kind: "err", value: "Error: QuotaExceededError" });
     } finally {
       Object.defineProperty(globalThis, "localStorage", { value: orig, configurable: true });
     }
@@ -1646,9 +1653,9 @@ describe("unhandled effect-error contract (#37)", () => {
     Object.defineProperty(globalThis, "sessionStorage", { value: throwing, configurable: true });
     try {
       const r = await builtinEffects.sessionRead({ key: "x" });
-      expect(r.kind).toBe("err");
+      expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
       const w = await builtinEffects.sessionWrite({ key: "x", value: 1 });
-      expect(w.kind).toBe("err");
+      expect(w).toEqual({ kind: "err", value: "Error: SecurityError" });
     } finally {
       Object.defineProperty(globalThis, "sessionStorage", { value: orig, configurable: true });
     }

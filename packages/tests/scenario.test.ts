@@ -200,7 +200,7 @@ describe("scenario runner", () => {
           },
         },
       ],
-      effects: { loadText: [{ outcome: "err", value: { message: "SecurityError" } }] },
+      effects: { loadText: [{ outcome: "err", value: "SecurityError" }] },
     });
     expect(report.ok).toBe(true);
   });
@@ -225,7 +225,7 @@ describe("scenario runner", () => {
           },
         ],
         effects: {
-          loadText: [{ outcome: "err", value: { message: "SecurityError" } }],
+          loadText: [{ outcome: "err", value: "SecurityError" }],
           saveText: [{ outcome: "ok" }],
         },
       },
@@ -483,7 +483,7 @@ describe("scenario runner", () => {
           },
         ],
         effects: {
-          loadText: [{ outcome: "err", value: { message: "SecurityError" } }],
+          loadText: [{ outcome: "err", value: "SecurityError" }],
           saveText: [{ outcome: "ok" }],
         },
       },

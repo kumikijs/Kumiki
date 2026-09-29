@@ -324,7 +324,9 @@ effect storage-clear  cap=storage.write
                       out=Result(Unit, Text)
 ```
 
-A stored value is always parsed as JSON. When the read's `Decoder.Json(T)` refuses what it parsed, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `message` starting `decode failed:`, as it is for a value that does not parse. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
+A stored value is always parsed as JSON. When the read's `Decoder.Json(T)` refuses what it parsed, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `Text` starting `decode failed:`, as it is for a value that does not parse. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
+
+**The err value is the declared `Text`.** A storage / session / indexed effect that fails delivers the failure's message as a plain `Text` — `"SecurityError: …"` when the backend is blocked, `"app.indexed-db is not declared"` when an `indexed-*` effect runs without one — not a record wrapping it. A throw from the effect's `map-request`, or from a host provider registered for the capability, is delivered as the same `Text`. So `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)): `problem := $e` stores the message, and `$e.message` is E0108.
 
 ### 6.7.3 Example
 

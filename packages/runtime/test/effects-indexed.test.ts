@@ -20,19 +20,19 @@ const cfg: IndexedDbCfg = {
 describe("indexed-* without config (#79)", () => {
   it("indexedRead returns a clean error when cfg is absent", async () => {
     const r = await indexedRead({ store: "notes", key: "a" }, undefined);
-    expect(r.kind).toBe("err");
-    if (r.kind !== "err") return;
-    expect((r.value as { message: string }).message).toMatch(/indexed-db is not declared/);
+    // The err value is the `Text` an `indexed-*` effect's `out=Result(_, Text)`
+    // declares (http.md §6.7.4), not a record wrapping it.
+    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 
   it("indexedWrite returns a clean error when cfg is absent", async () => {
     const r = await indexedWrite({ store: "notes", key: "a", value: { id: "a" } }, undefined);
-    expect(r.kind).toBe("err");
+    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 
   it("indexedDelete returns a clean error when cfg is absent", async () => {
     const r = await indexedDelete({ store: "notes", key: "a" }, undefined);
-    expect(r.kind).toBe("err");
+    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 });
 
@@ -49,9 +49,7 @@ describe("indexed-* unavailable backend (#79)", () => {
     // A fresh cfg avoids hitting the cached open() promise from earlier tests.
     const localCfg: IndexedDbCfg = { ...cfg, name: "missing-db" };
     const r = await indexedRead({ store: "notes", key: "a" }, localCfg);
-    expect(r.kind).toBe("err");
-    if (r.kind !== "err") return;
-    expect((r.value as { message: string }).message).toMatch(/IndexedDB is not available/);
+    expect(r).toEqual({ kind: "err", value: expect.stringMatching(/IndexedDB is not available/) });
   });
 });
 

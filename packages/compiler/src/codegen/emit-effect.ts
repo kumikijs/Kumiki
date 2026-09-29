@@ -1,4 +1,5 @@
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
+import { failsWithText } from "../capabilities.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
@@ -57,16 +58,19 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   const fallback =
     builtin ??
     `{ kind: "err", value: { message: ${JSON.stringify(`Capability ${eff.cap} has no provider`)} } }`;
-  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) return _provider(${reqVar}, _caps, _signal); return ${fallback};`;
-
-  let invokeBody: string;
-  if (eff.mapRequest) {
-    const inputCtx = makeEvalCtx(gen, ["$1"]);
-    const mapJs = jsOfExpr(eff.mapRequest, inputCtx);
-    invokeBody = `async (${bindRef(inputCtx, "$1")}, _caps, _signal) => { const _req = ${mapJs}; ${tail} }`;
-  } else {
-    invokeBody = `async (_input, _caps, _signal) => { ${tail} }`;
-  }
+  // An effect that fails with `Text` (capabilities.ts) delivers a throw as
+  // that `Text` too — from its `map-request` or a host provider. Left to the
+  // dispatcher, which cannot know `E`, it would arrive as `{message: …}`.
+  // `await` keeps a provider's rejected promise inside the `try`.
+  const textFailure = failsWithText(eff.cap);
+  const providerCall = `${textFailure ? "await " : ""}_provider(${reqVar}, _caps, _signal)`;
+  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) return ${providerCall}; return ${fallback};`;
+  const mapped = eff.mapRequest ? makeEvalCtx(gen, ["$1"]) : null;
+  const head = mapped && eff.mapRequest ? `const _req = ${jsOfExpr(eff.mapRequest, mapped)}; ` : "";
+  const body = textFailure
+    ? `try { ${head}${tail} } catch (_thrown) { return { kind: "err", value: String(_thrown) }; }`
+    : `${head}${tail}`;
+  const invokeBody = `async (${mapped ? bindRef(mapped, "$1") : "_input"}, _caps, _signal) => { ${body} }`;
 
   return `{
     name: ${JSON.stringify(eff.name)},
