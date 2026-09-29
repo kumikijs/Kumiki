@@ -32,7 +32,7 @@ tile Compose = column(
 | `check` / `switch` | `Bool` |
 | `radio` | union 型のいずれか |
 
-`check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `check` で報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。
+`check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。書き戻しはコントロール自身の `onClick` / `onChange` より先に行われるので、ハンドラは書き込み済みの slot を読む：`check(value=b, onClick=toggle)` を `check(bind=b, onClick=toggle)` に移すと `b` は 2 回反転するので、`onClick` は外す必要がある。`bind=` があるとき、bind していないコントロールの選択状態を決める引数 — `check` / `switch` の `value=`、`radio` の `selected=` — は読まれない（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。radio 自身の `value=` は引き続き書き込む値である。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `kumiki check` が報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。書き込む `value=` のない bind した radio も同様である（[E0225](./errors.md#e0225-radio-bind-without-value)）。
 
 ### 5.1.2 refinement の扱い
 

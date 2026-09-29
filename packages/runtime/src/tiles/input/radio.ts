@@ -15,6 +15,19 @@ import {
   writeBind,
 } from "./_shared.ts";
 
+/**
+ * The value a bound radio writes when it is chosen — its node's `value`, held
+ * beside the element rather than in the shared handler slot because no other
+ * kind has one. A radio whose node carries none has no entry, so it writes
+ * nothing (a bound radio with no `value=` is E0225 at `kumiki check` time).
+ */
+const RADIO_VALUE = new WeakMap<HTMLElement, unknown>();
+
+function setRadioValue(inp: HTMLInputElement, value: unknown): void {
+  if (value === undefined) RADIO_VALUE.delete(inp);
+  else RADIO_VALUE.set(inp, value);
+}
+
 export const radioTile: TileRenderer<"radio"> = (node) => {
   const wrap = document.createElement("label");
   wrap.dataset.kumikiTile = "radio";
@@ -32,14 +45,16 @@ export const radioTile: TileRenderer<"radio"> = (node) => {
     wrap.appendChild(span);
   }
   if (node.bind) bindDataset(inp, node.bind, node.bindPath);
-  setHandlers(inp, { ...inputHandlers(node), bindValue: node.value });
+  setHandlers(inp, inputHandlers(node));
+  setRadioValue(inp, node.value);
   inp.addEventListener("change", () => {
     const state = INPUT_STATE.get(inp);
-    // Only the radio being chosen writes: the one losing the selection fires
-    // no `change` of its own, and would have nothing true to write if it did.
-    if (state?.bind && inp.checked) {
+    // The `inp.checked` guard is what keeps the radio losing the selection
+    // from writing its own value over the chosen one; a browser does not fire
+    // `change` on it anyway.
+    if (state?.bind && inp.checked && RADIO_VALUE.has(inp)) {
       const app = liveApp(inp);
-      if (app) writeBind(app, inp, state.bind, state.bindPath, state.bindValue);
+      if (app) writeBind(app, inp, state.bind, state.bindPath, RADIO_VALUE.get(inp));
     }
     if (state?.onClick) state.onClick(state.el ?? {});
     if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
@@ -64,7 +79,8 @@ export const radioPatcher: TilePatcher<"radio"> = (el, _oldNode, newNode) => {
     if (inp.checked !== nextChecked) inp.checked = nextChecked;
     if (newNode.bind) bindDataset(inp, newNode.bind, newNode.bindPath);
     else clearBindDataset(inp);
-    setHandlers(inp, { ...inputHandlers(newNode), bindValue: newNode.value });
+    setHandlers(inp, inputHandlers(newNode));
+    setRadioValue(inp, newNode.value);
   }
   // Reconcile the trailing label span if the label text changed.
   const nextLabel = (newNode.props?.label as string | undefined) ?? "";

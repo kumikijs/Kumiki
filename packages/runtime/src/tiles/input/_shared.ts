@@ -122,10 +122,6 @@ export type InputHandlers = {
   el?: Record<string, unknown>;
   // Select-specific — decoded via valueKey lookup on `change`.
   selectOptions?: Array<{ label: unknown; value: unknown }>;
-  // Slider-specific — write `Number(inp.value)` back rather than the string.
-  isSlider?: boolean;
-  // Radio-specific — the value a bound radio writes when it is chosen.
-  bindValue?: unknown;
 };
 
 export const INPUT_STATE = new WeakMap<HTMLElement, InputHandlers>();

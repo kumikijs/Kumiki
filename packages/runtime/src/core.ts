@@ -2249,13 +2249,24 @@ export function mountCore(
       // ", ], or backslash — so it does not need attribute-value escaping
       // here. `snap.id` may be user-authored (`{id: "..."}`) and IS routed
       // through `CSS.escape` below.
-      let sel: Element | null = snap.bind
-        ? target.querySelector(`[data-kumiki-bind="${snap.bind}"]`)
-        : snap.id
-          ? target.querySelector(`#${CSS.escape(snap.id)}`)
-          : null;
-      // Fall back to DOM-path restore for inputs without bind/id (e.g.
-      // `value=`-only search boxes). Identifies the element by its position.
+      //
+      // A marker names the control only when one control carries it. Every
+      // radio of a bound group carries the same one, as do two controls bound
+      // to the same slot, and the first match is then a sibling of the
+      // focused control — so a shared marker falls through to the id and the
+      // DOM path, which tell the siblings apart.
+      const byBind = snap.bind
+        ? target.querySelectorAll(`[data-kumiki-bind="${snap.bind}"]`)
+        : null;
+      let sel: Element | null =
+        byBind?.length === 1
+          ? (byBind[0] ?? null)
+          : snap.id
+            ? target.querySelector(`#${CSS.escape(snap.id)}`)
+            : null;
+      // Fall back to DOM-path restore for inputs without a unique bind or an
+      // id (e.g. `value=`-only search boxes, a bound radio group). Identifies
+      // the element by its position.
       if (!sel && snap.path) sel = elementAtPath(snap.path, target);
       if (
         sel &&

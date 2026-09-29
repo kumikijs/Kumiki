@@ -2,14 +2,26 @@
 # `radio(group=…, bind=…, value=V)` binds one variant of a union — the box
 # shows the slot, and ticking it writes the slot back. The radios start on
 # `Done`, not the first variant, so the selection is read from the slot.
-# Before this, all three passed `check` and dropped the bind: every box
+# Before this, all three passed `kumiki check` and dropped the bind: every box
 # rendered unticked and clicking one wrote nothing.
+#
+# `prefs` binds the same two kinds through a path into a record (`bind=
+# prefs.news`), which writes the one field and leaves the other alone.
+#
+# The write-back runs before the control's own `onClick` / `onChange`, so a
+# handler reads the slot already written: `check(bind=agreed, onClick=r)`
+# where `r` inverts `agreed` inverts it twice. `seen` records what the
+# handler on `news` read.
 
 type Filter = All | Active | Done
+type Size   = Small | Large
+type Prefs  = {news: Bool, size: Size}
 
 slot agreed : Bool   = true
 slot lit    : Bool   = false
 slot filter : Filter = Done
+slot prefs  : Prefs  = {news: false, size: Large}
+slot seen   : Bool   = false
 
 tile ResetBtn = button(text="reset") {id: "reset"}
 
@@ -18,6 +30,11 @@ reducer reset
     do= agreed := true
         lit := false
         filter := Done
+        prefs := {news: false, size: Large}
+
+tile NewsCheck = check(bind=prefs.news, onClick=noteNews) {id: "news"}
+
+reducer noteNews on=ui.click(NewsCheck) do= seen := prefs.news
 
 tile App = column(
     check(bind=agreed) {id: "agree"},
@@ -25,10 +42,15 @@ tile App = column(
     radio(group="filter", bind=filter, value=All)    {label: "All", id: "rAll"},
     radio(group="filter", bind=filter, value=Active) {label: "Active", id: "rActive"},
     radio(group="filter", bind=filter, value=Done)   {label: "Done", id: "rDone"},
+    NewsCheck,
+    radio(group="size", bind=prefs.size, value=Small) {label: "Small", id: "sSmall"},
+    radio(group="size", bind=prefs.size, value=Large) {label: "Large", id: "sLarge"},
     ResetBtn,
     text("agreed=" + agreed.show),
     text("lit=" + lit.show),
-    text("filter=" + filter.show))
+    text("filter=" + filter.show),
+    text("prefs=" + prefs.news.show + "/" + prefs.size.show),
+    text("seen=" + seen.show))
 
 app ToggleBind
     caps   = []

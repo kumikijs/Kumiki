@@ -104,8 +104,10 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | コア |
 | [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | フォーム |
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | ライフサイクル |
+| [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
+| [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |

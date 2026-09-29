@@ -815,6 +815,18 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 
 **修正**：フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message`、`$1.location` など [ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) が定めるフィールドで読む。
 
+### E0225 `radio-bind-without-value`
+
+`radio` に `bind=` があり、`value=` がない。
+
+> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`
+
+bind した radio が選ばれたときに書き込むものは 1 つ — 自分の値である（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。`value=` がなければ書くものがない。これを報告するものはほかにない：checker が radio の `value=` を bind 先の slot と照合するのは `value=` があるときだけであり、プログラムはコンパイルされ、マウントされ、クリックにも耐える。そのクリックがしたのは slot への `undefined` の書き込みで、refinement のない slot は型によらずそれを受け取る。すると slot がその値と等しいときに選択される radio は、`undefined` が `undefined` と等しいので選択状態で表示され、一方で slot に対するすべての `match` はどの arm にも一致せず、それが描画していたブロックは何も言わずに消える。
+
+警告ではなくエラーである：書くもののない radio は選ばれても何も主張せず、それを意図するプログラムはない。bind 先の型が読めるかどうかによらず報告する。
+
+**修正**：radio にそれが表す値を与える — `radio(group="f", bind=filter, value=Active)` のように、slot が取りうる値ごとに radio を 1 つ置く。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
@@ -850,6 +862,16 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 検査するのはリテラルのテンプレートだけである。slot やフィールドを渡す `fmt(tpl, x)` にはコンパイル時のプレースホルダ集合が無く、その slot を初期化したリテラルの形は呼び出しが実際に見る形ではない。個数そのもの——`fmt` にテンプレートがあるか——は [E0213](#e0213-call-arity-mismatch) であり、これは致命的で、その場合はこの警告の代わりに報告される。
 
 **修正**: 足りない引数を足す、足りないプレースホルダを足す、あるいは要らない引数を消す。余った値を文の別の場所に置きたいなら、`+` はプレースホルダ無しで連結できる。
+
+### W0216 `selection-beside-bind` (warning)
+
+bind していないトグルが選択状態を読む引数 — `check` / `switch` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。
+
+> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md §5.1.1)`
+
+`bind=` があれば、ボックスにチェックが入るか、radio が選ばれるかは bind した値だけが決める（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。もう一方の引数は同じ問いへの 2 つめの答えであり、読まれない。[W0214](#w0214-fmt-placeholder-argument-mismatch-warning) が報告する引数と同じく、それは何の痕跡も残さない — 引数が何を言っても、コントロールは bind の言うとおりに表示される — ので、最初から渡していないプログラムとどの層も区別できない。radio 自身の `value=` はこの引数ではない：選ばれたときに書き込む値であり、読まれる。
+
+**修正**：その引数を取り除く。書き戻す slot ではなく式からボックスのチェックを決めたいなら、代わりに `bind=` を外し、`value=` と `onClick` / `onChange` の reducer を使う。
 
 ## E03xx — ケイパビリティと純粋性
 

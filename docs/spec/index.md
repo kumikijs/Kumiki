@@ -104,8 +104,10 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | core |
 | [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | forms |
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | lifecycle |
+| [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | forms |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
+| [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
