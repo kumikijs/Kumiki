@@ -1,0 +1,33 @@
+# Feature (stdlib.md §2.2.1 / §2.2.3 / §2.2.6): `is-empty : Bool` on a Map, a
+# List and a Text, and the parenthesis-free shortcut — `todos.is-empty` is the
+# same method as `todos.is-empty()`, so the two spellings give the same answer
+# on every receiver.
+#
+# The Map is the case that matters for the bare spelling (a Map has no
+# `.length` to test), and the non-empty Text for the parenthesised one (a Text
+# has no size as a Map does). Each receiver starts empty; a click fills them
+# and every answer turns over together.
+
+slot todos : Map(Text, Int) = {}
+slot tags  : List(Text)     = []
+slot draft : Text           = ""
+
+reducer fill on=ui.click(Fill)
+    do=
+        todos := todos.insert("a", 1)
+        tags := tags.push("x")
+        draft := "abc"
+
+tile Fill = button(text="fill") {id: "fill"}
+
+tile App = column(
+    Fill,
+    text("map: " + todos.is-empty.show + " / " + todos.is-empty().show),
+    text("list: " + tags.is-empty.show + " / " + tags.is-empty().show),
+    text("text: " + draft.is-empty.show + " / " + draft.is-empty().show),
+    when(todos.is-empty, text("Nothing to do")))
+
+app IsEmptyBothSpellings
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

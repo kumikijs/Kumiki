@@ -1097,6 +1097,34 @@ const BIND_CONTROLS = new Set([
 ]);
 
 /**
+ * E0602 on a `bind=` target: a step written as a call. A bind target is the
+ * place the control writes to — a path (language.md §1.6.3, forms.md §5.1),
+ * whose steps are written without parentheses. `bind=d.get().title` names the
+ * value `.get()` answers, not a place in `d`, and the lowering, which reads
+ * only paren-free steps, dropped the whole bind without a word: the input
+ * rendered empty and wrote nowhere. The unwrap step is `.get`.
+ */
+function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const bind = t.args.find((a) => a.name === "bind");
+  let cur = bind?.value as Expr | undefined;
+  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
+    if (cur.kind === "MethodCall") {
+      const hint =
+        cur.method === "get" && cur.args.length === 0
+          ? ' — the unwrap step is written ".get"'
+          : " — a member derives a value, so there is no place in the receiver for the control to write";
+      errors.push({
+        code: "E0602",
+        kind: "unassignable-member",
+        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+        pos: cur.pos,
+      });
+    }
+    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+  }
+}
+
+/**
  * E0219: `strict` on a bind control kind (`BIND_CONTROLS`), with or without a
  * `bind` — it is not a prop of these tiles at all. forms.md §5.1.2 used to specify
  * `strict=false` — take a value the refinement refuses and turn a form-level
@@ -1121,6 +1149,84 @@ function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
       pos,
     });
   }
+}
+
+/**
+ * The `BIND_CONTROLS` whose bind is a selection rather than a text: the bound
+ * value alone decides whether a box is ticked or a radio chosen (forms.md
+ * §5.1.1), so `check` / `switch` write a `Bool` and a `radio` writes its own
+ * `value=`.
+ */
+const TOGGLE_BIND_CONTROLS = new Set(["check", "switch", "radio"]);
+
+/** The argument each toggle reads for its selection when it has no `bind=`. */
+const TOGGLE_UNBOUND_SELECTION: Readonly<Record<string, string>> = {
+  check: "value",
+  switch: "value",
+  radio: "selected",
+};
+
+/**
+ * A `check` / `switch` / `radio` bind (forms.md §5.1.1), checked for what it
+ * writes when the control is chosen:
+ *
+ * - a `check` or `switch` writes the box's `Bool`, so the bound value has to
+ *   take one (E0201);
+ * - a `radio` writes its own `value=`, so it needs one (E0225 — without it the
+ *   runtime would write `undefined` into the slot, and `undefined == undefined`
+ *   would then show the radio chosen while every `match` on the slot fell
+ *   through), and that value has to be one the bound slot takes (E0201, or
+ *   E0216 for a variant of another union).
+ *
+ * The argument that selects the control when it is unbound — `value=` on a box,
+ * `selected=` on a radio — is not read beside a `bind=`, which is W0216. A bind
+ * whose type cannot be read is not type-checked; the other two still apply.
+ */
+function checkToggleBind(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!TOGGLE_BIND_CONTROLS.has(t.name)) return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const bindExpr = bindArg.value;
+  const unread = TOGGLE_UNBOUND_SELECTION[t.name];
+  for (const arg of t.args) {
+    if (arg.name !== unread) continue;
+    errors.push({
+      code: "W0216",
+      kind: "selection-beside-bind",
+      severity: "warning",
+      message: `"${unread}" on ${t.name}() is not read beside bind= — the bound value decides whether it is ${t.name === "radio" ? "chosen" : "ticked"}. Remove it (see docs/spec/forms.md §5.1.1)`,
+      pos: arg.namePos ?? (arg.value as Expr).pos,
+    });
+  }
+  const valueArg = t.name === "radio" ? t.args.find((a) => a.name === "value") : undefined;
+  if (t.name === "radio" && !valueArg) {
+    errors.push({
+      code: "E0225",
+      kind: "radio-bind-without-value",
+      message: `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`,
+      pos: bindArg.namePos ?? bindExpr.pos,
+    });
+  }
+  const bound = inferType(bindExpr, sym, ctx);
+  if (bound === null) return;
+  if (t.name === "radio") {
+    if (valueArg && !isTileExpr(valueArg.value)) {
+      checkAgainst(valueArg.value, bound, sym, errors, ctx);
+    }
+    return;
+  }
+  if (assignable(bound, prim("Bool", bindExpr.pos), sym)) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `${t.name}(bind=…) writes a Bool, but the bound value is ${typeToString(bound)} (see docs/spec/forms.md §5.1.1)`,
+    bindExpr.pos,
+  );
 }
 
 /**
@@ -1371,6 +1477,8 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
+  checkBindTargetSteps(t, errors);
+  checkToggleBind(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");

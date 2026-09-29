@@ -238,6 +238,9 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
+    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
+    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

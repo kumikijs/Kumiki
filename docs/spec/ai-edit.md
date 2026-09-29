@@ -152,6 +152,11 @@ The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isErr
 | `op-id` | the op's ULID |
 | `parent-ops` | id of the immediately preceding op this op relies on (CRDT ordering guarantee) |
 | `depends-on` | hashes of other definitions the body references (for referential integrity verification) |
+| `removed` | `remove --cascade` only: every definition the op deleted, the requested one first ([§9.4.1](#_9-4-1-pre-check-at-op-issuance)) |
+| `bodies` | `remove` only: every definition the op deleted as `{layer, name, body}`, with the body it had when it was deleted, the requested one first. `patch revert` restores these |
+| `with` | `add` only: further definitions `{layer, name, body}` added in the same op — how the revert of a cascade restores its dependents |
+
+`with` and `bodies` must be arrays of objects whose three fields are strings, and `removed` an array of qualified names starting with the op's own definition. An op in a patch file or a line in the op log that breaks this is rejected, naming the field, before anything is written.
 
 ### 9.3.3 op Convergence Guarantees
 
@@ -189,6 +194,10 @@ kumiki remove slot.draft
 ```
 
 `--cascade` includes the dependents in the same op bundle and removes them too. `--force` tolerates dangling (emits a warning).
+
+The cascade's `remove` op lists every definition it took in `removed`, the requested one first, and records each one's body in `bodies`. `kumiki patch revert` of that op restores all of them as **one** `add` op: the requested definition is its `layer` / `name` / `body`, and the dependents are its `with` list. The bodies are the ones recorded on the remove, so they are what the file held at that moment, even when a rename has since rewritten a dependent without logging its new body. A `remove` logged before `bodies` existed falls back to the last body the op log recorded for each name before the remove; if any of them cannot be found, the revert writes nothing, exits `1`, and names the definitions it could not restore. A cascade logged without `removed` is refused outright, because what it removed is unknown. A revert never reports a partial restore as success.
+
+Reverting that `add` removes exactly the set it added: the named definition and every member of `with`. It does not re-derive the set from what references the named definition now, so a member that no longer depends on it is still removed. It is refused, before anything is written, if a member is no longer in the file (renamed or removed since), if a member is locked by another agent, or if a definition outside the set references a member; the error names each such reference as `<outside> references <member>`. `patch apply` of a cascade `remove` that carries `removed` likewise removes that recorded set, under the same refusals.
 
 ### 9.4.2 Post-Check at op Application
 

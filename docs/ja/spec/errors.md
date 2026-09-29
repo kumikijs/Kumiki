@@ -505,6 +505,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
+> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
@@ -514,7 +515,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、ペイロードを伴う variant タグ（`onClick=Some(1)`）、引数を伴う tile call（`onClick=box(text("z"))`）、props を伴う tile call（`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 
@@ -814,6 +815,18 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 
 **修正**：フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message`、`$1.location` など [ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) が定めるフィールドで読む。
 
+### E0225 `radio-bind-without-value`
+
+`radio` に `bind=` があり、`value=` がない。
+
+> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`
+
+bind した radio が選ばれたときに書き込むものは 1 つ — 自分の値である（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。`value=` がなければ書くものがない。これを報告するものはほかにない：checker が radio の `value=` を bind 先の slot と照合するのは `value=` があるときだけであり、プログラムはコンパイルされ、マウントされ、クリックにも耐える。そのクリックがしたのは slot への `undefined` の書き込みで、refinement のない slot は型によらずそれを受け取る。すると slot がその値と等しいときに選択される radio は、`undefined` が `undefined` と等しいので選択状態で表示され、一方で slot に対するすべての `match` はどの arm にも一致せず、それが描画していたブロックは何も言わずに消える。
+
+警告ではなくエラーである：書くもののない radio は選ばれても何も主張せず、それを意図するプログラムはない。bind 先の型が読めるかどうかによらず報告する。
+
+**修正**：radio にそれが表す値を与える — `radio(group="f", bind=filter, value=Active)` のように、slot が取りうる値ごとに radio を 1 つ置く。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
@@ -849,6 +862,16 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 検査するのはリテラルのテンプレートだけである。slot やフィールドを渡す `fmt(tpl, x)` にはコンパイル時のプレースホルダ集合が無く、その slot を初期化したリテラルの形は呼び出しが実際に見る形ではない。個数そのもの——`fmt` にテンプレートがあるか——は [E0213](#e0213-call-arity-mismatch) であり、これは致命的で、その場合はこの警告の代わりに報告される。
 
 **修正**: 足りない引数を足す、足りないプレースホルダを足す、あるいは要らない引数を消す。余った値を文の別の場所に置きたいなら、`+` はプレースホルダ無しで連結できる。
+
+### W0216 `selection-beside-bind` (warning)
+
+bind していないトグルが選択状態を読む引数 — `check` / `switch` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。
+
+> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md §5.1.1)`
+
+`bind=` があれば、ボックスにチェックが入るか、radio が選ばれるかは bind した値だけが決める（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。もう一方の引数は同じ問いへの 2 つめの答えであり、読まれない。[W0214](#w0214-fmt-placeholder-argument-mismatch-warning) が報告する引数と同じく、それは何の痕跡も残さない — 引数が何を言っても、コントロールは bind の言うとおりに表示される — ので、最初から渡していないプログラムとどの層も区別できない。radio 自身の `value=` はこの引数ではない：選ばれたときに書き込む値であり、読まれる。
+
+**修正**：その引数を取り除く。書き戻す slot ではなく式からボックスのチェックを決めたいなら、代わりに `bind=` を外し、`value=` と `onClick` / `onChange` の reducer を使う。
 
 ## E03xx — ケイパビリティと純粋性
 
@@ -960,6 +983,12 @@ lvalue のステップがレシーバ内のどの場所も指していない：�
 インデックスについては、レシーバの型が `Set` だと分かるときに E0602 が報告される — 直接の宣言でも、エイリアスや `nominal` を通しても、フィールド・`List` の要素・`Map` の値・`.get` を経由して到達しても同じである。インデックスは場所 — `Map` のエントリ、`List` の位置 — を指すが、Set にあるのは所属だけで場所は無いので、`tags[x] := v` には着地する場所が無い：
 
 > `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+
+**`bind=` の対象**も同じように書き込まれる — コントロールが書き込む場所である（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）— ので、そのステップはパスのステップであり、括弧を付けずに書く。呼び出しとして書かれたステップは場所ではなく呼び出しが返す値を指すので、レシーバを問わずその呼び出しの位置で E0602 になる：
+
+> `Cannot bind through ".get()": a bind target is a path, and a call is not a step of one — the unwrap step is written ".get"`
+
+この検査が無いと bind は丸ごと落とされていた：`input(bind=d.get().title)` は `check` も `build` も通り、何にも束縛されていない input が描画された。アンラップのステップは、`:=` の左辺と同じく bind でも `.get` である — `:=` の左辺では、パスのステップは識別子なので `d.get().title := v` は構文として読めない（[言語 §1.6.1](./language.md#_1-6-1-構文)）。
 
 **対処**：メンバーなら、そのメンバーが導出するはずだった値を直接書く（`name.length := 9` ではなく `name := "some text"`）。レシーバがレコードなら、実在するフィールドを使う。Set なら、インデックスではなく所属を変える：`tags := tags.add(x)`、あるいはその位置に `.remove(x)` / `.toggle(x)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
 

@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "the module builds and mounts, and the keyed reading still looks up",
+      "expect": {
+        "noErrors": true,
+        "state": { "opt": { "_tag": "Some", "_0": 5 }, "res": { "_tag": "Ok", "_0": 10 } },
+        "domIncludes": ["opt: 5", "res: 10", "apple: 7"]
+      }
+    },
+    {
+      "label": "opt.get() unwraps the Option",
+      "do": { "click": "#bump-opt" },
+      "expect": {
+        "noErrors": true,
+        "state": { "opt": { "_tag": "Some", "_0": 6 } },
+        "domIncludes": ["opt: 6"]
+      }
+    },
+    {
+      "label": "and so does opt.get, to the same value",
+      "do": { "click": "#bump-opt-bare" },
+      "expect": {
+        "noErrors": true,
+        "state": { "opt": { "_tag": "Some", "_0": 7 } },
+        "domIncludes": ["opt: 7"]
+      }
+    },
+    {
+      "label": "res.get() unwraps the Result",
+      "do": { "click": "#bump-res" },
+      "expect": {
+        "noErrors": true,
+        "state": { "res": { "_tag": "Ok", "_0": 11 } },
+        "domIncludes": ["res: 11"]
+      }
+    },
+    {
+      "label": "and so does res.get",
+      "do": { "click": "#bump-res-bare" },
+      "expect": {
+        "noErrors": true,
+        "state": { "res": { "_tag": "Ok", "_0": 12 } },
+        "domIncludes": ["res: 12"]
+      }
+    }
+  ]
+}
