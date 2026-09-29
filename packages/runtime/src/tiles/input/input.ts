@@ -35,11 +35,15 @@ function withParse(h: InputHandlers, node: InputNode): InputHandlers {
   return h;
 }
 
-/** Does `text` read as the same value the node shows (a bound number field)? */
+/**
+ * Does `text` read as the same value the node shows? Asked of any field with a
+ * reader — a number field bound to an `Int` / `Float`, a date field bound to a
+ * `Time`.
+ */
 function readsSame(node: InputNode, text: string): boolean {
   if (!node.parse) return false;
-  const shown = node.parse(text);
-  const held = node.parse(node.value ?? "");
+  const shown = node.parse.read(text);
+  const held = node.parse.read(node.value ?? "");
   return shown._tag === "Some" && held._tag === "Some" && shown._0 === held._0;
 }
 
@@ -125,10 +129,10 @@ export const inputPatcher: TilePatcher<"input"> = (el, _oldNode, newNode) => {
     // that syncs the slot to the committed text, and the next render's
     // divergence is genuine.
     //
-    // A field bound to a number reads its text as one, so text that reads as
-    // the value the slot now holds is already showing it: "2.50" is 2.5, and
-    // rewriting it to "2.5" mid-typing would move the caret out from under
-    // the user.
+    // A field with a reader (a bound `Int` / `Float` / `Time`) reads its text
+    // as a value, so text that reads as the value the slot now holds is
+    // already showing it: "2.50" is 2.5, and rewriting it to "2.5" mid-typing
+    // would move the caret out from under the user.
     const nextValue = newNode.value ?? "";
     if (inp.value !== nextValue && !IME_COMPOSING.has(inp) && !readsSame(newNode, inp.value)) {
       inp.value = nextValue;

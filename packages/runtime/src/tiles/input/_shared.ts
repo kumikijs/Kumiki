@@ -7,7 +7,7 @@
 // path, and the small attribute reconcilers. A single-use helper stays with
 // its tile instead — `reconcileSelectOptions` is 70 lines only `select` runs.
 
-import type { BindSegment, EventHandler, MountedApp, TileProps } from "../../core.ts";
+import type { BindReader, BindSegment, EventHandler, MountedApp, TileProps } from "../../core.ts";
 import {
   _setPathHelper,
   attrValue,
@@ -43,31 +43,39 @@ export function writeBind(
   slotName: string,
   bindPath: BindSegment[] | undefined,
   value: unknown,
-  parse?: InputHandlers["parse"],
+  parse?: BindReader,
 ): void {
-  // Text that spells no value of the slot's type is refused the way a value
-  // its refinement refuses is: the slot keeps what it had, the field what was
-  // typed. What is remembered for `error(field=…)` is the text itself.
-  const read = parse?.(String(value));
-  const readable = read === undefined || read._tag === "Some";
+  // Text that spells no value of the bound position's base (`Int`, `Float`,
+  // `Time`) is refused the way a value its refinement refuses is: the slot
+  // keeps what it had, the field what was typed. The refusal remembers which
+  // base the text failed to read as, and `error(field=…)` names that reading
+  // before any refinement (forms.md §5.7.2).
+  const read = parse?.read(String(value));
+  const unread = read !== undefined && read._tag !== "Some" ? parse?.as : undefined;
   const written = read?._tag === "Some" ? read._0 : value;
   const next =
     bindPath && bindPath.length > 0
       ? _setPathHelper(app.live[slotName] ?? {}, bindPath, written)
       : written;
-  const accepted = readable && app._setSlot(slotName, next);
+  const accepted = unread === undefined && app._setSlot(slotName, next);
   if (!accepted && IME_COMPOSING.has(el)) {
-    PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, next));
+    PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, next, unread));
     return;
   }
   PENDING_REFUSAL.delete(el);
   if (accepted) noteBindWrite(app, el, slotName, next, true);
-  else settleRefusal(app, el, slotName, next);
+  else settleRefusal(app, el, slotName, next, unread);
 }
 
 /** Remember a refused write against `el` and re-render so its message shows. */
-function settleRefusal(app: MountedApp, el: HTMLElement, slotName: string, next: unknown): void {
-  noteBindWrite(app, el, slotName, next, false);
+function settleRefusal(
+  app: MountedApp,
+  el: HTMLElement,
+  slotName: string,
+  next: unknown,
+  unread: BindReader["as"] | undefined,
+): void {
+  noteBindWrite(app, el, slotName, next, false, unread);
   app._rerender();
 }
 
@@ -129,8 +137,9 @@ export type InputHandlers = {
   el?: Record<string, unknown>;
   // Select-specific — decoded via valueKey lookup on `change`.
   selectOptions?: Array<{ label: unknown; value: unknown }>;
-  // Input-specific — how the text reads as the bound slot's type, when not Text.
-  parse?: (text: string) => { _tag: string; _0?: unknown };
+  // Input-specific — how the text reads as the bound position's base, when that
+  // is an `Int`, a `Float` or a `Time`.
+  parse?: BindReader;
 };
 
 export const INPUT_STATE = new WeakMap<HTMLElement, InputHandlers>();

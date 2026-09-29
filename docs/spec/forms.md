@@ -25,14 +25,14 @@ tile Compose = column(
 
 | Element | Acceptable types |
 |---|---|
-| `input` | `Text` (`type=text/email/password/url/search/tel`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime`) |
+| `input` | `Text` (`type=text/email/password/url/search/tel`, or any other field whose value is the text typed: `number/date/datetime-local/time/month/week/color`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime-local`) |
 | `textarea` | `Text` |
 | `select` | Any (same type as the `value` of `options`) |
 | `slider` | `Int` / `Float` |
 | `check` / `switch` | `Bool` |
 | `radio` | One of a union type |
 
-An `input` bound to an `Int`, `Float` or `Time` reads its text the way `Int.parse` / `Float.parse` / `Time.parse` do ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)) and writes the value it reads — the type is the bound position's, through a record field or an `Option`'s payload. Text that spells no value of the type (`""`, or `"1.5"` for an `Int`) is refused as a refinement violation is ([§5.1.2](#_5-1-2-handling-of-refinement)): the slot keeps the last value it accepted and the field keeps what was typed. A `Time` is shown to a `type="date"` field as `yyyy-MM-dd`, and to a `datetime` one as `yyyy-MM-ddTHH:mm`, on the local clock `Time.parse` reads a zone-less string on.
+An `input` bound to an `Int`, `Float` or `Time` reads its text the way `Int.parse` / `Float.parse` / `Time.parse` do ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)) and writes the value it reads. The type is the bound position's base: the slot's type followed through a record field, or through an `Option`'s or a `Result`'s payload with `.get`, and unaliased, so `type Qty = Int where positive` and a `nominal Int` read as an `Int`. The reading is `T.parse`'s exactly — `".5"`, which a number field can hold, is no `Float`, and `"1e3"` is a `Float` and no `Int`. Text that spells no value of the base (`""`, or `"1.5"` for an `Int`) is refused as a refinement violation is ([§5.1.2](#_5-1-2-handling-of-refinement)): the slot keeps the last value it accepted, the field keeps what was typed, and `error(field=…)` names the reading it failed ([§5.7.2](#_5-7-2-standard-messages)). A `Time` is shown to a `type="date"` field as `yyyy-MM-dd`, and to a `type="datetime-local"` one as `yyyy-MM-ddTHH:mm`, on the local clock `Time.parse` reads a zone-less string on, so what the field shows reads back as the same day, or the same minute. A `Text` is written as typed, so it goes with any field whose value is the text typed; an `Int`, `Float` or `Time` goes only with the field kinds in the table, whose text it round-trips through. Any other pairing — a `Time` in a `type="time"` field, an `Int` in a text field, a `Bool`, or an `Option` bound whole rather than through `.get` — is reported by `kumiki check` ([E0226](./errors.md#e0226-input-bind-type)). (`type="datetime"` is obsolete in HTML and renders as a text field.)
 
 `check` / `switch` show the bound `Bool` and write the box's new state back when it is ticked; `radio(group=…, bind=b, value=V)` is selected exactly when `b == V` and writes `V` when it is chosen. All three go through the same write-back as `input` — the refinement refusal of [§5.1.2](#_5-1-2-handling-of-refinement) included — and it runs before the control's own `onClick` / `onChange`, so a handler reads the slot already written: moving `check(value=b, onClick=toggle)` to `check(bind=b, onClick=toggle)` inverts `b` twice, and the `onClick` has to go. With a `bind=`, the argument that decides the selection of an unbound control — `value=` on `check` / `switch`, `selected=` on `radio` — is not read ([W0216](./errors.md#w0216-selection-beside-bind-warning)); a radio's own `value=` is still what it writes. A `bind` of another type on `check` / `switch`, or a radio `value` that is not a value of the bound type, is reported by `kumiki check` ([E0201](./errors.md#e0201-type-mismatch), or [E0216](./errors.md#e0216-unknown-variant) for a variant of another union), and so is a bound radio with no `value=` to write ([E0225](./errors.md#e0225-radio-bind-without-value)).
 
@@ -40,7 +40,7 @@ An `input` bound to an `Int`, `Float` or `Time` reads its text the way `Int.pars
 
 For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters the value is **refused**: the slot keeps the last value it accepted. There is one mode, and it is deliberately quiet — a half-typed value is expected, not a defect, so nothing is reported. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
 
-The control keeps what was typed, so the field and the slot disagree until the field is edited to a value the slot accepts. `error(field=draft)` speaks for **what the field shows** ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)): while the field shows a value the refinement refused, the message is that value's. A reducer that rewrites the slot moves the field with it, and the message then follows the slot again. So the field shows a value the slot does not hold only together with the message saying why. Two refinements of that rule: the field in question is the one in the same view — with one app mounted into several hosts ([runtime.md §10.9](./runtime.md#_10-9-runtime-api-for-embedding)), each view's `error(field=…)` speaks for its own view's field, which in every other view still shows the slot's value; and during an IME composition the message is settled once, when the composition ends, not re-derived for every intermediate value the composition passes through.
+The control keeps what was typed, so the field and the slot disagree until the field is edited to a value the slot accepts. `error(field=draft)` speaks for **what the field shows** ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)): while the field shows a value the refinement refused, the message is that value's. A reducer that rewrites the slot moves the field with it, and the message then follows the slot again. The same holds for text a bound `Int`, `Float` or `Time` cannot read at all ([§5.1.1](#_5-1-1-elements-that-support-bind)), on a slot with a refinement or without one: its message is the reading's, and comes before any refinement's. So the field shows a value the slot does not hold only together with the message saying why. Two refinements of that rule: the field in question is the one in the same view — with one app mounted into several hosts ([runtime.md §10.9](./runtime.md#_10-9-runtime-api-for-embedding)), each view's `error(field=…)` speaks for its own view's field, which in every other view still shows the slot's value; and during an IME composition the message is settled once, when the composition ends, not re-derived for every intermediate value the composition passes through.
 
 ```kumiki snippet
 input(bind=draft)
@@ -290,7 +290,7 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` is a built-in tile that renders the target field's current validation error: it reads the predicate off the slot and renders the message for it whenever the value the field **shows** fails, and nothing otherwise. That is the slot's current value, except while a bound control shows a value the refinement refused ([§5.1.2](#_5-1-2-handling-of-refinement)), which is judged instead. A slot whose type carries no refinement therefore has no message to show — which is a statement about the slot, not about the value in it.
+`error(field=...)` is a built-in tile that renders the target field's current validation error: it reads the predicate off the slot and renders the message for it whenever the value the field **shows** fails, and nothing otherwise. That is the slot's current value, except while a bound control shows a value the refinement refused ([§5.1.2](#_5-1-2-handling-of-refinement)), which is judged instead. A slot whose type carries no refinement therefore has no message for any value — which is a statement about the slot, not about the value in it. What it can still show is the one message that is not about a value: while a bound `input` shows text that does not read as the slot's `Int`, `Float` or `Time` at all ([§5.1.1](#_5-1-1-elements-that-support-bind)), the message is that reading's (`int` / `float` / `time` below), on any slot and before any refinement — `"1.5"` into an `Int where between(0, 120)` is not a whole number, not a number out of range.
 
 A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) renders the message of the **first one the current value fails**, in the order §1.3.1 gives them. On `slot draft : Text where nonempty where len-lt(7) = ""` a pristine field reads "Required", not a bound the empty value is well inside.
 
@@ -308,8 +308,11 @@ A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) rend
 | `positive` / `negative` | "Must be positive" / "Must be negative" |
 | `regex(P)` | "Does not match pattern" |
 | `one-of(...)` | "Must be one of: ..." |
+| `int` (text that is no `Int`, [§5.1.1](#_5-1-1-elements-that-support-bind)) | "Must be a whole number" |
+| `float` (text that is no `Float`) | "Must be a number" |
+| `time` (text that is no `Time`) | "Must be a date" |
 
-Override custom messages via `theme.errors`:
+Override custom messages via `theme.errors`, keyed by the table's first column — `int` / `float` / `time` included:
 
 ```kumiki snippet
 theme MyTheme = {

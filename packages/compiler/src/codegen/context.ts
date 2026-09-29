@@ -19,10 +19,10 @@ export type GenCtx = {
    */
   usedIcons: Set<string>;
   /**
-   * The readings an `input` bound to a non-`Text` slot parses its text by
-   * (forms.md §5.1.1). Each is declared once per app instance, so the reader a
-   * node carries is the same function on every render and the node still
-   * compares equal to the last one.
+   * The readings an `input` parses its text by when the bound position's base
+   * is an `Int`, a `Float` or a `Time` (forms.md §5.1.1). Each is declared
+   * once per app instance, so the reader a node carries is the same object on
+   * every render and the node still compares equal to the last one.
    */
   usedReaders: Set<ParseReading>;
 };

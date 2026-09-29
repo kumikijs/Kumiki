@@ -11,14 +11,32 @@
       "expect": { "noErrors": true, "state": { "price": 2.5 }, "domIncludes": ["double=5"] }
     },
     {
-      "label": "an emptied Int field is refused, and the slot keeps its value",
+      "label": "an emptied Int field is refused, the slot keeps its value, and the error says why",
       "do": { "fill": "#age", "value": "" },
-      "expect": { "noErrors": true, "state": { "age": 5 }, "domIncludes": ["next=6"] }
+      "expect": {
+        "noErrors": true,
+        "state": { "age": 5 },
+        "domIncludes": ["next=6", "Must be a whole number"]
+      }
     },
     {
       "label": "a fraction is no Int, and is refused too",
       "do": { "fill": "#age", "value": "1.5" },
-      "expect": { "noErrors": true, "state": { "age": 5 }, "domIncludes": ["next=6"] }
+      "expect": {
+        "noErrors": true,
+        "state": { "age": 5 },
+        "domIncludes": ["next=6", "Must be a whole number"]
+      }
+    },
+    {
+      "label": "an Int the field reads again is taken, and the message goes",
+      "do": { "fill": "#age", "value": "7" },
+      "expect": {
+        "noErrors": true,
+        "state": { "age": 7 },
+        "domIncludes": ["next=8"],
+        "domExcludes": ["Must be a whole number"]
+      }
     },
     {
       "label": "a record field bound through a path is read by its own type",
@@ -30,9 +48,13 @@
       }
     },
     {
-      "label": "a date field bound to a Time stores the instant",
+      "label": "a date field bound to a Time stores the instant (local midnight on America/Los_Angeles, the zone packages/tests pins)",
       "do": { "fill": "#day", "value": "2026-03-04" },
-      "expect": { "noErrors": true, "domIncludes": ["day=2026-03-04"] }
+      "expect": {
+        "noErrors": true,
+        "state": { "day": 1772611200000 },
+        "domIncludes": ["day=2026-03-04"]
+      }
     },
     {
       "label": "a reducer that moves the Time moves the field",

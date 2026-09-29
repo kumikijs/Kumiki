@@ -238,10 +238,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // 61,000 from 60,000 (60,028 measured): a bound `input` reads its text as
+    // the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
+    // write remembers which reading the text failed, so `error(field=…)` can
+    // name it before any refinement (§5.7.2). That memory is the refused-bind
+    // record in core, which every app loads; a counter binds no input and
+    // still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

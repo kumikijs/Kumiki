@@ -3,8 +3,12 @@
 # reads it as an instant — the way `Int.parse` / `Float.parse` / `Time.parse`
 # read text (stdlib.md §2.4.3). Text that spells no value of the type (`""`,
 # `"1.5"` for an Int) is refused like a refinement violation: the slot keeps
-# its last value and the field keeps what was typed. Before this, the field's
-# string was written as-is, so `age + 1` rendered `51`.
+# its last value, the field keeps what was typed, and `error(field=age)` says
+# why (forms.md §5.7.2) — on a slot with no refinement too. Before this, the
+# field's string was written as-is, so `age + 1` rendered `51`.
+#
+# The scenario's stored date is local midnight on America/Los_Angeles, the
+# zone packages/tests pins; `kumiki run` from another zone reports that step.
 
 type Order = {qty: Int, note: Text}
 
@@ -19,6 +23,7 @@ reducer nextDay on=ui.click(NextDayBtn) do= day := day.plus(Duration.h(24))
 
 tile App = column(
     input(bind=age, type="number", id="age"),
+    error(field=age),
     input(bind=price, type="number", id="price"),
     input(bind=order.qty, type="number", id="qty"),
     input(bind=day, type="date", id="day"),
