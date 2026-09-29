@@ -238,14 +238,21 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
+    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
+    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
     //
-    // 61,000 from 60,000 (59,298 measured, from 59,181): a `for` keys each
-    // tile it renders apart from every sibling, a repeated value included
-    // (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which names the
-    // loop and the occurrence beside the value's `show`. A counter has no
-    // `for` and still ships it, because it sits in the stdlib module every app
-    // loads. The open PRs beside this one take the measurement to about 59,900
-    // without it, which this would push over.
+    // 61,000 from 60,000 (60,014 measured, from 59,889): the `isEmpty` above
+    // landed on a base that already carried the bound `check` / `switch` / `radio`
+    // write-back (forms.md §5.1.1), 59,889 from 59,789. Each fit under 60,000 on
+    // its own base; together they do not. A counter binds no box and asks nothing
+    // whether it is empty, and still ships both in the modules every app loads.
+    //
+    // Still 61,000 (60,131 measured, from 60,014): a `for` keys each tile it
+    // renders apart from every sibling, a repeated value included (runtime.md
+    // §10.3.10). The 117 bytes are `loopKeys`, which names the loop and the
+    // occurrence beside the value's `show`. A counter has no `for` and still ships
+    // it, because it sits in the stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

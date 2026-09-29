@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "initial render — the radios follow the slot, which starts on Done",
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "Done" } },
+        "elementState": {
+          "#rAll input": { "checked": false },
+          "#rDone input": { "checked": true }
+        }
+      }
+    },
+    {
+      "label": "a real click on the second radio writes Active and leaves focus on it — every radio of the group carries the same bind marker, and restoring focus by that marker alone moved it to the first",
+      "do": { "click": "#rActive input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "Active" } },
+        "focused": "#rActive input",
+        "elementState": { "#rActive input": { "checked": true } }
+      }
+    },
+    {
+      "label": "the third radio, likewise",
+      "do": { "click": "#rDone input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "filter": { "_tag": "Done" } },
+        "focused": "#rDone input",
+        "elementState": { "#rDone input": { "checked": true } }
+      }
+    }
+  ]
+}

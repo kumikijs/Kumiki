@@ -397,3 +397,18 @@ describe("value equality (docs/spec/language.md §1.9.4)", () => {
     expect(listUnique([0, -0, "0", 0])).toEqual([0, "0"]);
   });
 });
+
+describe("isEmpty's scalar tail (docs/spec/stdlib.md §2.2.1 / §2.2.3 / §2.2.6 is-empty)", () => {
+  // A missing value cannot be written as a slot's initial value, so the
+  // receiver rows in `packages/tests` never reach this half of the last line.
+  it("a missing value is empty", () => {
+    expect(_stdlibCore.isEmpty(undefined)).toBe(true);
+    expect(_stdlibCore.isEmpty(null)).toBe(true);
+  });
+
+  it("any other scalar is not empty, zero and false included", () => {
+    expect(_stdlibCore.isEmpty(0)).toBe(false);
+    expect(_stdlibCore.isEmpty(7)).toBe(false);
+    expect(_stdlibCore.isEmpty(false)).toBe(false);
+  });
+});
