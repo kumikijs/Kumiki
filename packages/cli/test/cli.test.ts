@@ -238,11 +238,20 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
+    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
+    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
     //
-    // 61,000 from 60,000 (60,052 measured, from 59,889): a `bind` into one
-    // field of a record is judged at that field (forms.md §5.6). `slotAccepts` and
-    // a slot's `refineFailure` take the path the write went through, and a refused
-    // bind keeps that path so what the field shows is laid over the record as it is
+    // 61,000 from 60,000 (60,014 measured, from 59,889): the `isEmpty` above
+    // landed on a base that already carried the bound `check` / `switch` / `radio`
+    // write-back (forms.md §5.1.1), 59,889 from 59,789. Each fit under 60,000 on
+    // its own base; together they do not. A counter binds no box and asks nothing
+    // whether it is empty, and still ships both in the modules every app loads.
+    //
+    // Still 61,000 (60,177 measured, from 60,014): a `bind` into one field of a
+    // record is judged at that field (forms.md §5.6). `slotAccepts` and a slot's
+    // `refineFailure` take the path the write went through, and a refused bind
+    // keeps that path so what the field shows is laid over the record as it is
     // now. A counter binds nothing and still ships them, because they sit in the
     // core module every app loads.
     const total = expected
