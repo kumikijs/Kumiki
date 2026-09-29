@@ -340,7 +340,7 @@ kumiki lock agent-1 'slot.todos*,reducer.todo-*'
 
 If another agent issues an op in the same namespace, it is rejected.
 
-The lock is checked against **every definition the op touches**, not only the one the verb names: each dependent a `remove --cascade` removes, the new name a `rename` creates, and each definition whose text a `rename` rewrites. One locked definition among them rejects the whole op before anything is written (exit `1`, the file byte-identical), and the message names the first locked definition and its owner. `patch apply` and the MCP tools go through the same check.
+The lock is checked against **every definition the op touches**, not only the one the verb names. What the op touched is read off the file, not off the verb: after the op's write passes validation, the definitions before and after it are compared by qualified name, and every one that was added, removed, or whose text changed is checked. That covers each dependent a `remove --cascade` removes, the new name a `rename` creates and each definition whose text it rewrites, and a definition that a `replace`, `add` or `edit` body brings in with it (a `replace` of `slot.count` whose body goes on to a line `slot todosX : Int = 0` creates `slot.todosX`). One locked definition among them rejects the whole op: the file is restored byte-identical, no op is logged, the command exits `1`, and the message names the first locked definition in qualified-name order and its owner. The named definition is also checked before anything is written. `patch apply`, `patch revert` and the MCP tools go through the same mutators, so the same check applies to them.
 
 ## 9.9 The Relationship Between episode and op
 

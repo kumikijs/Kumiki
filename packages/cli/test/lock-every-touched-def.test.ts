@@ -1,7 +1,7 @@
 // An ownership lock covers every definition an op creates, removes or
 // rewrites — not only the name the verb was given. Otherwise an agent refused
 // a direct `replace` / `remove` can reach the same definition through a
-// cascade or a rename.
+// cascade, a rename, or a body that carries a second definition with it.
 
 import {
   copyFileSync,
@@ -14,7 +14,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lockDef, patchApplyFile, readOpLog, removeDef, renameDef } from "@kumikijs/cli";
+import {
+  addDef,
+  editDef,
+  load,
+  lockDef,
+  patchApplyFile,
+  readOpLog,
+  removeDef,
+  renameDef,
+  replaceDef,
+} from "@kumikijs/cli";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const COUNTER = resolve(
@@ -41,7 +51,7 @@ const as = (agent: string): void => {
   process.env.KUMIKI_AUTHOR = agent;
 };
 
-/** Runs `op` as agent:b and asserts it was refused with nothing written. */
+/** Runs `op` as agent:b and asserts it was refused: the file byte-identical, nothing logged. */
 const refusedUnchanged = (op: () => unknown, message: RegExp): void => {
   const source = readFileSync(file, "utf8");
   const logged = readOpLog(file).length;
@@ -79,6 +89,62 @@ describe("rename", () => {
       () => renameDef(file, "slot.count", "total"),
       /lock violation: reducer\.dec is locked by agent:a/,
     );
+  });
+
+  it("is allowed for the owner of the locked definitions it touches", () => {
+    lockDef(file, "agent:a", "slot.todos*,reducer.*,tile.*");
+    as("agent:a");
+    renameDef(file, "slot.count", "todos");
+    const store = load(file);
+    expect(store.byQName.has("slot.todos")).toBe(true);
+    expect(store.byQName.has("slot.count")).toBe(false);
+    expect(readOpLog(file).at(-1)).toMatchObject({ op: "rename", name: "count", newName: "todos" });
+  });
+});
+
+// A body is concatenated into the file as written, so one that carries a
+// second definition creates it. The check has to see what the write produced,
+// not what the verb was named with.
+describe("a body that carries another definition", () => {
+  beforeEach(() => lockDef(file, "agent:a", "slot.todos*,reducer.*"));
+
+  it("replace cannot create a slot inside a locked namespace", () => {
+    refusedUnchanged(
+      () => replaceDef(file, "slot.count", "N = 0\n\nslot todosX : Int = 0"),
+      /lock violation: slot\.todosX is locked by agent:a/,
+    );
+  });
+
+  it("replace cannot create a reducer inside a locked namespace", () => {
+    refusedUnchanged(
+      () =>
+        replaceDef(file, "slot.count", "N = 0\n\nreducer inc2 on=ui.click(IncBtn) do= count := 5"),
+      /lock violation: reducer\.inc2 is locked by agent:a/,
+    );
+  });
+
+  it("add cannot create a second definition inside a locked namespace", () => {
+    refusedUnchanged(
+      () => addDef(file, "slot", "extra", "Int = 0\n\nslot todosX : Int = 0"),
+      /lock violation: slot\.todosX is locked by agent:a/,
+    );
+  });
+
+  it("edit cannot create a definition inside a locked namespace", () => {
+    refusedUnchanged(
+      () =>
+        editDef(file, "slot.count", {
+          find: "= 0",
+          replace: "= 0\n\nreducer inc2 on=ui.click(IncBtn) do= count := 5",
+        }),
+      /lock violation: reducer\.inc2 is locked by agent:a/,
+    );
+  });
+
+  it("is still allowed when every definition it creates is unlocked", () => {
+    as("agent:b");
+    replaceDef(file, "slot.count", "N = 0\n\nslot other : Int = 0");
+    expect(load(file).byQName.has("slot.other")).toBe(true);
   });
 });
 

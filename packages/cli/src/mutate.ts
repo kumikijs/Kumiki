@@ -9,6 +9,7 @@ import {
   directDeps,
   findReferences,
   load,
+  loadSource,
   referenceSites,
   type Store,
 } from "./store.ts";
@@ -167,12 +168,19 @@ function logOp(path: string, op: RawOp): string {
 }
 
 /**
- * Validate that after the write the file still parses and typechecks.
- * Returns the error list (empty array = success).
+ * Decide whether the write just made to `path` may stand, `before` being the
+ * source it replaced. Returns the reason to roll back, if there is one.
+ *
+ * The file must still parse and typecheck, and no definition the write
+ * touched may be locked by another agent (§9.8.3). What was touched is read
+ * off the two sources, not off the verb: a body is written as given, so a
+ * `replace` / `add` / `edit` body can carry a second definition with it, a
+ * cascade removes dependents and a rename rewrites referrers.
  */
-function validate(path: string): { ok: true } | { ok: false; message: string } {
+function validate(path: string, before: string): { ok: true } | { ok: false; message: string } {
+  let src: string;
   try {
-    const src = readFileSync(path, "utf8");
+    src = readFileSync(path, "utf8");
     const program = parse(lex(src));
     // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
     // warnings (W02xx) describe pre-existing dead code patterns and would
@@ -190,10 +198,46 @@ function validate(path: string): { ok: true } | { ok: false; message: string } {
         .join("; ");
       return { ok: false, message: `Validation failed: ${summary}` };
     }
-    return { ok: true };
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
+  const locked = lockViolation(path, touchedDefinitions(before, src));
+  return locked === undefined ? { ok: true } : { ok: false, message: locked };
+}
+
+/** The one order qualified names are listed in, in reports and in checks. */
+const compareQNames = (a: string, b: string): number => a.localeCompare(b);
+
+/**
+ * Every definition that differs between two sources: added, removed, or with
+ * different text. A source that does not parse contributes no definitions, so
+ * everything in the other one counts as touched.
+ */
+function touchedDefinitions(before: string, after: string): string[] {
+  const a = definitionTexts(before);
+  const b = definitionTexts(after);
+  const touched = new Set<string>();
+  for (const [q, text] of a) if (b.get(q) !== text) touched.add(q);
+  for (const q of b.keys()) if (!a.has(q)) touched.add(q);
+  return [...touched].sort(compareQNames);
+}
+
+function definitionTexts(source: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let store: Store;
+  try {
+    store = loadSource(source);
+  } catch {
+    return out;
+  }
+  for (const e of store.defs) {
+    const q = `${e.layer}.${e.name}`;
+    const text = store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
+    // A name defined twice keeps both texts, so touching either one shows.
+    const prior = out.get(q);
+    out.set(q, prior === undefined ? text : `${prior}\n\0\n${text}`);
+  }
+  return out;
 }
 
 type LockFile = { entries: Array<{ agent: string; patterns: string[] }> };
@@ -221,30 +265,35 @@ function patternToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Refuse the op if another agent holds a lock on any definition it touches.
- *
- * `qnames` is every definition the op creates, removes or rewrites, not only
- * the one the verb was named with (§9.8.3): a cascade removes its dependents
- * and a rename rewrites its referrers, and a lock that saw only the named
- * definition could be reached around through either. Called before any write,
- * and the first locked name in the order given is the one reported.
+ * The refusal for the first of `qnames` another agent holds a lock on, if any.
+ * The one matcher both lock checks use: `enforceLock` on the named definition
+ * before anything is written, and `validate` on everything the write touched.
  */
-function enforceLock(path: string, ...qnames: string[]): void {
+function lockViolation(path: string, qnames: readonly string[]): string | undefined {
   const locks = readLocks(path);
-  if (locks.entries.length === 0) return;
+  if (locks.entries.length === 0) return undefined;
   const me = authorOf();
   for (const qname of qnames) {
     for (const e of locks.entries) {
       if (e.agent === me) continue;
       for (const pat of e.patterns) {
         if (patternToRegExp(pat).test(qname)) {
-          throw new Error(
-            `lock violation: ${qname} is locked by ${e.agent} (pattern "${pat}"). Set KUMIKI_AUTHOR=${e.agent} to edit.`,
-          );
+          return `lock violation: ${qname} is locked by ${e.agent} (pattern "${pat}"). Set KUMIKI_AUTHOR=${e.agent} to edit.`;
         }
       }
     }
   }
+  return undefined;
+}
+
+/**
+ * Refuse, before anything is written, an op whose named definition is locked.
+ * Everything else the op turns out to touch is checked by `validate`, once the
+ * write shows what that is.
+ */
+function enforceLock(path: string, qname: string): void {
+  const locked = lockViolation(path, [qname]);
+  if (locked !== undefined) throw new Error(locked);
 }
 
 /**
@@ -308,7 +357,7 @@ export function addDef(path: string, layer: string, name: string, body: string):
   const inserted = assemble(layer, name, body);
   const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
   writeFileSync(path, next);
-  const v = validate(path);
+  const v = validate(path, src);
   if (!v.ok) {
     // roll back
     writeFileSync(path, src);
@@ -328,7 +377,7 @@ export function replaceDef(path: string, qname: string, body: string): string {
   const next = [...before, ...inserted, ...after].join("\n");
   const original = store.source;
   writeFileSync(path, next);
-  const v = validate(path);
+  const v = validate(path, original);
   if (!v.ok) {
     writeFileSync(path, original);
     throw new Error(`replace rejected: ${v.message}`);
@@ -374,9 +423,6 @@ export function removeDef(
       frontier = next;
     }
   }
-  // The cascade removes each dependent as part of this op, so each is checked
-  // against the lock table as the requested one was.
-  enforceLock(path, ...[...toRemove].filter((q) => q !== qname).sort());
   // Remove from bottom up so line numbers stay valid.
   const removalEntries = [...toRemove]
     .map((q) => store.byQName.get(q))
@@ -389,7 +435,7 @@ export function removeDef(
   const next = lines.join("\n");
   const original = store.source;
   writeFileSync(path, next);
-  const v = validate(path);
+  const v = validate(path, original);
   if (!v.ok) {
     writeFileSync(path, original);
     throw new Error(`remove rejected: ${v.message}`);
@@ -405,7 +451,7 @@ export function removeDef(
     ...removalEntries
       .map((e) => `${e.layer}.${e.name}`)
       .filter((q) => q !== qname)
-      .sort((a, b) => a.localeCompare(b)),
+      .sort(compareQNames),
   ];
   const opId = logOp(path, {
     op: "remove",
@@ -450,19 +496,11 @@ export function renameDef(path: string, qname: string, newName: string): string 
   }
 
   const sites: Pos[] = [defNamePos(store, entry, old)];
-  const rewritten = new Set<string>();
   for (const e of store.defs) {
     for (const r of referenceSites(store, `${e.layer}.${e.name}`)) {
-      if (r.layer === entry.layer && r.name === old && r.pos) {
-        sites.push(r.pos);
-        rewritten.add(`${e.layer}.${e.name}`);
-      }
+      if (r.layer === entry.layer && r.name === old && r.pos) sites.push(r.pos);
     }
   }
-  // The new name is a definition this op creates, and each referrer is one it
-  // rewrites; both are checked before anything is written.
-  rewritten.delete(qname);
-  enforceLock(path, `${entry.layer}.${newName}`, ...[...rewritten].sort());
 
   const lines = store.lines.slice();
   // Right-to-left within a line so earlier columns keep their positions.
@@ -493,7 +531,7 @@ export function renameDef(path: string, qname: string, newName: string): string 
   const next = lines.join("\n");
   const original = store.source;
   writeFileSync(path, next);
-  const v = validate(path);
+  const v = validate(path, original);
   if (!v.ok) {
     writeFileSync(path, original);
     throw new Error(`rename rejected: ${v.message}`);
@@ -574,7 +612,7 @@ export function editDef(path: string, qname: string, patch: unknown): string {
   }
   const next = [...before, ...updated, ...after].join("\n");
   writeFileSync(path, next);
-  const v = validate(path);
+  const v = validate(path, original);
   if (!v.ok) {
     writeFileSync(path, original);
     throw new Error(`edit rejected: ${v.message}`);
