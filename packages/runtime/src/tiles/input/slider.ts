@@ -27,7 +27,7 @@ export const sliderTile: TileRenderer<"slider"> = (node) => {
   if (typeof node.step === "number") inp.step = String(node.step);
   if (node.bind) bindDataset(inp, node.bind, node.bindPath);
   if (node.value != null) inp.value = String(node.value);
-  setHandlers(inp, { ...inputHandlers(node), isSlider: true });
+  setHandlers(inp, inputHandlers(node));
   inp.addEventListener("input", () => {
     const state = INPUT_STATE.get(inp);
     if (state?.bind) {
@@ -57,6 +57,6 @@ export const sliderPatcher: TilePatcher<"slider"> = (el, _oldNode, newNode) => {
     // thumb, so guard on active-drag by checking pointer-focus via focus.
     if (inp.value !== nextValue && document.activeElement !== inp) inp.value = nextValue;
   }
-  setHandlers(inp, { ...inputHandlers(newNode), isSlider: true });
+  setHandlers(inp, inputHandlers(newNode));
   applyControlState(el, (newNode as { props?: TileProps }).props);
 };
