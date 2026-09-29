@@ -1,13 +1,18 @@
 // stdlib.md §2.2.3's parenthesis-free shortcut: `todos.is-empty` is the same
 // method as `todos.is-empty()`. `is-empty : Bool` is listed on Map (§2.2.1),
-// Set (§2.2.2), List (§2.2.3) and Text (§2.2.6).
+// List (§2.2.3) and Text (§2.2.6).
 //
-// The two spellings had two unrelated lowerings. The paren-free one tested
-// `.length`, which a Map (an object keyed by its entries) does not have, so an
-// empty Map was not empty; the parenthesised one asked for a Map's size, which
-// is 0 for anything that is not an object, so every Text — `"abc"` too — was
-// empty. Each answer is asserted here for both spellings, on an empty and a
-// non-empty value of every receiver that declares the member.
+// The two spellings had two unrelated lowerings. The paren-free one was
+// `x.length === 0 || x === ""`: a Map (an object keyed by its entries) has no
+// `length` and is not `""`, so an empty Map was not empty. The parenthesised
+// one asked for a Map's size, which is 0 for anything that is not an object,
+// so every non-object — `"abc"`, and any Int, too — was empty. Each answer is
+// asserted here for both spellings, on an empty and a non-empty value of every
+// receiver that declares the member, plus an Int: the checker lets a scalar
+// through, and both spellings must agree that it is not empty.
+//
+// `bare` and `paren` start at the opposite of the expected answer, so a row
+// passes only if the reducer actually overwrote them.
 
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -22,19 +27,23 @@ function freshRoot(): HTMLElement {
 const CASES: ReadonlyArray<[label: string, type: string, value: string, empty: boolean]> = [
   ["an empty Map", "Map(Text, Int)", "{}", true],
   ["a non-empty Map", "Map(Text, Int)", '{"a": 1}', false],
-  ["an empty Set", "Set(Int)", "{}", true],
-  ["a non-empty Set", "Set(Int)", "[7]", false],
   ["an empty List", "List(Int)", "[]", true],
   ["a non-empty List", "List(Int)", "[1]", false],
   ["an empty Text", "Text", '""', true],
   ["a non-empty Text", "Text", '"abc"', false],
+  ["a zero Int", "Int", "0", false],
+  ["a non-zero Int", "Int", "7", false],
 ];
 
 const SPELLINGS = ["v.is-empty", "v.is-empty()"] as const;
 
-const program = (type: string, value: string): string => `slot v : ${type} = ${value}
-slot bare : Bool = false
-slot paren : Bool = false
+const program = (
+  type: string,
+  value: string,
+  empty: boolean,
+): string => `slot v : ${type} = ${value}
+slot bare : Bool = ${!empty}
+slot paren : Bool = ${!empty}
 reducer read on=app.start do=
     bare := ${SPELLINGS[0]}
     paren := ${SPELLINGS[1]}
@@ -49,14 +58,10 @@ describe("x.is-empty and x.is-empty() are one member", () => {
   it.each(
     CASES,
   )("both spellings answer the same, right answer on %s", async (_l, type, value, empty) => {
-    const shape = await loadSource(program(type, value));
+    const shape = await loadSource(program(type, value, empty));
     const report = await runScenario(shape, freshRoot(), {
-      steps: [{ expect: { noErrors: true } }],
+      steps: [{ expect: { noErrors: true, state: { bare: empty, paren: empty } } }],
     });
     expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
-    expect({ [SPELLINGS[0]]: shape.live?.bare, [SPELLINGS[1]]: shape.live?.paren }).toEqual({
-      [SPELLINGS[0]]: empty,
-      [SPELLINGS[1]]: empty,
-    });
   });
 });

@@ -257,6 +257,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `122-value-equality.kumiki` | type, slot, reducer, tile | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
 | `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | http | [§6.1.2](./http.md#_6-1-2-standard-effect) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
-| `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 <!-- examples:end -->
 :::
