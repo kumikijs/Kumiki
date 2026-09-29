@@ -23,6 +23,7 @@ export {
   plural,
   runFixFromTest,
   type SkipReason,
+  type TestPatchBlock,
 } from "./fix.ts";
 export {
   clearStorage,

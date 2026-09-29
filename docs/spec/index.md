@@ -256,6 +256,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
 | `122-value-equality.kumiki` | type, slot, reducer, tile | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
 | `124-set-literal.kumiki` | type, slot, reducer, tile, fn | stdlib | [§2.2.2](./stdlib.md#_2-2-2-set-t) |
+| `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | http | [§6.1.2](./http.md#_6-1-2-standard-effect) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 <!-- examples:end -->
 :::

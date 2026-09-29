@@ -499,4 +499,29 @@ app Demo
     ]);
     expect(code).toBe(1);
   });
+
+  it("fix --auto-patch --apply exits 1 when the gate refuses the patch", SPAWN, () => {
+    // The one token `1` is `other`'s; replacing it leaves `inc-adds-two`
+    // failing, so the patch is refused and nothing is written.
+    const src = `slot count : Int = 0
+slot other : Int = 1
+fn step() -> Int = 3 - 2
+reducer inc on=ui.click(Btn1) do= count := count + step()
+tile Btn1 = button(text="+")
+tile App = column(Btn1)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test inc-adds-two =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}
+        expect = {slots: {count: 2}, effects: []}
+`;
+    const file = write("auto-refused.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--auto-patch", "inc-adds-two", "--apply"]);
+    expect(stdout).toContain('refused fix for "inc-adds-two"');
+    expect(readFileSync(file, "utf8")).toBe(src);
+    expect(code).toBe(1);
+  });
 });
