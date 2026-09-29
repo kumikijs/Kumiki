@@ -360,6 +360,12 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    The author promises it is unique among its siblings: two siblings with one
    explicit key are a `location: "reconcile"` panic on the next render, as
    described above, because the runtime cannot tell which of them the key meant.
+   So explicit keys must be unique within one loop. A loop whose `{key: …}`
+   values collide (`for s in [7, 3, 7] text(s.show) {key: s.show}`) is a program
+   error: the runtime does not fall back to position, it reports
+   `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`
+   and rebuilds the whole tree, replacing every element on the page
+   ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)).
 2. **Inside `for` iteration**, tile calls that do not declare their own
    `{key: ...}` receive an implicit key derived from the loop variable, which is
    unique among the siblings it can meet. The key is `_s.loopKeys(xs, loop)[i]`:

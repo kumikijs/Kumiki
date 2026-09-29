@@ -138,3 +138,22 @@ describe("a keyed reorder", () => {
     expect(new Set(after)).toEqual(new Set(before));
   });
 });
+
+// An explicit `{key: …}` is the author's promise that the key is unique
+// (§10.3.10). A loop that breaks it is a program error: the reconciler does not
+// fall back to position, it panics on the next render and rebuilds the tree.
+describe("a for whose explicit keys collide", () => {
+  it("panics in reconcile on the next render, naming the key", async () => {
+    const loop = `column(for s in scores text("score " + s.show) {key: s.show})`;
+    const { root } = await mounted(program(SCORES, loop));
+    const seen = errors();
+    const input = root.querySelector("input") as HTMLInputElement;
+    click(root, "tick");
+    expect(seen.map((line) => line.split("\n")[0])).toEqual([
+      `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`,
+    ]);
+    // The wholesale rebuild replaced the element a keyed pass would have kept.
+    expect(input.isConnected).toBe(false);
+    expect(root.textContent?.match(/score 7/g)?.length).toBe(2);
+  });
+});

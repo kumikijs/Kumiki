@@ -344,7 +344,12 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    で文字列化される。`props.el` には流れない。兄弟の中で一意であることは
    作者が約束する。同じ明示 key を持つ 2 つの兄弟は、どちらを指すかを runtime
    が判断できないため、上述のとおり次のレンダで `location: "reconcile"` の
-   panic になる。
+   panic になる。したがって明示 key は 1 つのループの中で一意でなければならない。
+   `{key: …}` の値が衝突するループ（`for s in [7, 3, 7] text(s.show) {key: s.show}`）
+   はプログラムの誤りであり、runtime は位置による対応に退避せず、
+   `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`
+   を報告してツリー全体を再構築し、ページ上のすべての要素を置き換える
+   （[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。
 2. **`for` 反復の内側** で `{key: ...}` を書いていないタイル呼び出しには、
    ループ変数から暗黙 key を合成する。この key は出会いうる兄弟の中で一意である。
    key は `_s.loopKeys(xs, loop)[i]` であり、ループ（ソース位置で名付ける）、

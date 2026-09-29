@@ -17,4 +17,7 @@ The implicit key now also names the loop and which occurrence of the value
 this is (`_s.loopKeys`), so it is unique among the siblings it can meet. A
 list of distinct values keeps the key each element had, so reorder, insert
 and remove reuse elements exactly as before. Explicit `{key: …}` keys are
-unchanged: the author promises they are unique.
+unchanged: the author promises they are unique, and a loop whose explicit
+keys collide stays a reconcile panic (`duplicate TileNode.key …`) followed by
+a full rebuild. That is now the specified behaviour (runtime.md §10.3.10), not
+a fallback to position, and a test pins it.
