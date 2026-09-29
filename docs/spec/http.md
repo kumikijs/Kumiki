@@ -32,6 +32,7 @@ effect http-post cap=http.post
                  in={
                    url: Url,
                    headers: Map(Text, Text),
+                   query: Map(Text, Text),
                    body: HttpBody,
                    decode: Decoder
                  }
@@ -40,7 +41,7 @@ effect http-post cap=http.post
 # put / patch / delete have the same shape
 ```
 
-`query` is sent as the URL's query string: each entry is URL-encoded (`URLSearchParams`, so a space becomes `+` and an `&` inside a value is escaped) and appended to `url`, after any query string `url` already carries and before a fragment. An empty `query` leaves `url` as written.
+`query` is sent as the URL's query string, by every `http.*` method alike (get, post, put, patch and delete): each entry is URL-encoded (`URLSearchParams`, so a space becomes `+` and an `&` inside a value is escaped) and appended to `url`, after any query string `url` already carries and before a fragment. An empty `query` leaves `url` as written. The order of the entries in the query string is not guaranteed; do not rely on it.
 
 `http.get` and the like **cannot be used unless declared** (capability guard). They must be enumerated in `app.caps`.
 
