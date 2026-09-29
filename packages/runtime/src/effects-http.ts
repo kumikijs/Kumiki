@@ -29,13 +29,14 @@ export async function httpFetch(
   const x = input as {
     url?: string;
     headers?: Record<string, string>;
+    query?: Record<string, string>;
     body?: unknown;
     decode?: string;
     key?: string;
     value?: unknown;
   };
   const baseUrl = httpCfg?.baseUrl ?? "";
-  const url = baseUrl + (x.url ?? "");
+  const url = withQuery(baseUrl + (x.url ?? ""), x.query);
   // Header precedence (spec http.md §6.1.5): auto < global < input.
   const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
   const headers: Record<string, string> = { ...globalHeaders, ...(x.headers ?? {}) };
@@ -161,6 +162,21 @@ function formDataOf(entries: Record<string, unknown>): FormData {
 function hasHeader(headers: Record<string, string>, name: string): boolean {
   const lower = name.toLowerCase();
   return Object.keys(headers).some((k) => k.toLowerCase() === lower);
+}
+
+/**
+ * Append the request's `query` (http.md §6.1.2) to `url`: each entry
+ * URL-encoded, after any query string the url already carries and before a
+ * fragment. An empty or absent query leaves the url as written.
+ */
+function withQuery(url: string, query: Record<string, string> | undefined): string {
+  const qs = new URLSearchParams(query ?? {}).toString();
+  if (!qs) return url;
+  const hash = url.indexOf("#");
+  const path = hash < 0 ? url : url.slice(0, hash);
+  const fragment = hash < 0 ? "" : url.slice(hash);
+  const sep = !path.includes("?") ? "?" : path.endsWith("?") || path.endsWith("&") ? "" : "&";
+  return path + sep + qs + fragment;
 }
 
 function isAbortError(e: unknown): boolean {
