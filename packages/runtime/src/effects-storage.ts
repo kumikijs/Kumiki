@@ -22,7 +22,7 @@ async function readFrom(storage: Storage, key: string, decode?: Decode): Promise
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
     const value = JSON.parse(raw);
     const refused = decodeRefusal(decode, value);
-    if (refused) return { kind: "err", value: { message: refused } };
+    if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
     return { kind: "err", value: String(e) };

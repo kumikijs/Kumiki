@@ -15,8 +15,9 @@ in that reducer, stayed on its boot screen with nothing able to clear it.
 Now `Decoder.Json(T)` for a `T` that carries a predicate anywhere in it lowers
 to the walk a slot of type `T` is gated by, and the storage, session,
 IndexedDB and HTTP read handlers run it on what they decoded (http.md §6.1.4,
-§6.7.2). A refused value is `.err`: from storage a `message` such as
-`decode failed: uuid at .keys["k3j9x"]`, and from HTTP an `HttpError` with the
+§6.7.2). A refused value is `.err`: from storage, session or IndexedDB the
+`Text` its `out=` declares, such as `decode failed: uuid at .keys["k3j9x"]`,
+and from HTTP an `HttpError` with the
 response's status and text, which is not retried. A `T` with no predicate lowers to the
 sentinel as before. The check ships in a new `effects-decode` runtime module,
 only with the handlers that import it, so an app that decodes nothing (the

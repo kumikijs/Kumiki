@@ -1,12 +1,7 @@
 {
   "effects": {
     "seedLegacy": [{ "outcome": "ok", "value": null }],
-    "loadNotes": [
-      {
-        "outcome": "err",
-        "value": { "message": "decode failed: uuid at .keys[\"legacy-1\"]" }
-      }
-    ]
+    "loadNotes": [{ "outcome": "err", "value": "decode failed: uuid at .keys[\"legacy-1\"]" }]
   },
   "steps": [
     {

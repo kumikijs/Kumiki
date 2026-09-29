@@ -20,8 +20,9 @@ export function decodesJson(decode: Decode): boolean {
 }
 
 /**
- * Why `decode` refuses a parsed value, as the `.err`'s `message` says it —
- * `decode failed: uuid at .keys["k1"]` — or `undefined` when it accepts it.
+ * Why `decode` refuses a parsed value — `decode failed: uuid at .keys["k1"]`,
+ * the whole `.err` of a storage-family read and the `message` of an HTTP
+ * read's `HttpError` — or `undefined` when it accepts it.
  * The predicate and the path are spelled as a refused reducer write spells
  * them (runtime.md §10.3.3), since the value is refused by the same check.
  */

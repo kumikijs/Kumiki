@@ -93,7 +93,7 @@ async function pointRead(
     const value = await reqToPromise(tx.objectStore(input.store).get(input.key));
     if (value === undefined) return { kind: "ok", value: _stdlibCore.None };
     const refused = decodeRefusal(input.decode, value);
-    if (refused) return { kind: "err", value: { message: refused } };
+    if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
     return { kind: "err", value: String(e) };

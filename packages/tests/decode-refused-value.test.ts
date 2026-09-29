@@ -97,7 +97,7 @@ describe("a Decoder.Json(T) whose T refuses the stored value", () => {
     }
   });
 
-  it("names the predicate and where it failed in the error's message", async () => {
+  it("names the predicate and where it failed in the error's Text", async () => {
     const app = await loadSource(`type NoteId = nominal Text where uuid
 type Note = {id: NoteId, text: Text where nonempty}
 slot why : Text = ""
@@ -126,7 +126,7 @@ app D
     );
     const m = await mountUntil(app, ({ live }) => live.why !== "");
     try {
-      expect(m.live.why).toEqual({ message: "decode failed: nonempty at [1].text" });
+      expect(m.live.why).toBe("decode failed: nonempty at [1].text");
     } finally {
       m.dispose();
     }

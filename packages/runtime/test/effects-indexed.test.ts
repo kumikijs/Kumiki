@@ -88,7 +88,7 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
         : { kind: "nonempty", args: [], path: ["body"] };
     expect(await indexedRead({ store: "notes", key: "a", decode: check }, localCfg)).toEqual({
       kind: "err",
-      value: { message: "decode failed: nonempty at .body" },
+      value: "decode failed: nonempty at .body",
     });
   });
 

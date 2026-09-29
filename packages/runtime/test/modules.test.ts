@@ -207,7 +207,7 @@ describe("builtin effect modules", () => {
     await sessionWrite({ key: "dec", value: { id: "ok" } });
     expect(await storageRead({ key: "dec", decode: check })).toEqual({
       kind: "err",
-      value: { message: "decode failed: len-lt(3) at .id" },
+      value: "decode failed: len-lt(3) at .id",
     });
     expect(await sessionRead({ key: "dec", decode: check })).toEqual({
       kind: "ok",
