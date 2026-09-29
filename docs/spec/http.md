@@ -65,7 +65,7 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe. If you specify `Decoder.Json(User)`, the response JSON is decoded into the `User` type. A body that fails to decode is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)).
+Response decoding is type-safe at compile time; at runtime only the JSON syntax is checked. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A body that parses but does not match the declared type is not detected at runtime. A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
 
 ### 6.1.5 Common props (auto-applied)
 
@@ -265,7 +265,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a response whose body fails to decode: the server answered, so a retry would send the request again.
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON: the server already accepted the request, so a retry would duplicate its effect.
 
 ---
 

@@ -18,7 +18,7 @@
     "placeOrder": [
       {
         "outcome": "err",
-        "value": { "status": 201, "message": "decode failed", "body": "<html>Created</html>" }
+        "value": { "status": 201 }
       }
     ]
   }

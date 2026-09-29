@@ -132,4 +132,65 @@ describe("httpFetch (#78)", () => {
     const v = res.value as { message: string };
     expect(v.message).toBe("aborted");
   });
+
+  // A failed body read stays a connection-shaped error (status 0, retried),
+  // unlike a body that arrived and does not parse (§6.1.4).
+  it("reports a body stream that errors mid-read as status 0", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError("stream reset"));
+            },
+          }),
+          { status: 201 },
+        ),
+    );
+    const res = await httpFetch("POST", { url: "/orders" });
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.status).toBe(0);
+    expect(v.message).toMatch(/stream reset/);
+  });
+
+  // §6.4.1: an abort while the body is being read is still `aborted`, never a
+  // decode failure carrying the response's status.
+  it("reports an abort during the body read as aborted, not a decode failure", async () => {
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              body = c;
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const ctl = new AbortController();
+    const pending = httpFetch("GET", { url: "/q" }, undefined, ctl.signal);
+    while (!body) await new Promise((r) => setTimeout(r, 0));
+    ctl.abort();
+    body.error(new DOMException("The operation was aborted.", "AbortError"));
+    const res = await pending;
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.message).toBe("aborted");
+    expect(v.message).not.toMatch(/^decode failed/);
+    expect(v.status).toBe(0);
+  });
+
+  it("reports a body-less 204 under the default decoder as a decode failure with status 204", async () => {
+    stubFetch(() => new Response(null, { status: 204 }));
+    const res = await httpFetch("DELETE", { url: "/orders/1" });
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.status).toBe(204);
+    expect(v.message).toMatch(/^decode failed/);
+  });
 });

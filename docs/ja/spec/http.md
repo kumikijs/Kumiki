@@ -65,7 +65,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-レスポンスの decode は型安全。`Decoder.Json(User)` を指定すれば、レスポンス JSON が `User` 型に decode される。decode に失敗した本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。
+レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文だけ。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。構文は通るが宣言した型と形が合わない本文は実行時には検出されない。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
 ### 6.1.5 共通 props（自動付与）
 
@@ -259,7 +259,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | N 回まで、ms 間隔で再試行 |
 | `exponential(N, initial-ms, factor)` | N 回まで、初回 initial-ms、毎回 factor 倍 |
 
-リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文の decode に失敗したレスポンスもリトライしない。サーバーは応答しているので、リトライはリクエストをもう一度送ることになる。
+リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文が JSON として壊れている 2xx もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。
 
 ---
 

@@ -33,7 +33,7 @@ function settled(app: Awaited<ReturnType<typeof loadApp>>, root: HTMLElement): b
   return err?._tag === "Some";
 }
 
-/** Example 129's effect, with its `.err` payload kept whole in a slot. */
+/** Example 129's effect with a shorter backoff, its `.err` payload kept whole in a slot. */
 const WHOLE_ERROR = `type Order = {id: Text}
 slot err : Option(HttpError) = None
 
@@ -73,8 +73,9 @@ describe("a 2xx whose body does not decode", () => {
     try {
       const { dispose } = mount(app, root);
       clickByText(root, "Buy");
-      // `.err` fires once the retry loop is done with the request; the extra
-      // wait is longer than any backoff, so a further attempt would be seen.
+      // `.err` fires only after the retry loop has returned, so `calls` is
+      // already final here. The extra wait is a margin, longer than any
+      // backoff, in case an attempt is ever issued outside the loop.
       await waitUntil(() => settled(app, root));
       await tick(200);
       const text = root.textContent ?? "";
@@ -127,5 +128,36 @@ describe("a 2xx whose body does not decode", () => {
     const app = await loadSource(WHOLE_ERROR);
     await clickBuy(app, () => new Response("down", { status: 503 }));
     expect(double?.calls).toHaveLength(3);
+  });
+
+  it("still retries a body stream that fails mid-read, as status 0", async () => {
+    const app = await loadSource(WHOLE_ERROR);
+    await clickBuy(
+      app,
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError("stream reset"));
+            },
+          }),
+          { status: 201 },
+        ),
+    );
+    expect(double?.calls).toHaveLength(3);
+    const live = defined(app.live, "the app's live map") as Record<string, unknown>;
+    const err = defined(live.err, "the err slot") as { _0: Record<string, unknown> };
+    expect(err._0.status).toBe(0);
+    expect(String(err._0.message)).toMatch(/stream reset/);
+  });
+
+  it("sends a body-less 204 once and reports status 204", async () => {
+    const app = await loadSource(WHOLE_ERROR);
+    await clickBuy(app, () => new Response(null, { status: 204 }));
+    expect(double?.calls).toHaveLength(1);
+    const live = defined(app.live, "the app's live map") as Record<string, unknown>;
+    const err = defined(live.err, "the err slot") as { _0: Record<string, unknown> };
+    expect(err._0.status).toBe(204);
+    expect(String(err._0.message)).toMatch(/^decode failed/);
   });
 });
