@@ -141,6 +141,34 @@ describe("runtime: route.error fallback (#81)", () => {
     dispose();
   });
 
+  it("fires route.error once for a render that stays broken, and shows the panic display", () => {
+    // A handler that changes nothing leaves the page as broken as it was. Its
+    // write used to start a render of its own, which panicked and fired the
+    // handler again one level deeper, until the stack overflowed — and the
+    // payload the last surviving handler saw depended on where it overflowed.
+    let fired = 0;
+    const app: AppShape = baseApp({
+      reducers: [
+        lifecycleReducer('route.error("/")', (s) => {
+          fired++;
+          return { slots: s, emits: [] };
+        }),
+      ],
+      routes: [
+        {
+          pattern: "/",
+          tile: (): TileNode => {
+            throw new Error("kaboom");
+          },
+        },
+      ],
+    });
+    const { dispose } = mount(app, root);
+    expect(fired).toBe(1);
+    expect(root.querySelector("[data-kumiki-panic]")).not.toBeNull();
+    dispose();
+  });
+
   it("route.error $event carries the tile-render category, not reducer", () => {
     // Regression cover: earlier the fireRouteError helper hard-coded
     // `category: \"reducer\"`, so a render panic would show up in the reducer
