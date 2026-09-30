@@ -17,6 +17,7 @@ import {
   reportRejectedBatch,
   withEnvReplay,
 } from "./core.ts";
+import { valueEqual } from "./stdlib.ts";
 
 /**
  * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
@@ -103,25 +104,6 @@ function _jsonStr(v: unknown): string {
   }
 }
 
-/** Deep structural equality for slot values (records / lists / primitives). */
-function deepEqualValue(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
-  const aArr = Array.isArray(a);
-  const bArr = Array.isArray(b);
-  if (aArr || bArr) {
-    if (!aArr || !bArr || a.length !== b.length) return false;
-    return a.every((x, i) => deepEqualValue(x, (b as unknown[])[i]));
-  }
-  const ao = a as Record<string, unknown>;
-  const bo = b as Record<string, unknown>;
-  const ak = Object.keys(ao);
-  if (ak.length !== Object.keys(bo).length) return false;
-  // Compare key presence too — `{a: undefined}` and `{b: undefined}` have equal
-  // key counts but are not equal.
-  return ak.every((k) => Object.hasOwn(bo, k) && deepEqualValue(ao[k], bo[k]));
-}
-
 // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
 // `@@`-prefixed sentinels never collide with a Kumiki field name (identifiers
 // are alphanumeric + hyphen, so `@` can never appear in one).
@@ -148,7 +130,7 @@ function wildcardEqual(
   if (isWildValue(expected)) {
     const kind = expected[WILD];
     if (kind === "any-id") return actual !== undefined;
-    if (kind === "slot") return deepEqualValue(actual, finalSlots[expected.slot as string]);
+    if (kind === "slot") return valueEqual(actual, finalSlots[expected.slot as string]);
     return false;
   }
   if (expected === actual) return true;
@@ -754,7 +736,7 @@ function executeEpisode(
     for (const [k, v] of Object.entries(res?.slots ?? {})) {
       const before = app.live[k];
       app.live[k] = v;
-      if (!deepEqualValue(before, v)) diffs.push({ name: k, before, after: v });
+      if (!valueEqual(before, v)) diffs.push({ name: k, before, after: v });
     }
     return diffs;
   };
@@ -1386,7 +1368,7 @@ export const _stdlibTest = {
 
     if (expectedSlots) {
       for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!deepEqualValue(app.live[k], v)) {
+        if (!valueEqual(app.live[k], v)) {
           return {
             name,
             pass: false,

@@ -1,0 +1,5 @@
+{
+  "GET /search?x=1&q=a+b%26c&page=2": {
+    "json": [{ "name": "one" }, { "name": "two" }]
+  }
+}
