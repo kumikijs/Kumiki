@@ -28,5 +28,11 @@ export default defineConfig({
     // the files run in parallel, so the 5s default turns machine load into
     // spurious failures in whichever file happened to be scheduled last.
     testTimeout: 30000,
+    // A fixed, non-zero offset, as packages/runtime pins it. A date field shows
+    // and reads a `Time` on the local clock, and at offset 0 a formatter that
+    // used UTC instead renders the same text — so on a UTC runner (CI) and a
+    // runner east of Greenwich alike the local-clock round trip would go
+    // unchecked. West of Greenwich, a UTC reading lands on the previous day.
+    env: { TZ: "America/Los_Angeles" },
   },
 });
