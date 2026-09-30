@@ -1,0 +1,29 @@
+# Feature (language.md §1.6.5 / §1.7.3): `$el` is the `{...}` props of the tile
+# that fired the event, read by the names the tile declared them under —
+# kebab-case names included, which are the house style.
+#
+# A prop reaches `$el` from the props block and from a named argument alike;
+# each row below sends its id both ways, and a click reads each one back.
+
+type Todo = {todo-id: Text, title: Text}
+
+slot todos : List(Todo) = [
+    {todo-id: "t1", title: "write"},
+    {todo-id: "t2", title: "ship"}]
+slot from-block : Text = "-"
+slot from-arg   : Text = "-"
+
+reducer pick-block on=ui.click(Row) do= from-block := $el.todo-id
+reducer pick-arg   on=ui.click(Row) do= from-arg := $el.row-title
+
+tile Row in=Todo = button(text=$1.title, row-title=$1.title) {todo-id: $1.todo-id, id: $1.todo-id}
+
+tile App = column(
+    text("block: " + from-block),
+    text("arg: " + from-arg),
+    column(for t in todos Row(t) {key: t.todo-id}))
+
+app ElKebabProp
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

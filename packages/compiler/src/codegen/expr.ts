@@ -5,6 +5,7 @@ import {
   bindRef,
   declareBind,
   type EvalCtx,
+  fieldKey,
   type GenCtx,
   jsBinding,
   jsProperty,
@@ -44,7 +45,7 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
 }
 
 /** The lowering of one reading: text in, `Some(value)` or `None` out. */
-function readingJs(reading: ParseReading, a: string): string {
+export function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
     // Decimal only, and exact like `Bool`: `Number()` on its own also reads
     // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
@@ -145,7 +146,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // record with this field, read the field — do NOT let a same-named method
       // shortcut shadow it. `accessKind` is only set when `check()` ran; absent,
       // we keep the historical name-based dispatch below (back-compat).
-      if (e.accessKind === "field") return `(${baseJs})[${JSON.stringify(e.field)}]`;
+      if (e.accessKind === "field") return `(${baseJs})[${fieldKey(e.field)}]`;
       // For Option/Result values stored as {_tag,_0}, accessing common fields like
       // ".get" needs unwrapping. We special-case ".get" / ".is-some" / ".is-none" /
       // ".is-ok" / ".is-err".
@@ -163,14 +164,13 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "show") return `_s.show(${baseJs})`;
       // .length on text/list/string
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
-      if (e.field === "is-empty")
-        return `(((${baseJs}) ?? []).length === 0 || ((${baseJs}) ?? "") === "")`;
+      if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
       // .lower / .upper on Text
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
       if (e.field === "upper") return `(String((${baseJs}) ?? "")).toUpperCase()`;
       if (e.field === "trim") return `(String((${baseJs}) ?? "")).trim()`;
       // Zero-arg list / string method shorthands (callable without parens)
-      if (e.field === "unique") return `[...new Set((${baseJs}) ?? [])]`;
+      if (e.field === "unique") return `_s.listUnique(${baseJs})`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
       if (e.field === "sort") return `_s.listSort(${baseJs})`;
       // Issue #7: argument-less spec stdlib methods in the parenthesis-free form
@@ -194,7 +194,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "exp") return `Math.exp(${baseJs})`;
       if (e.field === "to-float") return `(${baseJs})`;
       if (e.field === "to-int") return `Math.trunc(${baseJs})`;
-      return `(${baseJs})[${JSON.stringify(e.field)}]`;
+      return `(${baseJs})[${fieldKey(e.field)}]`;
     }
     case "Index": {
       // Through the runtime, so a List index that names no element panics
@@ -284,7 +284,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind);
     }
     case "RecordLit": {
-      const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${jsOfExpr(f.value, ctx)}`);
+      const parts = e.fields.map((f) => `${fieldKey(f.name)}: ${jsOfExpr(f.value, ctx)}`);
       return `{ ${parts.join(", ")} }`;
     }
     case "ListLit":
@@ -298,10 +298,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       const parts = e.entries.map((en) => {
         // A `<any-id>` map key (test expect, §8.2.2) lowers to the runtime's
         // wild-key sentinel so the matcher pairs it with the one generated entry.
+        // Any other key is stored as every Map member stores one (`entryKey`).
         const keyJs =
           en.key.kind === "Wildcard" && en.key.wild === "any-id"
             ? "[_s.WILD_KEY]"
-            : `[${jsOfExpr(en.key, ctx)}]`;
+            : `[_s.entryKey(${jsOfExpr(en.key, ctx)})]`;
         return `${keyJs}: ${jsOfExpr(en.value, ctx)}`;
       });
       return `{ ${parts.join(", ")} }`;
@@ -367,6 +368,10 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["flat-map", 1],
   ["fold", 2],
   ["format", 1],
+  // The keyed reading's floor. The unwrapping one takes none and its lowering
+  // reads none, so the method-call check judges `.get` by its receiver
+  // (`checkGetArity`), not by this. The paren-free member check does read this
+  // entry, and passes `o.get` only because `get` is in FIELD_ACCESS_SHORTCUTS.
   ["get", 1],
   // One shape takes a default, the other a key AND a default; the lowering
   // branches on the count, so one is the floor.
@@ -664,9 +669,8 @@ export function methodCallJs(
   switch (method) {
     case "filter":
       // The receiver may be a List (incl. .entries → [k,v] tuples) or a Map.
-      // Dispatch at runtime; the lambda destructures tuples and also accepts
-      // the (k, v) calling convention used by mapFilter.
-      // A Map's predicate is handed each key, restored like any key reader's.
+      // Dispatch at runtime; a Map hands the lambda each `[k, v]` pair, as
+      // `.entries` does, with the key restored like any key reader's.
       return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
       // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples)
@@ -684,7 +688,14 @@ export function methodCallJs(
     case "toggle":
       return `_s.setToggle(${recvJs}, ${argRaw(args[0]!)})`;
     case "get":
-      // Spec: Map(K,V).get returns Option(V). Wrap the raw lookup result.
+      // One name, two readings, and the argument count picks between them:
+      // `Option(T).get()` / `Result(T, E).get()` take nothing and unwrap — the
+      // same lowering as the paren-free `o.get` — while `Map(K, V).get(k)` and
+      // `List(T).get(i)` take one and answer an Option (`Option(V)` /
+      // `Option(T)`), so the raw lookup is wrapped. On a receiver the checker
+      // decides, `checkGetArity` has already made the count fit it; on one it
+      // cannot decide, both counts pass and the count alone picks the reading.
+      if (args.length === 0) return `_s.unwrap(${recvJs})`;
       return `((_v) => _v === undefined ? _s.None : _s.Some(_v))(_s.mapGet(${recvJs}, ${argRaw(args[0]!)}))`;
     case "get-or":
       // Two shapes:
@@ -717,7 +728,7 @@ export function methodCallJs(
     case "is-none":
       return `_s.variantIs(${recvJs}, "None")`;
     case "is-empty":
-      return `(_s.mapSize(${recvJs}) === 0)`;
+      return `_s.isEmpty(${recvJs})`;
     case "to-ms":
       return `(${recvJs})`;
     case "copy":
@@ -735,7 +746,7 @@ export function methodCallJs(
     case "push":
       return `[...(${recvJs} ?? []), ${argRaw(args[0]!)}]`;
     case "unique":
-      return `[...new Set((${recvJs} ?? []))]`;
+      return `_s.listUnique(${recvJs})`;
     case "reverse":
       return `[...(${recvJs} ?? [])].reverse()`;
     case "join":
@@ -743,7 +754,7 @@ export function methodCallJs(
     case "split":
       return `((${recvJs}) ?? "").split(${argRaw(args[0]!)})`;
     case "contains":
-      return `(typeof (${recvJs}) === "string" ? ((${recvJs}) ?? "").includes(${argRaw(args[0]!)}) : ((${recvJs}) ?? []).includes(${argRaw(args[0]!)}))`;
+      return `_s.contains(${recvJs}, ${argRaw(args[0]!)})`;
     case "starts-with":
       return `((${recvJs}) ?? "").startsWith(${argRaw(args[0]!)})`;
     case "ends-with":
