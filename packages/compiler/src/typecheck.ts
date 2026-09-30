@@ -6147,16 +6147,13 @@ function checkApp(
 }
 
 /**
- * The reducers `app.http` routes a 401 / 403 / 5xx response to.
- *
- * They are named the same way a `button(onClick=…)` names one, and were the
- * one such site with nothing resolving the name — a misspelling left the
- * response with no handler, which looks exactly like a response the app chose
- * not to handle.
- */
-/**
  * `app.http` has two kinds of field: three reducer names, resolved here, and
  * four expressions, walked here.
+ *
+ * The reducer names are the ones a 401 / 403 / 5xx response is routed to. They
+ * are named the same way a `button(onClick=…)` names one, and were the one such
+ * site with nothing resolving the name — a misspelling left the response with
+ * no handler, which looks exactly like a response the app chose not to handle.
  *
  * The expressions are checked in the position `slot-init` names — pure and
  * payloadless, so `$route` is a name that does not exist rather than a bind
@@ -6186,29 +6183,25 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
+  // In the order of the walk above and of the field table in §6.3.1.
+  if (http.baseUrl !== undefined)
+    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
+  // `headers` is the `Map(Text, Text)` a request's own `headers` is (§6.1.2).
+  // The runtime spreads it into each request's headers: a number spreads to
+  // nothing and a string to headers named `0`, `1`, … — either way not one
+  // intended header reaches the request.
+  if (http.headers !== undefined) {
+    const pos = http.headers.pos;
+    const text = prim("Text", pos);
+    checkAgainst(http.headers, container("Map", [text, text], pos), sym, errors, fieldCtx);
+  }
   // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
   // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
   // `Duration`", because a program's own `type Duration` shadows the stdlib one
   // and may be anything.
-  if (http.baseUrl !== undefined)
-    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
   if (http.timeout !== undefined)
     checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
   if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
-  // `headers` is the `Map(Text, Text)` a request's own `headers` is (§6.1.2): the
-  // runtime spreads it into each request, and a value of any other shape
-  // spreads to nothing, dropping every global header without a word.
-  if (http.headers !== undefined) {
-    const pos = http.headers.pos;
-    const text = prim("Text", pos);
-    checkAgainst(
-      http.headers,
-      { kind: "TypeApp", name: "Map", args: [text, text], pos },
-      sym,
-      errors,
-      fieldCtx,
-    );
-  }
 }
 
 /** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */

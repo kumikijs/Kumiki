@@ -2,11 +2,14 @@ import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
 // `app.http`'s value fields are expressions evaluated per request, and each of
-// three has a type it is held to at the field (http.md §6.3.1), reported as
-// E0201:
+// the four has a type it is held to (http.md §6.3.1), reported as E0201:
 //
 // - `base-url` takes anything assignable to `Text` — `Url`, `Email`, `Uuid` and
 //   every other type built on `Text` included.
+// - `headers` takes anything assignable to `Map(Text, Text)`, the type of a
+//   request's own `headers`. A key or value of a map literal that is not a
+//   `Text` is reported where it is written; anything that is not a map, at the
+//   field.
 // - `timeout` takes anything assignable to `Int`, read as milliseconds — a
 //   `Duration` is one, and so is a user `nominal Int`. A `Float` is not: the
 //   field is an `Int`, the same boundary every other `Int` position draws.
@@ -15,9 +18,9 @@ import { describe, expect, it } from "vitest";
 //   must be one of the three Fetch modes. A value computed any other way is
 //   held to `Text` alone.
 //
-// Every case pairs what must report with what must not in one program and
-// asserts the whole list, so a quiet half cannot pass by the field going
-// unchecked altogether.
+// Every case asserts the whole diagnostic list, so an extra report, a missing
+// one or one at the wrong position fails it. What must report and what must
+// not are paired either in one program or in one test.
 
 const app = (slots: string, http: string): string =>
   `${slots}
@@ -34,11 +37,14 @@ const diagnostics = (src: string) =>
   check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
 describe("app.http value fields are checked against their types", () => {
-  it("reports base-url / timeout / credentials each at its own field", () => {
-    expect(diagnostics(app("", `base-url: 42, timeout: "soon", credentials: "bogus"`))).toEqual([
+  it("reports each field at its own position, in the order they are written", () => {
+    expect(
+      diagnostics(app("", `base-url: 42, headers: 7, timeout: "soon", credentials: "bogus"`)),
+    ).toEqual([
       "E0201 7:25 Expected Text but got Int",
-      "E0201 7:38 Expected Int but got Text",
-      'E0201 7:59 credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request',
+      "E0201 7:38 Expected Map(Text, Text) but got Int",
+      "E0201 7:50 Expected Int but got Text",
+      'E0201 7:71 credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request',
     ]);
   });
 
@@ -186,26 +192,67 @@ fn soon() = "soon"`;
 });
 
 // `headers` is the `Map(Text, Text)` every request's own `headers` is
-// (http.md §6.1.2), so the global ones are held to the same type at the field.
-// A value that is not one used to run: the runtime spreads it into the
-// request's headers, and a number or a string spreads to nothing, so every
-// global header silently disappeared.
+// (http.md §6.1.2), so the global ones are held to the same type. A value that
+// is not one used to run: the runtime spreads it into the request's headers, a
+// number spreads to nothing and a string to headers named `0`, `1`, … — either
+// way not one intended header reached the request.
 describe("app.http headers is a Map(Text, Text)", () => {
   it.each([
-    ["an Int", `headers: 42`, "E0201 7:24 Expected Map(Text, Text) but got Int"],
-    ["a Text", `headers: "x"`, "E0201 7:24 Expected Map(Text, Text) but got Text"],
-    ["a value that is not a Text", `headers: {"X-A": 1}`, "E0201 7:32 Expected Text but got Int"],
-  ])("reports %s", (_, http, expected) => {
-    expect(diagnostics(app("", http))).toEqual([expected]);
-  });
-
-  it("reports a slot of the wrong type at the field", () => {
-    expect(diagnostics(app(`slot hs : Map(Text, Int) = {}`, `headers: hs`))).toEqual([
+    ["an Int", ``, `headers: 42`, "E0201 7:24 Expected Map(Text, Text) but got Int"],
+    ["a Text", ``, `headers: "x"`, "E0201 7:24 Expected Map(Text, Text) but got Text"],
+    [
+      "a value that is not a Text, at the value",
+      ``,
+      `headers: {"X-A": 1}`,
+      "E0201 7:32 Expected Text but got Int",
+    ],
+    [
+      "an Option(Text) value, which has to be unwrapped first",
+      `slot session : Option(Text) = None`,
+      `headers: {"Authorization": session}`,
+      "E0201 7:42 Expected Text but got Option(Text)",
+    ],
+    [
+      "a key that is not a Text, at the key",
+      ``,
+      `headers: {1: "a"}`,
+      "E0201 7:25 Expected Text but got Int",
+    ],
+    [
+      "a branch of an if that is not a map, at the branch",
+      `slot secure : Bool = true`,
+      `headers: if secure then {"X-A": "x"} else 42`,
+      "E0201 7:57 Expected Map(Text, Text) but got Int",
+    ],
+    [
+      "a slot of the wrong type, at the field",
+      `slot hs : Map(Text, Int) = {}`,
+      `headers: hs`,
       "E0201 7:24 Expected Map(Text, Text) but got Map(Text, Int)",
-    ]);
+    ],
+  ])("reports %s", (_, slots, http, expected) => {
+    expect(diagnostics(app(slots, http))).toEqual([expected]);
   });
 
-  it("accepts a map of Text values, computed or read from a slot", () => {
+  it("refuses bare header names: an unquoted key makes a record, not a map", () => {
+    // `-` is an identifier character, so `Content-Type` is one name, and
+    // `{Name: value}` with a bare name is a record literal. This compiled and ran
+    // before `headers` had a type; it is now E0201 by decision (http.md §6.3.1),
+    // and the quoted form beside it is the fix the diagnostic points to.
+    const pre = `slot token : Text = "t"`;
+    expect(
+      diagnostics(app(pre, `headers: {Content-Type: "application/json", Authorization: token}`)),
+    ).toEqual([
+      "E0201 7:24 Expected Map(Text, Text) but got {Content-Type: Text, Authorization: Text}",
+    ]);
+    expect(
+      diagnostics(
+        app(pre, `headers: {"Content-Type": "application/json", "Authorization": token}`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("accepts a map of Text values, computed, read from a slot or returned by a fn", () => {
     expect(
       diagnostics(
         app(
@@ -217,6 +264,26 @@ slot hs : Map(Text, Text) = {}`,
       ),
     ).toEqual([]);
     expect(diagnostics(app(`slot hs : Map(Text, Text) = {}`, `headers: hs`))).toEqual([]);
+    expect(
+      diagnostics(app(`fn extra() -> Map(Text, Text) = {"X-A": "a"}`, `headers: extra()`)),
+    ).toEqual([]);
     expect(diagnostics(app("", `headers: {}`))).toEqual([]);
+  });
+
+  it("accepts a type built on Text, as a value and as a map's value type", () => {
+    // "Assignable to Map(Text, Text)" compares the arguments by assignability,
+    // as `base-url` accepts a `Url` and `timeout` a user `nominal Int`. Were the
+    // arguments ever compared by name instead, the two slots would start
+    // reporting.
+    const pre = `type Token = nominal Text
+slot trace : Url = "https://trace.example.com"
+slot token : Token = "t"
+slot urls : Map(Text, Url) = {}
+slot tokens : Map(Text, Token) = {}`;
+    expect(diagnostics(app(pre, `headers: {"X-Trace": trace, "Authorization": token}`))).toEqual(
+      [],
+    );
+    expect(diagnostics(app(pre, `headers: urls`))).toEqual([]);
+    expect(diagnostics(app(pre, `headers: tokens`))).toEqual([]);
   });
 });
