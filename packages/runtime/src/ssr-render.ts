@@ -77,11 +77,6 @@ function controlAttrs(
   };
 }
 
-/** `controlAttrs` for an `<input>` nested inside its own markup. */
-function controlAttrString(props?: TileProps): string {
-  return serializeAttrs(controlAttrs(props, true));
-}
-
 /**
  * What a kind paints of its own accord — `column`'s flex axis, `card`'s box
  * metrics, `grid`'s tracks — as opposed to what its props map to. Some of it
@@ -490,21 +485,25 @@ export function renderTileToString(node: TileNode): string {
       );
     }
     case "check":
+    case "switch": {
       // The wrapping <label> is the element the mount path builds and the one
       // the common props land on, so it is the element hydration has to meet.
+      // The bind marker sits on the box inside it, as the renderer puts it.
+      const inner = serializeAttrs({
+        type: "checkbox",
+        checked: node.checked,
+        ...controlAttrs(node.props, true),
+        "data-kumiki-bind": bindAttr(node),
+      });
       return el(
         node,
         "label",
-        { "data-kumiki-tile": "check" },
-        `<input type="checkbox"${node.checked ? " checked" : ""}${controlAttrString(node.props)}>`,
+        node.kind === "switch"
+          ? { "data-kumiki-tile": "switch", role: "switch" }
+          : { "data-kumiki-tile": "check" },
+        `<input${inner}>`,
       );
-    case "switch":
-      return el(
-        node,
-        "label",
-        { "data-kumiki-tile": "switch", role: "switch" },
-        `<input type="checkbox"${node.checked ? " checked" : ""}${controlAttrString(node.props)}>`,
-      );
+    }
     case "radio": {
       const label = typeof node.props?.label === "string" ? node.props.label : "";
       const inner = serializeAttrs({
@@ -513,6 +512,7 @@ export function renderTileToString(node: TileNode): string {
         value: node.value === undefined ? undefined : String(node.value),
         checked: node.selected,
         ...controlAttrs(node.props, true),
+        "data-kumiki-bind": bindAttr(node),
       });
       return el(
         node,
