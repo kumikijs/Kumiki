@@ -113,4 +113,29 @@ app A
     submit(root);
     expect(app.live?.sends).toBe(1);
   });
+
+  it("does not submit while an Int field shows text that is no Int", async () => {
+    // The field says "Must be a whole number" (forms.md §5.1.2) while the slot
+    // keeps its last number, which passes; the form judges what is shown.
+    const app = await loadSource(`
+slot age   : Int = 30
+slot sends : Int = 0
+reducer send on=ui.submit(Signup) do= sends := sends + 1
+tile Signup = form(column(input(bind=age, id="a", type="number"), error(field=age)))
+app A
+    caps   = []
+    routes = {"/" -> Signup, "/404" -> Signup}
+    init   = []
+`);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mount(app, root);
+    fill(root, "a", "1.5");
+    expect(root.textContent).toContain("Must be a whole number");
+    submit(root);
+    expect(app.live?.sends).toBe(0);
+    fill(root, "a", "31");
+    submit(root);
+    expect(app.live?.sends).toBe(1);
+  });
 });

@@ -9,7 +9,7 @@ import type {
   TileProps,
   TileRenderer,
 } from "../../core.ts";
-import { resolveApp, shownSlotValue, slotAccepts } from "../../core.ts";
+import { refusedBindShown, resolveApp, shownSlotValue, slotAccepts } from "../../core.ts";
 import type { InputHandlers } from "./_shared.ts";
 import { INPUT_STATE, inputHandlers, reconcileId, setHandlers, tileId } from "./_shared.ts";
 
@@ -38,6 +38,9 @@ function boundSlotsValid(form: HTMLFormElement): boolean {
   }
   const inForm = { contains: (el: Node | null) => el !== null && controls.has(el) };
   for (const slot of slots) {
+    // Text that reads as no value of the bound base shows its own message
+    // (forms.md §5.1.2), whatever the slot still holds.
+    if (refusedBindShown(app, slot, inForm)?.unread) return false;
     if (!slotAccepts(app.slots[slot], shownSlotValue(app, slot, inForm))) return false;
   }
   return true;
