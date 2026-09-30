@@ -265,6 +265,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `130-storage-remove-clear.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.7.2](./http.md#_6-7-2-宣言-localstorage) |
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
+| `134-record-field-bind.kumiki` | type, slot, tile | フォーム | [§5.6](./forms.md#_5-6-バリデーション戦略) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |

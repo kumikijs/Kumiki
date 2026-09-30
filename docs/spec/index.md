@@ -265,6 +265,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `130-storage-remove-clear.kumiki` | slot, effect, reducer, tile | http | [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage) |
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
+| `134-record-field-bind.kumiki` | type, slot, tile | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
