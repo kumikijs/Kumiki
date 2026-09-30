@@ -255,6 +255,8 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
+boundary に捕まらない render の panic は、対応する `route.error` reducer を 1 回だけ発火する。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
+
 ---
 
 ## 7.6 確認ダイアログ {#_7-6-confirmation-dialogs}
