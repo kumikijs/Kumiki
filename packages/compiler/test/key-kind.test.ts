@@ -102,6 +102,21 @@ describe("a reader of a Bool key records bool", () => {
   });
 });
 
+describe("a reader of a structured key records value", () => {
+  // A record, a union value or a tuple is stored under its JSON, and read back
+  // by parsing it.
+  it.each([
+    ["type Color = Red | Green", "Set(Color)", "st.to-list", "List(Color)"],
+    ["type Pt = {x: Int, y: Int}", "Set(Pt)", "st.to-list", "List(Pt)"],
+    ["type Color = Red | Green", "Map(Color, Int)", "st.keys", "List(Color)"],
+    ["type Pt = {x: Int, y: Int}", "Map(Pt, Int)", "st.entries", "List(Tuple(Pt, Int))"],
+    ["type Unused = {u: Int}", "Set(Tuple(Int, Int))", "st.to-list", "List(Tuple(Int, Int))"],
+    ["type Unused = {u: Int}", "Set(Option(Int))", "st.to-list", "List(Option(Int))"],
+  ])("%s / %s / %s", (decl, containerType, rhs, resType) => {
+    expect(kindOf(`${decl}\nslot st : ${containerType} = {}`, resType, rhs)).toBe("value");
+  });
+});
+
 describe("a Text key records nothing", () => {
   it("Map(Text, Int) / m.keys", () => {
     expect(kindOf(`slot m : Map(Text, Int) = {}`, "List(Text)", "m.keys")).toBeUndefined();
