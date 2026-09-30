@@ -1,0 +1,7 @@
+{
+  "POST /orders": {
+    "status": 201,
+    "text": "<html>Created</html>",
+    "headers": { "content-type": "text/html" }
+  }
+}
