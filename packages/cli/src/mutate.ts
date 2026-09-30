@@ -9,6 +9,7 @@ import {
   directDeps,
   findReferences,
   load,
+  loadSource,
   referenceSites,
   type Store,
   viewDef,
@@ -258,11 +259,20 @@ function appendLine(file: string, line: string): void {
 }
 
 /**
- * Validate that the source a write would leave still parses and typechecks.
- * Returns `{ ok: true }`, or `{ ok: false }` with a message naming the first
- * few errors.
+ * Decide whether `next` may replace `before` on `path`. Returns the reason to
+ * refuse, if there is one.
+ *
+ * The new source must parse and typecheck, and no definition the write
+ * touches may be locked by another agent (§9.8.3). What is touched is read
+ * off the two sources, not off the verb: a body is written as given, so a
+ * `replace` / `add` / `edit` body can carry a second definition with it, a
+ * cascade removes dependents and a rename rewrites referrers.
  */
-function validate(src: string): { ok: true } | { ok: false; message: string } {
+function validate(
+  path: string,
+  before: string,
+  src: string,
+): { ok: true } | { ok: false; message: string } {
   try {
     const program = parse(lex(src));
     // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
@@ -281,10 +291,46 @@ function validate(src: string): { ok: true } | { ok: false; message: string } {
         .join("; ");
       return { ok: false, message: `Validation failed: ${summary}` };
     }
-    return { ok: true };
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
+  const locked = lockViolation(path, touchedDefinitions(before, src));
+  return locked === undefined ? { ok: true } : { ok: false, message: locked };
+}
+
+/** The one order qualified names are listed in, in reports and in checks. */
+const compareQNames = (a: string, b: string): number => a.localeCompare(b);
+
+/**
+ * Every definition that differs between two sources: added, removed, or with
+ * different text. A source that does not parse contributes no definitions, so
+ * everything in the other one counts as touched.
+ */
+function touchedDefinitions(before: string, after: string): string[] {
+  const a = definitionTexts(before);
+  const b = definitionTexts(after);
+  const touched = new Set<string>();
+  for (const [q, text] of a) if (b.get(q) !== text) touched.add(q);
+  for (const q of b.keys()) if (!a.has(q)) touched.add(q);
+  return [...touched].sort(compareQNames);
+}
+
+function definitionTexts(source: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let store: Store;
+  try {
+    store = loadSource(source);
+  } catch {
+    return out;
+  }
+  for (const e of store.defs) {
+    const q = `${e.layer}.${e.name}`;
+    const text = store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
+    // A name defined twice keeps both texts, so touching either one shows.
+    const prior = out.get(q);
+    out.set(q, prior === undefined ? text : `${prior}\n\0\n${text}`);
+  }
+  return out;
 }
 
 /**
@@ -304,9 +350,9 @@ function validate(src: string): { ok: true } | { ok: false; message: string } {
  * between.
  */
 function commit(path: string, next: string, verb: string, log: () => string): string {
-  const v = validate(next);
-  if (!v.ok) throw new Error(`${verb} rejected: ${v.message}`);
   const before = readFileSync(path, "utf8");
+  const v = validate(path, before, next);
+  if (!v.ok) throw new Error(`${verb} rejected: ${v.message}`);
   atomicWriteFileSync(path, next);
   try {
     return log();
@@ -356,28 +402,40 @@ function patternToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Refuse an op on a definition another agent has locked (§9.8.3).
- *
- * Each write verb checks the definition it was named with before it waits for
- * the write lock, so an op that may not touch the definition at all is told so
- * at once rather than after the wait; and it checks again under the write
- * lock, where the names a cascade reaches are known and an ownership lock
- * taken during the wait is seen.
+ * The refusal for the first of `qnames` another agent holds a lock on, if any.
+ * The one matcher both lock checks use: `enforceLock` on the named definition,
+ * and `validate` on everything the write touches.
  */
-function enforceLock(path: string, qname: string): void {
+function lockViolation(path: string, qnames: readonly string[]): string | undefined {
   const locks = readLocks(path);
-  if (locks.entries.length === 0) return;
+  if (locks.entries.length === 0) return undefined;
   const me = authorOf();
-  for (const e of locks.entries) {
-    if (e.agent === me) continue;
-    for (const pat of e.patterns) {
-      if (patternToRegExp(pat).test(qname)) {
-        throw new Error(
-          `lock violation: ${qname} is locked by ${e.agent} (pattern "${pat}"). Set KUMIKI_AUTHOR=${e.agent} to edit.`,
-        );
+  for (const qname of qnames) {
+    for (const e of locks.entries) {
+      if (e.agent === me) continue;
+      for (const pat of e.patterns) {
+        if (patternToRegExp(pat).test(qname)) {
+          return `lock violation: ${qname} is locked by ${e.agent} (pattern "${pat}"). Set KUMIKI_AUTHOR=${e.agent} to edit.`;
+        }
       }
     }
   }
+  return undefined;
+}
+
+/**
+ * Refuse, before anything is written, an op whose named definition is locked.
+ * Everything else the op turns out to touch is checked by `validate`, once the
+ * composed source shows what that is.
+ *
+ * Each write verb runs this before it waits for the write lock, so an op that
+ * may not touch its definition at all is told so at once rather than after
+ * the wait, and again under the write lock, where an ownership lock taken
+ * during the wait is seen.
+ */
+function enforceLock(path: string, qname: string): void {
+  const locked = lockViolation(path, [qname]);
+  if (locked !== undefined) throw new Error(locked);
 }
 
 /**
@@ -445,7 +503,9 @@ export function addDef(path: string, layer: string, name: string, body: string):
  * typecheck on their own, without the definition they depend on.
  */
 function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
-  for (const d of defs) enforceLock(path, `${d.layer}.${d.name}`);
+  // The named definition up front; the rest of `with` is covered by the
+  // before/after diff in `validate`, like anything else the write adds.
+  enforceLock(path, `${defs[0].layer}.${defs[0].name}`);
   const src = readFileSync(path, "utf8");
   // Compose definition syntax for the requested layer. The body argument is
   // the right-hand side (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for
@@ -524,7 +584,7 @@ function removeDefLocked(
     }
   }
   toRemove.delete(qname);
-  const set: RemovedNames = [qname, ...[...toRemove].sort((a, b) => a.localeCompare(b))];
+  const set: RemovedNames = [qname, ...[...toRemove].sort(compareQNames)];
   return removeSet(path, store, set, cascade);
 }
 
@@ -535,9 +595,11 @@ function removeDefLocked(
  * recorded, which is not re-derived: what references the first member now may
  * be more or less than what did when the op was made.
  *
- * Refused before anything is written when a member is locked by another agent,
- * is no longer in the file, or is referenced by a definition outside the set —
- * removing it would leave that reference dangling.
+ * Refused before anything is written when the first member is locked by
+ * another agent, or a member is no longer in the file or is referenced by a
+ * definition outside the set — removing it would leave that reference
+ * dangling. Any other locked member is caught by `validate`'s before/after
+ * diff, which rolls the write back.
  */
 function removeSet(
   path: string,
@@ -545,7 +607,7 @@ function removeSet(
   set: RemovedNames,
   cascade: boolean,
 ): { opId: string; removed: RemovedNames } {
-  for (const q of set) enforceLock(path, q);
+  enforceLock(path, set[0]);
   const missing = set.filter((q) => !store.byQName.has(q));
   if (missing.length > 0) {
     throw new Error(
