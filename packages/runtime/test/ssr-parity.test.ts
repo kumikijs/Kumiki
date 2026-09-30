@@ -413,12 +413,16 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [
       ["check", { kind: "check", checked: true }],
       ["check (id, control state)", { kind: "check", checked: false, props: { id: "c" } }],
+      // The bind marker sits on the box inside the <label>, built from a path
+      // through `bindLabel` as the input row above explains.
+      ["check (bind)", { kind: "check", checked: true, bind: "agreed" }],
     ],
   },
   switch: {
     cases: [
       ["switch", { kind: "switch", checked: true }],
       ["switch (id)", { kind: "switch", checked: false, props: { id: "s" } }],
+      ["switch (bind)", { kind: "switch", checked: false, bind: "lit" }],
     ],
   },
   radio: {
@@ -428,6 +432,20 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         { kind: "radio", group: "plan", value: "pro", selected: true, props: { label: "Pro" } },
       ],
       ["radio (no label)", { kind: "radio", group: "plan", value: "free" }],
+      [
+        "radio (bind)",
+        { kind: "radio", group: "plan", value: "pro", selected: true, bind: "plan" },
+      ],
+      [
+        "radio (bind through .get)",
+        {
+          kind: "radio",
+          group: "plan",
+          value: "pro",
+          bind: "form",
+          bindPath: [{ get: true }, "plan"],
+        },
+      ],
     ],
   },
   select: {

@@ -32,6 +32,7 @@ effect http-post cap=http.post
                  in={
                    url: Url,
                    headers: Map(Text, Text),
+                   query: Map(Text, Text),
                    body: HttpBody,
                    decode: Decoder
                  }
@@ -39,6 +40,8 @@ effect http-post cap=http.post
 
 # put / patch / delete have the same shape
 ```
+
+`query` is sent as the URL's query string, by every `http.*` method alike (get, post, put, patch and delete): each entry is URL-encoded (`URLSearchParams`, so a space becomes `+` and an `&` inside a value is escaped) and appended to `url`, after any query string `url` already carries and before a fragment. An empty `query` leaves `url` as written. The order of the entries in the query string is not guaranteed; do not rely on it.
 
 `http.get` and the like **cannot be used unless declared** (capability guard). They must be enumerated in `app.caps`.
 
@@ -53,6 +56,21 @@ type HttpBody = Json(JsonValue)
               | Empty
 ```
 
+Each variant is sent as what it names:
+
+| variant | request body |
+|---|---|
+| `Json(v)` | `v` as JSON; `Json` of `Unit` is `null` |
+| `Form(m)` | `m` URL-encoded (`a=1&b=2`) |
+| `Multipart(m)` | a `FormData` of `m`; a `FileV` entry is sent as the file, and a `FileV` that holds no file (a file record restored from persistence) fails the effect with `HttpError{status: 0}` before any request |
+| `Text(t)` | `t` as-is |
+| `Bytes(b)` | the bytes of `b` |
+| `Empty` | no body |
+
+A `body` that is not an `HttpBody` variant (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`.
+
+`GET` and `HEAD` send no body, whatever `body` holds.
+
 ### 6.1.4 The Decoder Type
 
 ```kumiki snippet
@@ -62,18 +80,21 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe. If you specify `Decoder.Json(User)`, the response JSON is decoded into the `User` type. Failures are stored in the `body` of `HttpError`.
+Response decoding is type-safe at compile time; at runtime only the JSON syntax is checked. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A body that parses but does not match the declared type is not detected at runtime. A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
 
 ### 6.1.5 Common props (auto-applied)
 
 All HTTP effects automatically apply the following:
 
 - `Accept: application/json` (when the Decoder is Json)
-- `Content-Type: application/json` (when the HttpBody is Json)
-- `Content-Type: multipart/form-data` (when Multipart)
+- `Content-Type: application/json` (when the HttpBody is Json, or the body is not an HttpBody variant)
+- `Content-Type: application/x-www-form-urlencoded` (when Form)
+- `Content-Type: multipart/form-data` (when Multipart; written by fetch itself, so that it carries the boundary)
 - `User-Agent: Kumiki`
 
-User-specified headers take precedence.
+User-specified headers take precedence: `app.http.headers` over the defaults above, and the effect's own `headers` over `app.http.headers`. A header name is compared case-insensitively at every step, so an effect's `content-type` replaces a global `Content-Type` and exactly one value is sent.
+
+The one exception is `Multipart`: a `Content-Type` the program sets on it is dropped, because the header must carry the boundary that only fetch knows. `multipart/form-data` without that boundary cannot be parsed by the server.
 
 ---
 
@@ -262,7 +283,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification).
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON: the server already accepted the request, so a retry would duplicate its effect.
 
 ---
 
