@@ -8,6 +8,7 @@ import {
   clearBindDataset,
   IME_COMPOSING,
   INPUT_STATE,
+  type InputHandlers,
   inputHandlers,
   installCompositionGuard,
   liveApp,
@@ -24,6 +25,26 @@ function setBooleanAttr(inp: HTMLElement, name: string, on: boolean): void {
   } else if (inp.hasAttribute(name)) {
     inp.removeAttribute(name);
   }
+}
+
+type InputNode = Parameters<TileRenderer<"input">>[0];
+
+/** The handler slot for an input, with the reader its bound slot's type needs. */
+function withParse(h: InputHandlers, node: InputNode): InputHandlers {
+  if (node.parse) h.parse = node.parse;
+  return h;
+}
+
+/**
+ * Does `text` read as the same value the node shows? Asked of any field with a
+ * reader — a number field bound to an `Int` / `Float`, a date or
+ * datetime-local field bound to a `Time`.
+ */
+function readsSame(node: InputNode, text: string): boolean {
+  if (!node.parse) return false;
+  const shown = node.parse.read(text);
+  const held = node.parse.read(node.value ?? "");
+  return shown._tag === "Some" && held._tag === "Some" && shown._0 === held._0;
 }
 
 export const inputTile: TileRenderer<"input"> = (node) => {
@@ -46,12 +67,12 @@ export const inputTile: TileRenderer<"input"> = (node) => {
     inp.value = node.value ?? "";
     installCompositionGuard(inp);
   }
-  setHandlers(inp, inputHandlers(node));
+  setHandlers(inp, withParse(inputHandlers(node), node));
   inp.addEventListener("input", () => {
     const state = INPUT_STATE.get(inp);
     if (state?.bind && inp.type !== "file") {
       const app = liveApp(inp);
-      if (app) writeBind(app, inp, state.bind, state.bindPath, inp.value);
+      if (app) writeBind(app, inp, state.bind, state.bindPath, inp.value, state.parse);
     }
     if (state?.onInput) state.onInput({ ...(state.el ?? {}), value: inp.value });
   });
@@ -107,9 +128,16 @@ export const inputPatcher: TilePatcher<"input"> = (el, _oldNode, newNode) => {
     // `compositionend` fires, the browser dispatches a normal `input` event
     // that syncs the slot to the committed text, and the next render's
     // divergence is genuine.
+    //
+    // A field with a reader (a bound `Int` / `Float` / `Time`) reads its text
+    // as a value, so text that reads as the value the slot now holds is
+    // already showing it: "2.50" is 2.5, and rewriting it to "2.5" mid-typing
+    // would move the caret out from under the user.
     const nextValue = newNode.value ?? "";
-    if (inp.value !== nextValue && !IME_COMPOSING.has(inp)) inp.value = nextValue;
+    if (inp.value !== nextValue && !IME_COMPOSING.has(inp) && !readsSame(newNode, inp.value)) {
+      inp.value = nextValue;
+    }
   }
-  setHandlers(inp, inputHandlers(newNode));
+  setHandlers(inp, withParse(inputHandlers(newNode), newNode));
   applyControlState(el, (newNode as { props?: TileProps }).props);
 };

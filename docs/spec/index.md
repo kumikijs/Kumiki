@@ -105,6 +105,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | forms |
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | lifecycle |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | forms |
+| [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | forms |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
@@ -260,6 +261,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | http | [§6.1.2](./http.md#_6-1-2-standard-effect) |
 | `128-http-body-variants.kumiki` | slot, effect, reducer, tile | http | [§6.1.3](./http.md#_6-1-3-the-httpbody-type) |
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
+| `133-typed-input-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `144-builtin-effect-input.kumiki` | slot, reducer, tile | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
