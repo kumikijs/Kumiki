@@ -149,6 +149,12 @@ function uuidV4(c: PlatformCrypto | undefined): string {
 
 export const _stdlibCore = {
   /**
+   * The object key a Map literal's key is stored under — the one encoder
+   * every other member uses (`entryKey` in core.ts), so `{{x: 0, y: 0}: "o"}`
+   * holds the entry `insert({x: 0, y: 0}, "o")` would.
+   */
+  entryKey,
+  /**
    * Record a slot write against its refinement and return the value unchanged
    * (runtime.md §10.3.3). Codegen wraps every assignment to a refined slot, so
    * the check happens *per write* rather than on the batch's final value —
@@ -297,25 +303,17 @@ export const _stdlibCore = {
     for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
     return out;
   },
-  mapFilter(
-    m: Record<string, unknown>,
-    pred: (k: string, v: unknown) => boolean,
-  ): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(m ?? {})) if (pred(k, v)) out[k] = v;
-    return out;
-  },
   /**
    * Polymorphic `.filter` dispatch — used by codegen when the receiver type
    * isn't statically known (e.g. `m.keys.filter(...)` vs `m.filter(...)`).
    * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
    * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
    * so it has to be told apart before the Map branch reads its `_tag` / `_0`
-   * fields as entries; other objects (Maps in Kumiki) fall back to the
-   * (k, v) → boolean predicate of mapFilter, with `k` restored to the key's
-   * declared kind as `keys` restores it.
+   * fields as entries; other objects (Maps in Kumiki) hand the predicate
+   * each `[key, value]` pair, the key restored to its declared kind as
+   * `keys` restores it.
    */
-  filter(coll: unknown, pred: (...args: unknown[]) => boolean, kind?: KeyKind): unknown {
+  filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
     if (_stdlibCore.variantIs(coll, "Some")) {
       const value = (coll as { _0: unknown })._0;
@@ -325,7 +323,10 @@ export const _stdlibCore = {
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        if (pred(restoreKey(k, kind), v)) out[k] = v;
+        // One argument, the `[key, value]` pair, as `.entries` hands a List
+        // predicate its elements: the lambda then reads `$1` / `$2` off the
+        // pair, and never takes a two-element key for the pair itself.
+        if (pred([restoreKey(k, kind), v])) out[k] = v;
       }
       return out;
     }

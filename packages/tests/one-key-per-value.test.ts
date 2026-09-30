@@ -11,9 +11,20 @@
 // reads it off the page after one click. Example 123 carries the same claims
 // as a scenario.
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { testFile } from "@kumikijs/cli";
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
+
+const EXAMPLE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "examples",
+  "features",
+  "123-one-key-per-value.kumiki",
+);
 
 const TYPES = `type Color  = Red | Green | Blue
 type ItemId = nominal Int
@@ -80,6 +91,24 @@ describe("a record key is one entry per value", () => {
     );
     expect(text).toContain("n=2 at=b!");
   });
+
+  it("whatever order the fields of a record inside a payload or a record were written in", async () => {
+    const text = await afterClick(
+      "slot m : Map(Option(Pt), Text) = {}\nslot r : Map({a: Pt}, Text) = {}",
+      'm := m.insert(Some({x: 0, y: 1}), "a").insert(Some({y: 1, x: 0}), "b")\nr := r.insert({a: {x: 0, y: 1}}, "a").insert({a: {y: 1, x: 0}}, "b")',
+      '"m=" + m.size.show + " " + m.get-or(Some({x: 0, y: 1}), "-") + " r=" + r.size.show + " " + r.get-or({a: {x: 0, y: 1}}, "-")',
+    );
+    expect(text).toContain("m=1 b r=1 b");
+  });
+
+  it("union, intersect and diff meet members written in different field orders", async () => {
+    const text = await afterClick(
+      "slot a : Set(Pt) = {}\nslot b : Set(Pt) = {}",
+      "a := a.add({x: 1, y: 2}).add({x: 3, y: 4})\nb := b.add({y: 2, x: 1})",
+      '"u=" + a.union(b).size.show + " i=" + a.intersect(b).size.show + " d=" + a.diff(b).size.show',
+    );
+    expect(text).toContain("u=2 i=1 d=1");
+  });
 });
 
 describe("the readers hand a structured key back as the value it was written from", () => {
@@ -131,5 +160,82 @@ describe("remove takes out the entry add and insert put in", () => {
   ])("%s", async (_what, slot, body, has) => {
     const text = await afterClick(slot, body, `"n=" + c.size.show + " has=" + ${has}.show`);
     expect(text).toContain("n=1 has=false");
+  });
+});
+
+describe("a key written in a Map literal is stored the way insert stores it", () => {
+  it.each([
+    [
+      "a record key, found whatever order its fields are written in",
+      "slot m : Map(Pt, Text) = {}\nslot ks : List(Pt) = []",
+      'm := {{y: 2, x: 1}: "a"}\nks := m.keys',
+      '"n=" + m.size.show + " has=" + m.has({x: 1, y: 2}).show + " at=" + m.get-or({x: 1, y: 2}, "-") + " grown=" + m.insert({x: 1, y: 2}, "b").size.show',
+      { ks: [{ x: 1, y: 2 }] },
+    ],
+    [
+      "a variant key with a payload",
+      "slot m : Map(Option(Int), Text) = {}\nslot ks : List(Option(Int)) = []",
+      'm := {Some(1): "a"}\nks := m.keys',
+      '"n=" + m.size.show + " has=" + m.has(Some(1)).show + " at=" + m.get-or(Some(1), "-") + " grown=" + m.insert(Some(1), "b").size.show',
+      { ks: [{ _tag: "Some", _0: 1 }] },
+    ],
+    [
+      "a tuple key",
+      "slot m : Map(Tuple(Int, Int), Text) = {}\nslot ks : List(Tuple(Int, Int)) = []",
+      'm := {(1, 2): "a"}\nks := m.keys',
+      '"n=" + m.size.show + " has=" + m.has((1, 2)).show + " at=" + m.get-or((1, 2), "-") + " grown=" + m.insert((1, 2), "b").size.show',
+      { ks: [[1, 2]] },
+    ],
+  ])("%s", async (_what, slots, body, shown, keys) => {
+    const { text, state } = await click(slots, body, shown);
+    expect(text).toContain("n=1 has=true at=a grown=1");
+    expect(state).toMatchObject(keys);
+  });
+
+  it("is gated like an inserted key, so a refined value in it is refused, not a crash", async () => {
+    const src = `${TYPES}
+slot m : Map(Pt, Text where nonempty) = {}
+reducer go on=ui.click(Go) do=
+    m := {{x: 0, y: 0}: ""}
+tile Go = button(text="go") {id: "go"}
+tile App = column(Go, text("n=" + m.size.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const report = await runScenario(await loadSource(src), root, {
+      steps: [{ do: { click: "#go" }, expect: { noErrors: true } }],
+    });
+    const failures = JSON.stringify(report.steps[0]?.failures);
+    expect(failures).toContain("nonempty");
+    expect(failures).not.toContain("JSON");
+    expect(report.steps[0]?.domText).toContain("n=0");
+  });
+
+  it("in a reducer test's expected state, equals the Map the reducer built", async () => {
+    const results = await testFile(EXAMPLE);
+    expect(results.map((r) => `${r.name}:${r.pass}`)).toEqual(["mark-writes-two-cells:true"]);
+  });
+});
+
+describe("a Map's filter hands its predicate the key and the value, whatever shape the key has", () => {
+  it("binds $2 to the value on a tuple-keyed Map", async () => {
+    const { state } = await click(
+      "slot m : Map(Tuple(Int, Int), Int) = {(1, 2): 10, (3, 4): 0}\nslot ks : List(Tuple(Int, Int)) = []",
+      "ks := m.filter($2 > 0).keys",
+      '"read"',
+    );
+    expect(state.ks).toEqual([[1, 2]]);
+  });
+
+  it("binds $1 to the whole tuple key", async () => {
+    const { state } = await click(
+      "slot m : Map(Tuple(Int, Int), Int) = {}\nslot ks : List(Tuple(Int, Int)) = []",
+      "ks := m.insert((1, 2), 10).insert((3, 4), 0).filter($1 == (3, 4)).keys",
+      '"read"',
+    );
+    expect(state.ks).toEqual([[3, 4]]);
   });
 });

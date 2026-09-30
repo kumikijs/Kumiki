@@ -211,7 +211,8 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
   // strict `eq` and kept nothing.
   it("Map.filter hands its predicate the restored key and keeps the entry under its stored key", () => {
     const seen: unknown[] = [];
-    const pred = (k: unknown) => {
+    const pred = (pair: unknown) => {
+      const [k] = pair as [unknown, unknown];
       seen.push(k);
       return k === 3;
     };
@@ -255,7 +256,8 @@ describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () =
   });
 
   it("still filters a Map entry-wise", () => {
-    expect(_stdlibCore.filter({ a: 1, b: 2 }, (_k, v) => (v as number) > 1)).toEqual({ b: 2 });
+    const pred = (pair: unknown) => (pair as [string, number])[1] > 1;
+    expect(_stdlibCore.filter({ a: 1, b: 2 }, pred)).toEqual({ b: 2 });
   });
 });
 

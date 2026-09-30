@@ -2,44 +2,129 @@
   "steps": [
     {
       "label": "adding one variant to a Set leaves the others out",
-      "do": { "click": "#red" },
-      "expect": { "noErrors": true, "domIncludes": ["picked: 1 red=true green=false blue=false"] }
+      "do": {
+        "click": "#red"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "picked: 1 red=true green=false blue=false",
+          "literal record: has=true at=rec",
+          "literal variant: some=one none=none two=false",
+          "literal tuple: 2 has12=true has34=true"
+        ]
+      }
     },
     {
       "label": "toggling another variant adds it beside the first",
-      "do": { "click": "#green" },
-      "expect": { "noErrors": true, "domIncludes": ["picked: 2 red=true green=true blue=false"] }
+      "do": {
+        "click": "#green"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["picked: 2 red=true green=true blue=false"]
+      }
     },
     {
       "label": "an index write counts one variant",
-      "do": { "click": "#vote-red" },
-      "expect": { "noErrors": true, "domIncludes": ["votes: 1 red=1 green=0 blue=0"] }
+      "do": {
+        "click": "#vote-red"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["votes: 1 red=1 green=0 blue=0"]
+      }
     },
     {
       "label": "an insert counts another, separately",
-      "do": { "click": "#vote-green" },
-      "expect": { "noErrors": true, "domIncludes": ["votes: 2 red=1 green=1 blue=0"] }
+      "do": {
+        "click": "#vote-green"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["votes: 2 red=1 green=1 blue=0"]
+      }
     },
     {
       "label": "a record key is one entry whatever order its fields were written in",
-      "do": { "click": "#mark" },
-      "expect": { "noErrors": true, "domIncludes": ["cells: 2 above=above! origin=origin"] }
+      "do": {
+        "click": "#mark"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["cells: 2 above=above! origin=origin"]
+      }
     },
     {
       "label": "the readers hand structured keys back as the values they were written from",
-      "do": { "click": "#read" },
+      "do": {
+        "click": "#read"
+      },
       "expect": {
         "noErrors": true,
         "state": {
-          "pickedList": [{ "_tag": "Red" }, { "_tag": "Green" }],
-          "voteKeys": [{ "_tag": "Red" }, { "_tag": "Green" }],
-          "cellPairs": [[{ "x": 0, "y": 0 }, "origin"], [{ "x": 0, "y": 1 }, "above!"]]
+          "pickedList": [
+            {
+              "_tag": "Red"
+            },
+            {
+              "_tag": "Green"
+            }
+          ],
+          "voteKeys": [
+            {
+              "_tag": "Red"
+            },
+            {
+              "_tag": "Green"
+            }
+          ],
+          "cellPairs": [
+            [
+              {
+                "x": 0,
+                "y": 0
+              },
+              "origin"
+            ],
+            [
+              {
+                "x": 0,
+                "y": 1
+              },
+              "above!"
+            ]
+          ],
+          "litKeys": [
+            {
+              "x": 1,
+              "y": 2
+            }
+          ],
+          "litOptList": [
+            [
+              {
+                "_tag": "Some",
+                "_0": 1
+              },
+              "one"
+            ],
+            [
+              {
+                "_tag": "None"
+              },
+              "none"
+            ]
+          ],
+          "litPairKeys": [[1, 2], [3, 4]]
         }
       }
     },
     {
       "label": "remove takes out the entry that add and insert put in, whatever the key's type",
-      "do": { "click": "#remove" },
+      "do": {
+        "click": "#remove"
+      },
       "expect": {
         "noErrors": true,
         "domIncludes": [
@@ -51,6 +136,16 @@
           "flags: 1 true=false",
           "words: 1 x=false"
         ]
+      }
+    },
+    {
+      "label": "a Map's filter hands its predicate the value, whatever shape the key has",
+      "do": {
+        "click": "#positive"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["literal tuple: 1 has12=true has34=false"]
       }
     }
   ]
