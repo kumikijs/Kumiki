@@ -80,9 +80,9 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe. If you specify `Decoder.Json(User)`, the response JSON is decoded into the `User` type. A body that fails to decode is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)).
+Response decoding is type-safe at compile time; at runtime the JSON syntax is checked, and so is every predicate the declared type carries. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
 
-The decoded value is also checked against `T`: every predicate `T` carries, at every position it is written at — the check a write to a slot of type `T` gets ([§10.3.3](./runtime.md#_10-3-3-batching)). A value it refuses is the same `HttpError`, with a `message` that names the predicate and where the value failed it (`decode failed: uuid at .id`). Only the predicates are checked: a position where `T` carries none is taken as it arrives.
+The decoded value is also checked against `T`: every predicate `T` carries, at every position it is written at — the check a write to a slot of type `T` gets ([§10.3.3](./runtime.md#_10-3-3-batching)). A value it refuses is the same `HttpError`, with a `message` that names the predicate and where the value failed it (`decode failed: uuid at .id`). Only the predicates are checked: a position where `T` carries none is taken as it arrives, so a body that parses but does not match the declared shape is not detected at runtime.
 
 ### 6.1.5 Common props (auto-applied)
 
@@ -285,7 +285,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a response whose body fails to decode: the server answered, so a retry would send the request again.
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
 
 ---
 
