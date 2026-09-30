@@ -287,8 +287,16 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `{ ${parts.join(", ")} }`;
     }
     case "ListLit": {
-      const items = `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
-      return e.asSet ? `_s.setOf(${items})` : items;
+      if (!e.asSet) return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+      // A Set's members are its keys, so a `<any-id>` member (test expect,
+      // §8.2.2) is a key wildcard, not a value: it cannot go through `setOf`,
+      // which would key the sentinel by its string form. The literal members
+      // are built as usual, and the wildcards are counted for the matcher,
+      // which pairs each with one otherwise-unmatched member.
+      const members = e.items.filter((it) => !(it.kind === "Wildcard" && it.wild === "any-id"));
+      const set = `_s.setOf([${members.map((it) => jsOfExpr(it, ctx)).join(", ")}])`;
+      const wild = e.items.length - members.length;
+      return wild === 0 ? set : `{ ...${set}, [_s.WILD_MEMBERS]: ${wild} }`;
     }
     // The same array a tuple pattern destructures — `tupleArm` guards with
     // `Array.isArray` and reads by index, so the two halves already agreed on

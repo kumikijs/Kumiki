@@ -216,10 +216,11 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       }
       // A set's members are an object's keys at runtime (`setAdd`,
       // `setToggle`, and `setOf` for a literal), so they are strings, read back
-      // as a number for a member over one. A Set that arrived as JSON — a
-      // decoder, a storage read — may still be an array, or the mix `add`
-      // makes of one (its entries plus keys): an entry whose value is not the
-      // `true` a key maps to is a member held as itself.
+      // as a number for a member over one. A Set may still be an array — one
+      // that arrived as JSON (a decoder, a storage read), or a literal in a
+      // position where the checker could not tell it is a Set — or the mix
+      // `add` makes of one (its entries plus keys): an entry whose value is
+      // not the `true` a key maps to is a member held as itself.
       case "Set": {
         const check = sub(a0);
         const members = `Array.isArray(v) ? v : Object.entries(v).map(([k, e]) => (e === true ? ${keyJs(a0, "k")} : e))`;

@@ -10,11 +10,11 @@
           "add5: 1",
           "add6: 2",
           "to-list: 5",
-          "remove-a: false",
+          "remove-a: truefalse",
           "toggle-b: 1",
           "union: 3",
           "intersect: 1",
-          "diff: 1",
+          "diff: true1",
           "bag-x: true"
         ]
       }

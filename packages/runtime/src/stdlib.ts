@@ -648,9 +648,11 @@ export const _stdlibCore = {
     return { ...obj, [k]: fn(obj[k]) };
   },
   /**
-   * A Set literal (`[1, 2]` where a `Set` is declared): the Set `add` builds
-   * from the same members, so a Set has one runtime form wherever it comes
-   * from (stdlib.md §2.2.2).
+   * A Set literal (`[1, 2]` where a `Set` is declared): the same value `add`
+   * builds from the same members, so a literal and an `add` chain are one form
+   * (stdlib.md §2.2.2). Going through `setAdd` rather than writing the keys
+   * here is deliberate: however `setAdd` keys a member, a literal keys it the
+   * same way, and an inlined loop would fork the two.
    */
   setOf(xs: readonly unknown[]): Record<string, true> {
     let s: Record<string, true> = {};

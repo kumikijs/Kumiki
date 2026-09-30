@@ -465,11 +465,20 @@ export type Expr =
       /**
        * The literal is checked against a `Set` type, so codegen builds the Set
        * a program's `add` would (`_s.setOf`) rather than an array. Filled in
-       * by the type checker.
+       * by the type checker (`checkAgainst`).
+       *
+       * Unlike `accessKind` and `keyKind`, a missing mark is not a safe
+       * default: a literal with no mark lowers to an array, which every Set
+       * member misreads — so codegen that runs without `check()` builds a
+       * wrong Set. And the mark is never cleared once set, so `checkAgainst`
+       * must only be called with a type the literal really is: a speculative
+       * probe (trying a variant arm, an overload) would leave it behind.
        */
       asSet?: true;
     }
-  | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit
+  // `{}` is both the empty Map and the empty Set, and the declared type
+  // decides which; every entry is a key and a value, so a non-empty one is a Map.
+  | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a
   // reducer-test `expect`; rejected elsewhere (E0109). `<any-id>` matches any
   // generated id; `<slots.X>` matches slot X's post-execution value.

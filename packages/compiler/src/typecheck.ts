@@ -2007,6 +2007,24 @@ function effectPayloadType(
   return out;
 }
 
+/**
+ * The type of the value an effect answers with on `outcome`: the halves of a
+ * `Result` `out=`, or the whole `out=` for success when it is not a `Result`.
+ * Unlike `effectPayloadType` this answers the failure half too, for a mock
+ * that supplies it.
+ */
+function effectOutcomeType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  if (outcome === "ok") return effectPayloadType(effect, "ok", sym);
+  const out = unaliasType(sym.effects.get(effect)?.outType ?? null, sym);
+  return out?.kind === "TypeApp" && out.name === "Result" && out.args.length === 2
+    ? (out.args[1] ?? null)
+    : null;
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -3066,13 +3084,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           bindLocal(inner, "$1", p1);
           bindLocal(inner, "$2", p2);
           checkExpr(a, sym, errors, inner);
-        }
-        // `union` / `intersect` / `diff` take another Set of the receiver's
-        // type (stdlib.md §2.2.2), so a list literal there is a Set literal and
-        // is built as one.
-        const other = e.args[0];
-        if (other && SET_OPERANDS.has(e.method) && isSetType(recvType, sym)) {
-          checkAgainst(other, recvType, sym, errors, ctx);
+          // An argument whose type the receiver's fixes is checked against it
+          // like any declared position — which is also what builds a list
+          // literal there as the Set it is declared to be (stdlib.md §2.2.2).
+          const declared = memberArgType(recvType, e.method, i, sym);
+          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
@@ -3137,13 +3153,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      const inner: Ctx = {
-        ...ctx,
-        localBinds: new Set(ctx.localBinds),
-        localTypes: new Map(ctx.localTypes),
-      };
-      bindLocal(inner, e.name, inferType(e.value, sym, inner));
-      checkExpr(e.body, sym, errors, inner);
+      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
       return;
     }
     case "TokenRef":
@@ -3399,6 +3409,49 @@ function pushMismatch(errors: KumikiError[], code: MismatchCode, message: string
   errors.push({ code, kind: MISMATCH_KIND[code], message, pos });
 }
 
+/** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
+function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner: Ctx = {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+  };
+  bindLocal(inner, e.name, inferType(e.value, sym, ctx));
+  return inner;
+}
+
+/**
+ * The type a member's `index`th argument is declared as by the receiver's
+ * type (stdlib.md §2.2), or `null` where the receiver does not fix one: a
+ * `List`'s element for `contains` / `push` / `prepend`, a `Map`'s value for
+ * `insert` / `update` (whose fragment answers the new value), and the
+ * receiver itself for a `Set`'s `union` / `intersect` / `diff`.
+ */
+function memberArgType(
+  recv: TypeExpr | null,
+  member: string,
+  index: number,
+  sym: SymbolTable,
+): TypeExpr | null {
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return null;
+  const [a, b] = t.args;
+  switch (t.name) {
+    case "List":
+      return index === 0 && LIST_ELEMENT_ARGS.has(member) ? (a ?? null) : null;
+    case "Map":
+      return index === 1 && MAP_VALUE_ARGS.has(member) ? (b ?? null) : null;
+    case "Set":
+      return index === 0 && SET_OPERANDS.has(member) ? recv : null;
+    default:
+      return null;
+  }
+}
+
+const LIST_ELEMENT_ARGS: ReadonlySet<string> = new Set(["contains", "push", "prepend"]);
+const MAP_VALUE_ARGS: ReadonlySet<string> = new Set(["insert", "update"]);
+const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
+
 /**
  * Check `e` against the type the site declares, reporting at the innermost
  * expression that is wrong.
@@ -3413,14 +3466,6 @@ function pushMismatch(errors: KumikiError[], code: MismatchCode, message: string
  * (E0202) — the diagnostic that already told authors to look at the effect's
  * `in=` type.
  */
-/** The `Set` members whose argument is another `Set` of the receiver's type. */
-const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
-
-function isSetType(t: TypeExpr | null, sym: SymbolTable): boolean {
-  const u = unaliasType(t, sym);
-  return u?.kind === "TypeApp" && u.name === "Set";
-}
-
 function checkAgainst(
   e: Expr,
   declared: TypeExpr | null,
@@ -3471,10 +3516,9 @@ function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
-    // A `Set` is written `{}` and nothing else: the grammar has no non-empty
-    // set literal (`{"a", "b"}` does not parse, and `{a, b}` is a record), so
-    // an entry can only come from a `Map`. Both are the same node kind, which
-    // is why the declared type decides.
+    // `{}` is both the empty Map and the empty Set, so the declared type
+    // decides. A non-empty Set is written as a list literal (the branch
+    // above); every entry here is a key and a value, which only a `Map` has.
     if (d.name === "Set") return;
     if (d.name === "Map") {
       for (const ent of e.entries) {
@@ -3497,6 +3541,11 @@ function checkAgainst(
     // reporting at the `if`.
     checkAgainst(e.consequent, declared, sym, errors, ctx, code);
     checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    return;
+  }
+  if (e.kind === "LetIn") {
+    // The body is the value that lands here, read with the name bound.
+    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code);
     return;
   }
   if (e.kind === "MatchExpr") {
@@ -4381,8 +4430,8 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         e.pos,
       );
     case "MapLit": {
-      // `{}` is both the empty map and the only set literal the grammar has,
-      // so an entry-less literal says nothing about which it is.
+      // `{}` is both the empty Map and the empty Set, so an entry-less literal
+      // says nothing about which it is.
       if (e.entries.length === 0) return null;
       const k = commonType(
         e.entries.map((ent) => inferType(ent.key, sym, ctx)),
@@ -4701,10 +4750,12 @@ function keyKindOfReader(
  *
  * Everything else is `null`, which binds the name with no type — as every
  * fragment was bound before. That includes an element whose runtime value may
- * be a 2-element array without being a `Tuple` (a `List`, a `Set` that
- * arrived as JSON, or a type parameter): the lowering takes any such
- * array apart, so the element type is not what `$1` holds there. `Map.map` is absent because its lowering does not iterate a
- * Map at all.
+ * be a 2-element array without being a `Tuple` (a `List`, a `Set` — a Set
+ * literal is built as a Set only where the checker knows its type, and one
+ * that arrived as JSON may be an array — or a type parameter): the lowering
+ * takes any such array apart, so the element type is not what `$1` holds
+ * there. `Map.map` is absent because its lowering does not iterate a Map at
+ * all.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
@@ -5761,14 +5812,14 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
       checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
-    // A test's slot value is lowered like the slot's own initializer, so it
-    // needs the annotations `checkAgainst` leaves on the way — a list literal
-    // where the slot holds a `Set` has to be built as one (`asSet`), or a
-    // `given` seeds, and an `expect` compares against, the wrong form. Whether
-    // a test value is reported against its slot's type is a separate question;
-    // the walk's findings are not this function's to report.
+    // A test's slot value is the slot's value — seeded by a `given`, compared
+    // whole by an `expect` — so it is checked against the slot's type the way
+    // the slot's own initializer is: a `Text` seeded into an `Int` is the same
+    // mistake in either place. The walk also leaves the annotations lowering
+    // reads: a list literal where the slot holds a `Set` is built as one
+    // (`asSet`). An `expect` wildcard has no type, so it is never reported.
     const slot = sym.slots.get(f.name);
-    if (slot) checkAgainst(f.value, slot.type, sym, [], ctx);
+    if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
   }
 }
 
@@ -5845,7 +5896,15 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
         pos: item.pos,
       });
     }
-    if (item.kind === "Call") for (const a of item.args) checkExpr(a, sym, errors, ctx);
+    if (item.kind !== "Call") continue;
+    for (const a of item.args) checkExpr(a, sym, errors, ctx);
+    // The expected argument stands for the one the reducer emits, which is
+    // checked, and lowered, against the effect's `in=` type — so this one is
+    // too, or a Set the reducer emits is compared with the array the literal
+    // would otherwise be.
+    const inType = sym.effects.get(name)?.inType ?? null;
+    const arg = item.args[0];
+    if (arg && item.args.length === 1) checkAgainst(arg, inType, sym, errors, ctx);
   }
 }
 
@@ -5869,19 +5928,28 @@ function checkTestMockValues(
   ctx: Ctx,
   episode = false,
 ): void {
+  // The payload stands for the value the effect answers, which the reducer
+  // waiting on it reads as the effect's `out=` type — so it is checked, and
+  // lowered, against that type the way a slot's value is.
+  const checkOutcome = (effect: string, call: Expr & { kind: "Call" }): void => {
+    for (const a of call.args) checkExpr(a, sym, errors, ctx);
+    const payload = call.args[0];
+    const outcome = call.callee === "ok" ? "ok" : "err";
+    if (payload) checkAgainst(payload, effectOutcomeType(effect, outcome, sym), sym, errors, ctx);
+  };
   for (const f of recordFieldsOf(rec)) {
     const v = f.value;
     if (episode && v.kind === "Ref" && (v.name === "from-log" || v.name === "ignore")) continue;
     const outcome = v.kind === "Call" && (v.callee === "ok" || v.callee === "err") ? v : undefined;
     if (outcome) {
-      for (const a of outcome.args) checkExpr(a, sym, errors, ctx);
+      checkOutcome(f.name, outcome);
       continue;
     }
     if (v.kind === "Call" && v.callee === "delay" && !episode) {
       const [ms, inner] = v.args;
       if (ms) checkExpr(ms, sym, errors, ctx);
       if (inner?.kind === "Call" && (inner.callee === "ok" || inner.callee === "err")) {
-        for (const a of inner.args) checkExpr(a, sym, errors, ctx);
+        checkOutcome(f.name, inner);
         continue;
       }
     }

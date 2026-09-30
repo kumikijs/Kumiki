@@ -2,11 +2,12 @@
 #
 #   slot s : Set(Int) = [5]
 #
-# A list literal written where a `Set` is declared — a slot, a record field,
-# a `fn` parameter, a reducer write, a test's slots — builds the same value
-# `add` builds from those members, so every Set member reads it the way it
-# reads a Set built one `add` at a time: `has(5)` is true, a repeated member
-# counts once, and adding a member already there changes nothing.
+# A list literal written where a `Set` is declared — for example a slot, a
+# record field, a `fn` parameter, a reducer write, the argument of `union` /
+# `intersect` / `diff`, a test's slots — builds the same value `add` builds
+# from those members, so every Set member reads it the way it reads a Set
+# built one `add` at a time: `has(5)` is true, a repeated member counts once,
+# and adding a member already there changes nothing.
 
 type Bag = {tags: Set(Text)}
 
@@ -18,10 +19,12 @@ slot built : Bool      = false
 
 fn count(s: Set(Text)) -> Int = s.size
 
+# `built` reads `words` before the write replaces it, so the test's `given`
+# seed is what it reads: `has` finds "a" in a Set and not in an array.
 reducer rebuild on=ui.click(Rebuild) do=
+    built := words.has("a")
     words := ["c", "c", "d"]
     seen := count(["p", "q", "p"])
-    built := true
 
 tile Rebuild = button(text="rebuild") {id: "rebuild"}
 
@@ -32,11 +35,11 @@ tile App = column(
   text("add5: " + nums.add(5).size.show),
   text("add6: " + nums.add(6).size.show),
   text("to-list: " + nums.to-list.fold(0, $1 + $2).show),
-  text("remove-a: " + words.remove("a").has("a").show),
+  text("remove-a: " + words.remove("a").has("b").show + words.remove("a").has("a").show),
   text("toggle-b: " + words.toggle("b").size.show),
   text("union: " + words.union(bag.tags).size.show),
   text("intersect: " + words.intersect(["b", "z"]).size.show),
-  text("diff: " + words.diff(["b"]).size.show),
+  text("diff: " + words.diff(["b"]).has("a").show + words.diff(["b"]).size.show),
   text("bag-x: " + bag.tags.has("x").show),
   text("words: " + words.size.show + " c=" + words.has("c").show),
   text("fn-arg: " + seen.show),
