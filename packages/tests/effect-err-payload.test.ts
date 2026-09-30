@@ -76,7 +76,7 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     });
     const app = await loadSource(failingAtBoot("session.write", `{key: "k", value: "v"}`));
     const text = await problemShown(app);
-    expect(text).toContain("problem: Error: quota exceeded");
+    expect(text).toContain('problem: sessionStorage.setItem("k") failed: Error: quota exceeded');
     expect(text).not.toContain("[object Object]");
   });
 

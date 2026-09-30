@@ -1634,7 +1634,11 @@ describe("unhandled effect-error contract (#37)", () => {
       const r = await builtinEffects.storageRead({ key: "x" });
       expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
       const w = await builtinEffects.storageWrite({ key: "x", value: 1 });
-      expect(w).toEqual({ kind: "err", value: "Error: QuotaExceededError" });
+      // A failed write names the call and the key (§6.7.2), still as the Text.
+      expect(w).toEqual({
+        kind: "err",
+        value: 'localStorage.setItem("x") failed: Error: QuotaExceededError',
+      });
     } finally {
       Object.defineProperty(globalThis, "localStorage", { value: orig, configurable: true });
     }
@@ -1655,7 +1659,10 @@ describe("unhandled effect-error contract (#37)", () => {
       const r = await builtinEffects.sessionRead({ key: "x" });
       expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
       const w = await builtinEffects.sessionWrite({ key: "x", value: 1 });
-      expect(w).toEqual({ kind: "err", value: "Error: SecurityError" });
+      expect(w).toEqual({
+        kind: "err",
+        value: 'sessionStorage.setItem("x") failed: Error: SecurityError',
+      });
     } finally {
       Object.defineProperty(globalThis, "sessionStorage", { value: orig, configurable: true });
     }
