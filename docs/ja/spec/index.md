@@ -105,6 +105,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | フォーム |
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | ライフサイクル |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
+| [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
@@ -258,8 +259,11 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 | `122-value-equality.kumiki` | type, slot, reducer, tile | コア | [§1.9.4](./language.md#_1-9-4-演算子の型) |
 | `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | HTTP/Storage | [§6.1.2](./http.md#_6-1-2-標準-effect) |
+| `128-http-body-variants.kumiki` | slot, effect, reducer, tile | HTTP/Storage | [§6.1.3](./http.md#_6-1-3-httpbody-型) |
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
+| `133-typed-input-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 <!-- examples:end -->
 :::
