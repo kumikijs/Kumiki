@@ -1,8 +1,8 @@
 // A tile is a pure function of the slots and its `in` argument (language.md
-// §1.7.2 Invariant 1), and a binding ends with the scope that declared it
-// (§1.6.7). A user tile's body is not lexically inside its caller's `for`,
-// `match` or `let`, so a name the body reads as a slot is the slot wherever
-// the tile is called from — even where the caller has bound the same name.
+// §1.7.2 Invariant 1). None of its caller's `for` / `match` bindings are
+// visible in a user tile's body, so a name the body reads as a slot is the
+// slot wherever the tile is called from — even where the caller has bound the
+// same name.
 // The caller's bindings do reach the call's own argument: `FilterBtn(filter)`
 // passes the loop variable as `$1`.
 
@@ -70,5 +70,52 @@ tile App = column(for label in names Outer(label))`,
       ["outer: a;", "outer: b;", "show: from-slot;"],
       ["show: a;", "show: b;"],
     );
+  });
+
+  it("where the callee has `in=` too, its `$1` is its own argument, not the caller's", async () => {
+    // Both bodies bind `$1`; the inner call's is the literal it is given.
+    await renders(
+      `slot names : List(Text) = ["a", "b"]
+tile Inner in=Text = text("inner: " + $1 + ";")
+tile Outer in=Text = column(text("outer: " + $1 + ";"), Inner("fixed"))
+tile App = column(for label in names Outer(label))`,
+      ["outer: a;", "outer: b;", "inner: fixed;"],
+      ["inner: a;", "inner: b;"],
+    );
+  });
+
+  it("where the callee's own `for` binds the name the caller binds, the callee's wins", async () => {
+    await renders(
+      `slot names : List(Text) = ["a", "b"]
+slot items : List(Text) = ["x", "y"]
+tile Each = column(for label in items text("each: " + label + ";"))
+tile App = column(for label in names Each)`,
+      ["each: x;", "each: y;"],
+      ["each: a;", "each: b;"],
+    );
+  });
+
+  it("where the call has props, they see the caller's binding while the body reads the slot", async () => {
+    // Clicking the first button reports the `id` its call site gave it.
+    const shape = await loadSource(
+      app(`slot label  : Text       = "from-slot"
+slot names  : List(Text) = ["a", "b"]
+slot picked : Text       = "none"
+reducer pick on=ui.click(Show) do= picked := $el.id
+tile Show = button(text="show: " + label + ";")
+tile App = column(text("picked: " + picked + ";"), for label in names Show {id: label})`),
+    );
+    const report = await runScenario(shape, freshRoot(), {
+      steps: [
+        {
+          expect: { noErrors: true, domIncludes: ["show: from-slot;"], domExcludes: ["show: a;"] },
+        },
+        {
+          do: { clickText: "show: from-slot;" },
+          expect: { noErrors: true, domIncludes: ["picked: a;"] },
+        },
+      ],
+    });
+    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
   });
 });
