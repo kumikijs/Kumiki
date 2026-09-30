@@ -80,7 +80,7 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe. If you specify `Decoder.Json(User)`, the response JSON is decoded into the `User` type. Failures are stored in the `body` of `HttpError`.
+Response decoding is type-safe at compile time; at runtime only the JSON syntax is checked. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A body that parses but does not match the declared type is not detected at runtime. A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
 
 ### 6.1.5 Common props (auto-applied)
 
@@ -283,7 +283,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification).
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON: the server already accepted the request, so a retry would duplicate its effect.
 
 ---
 
@@ -339,6 +339,10 @@ effect storage-clear  cap=storage.write
                       in=Unit
                       out=Result(Unit, Text)
 ```
+
+A clear is decided by the declaration: an effect declared `in=Unit` (directly or through an alias) with no `map-request` empties the storage, and the storage is the **whole origin's** localStorage, not only the keys this app wrote. Every other `storage.write` is a write or a remove, told apart by the request (the effect's input, or what `map-request` builds): a record with a `key` and no `value` field removes that key (a later `storage-read` answers `Ok(None)`), and a record with a `value` field writes it. The value itself does not matter: `None`, `[]` and a record are all written.
+
+A request that is none of these is `err` and changes nothing: one that is not a record (an empty request included, which is also what an index into a `Map` that finds nothing produces), a `key` that is not a non-empty `Text`, or a `value` that JSON cannot encode. A failed Web Storage call (quota, `SecurityError`) is also `err`, and its message names the call and the key. A host provider for `storage.write` ([§2.5](./stdlib.md#_2-5-standard-capabilities)) receives the request as the effect's input or `map-request` built it, and receives no request for a clear.
 
 ### 6.7.3 Example
 
@@ -421,6 +425,7 @@ reducer loaded on=loadAll.ok($data, _) do= state := $data
 effect save cap=storage.write
             in=Map(TodoId, Todo)
             out=Result(Unit, Text)
+            map-request={key: "todos", value: $1}
             policy=debounce(300ms)
 
 reducer afterChange
