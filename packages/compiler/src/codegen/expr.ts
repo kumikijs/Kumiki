@@ -44,7 +44,7 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
 }
 
 /** The lowering of one reading: text in, `Some(value)` or `None` out. */
-function readingJs(reading: ParseReading, a: string): string {
+export function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
     // Decimal only, and exact like `Bool`: `Number()` on its own also reads
     // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
@@ -163,8 +163,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "show") return `_s.show(${baseJs})`;
       // .length on text/list/string
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
-      if (e.field === "is-empty")
-        return `(((${baseJs}) ?? []).length === 0 || ((${baseJs}) ?? "") === "")`;
+      if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
       // .lower / .upper on Text
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
       if (e.field === "upper") return `(String((${baseJs}) ?? "")).toUpperCase()`;
@@ -728,7 +727,7 @@ export function methodCallJs(
     case "is-none":
       return `_s.variantIs(${recvJs}, "None")`;
     case "is-empty":
-      return `(_s.mapSize(${recvJs}) === 0)`;
+      return `_s.isEmpty(${recvJs})`;
     case "to-ms":
       return `(${recvJs})`;
     case "copy":

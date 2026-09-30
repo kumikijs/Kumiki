@@ -64,6 +64,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [90-refinement-validation](./90-refinement-validation.kumiki) | every registered predicate as a runtime check — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`, and the standard library's refined nominals |
 | [105-refused-bind](./105-refused-bind.kumiki) | a bound field its refinement refuses keeps what was typed, and `error(field=…)` speaks for it |
 | [132-toggle-bind](./132-toggle-bind.kumiki) | `check` / `switch` bind a `Bool` and `radio` binds one variant of a union: the box shows the slot and writes it back |
+| [133-typed-input-bind](./133-typed-input-bind.kumiki) | an `input` bound to an `Int` / `Float` / `Time` slot reads its text as that type, and refuses text that is none |
 | [135-form-submit-gate](./135-form-submit-gate.kumiki) | a form submits only while every field bound inside it shows a valid value — a failing default or a refused edit holds it back |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |

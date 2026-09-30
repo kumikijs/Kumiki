@@ -25,12 +25,14 @@ tile Compose = column(
 
 | 要素 | 受け取れる型 |
 |---|---|
-| `input` | `Text` (`type=text/email/password/url/search/tel`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime`) |
+| `input` | `Text` (`type=text/email/password/url/search/tel`、または値が入力されたテキストそのものである他のフィールド：`number/date/datetime-local/time/month/week/color`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime-local`) |
 | `textarea` | `Text` |
 | `select` | 任意（`options` の `value` と同型） |
 | `slider` | `Int` / `Float` |
 | `check` / `switch` | `Bool` |
 | `radio` | union 型のいずれか |
+
+`Int` / `Float` / `Time` に bind した `input` は、テキストを `Int.parse` / `Float.parse` / `Time.parse` と同じように読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、読んだ値を書き込む。型は bind した位置の基底型である：slot の型をレコードのフィールド、または `.get` による `Option` / `Result` のペイロードを辿り、エイリアスを解いた型なので、`type Qty = Int where positive` や `nominal Int` は `Int` として読まれる。読み方は `T.parse` と完全に同じである — number フィールドが保持しうる `".5"` は `Float` ではなく、`"1e3"` は `Float` だが `Int` ではない。基底型の値を表さないテキスト（`""`、`Int` に対する `"1.5"` など）は refinement 違反と同じく拒否される（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot は最後に受け入れた値を保ち、フィールドは入力されたテキストを保ち、`error(field=…)` は失敗した読み方を示す（[§5.7.2](#_5-7-2-standard-messages)）。`Time` は `type="date"` のフィールドには `yyyy-MM-dd`、`type="datetime-local"` のフィールドには `yyyy-MM-ddTHH:mm` として、`Time.parse` がゾーンなし文字列を読むのと同じローカル時刻で表示されるので、フィールドの表示は同じ日（または同じ分）として読み戻される。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる。`Int` / `Float` / `Time` は表にあるフィールド種別、つまりテキストが往復できるものとだけ組み合わせられる。それ以外の組み合わせ — `type="time"` のフィールドの `Time`、text フィールドの `Int`、`Bool`、`.get` を通さずに丸ごと bind した `Option` など — は `kumiki check` が報告する（[E0226](./errors.md#e0226-input-bind-type)）。（`type="datetime"` は HTML では廃止されており、text フィールドとして描画される。）
 
 `check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。書き戻しはコントロール自身の `onClick` / `onChange` より先に行われるので、ハンドラは書き込み済みの slot を読む：`check(value=b, onClick=toggle)` を `check(bind=b, onClick=toggle)` に移すと `b` は 2 回反転するので、`onClick` は外す必要がある。`bind=` があるとき、bind していないコントロールの選択状態を決める引数 — `check` / `switch` の `value=`、`radio` の `selected=` — は読まれない（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。radio 自身の `value=` は引き続き書き込む値である。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `kumiki check` が報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。書き込む `value=` のない bind した radio も同様である（[E0225](./errors.md#e0225-radio-bind-without-value)）。
 
@@ -38,7 +40,7 @@ tile Compose = column(
 
 `slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えるとその値は**拒否**される：slot は最後に受け取った値を保つ。モードは 1 つで、意図的に静かである — 入力途中の値は欠陥ではなく想定内なので、何も報告しない。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
 
-コントロールは入力されたものを表示し続けるので、フィールドが slot の受け取る値に編集されるまで、フィールドと slot は食い違う。`error(field=draft)` は**フィールドが表示しているもの**について語る（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）：refinement が拒否した値をフィールドが表示している間は、その値のメッセージを出す。slot を書き換える reducer はフィールドも一緒に動かし、メッセージは再び slot に従う。したがって、フィールドが slot の保持していない値を表示するのは、その理由を述べるメッセージと一緒のときだけである。この規則には 2 つの補足がある。対象のフィールドは同じビューのものである — 1 つの app を複数のホストにマウントした場合（[runtime.md §10.9](./runtime.md#_10-9-ランタイム-api-埋め込み用)）、各ビューの `error(field=…)` は自分のビューのフィールドについて語り、他のビューのフィールドは slot の値を表示したままである。また IME の変換中は、変換が経由する途中の値ごとにメッセージを再計算せず、変換が確定したときに一度だけ決める。
+コントロールは入力されたものを表示し続けるので、フィールドが slot の受け取る値に編集されるまで、フィールドと slot は食い違う。`error(field=draft)` は**フィールドが表示しているもの**について語る（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）：refinement が拒否した値をフィールドが表示している間は、その値のメッセージを出す。slot を書き換える reducer はフィールドも一緒に動かし、メッセージは再び slot に従う。bind した `Int` / `Float` / `Time` がそもそも読めないテキスト（[§5.1.1](#_5-1-1-elements-that-support-bind)）も、refinement の有無にかかわらず同様である：そのメッセージは読み方のものであり、どの refinement のメッセージよりも先に出る。したがって、フィールドが slot の保持していない値を表示するのは、その理由を述べるメッセージと一緒のときだけである。この規則には 2 つの補足がある。対象のフィールドは同じビューのものである — 1 つの app を複数のホストにマウントした場合（[runtime.md §10.9](./runtime.md#_10-9-ランタイム-api-埋め込み用)）、各ビューの `error(field=…)` は自分のビューのフィールドについて語り、他のビューのフィールドは slot の値を表示したままである。また IME の変換中は、変換が経由する途中の値ごとにメッセージを再計算せず、変換が確定したときに一度だけ決める。
 
 ```kumiki snippet
 input(bind=draft)
@@ -289,11 +291,11 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` は対象フィールドの現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、フィールドが**表示している**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。それは slot の現在の値だが、bind されたコントロールが refinement に拒否された値を表示している間は、その値が判定される（[§5.1.2](#_5-1-2-refinement-の扱い)）。したがって型に refinement を持たない slot には表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。
+`error(field=...)` は対象フィールドの現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、フィールドが**表示している**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。それは slot の現在の値だが、bind されたコントロールが refinement に拒否された値を表示している間は、その値が判定される（[§5.1.2](#_5-1-2-refinement-の扱い)）。したがって型に refinement を持たない slot にはどの値についても表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。それでも表示しうるのは、値についてではない唯一のメッセージである：bind された `input` が slot の `Int` / `Float` / `Time` としてそもそも読めないテキストを表示している間（[§5.1.1](#_5-1-1-elements-that-support-bind)）、メッセージはその読み方のもの（下の `int` / `float` / `time`）であり、どの slot でも、どの refinement よりも先に出る — `Int where between(0, 120)` への `"1.5"` は整数ではないのであって、範囲外の数ではない。
 
 述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、§1.3.1 が与える順で、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
 
-### 5.7.2 標準メッセージ
+### 5.7.2 標準メッセージ {#_5-7-2-standard-messages}
 
 | 述語 | デフォルト |
 |---|---|
@@ -307,8 +309,11 @@ error(field=email)
 | `positive` / `negative` | "Must be positive" / "Must be negative" |
 | `regex(P)` | "Does not match pattern" |
 | `one-of(...)` | "Must be one of: ..." |
+| `int`（`Int` でないテキスト、[§5.1.1](#_5-1-1-elements-that-support-bind)） | "Must be a whole number" |
+| `float`（`Float` でないテキスト） | "Must be a number" |
+| `time`（`Time` でないテキスト） | "Must be a date" |
 
-カスタムメッセージは `theme.errors` で上書き：
+カスタムメッセージは `theme.errors` で上書き（キーは表の 1 列目で、`int` / `float` / `time` も含む）：
 
 ```kumiki snippet
 theme MyTheme = {

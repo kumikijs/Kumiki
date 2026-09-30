@@ -280,6 +280,12 @@ export type TileNode = (
       props?: TileProps;
       bind?: string;
       bindPath?: BindSegment[];
+      /**
+       * How the field's text reads as a value of the bound position's type,
+       * for a position whose base is `Int`, `Float` or `Time` (forms.md
+       * §5.1.1). Absent for `Text`, which is written as typed.
+       */
+      parse?: BindReader;
       value?: string;
       type?: string;
       placeholder?: string;
@@ -1500,11 +1506,28 @@ export type MountedApp = AppShape & {
 const appByRoot = new WeakMap<Element, MountedApp>();
 
 /**
- * A value a `bind` wrote and its slot's refinement refused (forms.md §5.1.2):
- * the slot value the write would have produced, and what the control was
- * showing when it was refused.
+ * How a bound `input`'s text reads as the base of the position it binds
+ * (forms.md §5.1.1): `read` answers `Some(value)` to write, or `None` for text
+ * that spells no value of the base, which is refused. `as` names the base, so
+ * `error(field=…)` can say which reading the text failed (forms.md §5.7.2).
  */
-type RefusedBind = { slot: string; value: unknown; shown: string };
+export type BindReader = {
+  as: "Int" | "Float" | "Time";
+  read: (text: string) => { _tag: string; _0?: unknown };
+};
+
+/**
+ * A value a `bind` wrote and its slot refused (forms.md §5.1.2): the slot value
+ * the write would have produced, what the control was showing when it was
+ * refused, and — when the refusal was the text not reading as the bound base
+ * at all rather than a refinement — which base it failed to read as.
+ */
+type RefusedBind = {
+  slot: string;
+  value: unknown;
+  shown: string;
+  unread: BindReader["as"] | undefined;
+};
 
 /**
  * Per app, the controls whose shown value their slot refused. A refused bind
@@ -1538,6 +1561,7 @@ export function noteBindWrite(
   slot: string,
   value: unknown,
   accepted: boolean,
+  unread?: BindReader["as"],
 ): void {
   let byEl = refusedBinds.get(app);
   if (byEl) {
@@ -1551,7 +1575,7 @@ export function noteBindWrite(
     byEl = new Map();
     refusedBinds.set(app, byEl);
   }
-  byEl.set(el, { slot, value, shown: shownValue(el) });
+  byEl.set(el, { slot, value, shown: shownValue(el), unread });
 }
 
 /** Where a refused value counts as shown: a view's root, or any set of controls. */
@@ -1569,17 +1593,17 @@ export function refusedBindShown(
   app: object,
   slot: string,
   view: BindView | undefined,
-): { value: unknown } | undefined {
+): Pick<RefusedBind, "value" | "unread"> | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
-  let found: { value: unknown } | undefined;
+  let found: Pick<RefusedBind, "value" | "unread"> | undefined;
   for (const [el, r] of byEl) {
     if (r.slot !== slot) continue;
     if (!el.isConnected || shownValue(el) !== r.shown) {
       byEl.delete(el);
       continue;
     }
-    if (!found && view?.contains(el)) found = { value: r.value };
+    if (!found && view?.contains(el)) found = { value: r.value, unread: r.unread };
   }
   return found;
 }
