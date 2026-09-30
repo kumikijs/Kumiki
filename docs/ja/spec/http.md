@@ -32,6 +32,7 @@ effect http-post cap=http.post
                  in={
                    url: Url,
                    headers: Map(Text, Text),
+                   query: Map(Text, Text),
                    body: HttpBody,
                    decode: Decoder
                  }
@@ -39,6 +40,8 @@ effect http-post cap=http.post
 
 # put / patch / delete も同じ形
 ```
+
+`query` は `http.*` のすべてのメソッド（get・post・put・patch・delete）で同じく URL のクエリ文字列として送られる。各エントリは URL エンコードされ（`URLSearchParams` による。空白は `+` に、値の中の `&` はエスケープされる）、`url` が既に持つクエリ文字列の後ろ・フラグメントの前に付け足される。空の `query` は `url` をそのまま残す。クエリ文字列中のエントリの順序は保証されないので、それに依存してはならない。
 
 `http.get` 等は **未指定なら使えない**（capability ガード）。`app.caps` に列挙必須。
 
@@ -52,6 +55,21 @@ type HttpBody = Json(JsonValue)
               | Bytes(Bytes)
               | Empty
 ```
+
+各 variant は、その名前が示すものとして送られる：
+
+| variant | リクエスト本文 |
+|---|---|
+| `Json(v)` | `v` の JSON。`Unit` の `Json` は `null` |
+| `Form(m)` | `m` を URL エンコードしたもの（`a=1&b=2`） |
+| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（永続化から復元したファイルレコード）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
+| `Text(t)` | `t` そのまま |
+| `Bytes(b)` | `b` のバイト列 |
+| `Empty` | 本文なし |
+
+HttpBody の variant でない `body`（レコード・リスト・素の `Text`）は、`Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。
+
+`GET` と `HEAD` は `body` が何であっても本文を送らない。
 
 ### 6.1.4 Decoder 型
 
@@ -69,11 +87,14 @@ Decoder.None         # レスポンス本文を捨てる
 すべての HTTP effect は次を自動付与：
 
 - `Accept: application/json`（Decoder が Json のとき）
-- `Content-Type: application/json`（HttpBody が Json のとき）
-- `Content-Type: multipart/form-data`（Multipart のとき）
+- `Content-Type: application/json`（HttpBody が Json のとき、または本文が HttpBody の variant でないとき）
+- `Content-Type: application/x-www-form-urlencoded`（Form のとき）
+- `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
 - `User-Agent: Kumiki`
 
-ユーザー指定の headers が優先される。
+ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` を置き換え、送られる値はちょうど 1 つになる。
+
+例外は `Multipart` だけである。プログラムが指定した `Content-Type` は捨てられる。このヘッダには fetch だけが知る boundary が必要で、boundary のない `multipart/form-data` はサーバが解析できないからである。
 
 ---
 
