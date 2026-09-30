@@ -1,0 +1,44 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been sent yet",
+      "expect": { "noErrors": true, "state": { "status": "idle" } }
+    },
+    {
+      "label": "the form body is answered",
+      "do": { "click": "#form" },
+      "expect": { "noErrors": true, "state": { "status": "login ok" } }
+    },
+    {
+      "label": "the json body is answered",
+      "do": { "click": "#json" },
+      "expect": { "noErrors": true, "state": { "status": "json ok" } }
+    },
+    {
+      "label": "the text body is answered",
+      "do": { "click": "#text" },
+      "expect": { "noErrors": true, "state": { "status": "text ok" } }
+    },
+    {
+      "label": "the empty body is answered",
+      "do": { "click": "#empty" },
+      "expect": { "noErrors": true, "state": { "status": "empty ok" } }
+    },
+    {
+      "label": "the record body is answered",
+      "do": { "click": "#record" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "record ok" },
+        "domIncludes": ["status: record ok"]
+      }
+    }
+  ],
+  "effects": {
+    "login": [{ "outcome": "ok", "value": "ok" }],
+    "rename": [{ "outcome": "ok", "value": "ok" }],
+    "note": [{ "outcome": "ok", "value": "ok" }],
+    "ping": [{ "outcome": "ok", "value": "ok" }],
+    "order": [{ "outcome": "ok", "value": "ok" }]
+  }
+}

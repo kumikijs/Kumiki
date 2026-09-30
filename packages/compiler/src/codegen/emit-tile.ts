@@ -1,6 +1,9 @@
-import type { Expr, TileArg, TileDef, TileExpr } from "../ast.ts";
+import { unaliasType } from "../assignable.ts";
+import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
+import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
+import type { ParseReading } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
@@ -10,7 +13,7 @@ import {
   type GenCtx,
   makeEvalCtx,
 } from "./context.ts";
-import { jsOfExpr, tupleArm } from "./expr.ts";
+import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
 import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
@@ -269,6 +272,77 @@ function toggleJs(
   return `({ ${fields.join(", ")} })`;
 }
 
+/**
+ * The reading an `input`'s text is parsed by before it is written to the slot
+ * it binds (forms.md §5.1.1), decided by the bound position's type alone. That
+ * type is followed from the slot through the path — a record field, an
+ * `Option`'s or a `Result`'s payload — to the base it unaliases to, as
+ * `T.parse` resolves its qualifier, so a `type Qty = Int where positive` or a
+ * `nominal Int` reads as an `Int`. Which `type=` a base goes with is not asked
+ * here: a field kind the base does not go with is E0226 at check time.
+ * `null` for `Text`, which is written as typed, and for a position whose type
+ * cannot be read.
+ */
+function boundReading(
+  bindInfo: { root: string; path: BindSegment[] },
+  gen: GenCtx,
+): "Int" | "Float" | "Time" | null {
+  let t: TypeExpr | null = gen.slots.find((s) => s.name === bindInfo.root)?.type ?? null;
+  for (const seg of bindInfo.path) {
+    const u = unaliasType(t, gen);
+    if (typeof seg === "string") {
+      t = u?.kind === "TypeRecord" ? (u.fields.find((f) => f.name === seg)?.type ?? null) : null;
+    } else {
+      t =
+        u?.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
+          ? (u.args[0] ?? null)
+          : null;
+    }
+  }
+  const base = unaliasType(t, gen);
+  if (base?.kind !== "TypePrim") return null;
+  return base.name === "Int" || base.name === "Float" || base.name === "Time" ? base.name : null;
+}
+
+const readerName = (reading: ParseReading): string => `_read${reading}`;
+
+/**
+ * One reader per reading an app's bound inputs use, declared once inside
+ * `createApp()`: its `read` is `(text) => Option(T)`, the same reading `T.parse`
+ * lowers to — the base's reading only; a refinement the slot's type carries is
+ * applied by the slot gate after it. `as` names the base, so a refused text
+ * can say which reading it failed (forms.md §5.7.2).
+ */
+export function bindReaderDecls(readings: ReadonlySet<ParseReading>): string[] {
+  return [...readings]
+    .sort()
+    .map(
+      (r) =>
+        `const ${readerName(r)} = { as: ${JSON.stringify(r)}, read: (_t) => ${readingJs(r, "_t")} };`,
+    );
+}
+
+/**
+ * What a bound `input` shows. A `Time` is a millisecond number, and a date
+ * field takes `yyyy-MM-dd` (a `datetime-local` one `yyyy-MM-ddTHH:mm`) on the
+ * local clock `Time.parse` reads a zone-less string on — so the text the field
+ * shows reads back as the same day (date) or the same minute (datetime-local)
+ * as the instant it came from, not the same millisecond. Everything else shows
+ * as `show` does.
+ */
+function boundInputValueJs(
+  reading: ParseReading | null,
+  t: TileExpr & { kind: "TileCall" },
+  readJs: string,
+): string {
+  if (reading === "Time") {
+    const typeArg = t.args.find((a) => a.name === "type")?.value as Expr | undefined;
+    const pattern = typeArg?.kind === "Str" ? TIME_INPUT_PATTERNS.get(typeArg.value) : undefined;
+    if (pattern) return `_s.formatTime(${readJs}, ${JSON.stringify(pattern)})`;
+  }
+  return `_s.show(${readJs})`;
+}
+
 function tileCallJs(
   t: TileExpr & { kind: "TileCall" },
   gen: GenCtx,
@@ -409,7 +483,15 @@ function tileCallJs(
           else if (arg.name === "accept") fields.push(`accept: ${valJs}`);
           else if (arg.name === "multiple") fields.push(`multiple: ${valJs}`);
         }
-        if (bindInfo) fields.push(...bindFields(bindInfo), `value: _s.show(${bindInfo.read})`);
+        if (bindInfo) {
+          fields.push(...bindFields(bindInfo));
+          const reading = boundReading(bindInfo, gen);
+          if (reading) {
+            gen.usedReaders.add(reading);
+            fields.push(`parse: ${readerName(reading)}`);
+          }
+          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.read)}`);
+        }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
