@@ -298,10 +298,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       const parts = e.entries.map((en) => {
         // A `<any-id>` map key (test expect, §8.2.2) lowers to the runtime's
         // wild-key sentinel so the matcher pairs it with the one generated entry.
+        // Any other key is stored as every Map member stores one (`entryKey`).
         const keyJs =
           en.key.kind === "Wildcard" && en.key.wild === "any-id"
             ? "[_s.WILD_KEY]"
-            : `[${jsOfExpr(en.key, ctx)}]`;
+            : `[_s.entryKey(${jsOfExpr(en.key, ctx)})]`;
         return `${keyJs}: ${jsOfExpr(en.value, ctx)}`;
       });
       return `{ ${parts.join(", ")} }`;
@@ -668,9 +669,8 @@ export function methodCallJs(
   switch (method) {
     case "filter":
       // The receiver may be a List (incl. .entries → [k,v] tuples) or a Map.
-      // Dispatch at runtime; the lambda destructures tuples and also accepts
-      // the (k, v) calling convention used by mapFilter.
-      // A Map's predicate is handed each key, restored like any key reader's.
+      // Dispatch at runtime; a Map hands the lambda each `[k, v]` pair, as
+      // `.entries` does, with the key restored like any key reader's.
       return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
       // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples)

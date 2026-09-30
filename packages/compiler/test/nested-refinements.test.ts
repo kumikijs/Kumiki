@@ -42,6 +42,8 @@ slot box    : Box(Text where nonempty)        = {v: "x"}
 slot named  : {h: Handle}                     = {h: "ab"}
 slot nums   : Set(Int where positive)         = {}
 slot people : Set({n: Text where nonempty})   = {}
+slot byName : Map({n: Text where nonempty}, Int) = {}
+slot cellAt : Map({x: Int, y: Int}, Short)       = {}
 slot plain  : {n: Int, kids: List(Text)}      = {n: 1, kids: []}
 slot handle : Handle                          = "ab"
 
@@ -202,6 +204,26 @@ describe("a refinement on a container element", () => {
   });
 });
 
+describe("a Map's structured keys, read back from the JSON they are keyed by", () => {
+  it("checks a refined record key as the record it encodes", () => {
+    expect(refineOf("byName")({ '{"n":"ada"}': 1 })).toBe(true);
+    expect(failureOf("byName", { '{"n":"ada"}': 1, '{"n":""}': 2 })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ key: { n: "" } }, "n"],
+    });
+  });
+
+  it("names the record key an entry that fails its value's refinement is under", () => {
+    expect(refineOf("cellAt")({ '{"x":0,"y":1}': "abc" })).toBe(true);
+    expect(failureOf("cellAt", { '{"x":0,"y":1}': "abcd" })).toEqual({
+      kind: "len-lt",
+      args: [4],
+      path: [{ entry: { x: 0, y: 1 } }],
+    });
+  });
+});
+
 describe("positions nest, and a type may be recursive", () => {
   it("joins the path outward-in", () => {
     const ok = { email: "ada@example.com", age: 36 };
@@ -228,8 +250,8 @@ describe("positions nest, and a type may be recursive", () => {
 });
 
 describe("a Set's members, in either runtime form", () => {
-  // A Set is an object keyed by `String(member)` once `add` / `toggle` built
-  // it, and still an array when it came from a literal; a literal a member was
+  // A Set is an object keyed by `entryKey(member)` once `add` / `toggle`
+  // built it, and still an array when it came from a literal; a literal a member was
   // added to is both at once (the array's entries plus a key).
   it("reads a numeric member back as a number from a key", () => {
     expect(refineOf("nums")({ 1: true, 2: true })).toBe(true);
@@ -250,11 +272,14 @@ describe("a Set's members, in either runtime form", () => {
     expect(refineOf("nums")({ 0: 1, 2: true })).toBe(true);
   });
 
-  it("leaves a member it cannot read back from a key ungated", () => {
-    // A record member is keyed "[object Object]"; no check can see the record
-    // through that, so the position is not walked rather than refusing every write.
-    expect(meta("people").refineFailure).toBeUndefined();
-    expect(meta("people").refine).toBeUndefined();
+  it("reads a record member back from the JSON it is keyed by", () => {
+    expect(refineOf("people")({ '{"n":"ada"}': true })).toBe(true);
+    expect(refineOf("people")([{ n: "ada" }])).toBe(true);
+    expect(failureOf("people", { '{"n":"ada"}': true, '{"n":""}': true })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ member: { n: "" } }, "n"],
+    });
   });
 });
 
