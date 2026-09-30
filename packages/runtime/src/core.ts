@@ -280,6 +280,12 @@ export type TileNode = (
       props?: TileProps;
       bind?: string;
       bindPath?: BindSegment[];
+      /**
+       * How the field's text reads as a value of the bound position's type,
+       * for a position whose base is `Int`, `Float` or `Time` (forms.md
+       * §5.1.1). Absent for `Text`, which is written as typed.
+       */
+      parse?: BindReader;
       value?: string;
       type?: string;
       placeholder?: string;
@@ -1512,16 +1518,35 @@ export type MountedApp = AppShape & {
 const appByRoot = new WeakMap<Element, MountedApp>();
 
 /**
- * A value a `bind` wrote and its slot's refinement refused (forms.md §5.1.2):
- * the value written, the path inside the slot it was written to (`[]` for the
- * slot itself), and what the control was showing when it was refused.
+ * How a bound `input`'s text reads as the base of the position it binds
+ * (forms.md §5.1.1): `read` answers `Some(value)` to write, or `None` for text
+ * that spells no value of the base, which is refused. `as` names the base, so
+ * `error(field=…)` can say which reading the text failed (forms.md §5.7.2).
+ */
+export type BindReader = {
+  as: "Int" | "Float" | "Time";
+  read: (text: string) => { _tag: string; _0?: unknown };
+};
+
+/**
+ * A value a `bind` wrote and its slot refused (forms.md §5.1.2): the value
+ * written, the path inside the slot it was written to (`[]` for the slot
+ * itself), what the control was showing when it was refused, and — when the
+ * refusal was the text not reading as the bound base at all rather than a
+ * refinement — which base it failed to read as.
  *
  * The field's value and not the slot value the write would have produced: a
  * bind into one field of a record is judged at that field (§5.6), so its
  * siblings go on being written, and what the field shows has to be laid over
  * the record as it is now rather than as it was when the refusal happened.
  */
-type RefusedBind = { slot: string; path: readonly BindSegment[]; value: unknown; shown: string };
+type RefusedBind = {
+  slot: string;
+  path: readonly BindSegment[];
+  value: unknown;
+  shown: string;
+  unread: BindReader["as"] | undefined;
+};
 
 /**
  * Per app, the controls whose shown value their slot refused. A refused bind
@@ -1556,6 +1581,7 @@ export function noteBindWrite(
   value: unknown,
   accepted: boolean,
   path: readonly BindSegment[] = [],
+  unread?: BindReader["as"],
 ): void {
   let byEl = refusedBinds.get(app);
   if (byEl) {
@@ -1569,7 +1595,7 @@ export function noteBindWrite(
     byEl = new Map();
     refusedBinds.set(app, byEl);
   }
-  byEl.set(el, { slot, path, value, shown: shownValue(el) });
+  byEl.set(el, { slot, path, value, shown: shownValue(el), unread });
 }
 
 /**
@@ -1592,7 +1618,7 @@ export function refusedBindShown(
   slot: string,
   view: Node | undefined,
   held?: unknown,
-): { value: unknown } | undefined {
+): Pick<RefusedBind, "value" | "unread"> | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
   const shown: RefusedBind[] = [];
@@ -1608,13 +1634,15 @@ export function refusedBindShown(
   shown.sort((a, b) => a.path.length - b.path.length);
   const laid = new Set<string>();
   let value = held;
+  let unread: BindReader["as"] | undefined;
   for (const r of shown) {
     const at = JSON.stringify(r.path);
     if (laid.has(at)) continue;
     laid.add(at);
     value = r.path.length > 0 ? _setPathHelper(value ?? {}, r.path, r.value) : r.value;
+    unread ??= r.unread;
   }
-  return { value };
+  return { value, unread };
 }
 
 /** The controls a refused bind is remembered against, for `app`. */

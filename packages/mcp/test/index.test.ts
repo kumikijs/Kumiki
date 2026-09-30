@@ -3,6 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lockDef } from "@kumikijs/cli";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -821,6 +822,42 @@ describe("failure reporting", () => {
         expect(parsed.error.message, name).toBe('Definition "slot.nope" not found');
       }
     });
+  });
+});
+
+// The editing tools call the CLI's mutators, so an op another agent's lock
+// covers is refused here exactly as at the CLI — including a definition the
+// body creates rather than the one the tool was named with.
+describe("ownership locks", () => {
+  let workdir: string;
+  let prevAuthor: string | undefined;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-lock-"));
+    prevAuthor = process.env.KUMIKI_AUTHOR;
+  });
+  afterEach(() => {
+    if (prevAuthor === undefined) delete process.env.KUMIKI_AUTHOR;
+    else process.env.KUMIKI_AUTHOR = prevAuthor;
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  it("kumiki_replace is refused when its body creates a locked definition", async () => {
+    const file = join(workdir, "c.kumiki");
+    copyFileSync(COUNTER, file);
+    lockDef(file, "agent:a", "slot.todos*,reducer.*");
+    const source = readFileSync(file, "utf8");
+    process.env.KUMIKI_AUTHOR = "agent:b";
+    await withClient(async (client) => {
+      const res = await client.callTool({
+        name: "kumiki_replace",
+        arguments: { path: file, name: "slot.count", body: "N = 0\n\nslot todosX : Int = 0" },
+      });
+      expect(res.isError).toBe(true);
+      const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+      expect(body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(fs.existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
   });
 });
 
