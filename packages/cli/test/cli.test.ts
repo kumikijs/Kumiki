@@ -255,6 +255,10 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // name it before any refinement (§5.7.2). That memory is the refused-bind
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
+    //
+    // Still 61,000 (60,421 measured, from 60,153): `heading` renders the element
+    // its level names. The 268 bytes are `headingTag` and the patcher's rebuild on
+    // a level change; a counter renders a heading, so it ships them.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
