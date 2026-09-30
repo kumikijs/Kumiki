@@ -1,5 +1,6 @@
 import { paramSubstitution, substituteType, type TypeEnv, unaliasType } from "./assignable.ts";
 import { assertNever, type Refinement, type TypeExpr } from "./ast.ts";
+import { keyRepresentation } from "./key-representation.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
 
 /**
@@ -48,17 +49,13 @@ const genericName = (t: TypeExpr, env: TypeEnv): string | undefined =>
 
 /**
  * A `Set`'s members as the runtime stores them are the keys of an object
- * (`setAdd`, `setToggle`: `String(x)`), so a member is recoverable only when
- * its type is one a key reads back as — text, or a number read back through
- * `Number`. A record's key is `"[object Object]"`, which no check can see the
- * record through; such a member is not a position this walk can reach.
+ * (`entryKey`), so a member is recoverable only when its type is one a key
+ * reads back as (`keyRepresentation`): text, a number, a boolean, or a
+ * structured value read back from its JSON — not a type parameter or a
+ * primitive such as `Bytes`, whose stored string is not a value of the type.
  */
 export function setMemberIsRecoverable(member: TypeExpr, env: TypeEnv): boolean {
-  const base = unaliasType(member, env);
-  return (
-    base?.kind === "TypePrim" &&
-    (base.name === "Text" || base.name === "Int" || base.name === "Float" || base.name === "Time")
-  );
+  return keyRepresentation(member, env) !== null;
 }
 
 /**
