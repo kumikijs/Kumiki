@@ -255,6 +255,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // name it before any refinement (§5.7.2). That memory is the refused-bind
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
+    //
+    // Still 61,000 (60,508 measured, from 60,153): an index step reaches the
+    // setter apart from a field step (language.md §1.6.3), so a write through a
+    // Map key that is absent writes nothing and a read there panics. The 355 bytes
+    // are `isIndexSegment` and the no-write branch in `_setPathHelper`,
+    // `isEntryOf` which both sides of `:=` ask, and the panic in
+    // `_stdlibCore.index`. A counter indexes nothing and still ships them, because
+    // the setter and the stdlib sit on paths every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
