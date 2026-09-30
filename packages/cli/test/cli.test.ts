@@ -243,8 +243,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
     // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
     //
-    // 61,000 from 60,000 (60,153 measured, from 59,914): a bound `input` reads its text as
-    // the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
+    // 61,000 from 60,000 (60,014 measured, from 59,889): the `isEmpty` above
+    // landed on a base that already carried the bound `check` / `switch` / `radio`
+    // write-back (forms.md §5.1.1), 59,889 from 59,789. Each fit under 60,000 on
+    // its own base; together they do not. A counter binds no box and asks nothing
+    // whether it is empty, and still ships both in the modules every app loads.
+    //
+    // Still 61,000 (60,153 measured, from 60,014): a bound `input` reads its text
+    // as the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
     // write remembers which reading the text failed, so `error(field=…)` can
     // name it before any refinement (§5.7.2). That memory is the refused-bind
     // record in core, which every app loads; a counter binds no input and
