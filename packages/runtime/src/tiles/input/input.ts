@@ -37,8 +37,8 @@ function withParse(h: InputHandlers, node: InputNode): InputHandlers {
 
 /**
  * Does `text` read as the same value the node shows? Asked of any field with a
- * reader — a number field bound to an `Int` / `Float`, a date field bound to a
- * `Time`.
+ * reader — a number field bound to an `Int` / `Float`, a date or
+ * datetime-local field bound to a `Time`.
  */
 function readsSame(node: InputNode, text: string): boolean {
   if (!node.parse) return false;
