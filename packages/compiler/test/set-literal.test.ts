@@ -47,7 +47,11 @@ reducer go on=ui.click(Btn) do= w := w.union(["a"])`);
   // alias, a return type, a member's argument, a `let … in` body.
   it.each([
     ["a List element", "slot v : List(Set(Int)) = [[1]]", "[_s.setOf([1])]"],
-    ["a Map value", 'slot v : Map(Text, Set(Int)) = {"a": [1]}', '["a"]: _s.setOf([1])'],
+    [
+      "a Map value",
+      'slot v : Map(Text, Set(Int)) = {"a": [1]}',
+      '[_s.entryKey("a")]: _s.setOf([1])',
+    ],
     ["an Option payload", "slot v : Option(Set(Int)) = Some([1])", "_s.setOf([1])"],
     ["an alias", "type Ids = Set(Int)\nslot v : Ids = [1]", '"v": { value: _s.setOf([1]) }'],
     ["a fn's return value", "fn one() -> Set(Int) = [1]", "return _s.setOf([1])"],
