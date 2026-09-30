@@ -208,6 +208,37 @@ describe("a name or tuple pattern binds the type as written", () => {
     expect(inReducer(body, TUPLE)).toEqual(["E0201 Expected Int but got UserId"]);
   });
 
+  // The two readers the arms' value reaches without a declared destination:
+  // `inferType` carries the binder's type through a `let`, and `==` compares
+  // it with the other operand. Each report sits where a direct read of `u`
+  // would put it.
+  const reportsAt = (body: string, message: string, at: string, offset = 0) => {
+    const line = `reducer r on=ui.click(B) do= ${body}`;
+    const src = app(`${TUPLE}\nslot b : Bool = false\n${line}`);
+    const lineNo = src.split("\n").indexOf(line) + 1;
+    // Columns are 1-based.
+    expect(errsOf(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
+      ["E0201", message, lineNo, line.indexOf(at) + offset + 1],
+    ]);
+  };
+
+  it("carries the nominal through a let binder with no declared destination", () => {
+    reportsAt(
+      `let v = match u with | x -> x; p := v`,
+      "Expected PostId but got UserId",
+      "p := v",
+      "p := ".length,
+    );
+  });
+
+  it("compares the binder as its nominal in an == operand", () => {
+    reportsAt(
+      `b := match u with | x -> x == p`,
+      'Operator "==" cannot compare UserId with PostId',
+      "x == p",
+    );
+  });
+
   it.each([
     ["a name pattern", `u := match u with | x -> x`],
     ["a tuple pattern", `p := match tt with | (a, b) -> b`],

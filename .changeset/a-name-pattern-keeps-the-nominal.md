@@ -17,6 +17,11 @@ p := match tt with | (a, b) -> a        # was ok; now E0201
 match u with | x -> p := x              # was ok; now E0201
 ```
 
+The binder's nominal reaches every reader of it, not only a declared
+destination: `let v = match u with | x -> x; p := v` now reports the same
+`E0201`, and an `==` between the binder and another nominal now reports
+`E0201 Operator "==" cannot compare UserId with PostId`, as `u == p` does.
+
 Only a variant pattern's payload kept its nominal before: a bare name bound the
 scrutinee's base type (`Text`), which goes into any nominal over `Text`, so the
 `UserId`-into-`PostId` mistake that `nominal` exists to catch passed `check`.
