@@ -1,7 +1,7 @@
 // Status / messaging tile renderers (#71): spinner, skeleton, progress, the
 // inline toast tile, and the validation `error` tile.
 
-import type { TilePatchers, TileRenderers } from "./core.ts";
+import type { BindReader, TilePatchers, TileRenderers } from "./core.ts";
 import {
   currentTheme,
   ensureAnimationStyles,
@@ -16,8 +16,10 @@ import {
  * Resolve the current validation message for a slot, for the `error` tile.
  * The value judged is the one the field shows: a value a `bind` wrote and the
  * refinement refused, while its control still shows it, else the slot's own.
- * Returns "" (no error shown) when that value passes its refinement, when
- * the slot has no refinement, or when no app is mounted. The message text comes
+ * A field showing text that does not read as its bound `Int` / `Float` / `Time`
+ * at all says so, before and whatever the refinement. Otherwise returns ""
+ * (no error shown) when the value passes its refinement, when the slot has no
+ * refinement, or when no app is mounted. The message text comes
  * from `theme.errors[<pred>]` if overridden, else the spec §5.7.2 default.
  */
 function resolveFieldError(field: string): string {
@@ -33,6 +35,14 @@ function resolveFieldError(field: string): string {
   // Only a control in the view being rendered speaks for this tile: another
   // view of the same shape shows the slot's own value.
   const refused = refusedBindShown(app, field, getRenderingView());
+  const overrides = currentTheme()?.errors as Record<string, string> | undefined;
+  // Text that does not read as the bound base at all is judged before any
+  // refinement: "1.5" into an `Int where between(0, 120)` is not a number out
+  // of range, and a slot with no refinement still has this to say (§5.1.2).
+  if (refused?.unread) {
+    const key = UNREAD_KEY[refused.unread];
+    return overrides?.[key] ?? defaultFieldError(key, []);
+  }
   const value = refused?.value ?? app.live?.[field] ?? meta.value;
   if (slotAccepts(meta, value)) return "";
   // The message names the predicate the value fails, which for a type carrying
@@ -40,10 +50,15 @@ function resolveFieldError(field: string): string {
   const failed = failedRefinement(value, meta);
   const pred = failed.kind ?? "";
   const args = failed.args ?? [];
-  const theme = currentTheme();
-  const overrides = theme?.errors as Record<string, string> | undefined;
   return overrides?.[pred] ?? defaultFieldError(pred, args);
 }
+
+/** The `theme.errors` key, and §5.7.2 row, of text that is no value of a base. */
+const UNREAD_KEY: Readonly<Record<BindReader["as"], string>> = {
+  Int: "int",
+  Float: "float",
+  Time: "time",
+};
 
 /** Spec §5.7.2 default validation messages, keyed by refinement predicate. */
 function defaultFieldError(pred: string, args: (number | string)[]): string {
@@ -72,6 +87,12 @@ function defaultFieldError(pred: string, args: (number | string)[]): string {
       return "Does not match pattern";
     case "one-of":
       return `Must be one of: ${args.join(", ")}`;
+    case "int":
+      return "Must be a whole number";
+    case "float":
+      return "Must be a number";
+    case "time":
+      return "Must be a date";
     default:
       return "Invalid value";
   }

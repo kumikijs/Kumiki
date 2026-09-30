@@ -45,7 +45,7 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
 }
 
 /** The lowering of one reading: text in, `Some(value)` or `None` out. */
-function readingJs(reading: ParseReading, a: string): string {
+export function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
     // Decimal only, and exact like `Bool`: `Number()` on its own also reads
     // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
@@ -164,14 +164,13 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "show") return `_s.show(${baseJs})`;
       // .length on text/list/string
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
-      if (e.field === "is-empty")
-        return `(((${baseJs}) ?? []).length === 0 || ((${baseJs}) ?? "") === "")`;
+      if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
       // .lower / .upper on Text
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
       if (e.field === "upper") return `(String((${baseJs}) ?? "")).toUpperCase()`;
       if (e.field === "trim") return `(String((${baseJs}) ?? "")).trim()`;
       // Zero-arg list / string method shorthands (callable without parens)
-      if (e.field === "unique") return `[...new Set((${baseJs}) ?? [])]`;
+      if (e.field === "unique") return `_s.listUnique(${baseJs})`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
       if (e.field === "sort") return `_s.listSort(${baseJs})`;
       // Issue #7: argument-less spec stdlib methods in the parenthesis-free form
@@ -729,7 +728,7 @@ export function methodCallJs(
     case "is-none":
       return `_s.variantIs(${recvJs}, "None")`;
     case "is-empty":
-      return `(_s.mapSize(${recvJs}) === 0)`;
+      return `_s.isEmpty(${recvJs})`;
     case "to-ms":
       return `(${recvJs})`;
     case "copy":
@@ -747,7 +746,7 @@ export function methodCallJs(
     case "push":
       return `[...(${recvJs} ?? []), ${argRaw(args[0]!)}]`;
     case "unique":
-      return `[...new Set((${recvJs} ?? []))]`;
+      return `_s.listUnique(${recvJs})`;
     case "reverse":
       return `[...(${recvJs} ?? [])].reverse()`;
     case "join":
@@ -755,7 +754,7 @@ export function methodCallJs(
     case "split":
       return `((${recvJs}) ?? "").split(${argRaw(args[0]!)})`;
     case "contains":
-      return `(typeof (${recvJs}) === "string" ? ((${recvJs}) ?? "").includes(${argRaw(args[0]!)}) : ((${recvJs}) ?? []).includes(${argRaw(args[0]!)}))`;
+      return `_s.contains(${recvJs}, ${argRaw(args[0]!)})`;
     case "starts-with":
       return `((${recvJs}) ?? "").startsWith(${argRaw(args[0]!)})`;
     case "ends-with":

@@ -59,7 +59,11 @@ const LAYER_OF = {
 export const LAYERS = Object.values(LAYER_OF);
 
 export function load(path: string): Store {
-  const source = readFileSync(path, "utf8");
+  return loadSource(readFileSync(path, "utf8"));
+}
+
+/** `load` for source text that is not (or not yet) on disk. */
+export function loadSource(source: string): Store {
   const lines = source.split(/\r?\n/);
   const tokens = lex(source);
   const program = parse(tokens);
