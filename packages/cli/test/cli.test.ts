@@ -256,7 +256,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
     //
-    // Still 61,000 (60,435 measured, from 60,153): `Time.parse` refuses a date
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
+    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
+    //
+    // Still 61,000 (60,970 measured, from 60,650): `Time.parse` refuses a date
     // that is not on the calendar (stdlib.md §2.2.8). The 282 bytes are
     // `isCalendarDate` and the branch in `parseTime` that consults it before the
     // platform's parser can roll `2026-02-30` over into March. A counter parses no
