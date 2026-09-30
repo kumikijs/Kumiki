@@ -265,6 +265,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | フォーム | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 <!-- examples:end -->
 :::

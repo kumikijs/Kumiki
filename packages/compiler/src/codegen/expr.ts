@@ -5,6 +5,7 @@ import {
   bindRef,
   declareBind,
   type EvalCtx,
+  fieldKey,
   type GenCtx,
   jsBinding,
   jsProperty,
@@ -145,7 +146,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // record with this field, read the field — do NOT let a same-named method
       // shortcut shadow it. `accessKind` is only set when `check()` ran; absent,
       // we keep the historical name-based dispatch below (back-compat).
-      if (e.accessKind === "field") return `(${baseJs})[${JSON.stringify(e.field)}]`;
+      if (e.accessKind === "field") return `(${baseJs})[${fieldKey(e.field)}]`;
       // For Option/Result values stored as {_tag,_0}, accessing common fields like
       // ".get" needs unwrapping. We special-case ".get" / ".is-some" / ".is-none" /
       // ".is-ok" / ".is-err".
@@ -193,7 +194,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "exp") return `Math.exp(${baseJs})`;
       if (e.field === "to-float") return `(${baseJs})`;
       if (e.field === "to-int") return `Math.trunc(${baseJs})`;
-      return `(${baseJs})[${JSON.stringify(e.field)}]`;
+      return `(${baseJs})[${fieldKey(e.field)}]`;
     }
     case "Index": {
       // Through the runtime, so a List index that names no element panics
@@ -283,7 +284,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind);
     }
     case "RecordLit": {
-      const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${jsOfExpr(f.value, ctx)}`);
+      const parts = e.fields.map((f) => `${fieldKey(f.name)}: ${jsOfExpr(f.value, ctx)}`);
       return `{ ${parts.join(", ")} }`;
     }
     case "ListLit":

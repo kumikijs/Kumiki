@@ -265,6 +265,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 <!-- examples:end -->
 :::
