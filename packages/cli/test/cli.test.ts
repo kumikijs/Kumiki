@@ -248,10 +248,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // its own base; together they do not. A counter binds no box and asks nothing
     // whether it is empty, and still ships both in the modules every app loads.
     //
-    // Still 61,000 (60,410 measured, from 60,014): a Set element or Map key is one
+    // Still 61,000 (60,511 measured, from 60,014): a Set element or Map key is one
     // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
-    // encoding in core.js, which every Set / Map member and the index read and
-    // write ask. A counter keys nothing and still ships it.
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
