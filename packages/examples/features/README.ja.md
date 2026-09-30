@@ -64,6 +64,7 @@
 | [90-refinement-validation](./90-refinement-validation.kumiki) | 登録済み述語がすべて実行時チェックであること — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`、および標準ライブラリの refinement 付き nominal |
 | [105-refused-bind](./105-refused-bind.kumiki) | refinement に拒否された bind フィールドは入力を表示し続け、`error(field=…)` がその理由を示す |
 | [132-toggle-bind](./132-toggle-bind.kumiki) | `check` / `switch` は `Bool` を、`radio` は union の 1 バリアントを bind し、スロットを表示して書き戻す |
+| [133-typed-input-bind](./133-typed-input-bind.kumiki) | `Int` / `Float` / `Time` の slot に bind した `input` はテキストをその型として読み、読めないテキストは拒否する |
 | [136-submit-button-click](./136-submit-button-click.kumiki) | クリック reducer を持つ submit ボタンはそれを実行しつつ form を送信する。ボタンに送信させないのは `type="button"` |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |
