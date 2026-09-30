@@ -1,0 +1,65 @@
+# Feature (http.md §6.1.3 / §6.1.5): each `HttpBody` variant is sent as what it
+# names, with the Content-Type that goes with it unless the program set one.
+#
+#   Form(m)   user=ann&pass=pw     application/x-www-form-urlencoded
+#   Json(v)   {"name":"x"}         application/json
+#   Text(t)   raw                  (fetch's own text/plain)
+#   Empty     no body
+#   a record  {"sku":"book"}       application/json, as before
+#
+# The runtime used to JSON-encode the variant itself, so every one of these
+# went out as `{"_tag":"Form","_0":{…}}` under `application/json`.
+# `packages/tests/http-body.test.ts` reads what reached `fetch`; `smoke` makes
+# each request through the real handler against `128-http-body-variants.http.json`.
+
+slot status : Text = "idle"
+
+effect login cap=http.post
+             in={user: Text, pass: Text}
+             out=Result(Text, HttpError)
+             map-request={url: "/login", body: Form({"user": $1.user, "pass": $1.pass}), decode: Decoder.Text}
+
+effect rename cap=http.post
+              in=Text
+              out=Result(Text, HttpError)
+              map-request={url: "/json", body: Json({"name": $1}), decode: Decoder.Text}
+
+effect note cap=http.put
+            in=Text
+            out=Result(Text, HttpError)
+            map-request={url: "/text", body: Text($1), decode: Decoder.Text}
+
+effect ping cap=http.post
+            in=Unit
+            out=Result(Text, HttpError)
+            map-request={url: "/empty", body: Empty, decode: Decoder.Text}
+
+effect order cap=http.post
+             in=Text
+             out=Result(Text, HttpError)
+             map-request={url: "/orders", body: {sku: $1}, decode: Decoder.Text}
+
+reducer goLogin  on=ui.click(LoginBtn)  do= emit login({user: "ann", pass: "pw"})
+reducer goRename on=ui.click(RenameBtn) do= emit rename("x")
+reducer goNote   on=ui.click(NoteBtn)   do= emit note("raw")
+reducer goPing   on=ui.click(PingBtn)   do= emit ping()
+reducer goOrder  on=ui.click(OrderBtn)  do= emit order("book")
+
+reducer loggedIn on=login.ok($r, _)  do= status := "login " + $r
+reducer renamed  on=rename.ok($r, _) do= status := "json " + $r
+reducer noted    on=note.ok($r, _)   do= status := "text " + $r
+reducer pinged   on=ping.ok($r, _)   do= status := "empty " + $r
+reducer ordered  on=order.ok($r, _)  do= status := "record " + $r
+
+tile LoginBtn  = button(text="Form")   {id: "form"}
+tile RenameBtn = button(text="Json")   {id: "json"}
+tile NoteBtn   = button(text="Text")   {id: "text"}
+tile PingBtn   = button(text="Empty")  {id: "empty"}
+tile OrderBtn  = button(text="Record") {id: "record"}
+
+tile App = column(LoginBtn, RenameBtn, NoteBtn, PingBtn, OrderBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app HttpBodyVariants
+    caps   = [http.post, http.put]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
