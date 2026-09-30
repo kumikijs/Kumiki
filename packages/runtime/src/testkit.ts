@@ -210,7 +210,7 @@ function tileStructEqual(
     // went through `show` on both sides.
     const ev = k === "text" ? String(tileField(expected, k)) : tileField(expected, k);
     const av = k === "text" ? String(tileField(actual, k)) : tileField(actual, k);
-    if (!deepEqualValue(ev, av)) {
+    if (!valueEqual(ev, av)) {
       // Carry the leaf values so the runner can print the §8.7.1 value arrow
       // and `kumiki fix --auto-patch` can locate the responsible literal.
       return { ok: false, path: `${here}.${k}`, expectedLeaf: ev, actualLeaf: av };
