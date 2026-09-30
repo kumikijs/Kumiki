@@ -3,7 +3,12 @@
     {
       "label": "a static segment beats a parameter declared before it",
       "do": { "navigate": "/todos/new" },
-      "expect": { "noErrors": true, "domIncludes": ["New todo form"], "domExcludes": ["Detail"] }
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["New todo form"],
+        "domExcludes": ["Detail"],
+        "state": { "new-entered": 1, "rest-entered": 0 }
+      }
     },
     {
       "label": "a parameter beats a wildcard declared before it",
@@ -13,7 +18,21 @@
     {
       "label": "the wildcard still takes what neither of the others can",
       "do": { "navigate": "/todos/42/comments" },
-      "expect": { "noErrors": true, "domIncludes": ["Anything else under todos"] }
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Anything else under todos"],
+        "state": { "new-entered": 1, "rest-entered": 1 }
+      }
+    },
+    {
+      "label": "a static page beats a wildcard redirect declared before it",
+      "do": { "navigate": "/archive/latest" },
+      "expect": { "noErrors": true, "domIncludes": ["Latest archive"], "domExcludes": ["Home"] }
+    },
+    {
+      "label": "the wildcard redirect still sends everything else home",
+      "do": { "navigate": "/archive/2019" },
+      "expect": { "noErrors": true, "domIncludes": ["Home"], "domExcludes": ["Latest archive"] }
     }
   ]
 }

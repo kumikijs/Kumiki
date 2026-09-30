@@ -7,20 +7,36 @@
 # the form: the static segment `new` outranks `:id`. Likewise `/todos/:id`
 # outranks the catch-all `/todos/*` declared above it, which still gets any
 # deeper path neither of the others can take.
+#
+# The pattern that wins is also the one `route.enter` names, so the reducer
+# keyed on `/todos/new` fires there and the one keyed on `/todos/*` does not.
+#
+# A redirect (`->>`) is ranked in the same table: `/archive/latest` renders its
+# page even though the wildcard redirect `/archive/*` is written above it, and
+# every other path under `/archive` is sent home.
+
+slot new-entered  : Int = 0
+slot rest-entered : Int = 0
+
+reducer on-new  on=route.enter("/todos/new")  do= new-entered := new-entered + 1
+reducer on-rest on=route.enter("/todos/*")    do= rest-entered := rest-entered + 1
 
 tile Detail   = page(heading("Detail " + route.params.get-or("id", "?")))
 tile NewTodo  = page(heading("New todo form"))
 tile Rest     = page(heading("Anything else under todos"))
+tile Latest   = page(heading("Latest archive"))
 tile Home     = page(heading("Home"))
 tile NotFound = page(heading("404"))
 
 app RouteSpecificity
     caps   = [nav.push]
     routes = {
-        "/"           -> Home,
-        "/todos/*"    -> Rest,
-        "/todos/:id"  -> Detail,
-        "/todos/new"  -> NewTodo,
-        "/404"        -> NotFound
+        "/"               -> Home,
+        "/todos/*"        -> Rest,
+        "/todos/:id"      -> Detail,
+        "/todos/new"      -> NewTodo,
+        "/archive/*"      ->> "/",
+        "/archive/latest" -> Latest,
+        "/404"            -> NotFound
     }
     init   = []

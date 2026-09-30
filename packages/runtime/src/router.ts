@@ -137,32 +137,28 @@ function parentBare(pattern: string): string | null {
 }
 
 /**
- * Walk the routes table and return the redirect target for the given location,
- * or `null` if nothing redirects. Top-level `->>` entries take precedence; if
- * none apply, the first parent whose wildcard pattern matches the path is
- * scanned for sub-route redirects (spec §3.6 + §3.10).
+ * The redirect target for the given location, or `null` if nothing redirects.
+ * Redirects and rendering routes share one order (§3.1.2): the first entry of
+ * `ranked(routes)` that matches the path owns it. If that entry is a `->>`,
+ * its target is the answer; if it is a page, nothing redirects — unless the
+ * page declares `sub-routes`, whose entries are resolved the same way, so a
+ * child `->>` applies only when it is the child that owns the path
+ * (spec §3.6 + §3.10).
  */
 function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
   if (!routes) return null;
   const path = loc.pathname || "/";
-  const order = ranked(routes);
-  for (const r of order) {
-    if ("redirectTo" in r) {
-      if (matchPattern(r.pattern, path)) return r.redirectTo;
-    }
-  }
-  for (const r of order) {
-    if ("redirectTo" in r) continue;
-    if (matchPattern(r.pattern, path)) {
-      if (!r.subRoutes) return null;
-      for (const sr of ranked(r.subRoutes)) {
-        if ("redirectTo" in sr && matchPattern(sr.pattern, path)) return sr.redirectTo;
-      }
-      // Only the route that owns the path (the one parseLocation renders) is
-      // scanned — stop here.
-      return null;
-    }
-  }
+  const owner = firstMatch(routes, path);
+  if (!owner) return null;
+  if ("redirectTo" in owner) return owner.redirectTo;
+  if (!owner.subRoutes || owner.subRoutes.length === 0) return null;
+  const child = firstMatch(owner.subRoutes, path);
+  return child && "redirectTo" in child ? child.redirectTo : null;
+}
+
+/** The entry of `list` that owns `path`: its first match in §3.1.2's order. */
+function firstMatch(list: RouteList, path: string): RouteList[number] | null {
+  for (const r of ranked(list)) if (matchPattern(r.pattern, path)) return r;
   return null;
 }
 
@@ -170,8 +166,9 @@ type RouteList = NonNullable<AppShape["routes"]>;
 
 /** A segment's rank in §3.1.2's order: static 0, parameter 1, wildcard 2. */
 function segmentRank(seg: string | undefined): number {
-  // A pattern that ends here only matches a path that ends here too, which
-  // is as exact as a static segment.
+  // A pattern that ends here only matches a path that ends here too (the
+  // length check at the end of `matchPattern`), which is as exact as a static
+  // segment.
   if (seg === undefined) return 0;
   return seg === "*" ? 2 : seg.startsWith(":") ? 1 : 0;
 }
@@ -184,6 +181,8 @@ function compareSpecificity(a: string, b: string): number {
     const d = segmentRank(as[i]) - segmentRank(bs[i]);
     if (d !== 0) return d;
     // A wildcard swallows the rest of the path, so segments past it never compare.
+    // Checking one side is enough: `d === 0` here and only `*` ranks 2, so
+    // `bs[i]` is `*` as well.
     if (as[i] === "*") return 0;
   }
   return 0;
@@ -193,16 +192,21 @@ const rankedCache = new WeakMap<RouteList, RouteList>();
 
 /**
  * `list` in match order (§3.1.2): most specific first, definition order among
- * equals (`sort` is stable). Every lookup — the rendered route, its sub-route,
- * and the redirects — walks this one order, on the client and in SSR alike.
+ * equals (`sort` is stable). Every first-match lookup — the rendered route, its
+ * sub-route, and the redirect that applies — walks this one order. (The §3.6.3
+ * bare-path fallback looks a child up by exact pattern instead, where order
+ * cannot matter: E0112 rejects two children with one pattern.)
+ *
+ * Cached by array identity, which assumes a route list is never mutated after
+ * the app is created — codegen builds a fresh `_routes` per `createApp()`.
  */
-function ranked<T extends RouteList>(list: T): T {
+function ranked(list: RouteList): RouteList {
   let out = rankedCache.get(list);
   if (!out) {
     out = [...list].sort((a, b) => compareSpecificity(a.pattern, b.pattern));
     rankedCache.set(list, out);
   }
-  return out as T;
+  return out;
 }
 
 function matchPattern(pattern: string, path: string): Record<string, string> | null {
