@@ -2096,11 +2096,19 @@ export function mountCore(
   // tree walk. The diff with the new render's set drives the
   // `tile.mount(X) / tile.unmount(X)` lifecycle reducers (§7.1.6).
   let prevMountedTiles = new Set<string>();
+  // True while `route.error` handlers run from inside a render pass's catch.
+  // Their writes must not start a render of their own: the page they would
+  // render is the one that just panicked, so it panics again and fires the
+  // handlers again, one level deeper each time, until the stack overflows —
+  // and then whichever frame the overflow lands in decides what the handlers
+  // last saw. The catch re-renders once after they return; that is the render
+  // their writes (a navigation included) reach.
+  let inRouteErrorHandlers = false;
   const render = (): void => {
     // Late effect results (e.g. an in-flight fetch that resolves after the app
     // was disposed) must not touch the DOM — each view's root has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
-    if (disposed) return;
+    if (disposed || inRouteErrorHandlers) return;
     withRenderingApp(app, () => {
       const touched: string[] = [];
       let tree: TileNode | null = null;
@@ -2416,13 +2424,18 @@ export function mountCore(
       ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
       pattern,
     };
-    for (const h of handlers) {
-      try {
-        applyReducer(h, { $event: info, $route: cur });
-      } catch {
-        // a panic inside route.error itself is logged via the inner applyReducer
-        // path; we just keep iterating other handlers.
+    inRouteErrorHandlers = true;
+    try {
+      for (const h of handlers) {
+        try {
+          applyReducer(h, { $event: info, $route: cur });
+        } catch {
+          // a panic inside route.error itself is logged via the inner applyReducer
+          // path; we just keep iterating other handlers.
+        }
       }
+    } finally {
+      inRouteErrorHandlers = false;
     }
     return true;
   }
