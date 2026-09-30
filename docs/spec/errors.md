@@ -529,6 +529,7 @@ A value does not have the type its position requires.
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
+> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
@@ -538,7 +539,7 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a variant tag carrying a payload (`onClick=Some(1)`), a tile call carrying arguments (`onClick=box(text("z"))`) or props (`onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
@@ -838,6 +839,18 @@ The report is attached to the clause, not to the tile: two clauses naming the sa
 
 **Fix**: Declare `in=PanicInfo` on the fallback, and read the panic through `$1.message`, `$1.location` and the other fields [Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) defines.
 
+### E0225 `radio-bind-without-value`
+
+A `radio` carries a `bind=` and no `value=`.
+
+> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`
+
+A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while every `match` on the slot falls through and the block it renders disappears without a word.
+
+An error, not a warning: a radio with nothing to write asserts nothing when it is chosen, and no program means that. It is reported whether or not the bound type can be read.
+
+**Fix**: Give the radio the value it stands for — `radio(group="f", bind=filter, value=Active)`, one radio per value the slot can hold.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
@@ -873,6 +886,16 @@ Arguments are numbered as the call writes them, so the template is argument 1 an
 Only a literal template is checked. `fmt(tpl, x)` over a slot or a field has no placeholder set at compile time, and the shape of whatever literal initialised that slot is not the shape the call will see. Arity itself — that a `fmt` has a template at all — is [E0213](#e0213-call-arity-mismatch), which is fatal and reported instead of this.
 
 **Fix**: Add the missing argument, or the missing placeholder, or delete the argument that is not wanted. Where the extra value belongs elsewhere in the sentence, `+` concatenates it without a placeholder.
+
+### W0216 `selection-beside-bind` (warning)
+
+The argument a toggle reads for its selection when it is unbound — `value=` on a `check` or `switch`, `selected=` on a `radio` — is written beside a `bind=`.
+
+> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md §5.1.1)`
+
+With a `bind=`, the bound value alone decides whether a box is ticked or a radio chosen ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), so the other argument is a second answer to the same question and is not read. Like the argument [W0214](#w0214-fmt-placeholder-argument-mismatch-warning) reports, it leaves nothing behind — the control shows what the bind says, whatever the argument said — so no tier can tell it from a program that never passed it. A radio's own `value=` is not this argument: it is what the radio writes when chosen, and is read.
+
+**Fix**: Remove the argument. To tick the box from an expression rather than from a slot it writes, drop the `bind=` instead and keep `value=` with an `onClick` / `onChange` reducer.
 
 ## E03xx — Capabilities and Purity
 
