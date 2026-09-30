@@ -1,7 +1,14 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { assertNever } from "../ast.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { bindRef, declareBind, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
+import {
+  bindRef,
+  declareBind,
+  type EvalCtx,
+  fieldKey,
+  type GenCtx,
+  makeEvalCtx,
+} from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
 import { jsOfExpr, reducerEmitJs, reducerNameArg, tupleArm } from "./expr.ts";
 import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
@@ -407,10 +414,10 @@ export function jsOfConfirmArg(a: Expr, ctx: EvalCtx): string {
       const refName = v.name;
       const isReducer = ctx.gen.reducers.some((r) => r.name === refName);
       if (isReducer) {
-        return `${JSON.stringify(f.name)}: ${JSON.stringify(refName)}`;
+        return `${fieldKey(f.name)}: ${JSON.stringify(refName)}`;
       }
     }
-    return `${JSON.stringify(f.name)}: ${jsOfExpr(v, ctx)}`;
+    return `${fieldKey(f.name)}: ${jsOfExpr(v, ctx)}`;
   });
   return `{ ${parts.join(", ")} }`;
 }
