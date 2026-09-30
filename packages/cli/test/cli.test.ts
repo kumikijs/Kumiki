@@ -256,7 +256,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
     //
-    // Still 61,000 (60,421 measured, from 60,153): `heading` renders the element
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
+    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
+    //
+    // Still 61,000 (60,918 measured, from 60,650): `heading` renders the element
     // its level names. The 268 bytes are `headingTag` and the patcher's rebuild on
     // a level change; a counter renders a heading, so it ships them.
     const total = expected
