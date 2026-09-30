@@ -239,15 +239,22 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
     //
-    // 61,000 from 60,000 (59,536 measured, from 59,181): an index step reaches
-    // the setter apart from a field step (language.md §1.6.3), so a write
-    // through a Map key that is absent writes nothing and a read there panics.
-    // The 355 bytes are `isIndexSegment` and the no-write branch in
-    // `_setPathHelper`, `isEntryOf` which both sides of `:=` ask, and the panic
-    // in `_stdlibCore.index`. A counter indexes nothing and still ships them,
-    // because the setter and the stdlib sit on paths every app loads. The open
-    // PRs beside this one take the measurement to about 59,900 without it,
-    // which this would push over.
+    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
+    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
+    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
+    //
+    // 61,000 from 60,000 (60,014 measured, from 59,889): the `isEmpty` above
+    // landed on a base that already carried the bound `check` / `switch` / `radio`
+    // write-back (forms.md §5.1.1), 59,889 from 59,789. Each fit under 60,000 on
+    // its own base; together they do not. A counter binds no box and asks nothing
+    // whether it is empty, and still ships both in the modules every app loads.
+    //
+    // Still 61,000 (60,153 measured, from 60,014): a bound `input` reads its text
+    // as the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
+    // write remembers which reading the text failed, so `error(field=…)` can
+    // name it before any refinement (§5.7.2). That memory is the refused-bind
+    // record in core, which every app loads; a counter binds no input and
+    // still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
