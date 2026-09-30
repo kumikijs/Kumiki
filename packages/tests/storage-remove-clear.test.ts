@@ -1,8 +1,9 @@
 // `storage.write` / `session.write` carry three declarations (http.md §6.7.2 /
-// §6.7.4): a write (`{key, value}`), a remove (`{key}`) and a clear (`Unit`).
-// The handler only knew `setItem`, so a remove stored the string "undefined"
-// and reported ok, and a clear threw destructuring its `Unit` input. These run
-// the real handlers against the real Web Storage — no provider, no mock.
+// §6.7.4), told apart by the request: a write (`{key, value}`), a remove
+// (`{key}`) and a clear (an effect declared `in=Unit` with no `map-request`).
+// These run the real handlers against the real Web Storage — no provider, no
+// mock — and read what the storage holds after each step, so a remove that
+// cleared everything, or a bad request that cleared anything, shows up.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,7 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = join(here, "..", "examples", "features", "130-storage-remove-clear.kumiki");
 
-const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function snapshot(storage: Storage): Record<string, string> {
   const out: Record<string, string> = {};
@@ -25,34 +26,67 @@ function snapshot(storage: Storage): Record<string, string> {
   return out;
 }
 
-/** Mount `app`, then click each button in turn, returning the text after each. */
-async function clicks(app: AppShape, buttons: string[]): Promise<string[]> {
+/**
+ * Mount `app` and, for each step, click the button and wait until the page
+ * shows `until`. Returns what `storage` holds after each step.
+ */
+async function run(
+  app: AppShape,
+  storage: Storage,
+  steps: [button: string, until: string][],
+): Promise<Record<string, string>[]> {
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const seen: string[] = [];
+  const after: Record<string, string>[] = [];
+  let dispose: (() => void) | undefined;
   try {
-    const { dispose } = mount(app, root);
-    for (const b of buttons) {
-      clickByText(root, b);
-      await tick();
-      seen.push(root.textContent ?? "");
+    ({ dispose } = mount(app, root));
+    for (const [button, until] of steps) {
+      clickByText(root, button);
+      const deadline = Date.now() + 2000;
+      while (!(root.textContent ?? "").includes(until)) {
+        if (Date.now() > deadline) {
+          throw new Error(`after "${button}": wanted "${until}", page shows "${root.textContent}"`);
+        }
+        await tick();
+      }
+      after.push(snapshot(storage));
     }
-    dispose();
   } finally {
+    dispose?.();
     root.remove();
   }
-  return seen;
+  return after;
 }
 
-/** The example's program over `session.*` instead of `storage.*`. */
+/** A one-button program whose effect `e` reports `shown: ok` or `shown: err`. */
+function oneEffect(decls: string, emit: string, cap = "storage.write"): string {
+  return `${decls}
+slot shown : Text = "idle"
+
+reducer go on=ui.click(Go) do= emit ${emit}
+reducer ok on=e.ok(_, _) do= shown := "ok"
+reducer bad on=e.err(_, _) do= shown := "err"
+
+tile Go = button(text="Go")
+tile App = column(Go, text("shown: " + shown))
+
+app W
+    caps = [${cap}]
+    routes = {"/" -> App, "/404" -> App}
+    init = []
+`;
+}
+
+/** The example's program over `session.*`, with its remove written without `map-request`. */
 const SESSION = `slot shown : Text = "idle"
 
 effect save cap=session.write in=Text out=Result(Unit, Text) map-request={key: "note", value: $1}
-effect forget cap=session.write in=Text out=Result(Unit, Text) map-request={key: $1}
+effect forget cap=session.write in={key: Text} out=Result(Unit, Text)
 effect wipe cap=session.write in=Unit out=Result(Unit, Text)
 
 reducer goSave on=ui.click(SaveBtn) do= emit save("hello")
-reducer goForget on=ui.click(ForgetBtn) do= emit forget("note")
+reducer goForget on=ui.click(ForgetBtn) do= emit forget({key: "note"})
 reducer goWipe on=ui.click(WipeBtn) do= emit wipe()
 reducer saved on=save.ok(_, _) do= shown := "saved"
 reducer forgotten on=forget.ok(_, _) do= shown := "forgotten"
@@ -79,36 +113,55 @@ describe("storage.write / session.write: write, remove and clear", () => {
     sessionStorage.clear();
   });
 
-  it("removes the key, so the next read answers None (example 130)", async () => {
-    const [afterSave, afterForget, afterLoad] = await clicks(await loadApp(EXAMPLE), [
-      "Save",
-      "Forget",
-      "Load",
+  it("removes only its key, so the next read answers None (example 130)", async () => {
+    const app = await loadApp(EXAMPLE);
+    localStorage.setItem("other", "1");
+    const [afterSave, afterForget] = await run(app, localStorage, [
+      ["Save", "shown: saved"],
+      ["Forget", "shown: forgotten"],
+      ["Load", "shown: loaded <none>"],
     ]);
-    expect(afterSave).toContain("shown: saved");
-    expect(afterForget).toContain("shown: forgotten");
-    expect(snapshot(localStorage)).toEqual({});
-    expect(afterLoad).toContain("shown: loaded <none>");
+    expect(afterSave).toEqual({ other: "1", note: '"hello"' });
+    expect(afterForget).toEqual({ other: "1" });
   });
 
   it("clears every key and reports ok (example 130)", async () => {
     const app = await loadApp(EXAMPLE);
     localStorage.setItem("other", "1");
-    const [, afterWipe] = await clicks(app, ["Save", "Wipe"]);
-    expect(afterWipe).toContain("shown: wiped");
-    expect(snapshot(localStorage)).toEqual({});
+    const [, afterWipe] = await run(app, localStorage, [
+      ["Save", "shown: saved"],
+      ["Wipe", "shown: wiped"],
+    ]);
+    expect(afterWipe).toEqual({});
   });
 
-  it("does the same against sessionStorage, including a remove written with map-request", async () => {
+  it("removes only its key through map-request={key: $1} on storage.write", async () => {
+    const app = await loadSource(
+      oneEffect(
+        `effect e cap=storage.write in=Text out=Result(Unit, Text) map-request={key: $1}`,
+        `e("note")`,
+      ),
+    );
+    localStorage.setItem("note", '"hello"');
+    localStorage.setItem("other", "1");
+    const [after] = await run(app, localStorage, [["Go", "shown: ok"]]);
+    expect(after).toEqual({ other: "1" });
+  });
+
+  it("does the same against sessionStorage, with a remove written without map-request", async () => {
     const app = await loadSource(SESSION);
     sessionStorage.setItem("other", "1");
-    const [, afterForget, afterWipe] = await clicks(app, ["Save", "Forget", "Wipe"]);
-    expect(afterForget).toContain("shown: forgotten");
-    expect(afterWipe).toContain("shown: wiped");
-    expect(snapshot(sessionStorage)).toEqual({});
+    const [afterSave, afterForget, afterWipe] = await run(app, sessionStorage, [
+      ["Save", "shown: saved"],
+      ["Forget", "shown: forgotten"],
+      ["Wipe", "shown: wiped"],
+    ]);
+    expect(afterSave).toEqual({ other: "1", note: '"hello"' });
+    expect(afterForget).toEqual({ other: "1" });
+    expect(afterWipe).toEqual({});
   });
 
-  it("does not take a value that is None, an empty list or a record for a remove", async () => {
+  it("does not mistake a write of None, an empty list or a record for a remove", async () => {
     const app = await loadSource(`slot shown : Text = "idle"
 
 effect w1 cap=storage.write in=Option(Text) out=Result(Unit, Text) map-request={key: "a", value: $1}
@@ -118,6 +171,7 @@ effect w3 cap=storage.write in={key: Text, value: {n: Int}} out=Result(Unit, Tex
 reducer go on=ui.click(Go) do= emit w1(None)
                                emit w2([])
                                emit w3({key: "c", value: {n: 1}})
+reducer done on=w3.ok(_, _) do= shown := "done"
 
 tile Go = button(text="Go")
 tile App = column(Go, text(shown))
@@ -127,11 +181,54 @@ app W
     routes = {"/" -> App, "/404" -> App}
     init = []
 `);
-    await clicks(app, ["Go"]);
-    const stored = snapshot(localStorage);
-    expect(Object.keys(stored).sort()).toEqual(["a", "b", "c"]);
-    expect(stored.a).not.toBe("undefined");
-    expect(JSON.parse(stored.b ?? "")).toEqual([]);
-    expect(JSON.parse(stored.c ?? "")).toEqual({ n: 1 });
+    const [stored] = await run(app, localStorage, [["Go", "done"]]);
+    expect(stored).toEqual({ a: '{"_tag":"None"}', b: "[]", c: '{"n":1}' });
+  });
+});
+
+describe("a storage.write request that is none of the three shapes is an err, not a wipe", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("other", "1");
+    localStorage.setItem("undefined", "kept");
+  });
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("a Map index that finds nothing leaves the storage alone and fires .err", async () => {
+    const app = await loadSource(
+      oneEffect(
+        `type Ref = {key: Text}
+slot refs : Map(Text, Ref) = {}
+effect e cap=storage.write in=Ref out=Result(Unit, Text)`,
+        `e(refs["nope"])`,
+      ),
+    );
+    const [after] = await run(app, localStorage, [["Go", "shown: err"]]);
+    expect(after).toEqual({ other: "1", undefined: "kept" });
+  });
+
+  it("a remove whose key is missing removes nothing and fires .err", async () => {
+    const app = await loadSource(
+      oneEffect(
+        `effect e cap=storage.write in=Text out=Result(Unit, Text) map-request={k: $1}`,
+        `e("other")`,
+      ),
+    );
+    const [after] = await run(app, localStorage, [["Go", "shown: err"]]);
+    expect(after).toEqual({ other: "1", undefined: "kept" });
+  });
+
+  it("a write whose value is missing stores nothing and fires .err", async () => {
+    const app = await loadSource(
+      oneEffect(
+        `slot texts : Map(Text, Text) = {}
+effect e cap=storage.write in=Unit out=Result(Unit, Text) map-request={key: "t", value: texts["nope"]}`,
+        `e()`,
+      ),
+    );
+    const [after] = await run(app, localStorage, [["Go", "shown: err"]]);
+    expect(after).toEqual({ other: "1", undefined: "kept" });
   });
 });

@@ -8,6 +8,8 @@
 import type { EffectResult } from "./core.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
+type Backend = "localStorage" | "sessionStorage";
+
 async function readFrom(storage: Storage, key: string): Promise<EffectResult> {
   try {
     const raw = storage.getItem(key);
@@ -19,25 +21,54 @@ async function readFrom(storage: Storage, key: string): Promise<EffectResult> {
   }
 }
 
+function failed(message: string): EffectResult {
+  return { kind: "err", value: { message } };
+}
+
 /**
- * One `*.write` capability answers the three declarations of http.md §6.7.2,
- * told apart by the request: `Unit` clears the storage, a `{key}` with no
- * `value` field removes the key, and `{key, value}` writes the value — whatever
- * it is, so a `None` or an empty list is still a write.
+ * Run one Web Storage call, answering a failure as an `err` that names the call
+ * and its key: a quota error on one key must read differently from a program
+ * that built the wrong request.
  */
-async function writeTo(storage: Storage, input: unknown): Promise<EffectResult> {
+function attempt(backend: Backend, call: string, run: (s: Storage) => void): EffectResult {
   try {
-    if (input === null || input === undefined) {
-      storage.clear();
-    } else {
-      const req = input as { key: string; value?: unknown };
-      if ("value" in req) storage.setItem(req.key, JSON.stringify(req.value) ?? "null");
-      else storage.removeItem(req.key);
-    }
+    run(globalThis[backend]);
     return { kind: "ok", value: null };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return failed(`${backend}.${call} failed: ${String(e)}`);
   }
+}
+
+/**
+ * The write and the remove of http.md §6.7.2, told apart by the request: a
+ * record with a `value` field writes it — whatever it is, so a `None` or an
+ * empty list is still a write — and one without removes the key. The clear is
+ * not decided here: codegen calls `storageClear` / `sessionClear` for an effect
+ * declared `in=Unit` with no `map-request`. An empty request is also what a Map
+ * index that found nothing produces, so a request that is not a record, a key
+ * that is not a non-empty text, and a value JSON cannot encode are each an
+ * `err` that touches nothing.
+ */
+function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
+  if (typeof input !== "object" || input === null) {
+    return failed(`${cap}: the request is not a record (got ${String(input)})`);
+  }
+  const req = input as { key?: unknown; value?: unknown };
+  const key = req.key;
+  if (typeof key !== "string" || key === "") {
+    return failed(`${cap}: a write or a remove needs a non-empty text key (got ${String(key)})`);
+  }
+  const at = JSON.stringify(key);
+  if (!("value" in req)) return attempt(backend, `removeItem(${at})`, (s) => s.removeItem(key));
+  // `JSON.stringify` answers `undefined` (not a string) for `undefined`, a
+  // function or a symbol; stored, that would read back as something else.
+  const raw: string | undefined = JSON.stringify(req.value);
+  if (raw === undefined) {
+    return failed(
+      `${cap}: the value for ${at} cannot be stored as JSON (got ${String(req.value)})`,
+    );
+  }
+  return attempt(backend, `setItem(${at})`, (s) => s.setItem(key, raw));
 }
 
 export async function storageRead(input: unknown): Promise<EffectResult> {
@@ -46,7 +77,12 @@ export async function storageRead(input: unknown): Promise<EffectResult> {
 }
 
 export async function storageWrite(input: unknown): Promise<EffectResult> {
-  return writeTo(localStorage, input);
+  return writeTo("localStorage", "storage.write", input);
+}
+
+/** A `storage.write` declared `in=Unit` with no `map-request`: empties the origin's localStorage. */
+export async function storageClear(): Promise<EffectResult> {
+  return attempt("localStorage", "clear()", (s) => s.clear());
 }
 
 export async function sessionRead(input: unknown): Promise<EffectResult> {
@@ -55,5 +91,10 @@ export async function sessionRead(input: unknown): Promise<EffectResult> {
 }
 
 export async function sessionWrite(input: unknown): Promise<EffectResult> {
-  return writeTo(sessionStorage, input);
+  return writeTo("sessionStorage", "session.write", input);
+}
+
+/** A `session.write` declared `in=Unit` with no `map-request`: empties the tab's sessionStorage. */
+export async function sessionClear(): Promise<EffectResult> {
+  return attempt("sessionStorage", "clear()", (s) => s.clear());
 }

@@ -1,26 +1,60 @@
+import { type TypeEnv, unaliasType } from "../assignable.ts";
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
+
+export type StorageHandler =
+  | "storageRead"
+  | "storageWrite"
+  | "storageClear"
+  | "sessionRead"
+  | "sessionWrite"
+  | "sessionClear";
+
+/**
+ * The `effects-storage` handler an effect calls, or null when it is not a
+ * storage effect. One answer for both the call codegen emits and the import
+ * that ships it, so the two cannot drift.
+ *
+ * A clear (http.md §6.7.2) is decided here, from the declaration: `in=Unit`
+ * (through any alias) with no `map-request`. It is not left to the runtime to
+ * infer from an empty request, because an empty request is also what a Map
+ * index that found nothing produces, and a clear takes the whole origin with
+ * it. A write and a remove stay one handler: `map-request` is an arbitrary
+ * expression, so only the request it builds can tell them apart.
+ */
+export function storageHandlerOf(eff: EffectDef, env: TypeEnv): StorageHandler | null {
+  const backend =
+    eff.cap === "storage.read" || eff.cap === "storage.write"
+      ? "storage"
+      : eff.cap === "session.read" || eff.cap === "session.write"
+        ? "session"
+        : null;
+  if (!backend) return null;
+  if (eff.cap.endsWith(".read")) return `${backend}Read`;
+  const inType = unaliasType(eff.inType, env);
+  const clears = !eff.mapRequest && inType?.kind === "TypePrim" && inType.name === "Unit";
+  return clears ? `${backend}Clear` : `${backend}Write`;
+}
 
 /**
  * The built-in implementation call for a standard capability, given the request
  * variable name. Returns null for custom capabilities (no built-in — a host
  * provider is required).
  */
-export function builtinEffectCall(eff: EffectDef, reqVar: string): string | null {
+export function builtinEffectCall(eff: EffectDef, reqVar: string, env: TypeEnv): string | null {
   // Bare names (not `builtinEffects.*`) so the modular build can import each
   // handler from its feature module; the assembled runtime entry exports the
   // same names top-level for the monolith/inlining path (#71).
-  if (eff.cap === "storage.read") {
-    return `storageRead(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
+  const storage = storageHandlerOf(eff, env);
+  if (storage?.endsWith("Read")) {
+    return `${storage}(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
   }
-  // A write's request goes through whole: whether it carries a `value` field
-  // is what tells a write from a remove (http.md §6.7.2).
-  if (eff.cap === "storage.write") return `storageWrite(${reqVar})`;
-  if (eff.cap === "session.read") {
-    return `sessionRead(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
-  }
-  if (eff.cap === "session.write") return `sessionWrite(${reqVar})`;
+  if (storage?.endsWith("Clear")) return `${storage}()`;
+  // A write's request goes through whole, on both storage.write and
+  // session.write: whether it carries a `value` field is what tells a write
+  // from a remove (http.md §6.7.2).
+  if (storage) return `${storage}(${reqVar})`;
   if (eff.cap === "indexed.read") return `indexedRead(${reqVar}, _idb)`;
   if (eff.cap === "indexed.write") return `indexedWrite(${reqVar}, _idb)`;
   if (eff.cap === "indexed.delete") return `indexedDelete(${reqVar}, _idb)`;
@@ -47,7 +81,7 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   // clear "no provider" error.
   const capJs = JSON.stringify(eff.cap);
   const reqVar = eff.mapRequest ? "_req" : "_input";
-  const builtin = builtinEffectCall(eff, reqVar);
+  const builtin = builtinEffectCall(eff, reqVar, gen);
   const fallback =
     builtin ??
     `{ kind: "err", value: { message: ${JSON.stringify(`Capability ${eff.cap} has no provider`)} } }`;
