@@ -3531,6 +3531,40 @@ function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
 }
 
 /**
+ * The object key a `Set` element or a `Map` key is stored under. A Set is
+ * `{ [key]: true }` and a Map a plain object, so every member that writes,
+ * finds or removes an entry — `add` / `toggle` / `has` / `remove`, `get` /
+ * `get-or` / `insert` / `update`, the index read `m[k]` and the index write
+ * `m[k] := v` — asks this one function, and two keys are one entry exactly
+ * when they encode alike.
+ *
+ * A primitive is `String(x)`, as it always was. A structured value — a
+ * variant, a record, a tuple — is its JSON with each object's fields in
+ * sorted order, so equal values (stdlib.md §2.2.1: by `==`) are one key
+ * whatever order their fields were written in, and distinct ones never share
+ * the `"[object Object]"` that `String` gives them all. The key types of one
+ * container are all one type, so the two encodings never meet in it. The
+ * readers turn a key back into a value through `restoreKey` in stdlib.ts,
+ * which parses this JSON for a key the checker recorded as `"value"`.
+ */
+export function entryKey(x: unknown): string {
+  return x !== null && typeof x === "object" ? sortedJson(x) : String(x);
+}
+
+function sortedJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(sortedJson).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const fields = Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${sortedJson(o[k])}`);
+    return `{${fields.join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/**
  * The element of `list` an index names, or a panic when it names none
  * (lifecycle.md §7.2.2). One rule for `xs[i]` on both sides of `:=`: the read
  * (`_stdlibCore.index`) and the write (`_setPathHelper`) ask it the same way,
@@ -3598,7 +3632,8 @@ export function _setPathHelper(
     throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
-  return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };
+  const key = entryKey(head);
+  return { ...cur, [key]: _setPathHelper(cur[key], rest, value) };
 }
 
 /**
