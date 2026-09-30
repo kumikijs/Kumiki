@@ -255,6 +255,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // name it before any refinement (§5.7.2). That memory is the refused-bind
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
+    //
+    // Still 61,000 (60,212 measured, from 60,153): a Set literal is a Set
+    // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
+    // `setAdd` so a literal and an `add` chain are one form. A counter writes
+    // no Set and still ships it in stdlib.js.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
