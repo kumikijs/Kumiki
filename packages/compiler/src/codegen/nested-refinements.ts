@@ -9,6 +9,7 @@ import {
   typeKey,
 } from "../refinement-positions.ts";
 import { refinementBodyJs } from "../refinements.ts";
+import { fieldKey } from "./context.ts";
 
 /**
  * The refinements a type carries at every position a value of it has, not only
@@ -124,8 +125,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
           'v !== null && typeof v === "object" && !Array.isArray(v)',
           t.fields.flatMap((field) => {
             const check = explain(field.type, generics);
-            const name = JSON.stringify(field.name);
-            return check ? [at(name, check, `v[${name}]`)] : [];
+            if (!check) return [];
+            return [at(JSON.stringify(field.name), check, `v[${fieldKey(field.name)}]`)];
           }),
         );
       case "TypeUnion":
