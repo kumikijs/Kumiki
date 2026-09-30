@@ -2,9 +2,9 @@
 # slot a control inside it binds passes its validation — judged on what the
 # control shows, the same judgement `error(field=…)` makes. A pristine address
 # that fails its refinement, and a typed one the refinement refused, both keep
-# the reducer from running, while the message says why. Before this, the
-# submit listener called the reducer unconditionally, and it read the slot's
-# last accepted value — not what the field showed.
+# the reducer from running, while the message says why. A refused edit leaves
+# the slot on the last value it accepted; were the form to submit, the reducer
+# would read that value, not what the field shows.
 
 slot email : Text where email = ""
 slot name  : Text             = ""

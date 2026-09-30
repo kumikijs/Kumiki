@@ -10,5 +10,5 @@ showing a refused address beside "Invalid email format" still submitted, and
 the reducer read the slot's last accepted value rather than what the field
 showed. The form now judges every slot a control inside it binds on what the
 controls show — the judgement `error(field=…)` makes, through one shared
-`shownSlotValue` — and does not call the reducer while any fails, whether the
+`judgeShownField` — and does not call the reducer while any fails, whether the
 submit comes from a button or Enter.

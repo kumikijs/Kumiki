@@ -1608,15 +1608,34 @@ export function refusedBindShown(
   return found;
 }
 
+/** A field as it shows, judged: valid, or why not (see `judgeShownField`). */
+export type ShownField =
+  | { valid: true }
+  | { valid: false; unread: BindReader["as"] }
+  | { valid: false; unread?: undefined; value: unknown };
+
 /**
- * The value `slot` shows inside `view` (forms.md §5.1.2): a refused value a
- * control bound to it there still shows, else the slot's own. It is what
- * `error(field=…)` renders a message for and what a form's submit is gated on
- * (§5.2.2), so the two cannot disagree about whether a field is valid.
+ * Whether the field bound to `slot` is valid as it shows inside `view`
+ * (forms.md §5.1.2), and if not, what is wrong with it. Text a control shows
+ * that reads as no value of the bound base (`"1.5"` into an `Int`) is judged
+ * first, whatever the refinement; then a refused value a control there still
+ * shows, else the slot's own value, against the slot's refinement.
+ *
+ * `error(field=…)` renders its message from this and a form's submit is gated
+ * on it (§5.2.2), so given the same view the two cannot disagree. They are
+ * not always handed the same view: the tile asks about the view being
+ * rendered, the form about its own controls.
  */
-export function shownSlotValue(app: AppShape, slot: string, view: BindView | undefined): unknown {
-  const held = app.live?.[slot] ?? app.slots?.[slot]?.value;
-  return refusedBindShown(app, slot, view)?.value ?? held;
+export function judgeShownField(
+  app: AppShape,
+  slot: string,
+  view: BindView | undefined,
+): ShownField {
+  const refused = refusedBindShown(app, slot, view);
+  if (refused?.unread) return { valid: false, unread: refused.unread };
+  const meta = app.slots?.[slot];
+  const value = refused?.value ?? app.live?.[slot] ?? meta?.value;
+  return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
 }
 
 /** The controls a refused bind is remembered against, for `app`. */

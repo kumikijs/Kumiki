@@ -9,21 +9,22 @@ import type {
   TileProps,
   TileRenderer,
 } from "../../core.ts";
-import { refusedBindShown, resolveApp, shownSlotValue, slotAccepts } from "../../core.ts";
+import { judgeShownField, resolveApp } from "../../core.ts";
 import type { InputHandlers } from "./_shared.ts";
 import { INPUT_STATE, inputHandlers, reconcileId, setHandlers, tileId } from "./_shared.ts";
 
 /**
  * Does every slot a control inside `form` binds pass its validation, judged on
- * what the controls show (forms.md §5.2.2)? The same judgement `error(field=…)`
- * makes — the slot's value, or a refused value a control in the form still
- * shows — so a form whose fields show a message does not submit, and one whose
- * fields show none does.
+ * what the controls show (forms.md §5.2.2)? `judgeShownField` makes the
+ * judgement, the one `error(field=…)` renders from — so a form whose fields
+ * show a message does not submit, and one whose fields show none does.
  *
  * "Inside the form" is the set of controls the form's own query finds, handed
  * over as the view rather than the form itself: happy-dom's `<form>` answers
  * `contains` false for its own descendants, which would quietly let every
- * refused value through the scenario and smoke tiers.
+ * refused value through the scenario and smoke tiers. A refused value a
+ * control outside the form shows is not what the form submits, so it does not
+ * hold the form back.
  */
 function boundSlotsValid(form: HTMLFormElement): boolean {
   const app = resolveApp(form);
@@ -37,12 +38,7 @@ function boundSlotsValid(form: HTMLFormElement): boolean {
     slots.add(slot);
   }
   const inForm = { contains: (el: Node | null) => el !== null && controls.has(el) };
-  for (const slot of slots) {
-    // Text that reads as no value of the bound base shows its own message
-    // (forms.md §5.1.2), whatever the slot still holds.
-    if (refusedBindShown(app, slot, inForm)?.unread) return false;
-    if (!slotAccepts(app.slots[slot], shownSlotValue(app, slot, inForm))) return false;
-  }
+  for (const slot of slots) if (!judgeShownField(app, slot, inForm).valid) return false;
   return true;
 }
 

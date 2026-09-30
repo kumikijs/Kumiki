@@ -8,9 +8,7 @@ import {
   failedRefinement,
   getRenderingApp,
   getRenderingView,
-  refusedBindShown,
-  shownSlotValue,
-  slotAccepts,
+  judgeShownField,
 } from "./core.ts";
 
 /**
@@ -34,20 +32,19 @@ function resolveFieldError(field: string): string {
   // slot kept the last value it accepted, and a message computed from that
   // one would be about a value the user is no longer looking at.
   // Only a control in the view being rendered speaks for this tile: another
-  // view of the same shape shows the slot's own value.
-  const view = getRenderingView();
-  const refused = refusedBindShown(app, field, view);
+  // view of the same shape shows the slot's own value. The judgement is the
+  // one a form gates its submit on (§5.2.2).
+  const shown = judgeShownField(app, field, getRenderingView());
+  if (shown.valid) return "";
   const overrides = currentTheme()?.errors as Record<string, string> | undefined;
   // Text that does not read as the bound base at all is judged before any
   // refinement: "1.5" into an `Int where between(0, 120)` is not a number out
   // of range, and a slot with no refinement still has this to say (§5.1.2).
-  if (refused?.unread) {
-    const key = UNREAD_KEY[refused.unread];
+  if (shown.unread) {
+    const key = UNREAD_KEY[shown.unread];
     return overrides?.[key] ?? defaultFieldError(key, []);
   }
-  // The same value `form` judges its fields by (§5.2.2).
-  const value = shownSlotValue(app, field, view);
-  if (slotAccepts(meta, value)) return "";
+  const value = shown.value;
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.
   const failed = failedRefinement(value, meta);

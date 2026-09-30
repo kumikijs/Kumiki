@@ -261,6 +261,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // encoding in core.js, which every Set / Map member, a Map literal and the
     // index read and write ask, and the panic that names a stored key no member
     // wrote. A counter keys nothing and still ships them.
+    //
+    // Still 61,000 (60,855 measured, from 60,650): a form submits only while
+    // every field bound inside it is valid as it shows (forms.md §5.2.2), judged
+    // by `judgeShownField` in core — the one judgement `error(field=…)` renders
+    // its message from, so the two cannot drift. It sits beside the refused-bind
+    // record in core, which every app loads; a counter has no form and still
+    // ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

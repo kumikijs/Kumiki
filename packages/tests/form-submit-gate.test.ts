@@ -1,12 +1,11 @@
 // A form's `ui.submit` reducer runs only when every slot a control inside it
-// binds passes its validation, judged on what the control shows (forms.md
-// §5.2.2) — the judgement `error(field=…)` makes. The submit listener called
-// the reducer unconditionally, so a field showing a refused value beside its
-// message submitted anyway, and the reducer read the stale slot value the
-// field was no longer showing.
+// binds passes its validation, judged on what the controls show (forms.md
+// §5.2.2) — the judgement `error(field=…)` makes. A field showing a refused
+// value has left its slot on the last value it accepted; were the form to
+// submit, the reducer would read that value, not what the field shows.
 
 import { type AppShape, mount } from "@kumikijs/runtime";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
 
 const SOURCE = `
@@ -48,12 +47,28 @@ function submit(root: HTMLElement): void {
   form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
 
-async function mounted(): Promise<{ app: AppShape; root: HTMLElement }> {
-  const app = await loadSource(SOURCE);
+const roots: HTMLElement[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) root.remove();
+});
+
+async function mounted(source = SOURCE): Promise<{ app: AppShape; root: HTMLElement }> {
+  const app = await loadSource(source);
   const root = document.createElement("div");
   document.body.appendChild(root);
+  roots.push(root);
   mount(app, root);
   return { app, root };
+}
+
+function program(slots: string, tiles: string, route = "Signup"): string {
+  return `${slots}
+${tiles}
+app A
+    caps   = []
+    routes = {"/" -> ${route}, "/404" -> ${route}}
+    init   = []
+`;
 }
 
 describe("a form submits only while its bound fields are valid", () => {
@@ -94,19 +109,14 @@ describe("a form submits only while its bound fields are valid", () => {
   });
 
   it("does not submit a pristine field whose default fails its refinement", async () => {
-    const app = await loadSource(`
-slot email : Text where email = ""
+    const { app, root } = await mounted(
+      program(
+        `slot email : Text where email = ""
 slot sends : Int = 0
-reducer send on=ui.submit(Signup) do= sends := sends + 1
-tile Signup = form(column(input(bind=email, id="e"), error(field=email)))
-app A
-    caps   = []
-    routes = {"/" -> Signup, "/404" -> Signup}
-    init   = []
-`);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    mount(app, root);
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(input(bind=email, id="e"), error(field=email)))`,
+      ),
+    );
     submit(root);
     expect(app.live?.sends).toBe(0);
     fill(root, "e", "ada@example.com");
@@ -117,19 +127,14 @@ app A
   it("does not submit while an Int field shows text that is no Int", async () => {
     // The field says "Must be a whole number" (forms.md §5.1.2) while the slot
     // keeps its last number, which passes; the form judges what is shown.
-    const app = await loadSource(`
-slot age   : Int = 30
+    const { app, root } = await mounted(
+      program(
+        `slot age   : Int = 30
 slot sends : Int = 0
-reducer send on=ui.submit(Signup) do= sends := sends + 1
-tile Signup = form(column(input(bind=age, id="a", type="number"), error(field=age)))
-app A
-    caps   = []
-    routes = {"/" -> Signup, "/404" -> Signup}
-    init   = []
-`);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    mount(app, root);
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(input(bind=age, id="a", type="number"), error(field=age)))`,
+      ),
+    );
     fill(root, "a", "1.5");
     expect(root.textContent).toContain("Must be a whole number");
     submit(root);
@@ -137,5 +142,117 @@ app A
     fill(root, "a", "31");
     submit(root);
     expect(app.live?.sends).toBe(1);
+  });
+
+  it("does not submit a pristine failing default even with no error tile to say why", async () => {
+    // Every bound slot counts, shown message or not: the reducer would
+    // otherwise run on a value its own type refuses.
+    const { app, root } = await mounted(
+      program(
+        `slot email : Text where email = ""
+slot sends : Int = 0
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(input(bind=email, id="e")))`,
+      ),
+    );
+    submit(root);
+    expect(app.live?.sends).toBe(0);
+    fill(root, "e", "ada@example.com");
+    submit(root);
+    expect(app.live?.sends).toBe(1);
+  });
+
+  it("judges a textarea and a select by their pristine defaults too", async () => {
+    const { app, root } = await mounted(
+      program(
+        `slot note  : Text where nonempty = ""
+slot size  : Text where nonempty = ""
+slot sends : Int = 0
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(
+    textarea(bind=note) {id: "t"},
+    select(bind=size, options=[{label: "S", value: "s"}], placeholder="Pick") {id: "s"}))`,
+      ),
+    );
+    submit(root);
+    expect(app.live?.sends).toBe(0);
+    fill(root, "t", "hello");
+    submit(root);
+    expect(app.live?.sends).toBe(0);
+    const select = root.querySelector<HTMLSelectElement>("#s");
+    if (!select) throw new Error("#s not found");
+    const option = Array.from(select.options).find((o) => o.textContent === "S");
+    if (!option) throw new Error("no option S");
+    select.value = option.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(app.live?.size).toBe("s");
+    submit(root);
+    expect(app.live?.sends).toBe(1);
+  });
+
+  it("does not submit while a path-bound field shows a refused value", async () => {
+    // `bind=user.email` writes the whole record back to `user`; the record the
+    // write would have produced is what is refused, and what is judged.
+    const { app, root } = await mounted(
+      program(
+        `type Email = Text where email
+slot user  : {name: Text, email: Email} = {name: "Ada", email: "ada@example.com"}
+slot sent  : Text = ""
+reducer send on=ui.submit(Signup) do= sent := user.email`,
+        `tile Signup = form(column(input(bind=user.email, id="e"), error(field=user)))`,
+      ),
+    );
+    fill(root, "e", "ada@examplecom");
+    expect(root.textContent).toContain("Invalid email format");
+    submit(root);
+    expect(app.live?.sent).toBe("");
+    fill(root, "e", "grace@example.com");
+    submit(root);
+    expect(app.live?.sent).toBe("grace@example.com");
+  });
+});
+
+describe("only the controls inside a form hold it back", () => {
+  it("submits while a control outside the form shows a refused value for the same slot", async () => {
+    // The form submits what its own control shows, which is the slot's value.
+    // `error(field=…)` speaks for the whole view, so it still names the edit
+    // outside the form (forms.md §5.2.2).
+    const { app, root } = await mounted(
+      program(
+        `slot contact : Text where email = "ada@example.com"
+slot sent    : Text = ""
+reducer send on=ui.submit(Signup) do= sent := contact`,
+        `tile Signup = form(column(input(bind=contact, id="in"), error(field=contact)))
+tile App = column(input(bind=contact, id="out"), Signup)`,
+        "App",
+      ),
+    );
+    fill(root, "out", "ada@examplecom");
+    expect(root.textContent).toContain("Invalid email format");
+    submit(root);
+    expect(app.live?.sent).toBe("ada@example.com");
+  });
+
+  it("holds back the form that shows the refused value and not another one", async () => {
+    const { app, root } = await mounted(
+      program(
+        `slot contact : Text where email = "ada@example.com"
+slot a       : Int = 0
+slot b       : Int = 0
+reducer sendA on=ui.submit(FormA) do= a := a + 1
+reducer sendB on=ui.submit(FormB) do= b := b + 1`,
+        `tile FormA = form(input(bind=contact, id="ca"))
+tile FormB = form(input(bind=contact, id="cb"))
+tile App = column(FormA, FormB)`,
+        "App",
+      ),
+    );
+    fill(root, "ca", "ada@examplecom");
+    const [formA, formB] = Array.from(root.querySelectorAll("form"));
+    for (const form of [formA, formB]) {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    }
+    expect(app.live?.a).toBe(0);
+    expect(app.live?.b).toBe(1);
   });
 });
