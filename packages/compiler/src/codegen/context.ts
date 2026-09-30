@@ -1,5 +1,6 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
 import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
+import type { ParseReading } from "../parse-reading.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -17,6 +18,13 @@ export type GenCtx = {
    * are not captured — they resolve via `theme.icons` at runtime.
    */
   usedIcons: Set<string>;
+  /**
+   * The readings an `input` parses its text by when the bound position's base
+   * is an `Int`, a `Float` or a `Time` (forms.md §5.1.1). Each is declared
+   * once per app instance, so the reader a node carries is the same object on
+   * every render and the node still compares equal to the last one.
+   */
+  usedReaders: Set<ParseReading>;
 };
 
 /**
@@ -129,6 +137,20 @@ function mapSpecialChars(name: string): string {
  */
 export function jsProperty(name: string): string {
   return mapSpecialChars(name);
+}
+
+/**
+ * The key a Kumiki field name has on a JS object that the program itself reads
+ * by field: a record, and the `$el` payload a tile hands its handlers. The
+ * source spelling, quoted — `item-name` stays `"item-name"` — because a field
+ * read (`r.item-name`, `$el.item-name`) is lowered with this same key. The
+ * writer and the reader take it from here so they cannot disagree.
+ *
+ * Not {@link jsProperty}: that one rewrites `-` to `_` for names the runtime
+ * defines, which a program's own field is not.
+ */
+export function fieldKey(name: string): string {
+  return JSON.stringify(name);
 }
 
 /**

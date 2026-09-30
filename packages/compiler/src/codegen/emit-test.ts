@@ -15,7 +15,7 @@ import {
   recordFieldsAt,
   recordValueAt,
 } from "../test-sections.ts";
-import { bindRef, type EvalCtx, type GenCtx, makeEvalCtx } from "./context.ts";
+import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
 import { typeToGenDesc } from "./emit-type.ts";
@@ -144,13 +144,10 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     // `const <name> = _b[...]` we destructure at the top of the trial fn.
     const pctx = makeEvalCtx(gen, new Set(forAll.map((f) => f.name)));
     const varsJs = forAll
-      .map(
-        (f) =>
-          `${JSON.stringify(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`,
-      )
+      .map((f) => `${fieldKey(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`)
       .join(", ");
     const binds = forAll
-      .map((f) => `const ${bindRef(pctx, f.name)} = _b[${JSON.stringify(f.name)}];`)
+      .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)
       .join(" ");
     const givenSlots = givenSection(t, "property-test", "slots");
     const initSlotsJs = givenSlots
@@ -327,7 +324,7 @@ function parseEpisodeLog(raw: string): unknown[] {
 function episodeMockJs(e: Expr, ctx: EvalCtx): string {
   const parts = recordFieldsAt(e, "mocks").map((f) => {
     const v = f.value;
-    const key = JSON.stringify(f.name);
+    const key = fieldKey(f.name);
     if (v.kind === "Ref" && v.name === "from-log") return `${key}: { policy: "from-log" }`;
     if (v.kind === "Ref" && v.name === "ignore") return `${key}: { policy: "ignore" }`;
     if (v.kind === "Call" && (v.callee === "ok" || v.callee === "err")) {
@@ -392,7 +389,7 @@ function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
  */
 function mocksJs(e: Expr, ctx: EvalCtx): string {
   const parts = recordFieldsAt(e, "given.mocks").map(
-    (f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`,
+    (f) => `${fieldKey(f.name)}: ${mockScriptJs(f.value, ctx)}`,
   );
   return `{ ${parts.join(", ")} }`;
 }
