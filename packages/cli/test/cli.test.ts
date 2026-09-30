@@ -255,6 +255,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // name it before any refinement (§5.7.2). That memory is the refused-bind
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
+    //
+    // Still 61,000 (60,398 measured, from 60,153): the viewport pick reads the
+    // active theme's breakpoints over the style.md §4.2 defaults
+    // (`DEFAULT_BREAKPOINTS` in core.js). The 245 bytes are that lookup; a counter
+    // picks no viewport and still ships it, because it sits in the core module
+    // every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
