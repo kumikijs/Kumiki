@@ -1,0 +1,25 @@
+{
+  "steps": [
+    {
+      "label": "every receiver starts empty, and both spellings say so, so the empty state shows",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "map: true / true",
+          "list: true / true",
+          "text: true / true",
+          "Nothing to do"
+        ]
+      }
+    },
+    {
+      "label": "once filled, both spellings say not empty on every receiver",
+      "do": { "click": "#fill" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["map: false / false", "list: false / false", "text: false / false"],
+        "domExcludes": ["Nothing to do"]
+      }
+    }
+  ]
+}
