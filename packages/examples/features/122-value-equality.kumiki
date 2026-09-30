@@ -1,0 +1,73 @@
+# Feature (language.md §1.9.4, stdlib.md §2.2.3): equality is by value.
+#
+#   a == b              : Bool   (any two values; shapes need not match — only two distinct nominals are rejected, §1.9.4)
+#   List(T).contains(x) : Bool
+#   List(T).unique      : List(T)
+#
+# Kumiki values are immutable, so a program has no reference identity to
+# compare. Two Lists, records, tuples, Maps or variants are equal when what
+# they hold is equal, all the way down, and `!=` is the negation. (A Set
+# compares as the keys it is stored under, which depends on how it was
+# built, so Set equality is not a rule to rely on — stdlib.md §2.2.2.)
+# `contains` and `unique` ask the same question as `==`: a List of union
+# values, records or Options finds a member that was built somewhere else,
+# and `unique` keeps the first of each value, in order.
+#
+# Every row that expects a match (or a `!=` that expects `false`) is one
+# JavaScript reference or SameValueZero equality gets wrong; each row that
+# expects no match is the other half of a pair of the same shape. No label
+# is a substring of another, so a row cannot be satisfied by its neighbour's
+# text. The property test at the bottom compares a whole List slot with `==`.
+
+type Pt   = {x: Int, y: Int}
+type Role = Admin | Editor | Viewer
+
+slot xs    : List(Int)          = []
+slot p     : Pt                 = {x: 1, y: 2}
+slot roles : List(Role)         = [Admin, Editor]
+slot picks : List(Role)         = [Admin, Admin, Viewer]
+slot pts   : List(Pt)           = [{x: 1, y: 2}, {x: 1, y: 2}, {x: 3, y: 4}]
+slot opts  : List(Option(Int))  = [Some(1), Some(1), None]
+slot pairs : List(Tuple(Int, Int)) = [(0, 0), (0, 1), (0, 0)]
+slot items : List(Int)          = []
+
+reducer add on=ui.click(AddBtn) do= items := items.push(1)
+
+tile AddBtn = button(text="add") {id: "add"}
+
+tile App = column(
+  AddBtn,
+  text("items: " + items.length.show),
+  text("empty-list: " + (xs == []).show),
+  text("same-list: " + ([1, 2] == [1, 2]).show),
+  text("swapped-list: " + ([1, 2] == [2, 1]).show),
+  text("equal-record: " + (p == {x: 1, y: 2}).show),
+  text("differs-from-other: " + (p != {x: 1, y: 3}).show),
+  text("differs-from-self: " + (p != {x: 1, y: 2}).show),
+  text("equal-tuple: " + ((0, 0) == (0, 0)).show),
+  text("some-record: " + (Some(p) == Some({x: 1, y: 2})).show),
+  text("some-some: " + (Some(Some(1)) == Some(Some(1))).show),
+  text("some-none: " + (Some(Some(1)) == Some(None)).show),
+  text("is-admin: " + roles.contains(Admin).show),
+  text("is-viewer: " + roles.contains(Viewer).show),
+  text("has-point: " + pts.contains({x: 3, y: 4}).show),
+  text("has-some-one: " + opts.contains(Some(1)).show),
+  text("has-pair: " + pairs.contains((0, 1)).show),
+  text("bare-unique: " + picks.unique.length.show),
+  text("called-unique: " + picks.unique().length.show),
+  text("first-kept: " + (picks.unique == [Admin, Viewer]).show),
+  text("distinct-points: " + pts.unique.length.show),
+  text("distinct-options: " + opts.unique.length.show),
+  text("distinct-pairs: " + (pairs.unique == [(0, 0), (0, 1)]).show),
+  text("substring: " + "kumiki".contains("mik").show))
+
+app ValueEquality
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
+
+test add-appends-one =
+    property-test
+        for-all   = {n: Int where between(0, 5)}
+        given     = {slots: {items: []}, event: {type: ui.click, target: AddBtn}}
+        invariant = run-reducer(add).slots.items == [1]
