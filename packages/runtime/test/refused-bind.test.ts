@@ -388,4 +388,26 @@ describe("the refused-bind memory", () => {
     expect(refusedBindShown(app, "a", document.body)).toEqual({ value: "bad-1" });
     expect(refusedBindControls(app)).toEqual([live]);
   });
+
+  // What a box shows is its tick. Its `.value` is the constant "on" whatever
+  // it shows, so judged by that a refused tick would never go stale and the
+  // `error(field=…)` beside it would never stop speaking.
+  const boxes: [string, string][] = [
+    ["check", "checkbox"],
+    ["switch", "checkbox"],
+    ["radio", "radio"],
+  ];
+  for (const [kind, type] of boxes) {
+    it(`judges a ${kind} by its tick: unticked, the refused tick is stale`, () => {
+      const app = {};
+      const box = control("on");
+      box.type = type;
+      box.checked = true;
+      noteBindWrite(app, box, "a", true, false);
+      expect(refusedBindShown(app, "a", document.body)).toEqual({ value: true });
+      box.checked = false;
+      expect(refusedBindShown(app, "a", document.body)).toBeUndefined();
+      expect(refusedBindControls(app)).toEqual([]);
+    });
+  }
 });
