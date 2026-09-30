@@ -147,6 +147,11 @@ chunk(n)                    : List(List(T))
 zip(other)                  : List(Tuple(T, U))
 ```
 
+`contains(x)` と `unique` は要素を `==` で比較し、これは値による比較である
+（[language §1.9.4](./language.md#_1-9-4-演算子の型)）：`[Admin, Editor].contains(Admin)`
+は `true`、`[Some(1), Some(1), None].unique` は `[Some(1), None]` である。`unique` は各値の
+最初の出現を順序どおりに残す。
+
 **括弧なしショートカット**: 引数なしメソッド（`is-empty` / `length` / `reverse` / `sort` / `unique` / `head` / `tail` / `last`）は **`()` を省略して field のように書ける**：
 
 ```kumiki fragment
