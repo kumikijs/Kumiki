@@ -128,10 +128,9 @@ describe("the blog app's Authorization header (#340)", () => {
       body: "Every definition stands on its own.",
       authorId: "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
       // Epoch milliseconds, the representation `Time` has (stdlib.md §2.2.9)
-      // and the one the blog's own scenario.json uses. An ISO string would be
-      // rejected by `Decoder.Json(Post)` and send `fetchPost` down its
-      // `retry=exponential` ladder — which this test would still pass, because
-      // a retried request carries the header too.
+      // and the one the blog's own scenario.json uses. `Decoder.Json(Post)`
+      // checks only the JSON syntax at runtime, not the shape, so an ISO string
+      // would still reach `.ok`; the test uses the real representation anyway.
       publishedAt: 1737018000000,
       tags: ["kumiki"],
     };
