@@ -93,4 +93,48 @@ describe("binding into one field of a record slot", () => {
     fill(root, "nick", "lovel");
     expect(errorText(root)).toBe("");
   });
+
+  // Two fields each showing a refused value: both are laid over the record,
+  // and the message is its first failure in field order — `email` before
+  // `nick`. The two orders tell the whole overlay from one that keeps a single
+  // entry: laying only the first refused would speak for the nick in the
+  // first, laying only the last would in the second.
+  it("lays every refused field over the record, the nick refused first", async () => {
+    const app = await loadApp(example);
+    const root = mountInto(app);
+    fill(root, "name", "Ada");
+    fill(root, "email", "a@b.co");
+    fill(root, "nick", "lovelace"); // refused
+    fill(root, "email", "nope"); // refused
+    expect((app.live?.signup as { email: string }).email).toBe("a@b.co");
+    expect(errorText(root)).toBe("Invalid email format");
+  });
+
+  it("lays every refused field over the record, the email refused first", async () => {
+    const app = await loadApp(example);
+    const root = mountInto(app);
+    fill(root, "name", "Ada");
+    fill(root, "email", "a@b.co");
+    fill(root, "email", "nope"); // refused
+    fill(root, "nick", "lovelace"); // refused
+    expect((app.live?.signup as { email: string }).email).toBe("a@b.co");
+    expect(errorText(root)).toBe("Invalid email format");
+  });
+
+  // A refusal during an IME composition is settled at compositionend, and what
+  // it settles is the field's own value at its path — not the record as it
+  // was when the composition refused it, which still held the pristine email.
+  it("settles a field's refusal at compositionend, at the field", async () => {
+    const app = await loadApp(example);
+    const root = mountInto(app);
+    fill(root, "name", "Ada");
+    const nick = root.querySelector<HTMLInputElement>("#nick");
+    if (!nick) throw new Error("#nick not found");
+    nick.dispatchEvent(new Event("compositionstart"));
+    fill(root, "nick", "lovelace"); // refused, not settled yet
+    expect(errorText(root)).toBe("Invalid email format"); // the pristine email's
+    nick.dispatchEvent(new Event("compositionend"));
+    fill(root, "email", "a@b.co");
+    expect(errorText(root)).toBe("Must be less than 6 characters");
+  });
 });

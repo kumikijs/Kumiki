@@ -14,3 +14,7 @@ failing sibling no longer refuses it. The generated per-type explainer takes
 the bind path as an optional focus, and a refused field is remembered as its
 own value and laid over the slot as it now is, so `error(field=…)` judges
 what every field shows even after a sibling is written.
+A position no bind step can name (a container's element, key or entry, a
+union's payload) is checked whole whatever steps the focus has left, and a
+control bound to the whole slot is laid under the fields bound into it,
+whichever was refused first.

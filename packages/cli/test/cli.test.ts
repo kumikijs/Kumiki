@@ -248,12 +248,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // its own base; together they do not. A counter binds no box and asks nothing
     // whether it is empty, and still ships both in the modules every app loads.
     //
-    // Still 61,000 (60,177 measured, from 60,014): a `bind` into one field of a
+    // Still 61,000 (60,242 measured, from 60,014): a `bind` into one field of a
     // record is judged at that field (forms.md §5.6). `slotAccepts` and a slot's
     // `refineFailure` take the path the write went through, and a refused bind
     // keeps that path so what the field shows is laid over the record as it is
-    // now. A counter binds nothing and still ships them, because they sit in the
-    // core module every app loads.
+    // now, shallower paths first. A counter binds nothing and still ships them,
+    // because they sit in the core module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

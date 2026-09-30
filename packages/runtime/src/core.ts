@@ -1577,7 +1577,9 @@ export function noteBindWrite(
  * every refused value a control bound into it is still showing laid over it at
  * the path that control writes, or `undefined` when no control there shows a
  * refused one. Two controls showing refused values at the same path are one
- * field shown twice, and the first speaks for it.
+ * field shown twice, and the first speaks for it. A shallower path is laid
+ * before a deeper one — a control bound to the whole slot shows the value its
+ * fields sit in — whichever of them was refused first.
  *
  * An entry whose control has left the page, or no longer shows what was
  * refused — a reducer rewrote the slot and the control followed it — is
@@ -1593,23 +1595,26 @@ export function refusedBindShown(
 ): { value: unknown } | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
-  let found: { value: unknown } | undefined;
-  const laid = new Set<string>();
+  const shown: RefusedBind[] = [];
   for (const [el, r] of byEl) {
     if (r.slot !== slot) continue;
     if (!el.isConnected || shownValue(el) !== r.shown) {
       byEl.delete(el);
       continue;
     }
-    const at = JSON.stringify(r.path);
-    if (!view?.contains(el) || laid.has(at)) continue;
-    laid.add(at);
-    const base = found ? found.value : held;
-    found = {
-      value: r.path.length > 0 ? _setPathHelper(base ?? {}, r.path, r.value) : r.value,
-    };
+    if (view?.contains(el)) shown.push(r);
   }
-  return found;
+  if (shown.length === 0) return undefined;
+  shown.sort((a, b) => a.path.length - b.path.length);
+  const laid = new Set<string>();
+  let value = held;
+  for (const r of shown) {
+    const at = JSON.stringify(r.path);
+    if (laid.has(at)) continue;
+    laid.add(at);
+    value = r.path.length > 0 ? _setPathHelper(value ?? {}, r.path, r.value) : r.value;
+  }
+  return { value };
 }
 
 /** The controls a refused bind is remembered against, for `app`. */
