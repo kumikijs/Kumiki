@@ -43,15 +43,23 @@ export function stubFetch(
   };
 }
 
-/** One header out of whichever shape `fetch` was given, or `null`. */
+/**
+ * Every value `fetch` was given for `name`, whatever the shape, matching the
+ * name case-insensitively as HTTP does — so a stray `content-type` beside a
+ * `Content-Type` shows up as two values instead of hiding.
+ */
+export function headerValues(h: HeadersInit | undefined, name: string): string[] {
+  if (!h) return [];
+  const entries =
+    h instanceof Headers ? [...h.entries()] : Array.isArray(h) ? h : Object.entries(h);
+  const lower = name.toLowerCase();
+  return entries.filter(([k]) => k.toLowerCase() === lower).map(([, v]) => v);
+}
+
+/** One header out of whichever shape `fetch` was given, or `null`. Case-insensitive. */
 export function readHeader(h: HeadersInit | undefined, name: string): string | null {
-  if (!h) return null;
-  if (h instanceof Headers) return h.get(name);
-  if (Array.isArray(h)) {
-    for (const [k, v] of h) if (k === name) return v;
-    return null;
-  }
-  return (h as Record<string, string>)[name] ?? null;
+  const values = headerValues(h, name);
+  return values.length === 0 ? null : values.join(", ");
 }
 
 /** Click the first button whose text contains `text`; throw if there is none. */
