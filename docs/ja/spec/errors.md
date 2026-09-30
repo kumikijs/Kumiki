@@ -505,6 +505,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
+> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
@@ -514,7 +515,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、ペイロードを伴う variant タグ（`onClick=Some(1)`）、引数を伴う tile call（`onClick=box(text("z"))`）、props を伴う tile call（`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 
@@ -814,6 +815,33 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 
 **修正**：フォールバックに `in=PanicInfo` を宣言し、panic は `$1.message`、`$1.location` など [ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) が定めるフィールドで読む。
 
+### E0225 `radio-bind-without-value`
+
+`radio` に `bind=` があり、`value=` がない。
+
+> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`
+
+bind した radio が選ばれたときに書き込むものは 1 つ — 自分の値である（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。`value=` がなければ書くものがない。これを報告するものはほかにない：checker が radio の `value=` を bind 先の slot と照合するのは `value=` があるときだけであり、プログラムはコンパイルされ、マウントされ、クリックにも耐える。そのクリックがしたのは slot への `undefined` の書き込みで、refinement のない slot は型によらずそれを受け取る。すると slot がその値と等しいときに選択される radio は、`undefined` が `undefined` と等しいので選択状態で表示され、一方で slot に対するすべての `match` はどの arm にも一致せず、それが描画していたブロックは何も言わずに消える。
+
+警告ではなくエラーである：書くもののない radio は選ばれても何も主張せず、それを意図するプログラムはない。bind 先の型が読めるかどうかによらず報告する。
+
+**修正**：radio にそれが表す値を与える — `radio(group="f", bind=filter, value=Active)` のように、slot が取りうる値ごとに radio を 1 つ置く。
+
+### E0226 `input-bind-type`
+
+`input` が、そのフィールド種別と組み合わせられない型を bind している（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。
+
+> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md §5.1.1)`
+> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md §5.1.1)`
+
+bind した `input` はテキストを bind 位置の基底型として読み、その基底型の値を表示し返すので、`Int` / `Float` / `Time` はテキストが往復できるフィールド種別とだけ組み合わせられる：`Int` / `Float` は `type="number"`、`Time` は `type="date"` か `type="datetime-local"`。それ以外のフィールド種別では、往復が何も言わずに壊れる。`type="time"`（あるいは `month`、`week`、`type` なし）のフィールドの `Time` にはミリ秒の数値が表示され、編集のたびに `Time.parse` がそれを拒否するので、フィールドは決して書き込めない。date フィールドの `Int` は、日付ピッカーが保持できない数値を表示する。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる — date フィールドの `Text` は `"2026-03-04"` を保持してそのまま表示する — ので、そのようなテキストを持たないフィールド（`type="checkbox"` など）でだけ報告される。
+
+2 つ目の形は、bind した型が表にまったく現れない場合である：`Bool`（`check` に bind する）、レコード、あるいは丸ごと bind した `Option` / `Result`。以前はフィールドの文字列がそこに書き込まれていた — `Option(Int)` の slot が `"5"` を保持し、それに対するどの `match` もそれを読めなかった。ペイロードを通して bind する位置、`bind=limit.get` は `Int` であり、`Int` として読まれる。
+
+bind した型は先にエイリアスを解くので、`type Qty = Int where positive` や `nominal Int` はここでは `Int` である。それと照合されるのはリテラルの `type=` だけである。式で書かれた `type=` はここでは分からないので、その隣では 2 つ目の形だけが適用される。型が読めない bind は報告しない（[E0103](#e0103-undef-ref-undef-slot) など、それ自身のコードが示す）。bind 付きの `type="file"` は [E0205](#e0205-bind-on-file-input) である。
+
+**修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
@@ -849,6 +877,16 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 検査するのはリテラルのテンプレートだけである。slot やフィールドを渡す `fmt(tpl, x)` にはコンパイル時のプレースホルダ集合が無く、その slot を初期化したリテラルの形は呼び出しが実際に見る形ではない。個数そのもの——`fmt` にテンプレートがあるか——は [E0213](#e0213-call-arity-mismatch) であり、これは致命的で、その場合はこの警告の代わりに報告される。
 
 **修正**: 足りない引数を足す、足りないプレースホルダを足す、あるいは要らない引数を消す。余った値を文の別の場所に置きたいなら、`+` はプレースホルダ無しで連結できる。
+
+### W0216 `selection-beside-bind` (warning)
+
+bind していないトグルが選択状態を読む引数 — `check` / `switch` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。
+
+> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md §5.1.1)`
+
+`bind=` があれば、ボックスにチェックが入るか、radio が選ばれるかは bind した値だけが決める（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。もう一方の引数は同じ問いへの 2 つめの答えであり、読まれない。[W0214](#w0214-fmt-placeholder-argument-mismatch-warning) が報告する引数と同じく、それは何の痕跡も残さない — 引数が何を言っても、コントロールは bind の言うとおりに表示される — ので、最初から渡していないプログラムとどの層も区別できない。radio 自身の `value=` はこの引数ではない：選ばれたときに書き込む値であり、読まれる。
+
+**修正**：その引数を取り除く。書き戻す slot ではなく式からボックスのチェックを決めたいなら、代わりに `bind=` を外し、`value=` と `onClick` / `onChange` の reducer を使う。
 
 ## E03xx — ケイパビリティと純粋性
 
