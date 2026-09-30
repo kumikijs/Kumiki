@@ -22,6 +22,7 @@
 // `nominal` (language.md §1.3.5). Every other rule keeps the reading above.
 
 import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
+import { forwardedParams, type NominalReading } from "./def-graph.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
 
 /** The slice of the checker's symbol table the type relation needs. */
@@ -57,7 +58,7 @@ export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
  * check, and normalisation has to terminate whether or not one exists.
  */
 export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
-  return unaliasFrom(t, env, new Set(), new WeakMap());
+  return unaliasFrom(t, new Set(), newWalk(env));
 }
 
 /**
@@ -67,17 +68,55 @@ export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
  * An argument is a sub-expression of the caller's syntax, not of the body it
  * is substituted into, so it is read with the caller's guard: in
  * `NonEmpty(NonEmpty(Short))` the inner application is the outer one's
- * argument and enters `NonEmpty` afresh, where reading it under the body's
- * guard met `NonEmpty` as a re-entry and answered no type at all. The walk
- * still ends — every argument is a strict part of the syntax it was written
- * in, and a name reached through a body rather than an argument
- * (`type Loop(T) = Loop(T)`) meets the body's guard as before. This is the
- * reading `refinementsOf` takes in codegen.
+ * argument and enters `NonEmpty` afresh. A parameter the body forwards into
+ * another application (`type Outer(T) = NonEmpty(T)`) is substituted there
+ * again, and keeps the guard it was first written under rather than taking
+ * the body's — so `Outer(Outer(Text))` enters `Outer` afresh as well.
+ *
+ * The walk still ends — every argument is a strict part of the syntax it was
+ * written in, and a name reached through a body rather than an argument
+ * (`type Loop(T) = Loop(T)`) meets the body's guard. This is the reading
+ * `refinementsOf` takes in codegen.
  *
  * Keyed on a fresh copy of each argument made at the application, so an
  * argument node shared by two applications carries the guard of each.
  */
 type ArgOrigins = WeakMap<TypeExpr, ReadonlySet<string>>;
+
+/**
+ * One normalisation, or one nominal chain: the type definitions, where each
+ * substituted argument was written, and which generics hand a parameter
+ * straight back (`def-graph.ts#forwardedParams`) under each reading of
+ * `nominal`.
+ */
+type Walk = {
+  readonly env: TypeEnv;
+  readonly origins: ArgOrigins;
+  readonly forwarded: Forwarded;
+};
+
+type Forwarded = Readonly<Record<NominalReading, (def: TypeDef) => number | null>>;
+
+/**
+ * The forwarding classifiers, one pair per table of definitions. `TypeEnv`
+ * hands this module the table read-only, so an answer read from it holds for
+ * as long as the table does — and the checker asks the same few generics
+ * again for every type it compares.
+ */
+const forwardedByTable = new WeakMap<TypeEnv["types"], Forwarded>();
+
+function newWalk(env: TypeEnv): Walk {
+  let forwarded = forwardedByTable.get(env.types);
+  if (!forwarded) {
+    const lookup = (name: string) => env.types.get(name);
+    forwarded = {
+      through: forwardedParams(lookup, "through"),
+      stop: forwardedParams(lookup, "stop"),
+    };
+    forwardedByTable.set(env.types, forwarded);
+  }
+  return { env, origins: new WeakMap(), forwarded };
+}
 
 /**
  * The body of `def` as applied by `t`, with each argument recorded under the
@@ -87,6 +126,11 @@ type ArgOrigins = WeakMap<TypeExpr, ReadonlySet<string>>;
  * be spelled the same as a top-level definition, and an unsubstituted `TypeRef`
  * would resolve against that global instead — so `type Alias(Cents) = Cents`
  * would answer `Cents` for every argument.
+ *
+ * The record survives substitution only because `substituteType` hands back
+ * the very node it was given for a parameter (`sub.get(name)`), not a copy of
+ * it. A copy there would drop the guard without any error, and every argument
+ * would be read under the body's guard again.
  */
 function applyDef(
   t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
@@ -106,16 +150,32 @@ function applyDef(
   return substituteType(def.body, sub);
 }
 
-function unaliasFrom(
-  t: TypeExpr | null,
-  env: TypeEnv,
-  outer: ReadonlySet<string>,
-  origins: ArgOrigins,
+/**
+ * The argument `t` hands straight back, when its generic is one that does,
+ * or `null` when the body has to be expanded.
+ *
+ * Taking it in one step is what keeps normalisation linear: expanding
+ * `type D1(T) = D0(D0(T))` walks `D0` twice, and a chain where each level
+ * applies the one below twice or three times doubles or triples the walk at
+ * every level. The argument is read where it was written, exactly as the
+ * expansion would have reached it.
+ */
+function forwardedArg(
+  t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
+  def: TypeDef,
+  walk: Walk,
+  nominal: NominalReading,
 ): TypeExpr | null {
+  if (t.kind !== "TypeApp") return null;
+  const i = walk.forwarded[nominal](def);
+  return i === null ? null : (t.args[i] ?? null);
+}
+
+function unaliasFrom(t: TypeExpr | null, outer: ReadonlySet<string>, walk: Walk): TypeExpr | null {
   if (!t) return null;
-  const seen = origins.get(t) ?? outer;
+  const seen = walk.origins.get(t) ?? outer;
   if (t.kind === "TypeRef" || t.kind === "TypeApp") {
-    const def = env.types.get(t.name);
+    const def = walk.env.types.get(t.name);
     // A `TypeRef` naming nothing is opaque; a stdlib constructor (`List`,
     // `Option`, …) has no definition to expand into and is already in its
     // comparison form.
@@ -127,10 +187,12 @@ function unaliasFrom(
     // Int` on the literal, blaming the value for a type with no body. E0009 is
     // what names that.
     if (seen.has(t.name)) return null;
-    return unaliasFrom(applyDef(t, def, seen, origins), env, new Set([...seen, t.name]), origins);
+    const arg = forwardedArg(t, def, walk, "through");
+    if (arg) return unaliasFrom(arg, seen, walk);
+    return unaliasFrom(applyDef(t, def, seen, walk.origins), new Set([...seen, t.name]), walk);
   }
   if (t.kind === "TypeNominal" || t.kind === "TypeRefinement")
-    return unaliasFrom(t.inner, env, seen, origins);
+    return unaliasFrom(t.inner, seen, walk);
   return t;
 }
 
@@ -165,21 +227,24 @@ function bareType(t: TypeExpr): TypeExpr {
  */
 function nominalDecl(
   t: TypeExpr | null,
-  env: TypeEnv,
-  outer: ReadonlySet<string> = new Set(),
-  origins: ArgOrigins = new WeakMap(),
+  outer: ReadonlySet<string>,
+  walk: Walk,
 ): { readonly name: string; readonly over: TypeExpr } | null {
   if (!t) return null;
-  const seen = origins.get(t) ?? outer;
-  if (t.kind === "TypeRefinement") return nominalDecl(t.inner, env, seen, origins);
+  const seen = walk.origins.get(t) ?? outer;
+  if (t.kind === "TypeRefinement") return nominalDecl(t.inner, seen, walk);
   if (t.kind !== "TypeRef" && t.kind !== "TypeApp") return null;
   if (seen.has(t.name)) return null;
-  const def = env.types.get(t.name);
+  const def = walk.env.types.get(t.name);
   if (!def) return null;
-  const body = applyDef(t, def, seen, origins);
+  // A generic that hands its argument back without passing a `nominal` on
+  // the way declares nothing itself, so the answer is the argument's.
+  const arg = forwardedArg(t, def, walk, "stop");
+  if (arg) return nominalDecl(arg, seen, walk);
+  const body = applyDef(t, def, seen, walk.origins);
   const bare = bareType(body);
   if (bare.kind === "TypeNominal") return { name: t.name, over: bare.inner };
-  return nominalDecl(body, env, new Set([...seen, t.name]), origins);
+  return nominalDecl(body, new Set([...seen, t.name]), walk);
 }
 
 /**
@@ -193,16 +258,34 @@ function nominalDecl(
  */
 function nominalChain(t: TypeExpr | null, env: TypeEnv): string[] {
   const chain: string[] = [];
+  // One walk for the whole chain: the `over` of a generic nominal is its
+  // substituted argument, and only this walk's record knows where that
+  // argument was written. A fresh record per step read `Tag(Tag(Cents))`'s
+  // inner `Tag` under the chain's guard, met `Tag` again, and stopped at
+  // `["Tag"]`.
+  const walk = newWalk(env);
   let cur = t;
   for (;;) {
     // Re-entering a name means the declarations loop; the chain so far is the
-    // whole finite answer, and reporting the loop belongs elsewhere.
-    const decl = nominalDecl(cur, env, new Set(chain));
+    // whole finite answer, and reporting the loop belongs elsewhere. The
+    // chain's names are the guard only for an `over` written in a definition's
+    // own body: an `over` that is a substituted argument is read under the
+    // guard it was written under, which `nominalDecl` looks up in the record
+    // before falling back to this one.
+    const decl = nominalDecl(cur, new Set(chain), walk);
     if (decl === null) return chain;
     chain.push(decl.name);
+    // A chain this long is a generic nominal applied inside itself at every
+    // level of a chain of definitions, which multiplies the names at each
+    // level. Past the limit it answers "cannot tell", the one-sided reading,
+    // rather than walk every one of them.
+    if (chain.length > NOMINAL_CHAIN_LIMIT) return [];
     cur = decl.over;
   }
 }
+
+/** How many nominal names `nominalChain` lists before it stops and answers "cannot tell". */
+const NOMINAL_CHAIN_LIMIT = 4096;
 
 /**
  * May two types be compared — `==`, `!=`, `<`, … — as far as nominal identity
@@ -348,7 +431,7 @@ function relate(
   //
   // A name that does match falls through rather than returning early, so
   // `Box(Int)` and `Box(Text)` are still told apart by their arguments.
-  const required = nominalDecl(declared, env)?.name;
+  const required = nominalDecl(declared, new Set(), newWalk(env))?.name;
   if (required !== undefined) {
     const declaredAs = nominalChain(actual, env);
     if (declaredAs.length > 0 && !declaredAs.includes(required)) return false;
