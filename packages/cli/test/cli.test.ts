@@ -238,6 +238,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
     // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
     // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
     // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
@@ -248,7 +249,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // its own base; together they do not. A counter binds no box and asks nothing
     // whether it is empty, and still ships both in the modules every app loads.
     //
-    // Still 61,000 (60,511 measured, from 60,014): a Set element or Map key is one
+    // Still 61,000 (60,153 measured, from 60,014): a bound `input` reads its text
+    // as the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
+    // write remembers which reading the text failed, so `error(field=…)` can
+    // name it before any refinement (§5.7.2). That memory is the refused-bind
+    // record in core, which every app loads; a counter binds no input and
+    // still ships it.
+    //
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
     // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
     // encoding in core.js, which every Set / Map member, a Map literal and the
     // index read and write ask, and the panic that names a stored key no member
