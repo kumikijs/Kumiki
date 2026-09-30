@@ -262,10 +262,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // index read and write ask, and the panic that names a stored key no member
     // wrote. A counter keys nothing and still ships them.
     //
-    // Still 61,000 (60,212 measured, from 60,153): a Set literal is a Set
+    // Still 61,000 (60,709 measured, from 60,650): a Set literal is a Set
     // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
     // `setAdd` so a literal and an `add` chain are one form. A counter writes
-    // no Set and still ships it in stdlib.js.
+    // no Set and still ships it in stdlib.js. The 60,747 this branch measures
+    // also carries the `route.error` guard in core.js (lifecycle.md §7.5.2,
+    // 38 bytes), merged in from its own branch.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
