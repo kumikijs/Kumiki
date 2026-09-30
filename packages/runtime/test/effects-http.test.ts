@@ -133,3 +133,60 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toBe("aborted");
   });
 });
+
+describe("httpFetch request body", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** A `Multipart` body the way codegen builds it: a Map of tagged FormValues. */
+  const multipart = (entries: Record<string, { _tag: string; _0: unknown }>) => ({
+    _tag: "Multipart",
+    _0: entries,
+  });
+
+  it("sends a FileV entry as its File and a BoolV entry as its text", async () => {
+    const { calls } = stubFetch(() => new Response("ok"));
+    const file = new File(["x"], "a.txt", { type: "text/plain" });
+    const res = await httpFetch("POST", {
+      url: "/up",
+      decode: "text",
+      body: multipart({
+        doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: file } },
+        agree: { _tag: "BoolV", _0: true },
+      }),
+    });
+    expect(res.kind).toBe("ok");
+    const fd = calls[0]?.init.body as FormData;
+    expect(fd).toBeInstanceOf(FormData);
+    expect(fd.get("doc")).toBe(file);
+    expect(fd.get("agree")).toBe("true");
+  });
+
+  it("fails a FileV that holds no file, without making a request", async () => {
+    // A file record restored from persistence through JSON has `_file: {}`.
+    const { calls } = stubFetch(() => new Response("ok"));
+    const res = await httpFetch("POST", {
+      url: "/up",
+      decode: "text",
+      body: multipart({
+        doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: {} } },
+      }),
+    });
+    expect(calls).toHaveLength(0);
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.status).toBe(0);
+    expect(v.message).toContain('"doc"');
+  });
+
+  it.each(["GET", "HEAD"])("sends no body and no Content-Type for a %s", async (method) => {
+    const { calls } = stubFetch(() => new Response(null));
+    await httpFetch(method, { url: "/q", body: { _tag: "Json", _0: { a: 1 } } });
+    expect(calls[0]?.init.body).toBeUndefined();
+    expect(calls[0]?.init.headers).toEqual({});
+  });
+});
