@@ -30,9 +30,6 @@
     }
   ],
   "effects": {
-    "save": [{ "outcome": "ok", "value": null }],
-    "forget": [{ "outcome": "ok", "value": null }],
-    "load": [{ "outcome": "ok", "value": { "_tag": "None" } }],
-    "wipe": [{ "outcome": "ok", "value": null }]
+    "load": [{ "outcome": "ok", "value": { "_tag": "None" } }]
   }
 }

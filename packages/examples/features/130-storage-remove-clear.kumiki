@@ -1,14 +1,19 @@
-# Feature (http.md §6.7.2 / §6.7.4): `storage.write` answers all three of its
-# declarations, told apart by the request.
+# Feature (http.md §6.7.2): `storage.write` answers all three of its
+# declarations. A write and a remove are told apart by the request; a clear by
+# the declaration.
 #
-#   in={key: Text, value: JsonValue}   write the value under the key
-#   in={key: Text}                     remove the key
-#   in=Unit                            clear the storage
+#   request {key: Text, value: JsonValue}     write the value under the key
+#   request {key: Text}                       remove the key
+#   in=Unit, no map-request                   clear the origin's localStorage
 #
-# A remove used to store the string "undefined" under the key and report ok,
-# so the next read failed to parse it, and a clear always erred. There is no
-# `.err` reducer below, so `smoke` — which runs the real handlers against the
-# real localStorage — reports any of these that fails.
+# `save` builds its request with `map-request`; `forget` takes the request as
+# its input. A remove used to store the string "undefined" under the key and
+# report ok, and a clear always erred.
+#
+# There is no `.err` reducer below on purpose: an unhandled `err` is an error
+# `smoke` reports, and `smoke` clicks the buttons in document order — Save,
+# Forget, Load, Wipe — against the real localStorage, so a remove that did not
+# remove fails the Load. A real app handles `.err` (see 20-effect-storage).
 
 slot shown : Text = "idle"
 
@@ -45,7 +50,7 @@ tile ForgetBtn = button(text="Forget") {id: "forget"}
 tile WipeBtn   = button(text="Wipe")   {id: "wipe"}
 tile LoadBtn   = button(text="Load")   {id: "load"}
 
-tile App = column(SaveBtn, ForgetBtn, WipeBtn, LoadBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
+tile App = column(SaveBtn, ForgetBtn, LoadBtn, WipeBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
 
 app StorageRemoveClear
     caps   = [storage.read, storage.write]
