@@ -46,11 +46,11 @@ describe("a segment that is not a field name", () => {
 
   it("does not read an arbitrary object segment as an unwrap", () => {
     // Only `{get: true}` is the unwrap. An index that evaluates to an object
-    // stringifies into a key, which is wrong but local — read as an unwrap it
+    // is a Map key, stored under its JSON (`entryKey`) — read as an unwrap it
     // would drop the segment and put the value where the container was.
     expect(_setPathHelper({ seed: { n: 0 } }, seg([{ x: 1 }]), { n: 7 })).toEqual({
       seed: { n: 0 },
-      "[object Object]": { n: 7 },
+      '{"x":1}': { n: 7 },
     });
   });
 

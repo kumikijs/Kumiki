@@ -256,7 +256,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
     //
-    // Still 61,000 (60,398 measured, from 60,153): the viewport pick reads the
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
+    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
+    //
+    // Still 61,000 (60,893 measured, from 60,650): the viewport pick reads the
     // active theme's breakpoints over the style.md §4.2 defaults
     // (`DEFAULT_BREAKPOINTS` in core.js). The 245 bytes are that lookup; a counter
     // picks no viewport and still ships it, because it sits in the core module
