@@ -6,6 +6,7 @@ import {
   childCtx,
   declareBind,
   type EvalCtx,
+  fieldKey,
   type GenCtx,
   makeEvalCtx,
 } from "./context.ts";
@@ -414,10 +415,10 @@ export function jsOfConfirmArg(a: Expr, ctx: EvalCtx): string {
       const refName = v.name;
       const isReducer = ctx.gen.reducers.some((r) => r.name === refName);
       if (isReducer) {
-        return `${JSON.stringify(f.name)}: ${JSON.stringify(refName)}`;
+        return `${fieldKey(f.name)}: ${JSON.stringify(refName)}`;
       }
     }
-    return `${JSON.stringify(f.name)}: ${jsOfExpr(v, ctx)}`;
+    return `${fieldKey(f.name)}: ${jsOfExpr(v, ctx)}`;
   });
   return `{ ${parts.join(", ")} }`;
 }

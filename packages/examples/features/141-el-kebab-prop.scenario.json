@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "nothing picked yet",
+      "expect": { "noErrors": true, "domIncludes": ["block: -", "arg: -"] }
+    },
+    {
+      "label": "a click reads the kebab-case prop from the block and from the named argument",
+      "do": { "click": "#t2" },
+      "expect": {
+        "noErrors": true,
+        "state": { "from-block": "t2", "from-arg": "ship" },
+        "domIncludes": ["block: t2", "arg: ship"]
+      }
+    }
+  ]
+}
