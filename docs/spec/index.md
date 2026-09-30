@@ -261,6 +261,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `124-set-literal.kumiki` | type, slot, reducer, tile, fn | stdlib | [§2.2.2](./stdlib.md#_2-2-2-set-t) |
 | `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | http | [§6.1.2](./http.md#_6-1-2-standard-effect) |
 | `128-http-body-variants.kumiki` | slot, effect, reducer, tile | http | [§6.1.3](./http.md#_6-1-3-the-httpbody-type) |
+| `129-http-decode-failure.kumiki` | type, slot, effect, reducer, tile | http | [§6.5](./http.md#_6-5-retry) |
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
