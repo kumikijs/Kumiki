@@ -36,7 +36,7 @@ import { genFn } from "./codegen/emit-fn.ts";
 import { genReducer } from "./codegen/emit-reducer.ts";
 import { emitSlots } from "./codegen/emit-slot.ts";
 import { coverageJs, genTest } from "./codegen/emit-test.ts";
-import { genRouteTile, genTile } from "./codegen/emit-tile.ts";
+import { bindReaderDecls, genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 
@@ -135,6 +135,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     types,
     usedTiles: new Set(),
     usedIcons: new Set(),
+    usedReaders: new Set(),
   };
 
   // The import header is emitted AFTER the body below — generating the body
@@ -147,6 +148,8 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // data (`_s`) stays outside.
   lines.push("function createApp() {");
   lines.push(HANDLER_MEMO_PREAMBLE);
+  // The bound-input readers go here once the body below has said which it uses.
+  const readersAt = lines.length;
 
   // fn definitions
   for (const fn of fns) {
@@ -337,6 +340,8 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push("globalThis.__kumikiCoverage = App._coverage;");
   }
   lines.push("");
+
+  lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
 
   // ----- runtime usage analysis (#71) — the body above is fully generated, so
   // `ctx.usedTiles` is complete. -----

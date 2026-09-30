@@ -851,6 +851,21 @@ An error, not a warning: a radio with nothing to write asserts nothing when it i
 
 **Fix**: Give the radio the value it stands for — `radio(group="f", bind=filter, value=Active)`, one radio per value the slot can hold.
 
+### E0226 `input-bind-type`
+
+An `input` binds a type its field kind does not go with ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)).
+
+> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md §5.1.1)`
+> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md §5.1.1)`
+
+A bound `input` reads its text as the bound position's base and shows that base's value back, so an `Int`, `Float` or `Time` goes only with the field kinds its text round-trips through: `type="number"` for an `Int` or a `Float`, `type="date"` or `type="datetime-local"` for a `Time`. Any other field kind breaks the round trip without a word. A `Time` in a `type="time"` field (or `month`, `week`, or no `type` at all) is shown its millisecond count, which `Time.parse` then refuses on every edit, so the field can never write. An `Int` in a date field shows a number the date picker cannot hold. A `Text` is written as typed, so it goes with every field whose value is the text typed — a `Text` in a date field holds `"2026-03-04"` and shows it back — and is reported only in a field that has no such text (`type="checkbox"`, …).
+
+The second form is a bound type with no row in the table at all: a `Bool` (bind it to a `check`), a record, or an `Option` / `Result` bound whole. The field's string used to be written into it — an `Option(Int)` slot came to hold `"5"`, which no `match` on it can read. The position its payload is bound through, `bind=limit.get`, is an `Int` and reads as one.
+
+The bound type is unaliased first, so `type Qty = Int where positive` and a `nominal Int` are an `Int` here. Only a literal `type=` is judged against it; a `type=` written as an expression is not known here, and only the second form applies beside one. A bind whose type cannot be read is not reported (its own code, such as [E0103](#e0103-undef-ref-undef-slot), names it), and `type="file"` with a bind is [E0205](#e0205-bind-on-file-input).
+
+**Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.

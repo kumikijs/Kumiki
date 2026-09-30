@@ -44,7 +44,7 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
 }
 
 /** The lowering of one reading: text in, `Some(value)` or `None` out. */
-function readingJs(reading: ParseReading, a: string): string {
+export function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
     // Decimal only, and exact like `Bool`: `Number()` on its own also reads
     // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.

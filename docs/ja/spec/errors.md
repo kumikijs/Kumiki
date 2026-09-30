@@ -829,6 +829,21 @@ bind した radio が選ばれたときに書き込むものは 1 つ — 自分
 
 **修正**：radio にそれが表す値を与える — `radio(group="f", bind=filter, value=Active)` のように、slot が取りうる値ごとに radio を 1 つ置く。
 
+### E0226 `input-bind-type`
+
+`input` が、そのフィールド種別と組み合わせられない型を bind している（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。
+
+> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md §5.1.1)`
+> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md §5.1.1)`
+
+bind した `input` はテキストを bind 位置の基底型として読み、その基底型の値を表示し返すので、`Int` / `Float` / `Time` はテキストが往復できるフィールド種別とだけ組み合わせられる：`Int` / `Float` は `type="number"`、`Time` は `type="date"` か `type="datetime-local"`。それ以外のフィールド種別では、往復が何も言わずに壊れる。`type="time"`（あるいは `month`、`week`、`type` なし）のフィールドの `Time` にはミリ秒の数値が表示され、編集のたびに `Time.parse` がそれを拒否するので、フィールドは決して書き込めない。date フィールドの `Int` は、日付ピッカーが保持できない数値を表示する。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる — date フィールドの `Text` は `"2026-03-04"` を保持してそのまま表示する — ので、そのようなテキストを持たないフィールド（`type="checkbox"` など）でだけ報告される。
+
+2 つ目の形は、bind した型が表にまったく現れない場合である：`Bool`（`check` に bind する）、レコード、あるいは丸ごと bind した `Option` / `Result`。以前はフィールドの文字列がそこに書き込まれていた — `Option(Int)` の slot が `"5"` を保持し、それに対するどの `match` もそれを読めなかった。ペイロードを通して bind する位置、`bind=limit.get` は `Int` であり、`Int` として読まれる。
+
+bind した型は先にエイリアスを解くので、`type Qty = Int where positive` や `nominal Int` はここでは `Int` である。それと照合されるのはリテラルの `type=` だけである。式で書かれた `type=` はここでは分からないので、その隣では 2 つ目の形だけが適用される。型が読めない bind は報告しない（[E0103](#e0103-undef-ref-undef-slot) など、それ自身のコードが示す）。bind 付きの `type="file"` は [E0205](#e0205-bind-on-file-input) である。
+
+**修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
