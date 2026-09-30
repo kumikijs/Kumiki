@@ -256,6 +256,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
     //
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
+    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
+    //
     // Still 61,000 (60,212 measured, from 60,153): a Set literal is a Set
     // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
     // `setAdd` so a literal and an `add` chain are one form. A counter writes

@@ -133,6 +133,48 @@ describe("modular runtime emission (#71)", () => {
     expect(r.runtimeModules).toContain("effects-storage");
   });
 
+  // A clear is decided here, from the declaration, rather than from a request
+  // that turned out empty at runtime: an `undefined` request is what a failed
+  // Map index produces too, and it must not wipe the origin.
+  const clearing = (cap: string, decl: string) => `
+type Nothing = Unit
+effect wipe cap=${cap} ${decl} out=Result(Unit, Text)
+reducer go on=ui.click(B) do= emit wipe()
+tile B = button(text="wipe")
+tile App = column(B)
+app A caps=[${cap}] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  for (const [cap, clear, write] of [
+    ["storage.write", "storageClear", "storageWrite"],
+    ["session.write", "sessionClear", "sessionWrite"],
+  ] as const) {
+    it(`an in=Unit ${cap} with no map-request calls ${clear} and ships only it`, () => {
+      for (const decl of ["in=Unit", "in=Nothing"]) {
+        const r = modular(clearing(cap, decl));
+        expect(r.js).toContain(`import { ${clear} } from "./runtime/effects-storage.js"`);
+        expect(r.js).toContain(`return ${clear}();`);
+        expect(r.js).not.toContain(write);
+      }
+    });
+
+    it(`an in=Unit ${cap} WITH a map-request stays a ${write}`, () => {
+      const r = modular(clearing(cap, `in=Unit map-request={key: "k"}`));
+      expect(r.js).toContain(`import { ${write} } from "./runtime/effects-storage.js"`);
+      expect(r.js).not.toContain(clear);
+    });
+  }
+
+  it("monolith mode pulls storageClear through the one import", () => {
+    const result = compile(clearing("storage.write", "in=Unit"), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const importLines = result.js.split("\n").filter((l) => l.startsWith("import "));
+    expect(importLines).toEqual(['import { mount, _stdlib, storageClear } from "./runtime.js";']);
+  });
+
   it("monolith mode keeps the single-import shape for the inlining path", () => {
     const result = compile(COUNTER, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");

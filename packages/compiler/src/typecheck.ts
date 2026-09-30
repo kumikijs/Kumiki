@@ -61,6 +61,7 @@ import {
   type GraphEdge,
 } from "./def-graph.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
+import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
@@ -4689,33 +4690,6 @@ const KEY_READER_NAMES: ReadonlySet<string> = new Set(
 );
 
 /**
- * How a key of type `key` is represented once it is read back: a string for a
- * `Text`, a `KeyKind` for a type the runtime restores, `null` for anything
- * else — a record, a variant, a type parameter — whose stored string is not a
- * value of the type at all.
- *
- * Followed through aliases, `nominal` and `where`, since what matters is how
- * the key is represented: a `TaskId = nominal Int` key is written from a
- * number and reads back as one. `Time` is a number at runtime.
- */
-function keyRepresentation(key: TypeExpr | null, sym: SymbolTable): KeyKind | "text" | null {
-  const t = unaliasType(key, sym);
-  if (t?.kind !== "TypePrim") return null;
-  switch (t.name) {
-    case "Text":
-      return "text";
-    case "Int":
-    case "Float":
-    case "Time":
-      return "number";
-    case "Bool":
-      return "bool";
-    default:
-      return null;
-  }
-}
-
-/**
  * The `KeyKind` a key reader lowers with, or `undefined` when `member` does not
  * read keys on this receiver or the key is already a string. One answer for
  * both spellings — `st.to-list` and `st.to-list()` ask it alike.
@@ -4728,7 +4702,7 @@ function keyKindOfReader(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp" || !KEY_READERS[t.name]?.has(member)) return undefined;
   const rep = keyRepresentation(t.args[0] ?? null, sym);
-  return rep === "number" || rep === "bool" ? rep : undefined;
+  return rep === "text" || rep === null ? undefined : rep;
 }
 
 /**

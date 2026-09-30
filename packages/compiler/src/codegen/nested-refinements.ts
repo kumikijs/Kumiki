@@ -1,5 +1,6 @@
-import { type TypeEnv, unaliasType } from "../assignable.ts";
+import type { TypeEnv } from "../assignable.ts";
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
+import { keyRepresentation } from "../key-representation.ts";
 import {
   containerPositions,
   expandNamed,
@@ -9,6 +10,7 @@ import {
   typeKey,
 } from "../refinement-positions.ts";
 import { refinementBodyJs } from "../refinements.ts";
+import { fieldKey } from "./context.ts";
 
 /**
  * The refinements a type carries at every position a value of it has, not only
@@ -122,8 +124,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
           'v !== null && typeof v === "object" && !Array.isArray(v)',
           t.fields.flatMap((field) => {
             const check = explain(field.type, generics);
-            const name = JSON.stringify(field.name);
-            return check ? [at(name, check, `v[${name}]`)] : [];
+            if (!check) return [];
+            return [at(JSON.stringify(field.name), check, `v[${fieldKey(field.name)}]`)];
           }),
         );
       case "TypeUnion":
@@ -180,13 +182,22 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return name;
   };
 
-  /** `js`, a key, as the key type reads it: a number when the type is one over a number. */
+  /**
+   * `js`, a stored key, as the key type reads it (`keyRepresentation`): a
+   * number for a type over one, a boolean for `Bool`, the value its JSON
+   * encodes for a structured key, the string itself otherwise.
+   */
   const keyJs = (k: TypeExpr | undefined, js: string): string => {
-    const base = k ? unaliasType(k, env) : null;
-    const numeric =
-      base?.kind === "TypePrim" &&
-      (base.name === "Int" || base.name === "Float" || base.name === "Time");
-    return numeric ? `(typeof ${js} === "number" ? ${js} : Number(${js}))` : js;
+    switch (keyRepresentation(k ?? null, env)) {
+      case "number":
+        return `(typeof ${js} === "number" ? ${js} : Number(${js}))`;
+      case "bool":
+        return `(${js} === true || ${js} === "true")`;
+      case "value":
+        return `JSON.parse(${js})`;
+      default:
+        return js;
+    }
   };
 
   const containerJs = (
@@ -216,8 +227,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       }
       // A set's members are an object's keys at runtime (`setAdd`,
       // `setToggle`, and `setOf` for a literal), so they are strings, read back
-      // as a number for a member over one. A Set may still be an array — one
-      // that arrived as JSON (a decoder, a storage read), or a literal in a
+      // as the member type reads them (`keyJs`). A Set may still be an array —
+      // one that arrived as JSON (a decoder, a storage read), or a literal in a
       // position where the checker could not tell it is a Set — or the mix
       // `add` makes of one (its entries plus keys): an entry whose value is
       // not the `true` a key maps to is a member held as itself.
