@@ -42,6 +42,8 @@ slot box    : Box(Text where nonempty)        = {v: "x"}
 slot named  : {h: Handle}                     = {h: "ab"}
 slot nums   : Set(Int where positive)         = {}
 slot people : Set({n: Text where nonempty})   = {}
+slot byName : Map({n: Text where nonempty}, Int) = {}
+slot cellAt : Map({x: Int, y: Int}, Short)       = {}
 slot plain  : {n: Int, kids: List(Text)}      = {n: 1, kids: []}
 slot handle : Handle                          = "ab"
 
@@ -198,6 +200,26 @@ describe("a refinement on a container element", () => {
       kind: "positive",
       args: [],
       path: [{ key: 0 }],
+    });
+  });
+});
+
+describe("a Map's structured keys, read back from the JSON they are keyed by", () => {
+  it("checks a refined record key as the record it encodes", () => {
+    expect(refineOf("byName")({ '{"n":"ada"}': 1 })).toBe(true);
+    expect(failureOf("byName", { '{"n":"ada"}': 1, '{"n":""}': 2 })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ key: { n: "" } }, "n"],
+    });
+  });
+
+  it("names the record key an entry that fails its value's refinement is under", () => {
+    expect(refineOf("cellAt")({ '{"x":0,"y":1}': "abc" })).toBe(true);
+    expect(failureOf("cellAt", { '{"x":0,"y":1}': "abcd" })).toEqual({
+      kind: "len-lt",
+      args: [4],
+      path: [{ entry: { x: 0, y: 1 } }],
     });
   });
 });

@@ -312,6 +312,17 @@ describe("one key per value (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
     expect(s.mapEntries(m, "value")).toEqual([[{ x: 1, y: 2 }, 7]]);
     expect(s.toList(s.setAdd({}, red()), "value")).toEqual([red()]);
   });
+
+  it("panics, naming the key, on a structured key no member stored", () => {
+    // A record key stored before keys were encoded, or a decoded Map whose
+    // keys are bare variant names: neither is the JSON a structured key reads
+    // back from, so the reader says so instead of throwing a bare SyntaxError.
+    expect(() => s.mapKeys({ "[object Object]": 1 }, "value")).toThrow(KumikiPanic);
+    expect(() => s.mapEntries({ Red: 1 }, "value")).toThrow(/"Red"/);
+    expect(() => s.toList({ "[object Object]": true }, "value")).toThrow(
+      /"\[object Object\]" was not stored by a Set or Map member/,
+    );
+  });
 });
 
 describe("value equality (docs/spec/language.md §1.9.4)", () => {

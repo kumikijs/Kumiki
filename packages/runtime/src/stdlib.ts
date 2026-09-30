@@ -49,9 +49,26 @@ function restoreKey(key: string, kind: KeyKind | undefined): unknown {
     case "bool":
       return key === "true";
     case "value":
-      return JSON.parse(key);
+      return restoreValueKey(key);
     default:
       return assertNeverKind(kind);
+  }
+}
+
+/**
+ * A structured key, parsed back from the JSON `entryKey` wrote. A key that is
+ * not that JSON — one stored before structured keys were encoded (the
+ * `"[object Object]"` every record shared), or a decoded Map whose keys are
+ * bare variant names — names no value of the key type, so reading it is a
+ * panic that says so rather than a bare `SyntaxError` from `JSON.parse`.
+ */
+function restoreValueKey(key: string): unknown {
+  try {
+    return JSON.parse(key);
+  } catch {
+    throw new KumikiPanic(
+      `The key ${JSON.stringify(key)} was not stored by a Set or Map member, so it reads back as no value of its structured key type`,
+    );
   }
 }
 
