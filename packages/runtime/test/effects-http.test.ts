@@ -132,4 +132,122 @@ describe("httpFetch (#78)", () => {
     const v = res.value as { message: string };
     expect(v.message).toBe("aborted");
   });
+
+  // A failed body read stays a connection-shaped error (status 0, retried),
+  // unlike a body that arrived and does not parse (§6.1.4).
+  it("reports a body stream that errors mid-read as status 0", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new TypeError("stream reset"));
+            },
+          }),
+          { status: 201 },
+        ),
+    );
+    const res = await httpFetch("POST", { url: "/orders" });
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.status).toBe(0);
+    expect(v.message).toMatch(/stream reset/);
+  });
+
+  // §6.4.1: an abort while the body is being read is still `aborted`, never a
+  // decode failure carrying the response's status.
+  it("reports an abort during the body read as aborted, not a decode failure", async () => {
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              body = c;
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const ctl = new AbortController();
+    const pending = httpFetch("GET", { url: "/q" }, undefined, ctl.signal);
+    while (!body) await new Promise((r) => setTimeout(r, 0));
+    ctl.abort();
+    body.error(new DOMException("The operation was aborted.", "AbortError"));
+    const res = await pending;
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.message).toBe("aborted");
+    expect(v.message).not.toMatch(/^decode failed/);
+    expect(v.status).toBe(0);
+  });
+
+  it("reports a body-less 204 under the default decoder as a decode failure with status 204", async () => {
+    stubFetch(() => new Response(null, { status: 204 }));
+    const res = await httpFetch("DELETE", { url: "/orders/1" });
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.status).toBe(204);
+    expect(v.message).toMatch(/^decode failed/);
+  });
+});
+
+describe("httpFetch request body", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** A `Multipart` body the way codegen builds it: a Map of tagged FormValues. */
+  const multipart = (entries: Record<string, { _tag: string; _0: unknown }>) => ({
+    _tag: "Multipart",
+    _0: entries,
+  });
+
+  it("sends a FileV entry as its File and a BoolV entry as its text", async () => {
+    const { calls } = stubFetch(() => new Response("ok"));
+    const file = new File(["x"], "a.txt", { type: "text/plain" });
+    const res = await httpFetch("POST", {
+      url: "/up",
+      decode: "text",
+      body: multipart({
+        doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: file } },
+        agree: { _tag: "BoolV", _0: true },
+      }),
+    });
+    expect(res.kind).toBe("ok");
+    const fd = calls[0]?.init.body as FormData;
+    expect(fd).toBeInstanceOf(FormData);
+    expect(fd.get("doc")).toBe(file);
+    expect(fd.get("agree")).toBe("true");
+  });
+
+  it("fails a FileV that holds no file, without making a request", async () => {
+    // A file record restored from persistence through JSON has `_file: {}`.
+    const { calls } = stubFetch(() => new Response("ok"));
+    const res = await httpFetch("POST", {
+      url: "/up",
+      decode: "text",
+      body: multipart({
+        doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: {} } },
+      }),
+    });
+    expect(calls).toHaveLength(0);
+    expect(res.kind).toBe("err");
+    if (res.kind !== "err") return;
+    const v = res.value as { status: number; message: string };
+    expect(v.status).toBe(0);
+    expect(v.message).toContain('"doc"');
+  });
+
+  it.each(["GET", "HEAD"])("sends no body and no Content-Type for a %s", async (method) => {
+    const { calls } = stubFetch(() => new Response(null));
+    await httpFetch(method, { url: "/q", body: { _tag: "Json", _0: { a: 1 } } });
+    expect(calls[0]?.init.body).toBeUndefined();
+    expect(calls[0]?.init.headers).toEqual({});
+  });
 });
