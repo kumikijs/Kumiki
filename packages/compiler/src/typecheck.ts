@@ -60,6 +60,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
@@ -1230,6 +1231,65 @@ function checkToggleBind(
 }
 
 /**
+ * E0226: an `input` bind whose field kind and bound type do not go together
+ * (forms.md §5.1.1). The field's text is read as the bound position's type, and
+ * the field shows that type's value, so each type has the field kinds that
+ * text round-trips through: a `Time` bound to a `type="time"` field was shown
+ * its millisecond count, which `Time.parse` then refused on every edit — the
+ * field could never write and never said why. A type with no row at all (a
+ * `Bool`, an `Option` bound without `.get`, a record) was written the field's
+ * string. Only a literal `type=` is judged; an expression's value is unknown
+ * here, and the bound type alone is still checked against it. A bind whose
+ * type cannot be read is not judged, and `type="file"` is E0205's.
+ */
+function checkInputBindType(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (t.name !== "input") return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const typeArg = t.args.find((a) => a.name === "type")?.value;
+  const literal =
+    typeArg === undefined
+      ? "text"
+      : !isTileExpr(typeArg) && typeArg.kind === "Str"
+        ? typeArg.value
+        : null;
+  if (literal === "file") return;
+  const bound = inferType(bindArg.value, sym, ctx);
+  const u = unaliasType(bound, sym);
+  if (!u || u.kind === "TypeRef") return;
+  const base = u.kind === "TypePrim" ? inputBindBase(u.name) : null;
+  if (base !== null && (literal === null || INPUT_BIND_TYPES[base].includes(literal))) return;
+  const typeName = bound ? typeToString(bound) : "?";
+  const see = "(see docs/spec/forms.md §5.1.1)";
+  if (base === null) {
+    const payload =
+      u.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
+        ? ` — bind its payload with ".get"`
+        : "";
+    errors.push({
+      code: "E0226",
+      kind: "input-bind-type",
+      message: `input(bind=…) cannot bind a value of type ${typeName}: an input binds a Text, Int, Float or Time${payload} ${see}`,
+      pos: bindArg.value.pos,
+    });
+    return;
+  }
+  const field = typeArg === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
+  const kinds = INPUT_BIND_TYPES[base].map((v) => `type="${v}"`).join(" / ");
+  errors.push({
+    code: "E0226",
+    kind: "input-bind-type",
+    message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
+    pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
+  });
+}
+
+/**
  * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
  * typed from the scrutinee. For the positions that only *read* an arm — a
  * value's type, a destination's check — so a pattern's own mistakes are
@@ -1479,6 +1539,7 @@ function checkTileCall(
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, errors);
   checkToggleBind(t, sym, errors, ctx);
+  checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");
