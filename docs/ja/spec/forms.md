@@ -240,7 +240,7 @@ Kumiki のバリデーションは **3 層**：
 
 refinement 層は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) が登録する**すべて**の述語を対象とする。標準ライブラリのドメイン型が宣言に使っている述語も含まれる — `Email`、`Url`、`Uuid`、`HttpStatus` は refinement 付きの nominal（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）なので、これらで宣言された slot は `Text where email` と書かれた slot とまったく同じように検査される。ツールチェーンがチェックへ lowering できない述語は、黙って通るチェックではなくビルドエラー（[E0803](./errors.md#e0803-unimplemented-refinement)）になる。
 
-2 つの書き込み経路は、検査内容ではなく報告の大きさが異なる：
+2 つの書き込み経路は報告の大きさが異なり、さらに `bind` は書き込むパスでだけ判定される（後述）。代入は、1 つのフィールドだけを書くもの（`signup.name := …`）でも値全体で判定される：
 
 - **代入**（reducer 内の `age := …`）はバッチ全体を破棄し、報告する — slot は書かれず、effect も発行されない（[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）。
 - **`bind`** はそのフィールドの値だけを受け取らず、何も報告しない。入力途中の値は欠陥ではなく想定内だからである。フィールドはその値を表示し続け、`error(field=…)` がそのメッセージを出す（[§5.1.2](#_5-1-2-refinement-の扱い)）。

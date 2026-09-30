@@ -240,7 +240,7 @@ Kumiki validation has **three layers**:
 
 The refinement layer covers **every** predicate [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates) registers, including the ones the standard library's domain types are declared with — `Email`, `Url`, `Uuid` and `HttpStatus` are refined nominals ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot declared with one is checked exactly as a slot written `Text where email` is. A predicate the toolchain cannot lower to a check is a build error ([E0803](./errors.md#e0803-unimplemented-refinement)), never a check that passes.
 
-The two write paths differ in how loud they are, not in what they check:
+The two write paths differ in how loud they are, and a `bind` is further judged only at the path it writes (below). An assignment is judged on the whole value, even one that writes a single field (`signup.name := …`):
 
 - **Assignment** (`age := …` in a reducer) discards the whole batch and reports it — no slot written, no effect emitted ([Runtime §10.3.3](./runtime.md#_10-3-3-batching)).
 - **`bind`** refuses the value for that field alone and reports nothing, because a half-typed value is expected rather than a defect. The field keeps showing it, and `error(field=…)` renders its message ([§5.1.2](#_5-1-2-handling-of-refinement)).
