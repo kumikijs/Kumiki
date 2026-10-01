@@ -298,7 +298,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0112 `duplicate-sub-route`
 
-同じ tile の `sub-routes` 内で同一 path が複数回出現している。マッチは定義順なので、重複はデッドコードかタイポ。
+同じ tile の `sub-routes` 内で同一 path が複数回出現している。同一パターンは具体度が同じなので（[ルーティング §3.1.2](./routing.md#_3-1-2-マッチ順序)）常に先のものが勝ち、残りはデッドコードかタイポ。
 
 > `Sub-route path "<path>" is declared more than once in tile "<name>"`
 

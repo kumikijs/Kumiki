@@ -130,7 +130,9 @@ describe("the schema positions are not expressions, and are not read as any", ()
         `{slots: {count: 0}, event: {type: ui.click, target: B}, mocks: {persist: ${v}}}`,
         EXPECT,
       );
-    for (const v of ['ok("x")', 'err("x")', 'delay(10, ok("x"))']) {
+    // `persist` answers `Result(Unit, Text)`, and a mock's payload is checked
+    // against the half it supplies.
+    for (const v of ["ok(())", 'err("x")', "delay(10, ok(()))"]) {
       expect(codes(mock(v)), v).toEqual([]);
     }
   });
