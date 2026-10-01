@@ -274,7 +274,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `setAdd` so a literal and an `add` chain are one form. A counter writes
     // no Set and still ships it in stdlib.js.
     //
-    // Over 61,000 (61,265 measured, from 60,983; the budget stays at 61,000):
+    // Over 61,000 (61,184 measured, from 60,983; the budget stays at 61,000): a
+    // form submits only while every field bound inside it is valid as it shows
+    // (forms.md §5.2.2), judged by `judgeShownField` in core — the one judgement
+    // `error(field=…)` renders its message from, so the two cannot drift. It sits
+    // beside the refused-bind record in core, which every app loads; a counter has
+    // no form and still ships it.
+    //
+    // Over 61,000 (61,466 measured, from 61,184; the budget stays at 61,000):
     // `Time.parse` refuses a date that is not on the calendar (stdlib.md §2.2.8).
     // The 282 bytes are `isCalendarDate` and the branch in `parseTime` that
     // consults it before the platform's parser can roll `2026-02-30` over into

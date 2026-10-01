@@ -66,6 +66,7 @@
 | [132-toggle-bind](./132-toggle-bind.kumiki) | `check` / `switch` は `Bool` を、`radio` は union の 1 バリアントを bind し、スロットを表示して書き戻す |
 | [133-typed-input-bind](./133-typed-input-bind.kumiki) | `Int` / `Float` / `Time` の slot に bind した `input` はテキストをその型として読み、読めないテキストは拒否する |
 | [134-record-field-bind](./134-record-field-bind.kumiki) | レコード slot の 1 フィールドへの `bind` はそのフィールドで判定され、失敗している兄弟フィールドに拒否されない |
+| [135-form-submit-gate](./135-form-submit-gate.kumiki) | form は中で bind したフィールドがすべて妥当な値を表示しているときだけ送信する — 失敗する初期値や拒否された編集は送信を止める |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |
 | [66-value-types](./66-value-types.kumiki) | 値レベルの型検査が受理する形と、それぞれが以前隠していた誤り |
