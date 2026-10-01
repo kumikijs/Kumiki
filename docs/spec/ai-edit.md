@@ -56,6 +56,10 @@ Multi-line bodies (a reducer's `do=` block, a fn's multi-line RHS, etc.) must go
 
 A write op is validated by re-parsing and re-typechecking the file, and rolls back on any `severity: "error"` diagnostic — with one exception. A program is built one definition at a time, so it is app-less until the `app` lands; **`E0003 missing-app` does not roll back a write op**. Whether the program is a complete application is what `kumiki check` reports, not what a mid-edit graph must already satisfy.
 
+Write ops on one file are **serialized**. `add`, `replace`, `edit`, `rename`, `remove`, `patch apply`, `patch revert`, `lock` and `unlock` each hold the file's write lock — a sibling `<file>.kumiki-write.lock`, not to be confused with the ownership lock `<file>.kumiki-locks.json` of §9.8.3 — for the whole read → validate → write → log sequence; `patch apply` and `patch revert` hold it once across the ops they are made of. The composed source is validated *before* it is written, and the file is replaced by a renamed sibling rather than written in place, so another reader never sees a half-written file and a rejected op never overwrites anything. (Being replaced, a symlink at the file's path is replaced rather than followed, and the file does not keep its own permissions.) If the op cannot then be appended to the op log, the file is put back and the op is rejected. As a result, every op in the op log is reflected in the file, and every op that reported success is in both. `kumiki fix --apply` also writes by rename but does not take the write lock, so it must not run alongside the write verbs on the same file.
+
+A writer that finds the lock held waits for it: 30 s by default, or `KUMIKI_WRITE_LOCK_WAIT_MS` milliseconds. The wait is per writer, so with several queued the last one waits for every writer ahead of it. If the lock is not released in time, the op is rejected: exit `1`, nothing written, nothing logged, and the message names the holder's pid and host and the lock file. The MCP tools wait the same way, and the server answers no other request while one of them waits. A lock is taken over instead of waited on when its holder is known to be gone: it names a process on this host that has exited, or it names no holder (empty, not JSON, or a pid that is not a positive integer) and is more than 2 s old. A lock naming a process on another host — another container, or Windows and WSL on a shared drive — is never taken over, because whether that process is still running cannot be checked; if it is not, delete the lock file.
+
 ### 9.2.3 Validation Commands
 
 ```bash
@@ -331,6 +335,8 @@ The graph store takes no locks. ops can be pushed at any time. However:
 - They may be rejected by referential integrity
 - A rejected agent pulls the latest master and retries
 
+This is about coordination between agents: nobody reserves a definition before editing it. Writing one `.kumiki` file is a separate matter — the write verbs take turns on the file itself (§9.2.2), so a concurrent op either lands or is rejected, and is never silently lost.
+
 ### 9.8.3 Task Boundaries
 
 We want to avoid multiple agents editing the same definition. Task splitting is done by the unit of "**the domain of definition names**":
@@ -349,7 +355,7 @@ kumiki lock agent-1 'slot.todos*,reducer.todo-*'
 
 If another agent issues an op in the same namespace, it is rejected.
 
-The lock is checked against **every definition the op touches**, not only the one the verb names. What the op touched is read off the file, not off the verb: after the op's write passes validation, the definitions before and after it are compared by qualified name, and every one that was added, removed, or whose text changed is checked. That covers each dependent a `remove --cascade` removes, the new name a `rename` creates and each definition whose text it rewrites, and a definition that a `replace`, `add` or `edit` body brings in with it (a `replace` of `slot.count` whose body goes on to a line `slot todosX : Int = 0` creates `slot.todosX`). One locked definition among them rejects the whole op: the file is restored byte-identical, no op is logged, the command exits `1`, and the message names the first locked definition in qualified-name order and its owner. The named definition is also checked before anything is written. `patch apply`, `patch revert` and the MCP tools go through the same mutators, so the same check applies to them.
+The lock is checked against **every definition the op touches**, not only the one the verb names. What the op touched is read off the source, not off the verb: once the source the op would write passes validation, the definitions before and after it are compared by qualified name, and every one that was added, removed, or whose text changed is checked. That covers each dependent a `remove --cascade` removes, the new name a `rename` creates and each definition whose text it rewrites, and a definition that a `replace`, `add` or `edit` body brings in with it (a `replace` of `slot.count` whose body goes on to a line `slot todosX : Int = 0` creates `slot.todosX`). One locked definition among them rejects the whole op before it is written: the file is left byte-identical, no op is logged, the command exits `1`, and the message names the first locked definition in qualified-name order and its owner. The named definition is also checked before anything is written. `patch apply`, `patch revert` and the MCP tools go through the same mutators, so the same check applies to them.
 
 ## 9.9 The Relationship Between episode and op
 
