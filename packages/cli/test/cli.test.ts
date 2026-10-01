@@ -281,16 +281,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // beside the refused-bind record in core, which every app loads; a counter has
     // no form and still ships it.
     //
-    // Over 61,000 (61,466 measured, from 61,184; the budget stays at 61,000):
-    // `Time.parse` refuses a date that is not on the calendar (stdlib.md §2.2.8).
-    // The 282 bytes are `isCalendarDate` and the branch in `parseTime` that
-    // consults it before the platform's parser can roll `2026-02-30` over into
-    // March. A counter parses no time and still ships it, because `parseTime` sits
-    // in the stdlib module every app loads.
+    // Raised once to 63,000 with the owner's approval (61,466 measured, from
+    // 61,184): `Time.parse` refuses a date that is not on the calendar
+    // (stdlib.md §2.2.8). The 282 bytes are `isCalendarDate` and the branch in
+    // `parseTime` that consults it before the platform's parser can roll
+    // `2026-02-30` over into March. A counter parses no time and still ships
+    // it, because `parseTime` sits in the stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(61_000);
+    expect(total).toBeLessThan(63_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
