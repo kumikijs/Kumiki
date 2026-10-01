@@ -273,6 +273,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | コア | [§1.7.2](./language.md#_1-7-2-不変条件) inv. 1 |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | ルーティング | [§3.1.2](./routing.md#_3-1-2-マッチ順序) |
+| `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 <!-- examples:end -->
 :::
