@@ -1,10 +1,12 @@
-# Feature (routing.md §3.4, §3.5.2): every navigation that fires `route.enter`
-# for the route it lands on fires `route.leave` for the route it leaves first,
-# even when both are the same pattern. Moving from `/todos/1/edit` to
+# Feature (routing.md §3.4, §3.5.2): a navigation to another path fires
+# `route.leave` for the route it leaves before `route.enter` for the one it
+# lands on, even when both are the same pattern. Moving from `/todos/1/edit` to
 # `/todos/2/edit` leaves todo 1 (`$route` is the old route) and enters todo 2,
 # so an unsaved-changes guard on `route.leave("/todos/:id/edit")` holds a
 # "next item" link behind `confirm` like any other way out of the page.
 # Within a `sub-routes` parent, switching child leaves and re-enters the parent.
+# A move to the path already shown leaves nothing (no guard asks), and only
+# re-runs `route.enter`.
 
 slot dirty   : Bool = false
 slot enters  : Int  = 0
@@ -46,7 +48,7 @@ tile Home     = page(heading("Home"))
 tile NotFound = page(heading("404"))
 
 app LeaveOnParamChange
-    caps   = [notification.show, nav.push, nav.replace]
+    caps   = [notification.show, nav.push]
     routes = {
         "/"               -> Home,
         "/todos/:id/edit" -> Edit,

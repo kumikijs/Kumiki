@@ -150,7 +150,7 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 | `route.enter(pattern)` | 新ルートに入った直後 |
 | `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
-最初のルート以降のナビゲーションはすべて切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。表示中と同じパスへのナビゲーションも両方を発火する。`route.enter` だけを発火するのは、離れる先の無い初期ルートのみである。
+別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。クエリかハッシュだけを変えるナビゲーションと、表示中と同じパスへのナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。それでも `route` slot は更新され、`route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも `route.enter` だけを発火する。
 
 ```kumiki fragment
 reducer loadTodoOnEnter

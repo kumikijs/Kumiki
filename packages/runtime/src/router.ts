@@ -312,5 +312,9 @@ export const routing: RoutingImpl = {
   parseLocation,
   matchPattern,
   findRedirect,
+  href({ path, query, hash }) {
+    const search = new URLSearchParams(query).toString();
+    return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
+  },
   installNavEffects,
 };

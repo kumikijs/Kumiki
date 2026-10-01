@@ -52,9 +52,9 @@
       }
     },
     {
-      "label": "navigating to the path already shown fires both, like any other navigation",
+      "label": "navigating to the path already shown leaves nothing; route.enter runs again",
       "do": { "navigate": "/settings/billing" },
-      "expect": { "noErrors": true, "state": { "sEnters": 3, "sLeaves": 2 } }
+      "expect": { "noErrors": true, "state": { "sEnters": 3, "sLeaves": 1 } }
     }
   ]
 }
