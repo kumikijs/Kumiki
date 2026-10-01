@@ -5041,7 +5041,10 @@ function checkPatternAgainstType(
   if (pat.kind === "PWildcard") return;
 
   if (pat.kind === "PBind") {
-    bindLocal(scope, pat.name, t);
+    // Normalising strips `nominal`, so bind the type as written (language.md
+    // §1.9: each arm is read with the types its pattern binds). A type with no
+    // normal form binds as unknown.
+    bindLocal(scope, pat.name, t === null ? null : scrutType);
     return;
   }
 
