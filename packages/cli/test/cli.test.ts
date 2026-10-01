@@ -256,11 +256,29 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // record in core, which every app loads; a counter binds no input and
     // still ships it.
     //
-    // Still 61,000 (60,508 measured, from 60,153): an index step reaches the
-    // setter apart from a field step (language.md §1.6.3), so a write through a
-    // Map key that is absent writes nothing and a read there panics. The 355 bytes
-    // are `isIndexSegment` and the no-write branch in `_setPathHelper`,
-    // `isEntryOf` which both sides of `:=` ask, and the panic in
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
+    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
+    //
+    // Still 61,000 (60,924 measured, from 60,650): a `bind` into one field of a
+    // record is judged at that field (forms.md §5.6). `slotAccepts` and a slot's
+    // `refineFailure` take the path the write went through, and a refused bind
+    // keeps that path so what the field shows is laid over the record as it is
+    // now, shallower paths first. A counter binds nothing and still ships them,
+    // because they sit in the core module every app loads.
+    //
+    // Still 61,000 (60,983 measured, from 60,924): a Set literal is a Set
+    // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
+    // `setAdd` so a literal and an `add` chain are one form. A counter writes
+    // no Set and still ships it in stdlib.js.
+    //
+    // Over 61,000 (61,319 measured, from 60,983; the budget stays at 61,000): an
+    // index step reaches the setter apart from a field step (language.md §1.6.3),
+    // so a write through a Map key that is absent writes nothing and a read there
+    // panics. The 336 bytes are `isIndexSegment` and the no-write branch in
+    // `_setPathHelper`, `isEntryOf` which both sides of `:=` ask, and the panic in
     // `_stdlibCore.index`. A counter indexes nothing and still ships them, because
     // the setter and the stdlib sit on paths every app loads.
     const total = expected
