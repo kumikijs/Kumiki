@@ -274,9 +274,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `setAdd` so a literal and an `add` chain are one form. A counter writes
     // no Set and still ships it in stdlib.js.
     //
-    // Over 61,000 (61,225 measured, from 60,983; the budget stays at 61,000): the
+    // Over 61,000 (61,184 measured, from 60,983; the budget stays at 61,000): a
+    // form submits only while every field bound inside it is valid as it shows
+    // (forms.md §5.2.2), judged by `judgeShownField` in core — the one judgement
+    // `error(field=…)` renders its message from, so the two cannot drift. It sits
+    // beside the refused-bind record in core, which every app loads; a counter has
+    // no form and still ships it.
+    //
+    // Over 61,000 (61,428 measured, from 61,184; the budget stays at 61,000): the
     // viewport pick reads the active theme's breakpoints over the style.md §4.2
-    // defaults (`DEFAULT_BREAKPOINTS` in core.js). The 245 bytes are that lookup;
+    // defaults (`DEFAULT_BREAKPOINTS` in core.js). The 244 bytes are that lookup;
     // a counter picks no viewport and still ships it, because it sits in the core
     // module every app loads.
     const total = expected
