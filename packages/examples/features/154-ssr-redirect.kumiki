@@ -1,0 +1,31 @@
+# Feature (routing.md §3.10, runtime.md §10.6.1): a static redirect is resolved
+# before the route is rendered, on the server as on the client. A request for
+# `/old` is served the Home page, and `/settings/legacy` is served the billing
+# child, not the 404 page or the parent's default child. `renderToString`
+# reports the redirect target as the rendered route, so hydration starts from
+# the route the server actually drew.
+
+tile Home     = page(heading("Home"),
+                     link(to="/old") {text: "old link"},
+                     link(to="/settings/legacy") {text: "legacy settings"})
+tile NotFound = page(heading("404 not found"))
+tile Billing  = page(heading("Billing settings"))
+tile SHome    = page(heading("Settings home"))
+
+tile Settings
+    sub-routes = {
+        "/settings/billing" -> Billing,
+        "/settings/legacy"  ->> "/settings/billing",
+        "/settings"         -> SHome
+    }
+    = page(heading("Settings"), route-outlet())
+
+app SsrRedirect
+    caps   = [nav.push]
+    routes = {
+        "/old"        ->> "/",
+        "/"           -> Home,
+        "/settings/*" -> Settings,
+        "/404"        -> NotFound
+    }
+    init   = []
