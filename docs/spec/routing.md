@@ -34,6 +34,8 @@ app TodoApp
 1. More specific routes take precedence (static > parameter > wildcard)
 2. At equal specificity, **definition order** wins (so behavior does not change under parallel development)
 
+Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. Redirect entries ([§3.10](#_3-10-redirects-static)) are ranked in the same table as the routes that render: the first entry in this order that matches the path owns it, so `"/todos/new" -> NewTodo` renders even when `"/todos/*" ->> "/"` is written above it. The same order picks the entry inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), redirects included. Server rendering (`renderToString`) picks the rendered route by this order only when it is handed the routing module; without it, the path is compared to the declared patterns verbatim. It never follows a `->>`.
+
 ### 3.1.3 `/404` Is Reserved
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).
@@ -240,6 +242,7 @@ tile SettingsLayout
 
 ### 3.6.3 Matching Rules
 
+- A parent's `sub-routes` map applies only when [§3.1.2](#_3-1-2-match-order) selects that parent for the path; a more specific sibling (`"/settings/:section"` beside `"/settings/*"`) takes the path and renders its own target, without the parent
 - Child routes are re-matched within the parent pattern `/settings/*`
 - If no child route matches, the parent's `/settings` (default) is used
 - If that also fails, fall through to the global `/404`
@@ -321,7 +324,7 @@ app App
     }
 ```
 
-`->>` is a **static redirect**. The moment it matches, it performs the equivalent of `navigate-replace`.
+`->>` is a **static redirect**. The moment it matches, it performs the equivalent of `navigate-replace`. It applies only when it is the entry that owns the path under [§3.1.2](#_3-1-2-match-order): a more specific rendering route declared anywhere in the table wins over it.
 
 ---
 

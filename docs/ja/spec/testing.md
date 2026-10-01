@@ -30,6 +30,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 | `expect.effects` の要素 | effect（宣言されたもの、または標準 effect） | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | `given.mocks` のキー | effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | すべての式——slot の値、`given.in`、`expect.panic`、`invariant`、モックのペイロード、`episode-test` の `expect` | 式レイヤの規則どおり | E0103 / E0116 など |
+| `given.slots` / `expect.slots` の値、`expect.effects` の引数、`given.mocks` のペイロード | slot の型・effect の `in=` 型・effect の `out=` の該当側の値 | [E0201](./errors.md#e0201-type-mismatch)、[E0214](./errors.md#e0214-missing-record-field)、[E0215](./errors.md#e0215-unknown-record-field) |
 | `given` / `expect` の**セクション**キー | そのテスト種別が受理する閉じた集合の 1 つ | [E0714](./errors.md#e0714-test-section-unknown) |
 
 セクション名そのものは解決すべき名前ではなく語彙であり、テスト種別ごと・節ごとに閉じている：
@@ -83,6 +84,8 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 ### 8.2.2 ワイルドカード {#_8-2-2-wildcards}
 
 `<any-id>` は「任意の生成 ID」、`<slots.todos>` は「実行後の slot 値への参照」。
+
+Set リテラルの**要素**としての `<any-id>` は、それぞれ他のどれとも対応しない要素一つと対になる。`[<any-id>, <any-id>]` はちょうど二つの生成された要素を、`["a", <any-id>]` は `"a"` ともう一つを求める。
 
 ### 8.2.3 バッチ規則はここにも適用される
 
