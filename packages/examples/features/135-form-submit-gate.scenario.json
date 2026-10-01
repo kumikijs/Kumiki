@@ -1,0 +1,51 @@
+{
+  "steps": [
+    {
+      "label": "a pristine address that fails its refinement keeps the form from submitting",
+      "do": { "submit": "#email" },
+      "expect": {
+        "noErrors": true,
+        "state": { "sent": "(nothing)" },
+        "domIncludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "a valid address is taken, and the message goes",
+      "do": { "fill": "#email", "value": "ada@example.com" },
+      "expect": {
+        "noErrors": true,
+        "state": { "email": "ada@example.com" },
+        "domExcludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "the form now submits what the fields show",
+      "do": { "submit": "#email" },
+      "expect": { "noErrors": true, "state": { "sent": " <ada@example.com>" } }
+    },
+    {
+      "label": "an edit the refinement refuses leaves the slot, and the field says why",
+      "do": { "fill": "#email", "value": "ada@examplecom" },
+      "expect": {
+        "noErrors": true,
+        "state": { "email": "ada@example.com" },
+        "domIncludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "while it shows the refused value, the send button does not submit the stale address",
+      "do": { "clickText": "Send" },
+      "expect": { "noErrors": true, "state": { "sent": " <ada@example.com>" } }
+    },
+    {
+      "label": "an unrefined field does not hold the form back once the address is fixed",
+      "do": { "fill": "#email", "value": "grace@example.com" },
+      "expect": { "noErrors": true, "state": { "email": "grace@example.com" } }
+    },
+    {
+      "label": "and the form submits again",
+      "do": { "clickText": "Send" },
+      "expect": { "noErrors": true, "state": { "sent": " <grace@example.com>" } }
+    }
+  ]
+}

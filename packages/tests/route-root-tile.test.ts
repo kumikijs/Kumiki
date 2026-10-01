@@ -344,6 +344,28 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
     expect(root.textContent).not.toContain("Inner");
   });
 
+  it("fires route.error once when the page it leaves in place stays broken", async () => {
+    // The handler's write does not re-render the page on its own: that page is
+    // the one that just panicked. When it did, each render fired the handler
+    // again one level deeper until the stack overflowed, and whichever frame
+    // the overflow landed in decided `$event.location` — the route target
+    // or, for the overflow itself, "render". That is what made the attribution
+    // test next to this one fail only sometimes.
+    const { app, root } = await at(
+      `slot xs : List(Int) = []
+slot fired : Int = 0
+reducer sawErr on=route.error("/shell/*") do= fired := fired + 1
+tile NotFound = column(text("nf"))
+tile Boom = column(text(xs.head.get.show))
+tile Shell sub-routes={"/shell/a" -> Boom} = column(route-outlet())
+app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
+`,
+      "/shell/a",
+    );
+    expect((app.live as Record<string, unknown>).fired).toBe(1);
+    expect(root.querySelector('[data-kumiki-panic="Boom"]')).not.toBeNull();
+  });
+
   it("hands route.error the same attribution when no boundary catches it", async () => {
     // `route.error`'s `$event.location` used to be absent for a render panic;
     // it is the route target now, the same name the built-in display carries.

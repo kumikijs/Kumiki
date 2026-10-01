@@ -1,6 +1,6 @@
 import { isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
-import { type EnclosingTiles, type EvalCtx, handlerRef, jsProperty } from "./context.ts";
+import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -213,7 +213,7 @@ export function propsFor(
   for (const p of t.props) {
     if (isNotPropData(t.name, p.name, true)) continue;
     if (p.name === "aria" || p.name.startsWith("aria-")) continue;
-    elProps.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+    elProps.push(`${fieldKey(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   // A named argument carries the same prop as the block form of the same name.
   // The spec writes the two interchangeably — `button(text="Log in",
@@ -241,7 +241,7 @@ export function propsFor(
     const js = jsOfExpr(a.value, ctx);
     if (collectAria(a.name, () => js, aria)) continue;
     entries.push(`${jsProperty(a.name)}: ${js}`);
-    elProps.push(`${jsProperty(a.name)}: ${js}`);
+    elProps.push(`${fieldKey(a.name)}: ${js}`);
   }
   const ariaJs = mergedAria(aria);
   if (ariaJs) {

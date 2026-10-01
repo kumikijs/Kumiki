@@ -1,11 +1,5 @@
 // kumiki fix — propose auto-patches for repairable typecheck errors.
 
-// `writeFileSync` is dereferenced through the `node:fs` namespace so tests can
-// intercept it — a plain named import would be resolved as a snapshot binding
-// by Vitest's mock spread, defeating `vi.spyOn(fs, "writeFileSync")`. Property
-// access on the namespace goes through the live slot every call. `readFileSync`
-// stays named — no test needs to mock reads.
-import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
 import type { KumikiError, Pos, TestDef, Token } from "@kumikijs/compiler";
 import {
@@ -23,6 +17,7 @@ import {
 import type { TestResult } from "@kumikijs/runtime";
 import { runTestsSource, testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
+import { atomicWriteFileSync } from "./write-lock.ts";
 
 /**
  * How much of the source a patch's `apply` disturbs — the only thing that
@@ -209,32 +204,6 @@ function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
       : anchor.kind === "line"
         ? replaceOnLine(text, anchor.pos, missing, suggested)
         : text;
-}
-
-/**
- * Write a file such that a failure (EACCES / ENOSPC / EBUSY) leaves the target
- * byte-identical to before the call. Node's `writeFileSync` opens with
- * `O_TRUNC`, so a mid-write ENOSPC produces a truncated file — unsafe for a
- * repair tool whose contract is "cleaner or unchanged". We stage the content
- * to a sibling temp file first, then `renameSync` it over the target.
- * `renameSync` is atomic on the same filesystem on both POSIX and Windows
- * (via `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`). On any throw the temp
- * file is best-effort unlinked so a subsequent retry sees a clean directory.
- */
-function atomicWriteFileSync(path: string, content: string): void {
-  const tmp = `${path}.kumiki-tmp`;
-  try {
-    fs.writeFileSync(tmp, content);
-    fs.renameSync(tmp, path);
-  } catch (e) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      // Temp file may not exist (throw happened before create) or belong to a
-      // concurrent invocation. Best-effort cleanup — swallow.
-    }
-    throw e;
-  }
 }
 
 /**
