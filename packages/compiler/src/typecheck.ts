@@ -60,6 +60,8 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
+import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
@@ -1097,6 +1099,34 @@ const BIND_CONTROLS = new Set([
 ]);
 
 /**
+ * E0602 on a `bind=` target: a step written as a call. A bind target is the
+ * place the control writes to — a path (language.md §1.6.3, forms.md §5.1),
+ * whose steps are written without parentheses. `bind=d.get().title` names the
+ * value `.get()` answers, not a place in `d`, and the lowering, which reads
+ * only paren-free steps, dropped the whole bind without a word: the input
+ * rendered empty and wrote nowhere. The unwrap step is `.get`.
+ */
+function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const bind = t.args.find((a) => a.name === "bind");
+  let cur = bind?.value as Expr | undefined;
+  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
+    if (cur.kind === "MethodCall") {
+      const hint =
+        cur.method === "get" && cur.args.length === 0
+          ? ' — the unwrap step is written ".get"'
+          : " — a member derives a value, so there is no place in the receiver for the control to write";
+      errors.push({
+        code: "E0602",
+        kind: "unassignable-member",
+        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+        pos: cur.pos,
+      });
+    }
+    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+  }
+}
+
+/**
  * E0219: `strict` on a bind control kind (`BIND_CONTROLS`), with or without a
  * `bind` — it is not a prop of these tiles at all. forms.md §5.1.2 used to specify
  * `strict=false` — take a value the refinement refuses and turn a form-level
@@ -1121,6 +1151,143 @@ function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
       pos,
     });
   }
+}
+
+/**
+ * The `BIND_CONTROLS` whose bind is a selection rather than a text: the bound
+ * value alone decides whether a box is ticked or a radio chosen (forms.md
+ * §5.1.1), so `check` / `switch` write a `Bool` and a `radio` writes its own
+ * `value=`.
+ */
+const TOGGLE_BIND_CONTROLS = new Set(["check", "switch", "radio"]);
+
+/** The argument each toggle reads for its selection when it has no `bind=`. */
+const TOGGLE_UNBOUND_SELECTION: Readonly<Record<string, string>> = {
+  check: "value",
+  switch: "value",
+  radio: "selected",
+};
+
+/**
+ * A `check` / `switch` / `radio` bind (forms.md §5.1.1), checked for what it
+ * writes when the control is chosen:
+ *
+ * - a `check` or `switch` writes the box's `Bool`, so the bound value has to
+ *   take one (E0201);
+ * - a `radio` writes its own `value=`, so it needs one (E0225 — without it the
+ *   runtime would write `undefined` into the slot, and `undefined == undefined`
+ *   would then show the radio chosen while every `match` on the slot fell
+ *   through), and that value has to be one the bound slot takes (E0201, or
+ *   E0216 for a variant of another union).
+ *
+ * The argument that selects the control when it is unbound — `value=` on a box,
+ * `selected=` on a radio — is not read beside a `bind=`, which is W0216. A bind
+ * whose type cannot be read is not type-checked; the other two still apply.
+ */
+function checkToggleBind(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!TOGGLE_BIND_CONTROLS.has(t.name)) return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const bindExpr = bindArg.value;
+  const unread = TOGGLE_UNBOUND_SELECTION[t.name];
+  for (const arg of t.args) {
+    if (arg.name !== unread) continue;
+    errors.push({
+      code: "W0216",
+      kind: "selection-beside-bind",
+      severity: "warning",
+      message: `"${unread}" on ${t.name}() is not read beside bind= — the bound value decides whether it is ${t.name === "radio" ? "chosen" : "ticked"}. Remove it (see docs/spec/forms.md §5.1.1)`,
+      pos: arg.namePos ?? (arg.value as Expr).pos,
+    });
+  }
+  const valueArg = t.name === "radio" ? t.args.find((a) => a.name === "value") : undefined;
+  if (t.name === "radio" && !valueArg) {
+    errors.push({
+      code: "E0225",
+      kind: "radio-bind-without-value",
+      message: `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`,
+      pos: bindArg.namePos ?? bindExpr.pos,
+    });
+  }
+  const bound = inferType(bindExpr, sym, ctx);
+  if (bound === null) return;
+  if (t.name === "radio") {
+    if (valueArg && !isTileExpr(valueArg.value)) {
+      checkAgainst(valueArg.value, bound, sym, errors, ctx);
+    }
+    return;
+  }
+  if (assignable(bound, prim("Bool", bindExpr.pos), sym)) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `${t.name}(bind=…) writes a Bool, but the bound value is ${typeToString(bound)} (see docs/spec/forms.md §5.1.1)`,
+    bindExpr.pos,
+  );
+}
+
+/**
+ * E0226: an `input` bind whose field kind and bound type do not go together
+ * (forms.md §5.1.1). The field's text is read as the bound position's type, and
+ * the field shows that type's value, so each type has the field kinds that
+ * text round-trips through: a `Time` bound to a `type="time"` field was shown
+ * its millisecond count, which `Time.parse` then refused on every edit — the
+ * field could never write and never said why. A type with no row at all (a
+ * `Bool`, an `Option` bound without `.get`, a record) was written the field's
+ * string. Only a literal `type=` is judged; an expression's value is unknown
+ * here, and the bound type alone is still checked against it. A bind whose
+ * type cannot be read is not judged, and `type="file"` is E0205's.
+ */
+function checkInputBindType(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (t.name !== "input") return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const typeArg = t.args.find((a) => a.name === "type")?.value;
+  const literal =
+    typeArg === undefined
+      ? "text"
+      : !isTileExpr(typeArg) && typeArg.kind === "Str"
+        ? typeArg.value
+        : null;
+  if (literal === "file") return;
+  const bound = inferType(bindArg.value, sym, ctx);
+  const u = unaliasType(bound, sym);
+  if (!u || u.kind === "TypeRef") return;
+  const base = u.kind === "TypePrim" ? inputBindBase(u.name) : null;
+  if (base !== null && (literal === null || INPUT_BIND_TYPES[base].includes(literal))) return;
+  const typeName = bound ? typeToString(bound) : "?";
+  const see = "(see docs/spec/forms.md §5.1.1)";
+  if (base === null) {
+    const payload =
+      u.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
+        ? ` — bind its payload with ".get"`
+        : "";
+    errors.push({
+      code: "E0226",
+      kind: "input-bind-type",
+      message: `input(bind=…) cannot bind a value of type ${typeName}: an input binds a Text, Int, Float or Time${payload} ${see}`,
+      pos: bindArg.value.pos,
+    });
+    return;
+  }
+  const field = typeArg === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
+  const kinds = INPUT_BIND_TYPES[base].map((v) => `type="${v}"`).join(" / ");
+  errors.push({
+    code: "E0226",
+    kind: "input-bind-type",
+    message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
+    pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
+  });
 }
 
 /**
@@ -1380,6 +1547,9 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
+  checkBindTargetSteps(t, errors);
+  checkToggleBind(t, sym, errors, ctx);
+  checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");
@@ -1861,6 +2031,24 @@ function effectPayloadType(
     return u.args.length === 2 ? (u.args[0] ?? null) : null;
   }
   return out;
+}
+
+/**
+ * The type of the value an effect answers with on `outcome`: the halves of a
+ * `Result` `out=`, or the whole `out=` for success when it is not a `Result`.
+ * Unlike `effectPayloadType` this answers the failure half too, for a mock
+ * that supplies it.
+ */
+function effectOutcomeType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  if (outcome === "ok") return effectPayloadType(effect, "ok", sym);
+  const out = unaliasType(sym.effects.get(effect)?.outType ?? null, sym);
+  return out?.kind === "TypeApp" && out.name === "Result" && out.args.length === 2
+    ? (out.args[1] ?? null)
+    : null;
 }
 
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -2922,6 +3110,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           bindLocal(inner, "$1", p1);
           bindLocal(inner, "$2", p2);
           checkExpr(a, sym, errors, inner);
+          // An argument whose type the receiver's fixes is checked against it
+          // like any declared position — which is also what builds a list
+          // literal there as the Set it is declared to be (stdlib.md §2.2.2).
+          const declared = memberArgType(recvType, e.method, i, sym);
+          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
@@ -2986,13 +3179,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      const inner: Ctx = {
-        ...ctx,
-        localBinds: new Set(ctx.localBinds),
-        localTypes: new Map(ctx.localTypes),
-      };
-      bindLocal(inner, e.name, inferType(e.value, sym, inner));
-      checkExpr(e.body, sym, errors, inner);
+      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
       return;
     }
     case "TokenRef":
@@ -3248,6 +3435,49 @@ function pushMismatch(errors: KumikiError[], code: MismatchCode, message: string
   errors.push({ code, kind: MISMATCH_KIND[code], message, pos });
 }
 
+/** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
+function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner: Ctx = {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+  };
+  bindLocal(inner, e.name, inferType(e.value, sym, ctx));
+  return inner;
+}
+
+/**
+ * The type a member's `index`th argument is declared as by the receiver's
+ * type (stdlib.md §2.2), or `null` where the receiver does not fix one: a
+ * `List`'s element for `contains` / `push` / `prepend`, a `Map`'s value for
+ * `insert` / `update` (whose fragment answers the new value), and the
+ * receiver itself for a `Set`'s `union` / `intersect` / `diff`.
+ */
+function memberArgType(
+  recv: TypeExpr | null,
+  member: string,
+  index: number,
+  sym: SymbolTable,
+): TypeExpr | null {
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return null;
+  const [a, b] = t.args;
+  switch (t.name) {
+    case "List":
+      return index === 0 && LIST_ELEMENT_ARGS.has(member) ? (a ?? null) : null;
+    case "Map":
+      return index === 1 && MAP_VALUE_ARGS.has(member) ? (b ?? null) : null;
+    case "Set":
+      return index === 0 && SET_OPERANDS.has(member) ? recv : null;
+    default:
+      return null;
+  }
+}
+
+const LIST_ELEMENT_ARGS: ReadonlySet<string> = new Set(["contains", "push", "prepend"]);
+const MAP_VALUE_ARGS: ReadonlySet<string> = new Set(["insert", "update"]);
+const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
+
 /**
  * Check `e` against the type the site declares, reporting at the innermost
  * expression that is wrong.
@@ -3284,6 +3514,7 @@ function checkAgainst(
   };
 
   if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
+    if (d.name === "Set") e.asSet = true;
     for (const item of e.items) checkAgainst(item, d.args[0] ?? null, sym, errors, ctx, code);
     return;
   }
@@ -3311,10 +3542,9 @@ function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
-    // A `Set` is written `{}` and nothing else: the grammar has no non-empty
-    // set literal (`{"a", "b"}` does not parse, and `{a, b}` is a record), so
-    // an entry can only come from a `Map`. Both are the same node kind, which
-    // is why the declared type decides.
+    // `{}` is both the empty Map and the empty Set, so the declared type
+    // decides. A non-empty Set is written as a list literal (the branch
+    // above); every entry here is a key and a value, which only a `Map` has.
     if (d.name === "Set") return;
     if (d.name === "Map") {
       for (const ent of e.entries) {
@@ -3337,6 +3567,11 @@ function checkAgainst(
     // reporting at the `if`.
     checkAgainst(e.consequent, declared, sym, errors, ctx, code);
     checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    return;
+  }
+  if (e.kind === "LetIn") {
+    // The body is the value that lands here, read with the name bound.
+    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code);
     return;
   }
   if (e.kind === "MatchExpr") {
@@ -4221,8 +4456,8 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         e.pos,
       );
     case "MapLit": {
-      // `{}` is both the empty map and the only set literal the grammar has,
-      // so an entry-less literal says nothing about which it is.
+      // `{}` is both the empty Map and the empty Set, so an entry-less literal
+      // says nothing about which it is.
       if (e.entries.length === 0) return null;
       const k = commonType(
         e.entries.map((ent) => inferType(ent.key, sym, ctx)),
@@ -4480,33 +4715,6 @@ const KEY_READER_NAMES: ReadonlySet<string> = new Set(
 );
 
 /**
- * How a key of type `key` is represented once it is read back: a string for a
- * `Text`, a `KeyKind` for a type the runtime restores, `null` for anything
- * else — a record, a variant, a type parameter — whose stored string is not a
- * value of the type at all.
- *
- * Followed through aliases, `nominal` and `where`, since what matters is how
- * the key is represented: a `TaskId = nominal Int` key is written from a
- * number and reads back as one. `Time` is a number at runtime.
- */
-function keyRepresentation(key: TypeExpr | null, sym: SymbolTable): KeyKind | "text" | null {
-  const t = unaliasType(key, sym);
-  if (t?.kind !== "TypePrim") return null;
-  switch (t.name) {
-    case "Text":
-      return "text";
-    case "Int":
-    case "Float":
-    case "Time":
-      return "number";
-    case "Bool":
-      return "bool";
-    default:
-      return null;
-  }
-}
-
-/**
  * The `KeyKind` a key reader lowers with, or `undefined` when `member` does not
  * read keys on this receiver or the key is already a string. One answer for
  * both spellings — `st.to-list` and `st.to-list()` ask it alike.
@@ -4519,7 +4727,7 @@ function keyKindOfReader(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp" || !KEY_READERS[t.name]?.has(member)) return undefined;
   const rep = keyRepresentation(t.args[0] ?? null, sym);
-  return rep === "number" || rep === "bool" ? rep : undefined;
+  return rep === "text" || rep === null ? undefined : rep;
 }
 
 /**
@@ -4541,10 +4749,12 @@ function keyKindOfReader(
  *
  * Everything else is `null`, which binds the name with no type — as every
  * fragment was bound before. That includes an element whose runtime value may
- * be a 2-element array without being a `Tuple` (a `List`, a `Set` — whose
- * literal is an array — or a type parameter): the lowering takes any such
- * array apart, so the element type is not what `$1` holds there. `Map.map` is absent because its lowering does not iterate a
- * Map at all.
+ * be a 2-element array without being a `Tuple` (a `List`, a `Set` — a Set
+ * literal is built as a Set only where the checker knows its type, and one
+ * that arrived as JSON may be an array — or a type parameter): the lowering
+ * takes any such array apart, so the element type is not what `$1` holds
+ * there. `Map.map` is absent because its lowering does not iterate a Map at
+ * all.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
@@ -4856,7 +5066,10 @@ function checkPatternAgainstType(
   if (pat.kind === "PWildcard") return;
 
   if (pat.kind === "PBind") {
-    bindLocal(scope, pat.name, t);
+    // Normalising strips `nominal`, so bind the type as written (language.md
+    // §1.9: each arm is read with the types its pattern binds). A type with no
+    // normal form binds as unknown.
+    bindLocal(scope, pat.name, t === null ? null : scrutType);
     return;
   }
 
@@ -5601,6 +5814,14 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
       checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
+    // A test's slot value is the slot's value — seeded by a `given`, compared
+    // whole by an `expect` — so it is checked against the slot's type the way
+    // the slot's own initializer is: a `Text` seeded into an `Int` is the same
+    // mistake in either place. The walk also leaves the annotations lowering
+    // reads: a list literal where the slot holds a `Set` is built as one
+    // (`asSet`). An `expect` wildcard has no type, so it is never reported.
+    const slot = sym.slots.get(f.name);
+    if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
   }
 }
 
@@ -5677,7 +5898,15 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
         pos: item.pos,
       });
     }
-    if (item.kind === "Call") for (const a of item.args) checkExpr(a, sym, errors, ctx);
+    if (item.kind !== "Call") continue;
+    for (const a of item.args) checkExpr(a, sym, errors, ctx);
+    // The expected argument stands for the one the reducer emits, which is
+    // checked, and lowered, against the effect's `in=` type — so this one is
+    // too, or a Set the reducer emits is compared with the array the literal
+    // would otherwise be.
+    const inType = sym.effects.get(name)?.inType ?? null;
+    const arg = item.args[0];
+    if (arg && item.args.length === 1) checkAgainst(arg, inType, sym, errors, ctx);
   }
 }
 
@@ -5701,19 +5930,28 @@ function checkTestMockValues(
   ctx: Ctx,
   episode = false,
 ): void {
+  // The payload stands for the value the effect answers, which the reducer
+  // waiting on it reads as the effect's `out=` type — so it is checked, and
+  // lowered, against that type the way a slot's value is.
+  const checkOutcome = (effect: string, call: Expr & { kind: "Call" }): void => {
+    for (const a of call.args) checkExpr(a, sym, errors, ctx);
+    const payload = call.args[0];
+    const outcome = call.callee === "ok" ? "ok" : "err";
+    if (payload) checkAgainst(payload, effectOutcomeType(effect, outcome, sym), sym, errors, ctx);
+  };
   for (const f of recordFieldsOf(rec)) {
     const v = f.value;
     if (episode && v.kind === "Ref" && (v.name === "from-log" || v.name === "ignore")) continue;
     const outcome = v.kind === "Call" && (v.callee === "ok" || v.callee === "err") ? v : undefined;
     if (outcome) {
-      for (const a of outcome.args) checkExpr(a, sym, errors, ctx);
+      checkOutcome(f.name, outcome);
       continue;
     }
     if (v.kind === "Call" && v.callee === "delay" && !episode) {
       const [ms, inner] = v.args;
       if (ms) checkExpr(ms, sym, errors, ctx);
       if (inner?.kind === "Call" && (inner.callee === "ok" || inner.callee === "err")) {
-        for (const a of inner.args) checkExpr(a, sym, errors, ctx);
+        checkOutcome(f.name, inner);
         continue;
       }
     }
@@ -6029,16 +6267,13 @@ function checkApp(
 }
 
 /**
- * The reducers `app.http` routes a 401 / 403 / 5xx response to.
- *
- * They are named the same way a `button(onClick=…)` names one, and were the
- * one such site with nothing resolving the name — a misspelling left the
- * response with no handler, which looks exactly like a response the app chose
- * not to handle.
- */
-/**
  * `app.http` has two kinds of field: three reducer names, resolved here, and
  * four expressions, walked here.
+ *
+ * The reducer names are the ones a 401 / 403 / 5xx response is routed to. They
+ * are named the same way a `button(onClick=…)` names one, and were the one such
+ * site with nothing resolving the name — a misspelling left the response with
+ * no handler, which looks exactly like a response the app chose not to handle.
  *
  * The expressions are checked in the position `slot-init` names — pure and
  * payloadless, so `$route` is a name that does not exist rather than a bind
@@ -6049,10 +6284,8 @@ function checkApp(
  * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
  * would pass check, build and smoke alike.
  *
- * Three of the four also have a type (http.md §6.3.1), checked after the walk:
- * a value of the wrong one runs and does the wrong thing rather than failing.
- * `headers` is a record of whatever the author sends, and has none to hold it
- * to here.
+ * All four also have a type (http.md §6.3.1), checked after the walk: a value
+ * of the wrong one runs and does the wrong thing rather than failing.
  */
 function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
@@ -6070,12 +6303,22 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
+  // In the order of the walk above and of the field table in §6.3.1.
+  if (http.baseUrl !== undefined)
+    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
+  // `headers` is the `Map(Text, Text)` a request's own `headers` is (§6.1.2).
+  // The runtime spreads it into each request's headers: a number spreads to
+  // nothing and a string to headers named `0`, `1`, … — either way not one
+  // intended header reaches the request.
+  if (http.headers !== undefined) {
+    const pos = http.headers.pos;
+    const text = prim("Text", pos);
+    checkAgainst(http.headers, container("Map", [text, text], pos), sym, errors, fieldCtx);
+  }
   // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
   // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
   // `Duration`", because a program's own `type Duration` shadows the stdlib one
   // and may be anything.
-  if (http.baseUrl !== undefined)
-    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
   if (http.timeout !== undefined)
     checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
   if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);

@@ -17,6 +17,7 @@ import {
   reportRejectedBatch,
   withEnvReplay,
 } from "./core.ts";
+import { valueEqual } from "./stdlib.ts";
 
 /**
  * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
@@ -103,31 +104,14 @@ function _jsonStr(v: unknown): string {
   }
 }
 
-/** Deep structural equality for slot values (records / lists / primitives). */
-function deepEqualValue(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
-  const aArr = Array.isArray(a);
-  const bArr = Array.isArray(b);
-  if (aArr || bArr) {
-    if (!aArr || !bArr || a.length !== b.length) return false;
-    return a.every((x, i) => deepEqualValue(x, (b as unknown[])[i]));
-  }
-  const ao = a as Record<string, unknown>;
-  const bo = b as Record<string, unknown>;
-  const ak = Object.keys(ao);
-  if (ak.length !== Object.keys(bo).length) return false;
-  // Compare key presence too — `{a: undefined}` and `{b: undefined}` have equal
-  // key counts but are not equal.
-  return ak.every((k) => Object.hasOwn(bo, k) && deepEqualValue(ao[k], bo[k]));
-}
-
 // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
 // `@@`-prefixed sentinels never collide with a Kumiki field name (identifiers
 // are alphanumeric + hyphen, so `@` can never appear in one).
 const WILD = "@@kumiki:wild";
 /** A wildcard map key (`<any-id>` in key position): pairs with the one generated entry. */
 const WILD_KEY = "@@kumiki:wild-key";
+/** How many `<any-id>` members a Set literal has: each pairs with one generated member. */
+const WILD_MEMBERS = "@@kumiki:wild-members";
 
 function isWildValue(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && Object.hasOwn(v, WILD);
@@ -137,7 +121,8 @@ function isWildValue(v: unknown): v is Record<string, unknown> {
  * Wildcard-aware structural match for reducer-test `expect` (§8.2.2). Records are
  * matched by exact key set; `<any-id>` (value) matches any present value, a
  * `<any-id>` map key pairs with exactly one otherwise-unmatched entry (0 or >1 →
- * fail), and `<slots.X>` matches slot X's post-execution value. Falls back to
+ * fail), each `<any-id>` member of a Set literal pairs with one otherwise-unmatched
+ * member (the counts must agree), and `<slots.X>` matches slot X's post-execution value. Falls back to
  * deep equality when no wildcard is involved.
  */
 function wildcardEqual(
@@ -148,7 +133,7 @@ function wildcardEqual(
   if (isWildValue(expected)) {
     const kind = expected[WILD];
     if (kind === "any-id") return actual !== undefined;
-    if (kind === "slot") return deepEqualValue(actual, finalSlots[expected.slot as string]);
+    if (kind === "slot") return valueEqual(actual, finalSlots[expected.slot as string]);
     return false;
   }
   if (expected === actual) return true;
@@ -168,11 +153,14 @@ function wildcardEqual(
   }
   const eo = expected as Record<string, unknown>;
   const ao = actual as Record<string, unknown>;
-  const literalKeys = Object.keys(eo).filter((k) => k !== WILD_KEY);
+  const literalKeys = Object.keys(eo).filter((k) => k !== WILD_KEY && k !== WILD_MEMBERS);
   for (const k of literalKeys) {
     if (!Object.hasOwn(ao, k) || !wildcardEqual(eo[k], ao[k], finalSlots)) return false;
   }
   const leftover = Object.keys(ao).filter((k) => !literalKeys.includes(k));
+  if (Object.hasOwn(eo, WILD_MEMBERS)) {
+    return leftover.length === eo[WILD_MEMBERS] && leftover.every((k) => ao[k] === true);
+  }
   if (Object.hasOwn(eo, WILD_KEY)) {
     if (leftover.length !== 1) return false;
     return wildcardEqual(eo[WILD_KEY], ao[leftover[0] as string], finalSlots);
@@ -715,7 +703,7 @@ function executeEpisode(
     for (const [k, v] of Object.entries(res?.slots ?? {})) {
       const before = app.live[k];
       app.live[k] = v;
-      if (!deepEqualValue(before, v)) diffs.push({ name: k, before, after: v });
+      if (!valueEqual(before, v)) diffs.push({ name: k, before, after: v });
     }
     return diffs;
   };
@@ -1048,6 +1036,8 @@ export const _stdlibTest = {
   // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
+  /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
+  WILD_MEMBERS,
   /** Build a value-position wildcard sentinel: `wild("any-id")` / `wild("slot", name)`. */
   wild(kind: "any-id" | "slot", slot?: string): Record<string, unknown> {
     return slot === undefined ? { [WILD]: kind } : { [WILD]: kind, slot };
@@ -1348,7 +1338,7 @@ export const _stdlibTest = {
 
     if (expectedSlots) {
       for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!deepEqualValue(app.live[k], v)) {
+        if (!valueEqual(app.live[k], v)) {
           return {
             name,
             pass: false,

@@ -238,10 +238,45 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `Map.filter`) restore each key through `restoreKey`. A counter keys
     // nothing and still ships them, because they sit in the stdlib module every
     // app loads. It was measured on a base without the paragraph above.
+    //
+    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
+    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
+    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
+    //
+    // 61,000 from 60,000 (60,014 measured, from 59,889): the `isEmpty` above
+    // landed on a base that already carried the bound `check` / `switch` / `radio`
+    // write-back (forms.md §5.1.1), 59,889 from 59,789. Each fit under 60,000 on
+    // its own base; together they do not. A counter binds no box and asks nothing
+    // whether it is empty, and still ships both in the modules every app loads.
+    //
+    // Still 61,000 (60,153 measured, from 60,014): a bound `input` reads its text
+    // as the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
+    // write remembers which reading the text failed, so `error(field=…)` can
+    // name it before any refinement (§5.7.2). That memory is the refused-bind
+    // record in core, which every app loads; a counter binds no input and
+    // still ships it.
+    //
+    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
+    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
+    // encoding in core.js, which every Set / Map member, a Map literal and the
+    // index read and write ask, and the panic that names a stored key no member
+    // wrote. A counter keys nothing and still ships them.
+    //
+    // Still 61,000 (60,924 measured, from 60,650): a `bind` into one field of a
+    // record is judged at that field (forms.md §5.6). `slotAccepts` and a slot's
+    // `refineFailure` take the path the write went through, and a refused bind
+    // keeps that path so what the field shows is laid over the record as it is
+    // now, shallower paths first. A counter binds nothing and still ships them,
+    // because they sit in the core module every app loads.
+    //
+    // Still 61,000 (60,983 measured, from 60,924): a Set literal is a Set
+    // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
+    // `setAdd` so a literal and an `add` chain are one form. A counter writes
+    // no Set and still ships it in stdlib.js.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(60_000);
+    expect(total).toBeLessThan(61_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

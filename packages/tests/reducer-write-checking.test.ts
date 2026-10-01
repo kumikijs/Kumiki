@@ -121,3 +121,42 @@ describe("every write in a reducer body is checked, not just the batch's last", 
     expect(errors).toEqual([]);
   });
 });
+
+// The type is written as a generic applied inside itself. It used to normalise
+// to nothing, so no write into the slot was compared against anything: an
+// `Int` compiled and the running app held it in a `Text` slot.
+describe("a write into a generic applied inside itself", () => {
+  const nested = (write: string) => `
+type NonEmpty(T) = T where nonempty
+type Short       = Text where len-lt(7)
+slot a : NonEmpty(NonEmpty(Short)) = "ku"
+
+reducer set on=ui.click(SetBtn) do= a := ${write}
+
+tile SetBtn = button(text="set", onClick=set)
+tile App = column(SetBtn, text(a))
+
+app Nested
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("does not compile when the value is an Int", async () => {
+    await expect(loadSource(nested("5"))).rejects.toThrow(
+      "E0201 Expected NonEmpty(NonEmpty(Short)) but got Int",
+    );
+  });
+
+  it("commits a Text that fits", async () => {
+    const app = await loadSource(nested(`"ok"`));
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mount(app, root);
+
+    click(root, "set");
+
+    expect(app.live?.a).toBe("ok");
+    expect(errors).toEqual([]);
+  });
+});

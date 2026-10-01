@@ -7,7 +7,9 @@
 import {
   _setPathHelper,
   currentEpisodeId,
+  entryKey,
   isPanic,
+  isPlainDataBag,
   KumikiPanic,
   listPosition,
   type PathSegment,
@@ -24,16 +26,18 @@ import {
 
 /**
  * How a `Set` element or a `Map` key reads back from the string it is stored
- * under — the checker records it from the receiver's declared key type, and
- * codegen passes it to the readers (`keys` / `entries` / `to-list`, and the
- * predicate of a Map's `filter`). Absent means the key is `Text`, or a type the
- * checker could not decide, and the string is the value.
+ * under (`entryKey` in core.ts) — the checker records it from the receiver's
+ * declared key type, and codegen passes it to the readers (`keys` / `entries`
+ * / `to-list`, and the predicate of a Map's `filter`). `"value"` is a
+ * structured key — a variant, a record, a tuple — stored as its JSON. Absent
+ * means the key is `Text`, or a type the checker could not decide, and the
+ * string is the value.
  *
  * This is the one definition: the compiler's AST (`KeyKind` in
  * `@kumikijs/compiler`'s `ast.ts`) imports it as a type, so a kind added here
  * is one the checker can record and `restoreKey` has to handle.
  */
-export type KeyKind = "number" | "bool";
+export type KeyKind = "number" | "bool" | "value";
 
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
@@ -44,14 +48,79 @@ function restoreKey(key: string, kind: KeyKind | undefined): unknown {
       return Number(key);
     case "bool":
       return key === "true";
+    case "value":
+      return restoreValueKey(key);
     default:
       return assertNeverKind(kind);
+  }
+}
+
+/**
+ * A structured key, parsed back from the JSON `entryKey` wrote. A key that is
+ * not that JSON — one stored before structured keys were encoded (the
+ * `"[object Object]"` every record shared), or a decoded Map whose keys are
+ * bare variant names — names no value of the key type, so reading it is a
+ * panic that says so rather than a bare `SyntaxError` from `JSON.parse`.
+ */
+function restoreValueKey(key: string): unknown {
+  try {
+    return JSON.parse(key);
+  } catch {
+    throw new KumikiPanic(
+      `The key ${JSON.stringify(key)} was not stored by a Set or Map member, so it reads back as no value of its structured key type`,
+    );
   }
 }
 
 /** Unreachable while `restoreKey` handles every `KeyKind`; a type error otherwise. */
 function assertNeverKind(kind: never): never {
   throw new Error(`unknown key kind ${String(kind)}`);
+}
+
+/**
+ * Value equality — the one answer to "are these two Kumiki values the same".
+ * `==` / `!=` and `List.contains` / `unique` ask it here, and so does the test
+ * layer wherever it compares two whole values; the reducer-test `expect` match
+ * keeps its own walk, because a wildcard may sit at any depth of the expected
+ * side and only that walk knows what one matches.
+ *
+ * Kumiki values are immutable (language.md §1.6.3), so a program has no
+ * reference identity it could mean to compare: a List, tuple, record, Map or
+ * variant equals another when what it holds is equal, recursively. A List or
+ * tuple (a JS array) compares element by element in order, and `Bytes` (a
+ * `Uint8Array`) byte by byte. A plain data bag — a record, a variant (`_tag`
+ * is one more field), a Map — compares by the same set of own keys holding
+ * equal values, regardless of the order they were written in. Anything else
+ * (a DOM `File`, a `Blob`, a `Date`) holds its state outside its own
+ * enumerable keys and would look like an empty bag, so it equals only itself.
+ * Primitives compare with `===`, so `NaN` equals nothing.
+ *
+ * A Set is not promised a by-value answer: it compares as whatever it is
+ * stored as, which depends on how it was built (stdlib.md §2.2.2).
+ */
+export function valueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  const aArr = Array.isArray(a);
+  const bArr = Array.isArray(b);
+  if (aArr || bArr) {
+    if (!aArr || !bArr || a.length !== b.length) return false;
+    return a.every((x, i) => valueEqual(x, (b as unknown[])[i]));
+  }
+  const aBytes = a instanceof Uint8Array;
+  const bBytes = b instanceof Uint8Array;
+  if (aBytes || bBytes) {
+    if (!aBytes || !bBytes || a.length !== b.length) return false;
+    return a.every((x, i) => x === (b as Uint8Array)[i]);
+  }
+  if (!isPlainDataBag(a) || !isPlainDataBag(b)) return false;
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const ak = Object.keys(ao);
+  if (ak.length !== Object.keys(bo).length) return false;
+  // Key presence too: `{a: undefined}` and `{b: undefined}` have equal key
+  // counts but are not equal.
+  return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
 }
 
 /**
@@ -96,6 +165,12 @@ function uuidV4(c: PlatformCrypto | undefined): string {
 }
 
 export const _stdlibCore = {
+  /**
+   * The object key a Map literal's key is stored under — the one encoder
+   * every other member uses (`entryKey` in core.ts), so `{{x: 0, y: 0}: "o"}`
+   * holds the entry `insert({x: 0, y: 0}, "o")` would.
+   */
+  entryKey,
   /**
    * Record a slot write against its refinement and return the value unchanged
    * (runtime.md §10.3.3). Codegen wraps every assignment to a refined slot, so
@@ -189,6 +264,22 @@ export const _stdlibCore = {
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
+  /**
+   * `is-empty` on a Map, List or Text (stdlib.md §2.2.1 / §2.2.3 / §2.2.6), for
+   * both spellings — `x.is-empty` and `x.is-empty()` are one member, so they
+   * lower to this one helper. A List and a Text are counted by `length`; a Map
+   * is an object keyed by its entries, so an empty one has no keys. A missing
+   * value is empty; any other scalar (Int, Float, Bool, Duration) is not.
+   *
+   * The order is load-bearing: a Text is answered first because it is not an
+   * object, and `""` is falsy, so the scalar tail would call the empty Text
+   * not empty.
+   */
+  isEmpty(v: unknown): boolean {
+    if (typeof v === "string" || Array.isArray(v)) return v.length === 0;
+    if (v && typeof v === "object") return Object.keys(v).length === 0;
+    return v === undefined || v === null;
+  },
   mapKeys(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
     return m ? Object.keys(m).map((k) => restoreKey(k, kind)) : [];
   },
@@ -198,8 +289,8 @@ export const _stdlibCore = {
   mapEntries(m: Record<string, unknown> | undefined | null, kind?: KeyKind): unknown[] {
     return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
-  mapGet(m: Record<string, unknown> | undefined | null, k: string): unknown {
-    return m ? m[k] : undefined;
+  mapGet(m: Record<string, unknown> | undefined | null, k: unknown): unknown {
+    return m ? m[entryKey(k)] : undefined;
   },
   /** Polymorphic `.get-or(default)` for Option-like values. */
   getOr(v: unknown, fallback: unknown): unknown {
@@ -214,24 +305,19 @@ export const _stdlibCore = {
     }
     return v ?? fallback;
   },
-  mapGetOr(m: Record<string, unknown> | undefined | null, k: string, def: unknown): unknown {
-    if (m && k in m) return m[k];
+  mapGetOr(m: Record<string, unknown> | undefined | null, k: unknown, def: unknown): unknown {
+    const key = entryKey(k);
+    if (m && key in m) return m[key];
     return def;
   },
-  mapInsert(m: Record<string, unknown>, k: string, v: unknown): Record<string, unknown> {
-    return { ...m, [k]: v };
+  mapInsert(m: Record<string, unknown>, k: unknown, v: unknown): Record<string, unknown> {
+    return { ...m, [entryKey(k)]: v };
   },
-  mapRemove(m: Record<string, unknown>, k: string): Record<string, unknown> {
+  /** `Map.remove(k)` and `Set.remove(x)`: every entry but the one `k` is stored under. */
+  mapRemove(m: Record<string, unknown>, k: unknown): Record<string, unknown> {
+    const key = entryKey(k);
     const out: Record<string, unknown> = {};
-    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== k) out[kk] = vv;
-    return out;
-  },
-  mapFilter(
-    m: Record<string, unknown>,
-    pred: (k: string, v: unknown) => boolean,
-  ): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(m ?? {})) if (pred(k, v)) out[k] = v;
+    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
     return out;
   },
   /**
@@ -240,11 +326,11 @@ export const _stdlibCore = {
    * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
    * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
    * so it has to be told apart before the Map branch reads its `_tag` / `_0`
-   * fields as entries; other objects (Maps in Kumiki) fall back to the
-   * (k, v) → boolean predicate of mapFilter, with `k` restored to the key's
-   * declared kind as `keys` restores it.
+   * fields as entries; other objects (Maps in Kumiki) hand the predicate
+   * each `[key, value]` pair, the key restored to its declared kind as
+   * `keys` restores it.
    */
-  filter(coll: unknown, pred: (...args: unknown[]) => boolean, kind?: KeyKind): unknown {
+  filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
     if (_stdlibCore.variantIs(coll, "Some")) {
       const value = (coll as { _0: unknown })._0;
@@ -254,7 +340,10 @@ export const _stdlibCore = {
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        if (pred(restoreKey(k, kind), v)) out[k] = v;
+        // One argument, the `[key, value]` pair, as `.entries` hands a List
+        // predicate its elements: the lambda then reads `$1` / `$2` off the
+        // pair, and never takes a two-element key for the pair itself.
+        if (pred([restoreKey(k, kind), v])) out[k] = v;
       }
       return out;
     }
@@ -277,6 +366,40 @@ export const _stdlibCore = {
   listFind<T>(xs: T[], pred: (x: T) => boolean): unknown {
     const hit = (xs ?? []).find(pred);
     return hit === undefined ? _stdlibCore.None : _stdlibCore.Some(hit);
+  },
+  /**
+   * `.contains(x)`: a substring test on `Text`, and membership on a `List`
+   * (stdlib.md §2.2.3), which asks `==`'s question of each element.
+   */
+  contains(recv: unknown, x: unknown): boolean {
+    if (typeof recv === "string") return recv.includes(x as string);
+    return ((recv as unknown[] | null | undefined) ?? []).some((y) => valueEqual(y, x));
+  },
+  /**
+   * `List(T).unique`: the first occurrence of each value, by `==`, in order.
+   *
+   * Not `new Set(xs)`: its SameValueZero cannot see that two separately built
+   * records or variants are equal, and it merges `NaN`s, which `==` never
+   * does. A primitive — which `==` compares with `===` — is still looked up
+   * in a `Set`, so a List of numbers or texts stays linear; a `NaN` is pushed
+   * every time, since no other value equals it. Only an object pays the
+   * pairwise `valueEqual` scan, against the objects kept so far.
+   */
+  listUnique<T>(xs: T[] | undefined | null): T[] {
+    const out: T[] = [];
+    const seenPrimitives = new Set<unknown>();
+    const keptObjects: unknown[] = [];
+    for (const x of xs ?? []) {
+      if (x !== null && typeof x === "object") {
+        if (keptObjects.some((y) => valueEqual(y, x))) continue;
+        keptObjects.push(x);
+      } else if (!(typeof x === "number" && Number.isNaN(x))) {
+        if (seenPrimitives.has(x)) continue;
+        seenPrimitives.add(x);
+      }
+      out.push(x);
+    }
+    return out;
   },
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
@@ -328,10 +451,10 @@ export const _stdlibCore = {
     return acc;
   },
   setHas(s: Record<string, true> | undefined, x: unknown): boolean {
-    return !!s && String(x) in s;
+    return !!s && entryKey(x) in s;
   },
   setToggle(s: Record<string, true> | undefined, x: unknown): Record<string, true> {
-    const k = String(x);
+    const k = entryKey(x);
     const cur = { ...(s ?? {}) };
     if (k in cur) {
       delete cur[k];
@@ -389,23 +512,9 @@ export const _stdlibCore = {
       return i < args.length ? _stdlibCore.show(args[i]) : placeholder;
     });
   },
+  /** `==` (language.md §1.9.4): by value, through `valueEqual`. `!=` is its negation. */
   eq(a: unknown, b: unknown): boolean {
-    if (a === b) return true;
-    if (a == null || b == null) return false;
-    if (typeof a === "object" && typeof b === "object") {
-      const ao = a as { _tag?: string };
-      const bo = b as { _tag?: string };
-      if (ao._tag !== undefined || bo._tag !== undefined) {
-        if (ao._tag !== bo._tag) return false;
-        for (const k of Object.keys(ao)) {
-          if (!Object.is((ao as Record<string, unknown>)[k], (bo as Record<string, unknown>)[k])) {
-            return false;
-          }
-        }
-        return true;
-      }
-    }
-    return false;
+    return valueEqual(a, b);
   },
   /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {
@@ -462,7 +571,7 @@ export const _stdlibCore = {
    */
   index(recv: unknown, key: unknown): unknown {
     if (Array.isArray(recv)) return recv[listPosition(recv, key)];
-    return (recv as Record<PropertyKey, unknown>)[key as PropertyKey];
+    return (recv as Record<string, unknown>)[entryKey(key)];
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */
   panic(message: unknown): never {
@@ -557,16 +666,29 @@ export const _stdlibCore = {
   /** Map(K,V).update(k, fn): apply fn to the current value of k, no-op if absent. */
   mapUpdate(
     m: Record<string, unknown> | undefined | null,
-    k: string,
+    k: unknown,
     fn: (v: unknown) => unknown,
   ): Record<string, unknown> {
     const obj = m ?? {};
-    if (!(k in obj)) return obj;
-    return { ...obj, [k]: fn(obj[k]) };
+    const key = entryKey(k);
+    if (!(key in obj)) return obj;
+    return { ...obj, [key]: fn(obj[key]) };
   },
-  /** Set(T).add(x). Sets are stored as `{ [String(x)]: true }`. */
+  /**
+   * A Set literal (`[1, 2]` where a `Set` is declared): the same value `add`
+   * builds from the same members, so a literal and an `add` chain are one form
+   * (stdlib.md §2.2.2). Going through `setAdd` rather than writing the keys
+   * here is deliberate: however `setAdd` keys a member, a literal keys it the
+   * same way, and an inlined loop would fork the two.
+   */
+  setOf(xs: readonly unknown[]): Record<string, true> {
+    let s: Record<string, true> = {};
+    for (const x of xs) s = _stdlibCore.setAdd(s, x);
+    return s;
+  },
+  /** Set(T).add(x). Sets are stored as `{ [entryKey(x)]: true }`. */
   setAdd(s: Record<string, true> | undefined | null, x: unknown): Record<string, true> {
-    return { ...(s ?? {}), [String(x)]: true };
+    return { ...(s ?? {}), [entryKey(x)]: true };
   },
   /** Set(T).union(other). */
   setUnion(
@@ -648,8 +770,8 @@ export const _stdlibCore = {
     // Return a fresh copy so the result never aliases a slot array, matching
     // listHead/listTail/listLast which all produce new values.
     if (Array.isArray(v)) return [...v];
-    // Set is stored as `{ [key]: true }` (keys are stringified, like the other
-    // set ops), so the element is read back through its recorded kind.
+    // Set is stored as `{ [entryKey(x)]: true }`, so the element is read back
+    // through its recorded kind.
     if (v && typeof v === "object") {
       return Object.keys(v as Record<string, unknown>).map((k) => restoreKey(k, kind));
     }

@@ -212,7 +212,7 @@ slot form : Contact = {email: "ada@example.com", age: 36}
 
 各位置は述語より先に値の形を検査する：レコードと `Map` はオブジェクト、`List` と `Tuple` は配列、union / `Option` / `Result` の値はそのバリアントのいずれかである。そこで形の合わない値 — リストのあるべき場所にデコードされた `{}`、フィールドの欠けたペイロード — は、次の段落があらゆる述語について述べるとおりその位置の述語に `false` を返し、そのうち最初のものに対して報告される。
 
-たどられない位置が二つある。型がテキストでも数値でもない `Set` の要素（`Set({n: Text where nonempty})`）は検査されない：ランタイムは集合を要素のテキストをキーにして保持し、レコードはそこから取り出せないからである。また、自分自身を大きくなっていく引数に適用するジェネリック（`type T(A) = {v: A, next: Option(T(List(A)))}`）は段ごとに lowering すべき新しい型になるので、refinement がそれに沿って 32 段より深くにある slot は、途中で止まる検査ではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。互いに異なる名前付き型はいくらでも深く入れ子にできる。
+たどられない位置が二つある。ランタイムが保持するキーから取り出せない型の `Set` の要素 — 型パラメータや `Bytes` — は検査されない。テキスト・数値・真偽値の要素は取り出せ、JSON として保持されるレコード・バリアント・タプルも取り出せる（`Set({n: Text where nonempty})` はたどられる）。また、自分自身を大きくなっていく引数に適用するジェネリック（`type T(A) = {v: A, next: Option(T(List(A)))}`）は段ごとに lowering すべき新しい型になるので、refinement がそれに沿って 32 段より深くにある slot は、途中で止まる検査ではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。互いに異なる名前付き型はいくらでも深く入れ子にできる。
 
 述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とする。`one-of` は厳密に比較するので、リテラルがテキストなら `Text`、数値なら `Int`・`Float`・`Time` の基底型を必要とする。ジェネリックの型パラメータは適用箇所で判定される：`type NonEmpty(T) = T where nonempty` は問題なく、`NonEmpty(Int)` は E0804 である。
 
@@ -884,6 +884,17 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 は `2` ではなく `2.5` になる — 結果型を `Int` と宣言することは runtime が守らない約束をす
 ることであり、`fn half(x: Int) -> Int = x / 2` は拒否される。整数が欲しい箇所では `.to-int`
 （切り捨て。[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)）を取るか、`Float` を宣言する。
+
+`==` は **値で** 比較する。Kumiki の値は不変である
+（[§1.6.3](#_1-6-3-lvalue-の意味論)）から、プログラムが比較しようとする参照の同一性はそもそも
+存在しない：2 つの List・タプル・レコード・Map・バリアントは、保持するものが最後まで
+等しければ等しい — 空リストに対する `xs == []`、`(0, 0) == (0, 0)`、
+`Some({x: 1}) == Some({x: 1})` は `true` であり、`[1, 2] == [2, 1]` は `false` である。
+レコードのフィールドと Map のエントリは書かれた順序によらず比較される。`!=` はその否定である。
+`List.contains` と `List.unique` も同じ問いを立て
+（[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、テスト層の比較も同じである。
+`Set` は格納されているキーとして比較され（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）、
+それは Set がどう作られたかに依存するので、Set 同士の等価はプログラムが頼ってよい規則ではない。
 
 `==` はあらゆる *形* に対して全域である — `Int` と `Text`、`Option` とその `None` —
 が、`nominal` だけが例外である。1 つの基底型に対する 2 つの宣言は 2 つの型であり

@@ -31,6 +31,7 @@ what it is:
 | an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
+| a `given.slots` / `expect.slots` value, an `expect.effects` argument, a `given.mocks` payload | a value of the slot's type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field) |
 | a `given` / `expect` **section** key | one of the closed set that kind accepts | [E0714](./errors.md#e0714-test-section-unknown) |
 
 The sections themselves are a vocabulary rather than names to resolve, one
@@ -116,7 +117,7 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 `<any-id>` means "any generated ID," and `<slots.todos>` means "a reference to the slot value after execution."
 
-A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
+A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. As a **member of a Set literal**, each `<any-id>` pairs with one otherwise-unmatched member, so `[<any-id>, <any-id>]` asks for exactly two generated members and `["a", <any-id>]` for `"a"` and one more. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
 
 ### 8.2.3 The batch rule applies here too
 
@@ -317,12 +318,16 @@ FAIL  counter-display
 
 ### 8.7.2 Fixing from a failing test
 
-`kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it and re-run (reporting whether the test now passes and whether any other test regressed). It repairs only what it can prove deterministically:
+`kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it once it is known to make the test pass without breaking another. It repairs only what it can prove deterministically:
 
 - If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run. **Through the same regression gate**: the composed source is re-parsed and re-typechecked, and the write is rolled back unless it resolves a reported diagnostic and introduces none — or does not parse at all, which is reported as what it is rather than as a pointless repair. A repair refused this way leaves the file byte-identical and says so — it is not "no patch available", and the diagnostics it then reports are the file's own, never the ones the refused patch would have added. The count it reports for a write is the number of patches that changed the source; a dry run reports what it proposes.
-- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the [Output](#_8-7-1-output) snapshot case).
+- If a tile-test or reducer-test fails on a scalar leaf, it looks for the one source literal the actual value came from, outside every `test` body — preferring the tested definition, then what it references — and proposes replacing it with the expected value:
+  - a **string, number or boolean leaf** whose actual value is written as a *unique* literal (the [Output](#_8-7-1-output) snapshot case, and a constant such as `fn step() -> Int = 1`). A candidate is a **whole token**: the `1` inside `Btn1`, inside `10`, inside a string or inside a comment is never one;
+  - a **string leaf** whose actual and expected values differ in one middle stretch that a single string literal contains, which is rewritten in place;
+  - a **numeric slot** written by exactly one reducer, in the shape `slot := slot + N`, `- N` or `* N`, whose operand is solved from the two values.
+- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way is not written — the file stays as the compile repair above left it, byte-identical to before the call when there was none — and the refusal says why: it does not parse, it introduces a diagnostic (listed), the test runner throws on it, the named test does not run, the named test still fails, or it would make a test that passed before fail or stop running (named). A refusal is reported as such, never as an applied fix and never as a raw compile error. A dry run (no `--apply`) proposes the patch without running the gate.
 
-Non-literal divergences (numeric slots, wrong operators, effect-list mismatches) are reported as a diff rather than guessed.
+Every other divergence (wrong operators, effect-list mismatches, a value no single literal accounts for) is reported as a diff rather than guessed.
 
 A **warning is not a compile error** here. A file whose only diagnostic is a `W02xx` compiles, so the test runs and the behavioural repair is proposed with the warning listed under it.
 

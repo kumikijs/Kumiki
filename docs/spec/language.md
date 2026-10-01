@@ -212,7 +212,7 @@ A key, an entry and a member hold the value as the key type reads it, so an `Int
 
 Each position checks the value's shape before its predicates: a record and a `Map` are objects, a `List` and a `Tuple` arrays, a union / `Option` / `Result` value one of its variants. A value of the wrong shape there — a decoded `{}` where a list belongs, a payload missing a field — answers the position's predicates `false`, as the paragraph below says of any predicate, and is reported against the first of them.
 
-Two positions are not walked. A `Set` member whose type is neither text nor a number (`Set({n: Text where nonempty})`) is not checked: the runtime keys a set by the member's text, and a record does not come back out of that. And a generic that applies itself to a growing argument (`type T(A) = {v: A, next: Option(T(List(A)))}`) is a new type to lower at every level, so a slot whose refinement lies along one more than 32 levels deep is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that stops partway. Distinct named types nest to any depth.
+Two positions are not walked. A `Set` member whose type does not come back out of the key the runtime stores it under — a type parameter, or `Bytes` — is not checked; a text, number or boolean member does, and so does a record, a variant or a tuple, which is stored as its JSON (`Set({n: Text where nonempty})` is walked). And a generic that applies itself to a growing argument (`type T(A) = {v: A, next: Option(T(List(A)))}`) is a new type to lower at every level, so a slot whose refinement lies along one more than 32 levels deep is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that stops partway. Distinct named types nest to any depth.
 
 A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` compares strictly, so its literals need a `Text` base when they are text and an `Int`, `Float` or `Time` one when they are numbers. A generic's parameter is judged where the generic is applied: `type NonEmpty(T) = T where nonempty` is fine, and `NonEmpty(Int)` is E0804.
 
@@ -899,6 +899,18 @@ is `2.5`, not `2` — so an `Int` result type would be a promise the runtime doe
 keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
 [stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
 declare the `Float`.
+
+`==` compares **by value**. Kumiki values are immutable
+([§1.6.3](#_1-6-3-lvalue-semantics)), so a program has no reference
+identity it could mean to compare: two Lists, tuples, records, Maps or variants
+are equal when what they hold is equal, all the way down — `xs == []` on an empty
+list, `(0, 0) == (0, 0)` and `Some({x: 1}) == Some({x: 1})` are `true`,
+`[1, 2] == [2, 1]` is `false`. A record's fields and a Map's entries compare
+regardless of the order they were written in. `!=` is the negation. `List.contains`
+and `List.unique` ask the same question ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)),
+and so do the test layer's comparisons. A `Set` compares as the keys it is stored
+under ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which depends on how the Set was
+built, so equality over Sets is not a rule a program may rely on.
 
 `==` is total over every *shape* — an `Int` and a `Text`, an `Option` and its
 `None` — and `nominal` is the one exception. Two declarations over one base are
