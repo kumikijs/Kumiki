@@ -11,5 +11,3 @@ Only the names in those fields were checked, so a value of the wrong type ran an
 - `credentials` takes anything assignable to `Text`, and each literal that reaches the field, including a literal branch of an `if`, must be `omit`, `same-origin` or `include`.
 
 A value computed at run time (a slot, a call) of the right type stays clean: the fields are evaluated per request, and reading a slot is the point.
-
-`headers` is not part of this change. The spec gives it no type, so `headers: 42` still compiles; that gap is tracked in #511.
