@@ -493,8 +493,12 @@ export type SlotMeta = {
    * for a type that carries a refinement below its own chain — the walk checks
    * the chain's predicates too — and emits the three fields above only for a
    * type whose predicates all sit on the type itself.
+   *
+   * Given a `bind` path as `at`, it answers only a failure on that path —
+   * along it, or below where it ends — so a write to one field of a record is
+   * not refused for a sibling the user has not reached yet (forms.md §5.6).
    */
-  refineFailure?: (v: unknown) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
 };
 
 /**
@@ -556,9 +560,17 @@ export type SlotGate = {
  * that every check shares — a reducer's write, the batch backstop, a `bind`
  * write-back, the `error` tile — so a slot built with `refineFailure` alone is
  * gated as fully as one codegen emitted.
+ *
+ * `at` is the path a `bind` wrote through: only a failure on it refuses the
+ * write. A predicate on the slot's own type is on every path, so a type whose
+ * predicates all sit there (`refine`) is judged whole either way.
  */
-export function slotAccepts(meta: SlotGate | undefined, value: unknown): boolean {
-  if (meta?.refineFailure) return meta.refineFailure(value) === undefined;
+export function slotAccepts(
+  meta: SlotGate | undefined,
+  value: unknown,
+  at?: readonly BindSegment[],
+): boolean {
+  if (meta?.refineFailure) return meta.refineFailure(value, at) === undefined;
   return meta?.refine ? meta.refine(value) : true;
 }
 
@@ -572,7 +584,7 @@ export type RefinementNaming = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
-  refineFailure?: (v: unknown) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
 };
 
 /**
@@ -1488,7 +1500,7 @@ export type MountedApp = AppShape & {
    * Write a slot through its refinement: `true` when the value was taken,
    * `false` when the refinement refused it and nothing changed.
    */
-  _setSlot: (name: string, value: unknown) => boolean;
+  _setSlot: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;
@@ -1517,13 +1529,20 @@ export type BindReader = {
 };
 
 /**
- * A value a `bind` wrote and its slot refused (forms.md §5.1.2): the slot value
- * the write would have produced, what the control was showing when it was
- * refused, and — when the refusal was the text not reading as the bound base
- * at all rather than a refinement — which base it failed to read as.
+ * A value a `bind` wrote and its slot refused (forms.md §5.1.2): the value
+ * written, the path inside the slot it was written to (`[]` for the slot
+ * itself), what the control was showing when it was refused, and — when the
+ * refusal was the text not reading as the bound base at all rather than a
+ * refinement — which base it failed to read as.
+ *
+ * The field's value and not the slot value the write would have produced: a
+ * bind into one field of a record is judged at that field (§5.6), so its
+ * siblings go on being written, and what the field shows has to be laid over
+ * the record as it is now rather than as it was when the refusal happened.
  */
 type RefusedBind = {
   slot: string;
+  path: readonly BindSegment[];
   value: unknown;
   shown: string;
   unread: BindReader["as"] | undefined;
@@ -1561,6 +1580,7 @@ export function noteBindWrite(
   slot: string,
   value: unknown,
   accepted: boolean,
+  path: readonly BindSegment[] = [],
   unread?: BindReader["as"],
 ): void {
   let byEl = refusedBinds.get(app);
@@ -1575,34 +1595,88 @@ export function noteBindWrite(
     byEl = new Map();
     refusedBinds.set(app, byEl);
   }
-  byEl.set(el, { slot, value, shown: shownValue(el), unread });
+  byEl.set(el, { slot, path, value, shown: shownValue(el), unread });
 }
 
+/** Where a refused value counts as shown: a view's root, or any set of controls. */
+export type BindView = Pick<Node, "contains">;
+
 /**
- * The refused value a control bound to `slot` inside `view` is still showing,
- * if any. An entry whose control has left the page, or no longer shows what
- * was refused — a reducer rewrote the slot and the control followed it — is
+ * The value `slot` shows inside `view`: `held` — the slot's own value — with
+ * every refused value a control bound into it is still showing laid over it at
+ * the path that control writes, or `undefined` when no control there shows a
+ * refused one. Two controls showing refused values at the same path are one
+ * field shown twice, and the first speaks for it. A shallower path is laid
+ * before a deeper one — a control bound to the whole slot shows the value its
+ * fields sit in — whichever of them was refused first.
+ *
+ * An entry whose control has left the page, or no longer shows what was
+ * refused — a reducer rewrote the slot and the control followed it — is
  * stale, and every stale entry for the slot is dropped here rather than by
  * every path that can move a control. A live entry in another view is kept
- * and not returned.
+ * and not used.
  */
 export function refusedBindShown(
   app: object,
   slot: string,
-  view: Node | undefined,
+  view: BindView | undefined,
+  held?: unknown,
 ): Pick<RefusedBind, "value" | "unread"> | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
-  let found: Pick<RefusedBind, "value" | "unread"> | undefined;
+  const shown: RefusedBind[] = [];
   for (const [el, r] of byEl) {
     if (r.slot !== slot) continue;
     if (!el.isConnected || shownValue(el) !== r.shown) {
       byEl.delete(el);
       continue;
     }
-    if (!found && view?.contains(el)) found = { value: r.value, unread: r.unread };
+    if (view?.contains(el)) shown.push(r);
   }
-  return found;
+  if (shown.length === 0) return undefined;
+  shown.sort((a, b) => a.path.length - b.path.length);
+  const laid = new Set<string>();
+  let value = held;
+  let unread: BindReader["as"] | undefined;
+  for (const r of shown) {
+    const at = JSON.stringify(r.path);
+    if (laid.has(at)) continue;
+    laid.add(at);
+    value = r.path.length > 0 ? _setPathHelper(value ?? {}, r.path, r.value) : r.value;
+    unread ??= r.unread;
+  }
+  return { value, unread };
+}
+
+/** A field as it shows, judged: valid, or why not (see `judgeShownField`). */
+export type ShownField =
+  | { valid: true }
+  | { valid: false; unread: BindReader["as"] }
+  | { valid: false; unread?: undefined; value: unknown };
+
+/**
+ * Whether the field bound to `slot` is valid as it shows inside `view`
+ * (forms.md §5.1.2), and if not, what is wrong with it. Text a control shows
+ * that reads as no value of the bound base (`"1.5"` into an `Int`) is judged
+ * first, whatever the refinement; then a refused value a control there still
+ * shows, else the slot's own value, against the slot's refinement.
+ *
+ * `error(field=…)` renders its message from this and a form's submit is gated
+ * on it (§5.2.2), so given the same view the two cannot disagree. They are
+ * not always handed the same view: the tile asks about the view being
+ * rendered, the form about its own controls.
+ */
+export function judgeShownField(
+  app: AppShape,
+  slot: string,
+  view: BindView | undefined,
+): ShownField {
+  const meta = app.slots?.[slot];
+  const held = app.live?.[slot] ?? meta?.value;
+  const refused = refusedBindShown(app, slot, view, held);
+  if (refused?.unread) return { valid: false, unread: refused.unread };
+  const value = refused ? refused.value : held;
+  return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
 }
 
 /** The controls a refused bind is remembered against, for `app`. */
@@ -2880,11 +2954,12 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  (app as AppShape & { _setSlot?: (name: string, value: unknown) => boolean })._setSlot = (
-    name: string,
-    value: unknown,
-  ) => {
-    if (!slotAccepts(app.slots[name], value)) return false;
+  (
+    app as AppShape & {
+      _setSlot?: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
+    }
+  )._setSlot = (name: string, value: unknown, at?: readonly BindSegment[]) => {
+    if (!slotAccepts(app.slots[name], value, at)) return false;
     slotValues[name] = value;
     render();
     return true;
@@ -3530,6 +3605,40 @@ function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
 }
 
 /**
+ * The object key a `Set` element or a `Map` key is stored under. A Set is
+ * `{ [key]: true }` and a Map a plain object, so every member that writes,
+ * finds or removes an entry — `add` / `toggle` / `has` / `remove`, `get` /
+ * `get-or` / `insert` / `update`, the index read `m[k]` and the index write
+ * `m[k] := v` — asks this one function, and two keys are one entry exactly
+ * when they encode alike.
+ *
+ * A primitive is `String(x)`, as it always was. A structured value — a
+ * variant, a record, a tuple — is its JSON with each object's fields in
+ * sorted order, so equal values (stdlib.md §2.2.1: by `==`) are one key
+ * whatever order their fields were written in, and distinct ones never share
+ * the `"[object Object]"` that `String` gives them all. The key types of one
+ * container are all one type, so the two encodings never meet in it. The
+ * readers turn a key back into a value through `restoreKey` in stdlib.ts,
+ * which parses this JSON for a key the checker recorded as `"value"`.
+ */
+export function entryKey(x: unknown): string {
+  return x !== null && typeof x === "object" ? sortedJson(x) : String(x);
+}
+
+function sortedJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(sortedJson).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const fields = Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${sortedJson(o[k])}`);
+    return `{${fields.join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/**
  * The element of `list` an index names, or a panic when it names none
  * (lifecycle.md §7.2.2). One rule for `xs[i]` on both sides of `:=`: the read
  * (`_stdlibCore.index`) and the write (`_setPathHelper`) ask it the same way,
@@ -3597,7 +3706,8 @@ export function _setPathHelper(
     throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
-  return { ...cur, [head]: _setPathHelper(cur[head], rest, value) };
+  const key = entryKey(head);
+  return { ...cur, [key]: _setPathHelper(cur[key], rest, value) };
 }
 
 /**
