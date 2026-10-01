@@ -211,7 +211,8 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
   // strict `eq` and kept nothing.
   it("Map.filter hands its predicate the restored key and keeps the entry under its stored key", () => {
     const seen: unknown[] = [];
-    const pred = (k: unknown) => {
+    const pred = (pair: unknown) => {
+      const [k] = pair as [unknown, unknown];
       seen.push(k);
       return k === 3;
     };
@@ -270,7 +271,8 @@ describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () =
   });
 
   it("still filters a Map entry-wise", () => {
-    expect(_stdlibCore.filter({ a: 1, b: 2 }, (_k, v) => (v as number) > 1)).toEqual({ b: 2 });
+    const pred = (pair: unknown) => (pair as [string, number])[1] > 1;
+    expect(_stdlibCore.filter({ a: 1, b: 2 }, pred)).toEqual({ b: 2 });
   });
 });
 
@@ -293,6 +295,48 @@ describe("an index read (docs/spec/language.md §1.6.3)", () => {
   it("reads a Map entry by key, a numeric key included", () => {
     expect(_stdlibCore.index({ a: 1 }, "a")).toBe(1);
     expect(_stdlibCore.index({ 5: "x" }, 5)).toBe("x");
+  });
+});
+
+describe("one key per value (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
+  const s = _stdlibCore;
+  const red = () => ({ _tag: "Red" });
+
+  it("keeps distinct variants and records apart, and equal ones together", () => {
+    const set = s.setAdd(s.setAdd({}, red()), { _tag: "Blue" });
+    expect(s.setHas(set, red())).toBe(true);
+    expect(s.setHas(set, { _tag: "Green" })).toBe(false);
+    const m = s.mapInsert(s.mapInsert({}, { x: 0, y: 1 }, "a"), { y: 1, x: 0 }, "b");
+    expect(s.mapSize(m)).toBe(1);
+    expect(s.mapGet(m, { x: 0, y: 1 })).toBe("b");
+    expect(s.index(m, { y: 1, x: 0 })).toBe("b");
+  });
+
+  it("removes the entry the other members stored, for any key type", () => {
+    expect(s.mapRemove({ 1: "a", 2: "b" }, 1)).toEqual({ 2: "b" });
+    expect(s.mapRemove(s.setAdd(s.setAdd({}, true), false), true)).toEqual({ false: true });
+    expect(s.mapRemove(s.setAdd(s.setAdd({}, red()), { _tag: "Blue" }), red())).toEqual({
+      '{"_tag":"Blue"}': true,
+    });
+    expect(s.mapRemove({ a: 1, b: 2 }, "a")).toEqual({ b: 2 });
+  });
+
+  it("reads a structured key back as the value it was written from", () => {
+    const m = s.mapInsert({}, { y: 2, x: 1 }, 7);
+    expect(s.mapKeys(m, "value")).toEqual([{ x: 1, y: 2 }]);
+    expect(s.mapEntries(m, "value")).toEqual([[{ x: 1, y: 2 }, 7]]);
+    expect(s.toList(s.setAdd({}, red()), "value")).toEqual([red()]);
+  });
+
+  it("panics, naming the key, on a structured key no member stored", () => {
+    // A record key stored before keys were encoded, or a decoded Map whose
+    // keys are bare variant names: neither is the JSON a structured key reads
+    // back from, so the reader says so instead of throwing a bare SyntaxError.
+    expect(() => s.mapKeys({ "[object Object]": 1 }, "value")).toThrow(KumikiPanic);
+    expect(() => s.mapEntries({ Red: 1 }, "value")).toThrow(/"Red"/);
+    expect(() => s.toList({ "[object Object]": true }, "value")).toThrow(
+      /"\[object Object\]" was not stored by a Set or Map member/,
+    );
   });
 });
 

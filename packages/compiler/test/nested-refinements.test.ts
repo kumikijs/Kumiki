@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
-import { type AppShape, type SlotMeta, slotAccepts } from "@kumikijs/runtime";
+import { type AppShape, type BindSegment, type SlotMeta, slotAccepts } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 
@@ -42,6 +42,8 @@ slot box    : Box(Text where nonempty)        = {v: "x"}
 slot named  : {h: Handle}                     = {h: "ab"}
 slot nums   : Set(Int where positive)         = {}
 slot people : Set({n: Text where nonempty})   = {}
+slot byName : Map({n: Text where nonempty}, Int) = {}
+slot cellAt : Map({x: Int, y: Int}, Short)       = {}
 slot plain  : {n: Int, kids: List(Text)}      = {n: 1, kids: []}
 slot handle : Handle                          = "ab"
 
@@ -202,6 +204,26 @@ describe("a refinement on a container element", () => {
   });
 });
 
+describe("a Map's structured keys, read back from the JSON they are keyed by", () => {
+  it("checks a refined record key as the record it encodes", () => {
+    expect(refineOf("byName")({ '{"n":"ada"}': 1 })).toBe(true);
+    expect(failureOf("byName", { '{"n":"ada"}': 1, '{"n":""}': 2 })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ key: { n: "" } }, "n"],
+    });
+  });
+
+  it("names the record key an entry that fails its value's refinement is under", () => {
+    expect(refineOf("cellAt")({ '{"x":0,"y":1}': "abc" })).toBe(true);
+    expect(failureOf("cellAt", { '{"x":0,"y":1}': "abcd" })).toEqual({
+      kind: "len-lt",
+      args: [4],
+      path: [{ entry: { x: 0, y: 1 } }],
+    });
+  });
+});
+
 describe("positions nest, and a type may be recursive", () => {
   it("joins the path outward-in", () => {
     const ok = { email: "ada@example.com", age: 36 };
@@ -228,8 +250,8 @@ describe("positions nest, and a type may be recursive", () => {
 });
 
 describe("a Set's members, in either runtime form", () => {
-  // A Set is an object keyed by `String(member)` once `add` / `toggle` built
-  // it, and still an array when it came from a literal; a literal a member was
+  // A Set is an object keyed by `entryKey(member)` once `add` / `toggle`
+  // built it, and still an array when it came from a literal; a literal a member was
   // added to is both at once (the array's entries plus a key).
   it("reads a numeric member back as a number from a key", () => {
     expect(refineOf("nums")({ 1: true, 2: true })).toBe(true);
@@ -250,11 +272,14 @@ describe("a Set's members, in either runtime form", () => {
     expect(refineOf("nums")({ 0: 1, 2: true })).toBe(true);
   });
 
-  it("leaves a member it cannot read back from a key ungated", () => {
-    // A record member is keyed "[object Object]"; no check can see the record
-    // through that, so the position is not walked rather than refusing every write.
-    expect(meta("people").refineFailure).toBeUndefined();
-    expect(meta("people").refine).toBeUndefined();
+  it("reads a record member back from the JSON it is keyed by", () => {
+    expect(refineOf("people")({ '{"n":"ada"}': true })).toBe(true);
+    expect(refineOf("people")([{ n: "ada" }])).toBe(true);
+    expect(failureOf("people", { '{"n":"ada"}': true, '{"n":""}': true })).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ member: { n: "" } }, "n"],
+    });
   });
 });
 
@@ -363,4 +388,138 @@ slot t : T(${arg}) = {v: ${arg === "Int" ? "1" : '"a"'}, next: None}`);
     const codes = result.kind === "fail" ? result.errors.map((e) => e.code) : [];
     expect(codes).not.toContain("E0803");
   });
+});
+
+// A `bind` into part of a slot is judged at the path it writes (forms.md
+// §5.6): the gate takes that path as a focus, enters only the position each
+// step names, and checks everything below where it ends. The focus has to
+// survive every helper between the slot and the field — an alias of a named
+// type is a wrapper around that type's helper, and a nominal or refined type
+// calls its inner type's — or a sibling's failure refuses the write again.
+describe("a gate asked about one bind path", () => {
+  const FOCUS = program(`type Short   = Text where len-lt(12)
+type City    = nominal Short where nonempty
+type Place   = nominal {city: City, zip: Text where len-gt(3)}
+type Addr    = Place
+type Person  = {email: Text where email, addr: Addr}
+type Account = {owner: Person, note: Text where nonempty}
+type Post    = {title: Text where nonempty, body: Text where len-lt(10)}
+type Entry   = Post
+
+slot person : Person        = {email: "", addr: {city: "", zip: ""}}
+slot acct   : Account       = {owner: {email: "", addr: {city: "", zip: ""}}, note: ""}
+slot draft  : Option(Entry) = None`);
+
+  let focused: Record<string, SlotMeta>;
+  beforeAll(async () => {
+    focused = await load(FOCUS);
+  }, 30_000);
+
+  const at = (slot: string, v: unknown, focus?: BindSegment[]) =>
+    defined(focused[slot]?.refineFailure, `slot "${slot}"'s failure reader`)(v, focus);
+  const GET = { get: true } as const;
+
+  const person = (city: string) => ({ email: "nope", addr: { city, zip: "1" } });
+
+  it("reaches a field through an alias and a nominal record, passing over its siblings", () => {
+    // Whole value: the email is the first failure.
+    expect(at("person", person("Paris"))?.path).toEqual(["email"]);
+    // At the city: the failing email and the failing zip beside it are not on the path.
+    expect(at("person", person("Paris"), ["addr", "city"])).toBeUndefined();
+    // The zip is judged at its own path.
+    expect(at("person", person("Paris"), ["addr", "zip"])).toEqual({
+      kind: "len-gt",
+      args: [3],
+      path: ["addr", "zip"],
+    });
+  });
+
+  it("still refuses the field's own failure, from every predicate its type chain carries", () => {
+    // `City`'s own predicate, written on the nominal.
+    expect(at("person", person(""), ["addr", "city"])).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: ["addr", "city"],
+    });
+    // `Short`'s, the named type the nominal wraps.
+    expect(at("person", person("Ciudad de Mexico"), ["addr", "city"])).toEqual({
+      kind: "len-lt",
+      args: [12],
+      path: ["addr", "city"],
+    });
+  });
+
+  it("checks the shape of every type along the path", () => {
+    const f = at("person", { email: "nope", addr: "not a record" }, ["addr", "city"]);
+    expect(f?.path).toEqual(["addr"]);
+  });
+
+  it("follows a focus three fields deep", () => {
+    const acct = (city: string) => ({ owner: person(city), note: "" });
+    expect(at("acct", acct("Paris"))?.path).toEqual(["owner", "email"]);
+    expect(at("acct", acct("Paris"), ["owner", "addr", "city"])).toBeUndefined();
+    expect(at("acct", acct(""), ["owner", "addr", "city"])).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: ["owner", "addr", "city"],
+    });
+  });
+
+  it("reaches a record field inside an Option's payload through .get", () => {
+    const draft = (title: string) => ({ _tag: "Some", _0: { title, body: "far too long a body" } });
+    expect(at("draft", draft("Hi"))?.path).toEqual([{ variant: "Some" }, "body"]);
+    expect(at("draft", draft("Hi"), [GET, "title"])).toBeUndefined();
+    expect(at("draft", draft(""), [GET, "title"])).toEqual({
+      kind: "nonempty",
+      args: [],
+      path: [{ variant: "Some" }, "title"],
+    });
+  });
+
+  it("answers an empty focus as it answers none", () => {
+    for (const v of [
+      person("Paris"),
+      person(""),
+      { email: "a@b.co", addr: { city: "P", zip: "1234" } },
+    ]) {
+      expect(at("person", v, [])).toEqual(at("person", v));
+    }
+  });
+
+  it("enters Result's Ok through .get and passes over Err, which is beside that path", () => {
+    // `res : Result(Short, Text where email)` in the fixture above.
+    const res = (v: unknown, focus?: BindSegment[]) =>
+      defined(meta("res").refineFailure, "res's failure reader")(v, focus);
+    expect(res({ _tag: "Ok", _0: "abcdef" }, [GET])).toEqual({
+      kind: "len-lt",
+      args: [4],
+      path: [{ variant: "Ok" }],
+    });
+    expect(res({ _tag: "Err", _0: "nope" }, [GET])).toBeUndefined();
+    expect(res({ _tag: "Err", _0: "nope" })?.path).toEqual([{ variant: "Err" }]);
+  });
+
+  // No bind step names a List element, a Set member, a Map key or entry, a
+  // Tuple member or a user union's payload, so a focus that reaches one with
+  // steps left has nothing there to follow: everything below is checked, and
+  // a step the gate cannot read is never a reason to pass over a failure.
+  const unnamed: [string, string, unknown, BindSegment[], unknown[]][] = [
+    [
+      "a List element",
+      "sheet",
+      { rows: [{ email: "nope", age: 36 }] },
+      ["rows", "size"],
+      ["rows", 0, "email"],
+    ],
+    ["a Set member", "nums", [-1], ["x"], [{ member: -1 }]],
+    ["a Map key", "byId", { "-1": "a" }, ["x"], [{ key: -1 }]],
+    ["a Tuple member", "pair", ["a", 1], ["x"], [1]],
+    ["a union payload", "look", { _tag: "Found", _0: "" }, [GET], [{ variant: "Found" }]],
+  ];
+  for (const [position, slot, v, focus, path] of unnamed) {
+    it(`checks ${position} whole, whatever steps the focus has left`, () => {
+      const f = defined(meta(slot).refineFailure, `slot "${slot}"'s failure reader`)(v, focus);
+      expect(f?.path).toEqual(path);
+    });
+  }
 });
