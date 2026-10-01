@@ -334,6 +334,10 @@ effect storage-clear  cap=storage.write
                       out=Result(Unit, Text)
 ```
 
+クリアは宣言で決まる。`map-request` を持たず `in=Unit`（直接、または別名を通して）と宣言した effect がストレージを空にする。空になるのはこのアプリが書いたキーだけでなく、**オリジン全体**の localStorage である。それ以外の `storage.write` は書き込みか削除で、リクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
+
+このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む。`Map` への添字が何も見つけなかったときにできるのもこれである）、空でない `Text` でない `key`、JSON で表せない `value` がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
+
 ### 6.7.3 例
 
 ```kumiki snippet
@@ -415,6 +419,7 @@ reducer loaded on=loadAll.ok($data, _) do= state := $data
 effect save cap=storage.write
             in=Map(TodoId, Todo)
             out=Result(Unit, Text)
+            map-request={key: "todos", value: $1}
             policy=debounce(300ms)
 
 reducer afterChange

@@ -79,10 +79,18 @@ type AliasHead =
   | { readonly kind: "param"; readonly name: string };
 
 /**
+ * Whether a walk along a type's head looks through `nominal` (normalisation,
+ * which strips it) or stops there (the search for a nominal declaration, for
+ * which the wrapper is the answer).
+ */
+export type NominalReading = "through" | "stop";
+
+/**
  * The head of a type expression — what `unaliasType` would look at next.
  *
  * `nominal` and `where` are passed through: neither is a type of its own, so
- * normalisation strips them and carries on to the name underneath. A record, a
+ * normalisation strips them and carries on to the name underneath. A reading
+ * of `"stop"` ends the head at `nominal` instead. A record, a
  * union and a primitive are types in their own right and stop it, so they
  * answer `null` and nothing written inside one is ever reached.
  *
@@ -91,11 +99,18 @@ type AliasHead =
  * against the global table, and the one-sided reading prefers a chain that
  * stops early over an edge that may be to the wrong definition.
  */
-function headOf(t: TypeExpr, params: ReadonlySet<string>): AliasHead | null {
+function headOf(
+  t: TypeExpr,
+  params: ReadonlySet<string>,
+  nominal: NominalReading = "through",
+): AliasHead | null {
   let cur = t;
   for (;;) {
     switch (cur.kind) {
       case "TypeNominal":
+        if (nominal === "stop") return null;
+        cur = cur.inner;
+        continue;
       case "TypeRefinement":
         cur = cur.inner;
         continue;
@@ -130,57 +145,80 @@ function headOf(t: TypeExpr, params: ReadonlySet<string>): AliasHead | null {
  *
  * `type Alias(T) = T` is the shape, and `type Tag(T) = nominal T` and
  * `type Pos(T) = T where positive` are the same shape under wrappers, since
- * neither wrapper is a type of its own. It is transitive: `type Outer(T) =
- * Alias(T)` hands back its own parameter too, by way of `Alias`.
+ * neither wrapper is a type of its own. It is transitive, through the head and
+ * through the argument the head hands back: `type Outer(T) = Alias(T)` hands
+ * back its parameter by way of `Alias`, and so does `type Twice(T) =
+ * Alias(Alias(T))`, by way of `Alias` twice.
  *
- * This is what `unaliasType` does when it substitutes `paramSubstitution(
- * def.params, t.args)` into a body and keeps going, so a chain that runs
- * through such a generic has to keep going here as well — otherwise
+ * `nominal` decides whether the wrapper is looked through. Normalisation
+ * strips it (`"through"`); the search for a nominal declaration stops at it
+ * (`"stop"`), because there the wrapper *is* the answer.
+ *
+ * Two readers share it. `aliasTarget` follows a chain on through such a
+ * generic's argument, since that is where normalisation goes next — otherwise
  * `type A = Alias(A)` has no edge and the loop is invisible.
+ * `assignable.ts#unaliasType` and `nominalDecl` take the step in one move
+ * rather than expanding the body: normalising `Twice(X)` by expansion walks
+ * `Alias` twice, and a chain of definitions that each apply the one below
+ * twice doubles that at every level.
  *
- * Iterative for the reason the module docblock gives: the walk is between
- * definitions, and nothing bounds how many of them a program may chain. The
- * `seen` set is what makes it terminate — a generic that forwards to itself
- * (`type Loop(T) = Loop(T)`) has no answer to give.
+ * Returns the classifier rather than one answer so the answers are shared: a
+ * definition is classified once however many heads name it, which is what
+ * keeps the doubling chain linear here too. Iterative for the reason the
+ * module docblock gives — the walk is between definitions, and nothing bounds
+ * how many of them a program may chain. A generic whose head comes back to a
+ * definition still being classified (`type Loop(T) = Loop(T)`, or two that
+ * forward to each other) has no parameter to hand back.
  */
-function forwardedIndex(
-  def: TypeDef,
+export function forwardedParams(
   lookup: (name: string) => TypeDef | undefined,
-): number | null {
-  // Down: follow the head from definition to definition, remembering the
-  // arguments written at each step, until one of them names a parameter.
-  const chain: { readonly params: readonly string[]; readonly args: readonly TypeExpr[] }[] = [];
-  const seen = new Set<string>([def.name]);
-  let cur = def;
-  let index: number;
-  for (;;) {
-    const head = headOf(cur.body, new Set(cur.params));
-    if (!head) return null;
-    if (head.kind === "param") {
-      index = cur.params.indexOf(head.name);
-      break;
+  nominal: NominalReading,
+): (def: TypeDef) => number | null {
+  const answers = new Map<string, number | null>();
+  // Where `expr`, written inside a definition with `params`, ends up: one of
+  // those parameters by index, `null` for somewhere else, or the definition
+  // that has to be classified before this can be told.
+  const follow = (expr: TypeExpr, params: readonly string[]): number | null | TypeDef => {
+    const scope = new Set(params);
+    let cur = expr;
+    for (;;) {
+      const head = headOf(cur, scope, nominal);
+      if (!head) return null;
+      if (head.kind === "param") return params.indexOf(head.name);
+      const def = lookup(head.name);
+      if (!def) return null;
+      if (!answers.has(def.name)) return def;
+      const i = answers.get(def.name);
+      if (i === null || i === undefined) return null;
+      // A generic named with too few arguments is E0210's to report; there is
+      // no argument here to carry on with.
+      const arg = head.args[i];
+      if (!arg) return null;
+      cur = arg;
     }
-    const next = lookup(head.name);
-    if (!next || seen.has(head.name)) return null;
-    seen.add(head.name);
-    chain.push({ params: cur.params, args: head.args });
-    cur = next;
-  }
-  if (index < 0) return null;
-  // Up: each step back out says which of its own parameters it wrote at the
-  // position the step below hands back. Anything else — a record, a concrete
-  // type, a missing argument — means the answer is not a parameter after all.
-  for (let k = chain.length - 1; k >= 0; k -= 1) {
-    const frame = chain[k];
-    if (!frame) return null;
-    const arg = frame.args[index];
-    if (!arg) return null;
-    const head = headOf(arg, new Set(frame.params));
-    if (head?.kind !== "param") return null;
-    index = frame.params.indexOf(head.name);
-    if (index < 0) return null;
-  }
-  return index;
+  };
+  return (root) => {
+    const stack: TypeDef[] = [root];
+    const open = new Set<string>([root.name]);
+    while (stack.length > 0) {
+      const def = stack[stack.length - 1];
+      if (!def) break;
+      const next = answers.has(def.name) ? answers.get(def.name) : follow(def.body, def.params);
+      if (typeof next === "object" && next !== null) {
+        if (!open.has(next.name)) {
+          stack.push(next);
+          open.add(next.name);
+          continue;
+        }
+        answers.set(def.name, null);
+      } else {
+        answers.set(def.name, next ?? null);
+      }
+      stack.pop();
+      open.delete(def.name);
+    }
+    return answers.get(root.name) ?? null;
+  };
 }
 
 /**
@@ -202,7 +240,7 @@ function forwardedIndex(
  * A `TypeApp` is an alias step like a bare name is, since `unaliasType`
  * instantiates and keeps going. Its **arguments are followed too**, but only
  * where normalisation follows them — through a generic that hands a parameter
- * straight back (`forwardedIndex`), which is the one case where substitution
+ * straight back (`forwardedParams`), which is the one case where substitution
  * decides what comes next. So `type Alias(T) = T` / `type A = Alias(A)` closes
  * a loop, while `type A = Alias(Option(A))` does not: the argument is a
  * container, and a container is where normalisation stops.
@@ -220,12 +258,13 @@ export function aliasTarget(
   lookup: (name: string) => TypeDef | undefined,
 ): GraphEdge | null {
   const params = new Set(def.params);
+  const forwarded = forwardedParams(lookup, "through");
   let head = headOf(def.body, params);
   while (head?.kind === "name") {
     const edge = { to: head.name, pos: head.pos };
     const target = lookup(head.name);
     if (!target) return edge;
-    const i = forwardedIndex(target, lookup);
+    const i = forwarded(target);
     if (i === null) return edge;
     const arg = head.args[i];
     // A generic named with too few arguments is E0210's to report; there is no

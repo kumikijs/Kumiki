@@ -17,7 +17,14 @@ import {
 import { installConfirm } from "./effects-confirm.ts";
 import { httpFetch } from "./effects-http.ts";
 import { indexedDelete, indexedQuery, indexedRead, indexedWrite } from "./effects-indexed.ts";
-import { sessionRead, sessionWrite, storageRead, storageWrite } from "./effects-storage.ts";
+import {
+  sessionClear,
+  sessionRead,
+  sessionWrite,
+  storageClear,
+  storageRead,
+  storageWrite,
+} from "./effects-storage.ts";
 import { installToast } from "./effects-toast.ts";
 import { routing } from "./router.ts";
 import type { RenderToStringResult } from "./ssr.ts";
@@ -134,8 +141,10 @@ export {
   indexedWrite,
 } from "./effects-indexed.ts";
 export {
+  sessionClear,
   sessionRead,
   sessionWrite,
+  storageClear,
   storageRead,
   storageWrite,
 } from "./effects-storage.ts";
@@ -318,8 +327,10 @@ export const _stdlib = { ..._stdlibCore, ..._stdlibTest };
 export const builtinEffects = {
   storageRead,
   storageWrite,
+  storageClear,
   sessionRead,
   sessionWrite,
+  sessionClear,
   httpFetch,
   indexedRead,
   indexedWrite,

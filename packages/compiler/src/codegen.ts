@@ -349,6 +349,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     app,
     reducers,
     effects,
+    ctx,
     ctx.usedTiles,
     !!opts.includeTests,
     tests.length > 0,

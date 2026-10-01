@@ -322,7 +322,7 @@ A tile declares `sub-routes` but no entry in `app.routes` targets that tile. The
 
 ### E0112 `duplicate-sub-route`
 
-The same sub-route path is declared more than once on a single tile. Match order is positional, so duplicates are either dead code or a typo.
+The same sub-route path is declared more than once on a single tile. Two identical patterns tie on specificity ([Routing §3.1.2](./routing.md#_3-1-2-match-order)), so the first always wins and the rest are dead code or a typo.
 
 > `Sub-route path "<path>" is declared more than once in tile "<name>"`
 
