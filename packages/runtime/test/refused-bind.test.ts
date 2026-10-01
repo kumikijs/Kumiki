@@ -411,3 +411,63 @@ describe("the refused-bind memory", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Controls bound into parts of one slot (forms.md §5.6): what the slot shows is
+// its own value with every refused value laid over it at the path its control
+// writes. `refusedBindShown` is read directly here; the field-level cases that
+// go through the input tiles are in packages/tests/record-field-bind.test.ts.
+
+describe("refused values laid over a slot", () => {
+  const control = (value: string): HTMLInputElement => {
+    const el = document.createElement("input");
+    el.value = value;
+    document.body.appendChild(el);
+    return el;
+  };
+
+  it("lays the refused values at two paths over the slot, both of them", () => {
+    const app = {};
+    noteBindWrite(app, control("1"), "a", "1", false, ["name"]);
+    noteBindWrite(app, control("2"), "a", "2", false, ["nick"]);
+    const held = { name: "held", nick: "held", email: "e" };
+    expect(refusedBindShown(app, "a", document.body, held)).toEqual({
+      value: { name: "1", nick: "2", email: "e" },
+    });
+  });
+
+  it("lets the first of two controls on one path speak for it", () => {
+    const app = {};
+    noteBindWrite(app, control("first"), "a", "first", false, ["name"]);
+    noteBindWrite(app, control("second"), "a", "second", false, ["name"]);
+    const held = { name: "held", nick: "n" };
+    expect(refusedBindShown(app, "a", document.body, held)).toEqual({
+      value: { name: "first", nick: "n" },
+    });
+  });
+
+  // A control bound to the whole slot shows the value the field controls sit
+  // in, so it is laid first and theirs over it — whichever was refused first.
+  const whole = { name: "whole-name", nick: "whole-nick" };
+  const orders: [string, boolean][] = [
+    ["the whole slot first", true],
+    ["the field first", false],
+  ];
+  for (const [order, wholeFirst] of orders) {
+    it(`lays a field over a whole-slot refusal, ${order}`, () => {
+      const app = {};
+      const noteWhole = () => noteBindWrite(app, control("whole"), "a", whole, false, []);
+      const noteField = () => noteBindWrite(app, control("x"), "a", "x", false, ["name"]);
+      if (wholeFirst) {
+        noteWhole();
+        noteField();
+      } else {
+        noteField();
+        noteWhole();
+      }
+      expect(refusedBindShown(app, "a", document.body, { name: "held", nick: "held" })).toEqual({
+        value: { name: "x", nick: "whole-nick" },
+      });
+    });
+  }
+});
