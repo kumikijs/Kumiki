@@ -746,6 +746,8 @@ kumiki replay --until-step 5                # 途中まで
 ### 10.6.1 SSR
 
 - HTML 生成は **server-side** で初期 route の tile を 1 回描画
+  - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`mount` と同じ解決で先に処理され、その行き先が描画される。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、行き先を指す。
+  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。クライアントのルーターがロケーションを読むのと同じ方法で分割され、pathname は**書かれたとおりに**照合される：`//foo` や `/a/../b` は正規化されない。ブラウザの `location.pathname` がそれらを保つためであり、サーバーはクライアントと同じ場所に行き着かなければならない。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
