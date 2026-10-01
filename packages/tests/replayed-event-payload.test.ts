@@ -8,7 +8,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AppShape, EpisodeLogEntry, ReplayEvent, Scenario } from "@kumikijs/runtime";
+import type {
+  AppShape,
+  EpisodeLogEntry,
+  ReplayApp,
+  ReplayEvent,
+  Scenario,
+} from "@kumikijs/runtime";
 import {
   _stdlibTest,
   createEpisodeLogger,
@@ -129,5 +135,118 @@ describe("an ssr.hydrate bootstrap episode replays", () => {
       name: "replays-from-log",
       pass: true,
     });
+  });
+});
+
+// The consumption half of the rule (§10.5.3): the bootstrap's entry value is
+// taken from the log, so a `from-log` mock of the same effect continues after
+// it. The example records one `effect-end`, which cannot tell "continues after"
+// from "starts over", so these logs are built by hand.
+describe("the entry reducer's recorded result is consumed", () => {
+  // `load.ok` / `load.err` append what they got to `got`; the first of them to
+  // run emits `load` once more, so the re-emit shows which recorded result the
+  // `from-log` cursor hands out next.
+  function chainApp(): ReplayApp {
+    const step = (tag: string) => (live: Record<string, unknown>, p: Record<string, unknown>) => {
+      const got = live.got as unknown[];
+      return {
+        slots: { got: [...got, [tag, p]] },
+        emits: got.length === 0 ? [{ effect: "load", args: [] }] : [],
+      };
+    };
+    return {
+      live: {},
+      slots: { got: { value: [] } },
+      reducers: [
+        {
+          name: "load.ok",
+          event: { kind: "effect", effect: "load", outcome: "ok" },
+          apply: step("ok"),
+        },
+        {
+          name: "load.err",
+          event: { kind: "effect", effect: "load", outcome: "err" },
+          apply: step("err"),
+        },
+      ],
+    };
+  }
+
+  type Step = EpisodeLogEntry["steps"][number];
+  const end = (result: "ok" | "err", value: unknown): Step => ({
+    kind: "effect-end",
+    name: "load",
+    result,
+    value,
+  });
+  const red = (name: string): Step => ({ kind: "reducer", name, "slot-diffs": [], emits: [] });
+
+  function hydrate(steps: EpisodeLogEntry["steps"]): EpisodeLogEntry {
+    return {
+      id: "ep_boot",
+      trigger: { kind: "ssr.hydrate", target: "/" },
+      steps,
+      status: "completed",
+    };
+  }
+
+  function run(ep: EpisodeLogEntry) {
+    const app = chainApp();
+    const events: ReplayEvent[] = [];
+    const report = replayEpisodes({
+      app,
+      episodes: [ep],
+      mocks: { load: { policy: "from-log" } },
+      observer: (ev) => {
+        events.push(ev);
+        return "continue";
+      },
+    });
+    const ends = events.flatMap((ev) =>
+      ev.kind === "effect-end" ? [[ev.outcome, ev.value, ev.source]] : [],
+    );
+    return { report, events, ends, got: report.finalSlots.got };
+  }
+
+  // Fails if `cursors[effect] = nth + 1` is dropped: the re-emit is then handed
+  // "first" a second time, one step stale, and nothing panics to say so.
+  it("hands a re-emit of the same effect the result after the consumed one", () => {
+    const { ends, got, report } = run(
+      hydrate([end("ok", "first"), red("load.ok"), end("ok", "second"), red("load.ok")]),
+    );
+    expect(report.panics).toEqual([]);
+    expect(ends).toEqual([["ok", "second", "from-log"]]);
+    expect(got).toEqual([
+      ["ok", { $1: "first" }],
+      ["ok", { $1: "second", $2: undefined }],
+    ]);
+  });
+
+  // Fails if the `s.result === outcome` filter is dropped: the `.err` entry
+  // reducer is then handed the later `ok` value, and the cursor moves past
+  // both results, so the re-emit finds nothing left to replay.
+  it("hands an `.err` entry reducer the recorded `err` result, not a later `ok` one", () => {
+    const { ends, got } = run(hydrate([end("err", "boom"), end("ok", "v"), red("load.err")]));
+    expect(got).toEqual([
+      ["err", { $1: "boom" }],
+      ["ok", { $1: "v", $2: undefined }],
+    ]);
+    expect(ends).toEqual([["ok", "v", "from-log"]]);
+  });
+
+  // Fails if the `found === false` path hands over `{ $1: undefined }` as if
+  // the log had answered: the reducer then gets a `$1` key, and neither the
+  // episode line nor the report says the log never carried the value.
+  it("reports an entry result the log does not carry instead of inventing one", () => {
+    const { events, got, report } = run(hydrate([red("load.ok")]));
+    expect(got).toStrictEqual([["ok", {}]]);
+    expect(events[0]).toMatchObject({ kind: "episode-start", entryResultMissing: "load.ok" });
+    expect(report.entryResultsMissing).toEqual([{ episodeId: "ep_boot", reducer: "load.ok" }]);
+  });
+
+  it("does not report an entry result the log carries", () => {
+    const { events, report } = run(hydrate([end("ok", "first"), red("load.ok")]));
+    expect(events[0]).not.toHaveProperty("entryResultMissing");
+    expect(report.entryResultsMissing).toEqual([]);
   });
 });

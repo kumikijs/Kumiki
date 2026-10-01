@@ -1,5 +1,6 @@
 ---
 "@kumikijs/runtime": patch
+"@kumikijs/cli": patch
 ---
 
 A replayed episode hands its entry reducer the payload the live run handed it (`runtime.md` §10.5.3).
@@ -11,4 +12,6 @@ The live runtime records `trigger.payload` as the reducer payload itself — `{$
 [panic:reducer] Cannot read properties of undefined (reading 'text')  reducer "loaded"
 ```
 
-The payload is now passed on unchanged. An `ssr.hydrate` bootstrap episode, whose trigger carries no payload, hands its first `.ok` / `.err` reducer the value of the `effect-end` step recorded before it, and a `from-log` mock of that effect continues after it. An `episode-test` with `slots-equal: from-log, no-panics: true` over a log of the unchanged program now passes for both.
+The payload is now passed on unchanged. An `ssr.hydrate` bootstrap episode, whose trigger carries no payload, hands its first `.ok` / `.err` reducer the value of the last `effect-end` of that effect and outcome recorded before it, and a `from-log` mock of that effect continues after it. An `episode-test` with `slots-equal: from-log, no-panics: true` over a log of the unchanged program now passes for both.
+
+When the log carries no such `effect-end` (a trimmed or hand-edited log), the reducer still runs with no `$1`, but replay now says so instead of leaving the panic to read as a reducer bug: the episode line ends in `(no recorded result for <reducer>)`, the run ends with an `entry results missing:` summary, and `ReplayReport.entryResultsMissing` lists the episodes.
