@@ -262,12 +262,24 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // index read and write ask, and the panic that names a stored key no member
     // wrote. A counter keys nothing and still ships them.
     //
-    // Still 61,000 (60,970 measured, from 60,650): `Time.parse` refuses a date
-    // that is not on the calendar (stdlib.md §2.2.8). The 282 bytes are
-    // `isCalendarDate` and the branch in `parseTime` that consults it before the
-    // platform's parser can roll `2026-02-30` over into March. A counter parses no
-    // time and still ships it, because `parseTime` sits in the stdlib module every
-    // app loads.
+    // Still 61,000 (60,924 measured, from 60,650): a `bind` into one field of a
+    // record is judged at that field (forms.md §5.6). `slotAccepts` and a slot's
+    // `refineFailure` take the path the write went through, and a refused bind
+    // keeps that path so what the field shows is laid over the record as it is
+    // now, shallower paths first. A counter binds nothing and still ships them,
+    // because they sit in the core module every app loads.
+    //
+    // Still 61,000 (60,983 measured, from 60,924): a Set literal is a Set
+    // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
+    // `setAdd` so a literal and an `add` chain are one form. A counter writes
+    // no Set and still ships it in stdlib.js.
+    //
+    // Over 61,000 (61,265 measured, from 60,983; the budget stays at 61,000):
+    // `Time.parse` refuses a date that is not on the calendar (stdlib.md §2.2.8).
+    // The 282 bytes are `isCalendarDate` and the branch in `parseTime` that
+    // consults it before the platform's parser can roll `2026-02-30` over into
+    // March. A counter parses no time and still ships it, because `parseTime` sits
+    // in the stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

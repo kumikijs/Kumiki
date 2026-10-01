@@ -696,6 +696,18 @@ export const _stdlibCore = {
     if (!(key in obj)) return obj;
     return { ...obj, [key]: fn(obj[key]) };
   },
+  /**
+   * A Set literal (`[1, 2]` where a `Set` is declared): the same value `add`
+   * builds from the same members, so a literal and an `add` chain are one form
+   * (stdlib.md §2.2.2). Going through `setAdd` rather than writing the keys
+   * here is deliberate: however `setAdd` keys a member, a literal keys it the
+   * same way, and an inlined loop would fork the two.
+   */
+  setOf(xs: readonly unknown[]): Record<string, true> {
+    let s: Record<string, true> = {};
+    for (const x of xs) s = _stdlibCore.setAdd(s, x);
+    return s;
+  },
   /** Set(T).add(x). Sets are stored as `{ [entryKey(x)]: true }`. */
   setAdd(s: Record<string, true> | undefined | null, x: unknown): Record<string, true> {
     return { ...(s ?? {}), [entryKey(x)]: true };
