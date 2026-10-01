@@ -273,6 +273,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | core | [§1.7.2](./language.md#_1-7-2-invariants) inv. 1 |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
+| `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
 | `158-responsive-breakpoints.kumiki` | tile, app | style | [§4.5](./style.md#_4-5-responsive) |
 <!-- examples:end -->
 :::
