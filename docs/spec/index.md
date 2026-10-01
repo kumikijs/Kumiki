@@ -267,11 +267,13 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `132-toggle-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `133-typed-input-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
 | `134-record-field-bind.kumiki` | type, slot, tile | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
+| `135-form-submit-gate.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | core | [§1.7.2](./language.md#_1-7-2-invariants) inv. 1 |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
+| `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
 | `157-theme-switch.kumiki` | slot, reducer, tile, app | style | [§4.6](./style.md#_4-6-dark-mode) |
 <!-- examples:end -->
 :::
