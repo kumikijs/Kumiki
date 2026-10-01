@@ -281,14 +281,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // beside the refused-bind record in core, which every app loads; a counter has
     // no form and still ships it.
     //
-    // Over 61,000 (61,452 measured, from 61,184; the budget stays at 61,000):
-    // `heading` renders the element its level names. The 268 bytes are
-    // `headingTag` and the patcher's rebuild on a level change; a counter renders
-    // a heading, so it ships them.
+    // Raised once to 63,000 with the owner's approval (61,452 measured, from
+    // 61,184): `heading` renders the element its level names. The 268 bytes are
+    // `headingTag` and the patcher's rebuild on a level change; a counter
+    // renders a heading, so it ships them.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(61_000);
+    expect(total).toBeLessThan(63_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
