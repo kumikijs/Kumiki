@@ -274,10 +274,17 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `setAdd` so a literal and an `add` chain are one form. A counter writes
     // no Set and still ships it in stdlib.js.
     //
-    // Over 61,000 (61,319 measured, from 60,983; the budget stays at 61,000): an
+    // Over 61,000 (61,184 measured, from 60,983; the budget stays at 61,000): a
+    // form submits only while every field bound inside it is valid as it shows
+    // (forms.md §5.2.2), judged by `judgeShownField` in core — the one judgement
+    // `error(field=…)` renders its message from, so the two cannot drift. It sits
+    // beside the refused-bind record in core, which every app loads; a counter has
+    // no form and still ships it.
+    //
+    // Over 61,000 (61,525 measured, from 61,184; the budget stays at 61,000): an
     // index step reaches the setter apart from a field step (language.md §1.6.3),
     // so a write through a Map key that is absent writes nothing and a read there
-    // panics. The 336 bytes are `isIndexSegment` and the no-write branch in
+    // panics. The 341 bytes are `isIndexSegment` and the no-write branch in
     // `_setPathHelper`, `isEntryOf` which both sides of `:=` ask, and the panic in
     // `_stdlibCore.index`. A counter indexes nothing and still ships them, because
     // the setter and the stdlib sit on paths every app loads.
