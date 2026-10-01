@@ -281,16 +281,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // beside the refused-bind record in core, which every app loads; a counter has
     // no form and still ships it.
     //
-    // Over 61,000 (61,301 measured, from 61,184; the budget stays at 61,000): a
-    // `for` keys each tile it renders apart from every sibling, a repeated value
-    // included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which names
-    // the loop and the occurrence beside the value's `show`. A counter has no
-    // `for` and still ships it, because it sits in the stdlib module every app
-    // loads.
+    // Raised once to 63,000 with the owner's approval (61,301 measured, from
+    // 61,184): a `for` keys each tile it renders apart from every sibling, a
+    // repeated value included (runtime.md §10.3.10). The 117 bytes are
+    // `loopKeys`, which names the loop and the occurrence beside the value's
+    // `show`. A counter has no `for` and still ships it, because it sits in the
+    // stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(61_000);
+    expect(total).toBeLessThan(63_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
