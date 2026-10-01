@@ -85,8 +85,9 @@ export type TestResult = {
   actual?: string;
   diffAt?: string;
   /**
-   * The scalar values at the divergence point (`diffAt`), when the runner can
-   * isolate one. Powers the §8.7.1 value arrow (`expected -> actual`) and lets
+   * The values at the divergence point (`diffAt`), when the runner can
+   * isolate one — a scalar, or a list or record for a tile field such as
+   * `options`. Powers the §8.7.1 value arrow (`expected -> actual`) and lets
    * `kumiki fix --auto-patch` find the responsible source literal.
    */
   leaf?: { expected: unknown; actual: unknown };
@@ -178,27 +179,74 @@ function tileChildren(node: unknown): unknown[] {
 }
 
 /**
- * The fields of a tile node that carry its content — every own field but the
- * three that are structure rather than content: `kind` (compared first),
- * `children` (recursed into) and `props`, which holds the styles, classes and
- * handlers spec §8.4 leaves out of the comparison. A field the node does not
- * carry, or carries as a function, is not content either.
+ * Top-level fields of a tile node that are not content: `kind` (compared
+ * first), `children` (recursed into), `props` (read below), and the identity
+ * and wiring a node carries beside its content — `key` (the reconciler's
+ * identity, stamped by `_wk`), `bind` / `bindPath` / `parse` (form
+ * write-back) and `prefetch` / `prefetchArgs` (a link's §3.8 prefetch).
  */
-function tileContentFields(node: unknown): string[] {
-  if (node === null || typeof node !== "object") return [];
-  return Object.keys(node).filter((k) => {
-    if (k === "kind" || k === "children" || k === "props") return false;
-    const v = tileField(node, k);
-    return v !== undefined && typeof v !== "function";
-  });
+const TILE_NOT_CONTENT: ReadonlySet<string> = new Set([
+  "kind",
+  "children",
+  "props",
+  "key",
+  "bind",
+  "bindPath",
+  "parse",
+  "prefetch",
+  "prefetchArgs",
+]);
+
+/**
+ * Entries of a node's `props` that are not content: `el` (the same arguments
+ * again, as the element's attribute bag), `_tile` (the user-tile marker
+ * `_named` adds) and the classes and styles spec §8.4 leaves out.
+ */
+const TILE_PROPS_NOT_CONTENT: ReadonlySet<string> = new Set(["el", "_tile", "class", "style"]);
+
+/**
+ * The content of a tile node, by name, in comparison order (spec §8.4).
+ *
+ * First the fields its builtin lifts to the top level — `text`, `src`, `to`,
+ * `value`, `checked`, `options`, … — then the named arguments codegen folds
+ * into `props` (`alt`, `disabled`, `aria`, `id`, …). Codegen folds a lifted
+ * argument into `props` as well, so a name the top level already has is read
+ * there, once; and a node with a top-level `checked` is a toggle, whose
+ * `value=` argument is that checked state rather than a field of its own.
+ * Handlers are functions and are left out with everything listed above. A
+ * tile-test's expected node never carries its `{…}` block in `props` — the
+ * compiler leaves it out of the lowering (`GenCtx.expectedTree`) — so what
+ * is left there is what the expectation was written with.
+ */
+function tileContent(node: unknown): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  if (node === null || typeof node !== "object") return out;
+  const isContent = (v: unknown): boolean => v !== undefined && typeof v !== "function";
+  for (const [k, v] of Object.entries(node)) {
+    if (!TILE_NOT_CONTENT.has(k) && isContent(v)) out.set(k, v);
+  }
+  const props = tileField(node, "props");
+  if (props === null || typeof props !== "object") return out;
+  const toggle = out.has("checked");
+  for (const [k, v] of Object.entries(props)) {
+    if (out.has(k) || TILE_PROPS_NOT_CONTENT.has(k) || !isContent(v)) continue;
+    if (toggle && k === "value") continue;
+    out.set(k, v);
+  }
+  return out;
+}
+
+/** A content value as compared: `text` went through `show` on both sides. */
+function contentValue(k: string, v: unknown): unknown {
+  return k === "text" && v !== undefined ? String(v) : v;
 }
 
 /**
  * Structural tile comparison for tile-tests (spec §8.4): compares `kind`,
- * every content field the EXPECTED node carries (`text`, `src`, `to`,
- * `value`, `checked`, `options`, …), and `children` recursively. A field
- * only the actual node carries was not asserted, so it is not compared.
- * Returns the first differing path on mismatch.
+ * every content field the EXPECTED node carries ({@link tileContent}), and
+ * `children` recursively. A field only the actual node carries was not
+ * asserted, so it is not compared. Returns the first differing path on
+ * mismatch, with the two values there.
  */
 function tileStructEqual(
   expected: unknown,
@@ -211,14 +259,13 @@ function tileStructEqual(
   const ek = tileField(expected, "kind");
   const here = path || String(ek ?? "(root)");
   if (ek !== tileField(actual, "kind")) return { ok: false, path: `${here}.kind` };
-  for (const k of tileContentFields(expected)) {
-    // `text` is compared as rendered, the way it always was: a node's text
-    // went through `show` on both sides.
-    const ev = k === "text" ? String(tileField(expected, k)) : tileField(expected, k);
-    const av = k === "text" ? String(tileField(actual, k)) : tileField(actual, k);
+  const got = tileContent(actual);
+  for (const [k, raw] of tileContent(expected)) {
+    const ev = contentValue(k, raw);
+    const av = contentValue(k, got.get(k));
     if (!valueEqual(ev, av)) {
-      // Carry the leaf values so the runner can print the §8.7.1 value arrow
-      // and `kumiki fix --auto-patch` can locate the responsible literal.
+      // Carry the leaf values so the runner can print the §8.7.1 value arrow;
+      // `kumiki fix --auto-patch` repairs a text leaf from them.
       return { ok: false, path: `${here}.${k}`, expectedLeaf: ev, actualLeaf: av };
     }
   }
@@ -233,20 +280,28 @@ function tileStructEqual(
 }
 
 /**
- * One line per tile tree for the `expected:` / `actual:` report: the text
- * positionally, then every other content field {@link tileStructEqual}
- * compares as `name=value`, then the children.
+ * One line per tile tree for the `expected:` / `actual:` report. `shape` is
+ * the expected node at the same position, and only the fields
+ * {@link tileStructEqual} compares there are printed — the text positionally,
+ * the rest as `name=value`, a field `node` lacks left out — then the
+ * children, each against the expected child beside it. A child with no
+ * expected counterpart prints its kind and text.
  */
-function serializeTileNode(node: unknown): string {
+function serializeTileNode(node: unknown, shape: unknown = node): string {
   if (node == null) return "null";
   const kind = String(tileField(node, "kind"));
+  const have = tileContent(node);
+  const names = shape === null ? ["text"] : [...tileContent(shape).keys()];
   const parts: string[] = [];
-  const text = tileField(node, "text");
-  if (text !== undefined) parts.push(_jsonStr(text));
-  for (const k of tileContentFields(node)) {
-    if (k !== "text") parts.push(`${k}=${_jsonStr(tileField(node, k))}`);
+  for (const k of names) {
+    const v = have.get(k);
+    if (v === undefined) continue;
+    parts.push(k === "text" ? _jsonStr(String(v)) : `${k}=${_jsonStr(v)}`);
   }
-  for (const kid of tileChildren(node)) parts.push(serializeTileNode(kid));
+  const shapeKids = shape === null ? [] : tileChildren(shape);
+  tileChildren(node).forEach((kid, i) => {
+    parts.push(serializeTileNode(kid, shapeKids[i] ?? null));
+  });
   return `${kind}(${parts.join(", ")})`;
 }
 
@@ -1404,7 +1459,7 @@ export const _stdlibTest = {
       name: input.name,
       pass: cmp.ok,
       expected: serializeTileNode(input.expected),
-      actual: serializeTileNode(input.actual),
+      actual: serializeTileNode(input.actual, input.expected),
       ...(cmp.path ? { diffAt: cmp.path } : {}),
       ...(cmp.expectedLeaf !== undefined || cmp.actualLeaf !== undefined
         ? { leaf: { expected: cmp.expectedLeaf, actual: cmp.actualLeaf } }

@@ -1,20 +1,27 @@
-# Feature (testing.md §8.4): a tile-test compares every field its expected
-# node states — `src`, `to`, `value`, `checked`, `options` — not only `text`.
+# Feature (testing.md §8.4): a tile-test compares every content field its
+# expected node states — the fields a builtin lifts (`src`, `to`, `value`,
+# `checked`, `options`) and the named arguments it keeps in props (`alt`,
+# `disabled`) — not only `text`.
 #
-# Each test below states the one field its tile is about. A snapshot that
-# compared only `kind`, `text` and `children` passed every one of them with
-# that field written wrong: an image with the wrong `src`, a link to the
-# wrong page. What stays out of the comparison is what §8.4 names — class
-# names and styles (`{pad: …}`, `variant=`) — and any field the expected
-# node leaves out: `name-field` does not state a `placeholder`, so the one
-# `Name` renders is not compared.
+# A snapshot that compared only `kind`, `text` and `children` passed every
+# test below with its subject written wrong: an image with the wrong `src` or
+# `alt`, a link to the wrong page, a button that is not disabled. What stays
+# out of the comparison is the `{…}` block — `go-disabled` states a different
+# `variant` from the one `Go` renders, and still passes — the identity and
+# wiring a node carries (`key` from `for`, `bind`), and any field the
+# expected node leaves out: `name-field` does not state a `placeholder`, so
+# the one `Name` renders is not compared, and `people-list` keys its rows
+# implicitly while `People` keys them by id.
 #
 # `packages/tests/tile-test-content-fields.test.ts` runs these tests, then
 # writes each stated field wrong and asserts the test fails naming it.
 
+type Person = {id: Int, name: Text}
+
 slot agreed : Bool = true
 slot name   : Text = "Ada"
 slot size   : Text = "s"
+slot people : List(Person) = [{id: 1, name: "Ada"}, {id: 2, name: "Grace"}]
 
 tile Pic   = image(src="/avatar.png", alt="avatar")
 tile Nav   = link(text="Home", to="/home")
@@ -22,6 +29,8 @@ tile Agree = check(value=agreed)
 tile Name  = input(value=name, placeholder="your name")
 tile Size  = select(options=[{label: "S", value: "s"}, {label: "L", value: "l"}], value=size)
 tile Card  = column(Pic, Nav) {pad: "lg", gap: "md"}
+tile Go    = button(text="Go", disabled=true) {variant: "ghost"}
+tile People = column(for p in people text(p.name) {key: p.id.show})
 
 tile App
     = column(
@@ -30,6 +39,8 @@ tile App
         Agree,
         Name,
         Size,
+        Go,
+        People,
         text("agreed=" + agreed.show + " name=" + name + " size=" + size))
       {pad: "lg", gap: "md"}
 
@@ -67,3 +78,13 @@ test card-children =
     tile-test Card
         given  = {slots: {}}
         expect = column(image(src="/avatar.png", alt="avatar"), link(text="Home", to="/home"))
+
+test go-disabled =
+    tile-test Go
+        given  = {slots: {}}
+        expect = button(text="Go", disabled=true) {variant: "primary"}
+
+test people-list =
+    tile-test People
+        given  = {slots: {}}
+        expect = column(for p in people text(p.name))

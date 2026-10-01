@@ -228,7 +228,30 @@ test counter-display =
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
 
-What is compared is the expected node's `kind`, its `children` in order, and **every content field it carries** — its `text`, and whatever else its builtin puts on the node: an `image`'s `src`, a `link`'s `to`, an `input`'s `value`, a `check`'s checked state, a `select`'s `options`. A field the expected node does not carry (an `input(value="x")` states no `placeholder`) is not compared, so a snapshot can assert one field of a tile that renders several. What a builtin fills in for an argument left out *is* carried: `check()` is an unchecked check, and a `select` written with no `options=` has none. A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`, and the `expected:` / `actual:` lines print the compared fields.
+What is compared is the expected node's `kind`, its `children` in order, and **every content field it carries**: the fields its builtin puts on the node — its `text`, an `image`'s `src`, a `link`'s `to`, an `input`'s `value`, a `check`'s checked state, a `select`'s `options` — and every other named argument it is written with, such as an `image`'s `alt`, a `button`'s `disabled` or `variant`, an `aria-*` label or an `id`. A field the expected node does not carry (an `input(value="x")` states no `placeholder`) is not compared, so a snapshot can assert one field of a tile that renders several.
+
+Some things are never compared, whatever the expected node says:
+
+- the `{…}` block: styles, classes and any other prop written there. `column(…) {pad: "sm"}` asserts no padding; to compare a prop, write it as a named argument;
+- handlers (`onClick=…`, and the reducers a `ui.*` subscription wires);
+- the identity and wiring a node carries: its `key` (written as `{key: …}`, or implicit in a `for`), a control's `bind`, and a link's `prefetch`.
+
+A builtin fills in some fields when their argument is left out, and the expected node carries those like any other field. So `check()` is an unchecked check, and `details(text("x"))` asserts an empty summary. To assert another value, write the argument:
+
+| Builtin | Carried when the argument is left out |
+|---|---|
+| `text`, `heading`, `button`, `label`, `link`, `markdown`, `code`, `editable` | `text: ""` |
+| `link` | `to: ""` |
+| `image` | `src: ""` |
+| `icon` | `name: ""` |
+| `check`, `switch` | unchecked |
+| `select` | `options: []` |
+| `list` | `ordered: false` |
+| `details` | `summary: ""` |
+| `error` | `field: ""` |
+| `modal`, `drawer`, `popover` | `open: true` |
+
+A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
 
 `given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
 

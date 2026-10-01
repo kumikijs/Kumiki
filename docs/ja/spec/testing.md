@@ -194,7 +194,30 @@ test counter-display =
 
 snapshot は深い構造比較。クラス名やスタイルは比較対象外（明示指定したものだけ）。
 
-比較するのは、期待するノードの `kind`、順序どおりの `children`、そしてそのノードが持つ**すべての内容フィールド**である — `text` と、ビルトインがノードに載せるそれ以外のもの：`image` の `src`、`link` の `to`、`input` の `value`、`check` のチェック状態、`select` の `options`。期待するノードが持たないフィールド（`input(value="x")` は `placeholder` を述べていない）は比較しないので、いくつものフィールドを描くタイルの 1 つだけを snapshot で主張できる。省いた引数の代わりにビルトインが補うものは持っている：`check()` はチェックされていない check であり、`options=` を書かない `select` は選択肢を持たない。不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告し、`expected:` / `actual:` の行は比較したフィールドを表示する。
+比較するのは、期待するノードの `kind`、順序どおりの `children`、そしてそのノードが持つ**すべての内容フィールド**である。内容フィールドとは、ビルトインがノードに載せるフィールド（`text`、`image` の `src`、`link` の `to`、`input` の `value`、`check` のチェック状態、`select` の `options`）と、それ以外にそのノードが書かれた名前付き引数（`image` の `alt`、`button` の `disabled` や `variant`、`aria-*` のラベル、`id` など）である。期待するノードが持たないフィールド（`input(value="x")` は `placeholder` を述べていない）は比較しないので、いくつものフィールドを描くタイルの 1 つだけを snapshot で主張できる。
+
+期待するノードに何が書かれていても、次のものは比較しない：
+
+- `{…}` ブロック：スタイル、クラス、そこに書いたそれ以外のプロパティ。`column(…) {pad: "sm"}` は余白について何も主張しない。プロパティを比較したいときは名前付き引数で書く；
+- ハンドラ（`onClick=…` と、`ui.*` の購読が結びつける reducer）；
+- ノードが持つ同一性と配線：`key`（`{key: …}` で書いたもの、または `for` の暗黙のキー）、コントロールの `bind`、リンクの `prefetch`。
+
+ビルトインは、引数を省いたときにもいくつかのフィールドを補う。期待するノードはそれを他のフィールドと同じように持つ。したがって `check()` はチェックされていない check であり、`details(text("x"))` は空の summary を主張する。別の値を主張するには、その引数を書く：
+
+| ビルトイン | 引数を省いたときに持つもの |
+|---|---|
+| `text`、`heading`、`button`、`label`、`link`、`markdown`、`code`、`editable` | `text: ""` |
+| `link` | `to: ""` |
+| `image` | `src: ""` |
+| `icon` | `name: ""` |
+| `check`、`switch` | チェックなし |
+| `select` | `options: []` |
+| `list` | `ordered: false` |
+| `details` | `summary: ""` |
+| `error` | `field: ""` |
+| `modal`、`drawer`、`popover` | `open: true` |
+
+不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告する。`expected:` / `actual:` の行は比較したフィールドだけを表示する。実際のノードには同じ位置の期待するノードが述べるフィールドを表示するので、実際のノードだけが持つ `placeholder` や `bind` は表示されない。
 
 `given.in` はターゲットの引数である。そしてターゲットはプログラムが定義した tile でなければならない——生成されるテストはターゲットに `App._tilesById` 経由で到達し、そこにはユーザ定義の tile しか入っていないので、組み込み tile はターゲットになれない（[E0105](./errors.md#e0105-undef-tile)）。`tile-test` はそのターゲットを tile 本体と同じように適用する——`App._tilesById["<T>"]` に `given.in` を渡す——ので、`in=` を宣言しているターゲットには 1 つ必要、宣言していないターゲットには渡してはならず、いずれの場合も値は宣言された型と照合される：
 
