@@ -1600,6 +1600,9 @@ export function noteBindWrite(
   byEl.set(el, { slot, path, value, shown: shownValue(el), unread });
 }
 
+/** Where a refused value counts as shown: a view's root, or any set of controls. */
+export type BindView = Pick<Node, "contains">;
+
 /**
  * The value `slot` shows inside `view`: `held` — the slot's own value — with
  * every refused value a control bound into it is still showing laid over it at
@@ -1618,7 +1621,7 @@ export function noteBindWrite(
 export function refusedBindShown(
   app: object,
   slot: string,
-  view: Node | undefined,
+  view: BindView | undefined,
   held?: unknown,
 ): Pick<RefusedBind, "value" | "unread"> | undefined {
   const byEl = refusedBinds.get(app);
@@ -1645,6 +1648,37 @@ export function refusedBindShown(
     unread ??= r.unread;
   }
   return { value, unread };
+}
+
+/** A field as it shows, judged: valid, or why not (see `judgeShownField`). */
+export type ShownField =
+  | { valid: true }
+  | { valid: false; unread: BindReader["as"] }
+  | { valid: false; unread?: undefined; value: unknown };
+
+/**
+ * Whether the field bound to `slot` is valid as it shows inside `view`
+ * (forms.md §5.1.2), and if not, what is wrong with it. Text a control shows
+ * that reads as no value of the bound base (`"1.5"` into an `Int`) is judged
+ * first, whatever the refinement; then a refused value a control there still
+ * shows, else the slot's own value, against the slot's refinement.
+ *
+ * `error(field=…)` renders its message from this and a form's submit is gated
+ * on it (§5.2.2), so given the same view the two cannot disagree. They are
+ * not always handed the same view: the tile asks about the view being
+ * rendered, the form about its own controls.
+ */
+export function judgeShownField(
+  app: AppShape,
+  slot: string,
+  view: BindView | undefined,
+): ShownField {
+  const meta = app.slots?.[slot];
+  const held = app.live?.[slot] ?? meta?.value;
+  const refused = refusedBindShown(app, slot, view, held);
+  if (refused?.unread) return { valid: false, unread: refused.unread };
+  const value = refused ? refused.value : held;
+  return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
 }
 
 /** The controls a refused bind is remembered against, for `app`. */
