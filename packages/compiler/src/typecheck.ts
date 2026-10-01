@@ -43,7 +43,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
+import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
@@ -1518,15 +1518,6 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
-/**
- * Whether a positional argument of `name` is a child tile: a builtin that is
- * not a value-arg builtin. A user tile's positional argument is its input, a
- * value.
- */
-function takesChildren(name: string): boolean {
-  return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
-}
-
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -1604,18 +1595,26 @@ function checkTileCall(
       checkTileExpr(v, sym, errors, ctx);
       continue;
     }
-    // A positional argument of a builtin that takes children is a child, and
-    // `let` is not a tile (§1.7.1). It parses there as a value, which codegen
-    // renders as nothing, so the tile under it was neither checked nor shown.
-    // Nothing inside it is checked on top: a tile call there is read as a
-    // `fn` call, and would report a second, wrong diagnostic.
-    if (v.kind === "LetIn" && arg.name === undefined && takesChildren(t.name)) {
+    // A positional argument of a builtin that is not a value builtin renders
+    // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
+    // program defines, and drops anything else — so a value there rendered
+    // nothing, and a slot named there lowered to a `null` child. It is
+    // reported at the value, and nothing inside it is checked: a `let` is the
+    // one value that can hold a tile call, which reads as a `fn` call there
+    // and would be reported wrongly, so a correct diagnostic under it (an
+    // undefined name, say) waits until the value is moved too.
+    if (
+      arg.name === undefined &&
+      positionalIsTile(t.name) &&
+      !(v.kind === "Ref" && sym.tiles.has(v.name))
+    ) {
       errors.push({
         code: "E0128",
-        kind: "let-in-tile",
+        kind: "value-as-child",
         message:
-          "A `let` is not a tile: a tile body has no local bindings, so a `let` written as a " +
-          "child renders nothing. Write the value where it is used, or compute it in a `fn`",
+          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
+          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
+          "for a `let`, write the value where it is used or compute it in a `fn`",
         pos: v.pos,
       });
       continue;
