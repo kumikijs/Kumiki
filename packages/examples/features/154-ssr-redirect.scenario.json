@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "label": "a top-level redirect lands on its target",
+      "do": { "navigate": "/old" },
+      "expect": { "noErrors": true, "domIncludes": ["Home"], "domExcludes": ["404"] }
+    },
+    {
+      "label": "a redirect inside a sub-routes map lands on the child it names",
+      "do": { "navigate": "/settings/legacy" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Billing settings"],
+        "domExcludes": ["Settings home"]
+      }
+    }
+  ]
+}
