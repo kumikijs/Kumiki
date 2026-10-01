@@ -1,3 +1,4 @@
+import type { TypeEnv } from "../assignable.ts";
 import type { AppDef, EffectDef, ReducerDef } from "../ast.ts";
 import {
   isPerTileFamily,
@@ -7,6 +8,7 @@ import {
   tileModule,
 } from "../builtins.ts";
 import { tileFamilyVar, tilePatcherFamilyVar, tilePatcherVar, tileVar } from "./context.ts";
+import { type StorageHandler, storageHandlerOf } from "./emit-effect.ts";
 import { collectEmits } from "./emit-reducer.ts";
 
 type IndexedHandler = "indexedRead" | "indexedWrite" | "indexedDelete";
@@ -24,7 +26,7 @@ export type RuntimeUsage = {
   router: boolean;
   /** The storage effect handlers referenced by generated invokes
    * (localStorage + sessionStorage share the `effects-storage` module). */
-  storage: ("storageRead" | "storageWrite" | "sessionRead" | "sessionWrite")[];
+  storage: StorageHandler[];
   /** The IndexedDB effect handlers referenced by generated invokes. */
   indexed: IndexedHandler[];
   http: boolean;
@@ -34,6 +36,16 @@ export type RuntimeUsage = {
   /** Runtime module file basenames the generated imports reference. */
   modules: string[];
 };
+
+/** The order the storage handlers are imported in, so the header is stable. */
+const STORAGE_HANDLER_ORDER: StorageHandler[] = [
+  "storageRead",
+  "storageWrite",
+  "storageClear",
+  "sessionRead",
+  "sessionWrite",
+  "sessionClear",
+];
 
 export const TILE_FAMILY_ORDER: TileFamily[] = [
   "layout",
@@ -60,6 +72,7 @@ export function analyzeRuntimeUsage(
   app: AppDef,
   reducers: ReducerDef[],
   effects: EffectDef[],
+  env: TypeEnv,
   usedTiles: Set<string>,
   includeTests: boolean,
   hasTests: boolean,
@@ -87,11 +100,8 @@ export function analyzeRuntimeUsage(
     usedTiles.has("link") ||
     usedTiles.has("route-outlet") ||
     app.routes.some((r) => r.tile.startsWith(">>") || (r.path !== "/" && r.path !== "/404"));
-  const storage: ("storageRead" | "storageWrite" | "sessionRead" | "sessionWrite")[] = [];
-  if (effects.some((e) => e.cap === "storage.read")) storage.push("storageRead");
-  if (effects.some((e) => e.cap === "storage.write")) storage.push("storageWrite");
-  if (effects.some((e) => e.cap === "session.read")) storage.push("sessionRead");
-  if (effects.some((e) => e.cap === "session.write")) storage.push("sessionWrite");
+  const handlers = new Set(effects.map((e) => storageHandlerOf(e, env)));
+  const storage = STORAGE_HANDLER_ORDER.filter((h) => handlers.has(h));
   const indexed: IndexedHandler[] = [];
   // `indexed.read` is dispatched at runtime by input shape (point vs range
   // query), so cap → one handler is enough. Spec §6.7.4.
