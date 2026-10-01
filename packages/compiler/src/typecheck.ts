@@ -60,7 +60,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
-import { fnScope } from "./fn-scope.ts";
+import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
@@ -5998,7 +5998,7 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
 function routeReadsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
   return preMountProbe(e, sym, params).routeReads;
 }
@@ -6014,7 +6014,7 @@ function routeReadsIn(
 function preMountProbe(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[],
+  params: readonly FnScopeBind[],
 ): { routeReads: { name: string; pos: Pos }[]; fragmentFnCalls: { name: string; pos: Pos }[] } {
   const routeReads: { name: string; pos: Pos }[] = [];
   const fragmentFnCalls: { name: string; pos: Pos }[] = [];
@@ -6046,7 +6046,7 @@ function preMountProbe(
 function fnCallsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
   const out: { name: string; pos: Pos }[] = [];
   walkExpr(e, (n) => {
