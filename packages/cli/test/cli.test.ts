@@ -268,6 +268,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // keeps that path so what the field shows is laid over the record as it is
     // now, shallower paths first. A counter binds nothing and still ships them,
     // because they sit in the core module every app loads.
+    //
+    // Still 61,000 (60,983 measured, from 60,924): a Set literal is a Set
+    // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
+    // `setAdd` so a literal and an `add` chain are one form. A counter writes
+    // no Set and still ships it in stdlib.js.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
