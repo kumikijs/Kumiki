@@ -69,6 +69,7 @@ import { type RefinementProblem, refinementBaseProblem, refinementProblem } from
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
+  bareNameAt,
   fitsRecordPosition,
   type GivenSection,
   givenSection,
@@ -5663,8 +5664,10 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
       switch (f.section) {
         case "slots-equal":
-          // `from-log` (the log's own values) fits the position and has no
-          // slots of its own to check.
+          // The position's bare name (`from-log`: the log's own values) has no
+          // slots of its own to check, so it stops here; anything past this
+          // line is a record or E0713.
+          if (bareNameAt(f.value, "expect.slots-equal") !== undefined) break;
           if (requireRecord(f.value, "expect.slots-equal", errors)) {
             checkTestSlotMap(f.value, sym, errors, base);
           }
@@ -5754,8 +5757,10 @@ function nearestSectionHint(kind: TestKind, part: TestPart, written: string): st
 
 /**
  * E0713 when `value` — written at a test-body `position` the lowering reads
- * as a record — is something else; whether it is a record (or absent) to go on
- * reading. The sentence is the one the lowering throws, from the shared table.
+ * as a record — is something the position does not accept; whether it fits (a
+ * record, the position's bare name, or absent) to go on reading. A caller at a
+ * position with a bare name steps past it (`bareNameAt`) before reading fields.
+ * The sentence is the one the lowering throws, from the shared table.
  */
 function requireRecord(
   value: Expr | TileExpr | undefined,
@@ -5780,7 +5785,8 @@ function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: 
 
 /**
  * `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots` /
- * `slots-equal`, once `requireRecord` has said it is one.
+ * `slots-equal`, once `requireRecord` has said it fits and the caller has
+ * stepped past a bare name, so `rec` is a record.
  */
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   for (const f of recordFieldsOf(rec)) {

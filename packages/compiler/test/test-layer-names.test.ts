@@ -558,6 +558,32 @@ describe("a clause read as a record of sections is a record", () => {
         mocks  = {}
         expect = {slots-equal: 41}`);
     expect(at(src)).toEqual([e0713("expect.slots-equal", "41}")]);
+    // A bare name that is not the position's own is not accepted in its place:
+    // only `from-log` is, and a slot's name is not a value to compare against.
+    expect(at(src.replace("41", "count"))).toEqual([e0713("expect.slots-equal", "count}")]);
+  });
+
+  it("accepts `from-log` in place of a record at `slots-equal` only", () => {
+    // `from-log` is the episode-test's alternative to a record of slots; at a
+    // `given.slots` or an `expect.slots` it is a name like any other, and the
+    // sentence there does not offer it.
+    expect(at(reducerTest(`{slots: from-log}`, EXPECT))).toEqual([
+      e0713("given.slots", "from-log}"),
+    ]);
+    expect(at(reducerTest(GIVEN, `{slots: from-log}`))).toEqual([
+      e0713("expect.slots", "from-log}"),
+    ]);
+    expect(SAYS["given.slots"]).not.toContain("from-log");
+    expect(SAYS["expect.slots"]).not.toContain("from-log");
+  });
+
+  it("reports an `expect.slots` that is not a record beside a `panic`", () => {
+    // The lowering does not read `slots` on the `panic` branch, so only the
+    // checker stands between this and a section that is silently dropped; the
+    // rule is not scoped to the non-panic form.
+    expect(at(reducerTest(GIVEN, `{panic: "boom", slots: 41}`))).toEqual([
+      e0713("expect.slots", "41}"),
+    ]);
   });
 
   it("accepts `from-log`, a record and `{}` as `slots-equal`, and `{}` as `slots`", () => {
@@ -675,6 +701,7 @@ describe("a clause read as a record of sections is a record", () => {
         mocks  = {}
         expect = {slots-equal: 41}`);
       expect(lower(src)).toThrow(throws("expect.slots-equal"));
+      expect(lower(src.replace("41", "count"))).toThrow(throws("expect.slots-equal"));
     });
 
     it("lowers `{}` as the empty record in every position that takes one", () => {
@@ -706,6 +733,24 @@ test t6 =
     property-test
         for-all   = {n: Int}
         given     = {slots: {count: n}, event: {}}
+        invariant = n == n
+test t7 =
+    reducer-test inc
+        given  = {slots: {}}
+        expect = {slots: {}}
+test t8 =
+    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {}}
+test t9 =
+    tile-test B
+        given  = {slots: {}}
+        expect = button(text="+", onClick=inc)
+test t10 =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {}}
         invariant = n == n`);
       expect(codes(src)).toEqual([]);
       expect(lower(src)).not.toThrow();

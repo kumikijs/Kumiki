@@ -75,9 +75,9 @@ export type ExpectSection<K extends TestKind> = SectionName<K, "expect">;
  * nothing, and a `mocks` scripted nothing, each without a word. A `slots`
  * section is read as slot → value pairs the same way, one level down: a
  * `given.slots` that is not a record seeded no slot, and an `expect.slots`
- * asserted none. The checker reports E0713 at any of them that is not a
- * record, and the lowering throws the same sentence for a caller that skipped
- * `check`.
+ * asserted none. The checker reports E0713 at any of them that is neither a
+ * record nor its bare name, and the lowering throws the same sentence for a
+ * caller that skipped `check`.
  */
 const RECORD_POSITIONS = {
   given: { shape: "{<section>: …}" },
@@ -93,11 +93,24 @@ const RECORD_POSITIONS = {
 
 export type RecordPosition = keyof typeof RECORD_POSITIONS;
 
+/** The bare names the table accepts in place of a record. */
+export type BareName = Extract<(typeof RECORD_POSITIONS)[RecordPosition], { or: string }>["or"];
+
+/**
+ * What the table says about `position`, with its literal types: only
+ * `positionSpec("expect.slots-equal")` has an `or`, and it is `"from-log"`. A
+ * caller asks `"or" in spec` rather than widening the entry to an optional
+ * `or: string`, which would let any position grow a bare name unnoticed.
+ */
+export function positionSpec<P extends RecordPosition>(position: P): (typeof RECORD_POSITIONS)[P] {
+  return RECORD_POSITIONS[position];
+}
+
 /** What E0713 says about a record position holding something else. */
 export function notARecordMessage(position: RecordPosition): string {
-  const p: { shape: string; or?: string } = RECORD_POSITIONS[position];
-  const or = p.or === undefined ? "" : `, or \`${p.or}\``;
-  return `\`${position}\` must be a record, \`${p.shape}\`${or}`;
+  const spec = positionSpec(position);
+  const or = "or" in spec ? `, or \`${spec.or}\`` : "";
+  return `\`${position}\` must be a record, \`${spec.shape}\`${or}`;
 }
 
 /**
@@ -110,16 +123,27 @@ export function isRecordValue(e: Expr | TileExpr): boolean {
   return e.kind === "RecordLit" || (e.kind === "MapLit" && e.entries.length === 0);
 }
 
+/**
+ * The bare name `e` is when it is the one `position` accepts in place of a
+ * record, and `undefined` otherwise — including at a position with no such
+ * name. A reader that walks fields asks this first: a bare name has none.
+ */
+export function bareNameAt(e: Expr | TileExpr, position: RecordPosition): BareName | undefined {
+  const spec = positionSpec(position);
+  if (!("or" in spec) || isTileExpr(e) || e.kind !== "Ref" || e.name !== spec.or) return undefined;
+  return spec.or;
+}
+
 /** Whether `e` is what `position` accepts: a record, or its one bare name. */
 export function fitsRecordPosition(e: Expr | TileExpr, position: RecordPosition): boolean {
-  if (isRecordValue(e)) return true;
-  const p: { shape: string; or?: string } = RECORD_POSITIONS[position];
-  return p.or !== undefined && !isTileExpr(e) && e.kind === "Ref" && e.name === p.or;
+  return isRecordValue(e) || bareNameAt(e, position) !== undefined;
 }
 
 /**
  * The value written at `position`, for a lowering that reads it whole; a throw
- * when it is not what the position accepts.
+ * when it is not what the position accepts. A position with a bare-name
+ * alternative returns that name unchanged — the caller still has to recognise
+ * it (`bareNameAt`), since it is not a value to lower.
  */
 export function recordValueAt(e: Expr, position: RecordPosition): Expr {
   if (!fitsRecordPosition(e, position)) throw new Error(`E0713 ${notARecordMessage(position)}`);
@@ -128,14 +152,17 @@ export function recordValueAt(e: Expr, position: RecordPosition): Expr {
 
 /**
  * The fields of the record written at `position`, none when nothing is written
- * there, and a throw when something that is not a record is.
+ * there, and a throw when something the position does not accept is. It gates
+ * on `fitsRecordPosition`, as `recordValueAt` does, so the bare name a position
+ * accepts is not thrown on — and has no fields: a caller at such a position
+ * recognises it with `bareNameAt` before asking for fields.
  */
 export function recordFieldsAt(
   e: Expr | TileExpr | undefined,
   position: RecordPosition,
 ): (Expr & { kind: "RecordLit" })["fields"] {
   if (e === undefined) return [];
-  if (!isRecordValue(e)) throw new Error(`E0713 ${notARecordMessage(position)}`);
+  if (!fitsRecordPosition(e, position)) throw new Error(`E0713 ${notARecordMessage(position)}`);
   return !isTileExpr(e) && e.kind === "RecordLit" ? e.fields : [];
 }
 

@@ -9,6 +9,7 @@ import {
 } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
 import {
+  bareNameAt,
   expectSection,
   givenSection,
   isSectionName,
@@ -359,16 +360,18 @@ function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
       throw new Error(`episode-test expect has no section "${f.name}"`);
     }
     switch (f.name) {
-      case "slots-equal":
-        // `from-log` is the literal that means "take the log's own values".
-        // A value that is neither throws E0713 (`recordValueAt`) rather than
-        // being evaluated as the expectation.
+      case "slots-equal": {
+        // The position's bare name (the table's `or`) is passed through as
+        // itself; anything else must be a record (`recordValueAt` throws E0713
+        // rather than evaluating it as the expectation).
+        const bare = bareNameAt(f.value, "expect.slots-equal");
         parts.push(
-          f.value.kind === "Ref" && f.value.name === "from-log"
-            ? `slotsEqual: "from-log"`
+          bare !== undefined
+            ? `slotsEqual: ${JSON.stringify(bare)}`
             : `slotsEqual: ${jsOfExpr(recordValueAt(f.value, "expect.slots-equal"), ctx)}`,
         );
         break;
+      }
       case "no-panics":
         parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
         break;
