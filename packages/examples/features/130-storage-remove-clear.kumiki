@@ -1,0 +1,58 @@
+# Feature (http.md §6.7.2): `storage.write` answers all three of its
+# declarations. A write and a remove are told apart by the request; a clear by
+# the declaration.
+#
+#   request {key: Text, value: JsonValue}     write the value under the key
+#   request {key: Text}                       remove the key
+#   in=Unit, no map-request                   clear the origin's localStorage
+#
+# `save` builds its request with `map-request`; `forget` takes the request as
+# its input. A remove used to store the string "undefined" under the key and
+# report ok, and a clear always erred.
+#
+# There is no `.err` reducer below on purpose: an unhandled `err` is an error
+# `smoke` reports, and `smoke` clicks the buttons in document order — Save,
+# Forget, Load, Wipe — against the real localStorage, so a remove that did not
+# remove fails the Load. A real app handles `.err` (see 20-effect-storage).
+
+slot shown : Text = "idle"
+
+effect save cap=storage.write
+            in=Text
+            out=Result(Unit, Text)
+            map-request={key: "note", value: $1}
+
+effect forget cap=storage.write
+              in={key: Text}
+              out=Result(Unit, Text)
+
+effect wipe cap=storage.write
+            in=Unit
+            out=Result(Unit, Text)
+
+effect load cap=storage.read
+            in=Unit
+            out=Result(Option(Text), Text)
+            map-request={key: "note", decode: Decoder.Json(Text)}
+
+reducer goSave   on=ui.click(SaveBtn)   do= emit save("hello")
+reducer goForget on=ui.click(ForgetBtn) do= emit forget({key: "note"})
+reducer goWipe   on=ui.click(WipeBtn)   do= emit wipe()
+reducer goLoad   on=ui.click(LoadBtn)   do= emit load()
+
+reducer saved     on=save.ok(_, _)   do= shown := "saved"
+reducer forgotten on=forget.ok(_, _) do= shown := "forgotten"
+reducer wiped     on=wipe.ok(_, _)   do= shown := "wiped"
+reducer loaded    on=load.ok($o, _)  do= shown := "loaded " + $o.get-or("<none>")
+
+tile SaveBtn   = button(text="Save")   {id: "save"}
+tile ForgetBtn = button(text="Forget") {id: "forget"}
+tile WipeBtn   = button(text="Wipe")   {id: "wipe"}
+tile LoadBtn   = button(text="Load")   {id: "load"}
+
+tile App = column(SaveBtn, ForgetBtn, LoadBtn, WipeBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
+
+app StorageRemoveClear
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
