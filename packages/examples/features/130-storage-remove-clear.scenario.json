@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "nothing has happened yet",
+      "expect": { "noErrors": true, "state": { "shown": "idle" } }
+    },
+    {
+      "label": "save writes the note",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "state": { "shown": "saved" } }
+    },
+    {
+      "label": "forget removes it",
+      "do": { "click": "#forget" },
+      "expect": { "noErrors": true, "state": { "shown": "forgotten" } }
+    },
+    {
+      "label": "a load after the remove finds nothing",
+      "do": { "click": "#load" },
+      "expect": { "noErrors": true, "state": { "shown": "loaded <none>" } }
+    },
+    {
+      "label": "wipe clears the storage",
+      "do": { "click": "#wipe" },
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": "wiped" },
+        "domIncludes": ["shown: wiped"]
+      }
+    }
+  ],
+  "effects": {
+    "load": [{ "outcome": "ok", "value": { "_tag": "None" } }]
+  }
+}

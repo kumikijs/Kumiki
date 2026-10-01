@@ -61,8 +61,9 @@ describe("app.http fields that read a slot", () => {
       expect(readHeader(double.calls[0]?.init.headers, "X-Endpoint")).toBe(
         "https://api.example.com",
       );
+      expect(readHeader(double.calls[0]?.init.headers, "X-Mode")).toBe("loose");
 
-      // Two reducers, writing three of the four slots and nothing else. If a
+      // Two reducers, writing the four slots the fields read and nothing else. If a
       // field were read once, this request would repeat the first one.
       clickByText(root, "Use backup");
       clickByText(root, "Tighten");
@@ -76,6 +77,7 @@ describe("app.http fields that read a slot", () => {
       expect(readHeader(double.calls[1]?.init.headers, "X-Endpoint")).toBe(
         "https://backup.example.com",
       );
+      expect(readHeader(double.calls[1]?.init.headers, "X-Mode")).toBe("tight");
 
       dispose();
     } finally {
