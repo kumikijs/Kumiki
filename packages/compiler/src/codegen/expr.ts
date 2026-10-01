@@ -287,8 +287,18 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       const parts = e.fields.map((f) => `${fieldKey(f.name)}: ${jsOfExpr(f.value, ctx)}`);
       return `{ ${parts.join(", ")} }`;
     }
-    case "ListLit":
-      return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+    case "ListLit": {
+      if (!e.asSet) return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
+      // A Set's members are its keys, so a `<any-id>` member (test expect,
+      // §8.2.2) is a key wildcard, not a value: it cannot go through `setOf`,
+      // which would key the sentinel by its string form. The literal members
+      // are built as usual, and the wildcards are counted for the matcher,
+      // which pairs each with one otherwise-unmatched member.
+      const members = e.items.filter((it) => !(it.kind === "Wildcard" && it.wild === "any-id"));
+      const set = `_s.setOf([${members.map((it) => jsOfExpr(it, ctx)).join(", ")}])`;
+      const wild = e.items.length - members.length;
+      return wild === 0 ? set : `{ ...${set}, [_s.WILD_MEMBERS]: ${wild} }`;
+    }
     // The same array a tuple pattern destructures — `tupleArm` guards with
     // `Array.isArray` and reads by index, so the two halves already agreed on
     // the shape before there was a way to write one.
@@ -298,10 +308,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       const parts = e.entries.map((en) => {
         // A `<any-id>` map key (test expect, §8.2.2) lowers to the runtime's
         // wild-key sentinel so the matcher pairs it with the one generated entry.
+        // Any other key is stored as every Map member stores one (`entryKey`).
         const keyJs =
           en.key.kind === "Wildcard" && en.key.wild === "any-id"
             ? "[_s.WILD_KEY]"
-            : `[${jsOfExpr(en.key, ctx)}]`;
+            : `[_s.entryKey(${jsOfExpr(en.key, ctx)})]`;
         return `${keyJs}: ${jsOfExpr(en.value, ctx)}`;
       });
       return `{ ${parts.join(", ")} }`;
@@ -668,9 +679,8 @@ export function methodCallJs(
   switch (method) {
     case "filter":
       // The receiver may be a List (incl. .entries → [k,v] tuples) or a Map.
-      // Dispatch at runtime; the lambda destructures tuples and also accepts
-      // the (k, v) calling convention used by mapFilter.
-      // A Map's predicate is handed each key, restored like any key reader's.
+      // Dispatch at runtime; a Map hands the lambda each `[k, v]` pair, as
+      // `.entries` does, with the key restored like any key reader's.
       return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
       // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples)
