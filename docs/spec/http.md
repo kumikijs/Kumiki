@@ -181,7 +181,7 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests | per request |
+| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
 | `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
 | `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
@@ -203,10 +203,20 @@ resolved once, by the compiler, against the `reducer` definitions.
 What is checked in the four expressions is the names and the values. A name
 that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), reported where it is
 written. A value of the wrong type is [E0201](./errors.md#e0201-type-mismatch), reported at the
-field:
+field unless a bullet below says otherwise:
 
 - `base-url` takes anything assignable to `Text` — a type built on `Text`,
   such as `Url`, included.
+- `headers` takes anything assignable to `Map(Text, Text)`, the type of a
+  request's own `headers` ([§6.1.2](#_6-1-2-standard-effect)): a literal
+  `{"Name": value}` whose every value is a `Text`, or any other expression of
+  that type — a slot, a `fn` call. A key or value in the literal that is not a
+  `Text` is reported where it is written, and anything that is not a map at the
+  field, or at the `if` branch that yields it. The keys are quoted:
+  `{Content-Type: "application/json"}` with bare keys is a record, not a map,
+  and is E0201 at the field. The runtime spreads the value into each request's
+  headers: a number spreads to nothing and a string to headers named `0`, `1`,
+  … — either way not one intended header reaches the request.
 - `timeout` takes anything assignable to `Int`, read as milliseconds. A
   `Duration` is one (it is milliseconds at run time), and so is a user
   `nominal Int`; a `Float` is not. A `Text` would reach `setTimeout` as `NaN`
@@ -219,8 +229,7 @@ field:
 What is compared is the type, and for `credentials` the literals: a value
 computed any other way — a slot, a call, a concatenation — is decided at run
 time, so one of the right type is accepted whatever it will hold. `timeout: 0`
-and a negative `Int` are an `Int`, and are accepted too. `headers` has no type
-to hold it to here.
+and a negative `Int` are an `Int`, and are accepted too.
 
 ### 6.3.2 Global Handling of 401
 
