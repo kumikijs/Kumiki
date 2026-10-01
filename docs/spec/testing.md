@@ -31,6 +31,7 @@ what it is:
 | an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
+| a `given.slots` / `expect.slots` value, an `expect.effects` argument, a `given.mocks` payload | a value of the slot's type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field) |
 | a `given` / `expect` **section** key | one of the closed set that kind accepts | [E0714](./errors.md#e0714-test-section-unknown) |
 
 The sections themselves are a vocabulary rather than names to resolve, one
@@ -116,7 +117,7 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 `<any-id>` means "any generated ID," and `<slots.todos>` means "a reference to the slot value after execution."
 
-A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
+A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. As a **member of a Set literal**, each `<any-id>` pairs with one otherwise-unmatched member, so `[<any-id>, <any-id>]` asks for exactly two generated members and `["a", <any-id>]` for `"a"` and one more. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
 
 ### 8.2.3 The batch rule applies here too
 
