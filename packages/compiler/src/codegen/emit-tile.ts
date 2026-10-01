@@ -351,7 +351,12 @@ function tileCallJs(
   if (!BUILTIN_TILES.has(name)) {
     const def = gen.tiles.find((x) => x.name === name);
     if (!def) throw new Error(`Tile "${name}" not found`);
-    const inner = makeEvalCtx(gen, ctx.localBinds);
+    // The callee's body is lowered in a scope of its own. A tile is a pure
+    // function of the slots and its `in` argument (language.md §1.7.2
+    // Invariant 1), so none of the caller's `for` / `match` bindings are
+    // visible in it: a name the body reads as a slot stays the slot wherever
+    // the tile is called from.
+    const inner = makeEvalCtx(gen, new Set<string>());
     // The first positional argument, which is the set `checkTileInput` counts:
     // the two have to read the same one, or a call the checker approved lowers
     // to something else. A named argument is a prop and goes to `propsFor`.
@@ -372,12 +377,11 @@ function tileCallJs(
     const bodyHandlers = handlers.size > 0 ? handlers : undefined;
     if (arg1) {
       const v = arg1.value;
+      // `checkTileInput` rejects a tile expression as the positional argument
+      // (E0213 without `in=`, E0201 with it), so a checked program never
+      // passes one here.
       if (isTileExpr(v)) {
-        return wrap(
-          wrapBoundary(
-            `_named(${tileExprJs(v as TileExpr, gen, inner, under(enclosingTiles, def.name))}, ${nameLit})`,
-          ),
-        );
+        throw new Error(`Tile "${name}" called with a tile as its positional argument`);
       }
       // Evaluate the positional arg and props in the OUTER context (where
       // `_d_1` still refers to the enclosing tile's `$1`), then pass them in
