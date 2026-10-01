@@ -34,7 +34,8 @@ function resolveFieldError(field: string): string {
   // one would be about a value the user is no longer looking at (#443).
   // Only a control in the view being rendered speaks for this tile: another
   // view of the same shape shows the slot's own value.
-  const refused = refusedBindShown(app, field, getRenderingView());
+  const held = app.live?.[field] ?? meta.value;
+  const refused = refusedBindShown(app, field, getRenderingView(), held);
   const overrides = currentTheme()?.errors as Record<string, string> | undefined;
   // Text that does not read as the bound base at all is judged before any
   // refinement: "1.5" into an `Int where between(0, 120)` is not a number out
@@ -43,7 +44,7 @@ function resolveFieldError(field: string): string {
     const key = UNREAD_KEY[refused.unread];
     return overrides?.[key] ?? defaultFieldError(key, []);
   }
-  const value = refused?.value ?? app.live?.[field] ?? meta.value;
+  const value = refused ? refused.value : held;
   if (slotAccepts(meta, value)) return "";
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.
