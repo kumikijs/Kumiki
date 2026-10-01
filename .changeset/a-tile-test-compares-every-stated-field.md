@@ -4,7 +4,7 @@
 "@kumikijs/cli": patch
 ---
 
-A `tile-test` compares every content field its expected node carries, not only `kind`, `text` and `children` (`testing.md` §8.4). That covers the fields a builtin lifts (`src`, `to`, `value`, `checked`, `options`, …) and every other named argument the expected node is written with (`alt`, `disabled`, `variant`, `aria-*`, `id`, …).
+A `tile-test` compares every content field its expected node carries, not only `kind`, `text` and `children` (`testing.md` §8.4). That covers the fields a builtin lifts (`src`, `to`, `value`, `options`, a toggle's checked state, …) and every other named argument the expected node is written with (`alt`, `disabled`, `variant`, `aria-*`, `id`, …). Each `aria-*` attribute is compared on its own, so stating `aria-label` asserts the label alone, at `button.aria-label`; a toggle's checked state is reported as `check.value`, the argument that sets it.
 
 ```kumiki
 tile Pic = image(src="/real.png")

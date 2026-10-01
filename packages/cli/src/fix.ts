@@ -1515,6 +1515,12 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
     .map((e): [number, number] => [e.range.startLine, e.range.endLine]);
 }
 
+/** The kind of the `test` definition named `testName`, if the file has one. */
+function testKindOf(store: Store, testName: string): TestDef["testKind"] | undefined {
+  const entry = store.defs.find((e) => e.def.kind === "TestDef" && e.name === testName);
+  return entry ? (entry.def as TestDef).testKind : undefined;
+}
+
 /**
  * Line ranges of the target def and every def it transitively references, used
  * to constrain a literal search to code the failing test can actually reach.
@@ -1523,12 +1529,6 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
  * when the target can't be resolved — the caller falls back to whole-file
  * search.
  */
-/** The kind of the `test` definition named `testName`, if the file has one. */
-function testKindOf(store: Store, testName: string): TestDef["testKind"] | undefined {
-  const entry = store.defs.find((e) => e.def.kind === "TestDef" && e.name === testName);
-  return entry ? (entry.def as TestDef).testKind : undefined;
-}
-
 function scopeOfTest(
   store: Store,
   testName: string,

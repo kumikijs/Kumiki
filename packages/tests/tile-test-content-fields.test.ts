@@ -65,7 +65,7 @@ describe("a tile-test compares the fields its expected node states", () => {
   it.each([
     ["pic-src", '"/avatar.png"', '"/WRONG.png"', "image.src", "/WRONG.png", "/avatar.png"],
     ["nav-to", '"/home"', '"/WRONG"', "link.to", "/WRONG", "/home"],
-    ["agree-checked", "value=true", "value=false", "check.checked", false, true],
+    ["agree-checked", "value=true", "value=false", "check.value", false, true],
     ["name-field", '"Grace"', '"WRONG"', "input.value", "WRONG", "Grace"],
     [
       "size-options",
@@ -82,6 +82,8 @@ describe("a tile-test compares the fields its expected node states", () => {
     ["pic-src", 'alt="avatar"', 'alt="WRONG"', "image.alt", "WRONG", "avatar"],
     ["card-children", 'alt="avatar"', 'alt="WRONG"', "column[0].alt", "WRONG", "avatar"],
     ["go-disabled", "disabled=true", "disabled=false", "button.disabled", false, true],
+    ["close-aria", '"Close"', '"WRONG"', "button.aria-label", "WRONG", "Close"],
+    ["close-block-aria", '"Close"', '"WRONG"', "button.aria-label", "WRONG", "Close"],
   ])("fails %s when %s is written %s, at %s", async (test, from, to, diffAt, exp, act) => {
     expect(asWritten.get(test)).toBe(true);
     const r = await runWith(test, from, to);
@@ -116,6 +118,25 @@ describe("a tile-test compares the fields its expected node states", () => {
     const r = await runWith("nav-to", '"/home"', '"/WRONG"');
     expect(r.expected).toBe('link("Home", to="/WRONG")');
     expect(r.actual).toBe('link("Home", to="/home")');
+  });
+
+  it("passes one aria attribute stated against two rendered, in either form", () => {
+    // `Close` writes both as named arguments, `CloseBlock` in its `{…}` block;
+    // each test states `aria-label` alone.
+    expect(asWritten.get("close-aria")).toBe(true);
+    expect(asWritten.get("close-block-aria")).toBe(true);
+  });
+
+  it("prints an aria attribute the way the source spells it", async () => {
+    const r = await runWith("close-aria", '"Close"', '"WRONG"');
+    expect(r.expected).toBe('button("x", aria-label="WRONG")');
+    expect(r.actual).toBe('button("x", aria-label="Close")');
+  });
+
+  it("prints a toggle's checked state as its value argument", async () => {
+    const r = await runWith("agree-checked", "value=true", "value=false");
+    expect(r.expected).toBe("check(value=false)");
+    expect(r.actual).toBe("check(value=true)");
   });
 
   it("prints only the stated fields of a node that carries more", async () => {

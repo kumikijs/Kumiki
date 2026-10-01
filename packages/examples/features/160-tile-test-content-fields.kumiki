@@ -1,7 +1,7 @@
 # Feature (testing.md §8.4): a tile-test compares every content field its
 # expected node states — the fields a builtin lifts (`src`, `to`, `value`,
-# `checked`, `options`) and the named arguments it keeps in props (`alt`,
-# `disabled`) — not only `text`.
+# a toggle's checked state, `options`) and the named arguments it keeps in
+# props (`alt`, `disabled`, each `aria-*` attribute) — not only `text`.
 #
 # A snapshot that compared only `kind`, `text` and `children` passed every
 # test below with its subject written wrong: an image with the wrong `src` or
@@ -11,7 +11,10 @@
 # wiring a node carries (`key` from `for`, `bind`), and any field the
 # expected node leaves out: `name-field` does not state a `placeholder`, so
 # the one `Name` renders is not compared, and `people-list` keys its rows
-# implicitly while `People` keys them by id.
+# implicitly while `People` keys them by id. `close-aria` and
+# `close-block-aria` state one of the two `aria-*` attributes their tile
+# renders (as arguments in `Close`, in the `{…}` block in `CloseBlock`): each
+# attribute is a field of its own.
 #
 # `packages/tests/tile-test-content-fields.test.ts` runs these tests, then
 # writes each stated field wrong and asserts the test fails naming it.
@@ -31,6 +34,8 @@ tile Size  = select(options=[{label: "S", value: "s"}, {label: "L", value: "l"}]
 tile Card  = column(Pic, Nav) {pad: "lg", gap: "md"}
 tile Go    = button(text="Go", disabled=true) {variant: "ghost"}
 tile People = column(for p in people text(p.name) {key: p.id.show})
+tile Close = button(text="x", aria-label="Close", aria-describedby="hint")
+tile CloseBlock = button(text="x") {aria-label: "Close", aria-describedby: "hint"}
 
 tile App
     = column(
@@ -41,6 +46,8 @@ tile App
         Size,
         Go,
         People,
+        Close,
+        CloseBlock,
         text("agreed=" + agreed.show + " name=" + name + " size=" + size))
       {pad: "lg", gap: "md"}
 
@@ -88,3 +95,13 @@ test people-list =
     tile-test People
         given  = {slots: {}}
         expect = column(for p in people text(p.name))
+
+test close-aria =
+    tile-test Close
+        given  = {slots: {}}
+        expect = button(text="x", aria-label="Close")
+
+test close-block-aria =
+    tile-test CloseBlock
+        given  = {slots: {}}
+        expect = button(text="x", aria-label="Close")

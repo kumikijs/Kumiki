@@ -217,6 +217,8 @@ snapshot は深い構造比較。クラス名やスタイルは比較対象外�
 | `error` | `field: ""` |
 | `modal`、`drawer`、`popover` | `open: true` |
 
+`aria-*` の属性は、どう書かれていても（`aria-label="…"`、`aria` マップ、実際のタイルの `{…}` ブロック）1 つずつ別のフィールドである。`button(text="x", aria-label="Close")` はラベルを主張し、タイルが同時に描く `aria-describedby` については何も述べない。そのパスは `button.aria-label` であり、`check` / `switch` のチェック状態は、それを決める引数の名前 `value` で報告する。
+
 不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告する。`expected:` / `actual:` の行は比較したフィールドだけを表示する。実際のノードには同じ位置の期待するノードが述べるフィールドを表示するので、実際のノードだけが持つ `placeholder` や `bind` は表示されない。
 
 `given.in` はターゲットの引数である。そしてターゲットはプログラムが定義した tile でなければならない——生成されるテストはターゲットに `App._tilesById` 経由で到達し、そこにはユーザ定義の tile しか入っていないので、組み込み tile はターゲットになれない（[E0105](./errors.md#e0105-undef-tile)）。`tile-test` はそのターゲットを tile 本体と同じように適用する——`App._tilesById["<T>"]` に `given.in` を渡す——ので、`in=` を宣言しているターゲットには 1 つ必要、宣言していないターゲットには渡してはならず、いずれの場合も値は宣言された型と照合される：

@@ -208,11 +208,19 @@ const TILE_PROPS_NOT_CONTENT: ReadonlySet<string> = new Set(["el", "_tile", "cla
  * The content of a tile node, by name, in comparison order (spec §8.4).
  *
  * First the fields its builtin lifts to the top level — `text`, `src`, `to`,
- * `value`, `checked`, `options`, … — then the named arguments codegen folds
- * into `props` (`alt`, `disabled`, `aria`, `id`, …). Codegen folds a lifted
- * argument into `props` as well, so a name the top level already has is read
- * there, once; and a node with a top-level `checked` is a toggle, whose
- * `value=` argument is that checked state rather than a field of its own.
+ * `value`, `options`, … — then the named arguments codegen folds into `props`
+ * (`alt`, `disabled`, `id`, …). Codegen folds a lifted argument into `props`
+ * as well, so a name the top level already has is read there, once — and so
+ * is a props key whose kebab argument the builtin lifted under its camelCase
+ * name (`auto-focus` is `autoFocus` above and `auto_focus` here).
+ *
+ * Two fields are named the way the source writes them rather than the way
+ * the node stores them, so that a path and a report line read like the
+ * test: a toggle's `checked` state is its `value` argument, and the `aria`
+ * map codegen merges every `aria-*` argument into is one entry per
+ * attribute, named the attribute `commonAttrDecls` (core.ts) renders — so
+ * stating one attribute asserts that one alone.
+ *
  * Handlers are functions and are left out with everything listed above. A
  * tile-test's expected node never carries its `{…}` block in `props` — the
  * compiler leaves it out of the lowering (`GenCtx.expectedTree`) — so what
@@ -223,14 +231,19 @@ function tileContent(node: unknown): Map<string, unknown> {
   if (node === null || typeof node !== "object") return out;
   const isContent = (v: unknown): boolean => v !== undefined && typeof v !== "function";
   for (const [k, v] of Object.entries(node)) {
-    if (!TILE_NOT_CONTENT.has(k) && isContent(v)) out.set(k, v);
+    if (!TILE_NOT_CONTENT.has(k) && isContent(v)) out.set(k === "checked" ? "value" : k, v);
   }
   const props = tileField(node, "props");
   if (props === null || typeof props !== "object") return out;
-  const toggle = out.has("checked");
   for (const [k, v] of Object.entries(props)) {
-    if (out.has(k) || TILE_PROPS_NOT_CONTENT.has(k) || !isContent(v)) continue;
-    if (toggle && k === "value") continue;
+    if (TILE_PROPS_NOT_CONTENT.has(k) || !isContent(v)) continue;
+    if (out.has(k) || out.has(k.replace(/_(\w)/g, (_, c: string) => c.toUpperCase()))) continue;
+    if (k === "aria" && v !== null && typeof v === "object" && !Array.isArray(v)) {
+      for (const [attr, a] of Object.entries(v)) {
+        if (a != null) out.set(attr.startsWith("aria-") ? attr : `aria-${attr}`, a);
+      }
+      continue;
+    }
     out.set(k, v);
   }
   return out;

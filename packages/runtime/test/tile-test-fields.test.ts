@@ -32,12 +32,48 @@ describe("a tile-test compares the named arguments in props", () => {
     expect(r.leaf).toEqual({ expected: "WRONG", actual: "avatar" });
   });
 
-  it("compares the merged aria map", () => {
+  it("compares each stated aria attribute on its own", () => {
+    // Codegen merges every `aria-*` argument into one `aria` map. Stating one
+    // attribute of a tile that renders two asserts that one.
+    const rendered = {
+      kind: "button",
+      text: "x",
+      props: { aria: { "aria-label": "Close", "aria-describedby": "hint" } },
+    };
+    const ok = run(
+      { kind: "button", text: "x", props: { aria: { "aria-label": "Close" } } },
+      rendered,
+    );
+    expect(ok.pass).toBe(true);
     const r = run(
-      { kind: "icon", name: "x", props: { aria: { "aria-label": "close" } } },
+      { kind: "button", text: "x", props: { aria: { "aria-label": "Shut" } } },
+      rendered,
+    );
+    expect(r.diffAt).toBe("button.aria-label");
+    expect(r.leaf).toEqual({ expected: "Shut", actual: "Close" });
+    expect(r.expected).toBe('button("x", aria-label="Shut")');
+    expect(r.actual).toBe('button("x", aria-label="Close")');
+  });
+
+  it("names an aria map key by the attribute it renders", () => {
+    // `aria={label: …}` and `aria-label=…` write the same attribute.
+    const r = run(
+      { kind: "icon", name: "x", props: { aria: { label: "close" } } },
       { kind: "icon", name: "x", props: { aria: { "aria-label": "shut" } } },
     );
-    expect(r.diffAt).toBe("icon.aria");
+    expect(r.diffAt).toBe("icon.aria-label");
+  });
+
+  it("compares an argument lifted under another name once", () => {
+    // `input(auto-focus=…)` lowers to a top-level `autoFocus` and folds into
+    // props as `auto_focus`; the two are one argument.
+    const r = run(
+      { kind: "input", autoFocus: false, props: { auto_focus: false } },
+      { kind: "input", autoFocus: true, props: { auto_focus: true } },
+    );
+    expect(r.diffAt).toBe("input.autoFocus");
+    expect(r.expected).toBe("input(autoFocus=false)");
+    expect(r.actual).toBe("input(autoFocus=true)");
   });
 
   it("reaches a differing argument past el, _tile, class, style and handlers", () => {
@@ -135,13 +171,16 @@ describe("a tile-test leaves identity and wiring out", () => {
 });
 
 describe("a builtin's default is compared", () => {
-  it("fails check() against a ticked box at check.checked", () => {
+  it("fails check() against a ticked box at check.value", () => {
+    // A toggle's checked state is its `value=` argument, and is named so.
     const r = run(
       { kind: "check", checked: false, props: {} },
       { kind: "check", checked: true, props: { value: true } },
     );
-    expect(r.diffAt).toBe("check.checked");
+    expect(r.diffAt).toBe("check.value");
     expect(r.leaf).toEqual({ expected: false, actual: true });
+    expect(r.expected).toBe("check(value=false)");
+    expect(r.actual).toBe("check(value=true)");
   });
 
   it("fails select(value=…) with no options= at select.options", () => {

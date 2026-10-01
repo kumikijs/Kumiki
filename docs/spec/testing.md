@@ -251,6 +251,8 @@ A builtin fills in some fields when their argument is left out, and the expected
 | `error` | `field: ""` |
 | `modal`, `drawer`, `popover` | `open: true` |
 
+Each `aria-*` attribute is a field of its own, however it was written (as `aria-label="…"`, in the `aria` map, or in the actual tile's `{…}` block): `button(text="x", aria-label="Close")` asserts the label and says nothing about an `aria-describedby` the tile also renders. Its path is `button.aria-label`, and a `check`'s or `switch`'s checked state is reported as `value`, the argument that sets it.
+
 A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
 
 `given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
