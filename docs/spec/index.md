@@ -270,5 +270,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
 <!-- examples:end -->
 :::
