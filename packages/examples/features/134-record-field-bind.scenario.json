@@ -1,0 +1,132 @@
+{
+  "steps": [
+    {
+      "label": "a field lands while a sibling still fails its refinement",
+      "do": {
+        "fill": "#name",
+        "value": "Ada"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "signup": {
+            "email": "",
+            "name": "Ada",
+            "nick": {
+              "_tag": "Some",
+              "_0": ""
+            }
+          }
+        },
+        "domIncludes": ["name=Ada", "Invalid email format"]
+      }
+    },
+    {
+      "label": "a bind through an Option payload is judged there too",
+      "do": {
+        "fill": "#nick",
+        "value": "ada"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "signup": {
+            "email": "",
+            "name": "Ada",
+            "nick": {
+              "_tag": "Some",
+              "_0": "ada"
+            }
+          }
+        },
+        "domIncludes": ["nick=ada"]
+      }
+    },
+    {
+      "label": "the bound field's own predicate still refuses",
+      "do": {
+        "fill": "#nick",
+        "value": "lovelace"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "signup": {
+            "email": "",
+            "name": "Ada",
+            "nick": {
+              "_tag": "Some",
+              "_0": "ada"
+            }
+          }
+        },
+        "domIncludes": ["nick=ada"]
+      }
+    },
+    {
+      "label": "an address the refinement refuses is refused",
+      "do": {
+        "fill": "#email",
+        "value": "ada@examplecom"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "signup": {
+            "email": "",
+            "name": "Ada",
+            "nick": {
+              "_tag": "Some",
+              "_0": "ada"
+            }
+          }
+        },
+        "domIncludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "a valid address lands; the nick field still shows its refused value, and the message is now that one's",
+      "do": {
+        "fill": "#email",
+        "value": "ada@example.com"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "signup": {
+            "email": "ada@example.com",
+            "name": "Ada",
+            "nick": {
+              "_tag": "Some",
+              "_0": "ada"
+            }
+          }
+        },
+        "domIncludes": ["email=ada@example.com", "Must be less than 6 characters"],
+        "domExcludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "a nick the refinement accepts lands, and nothing is left to say",
+      "do": {
+        "fill": "#nick",
+        "value": "lovel"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "signup": {
+            "email": "ada@example.com",
+            "name": "Ada",
+            "nick": {
+              "_tag": "Some",
+              "_0": "lovel"
+            }
+          }
+        },
+        "domIncludes": ["nick=lovel"],
+        "domExcludes": ["Invalid email format", "Must be less than 6 characters"]
+      }
+    }
+  ]
+}

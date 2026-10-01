@@ -254,6 +254,8 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
+A render that panics with no boundary to catch it fires the matching `route.error` reducers once. Their writes do not start a render of their own — the page they would render is the one that just panicked — so after they return the runtime renders once more, and that render is where their writes, a navigation included, take effect. If it panics too, the built-in panic display is shown and `route.error` is not fired again for it.
+
 ---
 
 ## 7.6 Confirmation Dialogs
