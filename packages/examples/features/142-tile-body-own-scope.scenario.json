@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "only the slot's filter is marked, though the loop variable has the same name",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["showing: All", "All (current)", "Active", "Done"],
+        "domExcludes": ["Active (current)", "Done (current)"]
+      }
+    },
+    {
+      "label": "picking another filter moves the mark to it",
+      "do": { "click": "#Done" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["showing: Done", "Done (current)"],
+        "domExcludes": ["All (current)", "Active (current)"]
+      }
+    }
+  ]
+}

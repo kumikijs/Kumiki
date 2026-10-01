@@ -14,7 +14,7 @@
 | `http.patch` | PATCH |
 | `http.delete` | DELETE |
 
-### 6.1.2 標準 effect
+### 6.1.2 標準 effect {#_6-1-2-standard-effect}
 
 プログラムは capability に対して自分の effect を宣言する。以下は各メソッドでツールチェインが期待する形 — 名前は任意で、`cap` とレコードがランタイムの dispatch 先を決める：
 
@@ -179,7 +179,7 @@ app App
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
-| `headers` | 全リクエストに付与 | リクエストごと |
+| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
 | `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
 | `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
@@ -197,10 +197,19 @@ reducer 名の 3 つだけは例外で、そもそも値ではない：コンパ
 対して一度だけ解決する。
 
 4 つの式について検査されるのは名前と値である。解決されない名前は書かれた位置で
-[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。型の合わない値はフィールドの位置で
-[E0201](./errors.md#e0201-type-mismatch) になる：
+[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。型の合わない値は、下の項目が別に定めない限り
+フィールドの位置で [E0201](./errors.md#e0201-type-mismatch) になる：
 
 - `base-url` は `Text` に代入可能なものを取る — `Url` など `Text` の上に作られた型を含む。
+- `headers` は `Map(Text, Text)` に代入可能なものを取る。リクエスト自身の `headers`
+  （[§6.1.2](#_6-1-2-standard-effect)）と同じ型であり、値がすべて `Text` の
+  リテラル `{"Name": value}` か、その型を持つそれ以外の式 — slot、`fn` 呼び出し — である。
+  リテラルの中の `Text` でないキーや値はそれが書かれた位置で、map でないものは
+  フィールドの位置、またはそれを生む `if` の分岐の位置で報告される。キーは引用符で
+  囲む：キーを裸で書いた `{Content-Type: "application/json"}` は map ではなく
+  レコードであり、フィールドの位置で E0201 になる。ランタイムはこの値を
+  各リクエストの headers に展開する：数値は何も展開せず、文字列は `0`・`1`・… という名前の
+  header に展開される — いずれにせよ意図した header は 1 つもリクエストに届かない。
 - `timeout` は `Int` に代入可能なものを取り、ミリ秒として読まれる。`Duration` は
   その 1 つであり（実行時にはミリ秒）、ユーザ定義の `nominal Int` も同様である。
   `Float` は含まれない。`Text` は `setTimeout` に `NaN` として届いて、すべての
@@ -212,7 +221,7 @@ reducer 名の 3 つだけは例外で、そもそも値ではない：コンパ
 照合されるのは型であり、`credentials` についてはリテラルも照合される：それ以外の
 方法で計算される値 — slot、呼び出し、連結 — は実行時に決まるので、型の合うものは
 何を保持するかにかかわらず受理される。`timeout: 0` や負の `Int` も `Int` であり、
-受理される。`headers` にはここで照合する型がない。
+受理される。
 
 ### 6.3.2 401 のグローバル処理
 

@@ -99,8 +99,10 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 ### 5.2.2 Submit Behavior
 
-- If all `bind`ed slots pass validation, the `ui.submit(WrapperTile)` reducer is called
+- If every slot a control inside the form binds passes validation, the `ui.submit(WrapperTile)` reducer is called
 - If even one fails, it is not called (individual error displays do appear)
+- What is judged is what each control **shows** — the judgement `error(field=…)` makes ([§5.1.2](#_5-1-2-handling-of-refinement)), in its order: text an `Int` / `Float` / `Time` field shows that reads as no value of that type at all; else a value the refinement refused that a control inside the form still shows; else the slot's own value. So a pristine field whose declared default fails its refinement holds the form back ([§5.6](#_5-6-validation-strategy)) — with or without an `error(field=…)` tile to say why, so a form holding such a field should carry one — and so does a field showing a refused edit or unreadable text: the reducer would otherwise read the slot's last accepted value, which is not what the field shows
+- Only slots bound inside the form count, and only the form's own controls speak for them. A slot the form's controls do not bind is not asked about, and a refused value shown by a control **outside** the form does not hold it back: the form's own control shows the slot's value, which is what the reducer reads. `error(field=…)` speaks for the whole view being rendered, so an `error` tile inside the form can show a message for that outside edit while the form submits
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
 - `type` is one of `submit` / `button` / `reset`, written through to the DOM verbatim, and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`. A literal outside the three is [E0201](./errors.md#e0201-type-mismatch): an invalid `type` attribute resolves to `submit`, so the typo submits
 
@@ -242,12 +244,14 @@ Kumiki validation has **three layers**:
 
 The refinement layer covers **every** predicate [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates) registers, including the ones the standard library's domain types are declared with — `Email`, `Url`, `Uuid` and `HttpStatus` are refined nominals ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot declared with one is checked exactly as a slot written `Text where email` is. A predicate the toolchain cannot lower to a check is a build error ([E0803](./errors.md#e0803-unimplemented-refinement)), never a check that passes.
 
-The two write paths differ in how loud they are, not in what they check:
+The two write paths differ in how loud they are, and a `bind` is further judged only at the path it writes (below). An assignment is judged on the whole value, even one that writes a single field (`signup.name := …`):
 
 - **Assignment** (`age := …` in a reducer) discards the whole batch and reports it — no slot written, no effect emitted ([Runtime §10.3.3](./runtime.md#_10-3-3-batching)).
 - **`bind`** refuses the value for that field alone and reports nothing, because a half-typed value is expected rather than a defect. The field keeps showing it, and `error(field=…)` renders its message ([§5.1.2](#_5-1-2-handling-of-refinement)).
 
 Neither gates the **declared default**: `slot email : Email = ""` starts out holding a value its own refinement rejects, which is what puts a message on a pristine form ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)).
+
+A `bind` into part of a slot — `input(bind=form.age)`, `input(bind=draft.nick.get)` — is judged **at the path it writes**: the predicates along that path, on the slot's own type included, and every one below where it ends. A predicate on a sibling is not on that path, so a sibling that fails does not refuse the write. That is what lets a record whose default fails several fields be filled in any order. The field that shows a refused value is laid over the slot as it is now when `error(field=…)` judges it, so a sibling written afterwards does not bring back a message that field no longer deserves. A control bound to the whole slot shows the value the fields bound into it sit in, so when both show refused values the slot's is laid first and the fields' over it.
 
 ### 5.6.1 Cross-Form Example
 
