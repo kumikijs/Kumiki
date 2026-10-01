@@ -29,8 +29,13 @@ function historyRouter(): Router {
   };
 }
 
-/** Split a raw path into the `{ pathname, search, hash }` parseLocation reads. */
-function splitPath(p: string): LocationLike {
+/**
+ * Split a raw path into the `{ pathname, search, hash }` parseLocation reads.
+ * The pathname is kept as written (`//foo`, `/a/../b`), as a browser's
+ * `location.pathname` keeps it; SSR splits its requested route with this too,
+ * so server and client match the same path.
+ */
+export function splitPath(p: string): LocationLike {
   let rest = p || "/";
   let hash = "";
   const hi = rest.indexOf("#");

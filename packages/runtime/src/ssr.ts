@@ -29,7 +29,6 @@ import {
   computeSlotDiffs,
   type EffectResult,
   type EmitSpec,
-  type LocationLike,
   NONE,
   type ParsedRoute,
   panicInfo,
@@ -45,12 +44,18 @@ import {
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
+import { splitPath } from "./router.ts";
 import { renderTileToString } from "./ssr-render.ts";
 
 export type RenderToStringOptions = {
   /**
-   * Initial route path the SSR pass renders for. The string is treated as a
-   * concrete URL path (e.g. `"/posts/abc"`). When `routing` is provided,
+   * Initial route path the SSR pass renders for: a concrete URL path, which may
+   * carry a query and a hash (e.g. `"/posts/abc?tab=2#top"`, or a request's
+   * `url` passed through as is). It is split the way the client's router reads
+   * a location, with the pathname kept as written (`//foo` and `/a/../b` are
+   * not normalized, as a browser's `location.pathname` does not). A static
+   * redirect (`->>`) that applies to it is resolved first, and the target is
+   * what is rendered and what `snapshot.route` names. When `routing` is provided,
    * dynamic patterns (`/posts/:id`) match this path via
    * `RoutingImpl.parseLocation`; otherwise the path is compared to declared
    * route patterns verbatim (so only static routes match without routing).
@@ -125,11 +130,12 @@ export async function renderToString(
   // server and client agree on where a path lands). Without a routing module
   // only a redirect written for exactly this path applies, matching the
   // literal-string fallback below.
-  const requested: LocationLike = { pathname: routePath, search: "", hash: "" };
+  const requested = splitPath(routePath);
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
-    : (app.routes?.find((r): r is RedirectEntry => "redirectTo" in r && r.pattern === routePath)
-        ?.redirectTo ?? null);
+    : (app.routes?.find(
+        (r): r is RedirectEntry => "redirectTo" in r && r.pattern === requested.pathname,
+      )?.redirectTo ?? null);
   const servedPath = redirectTo ?? routePath;
 
   // Dynamic-route matching when the host hands us a routing implementation.
@@ -137,7 +143,7 @@ export async function renderToString(
   // its own pattern) — static routes still work; dynamic ones won't.
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
-      ? options.routing.parseLocation(app.routes, locationOf(servedPath))
+      ? options.routing.parseLocation(app.routes, splitPath(servedPath))
       : { path: servedPath, pattern: servedPath, params: {}, query: {}, hash: NONE };
   live.route = parsedRoute;
 
@@ -152,7 +158,9 @@ export async function renderToString(
   };
 
   try {
-    logger.beginTrigger({ kind: "ssr.hydrate", target: routePath });
+    // §10.5: the trigger names the initial route, which §10.6.1 defines as
+    // where the path lands, so a redirected request names its target.
+    logger.beginTrigger({ kind: "ssr.hydrate", target: servedPath });
     // Run `app.init` emits concurrently to mirror the live `dispatcher.dispatch`
     // model — sequential await would let cache-first / network-first races land
     // a different "last write wins" than the client would observe.
@@ -190,12 +198,6 @@ export async function renderToString(
     // restored before this call returns.
     for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
   }
-}
-
-/** Split a path (a redirect target may carry a query or hash) the way a router reads it. */
-function locationOf(path: string): LocationLike {
-  const u = new URL(path, "http://ssr.invalid");
-  return { pathname: u.pathname, search: u.search, hash: u.hash };
 }
 
 /**

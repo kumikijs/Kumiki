@@ -6,7 +6,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mount, renderToString, routing } from "@kumikijs/runtime";
+import { type AppShape, mount, renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
@@ -19,8 +19,8 @@ function textOf(html: string): string {
   return el.textContent ?? "";
 }
 
-async function clientText(path: string): Promise<string> {
-  const app = await loadApp(EXAMPLE);
+async function clientText(path: string, app?: AppShape): Promise<string> {
+  app ??= await loadApp(EXAMPLE);
   const root = document.createElement("div");
   document.body.appendChild(root);
   const handle = mount(app, root, { router: "memory", initialPath: path });
@@ -33,9 +33,16 @@ async function clientText(path: string): Promise<string> {
 describe("renderToString resolves static redirects", () => {
   it.each([
     ["a top-level redirect", "/old", "/", "Home"],
+    ["a top-level redirect asked with a query and a hash", "/old?ref=x#top", "/", "Home"],
     [
       "a redirect inside a sub-routes map",
       "/settings/legacy",
+      "/settings/billing",
+      "Billing settings",
+    ],
+    [
+      "a sub-routes redirect asked with a query",
+      "/settings/legacy?tab=2",
       "/settings/billing",
       "Billing settings",
     ],
@@ -48,6 +55,9 @@ describe("renderToString resolves static redirects", () => {
     // The snapshot names the route the server drew, so hydration does not
     // start from one it did not.
     expect(out.snapshot.route).toBe(to);
+    // runtime.md §10.5: the bootstrap episode's trigger names the initial
+    // route, which §10.6.1 defines as where the path lands.
+    expect(out.bootstrapEpisode.trigger.target).toBe(to);
   });
 
   it("serves the blog app's home page, which redirects to the post list", async () => {
@@ -75,5 +85,33 @@ app R
     const out = await renderToString(app, { route: "/old" });
     expect(textOf(out.html)).toContain("Home");
     expect(out.snapshot.route).toBe("/");
+  });
+
+  it("resolves a literal redirect asked with a query when no routing module is passed", async () => {
+    const app = await loadApp(EXAMPLE);
+    const out = await renderToString(app, { route: "/old?ref=x" });
+    expect(textOf(out.html)).toContain("Home");
+    expect(out.snapshot.route).toBe("/");
+  });
+});
+
+describe("renderToString reads the requested path as the client does", () => {
+  // A browser's `location.pathname` keeps `//foo` and `/a/../b` as written, and
+  // so does the memory router `mount` reads `initialPath` through. A server that
+  // resolved them as URLs would draw `/` and `/b` where the client draws `/404`.
+  it.each([["//foo"], ["/a/../b"]])("%s is matched as written", async (path) => {
+    const app = await loadSource(`
+tile Home     = page(heading("home"))
+tile B        = page(heading("b"))
+tile NotFound = page(heading("404"))
+app R
+    caps   = []
+    routes = {"/" -> Home, "/b" -> B, "/404" -> NotFound}
+    init   = []
+`);
+    const out = await renderToString(app, { route: path, routing });
+    const served = textOf(out.html);
+    expect(served).toBe(await clientText(path, app));
+    expect(served).toBe("404");
   });
 });
