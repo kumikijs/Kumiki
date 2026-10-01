@@ -1,16 +1,15 @@
-// A click reducer on a `type="submit"` button and the form's `ui.submit` are
-// independent (forms.md §5.2.2). The button renderer cancelled every click it
-// had a handler for, and cancelling a submit button's click cancels its
-// activation: the form never submitted in a browser. The scenario tier did not
-// see it, because its clicks were not cancelable and `preventDefault` was a
-// no-op there. These use `HTMLElement.click()`, which is cancelable as a
-// user's click is, and pin the scenario tier's clicks to the same.
+// A click reducer on a submit button and the form's `ui.submit` are
+// independent (forms.md §5.2.2): a click reducer must not cancel the click,
+// because cancelling a submit button's click cancels its activation and the
+// form never submits. These use `HTMLElement.click()`, which is cancelable as
+// a user's click is, and pin the scenario and smoke tiers' clicks to the same,
+// so a cancelled activation shows up in those tiers too.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AppShape, mount, runScenario } from "@kumikijs/runtime";
+import { type AppShape, mount, runScenario, smoke } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { loadApp } from "./helpers/load.ts";
+import { loadApp, loadSource } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const example = join(here, "..", "examples", "features", "136-submit-button-click.kumiki");
@@ -50,12 +49,19 @@ describe("a submit button with a click reducer", () => {
     expect(app.live).toMatchObject({ clicks: 1, submits: 1 });
   });
 
-  it("submits with a click reducer lifted from a wrapping tile, and with onClick=", async () => {
+  it("submits with a click reducer lifted across a tile boundary, and with onClick=", async () => {
     const { app, root } = await mounted();
+    // `ui.click(Outer)` with `tile Outer = box(InnerBtn)`: lifted onto the button.
     userClick(root, "Wrapped");
     expect(app.live).toMatchObject({ clicks: 10, submits: 10 });
     userClick(root, "By arg");
     expect(app.live).toMatchObject({ clicks: 110, submits: 110 });
+  });
+
+  it("submits from a button with no type, which is a submit button by default", async () => {
+    const { app, root } = await mounted();
+    expect(userClick(root, "No type")).toBe(false);
+    expect(app.live).toMatchObject({ clicks: 10000, submits: 10000 });
   });
 
   it("does not submit from a type=button button with a click reducer", async () => {
@@ -80,5 +86,42 @@ describe("the scenario tier's clicks", () => {
     });
     root.removeEventListener("click", probe);
     expect(seen).toEqual([true, true]);
+  });
+});
+
+describe("the smoke tier's clicks", () => {
+  // Both of `fire()`'s click paths: a checkbox, and every other clickable.
+  const PROBE = `
+slot agreed : Bool = false
+slot taps   : Int  = 0
+reducer tap on=ui.click(GoBtn) do= taps := taps + 1
+tile GoBtn = button(text="Go", type="button")
+tile App = column(check(bind=agreed), GoBtn)
+app SmokeClickProbe
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("are cancelable, as a user's click is, on a checkbox and on a button", async () => {
+    const app = await loadSource(PROBE);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const seen: [string, boolean][] = [];
+    const probe = (e: Event): void => {
+      seen.push([(e.target as HTMLElement).tagName.toLowerCase(), e.cancelable]);
+    };
+    root.addEventListener("click", probe);
+    try {
+      const r = await smoke(app, root, { settleMs: 20 });
+      expect(r.ok).toBe(true);
+    } finally {
+      root.removeEventListener("click", probe);
+      root.remove();
+    }
+    expect(seen).toEqual([
+      ["input", true],
+      ["button", true],
+    ]);
   });
 });

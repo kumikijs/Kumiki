@@ -1,8 +1,7 @@
-// A real click on a `type="submit"` button that has a click reducer submits
-// its form (forms.md §5.2.2). The renderer used to cancel every click it had a
-// handler for, which cancels a submit button's activation: in a browser the
-// form never submitted, while the scenario tier's non-cancelable clicks let it
-// through. This is the tier where a cancelled activation is a real one.
+// A real click on a submit button that has a click reducer submits its form
+// (forms.md §5.2.2): a click reducer must not cancel the click, because
+// cancelling a submit button's click cancels its activation. This is the tier
+// where a cancelled activation is a real one.
 //
 // The program is example 136, the same one its `.scenario.json` drives.
 
@@ -37,7 +36,9 @@ test("clicking a submit button runs its click reducer and submits the form", asy
   expect(await counts(page)).toEqual({ clicks: 1, submits: 1 });
 });
 
-test("a lifted click reducer and an onClick= argument do not stop the submit", async ({ page }) => {
+test("a click reducer lifted across a tile boundary and an onClick= argument do not stop the submit", async ({
+  page,
+}) => {
   await page.getByRole("button", { name: "Wrapped" }).click();
   await page.getByRole("button", { name: "By arg" }).click();
   expect(await counts(page)).toEqual({ clicks: 110, submits: 110 });
@@ -46,6 +47,13 @@ test("a lifted click reducer and an onClick= argument do not stop the submit", a
 test("a type=button button runs its reducer and does not submit", async ({ page }) => {
   await page.getByRole("button", { name: "Cancel" }).click();
   expect(await counts(page)).toEqual({ clicks: 1000, submits: 0 });
+});
+
+test("a button with no type is a submit button: its click reducer runs and it submits", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "No type" }).click();
+  expect(await counts(page)).toEqual({ clicks: 10000, submits: 10000 });
 });
 
 test("Enter in the form's input submits it through the submit button", async ({ page }) => {

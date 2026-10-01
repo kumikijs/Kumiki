@@ -102,8 +102,9 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 - If all `bind`ed slots pass validation, the `ui.submit(WrapperTile)` reducer is called
 - If even one fails, it is not called (individual error displays do appear)
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
-- A click reducer on that button — `ui.click` on it, one lifted onto it from a tile that wraps it, or an `onClick=` argument — is independent of the submit: clicking the button runs the click reducer **and** submits the form. Nothing a click reducer is bound to cancels the click, so the only thing that keeps a button inside a form from submitting it is its `type`
+- A click reducer on that button — `ui.click` on it, one lifted onto it from a tile that wraps it, or an `onClick=` argument — is independent of the submit: clicking the button runs the click reducer **and** submits the form. Nothing a click reducer is bound to cancels the click, so `type` is the one thing here a click reducer can't replace: a click reducer never keeps a button inside a form from submitting it, and `type="button"` does. (A `disabled` or `loading` button does not submit either: it is disabled, so it is never activated.)
 - `type` is one of `submit` / `button` / `reset`, written through to the DOM verbatim, and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`. A literal outside the three is [E0201](./errors.md#e0201-type-mismatch): an invalid `type` attribute resolves to `submit`, so the typo submits
+- A `type="reset"` button with a click reducer runs the reducer **and** resets the form, which puts the fields' DOM values back to their defaults but leaves the `bind`ed slots as they were — nothing listens for `reset`. To clear a form, write the slots in a reducer on a `type="button"` button
 
 ---
 

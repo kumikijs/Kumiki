@@ -6,7 +6,7 @@
       "expect": { "noErrors": true, "state": { "clicks": 1, "submits": 1 } }
     },
     {
-      "label": "a click reducer lifted from a wrapping tile does not stop the submit",
+      "label": "a click reducer lifted across a tile boundary (ui.click(Outer), Outer = box(InnerBtn)) does not stop the submit",
       "do": { "clickText": "Wrapped" },
       "expect": { "noErrors": true, "state": { "clicks": 11, "submits": 11 } }
     },
@@ -19,6 +19,11 @@
       "label": "a type=\"button\" button in the form runs its reducer and does not submit",
       "do": { "clickText": "Cancel" },
       "expect": { "noErrors": true, "state": { "clicks": 1111, "submits": 111 } }
+    },
+    {
+      "label": "a button with no type is a submit button: its click reducer runs and the form submits",
+      "do": { "clickText": "No type" },
+      "expect": { "noErrors": true, "state": { "clicks": 11111, "submits": 10111 } }
     }
   ]
 }
