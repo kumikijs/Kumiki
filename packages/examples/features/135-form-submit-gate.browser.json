@@ -1,0 +1,56 @@
+{
+  "steps": [
+    {
+      "label": "a real form submit does not run the reducer while the pristine address fails its refinement",
+      "do": { "submit": "#email" },
+      "expect": {
+        "noErrors": true,
+        "state": { "sent": "(nothing)" },
+        "visible": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "a valid address is taken, and the message goes",
+      "do": { "fill": "#email", "value": "ada@example.com" },
+      "expect": {
+        "noErrors": true,
+        "state": { "email": "ada@example.com" },
+        "domExcludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "clicking the real Send button submits what the fields show",
+      "do": { "click": "button[type=submit]" },
+      "expect": { "noErrors": true, "state": { "sent": " <ada@example.com>" } }
+    },
+    {
+      "label": "an edit the refinement refuses leaves the slot, and the field says why",
+      "do": { "fill": "#email", "value": "ada@examplecom" },
+      "expect": {
+        "noErrors": true,
+        "state": { "email": "ada@example.com" },
+        "visible": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "while it shows the refused value, clicking Send does not submit the stale address",
+      "do": { "click": "button[type=submit]" },
+      "expect": { "noErrors": true, "state": { "sent": " <ada@example.com>" } }
+    },
+    {
+      "label": "and neither does a real form submit",
+      "do": { "submit": "#email" },
+      "expect": { "noErrors": true, "state": { "sent": " <ada@example.com>" } }
+    },
+    {
+      "label": "once the address is fixed, Send submits it",
+      "do": { "fill": "#email", "value": "grace@example.com" },
+      "expect": { "noErrors": true, "state": { "email": "grace@example.com" } }
+    },
+    {
+      "label": "and the form submits again",
+      "do": { "click": "button[type=submit]" },
+      "expect": { "noErrors": true, "state": { "sent": " <grace@example.com>" } }
+    }
+  ]
+}
