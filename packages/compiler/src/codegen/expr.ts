@@ -671,9 +671,10 @@ export function methodCallJs(
   // The lambda a `filter` / `map` / `find` / `sort-by` fragment is lowered
   // into, binding `$1` / `$2` the way the checker decided from the receiver's
   // type (`FragmentShape`, stdlib.md §2.2.3). A pair is taken apart; a Map's
-  // filter is handed each entry as one `[key, value]` pair (`_s.filter`
-  // passes it that way, the key restored to its type when the checker
-  // recorded a `keyKind`) and takes it apart the same way; any other value —
+  // filter or map is handed each entry as one `[key, value]` pair
+  // (`_s.filter` / `_s.mapOver` pass it that way, the key restored to its
+  // type when the checker recorded a `keyKind`) and takes it apart the same
+  // way; any other value —
   // a 2-element List included — is `$1` whole, with no `$2` declared at all.
   // An undecided receiver falls back to reading the value: any 2-element
   // array is taken apart there.

@@ -2968,7 +2968,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           kind: "undef-ref",
           message: hides
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
-            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
           pos: e.pos,
         });
         return;
@@ -3292,7 +3292,7 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
  * - `fold`'s `fn` takes both, because the element is the second;
  * - a `filter` / `map` / `find` / `sort-by` fragment binds a second
  *   positional only where `shape` says the value handed over is taken apart —
- *   a pair, or a Map's filter entry. Where it binds one value (`"value"`), or
+ *   a pair, or a Map's filter or map entry. Where it binds one value (`"value"`), or
  *   the receiver is known but §2.2.3 gives the method no binding on it
  *   (`null`), a second parameter would be handed nothing the `fn` means. Only
  *   a receiver whose type cannot be decided (`"undecided"`) is given the
@@ -3328,7 +3328,7 @@ function checkFragmentFnArity(
   if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
     );
   }
   return true;
@@ -4822,9 +4822,9 @@ function keyKindOfReader(
  * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
  *   is `T`, taken apart like a `List`'s element except under `flat-map`,
  *   whose lowering does not; `Result.map-err`: `$1` is `E`.
- * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key only when
- *   it reads back as a value of `K` (`keyRepresentation`); `Map.update(k, expr)`:
- *   `$1` is the current `V`.
+ * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key
+ *   only when it reads back as a value of `K` (`keyRepresentation`);
+ *   `Map.update(k, expr)`: `$1` is the current `V`.
  *
  * Everything else is `null`, which binds the name with no type — as every
  * fragment was bound before. That includes an element the checker cannot
@@ -4883,8 +4883,8 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
  * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
  *   from `.entries`, or an `Option` / `Result` holding one — and is taken
  *   apart, `$1 = A`, `$2 = B`.
- * - `"key-value"`: `Map(K, V).filter`, handed each entry as the key and the
- *   value, `$1` and `$2`.
+ * - `"key-value"`: `Map(K, V).filter` / `map`, handed each entry as the key
+ *   and the value, `$1` and `$2`.
  * - `"value"`: any other element of a `List`, or the value of an `Option`
  *   (`map` / `filter`) or a `Result` (`map`) — `$1` is that value whole,
  *   whatever it is (a 2-element `List` included), and `$2` is not bound.
@@ -4892,7 +4892,7 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
  *   here (a type parameter, an untyped payload).
  * - `null`: the receiver's type is known, but §2.2.3 gives this method no
  *   binding on it — a `Set`, whose `_s.filter` hands each element as an
- *   `[element, true]` entry; `Map.map` / `find` / `sort-by`; `Option.find` /
+ *   `[element, true]` entry; `Map.find` / `sort-by`; `Option.find` /
  *   `sort-by`; `Result.filter` / `find` / `sort-by`; any receiver that is not
  *   a container.
  *
@@ -4921,7 +4921,7 @@ function fragmentShape(
     case "Result":
       return method === "map" ? elementShape(a ?? null, sym).shape : null;
     case "Map":
-      return method === "filter" ? "key-value" : null;
+      return method === "filter" || method === "map" ? "key-value" : null;
     default:
       return null;
   }

@@ -17,4 +17,8 @@ restore it, so `m.map($1 * 10)` on a `Map(Int, Int)` is arithmetic, and a
 key that is itself a pair, such as a `Tuple(Int, Int)`, is still all of `$1`
 with `$2` the value. The
 checker binds `$1` / `$2` for `Map.map`, so a fragment that uses them with
-the wrong type is reported.
+the wrong type is reported, and records its fragment as handed the key and
+the value, as it does a Map's `filter`: a `fn` of two named there
+(`m.map(label)`) takes the key and the value instead of being refused with
+**E0213**, and the E0103 / E0213 messages name a Map's map among the places
+a `$2` is bound.
