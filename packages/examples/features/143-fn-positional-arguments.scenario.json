@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "nothing computed yet",
+      "expect": { "noErrors": true, "domIncludes": ["sum: 0", "doubles: ", "total: 0"] }
+    },
+    {
+      "label": "each fn reads its arguments by position, and each fragment keeps its own",
+      "do": { "click": "#go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "sum": 5, "doubles": [2, 4, 6], "total": 16 },
+        "domIncludes": ["sum: 5", "doubles: 2,4,6", "total: 16"]
+      }
+    }
+  ]
+}
