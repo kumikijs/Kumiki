@@ -276,11 +276,13 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | コア | [§1.7.2](./language.md#_1-7-2-不変条件) inv. 1 |
 | `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `144-builtin-effect-input.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | ルーティング | [§3.1.2](./routing.md#_3-1-2-マッチ順序) |
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | ルーティング | [§3.4](./routing.md#_3-4-ルートライフサイクル) |
 | `156-heading-level.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.2](./stdlib.md#_2-3-2-テキスト要素) |
 | `157-theme-switch.kumiki` | slot, reducer, tile, app | スタイル | [§4.6](./style.md#_4-6-dark-mode) |
+| `158-responsive-breakpoints.kumiki` | tile, app | スタイル | [§4.5](./style.md#_4-5-responsive) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
 | `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | コア | [§1.6.4](./language.md#_1-6-4-不変条件) |
@@ -288,5 +290,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 | `166-map-map.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `167-time-parse-calendar.kumiki` | slot, reducer, fn, tile | 標準ライブラリ | [§2.2.8](./stdlib.md#_2-2-8-time) |
 <!-- examples:end -->
 :::

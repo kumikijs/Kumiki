@@ -32,6 +32,13 @@ const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
 });
+
+/**
+ * The constructors for a type the standard library writes rather than parses,
+ * for the other tables that hold one (the built-in effects' `in=` types).
+ */
+export { app as appType, prim as primType, record as recordType, ref as refType };
+
 const nominal = (inner: TypeExpr, pred?: string, args: (number | string)[] = []): TypeExpr => ({
   kind: "TypeNominal",
   inner,

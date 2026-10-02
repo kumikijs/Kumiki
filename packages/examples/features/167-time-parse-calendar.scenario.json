@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "a date outside the calendar is None; a real one is that day",
+      "do": { "click": "#read" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "feb30": { "_tag": "None" },
+          "month13": { "_tag": "None" },
+          "month0": { "_tag": "None" },
+          "feb30At": { "_tag": "None" },
+          "padded": { "_tag": "None" },
+          "leap": "2028-02-29",
+          "feb28": "2026-02-28"
+        },
+        "domIncludes": ["feb30: none", "feb28: 2026-02-28"]
+      }
+    }
+  ]
+}
