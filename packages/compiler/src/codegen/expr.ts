@@ -922,7 +922,7 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
  * value is `undefined`: a `match` with no arm for its scrutinee writes
  * `undefined`, the batch commits that, and a later read has to agree with it.
  */
-export function slotReadJs(name: string, reducerScope: boolean): string {
+export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
   const key = JSON.stringify(name);
   return reducerScope
     ? `(Object.hasOwn(_next, ${key}) ? _next[${key}] : _live[${key}])`
