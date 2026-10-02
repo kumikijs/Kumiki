@@ -89,10 +89,15 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   // An effect that fails with `Text` (capabilities.ts) delivers a throw as
   // that `Text` too — from its `map-request` or a host provider. Left to the
   // dispatcher, which cannot know `E`, it would arrive as `{message: …}`.
-  // `await` keeps a provider's rejected promise inside the `try`.
+  // `await` keeps a provider's rejected promise inside the `try`. A provider
+  // that *returns* a non-`Text` err value (a `{message}` record, written
+  // against the old contract) has its `message` read out, so `$e : Text`
+  // never holds a record; `String(record)` would be "[object Object]".
   const textFailure = failsWithText(eff.cap);
-  const providerCall = `${textFailure ? "await " : ""}_provider(${reqVar}, _caps, _signal)`;
-  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) return ${providerCall}; return ${fallback};`;
+  const providerCall = textFailure
+    ? `{ const _r = await _provider(${reqVar}, _caps, _signal); return _r && _r.kind === "err" && typeof _r.value !== "string" ? { kind: "err", value: typeof _r.value?.message === "string" ? _r.value.message : (JSON.stringify(_r.value) ?? String(_r.value)) } : _r; }`
+    : `return _provider(${reqVar}, _caps, _signal);`;
+  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) ${providerCall} return ${fallback};`;
   const mapped = eff.mapRequest ? makeEvalCtx(gen, ["$1"]) : null;
   const head = mapped && eff.mapRequest ? `const _req = ${jsOfExpr(eff.mapRequest, mapped)}; ` : "";
   const body = textFailure
