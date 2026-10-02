@@ -303,6 +303,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // parser, which rolls `2026-02-30` over into March. A counter parses no
     // time and still ships it, because `parseTime` sits in the stdlib module
     // every app loads.
+    //
+    // Still 63,000 (62,940 measured, from 62,504 on dev at f9a999c): the
+    // viewport pick reads the active theme's breakpoints over the style.md
+    // §4.2 defaults (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
+    // counting rem and em at 16px (§4.5); a grid's track mapping moved from
+    // tiles-layout.js into core.js so SSR shares it without importing a
+    // renderer. A counter picks no viewport and lays out no grid and still
+    // ships them, because they sit in modules every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

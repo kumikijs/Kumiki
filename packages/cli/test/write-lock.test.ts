@@ -64,6 +64,67 @@ describe("claiming a lock", () => {
     expect(claimLock(lock, seen)).toBe(false);
     expect(readFileSync(lock, "utf8")).toBe(liveHolder);
   });
+
+  it("never removes a lock it did not see, whatever another writer creates meanwhile", () => {
+    // Waiters B and C both saw a dead holder; A has since taken its place and
+    // holds the lock. B's claim, on what it saw, runs while C keeps trying to
+    // create the lock before each of B's filesystem calls. As long as A's
+    // lock stands, no attempt of C's can succeed, and A's lock must stand.
+    writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
+    const seen = sight();
+    rmSync(lock);
+    writeFileSync(lock, liveHolder);
+    const real = { ...fs };
+    let inC = false;
+    let cCreated = false;
+    const cTries = (): void => {
+      if (inC) return;
+      inC = true;
+      try {
+        real.closeSync(real.openSync(lock, "wx"));
+        cCreated = true;
+      } catch {
+        // A lock is there: C waits.
+      } finally {
+        inC = false;
+      }
+    };
+    for (const name of [
+      "openSync",
+      "readFileSync",
+      "fstatSync",
+      "closeSync",
+      "writeSync",
+      "renameSync",
+      "linkSync",
+      "unlinkSync",
+    ] as const) {
+      const original = real[name] as (...args: unknown[]) => unknown;
+      vi.spyOn(fs, name).mockImplementation(((...args: unknown[]) => {
+        cTries();
+        return original(...args);
+      }) as never);
+    }
+    expect(claimLock(lock, seen)).toBe(false);
+    vi.restoreAllMocks();
+    expect(cCreated).toBe(false);
+    expect(readFileSync(lock, "utf8")).toBe(liveHolder);
+  });
+
+  it("takes over a lock whose claim was left by a waiter that stopped, and leaves no claim behind", () => {
+    writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
+    const seen = sight();
+    // A first claim stops before it can remove anything: its files stay, naming
+    // this process, which holds no claim once the call has returned.
+    const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
+      throw errno("EBUSY");
+    });
+    expect(claimLock(lock, seen)).toBe(false);
+    expect(fs.readdirSync(dir).length).toBeGreaterThan(2);
+    stuck.mockRestore();
+    expect(claimLock(lock, seen)).toBe(true);
+    expect(fs.readdirSync(dir)).toEqual(["c.kumiki"]);
+  });
 });
 
 describe("releasing the lock", () => {
@@ -78,10 +139,10 @@ describe("releasing the lock", () => {
 
   it("returns the result even when the lock cannot be removed, and the next write proceeds", () => {
     process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "2000";
-    const rename = fs.renameSync;
-    const stuck = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-      if (String(from) === lock) throw errno("EBUSY");
-      rename(from, to);
+    const unlink = fs.unlinkSync;
+    const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation((path) => {
+      if (String(path) === lock) throw errno("EBUSY");
+      unlink(path);
     });
     vi.spyOn(process, "emitWarning").mockImplementation(() => {});
     expect(withWriteLock(file, () => 42)).toBe(42);
