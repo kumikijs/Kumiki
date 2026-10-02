@@ -17,11 +17,16 @@
     "loc": 674,
     "cl100k": 6417,
     "parse": true,
-    "typecheck": true,
-    "build": true,
-    "errorCount": 0,
-    "errorCategories": {},
-    "firstError": null
+    "typecheck": false,
+    "build": false,
+    "errorCount": 1,
+    "errorCategories": { "other(E0128)": 1 },
+    "firstError": {
+      "stage": "typecheck",
+      "code": "E0128",
+      "message": "A value is not a tile: column renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn`",
+      "pos": { "line": 354, "col": 13 }
+    }
   },
   {
     "path": "packages/benchmarks/learning-cost/v3-issue-tracker/results/Gemini/output.kumiki",
