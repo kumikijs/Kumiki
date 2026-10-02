@@ -291,7 +291,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,507 measured, from 61,162):
+    // Still 63,000 (61,872 measured, from 61,527):
     // an index step reaches the setter apart from a field step
     // (language.md §1.6.3), so a write through a Map key that is absent writes
     // nothing, an index key is never taken for a `.get` unwrap, and a read
