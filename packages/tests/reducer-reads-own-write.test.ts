@@ -60,7 +60,7 @@ describe("a slot read after the reducer's own write, in a nested form", () => {
   it("reads the write in a method predicate", async () => {
     // Before the fix the receiver saw the write and the predicate did not:
     // `$1 == "a"` over ["b", "b", "c"] counts 0.
-    const slots = await clickOnce(program("names.filter($1 == noteKey).size", "Int", "0"));
+    const slots = await clickOnce(program("names.filter($1 == noteKey).length", "Int", "0"));
     expect(slots.got).toBe(2);
   });
 
@@ -70,7 +70,7 @@ describe("a slot read after the reducer's own write, in a nested form", () => {
   });
 
   it("reads the write two levels down: a method predicate inside a match arm", async () => {
-    const read = "match 1 with | n -> names.filter($1 == noteKey).size";
+    const read = "match 1 with | n -> names.filter($1 == noteKey).length";
     const slots = await clickOnce(program(read, "Int", "0"));
     expect(slots.got).toBe(2);
   });
@@ -133,7 +133,7 @@ describe("a nested read that runs before the write", () => {
   it("counts with the starting value in a method predicate", async () => {
     // `$1 == "a"` over ["b", "b", "c"]: the write that follows is not seen yet.
     const slots = await clickOnce(
-      programWith(["got := names.filter($1 == noteKey).size", 'noteKey := "b"'], "Int", "0"),
+      programWith(["got := names.filter($1 == noteKey).length", 'noteKey := "b"'], "Int", "0"),
     );
     expect(slots.got).toBe(0);
   });
@@ -178,7 +178,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     ],
     [
       "a method predicate",
-      'text("hits=" + names.filter($1 == noteKey).size.show)',
+      'text("hits=" + names.filter($1 == noteKey).length.show)',
       "hits=0",
       "hits=1",
     ],

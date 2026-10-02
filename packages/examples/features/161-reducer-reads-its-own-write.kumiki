@@ -28,7 +28,7 @@ reducer go on=ui.click(Go)
         out3 := match ("x", 1) with | (s, _) -> noteKey
         out4 := let k = "x" in noteKey
         out5 := names.map($1 + noteKey).join(",")
-        hits := names.filter($1 == noteKey).size
+        hits := names.filter($1 == noteKey).length
 
 tile Go = button(text="go", onClick=go)
 
