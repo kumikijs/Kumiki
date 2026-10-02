@@ -4537,6 +4537,7 @@ function receiverMemberResult(
         case "union":
         case "intersect":
         case "diff":
+        case "filter":
           return t;
         case "to-list":
           return a0 && list(a0);

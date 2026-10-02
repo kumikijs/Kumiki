@@ -29,7 +29,6 @@ const ROWS: [string, string][] = [
   ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.size"],
   ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.entries.length"],
   ["slot res : Result(Int, Text) = Ok(3)\nslot n : Int = 0", "n := res.values.length"],
-  ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.filter($1 > 1).size"],
   ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.map($1 * 2).length"],
 ];
 

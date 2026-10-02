@@ -144,11 +144,11 @@ describe("a numeric method on something that is not a number", () => {
 
   it("says nothing about a receiver whose type it does not know", () => {
     // The file's standing policy: a diagnostic is only for types understood
-    // fully. A `$1` bound to an element that is itself a `List` is left
-    // untyped (stdlib.md §2.2.2), so it keeps the dynamic pass-through.
-    const src = `slot xss : List(List(Float)) = []
+    // fully. A `fold`'s result has no type (stdlib.md §2.2.2), so the `$1` a
+    // `map` over it binds is untyped and keeps the dynamic pass-through.
+    const src = `slot xs : List(Float) = []
 slot dst : List(Float) = []
-reducer r on=ui.click(B) do= dst := xss.map($1.sqrt)
+reducer r on=ui.click(B) do= dst := xs.fold([], $1.push($2)).map($1.sqrt)
 tile B = button(text="b")
 tile App = column(B, text(dst.length.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]

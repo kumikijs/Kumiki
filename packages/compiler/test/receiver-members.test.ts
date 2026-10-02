@@ -99,7 +99,6 @@ describe("a member of one container on another", () => {
     ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.keys.length", "Option"],
     ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.size", "Option"],
     ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.entries.length", "Option"],
-    ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.filter($1 > 1).size", "Set"],
     ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.map($1 * 2).length", "Set"],
   ];
   for (const [decls, body, type] of rows) {
@@ -116,7 +115,7 @@ describe("a member of one container on another", () => {
       "sink := res.filter($1 > 2)",
     );
     expect(err?.message).toBe(
-      'Type "Result" has no member ".filter" — it is a member of Map / List / Option',
+      'Type "Result" has no member ".filter" — it is a member of Map / Set / List / Option',
     );
   });
 
@@ -140,11 +139,12 @@ describe("a member of one container on another", () => {
   });
 
   it("stays silent on a receiver whose type it cannot decide", () => {
-    // A `$1` bound to an element that is itself a `List` is not resolved
-    // (§2.2.2), so the name-based dispatch §2.2.3 keeps for it still applies.
+    // A `fold`'s result has no type (§2.2.2), so the `$1` a `map` over it
+    // binds is not resolved and the name-based dispatch §2.2.3 keeps for it
+    // still applies.
     const errs = reducerErrors(
-      "slot xss : List(List(Int)) = []\nslot n : Int = 0",
-      "n := xss.map($1.size).length",
+      "slot xs : List(Int) = []\nslot n : Int = 0",
+      "n := xs.fold([], $1.push($2)).map($1.size).length",
     );
     expect(errs.map((e) => e.code)).not.toContain("E0108");
   });

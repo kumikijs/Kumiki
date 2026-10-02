@@ -115,6 +115,7 @@ toggle(x)                   : Set(T)
 union(other)                : Set(T)
 intersect(other)            : Set(T)
 diff(other)                 : Set(T)
+filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
@@ -175,7 +176,7 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 - `Tuple(A, B)` である要素 — `.entries` が作る `[k, v]` ペア — は分解される：`$1` が前半、`$2` が後半。例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`。`Tuple(A, B)` を持つ `Option` / `Result` も同じく分解される。
 - `Map(K, V).filter` の述語と `Map(K, V).map` の式は各エントリを受け取る：`$1=key`, `$2=value`（[§2.2.1](#_2-2-1-map-k-v)）。
 - それ以外の `List` の要素、`Option`（`map` / `filter`）や `Result`（`map`）の値は、**丸ごと** `$1` になる — 2 要素の `List` である要素も同じ：`[[1, 2], [3, 4, 5]].map($1.length)` は `[2, 3]`、`Some([1, 2]).filter($1.length > 1)` は `Some([1, 2])`。このようなフラグメントは `$2` を束縛しない：書けば添字や `$1` の複製ではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)（`"$2" is not bound here — …`）になる。これはフラグメントの中のどこでも同じで、別のメソッドの引数の中の `$2` も含む：positional を束縛するのはフラグメントだけで、その引数はフラグメントのものを読むので、`nums.map($1.min($2))` も E0103 である。
-- それ以外の場所では、lowering は値を見て判断する：2 要素の配列は分解して `$1` / `$2` とし、それ以外は `$1` とし、`$2` は添字（`map` / `find`）か再び `$1`（`filter` / `sort-by`）になる。型検査器が要素の型を決定できない場所（型パラメータ、型のない payload — `nums.fold([], $1.push([$2, $2])).map(…)`）と、受信側の型は分かっているがこの節がそのメソッドに束縛を与えていない場所がこれにあたる：`filter` が各要素を `[element, true]` のエントリとして渡す `Set`、`Map.find` / `sort-by`、`Option.find` / `sort-by`、`Result.filter` / `find` / `sort-by`、およびコレクションでない受信側。そこにフラグメントとして名指した `fn` が 2 つ目のパラメータを取れるのは、型検査器が決定できない受信側の上だけであり、決定できる受信側の上では [E0213](./errors.md#e0213-call-arity-mismatch) になる。これらは欠落であってプログラムが頼ってよい規則ではなく、型が決定できるようになり、メンバーが自身の束縛を得るにつれて閉じる。
+- それ以外の場所では、lowering は値を見て判断する：2 要素の配列は分解して `$1` / `$2` とし、それ以外は `$1` とし、`$2` は添字（`map` / `find`）か再び `$1`（`filter` / `sort-by`）になる。型検査器が要素の型を決定できない場所（型パラメータ、型のない payload — `nums.fold([], $1.push([$2, $2])).map(…)`）と、受信側の型は分かっているがこの節がそのメソッドに束縛を与えていない場所がこれにあたる：`filter` が各要素を `[element, true]` のエントリとして渡す `Set`。受信側がそもそも持たないメソッド — `Map.find` / `sort-by`、`Option.find` / `sort-by`、`Result.filter` / `find` / `sort-by`、コレクションでない受信側の上のそれら — は、上の dispatch 規則により代わりに [E0108](./errors.md#e0108-undef-member) になる。そこにフラグメントとして名指した `fn` が 2 つ目のパラメータを取れるのは、型検査器が決定できない受信側の上だけであり、決定できる受信側の上では [E0213](./errors.md#e0213-call-arity-mismatch) になる。これらは欠落であってプログラムが頼ってよい規則ではなく、型が決定できるようになり、メンバーが自身の束縛を得るにつれて閉じる。
 
 **`sort-by(expr)` はキーを `<` が 2 値を並べる順で並べる**（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。数値と `Time` は数値として、`Text` は `<` が 2 つの `Text` を比べる順で並べる。キーが等しい要素は元の順を保つ。順序を持たないキー（record、variant、`Bool`、`Option`、コンテナ）は、同じ 2 値の `a < b` と同じく [E0201](./errors.md#e0201-type-mismatch)。キーは名前で渡した `fn`（`xs.sort-by(keyOf)`）でもよく、その宣言された戻り値型がキーの型になる。
 
