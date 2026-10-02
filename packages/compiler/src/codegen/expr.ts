@@ -423,10 +423,11 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
  *
  * `second` is why the checker cannot read `binds` alone. `fold` binds the
  * element as `$2` on every receiver, so a `fn` that stops at the accumulator
- * drops every element. The list methods bind `$2` to the value of a key/value
- * pair — a `Map`, or a `List` of pairs from `.entries` — and on any other
- * receiver `argFnList` fills it with the JS index or the element again, which
- * no `fn` written for it means.
+ * drops every element. The list methods bind `$2` only where the value handed
+ * over is taken apart — a `Map`'s filter entry, or a pair (stdlib.md §2.2.3).
+ * Where the checker decides the value is one value, `argFnList` declares no
+ * `$2` at all; only where the lowering falls back does it fill one with the
+ * JS index or the element again, which no `fn` written for it means.
  */
 export const FRAGMENT_ARGUMENTS: ReadonlyMap<
   string,
