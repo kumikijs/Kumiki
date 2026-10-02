@@ -70,12 +70,13 @@ export const buttonTile: TileRenderer<"button"> = (node) => {
   const id = tileId(node);
   if (id) b.id = id;
   setHandlers(b, inputHandlers(node));
-  b.addEventListener("click", (e) => {
+  // The click is not cancelled: a click reducer and the form's submit are
+  // independent (forms.md §5.2.2), and cancelling a submit button's click
+  // cancels its activation — the form never submits. A button in a form that
+  // is not meant to submit it says `type="button"`.
+  b.addEventListener("click", () => {
     const state = INPUT_STATE.get(b);
-    if (state?.onClick) {
-      e.preventDefault();
-      state.onClick(state.el ?? {});
-    }
+    if (state?.onClick) state.onClick(state.el ?? {});
   });
   return b;
 };
