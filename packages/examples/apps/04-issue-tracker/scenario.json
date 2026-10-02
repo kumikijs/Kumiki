@@ -18,6 +18,24 @@
       "expect": { "noErrors": true, "domIncludes": ["New Issue", "Title", "Tags"] }
     },
     {
+      "do": { "fill": "#new-title", "value": "Draft to discard" },
+      "expect": { "noErrors": true, "state": { "draft": { "title": "Draft to discard" } } }
+    },
+    {
+      "label": "Cancel clears the draft and returns to / without creating an issue: the list still has none",
+      "do": { "clickText": "Cancel" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": { "title": "" } },
+        "domIncludes": ["Issues", "No issues"],
+        "domExcludes": ["Create issue", "Draft to discard"]
+      }
+    },
+    {
+      "do": { "navigate": "/new" },
+      "expect": { "noErrors": true, "domIncludes": ["New Issue"] }
+    },
+    {
       "label": "the fields bind into the draft record, field by field",
       "do": { "fill": "#new-title", "value": "Login button does nothing" },
       "expect": { "noErrors": true, "state": { "draft": { "title": "Login button does nothing" } } }

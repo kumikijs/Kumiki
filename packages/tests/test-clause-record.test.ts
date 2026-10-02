@@ -1,5 +1,6 @@
-// A test's `given`, a reducer-test's or episode-test's `expect`, and an
-// episode-test's `mocks` are read as records of named parts (`docs/spec/errors.md`
+// A test's `given`, a reducer-test's or episode-test's `expect`, an
+// episode-test's `mocks`, and the `slots` sections inside them are read as
+// records of named parts (`docs/spec/errors.md`
 // E0713). A value that is not a record literal has no parts, so every reader
 // used to answer "none": `given = setup` set nothing and the reducer ran from
 // the declared defaults, `expect = 41` asserted nothing, and `mocks = 41`
@@ -54,11 +55,37 @@ describe("a test clause that is not a record stops the build", () => {
         expect = {no-panics: true}`,
       "`mocks` must be a record, `{<effect>: <policy>}`",
     ],
+    // One level down: the test seeded no slot and asserted no slot, and passed.
+    [
+      "a reducer-test whose `slots` sections are literals",
+      `test t =
+    reducer-test inc
+        given  = {slots: 41, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 1}}
+test u =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}
+        expect = {slots: 41}`,
+      [
+        "`given.slots` must be a record, `{<slot>: …}`",
+        "`expect.slots` must be a record, `{<slot>: …}`",
+      ],
+    ],
+    [
+      "an episode-test `slots-equal` that is a literal",
+      `test t =
+    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: 41}`,
+      "`expect.slots-equal` must be a record, `{<slot>: …}`, or `from-log`",
+    ],
   ])("refuses %s", (_, test, message) => {
     const r = build(program(test));
     expect(r.kind).toBe("fail");
     if (r.kind !== "fail") return;
-    expect(r.errors.map((e) => [e.code, e.message])).toEqual([["E0713", message]]);
+    const messages = typeof message === "string" ? [message] : message;
+    expect(r.errors.map((e) => [e.code, e.message])).toEqual(messages.map((m) => ["E0713", m]));
   });
 
   // `{}` parses as an empty map rather than a record, so it takes a branch of
@@ -74,7 +101,16 @@ test u =
     episode-test
         load   = "nope.jsonl"
         mocks  = {}
-        expect = {}`),
+        expect = {}
+test v =
+    reducer-test inc
+        given  = {slots: {}}
+        expect = {slots: {}}
+test w =
+    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: from-log}`),
     );
     expect(r.kind).toBe("ok");
   });

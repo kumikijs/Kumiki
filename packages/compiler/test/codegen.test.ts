@@ -512,7 +512,7 @@ describe("codegen", () => {
     const src = `
       slot f : Text = ""
       reducer recordFocus on=ui.focus(Other) do= f := "focused"
-      tile Other = button("noop")
+      tile Other = button(text="noop")
       tile MyInput = input(onFocus=recordFocus)
       tile App = column(MyInput, Other)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -563,7 +563,7 @@ describe("codegen", () => {
     const src = `
       slot b : Text = ""
       reducer markBlur on=ui.blur(Other) do= b := "blurred"
-      tile Other = button("noop")
+      tile Other = button(text="noop")
       tile MyInput = input() {onBlur: markBlur}
       tile App = column(MyInput, Other)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
