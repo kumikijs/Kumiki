@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "label": "a Text key sorts by name; equal Int keys keep their order",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["by-name: abe,alice,bob,carol", "by-age: alice,abe,bob,carol"]
+      }
+    },
+    {
+      "label": "the same sort in a reducer writes the ordered names",
+      "do": { "click": "#order" },
+      "expect": {
+        "noErrors": true,
+        "state": { "byName": ["abe", "alice", "bob", "carol"] }
+      }
+    }
+  ]
+}
