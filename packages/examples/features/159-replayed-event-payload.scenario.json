@@ -1,0 +1,21 @@
+{
+  "effects": {
+    "fetchQuote": [{ "outcome": "ok", "value": { "text": "hi", "author": "me" } }]
+  },
+  "steps": [
+    {
+      "label": "the init effect's recorded value reaches the .ok reducer as $1",
+      "expect": { "state": { "quote": "hi" }, "domIncludes": ["quote=hi"] }
+    },
+    {
+      "label": "a dispatched click hands $el its payload",
+      "do": { "dispatch": "clicked", "payload": { "idx": 5 } },
+      "expect": { "state": { "n": 5 }, "domIncludes": ["n=5"] }
+    },
+    {
+      "label": "typing hands $event its value",
+      "do": { "fill": "input", "value": "hello" },
+      "expect": { "state": { "seen": "hello", "draft": "hello" }, "domIncludes": ["seen=hello"] }
+    }
+  ]
+}
