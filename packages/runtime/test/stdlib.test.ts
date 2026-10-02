@@ -259,7 +259,7 @@ describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
 
   // A `Map(Text, _)` may have a `"_tag"` key; only a real variant tag makes it
   // an Option / Result, as `filter` decides with `variantIs`.
-  it("maps a Map that has a \"_tag\" key instead of returning it unchanged", () => {
+  it('maps a Map that has a "_tag" key instead of returning it unchanged', () => {
     const out = _stdlibCore.mapOver(
       { _tag: "label", a: "x" },
       (pair) => `${String((pair as [unknown, unknown])[1])}!`,
