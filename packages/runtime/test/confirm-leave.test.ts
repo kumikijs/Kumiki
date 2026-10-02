@@ -4,7 +4,7 @@
 // onYes reducer), and that No reverts the router back to the old path.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AppShape } from "../src/core.ts";
+import type { AppShape, ParsedRoute } from "../src/core.ts";
 import { installConfirm } from "../src/effects-confirm.ts";
 import { mount } from "../src/index.ts";
 
@@ -24,8 +24,8 @@ afterEach(() => {
   for (const m of Array.from(document.querySelectorAll("[data-kumiki-confirm]"))) m.remove();
 });
 
-function leaveGuardApp(): AppShape {
-  // A two-route app whose `route.leave("/edit")` guard emits `confirm` when
+function leaveGuardApp(editPattern = "/edit"): AppShape {
+  // A two-route app whose `route.leave(editPattern)` guard emits `confirm` when
   // `dirty` is true. `continueLeave` clears `dirty`; `stayHere` is a noop.
   const app: AppShape = {
     slots: {
@@ -52,7 +52,7 @@ function leaveGuardApp(): AppShape {
       },
       {
         name: "guardEdit",
-        event: { kind: "lifecycle", name: 'route.leave("/edit")' },
+        event: { kind: "lifecycle", name: `route.leave(${JSON.stringify(editPattern)})` },
         apply: (slots) => ({
           slots,
           emits: slots.dirty
@@ -105,7 +105,7 @@ function leaveGuardApp(): AppShape {
         }),
       },
       {
-        pattern: "/edit",
+        pattern: editPattern,
         tile: () => ({
           kind: "page",
           children: [
@@ -224,6 +224,98 @@ describe("route.leave guard with confirm — No reverts the transition", () => {
       expect(getModal()).toBeNull();
       expect(target.textContent).toContain("Home");
       expect(app.live?.visits).toBe(1);
+    } finally {
+      handle.dispose();
+    }
+  });
+});
+
+/** The ambient URL the history router reads and writes. */
+function href(): string {
+  return location.pathname + location.search + location.hash;
+}
+
+/** Mount on the history router at `start`, with unsaved edits. */
+function mountDirtyAt(app: Hooked, start: string): { dispose: () => void } {
+  history.replaceState(null, "", start);
+  const handle = mount(app, target);
+  app._dispatch?.("edit", {});
+  expect(app.live?.dirty).toBe(true);
+  return handle;
+}
+
+async function settle(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("route.leave guard — what counts as leaving (routing §3.4)", () => {
+  it("a query-only move stays on the route, so the guard never asks", async () => {
+    const app = leaveGuardApp() as Hooked;
+    const handle = mountDirtyAt(app, "/edit?tab=a");
+    try {
+      app._navigate?.("/edit?tab=b");
+      await settle();
+      expect(getModal()).toBeNull();
+      expect(href()).toBe("/edit?tab=b");
+      expect((app.live?.route as ParsedRoute).query).toEqual({ tab: "b" });
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("a hash-only move stays on the route, so the guard never asks", async () => {
+    const app = leaveGuardApp() as Hooked;
+    const handle = mountDirtyAt(app, "/edit?tab=a");
+    try {
+      app._navigate?.("#notes");
+      await settle();
+      expect(getModal()).toBeNull();
+      expect(href()).toBe("/edit?tab=a#notes");
+      const route = app.live?.route as ParsedRoute;
+      expect(route.query).toEqual({ tab: "a" });
+      expect(route.hash).toEqual({ _tag: "Some", _0: "notes" });
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("a move to the path already shown stays on the route, so the guard never asks", async () => {
+    const app = leaveGuardApp() as Hooked;
+    const handle = mountDirtyAt(app, "/edit");
+    try {
+      app._navigate?.("/edit");
+      await settle();
+      expect(getModal()).toBeNull();
+      expect(href()).toBe("/edit");
+      expect(app.live?.dirty).toBe(true);
+    } finally {
+      handle.dispose();
+    }
+  });
+});
+
+describe("route.leave guard — No on a move within one pattern", () => {
+  it("puts back the old URL whole: path, query and hash", async () => {
+    const app = leaveGuardApp("/todos/:id/edit") as Hooked;
+    const handle = mountDirtyAt(app, "/todos/1/edit?tab=a#notes");
+    try {
+      app._navigate?.("/todos/2/edit");
+      await settle();
+      expect(getModal(), "a params-only move leaves todo 1").not.toBeNull();
+      expect(href()).toBe("/todos/2/edit");
+
+      getModal()
+        ?.querySelector<HTMLButtonElement>("button[data-kumiki-confirm-action='no']")
+        ?.click();
+      await Promise.resolve();
+
+      expect(getModal()).toBeNull();
+      expect(href()).toBe("/todos/1/edit?tab=a#notes");
+      const route = app.live?.route as ParsedRoute;
+      expect(route.params).toEqual({ id: "1" });
+      expect(route.query).toEqual({ tab: "a" });
+      expect(route.hash).toEqual({ _tag: "Some", _0: "notes" });
     } finally {
       handle.dispose();
     }

@@ -140,11 +140,8 @@ reducer submit
   }
 
   // The buttonless form is what was genuinely unreachable, and it is the shape
-  // `02-todomvc` and the spec's own example use. (A form *with* a default-type
-  // button already submitted under this harness's synthetic click: happy-dom
-  // runs the activation behaviour, and the `preventDefault` the runtime
-  // installs on the button does not stop it, because the click `fire()` builds
-  // is not cancelable.)
+  // `02-todomvc` and the spec's own example use. (A form *with* a submit button
+  // already submits when `fire()` clicks it, through the click's activation.)
   it("fires the submit reducer of a form with no submit button", async () => {
     const { ok, count } = await driveForm();
     expect(ok).toBe(true);

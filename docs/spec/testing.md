@@ -77,7 +77,12 @@ not `ok(...)` / `err(...)` / `delay(...)` became a success mock, an
 `expect.effects` that is not a list became the assertion that no effect was
 emitted, and a `given` / `expect` / `mocks` (or a `given`'s `mocks` / `event`)
 that is not a record was read as an empty one, so the setup, the assertion or
-the script it was written for did not happen.
+the script it was written for did not happen. The slot → value sections one
+level down — a `given`'s `slots`, a `reducer-test` `expect`'s `slots` and an
+`episode-test` `expect`'s `slots-equal` — are records the same way: one that is
+not seeded no slot, or asserted none. `slots-equal` alone also takes the bare
+name `from-log` (the log's own final values) in place of a record; it is a name
+like any other at every other position.
 
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
@@ -174,10 +179,12 @@ test toggle-is-involution =
 ```
 property-test ::= 'property-test'
                   'for-all'    '=' record-lit       ; variables to generate
-                  'given'      '=' record-lit
+                  'given'      '=' '{' (property-given (',' property-given)*)? '}'
                   'invariant'  '=' expr
                   ('count'     '=' int)?            ; number of trials (default 100)
                   ('shrink'    '=' bool)?           ; minimize on failure (default true)
+
+property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
 
 `run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
@@ -227,6 +234,14 @@ test counter-display =
 ```
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
+
+```
+tile-test ::= 'tile-test' identifier
+              'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
+              'expect' '=' tile-expr
+
+tile-given ::= 'slots' ':' record-lit | 'in' ':' expr
+```
 
 `given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
 
@@ -284,6 +299,20 @@ test bug-2026-05-21 =
             no-panics: true
         }
 ```
+
+```
+episode-test ::= 'episode-test'
+                 'load'   '=' string
+                 'mocks'  '=' '{' (identifier ':' mock-policy (',' identifier ':' mock-policy)*)? '}'
+                 'expect' '=' '{' (episode-expect (',' episode-expect)*)? '}'
+
+mock-policy    ::= 'from-log' | 'ignore' | 'ok' '(' expr ')' | 'err' '(' expr ')'
+episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
+                 | 'no-panics' ':' bool
+                 | 'no-errors' ':' bool
+```
+
+`slots-equal: from-log` compares the final slots with the values the log recorded; a record names the slots to compare and their expected values instead.
 
 ### 8.6.1 The Format of the episode log
 
