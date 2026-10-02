@@ -215,8 +215,15 @@ export function tileExprJs(
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
       // A body whose every tile call carries its own `{key: …}` never reads the
       // implicit key, so the keys are not computed on each render.
-      if (!body.includes(impl)) return `((${iter}) || []).map((${bind}) => (${body}))`;
-      return `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(name)}); return __xs.map((${bind}, ${index}) => (${body})); })((${iter}) || [])`;
+      const list = body.includes(impl)
+        ? `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(name)}); return __xs.map((${bind}, ${index}) => (${body})); })((${iter}) || [])`
+        : `((${iter}) || []).map((${bind}) => (${body}))`;
+      // A `for` reached by an enclosing `for`'s implicit key — its body, or an
+      // arm of a branch there — renders a list per outer iteration, each node
+      // keyed by this loop alone, so siblings from different outer iterations
+      // would collide once flattened. `_wk` pairs each node's key with the
+      // outer iteration's.
+      return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
