@@ -292,6 +292,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 | `166-map-map.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `167-time-parse-calendar.kumiki` | slot, reducer, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
+| `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 <!-- examples:end -->
 :::

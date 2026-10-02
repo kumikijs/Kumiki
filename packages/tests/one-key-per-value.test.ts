@@ -76,7 +76,7 @@ describe("a union value is a Set element and a Map key of its own", () => {
     const text = await afterClick(
       "slot m : Map(Color, Int) = {}",
       "m := m.insert(Green, 5)\nm[Red] := 1",
-      '"n=" + m.size.show + " red=" + m.get-or(Red, 0).show + " green=" + m[Green].show + " blue=" + m.get(Blue).is-some.show',
+      '"n=" + m.size.show + " red=" + m.get-or(Red, 0).show + " green=" + m.get-or(Green, 0).show + " blue=" + m.get(Blue).is-some.show',
     );
     expect(text).toContain("n=2 red=1 green=5 blue=false");
   });

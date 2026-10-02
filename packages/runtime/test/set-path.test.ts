@@ -183,6 +183,89 @@ describe("an index into a Map", () => {
   });
 });
 
+// A reducer's `[…]` step arrives as `{at: key}`, apart from a field step, so
+// the setter can tell a missing Map entry from a missing record field: the
+// first is `m.update(k, …)` on an absent `k`, which writes nothing (language.md
+// §1.6.3); the second is a level to build.
+describe("an index step", () => {
+  const todos = { t1: { title: "a", done: false } };
+
+  it("writes a field of the entry at a key the Map holds", () => {
+    expect(_setPathHelper(todos, [{ at: "t1" }, "done"], true)).toEqual({
+      t1: { title: "a", done: true },
+    });
+  });
+
+  it("writes nothing through a key the Map does not hold", () => {
+    expect(_setPathHelper(todos, [{ at: "t9" }, "done"], true)).toBe(todos);
+  });
+
+  it("does not take an Object.prototype member for an entry", () => {
+    expect(_setPathHelper(todos, [{ at: "toString" }, "done"], true)).toBe(todos);
+  });
+
+  it("inserts or replaces the entry when it is the last step", () => {
+    expect(_setPathHelper(todos, [{ at: "t9" }], { title: "b", done: true })).toEqual({
+      ...todos,
+      t9: { title: "b", done: true },
+    });
+    expect(_setPathHelper({}, [{ at: 5 }], "x")).toEqual({ 5: "x" });
+  });
+
+  it("indexes a List the way a bare numeric step does", () => {
+    expect(_setPathHelper([{ n: 1 }, { n: 2 }], [{ at: 1 }, "n"], 9)).toEqual([{ n: 1 }, { n: 9 }]);
+    expect(() => _setPathHelper([1, 2, 3], [{ at: 3 }], 7)).toThrow(
+      "Index 3 is out of range for a List of length 3",
+    );
+  });
+
+  // `Map({get: Bool}, Int)`: the key is a record that happens to have a `get`
+  // field set to `true`, the shape of the unwrap segment. Inside `{at}` it is a
+  // key, so the write inserts an entry under its `entryKey` encoding rather
+  // than replacing the whole slot with `1`.
+  it("takes a record key with `get: true` for a key, not an unwrap", () => {
+    expect(_setPathHelper({}, [{ at: { get: true } }], 1)).toEqual({ '{"get":true}': 1 });
+  });
+
+  // `m[a][b].f := v` and `m[a][b] := v` are `m.update(a, …)`, so an absent
+  // outer key writes nothing at either depth.
+  it("writes nothing through an absent outer key of a nested Map", () => {
+    const grid = { x: { y: { n: 0 } } };
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }, "n"], 1)).toBe(grid);
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }], { n: 2 })).toBe(grid);
+  });
+
+  // A present outer key reaches the inner Map, where the rule for the last
+  // step applies: a field through an absent inner key writes nothing, the
+  // entry itself is inserted.
+  it("writes through a present outer key into the inner Map", () => {
+    const grid = { a: {} };
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }, "n"], 1)).toEqual({ a: {} });
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }], { n: 2 })).toEqual({
+      a: { b: { n: 2 } },
+    });
+  });
+
+  // `m[k].get.f := v` on `Map(K, Option(R))`: the key decides whether there is
+  // an entry, then `.get` decides whether there is a payload to write through.
+  it("writes through `.get` of the entry at a key the Map holds", () => {
+    const opts = {
+      a: { _tag: "Some", _0: { done: false } },
+      b: { _tag: "None" },
+    };
+    expect(_setPathHelper(opts, [{ at: "a" }, { get: true }, "done"], true)).toEqual({
+      ...opts,
+      a: { _tag: "Some", _0: { done: true } },
+    });
+    expect(_setPathHelper(opts, [{ at: "b" }, { get: true }, "done"], true)).toEqual(opts);
+    expect(_setPathHelper(opts, [{ at: "z" }, { get: true }, "done"], true)).toBe(opts);
+  });
+
+  it("leaves a field step building the level it finds missing", () => {
+    expect(_setPathHelper({}, ["t9", "done"], true)).toEqual({ t9: { done: true } });
+  });
+});
+
 describe("an unwrap segment", () => {
   it("edits the payload of a Some and leaves the tag", () => {
     expect(_setPathHelper({ _tag: "Some", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
