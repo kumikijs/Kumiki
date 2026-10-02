@@ -549,6 +549,27 @@ export function showRefinementPath(path: readonly RefinementStep[]): string {
     .join("");
 }
 
+/**
+ * A failed predicate as every report spells it: `between(0, 3)`, `uuid at
+ * .keys["k1"]`, or `its refinement` when the predicate is unnamed. The one
+ * formatter for a refused slot write (runtime.md §10.3.3) and a refused
+ * `Decoder.Json(T)` (effects-decode.ts), since both are the same check.
+ */
+export function showRefinementFailure(f: {
+  kind?: string;
+  args?: readonly (number | string)[];
+  path?: readonly RefinementStep[];
+}): string {
+  const pred =
+    f.kind === undefined
+      ? "its refinement"
+      : f.args && f.args.length > 0
+        ? `${f.kind}(${f.args.join(", ")})`
+        : f.kind;
+  const at = f.path && f.path.length > 0 ? ` at ${showRefinementPath(f.path)}` : "";
+  return `${pred}${at}`;
+}
+
 /** The slot fields that decide whether a value is let in. */
 export type SlotGate = {
   refine?: RefinementCheck;
@@ -1395,14 +1416,7 @@ export function batchRejections(
  * `slot "form" cannot hold {"email":"nope"} (email at .email)`.
  */
 function describeRejection(r: RefinementRejection): string {
-  const pred =
-    r.kind === undefined
-      ? "its refinement"
-      : r.args && r.args.length > 0
-        ? `${r.kind}(${r.args.join(", ")})`
-        : r.kind;
-  const at = r.path && r.path.length > 0 ? ` at ${showRefinementPath(r.path)}` : "";
-  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred}${at})`;
+  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${showRefinementFailure(r)})`;
 }
 
 /**

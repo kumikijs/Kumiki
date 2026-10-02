@@ -48,6 +48,7 @@ import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./b
 import {
   BUILTIN_EFFECTS,
   builtinFieldOmittable,
+  failsWithText,
   REDUCER_REF,
   STANDARD_CAPABILITIES,
 } from "./capabilities.ts";
@@ -2097,29 +2098,33 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
 }
 
 /**
- * The type `$1` holds in an `effect-name.ok(…)` trigger — the value the
- * effect's `out=` says a success delivers (language.md §1.6.5): the Ok payload
- * of a `Result(T, E)`, or the whole value of any other `out=`.
+ * The type `$1` holds in an `effect-name.ok(…)` / `.err(…)` trigger — the
+ * value the effect's `out=` says it delivers (language.md §1.6.5). On `.ok`:
+ * the Ok payload of a `Result(T, E)`, or the whole value of any other `out=`.
  *
- * `.err` stays undecided. What arrives there is the runtime's failure record
- * (`{message: …}` from the storage / indexed handlers and the dispatcher's
- * catch), which the declared `E` does not describe; typing `$e` as `E` would
- * reject the read that matches it and accept the one that does not. A
- * built-in effect has no `out=` to read, and a `Result` of the wrong arity is
- * already reported where it is written, so neither is guessed at.
+ * On `.err`: the `E` of a `Result(T, E)`, for an effect on a capability whose
+ * handlers deliver that `E` ({@link failsWithText}). Any other `.err` stays
+ * undecided — an HTTP handler's record and a host provider's value are not
+ * what the runtime fixes to `E`, so typing `$e` from `out=` there would claim
+ * a type nothing guarantees. A built-in effect has no `out=` to read, and a
+ * `Result` of the wrong arity is already reported where it is written, so
+ * neither is guessed at.
  */
 function effectPayloadType(
   effect: string,
   outcome: "ok" | "err",
   sym: SymbolTable,
 ): TypeExpr | null {
-  if (outcome === "err") return null;
-  const out = sym.effects.get(effect)?.outType;
-  if (!out) return null;
+  const eff = sym.effects.get(effect);
+  const out = eff?.outType;
+  if (!eff || !out) return null;
   const u = unaliasType(out, sym);
-  if (u?.kind === "TypeApp" && u.name === "Result") {
-    return u.args.length === 2 ? (u.args[0] ?? null) : null;
+  const result = u?.kind === "TypeApp" && u.name === "Result" ? u : null;
+  if (outcome === "err") {
+    if (!result || result.args.length !== 2 || !failsWithText(eff.cap)) return null;
+    return result.args[1] ?? null;
   }
+  if (result) return result.args.length === 2 ? (result.args[0] ?? null) : null;
   return out;
 }
 
@@ -4345,7 +4350,8 @@ const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
 
 /**
  * Result types of the built-in calls that have one. `panic` never returns and
- * `Decoder.*` produce an opaque sentinel, so both stay undecidable.
+ * `Decoder.*` produce an opaque decoder (a sentinel, or `Decoder.Json(T)`'s
+ * check), so both stay undecidable.
  */
 const CALL_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["now", "Time"],

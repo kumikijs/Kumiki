@@ -38,6 +38,7 @@ import { emitSlots } from "./codegen/emit-slot.ts";
 import { coverageJs, genTest } from "./codegen/emit-test.ts";
 import { bindReaderDecls, genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
+import { nestedRefinements } from "./codegen/nested-refinements.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 
 export type CodegenOptions = {
@@ -135,6 +136,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     types,
     usedTiles: new Set(),
     usedIcons: new Set(),
+    refinements: nestedRefinements({ types }),
     usedReaders: new Set(),
   };
 
@@ -155,6 +157,13 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   for (const fn of fns) {
     lines.push(genFn(fn, ctx));
   }
+
+  // The refinement walks (`_rq0`, …) go here, once the whole body has been
+  // generated and has asked for all of them: the slot table and a
+  // `Decoder.Json(T)` in an effect request, a reducer or an `app.init` entry
+  // all name them. Each is a `const` arrow that calls the others only when it
+  // runs, so ahead of every reader is the one position that is always right.
+  const refinementsAt = lines.length;
 
   // App-wide HTTP config (#78). Emitted unconditionally so the http effect
   // handler's `httpFetch(method, req, _http)` reference never trips TDZ even
@@ -318,6 +327,12 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 
+  // The two splices are order-dependent: `refinementsAt` is the larger index,
+  // so it goes in first and the readers' splice below, at the smaller
+  // `readersAt`, does not move it. Reversed, the refinement declarations
+  // would land as many lines early as the readers block is long, in the
+  // middle of whatever the body emitted there.
+  lines.splice(refinementsAt, 0, ...ctx.refinements.decls);
   lines.push("  return App;");
   lines.push("}"); // end createApp
   lines.push("");
@@ -341,6 +356,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   }
   lines.push("");
 
+  // After the refinements splice above, which sits at a larger index.
   lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
 
   // ----- runtime usage analysis (#71) — the body above is fully generated, so

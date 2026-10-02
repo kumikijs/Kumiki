@@ -312,15 +312,21 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // renderer. A counter picks no viewport and lays out no grid and still
     // ships them, because they sit in modules every app loads.
     //
-    // 64,000 from 63,000 (63,281 measured, from 62,940 on dev at d8ff739): an index
+    // Still 63,000 (62,985 measured, from 62,940 on dev at d8ff739): a decoded
+    // value its type refuses is the effect's err (http.md §6.1.4), named by the
+    // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
+    // now sits in core as an export the decode handlers share instead of inline
+    // in the slot-write report; a counter decodes nothing and still ships it.
+    //
+    // 64,000 from 63,000 (63,331 measured, from 62,985 on dev at fbbec02): an index
     // step reaches the setter apart from a field step (language.md §1.6.3), so
     // a write through a Map key that is absent writes nothing, an index key is
-    // never taken for a `.get` unwrap, and a read there panics. The 341 bytes
+    // never taken for a `.get` unwrap, and a read there panics. The 346 bytes
     // are `isIndexSegment` and the two branches in `_setPathHelper` that ask
     // it, `isEntryOf` which both sides of `:=` ask, and the panic in
     // `_stdlibCore.index`. A counter indexes nothing and still ships them,
     // because the setter and the stdlib sit on paths every app loads.
-    // Dev was 60 bytes under the line at d8ff739, so this change crosses it;
+    // Dev was 15 bytes under the line at fbbec02, so this change crosses it;
     // the budget moves up one step, as it did to 63,000, rather than holding
     // the change at the old line.
     const total = expected

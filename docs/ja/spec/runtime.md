@@ -166,6 +166,8 @@ reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
 
+プログラムの外から来る値は、reducer に届く前に検査される。`Decoder.Json(T)` が decode した値を `T` の述語が拒否するレスポンスや保存値は、effect の `.err` になり（[§6.1.4](./http.md#_6-1-4-decoder-型)、[§6.7.2](./http.md#_6-7-2-宣言-localstorage)）、プログラムの `.err` reducer が扱う。そうでなければ、その書き込みがこの規則で破棄される `.ok` になり、reducer が行った他のすべて（ロード状態を終えることなど）も一緒に破棄される。
+
 refinement が門番を**しない**ものが 2 つある:
 
 - **宣言時の初期値**。`slot email : Text where email = ""` は自身の refinement が拒否する値を最初から保持する。これこそが、手つかずのフォームで `error(field=email)` にメッセージを出させている仕組みである（[エラー表示](./forms.md#_5-7-エラー表示)）。

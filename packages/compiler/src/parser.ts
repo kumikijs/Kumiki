@@ -72,7 +72,8 @@ type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
  */
 const MAX_NESTING_DEPTH = 256;
 
-const PRIM_TYPES = new Set([
+/** The primitive type names, which a type position reads as `TypePrim`. */
+export const PRIM_TYPES: ReadonlySet<string> = new Set([
   "Int",
   "Text",
   "Bool",
