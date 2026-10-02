@@ -4,8 +4,8 @@ import { jsOfExpr } from "./expr.ts";
 
 export function httpConfigJs(http: AppDef["http"], gen: GenCtx): string {
   if (!http) return "const _http = undefined;";
-  // Plain (non-reducer) scope: slot refs lower to `_live[name]`, not
-  // `_next[name] ?? _live[name]` — `_next` is local to each reducer's
+  // Plain (non-reducer) scope: slot refs lower to `_live[name]`, not the
+  // `_next`-first read (`slotReadJs`) — `_next` is local to each reducer's
   // generated body and out of reach from `_http`'s closures.
   const ctx = makeEvalCtx(gen, new Set(), false);
   const fields: string[] = [];
