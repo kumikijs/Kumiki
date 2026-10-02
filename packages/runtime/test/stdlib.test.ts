@@ -50,6 +50,76 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
 // (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
 // `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
 // which sorts numerically when every element is a finite number.
+// `sort-by` subtracted its keys, and two Text keys subtract to `NaN`, which
+// `Array.prototype.sort` reads as "equal": a list sorted by a name came back
+// in the order it went in.
+describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
+  const users = [
+    { name: "carol", age: 30 },
+    { name: "alice", age: 20 },
+    { name: "bob", age: 25 },
+    { name: "abe", age: 20 },
+  ];
+  const names = (xs: { name: string }[]) => xs.map((u) => u.name);
+
+  it("orders a Text key as `<` orders two Texts", () => {
+    expect(names(_stdlibCore.listSortBy(users, (u) => u.name))).toEqual([
+      "abe",
+      "alice",
+      "bob",
+      "carol",
+    ]);
+  });
+
+  it("orders a numeric key numerically, keeping equal keys in their order", () => {
+    expect(names(_stdlibCore.listSortBy(users, (u) => u.age))).toEqual([
+      "alice",
+      "abe",
+      "bob",
+      "carol",
+    ]);
+    expect(_stdlibCore.listSortBy([10, 9, 100], (x) => x)).toEqual([9, 10, 100]);
+  });
+
+  // A key the checker could not type arrives as whatever it is at runtime.
+  const keyed = (ks: unknown[]) => ks.map((k, i) => ({ id: i, k }));
+  const ids = (xs: { id: number }[]) => xs.map((x) => x.id);
+
+  it("sorts an absent (undefined) key after every other, keeping its order", () => {
+    // Compared as "equal" to everything, one missing key used to leave the
+    // whole list as it found it.
+    expect(ids(_stdlibCore.listSortBy(keyed([3, undefined, 1, null, 2]), (x) => x.k))).toEqual([
+      2, 4, 0, 1, 3,
+    ]);
+    expect(
+      ids(_stdlibCore.listSortBy(keyed([undefined, undefined, undefined]), (x) => x.k)),
+    ).toEqual([0, 1, 2]);
+  });
+
+  it("sorts a NaN key after every other, keeping its order", () => {
+    expect(
+      ids(_stdlibCore.listSortBy(keyed(["b", Number.NaN, "a", Number.NaN]), (x) => x.k)),
+    ).toEqual([2, 0, 1, 3]);
+  });
+
+  it("orders a numeric key that arrives as Text the way `<` does", () => {
+    // Text against Text compares as text ("10" < "9"); Text against a number
+    // is coerced to a number. Not converted to the declared type
+    // (stdlib.md §2.2.3).
+    expect(_stdlibCore.listSortBy(["9", "10"], (x) => x)).toEqual(["10", "9"]);
+    expect(_stdlibCore.listSortBy([10, "9", 2], (x) => x)).toEqual([2, "9", 10]);
+  });
+
+  it("keeps every element of a key list `<` cannot order, and leaves the input alone", () => {
+    // A number against a non-numeric Text answers false both ways, so there
+    // is no single order to assert — only that nothing is lost or mutated.
+    const xs = keyed([3, "b", 1, { r: 1 }, "a"]);
+    const out = _stdlibCore.listSortBy(xs, (x) => x.k);
+    expect(ids(out).sort()).toEqual([0, 1, 2, 3, 4]);
+    expect(ids(xs)).toEqual([0, 1, 2, 3, 4]);
+  });
+});
+
 describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
   it("sorts a numeric list numerically, not lexicographically", () => {
     expect(_stdlibCore.listSort([3, 1, 2, 10])).toEqual([1, 2, 3, 10]);
