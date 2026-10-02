@@ -225,14 +225,36 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
 // the fragment once with the whole Map, so a `Map(Int, Text)` slot ended up
 // holding the string `"[object Object]!"`.
 describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
-  it("keeps the keys and replaces each value with the fragment's result", () => {
-    const out = _stdlibCore.mapOver({ 3: "c", 4: "d" }, (_k, v) => `${String(v)}!`, "number");
+  // The fragment is called the way `filter` calls its predicate: with one
+  // argument, the `[key, value]` pair, which the generated lambda takes apart
+  // into `$1` / `$2`.
+  it("hands the fragment one [key, value] argument, the key restored to its kind", () => {
+    const calls: unknown[][] = [];
+    const out = _stdlibCore.mapOver(
+      { 3: "c", 4: "d" },
+      (...args: unknown[]) => {
+        calls.push(args);
+        const [, v] = args[0] as [unknown, unknown];
+        return `${String(v)}!`;
+      },
+      "number",
+    );
+    expect(calls).toEqual([[[3, "c"]], [[4, "d"]]]);
     expect(out).toEqual({ 3: "c!", 4: "d!" });
   });
 
-  it("hands the fragment each key restored to its declared kind", () => {
-    const out = _stdlibCore.mapOver({ 3: 1, 4: 2 }, (k) => (k as number) * 10, "number");
-    expect(out).toEqual({ 3: 30, 4: 40 });
+  it("hands a two-element structured key whole, inside the pair", () => {
+    const calls: unknown[][] = [];
+    const out = _stdlibCore.mapOver(
+      { "[1,2]": "a" },
+      (...args: unknown[]) => {
+        calls.push(args);
+        return `${String((args[0] as [unknown, unknown])[1])}!`;
+      },
+      "value",
+    );
+    expect(calls).toEqual([[[[1, 2], "a"]]]);
+    expect(out).toEqual({ "[1,2]": "a!" });
   });
 });
 

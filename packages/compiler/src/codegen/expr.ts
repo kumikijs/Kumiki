@@ -684,9 +684,9 @@ export function methodCallJs(
       return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
       // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples),
-      // Option(T).map (over Some), or Map(K, V).map (over entries, handed
-      // (k, v) with the key restored like any key reader's). Runtime
-      // distinguishes by shape.
+      // Option(T).map (over Some), or Map(K, V).map (over entries, each
+      // handed as one `[k, v]` pair, as `filter` hands them, with the key
+      // restored like any key reader's). Runtime distinguishes by shape.
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
