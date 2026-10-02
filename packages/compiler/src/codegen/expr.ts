@@ -3,6 +3,7 @@ import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
+  childCtx,
   declareBind,
   type EvalCtx,
   fieldKey,
@@ -114,17 +115,8 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (ctx.localBinds.has(e.name)) return bindRef(ctx, e.name);
       if (e.name === "now") return `_s.now()`;
       // `route` is an auto-managed slot maintained by the runtime.
-      if (e.name === "route") {
-        return ctx.reducerScope
-          ? `((_next["route"] !== undefined) ? _next["route"] : _live["route"])`
-          : `_live["route"]`;
-      }
-      const isSlot = ctx.gen.slots.some((s) => s.name === e.name);
-      if (isSlot) {
-        const key = JSON.stringify(e.name);
-        return ctx.reducerScope
-          ? `((_next[${key}] !== undefined) ? _next[${key}] : _live[${key}])`
-          : `_live[${key}]`;
+      if (e.name === "route" || ctx.gen.slots.some((s) => s.name === e.name)) {
+        return slotReadJs(e.name, ctx.reducerScope);
       }
       return jsBinding(e.name);
     }
@@ -664,7 +656,7 @@ export function methodCallJs(
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
   // Build inner ctx with $1, $2 bound for predicate expression fragments.
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
+  const inner = childCtx(ctx);
   const p1 = declareBind(inner, "$1");
   const p2 = declareBind(inner, "$2");
 
@@ -923,6 +915,21 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
 }
 
 /**
+ * A read of slot `name`. Inside a reducer body (`reducerScope`) it answers the
+ * value the body last wrote to the slot, if it has written one, and the value
+ * the slot held when the reducer started otherwise (language.md §1.6.4
+ * invariant 7). "Has written" is whether `_next` holds the key, not whether the
+ * value is `undefined`: a `match` with no arm for its scrutinee writes
+ * `undefined`, the batch commits that, and a later read has to agree with it.
+ */
+export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
+  const key = JSON.stringify(name);
+  return reducerScope
+    ? `(Object.hasOwn(_next, ${key}) ? _next[${key}] : _live[${key}])`
+    : `_live[${key}]`;
+}
+
+/**
  * One `emit` in a reducer body, statement or expression: the statements that
  * push its record onto `_emits`, and the `EffectId` that names it.
  *
@@ -936,10 +943,9 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
  *
  * The key reads slots in reducer scope unconditionally rather than from
  * `ctx.reducerScope`. `_emits`, which this pushes to, is declared beside
- * `_next` in the reducer body (`emit-reducer.ts`), so `_next` is in scope
- * wherever this code runs — and a lowering on the way here that rebuilt the
- * `EvalCtx` without the flag would otherwise make the key read `_live` and miss
- * the body's own writes.
+ * `_next` in the reducer body (`emit-reducer.ts`), so wherever this code runs
+ * `_next` is in scope and the key sees the body's own writes; the key never
+ * depends on how the `EvalCtx` that reached here was built.
  */
 export function reducerEmitJs(
   effect: string,
@@ -993,12 +999,12 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     return `if (true) { const ${bindRef(inner, p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
   if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
     return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
   const tag = p.name;
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
+  const inner = childCtx(ctx);
   const bindAssigns: string[] = [];
   for (let i = 0; i < p.binds.length; i++) {
     const name = p.binds[i]!;
@@ -1011,23 +1017,15 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
 // Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
 // nested element guards) and a series of `const … = scVar[i]…;` bindings.
 // Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
-// the indexed access path. `inheritReducerScope` carries the caller's
-// reducer-scope flag into the arm; with it off, a slot read in the arm lowers to
-// `_live[...]`. A `match` statement passes true. TileMatch passes false because
-// a tile renders outside every reducer body. `matchExpr` passes false too, and
-// so drops the flag inside a reducer body as well — as its binding and variant
-// arms do by rebuilding the context — which is a known gap, not a rule.
+// the indexed access path. The arm is a `childCtx` of the caller's, so it reads
+// the slots the way the caller does: `_next` first inside a reducer body,
+// `_live` everywhere else.
 export function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,
   scVar: string,
-  inheritReducerScope: boolean,
 ): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = makeEvalCtx(
-    ctx.gen,
-    ctx.localBinds,
-    inheritReducerScope ? ctx.reducerScope : undefined,
-  );
+  const inner = childCtx(ctx);
   const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
   const binds: string[] = [];
   for (let i = 0; i < p.items.length; i++) {

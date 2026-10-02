@@ -13,8 +13,7 @@
 // `_s.show(undefined)`. Kumiki source has no `undefined` literal, so this token
 // can only come from a dropped expression — it is a zero-false-positive
 // sentinel (verified: it occurs 0 times across the current example corpus,
-// whereas bare `undefined` is pervasive and benign — the reducer
-// `(_next[x] !== undefined) ? … : _live[x]` read-back, selector-less reducers'
+// whereas bare `undefined` is pervasive and benign — selector-less reducers'
 // `selector: undefined`, null/undefined guards — so we match the precise
 // sentinel rather than bare `undefined`, which needs no allowlist).
 

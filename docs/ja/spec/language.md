@@ -539,6 +539,7 @@ issue.copy(status=Done, priority=High)
 6. **バッチは全部通るか全部通らないか**: どれか 1 つの slot の新しい値がその型の refinement に違反したら、その reducer 適用は丸ごと破棄される — slot 書き込みなし、`emit` なし、`stop-timer` なし — そして拒否が報告される（[batching](./runtime.md#a-batch-commits-all-or-nothing) 参照）。到達しうる境界はプログラム側の責任である。ガードは自分で書く
    - `Volume = nominal Int where between(0, 11)` に対する `volume := volume + 1` は 11 で ✗（拒否され、報告される）
    - `if volume < 11 then volume := volume + 1` ✓
+7. **slot の読みは、同じ本体がその slot に最後に書き込んだ値を読む。** 読みがどこにあっても同じ：`match` の arm、文としての `if` / `match`、`let … in` の本体、メソッドの述語や要素ラムダ（`names.filter($1 == noteKey)`）、本体の直下。`noteKey := "b"` の後に実行される `noteKey` の読みは、その適用の中ではすべて `"b"` になる。その適用の中でその slot への書き込みがまだ一つも実行されていないうちに実行される読みは、reducer が始まったときに slot が持っていた値を読む。
 
 ### 1.6.5 positional binding
 
