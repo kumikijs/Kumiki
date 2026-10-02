@@ -560,7 +560,7 @@ tile NewTagsInput
     = input(id="new-tags", bind=draft.tags, placeholder="Tags (comma-separated)")
 
 tile CancelNewBtn
-    = button(text="Cancel", onClick=cancelNew) {variant: "ghost"}
+    = button(text="Cancel", type="button", onClick=cancelNew) {variant: "ghost"}
 
 tile NewIssueForm
     = form(
