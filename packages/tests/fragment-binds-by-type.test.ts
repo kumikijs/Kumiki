@@ -106,3 +106,121 @@ describe("an element that is itself a Set is typed", () => {
     expect(await run(source)).toEqual([[3]]);
   });
 });
+
+describe("a bare fn fragment binds like the call it stands for", () => {
+  // `xs.map(len)` is `xs.map(len($1))` (language.md §1.8.6), so the two
+  // spellings bind the same `$1`: the two-item element is one value to both.
+  it("hands a two-item list element whole to a named fn", async () => {
+    const defs = `fn len(xs: List(Int)) -> Int = xs.length
+${NESTED}`;
+    expect(await run(program(defs, "List(Int)", "nested.map(len)"))).toEqual([2, 3]);
+  });
+});
+
+describe("a Set's filter is handed its elements", () => {
+  // `_s.filter` hands a Set's predicate each `[element, true]` entry, so a
+  // Set is not a receiver whose element §2.2.3 binds whole.
+  it("keeps the Text elements the predicate keeps", async () => {
+    const defs = 'slot words : Set(Text) = ["ann", "bob"]';
+    expect(await run(program(defs, "List(Text)", 'words.filter($1 != "bob").to-list'))).toEqual([
+      "ann",
+    ]);
+  });
+  it("keeps the Int elements the predicate keeps", async () => {
+    const defs = "slot tags : Set(Int) = [1, 2, 3]";
+    expect(await run(program(defs, "Int", "tags.filter($1 > 1).size"))).toBe(2);
+  });
+});
+
+describe("a $2 inside another method's argument is the enclosing fragment's", () => {
+  // Only a fragment position binds positionals; any other argument is
+  // evaluated where the call is, so its `$2` is whatever the enclosing scope
+  // binds — and a fragment handed one value binds none.
+  const NUMS =
+    'slot nums : List(Int) = [1, 2]\nslot words : List(Text) = ["a", "b"]\nslot m : Map(Text, Int) = {"a": 9}';
+  it.each([
+    ["nums.map($1.min($2))", "List(Int)", "map"],
+    ['words.map($1.replace("a", $2))', "List(Text)", "map"],
+    ['nums.map(m.get-or("zz", $2))', "List(Int)", "map"],
+    ["nums.map(nums.push($2).length)", "List(Int)", "map"],
+    ['words.map(m.update("a", $2).size)', "List(Int)", "map"],
+  ])("reports %s", (rhs, resType, method) => {
+    expect(codes(program(NUMS, resType, rhs))).toEqual([
+      `E0103 "$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+    ]);
+  });
+  it("reads an enclosing pair's value from inside a one-positional fragment", async () => {
+    // `update`'s fragment binds `$1` (the current value) and nothing else, so
+    // its `$2` is the `.entries` pair's value.
+    const defs = 'slot scores : Map(Text, Int) = {"ann": 2, "bob": 1}';
+    const rhs = "scores.entries.map(scores.update($1, $1 + $2).get-or($1, 0))";
+    expect(await run(program(defs, "List(Int)", rhs))).toEqual([4, 2]);
+  });
+});
+
+describe("a fn named as a two-positional fragment where only one is bound", () => {
+  // Over a receiver the checker knows, a fragment that binds no `$2` cannot
+  // take a two-parameter `fn`; only an undecidable receiver is let through.
+  const ADD2 = "fn add2(a: Int, b: Int) -> Int = a + b";
+  it.each([
+    ["a record", "type P = { x: Int }\nslot p : P = { x: 1 }", "p.map(add2)"],
+    ["Text", 'slot t : Text = "x"', "t.map(add2)"],
+    ["an Option", "slot picked : Option(Int) = Some(1)", "picked.sort-by(add2)"],
+    ["a Result", "slot parsed : Result(Int, Text) = Ok(1)", "parsed.filter(add2)"],
+    ["a List(Int)", "slot xs : List(Int) = [1]", "xs.map(add2)"],
+  ])("reports E0213 over %s", (_what, defs, rhs) => {
+    const found = codes(program(`${ADD2}\n${defs}`, "Int", rhs)).map((c) => c.slice(0, 5));
+    expect(found).toContain("E0213");
+  });
+});
+
+describe("the shapes §2.2.3 binds", () => {
+  it.each([
+    [
+      "an Option holding a pair is taken apart (map)",
+      "slot o : Option(Tuple(Int, Int)) = Some((1, 2))",
+      "Option(Int)",
+      "o.map($1 + $2)",
+      { _tag: "Some", _0: 3 },
+    ],
+    [
+      "an Option holding a pair is taken apart (filter)",
+      "slot o : Option(Tuple(Int, Int)) = Some((1, 2))",
+      "Int",
+      "o.filter($2 > $1).map($1 * 10 + $2).get-or(0)",
+      12,
+    ],
+    [
+      "a Result's Ok value is one value",
+      "slot r : Result(List(Int), Text) = Ok([1, 2])",
+      "Int",
+      "r.map($1.length).get-or(0)",
+      2,
+    ],
+    [
+      "a List of pairs is taken apart (filter, find)",
+      'slot scores : Map(Text, Int) = {"ann": 2, "bob": 1}',
+      "Text",
+      'scores.entries.filter($2 > 1).map($1).join(",") + "|" + scores.entries.find($2 == 1).map($1).get-or("")',
+      "ann|bob",
+    ],
+    [
+      "an aliased pair is a pair",
+      "type Pair = Tuple(Int, Int)\nslot ps : List(Pair) = [(1, 2), (3, 4)]",
+      "List(Int)",
+      "ps.map($1 + $2)",
+      [3, 7],
+    ],
+  ])("%s", async (_what, defs, resType, rhs, want) => {
+    expect(await run(program(defs, resType, rhs))).toEqual(want);
+  });
+});
+
+describe("a fn's own $2 inside a fragment handed one value", () => {
+  it("says the fragment hides it and how to reach it", () => {
+    const defs = "fn addK(xs: List(Int), k: Int) -> List(Int) = xs.map($1 + $2)";
+    expect(codes(program(defs, "Int", "0"))).toEqual([
+      `E0103 "$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`,
+    ]);
+  });
+});

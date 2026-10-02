@@ -11,7 +11,9 @@
           "sizes": [2, 3],
           "twoItem": { "_tag": "Some", "_0": [1, 2] },
           "longest": [[3, 4, 5], [1, 2]],
-          "byScore": ["bob", "ann"]
+          "byScore": ["bob", "ann"],
+          "named": [2, 3],
+          "kept2": ["ann"]
         }
       }
     }

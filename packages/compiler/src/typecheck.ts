@@ -1042,10 +1042,12 @@ type Ctx = {
   undeclaredInputReads?: Pos[];
   /**
    * Set inside the fragment of a list method handed one value per call
-   * (`fragmentShape` answered `"value"`), to that method's name, so an
-   * unbound `$2` there says why it is unbound rather than only that it is.
+   * (`fragmentShape` answered `"value"`): that method's name, and whether the
+   * fragment hides a `$2` the enclosing scope binds (a `fn`'s second
+   * parameter, an outer pair's value), so an unbound `$2` there says why it is
+   * unbound rather than only that it is.
    */
-  oneValueFragment?: string;
+  oneValueFragment?: { method: string; hides: boolean };
 };
 
 /**
@@ -2936,10 +2938,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         return;
       }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
+        const { method, hides } = ctx.oneValueFragment;
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `"$2" is not bound here — the .${ctx.oneValueFragment} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+          message: hides
+            ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
+            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
           pos: e.pos,
         });
         return;
@@ -3086,35 +3091,48 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         const kind = keyKindOfReader(recvType, e.method, sym);
         if (kind) e.keyKind = kind;
         const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        // How a `filter` / `map` / `find` / `sort-by` fragment binds its
+        // positionals, recorded for codegen whatever the fragment is spelled
+        // as — `xs.map(len)` is `xs.map(len($1))` and binds the same way.
+        const shape =
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+        if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
-          if (fragment?.index === i && isFragmentFnName(a, sym, ctx)) {
-            checkFragmentFnArity(a, e.method, fragment, recvType, sym, errors);
+          if (fragment?.index !== i) {
+            // Only the fragment argument is lowered into a lambda; every other
+            // argument is evaluated where the call is, so it reads the
+            // enclosing scope's `$1` / `$2`, as codegen emits it.
+            checkExpr(a, sym, errors, ctx);
+            const declared = memberArgType(recvType, e.method, i, sym);
+            if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
+            continue;
+          }
+          if (isFragmentFnName(a, sym, ctx)) {
+            checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             continue;
           }
-          // Inside a method-call argument `$1` / `$2` are the implicit lambda's
-          // parameters, and they SHADOW any outer ones — a tile that declares
-          // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
-          // inside that tile is a different `$1`. What they are bound to is
-          // per method and per receiver, and `fragmentBindings` answers only
-          // where the lowering's own reading is certain: a wrong guess costs a
-          // diagnostic on a working program.
+          // Inside the fragment `$1` (and `$2`, where the lambda binds one) are
+          // the implicit lambda's parameters, and they SHADOW any outer ones —
+          // a tile that declares `in=TaskId` binds `$1` to it, and
+          // `dueDate.map(formatDate($1))` inside that tile is a different
+          // `$1`. What they are bound to is per method and per receiver, and
+          // `fragmentBindings` answers only where the lowering's own reading
+          // is certain: a wrong guess costs a diagnostic on a working program.
           const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
-          bindLocal(inner, "$2", p2);
-          if (fragment?.second === "pair-value" && fragment.index === i) {
-            // Codegen binds the positionals from this decision rather than
-            // from the shape of each value at run time. A fragment handed one
-            // value binds `$1` alone: its `$2` is an error here, not the index
-            // or a second copy of `$1` there.
-            const shape = fragmentShape(recvType, e.method, sym);
-            if (shape) e.fragmentShape = shape;
-            if (shape === "value") {
-              inner.localBinds.delete("$2");
-              inner.localTypes.delete("$2");
-              inner.oneValueFragment = e.method;
-            }
+          if (shape === "value") {
+            // A fragment handed one value binds `$1` alone, and codegen
+            // declares no `$2` in it: a `$2` anywhere inside — nested method
+            // arguments included — is an error here, not the index or a
+            // second copy of `$1` there. An enclosing `$2` is hidden too,
+            // since the lambda's positionals shadow the enclosing ones.
+            inner.localBinds.delete("$2");
+            inner.localTypes.delete("$2");
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+          } else if (fragment.binds === 2) {
+            bindLocal(inner, "$2", p2);
           }
           checkExpr(a, sym, errors, inner);
           // An argument whose type the receiver's fixes is checked against it
@@ -3239,16 +3257,20 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
  * - none drops the element, and more than the method binds leaves a
  *   parameter unbound;
  * - `fold`'s `fn` takes both, because the element is the second;
- * - a list method's `$2` is the value of a key/value pair, so a `fn` of two
- *   takes it only over a `Map` or a `List` of pairs. Over any other receiver
- *   the second argument would be the JS index or the element again. A
- *   receiver whose type cannot be decided is given the benefit of the doubt.
+ * - a `filter` / `map` / `find` / `sort-by` fragment binds a second
+ *   positional only where `shape` says the value handed over is taken apart —
+ *   a pair, or a Map's filter entry. Where it binds one value (`"value"`), or
+ *   the receiver is known but §2.2.3 gives the method no binding on it
+ *   (`null`), a second parameter would be handed nothing the `fn` means. Only
+ *   a receiver whose type cannot be decided (`"undecided"`) is given the
+ *   benefit of the doubt.
  */
 function checkFragmentFnArity(
   a: Expr & { kind: "Ref" },
   method: string,
   fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
   receiver: TypeExpr | null,
+  shape: FragmentShape | null | undefined,
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
@@ -3267,10 +3289,10 @@ function checkFragmentFnArity(
   }
   if (n === 0) report(`.${method} needs at least 1`);
   else if (n > fragment.binds) report(`.${method} supplies at most ${fragment.binds}`);
-  else if (n === 2 && fragment.second === "pair-value" && !bindsSecond(receiver, method, sym)) {
+  else if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)`,
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
     );
   }
 }
@@ -4798,13 +4820,21 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
  *   apart, `$1 = A`, `$2 = B`.
  * - `"key-value"`: `Map(K, V).filter`, handed each entry as the key and the
  *   value, `$1` and `$2`.
- * - `"value"`: any other element of a `List` / `Set`, or the value of an
- *   `Option` / `Result` — `$1` is that value whole, whatever it is (a
- *   2-element `List` included), and `$2` is not bound.
- * - `null`: the receiver's type, or its element's, cannot be decided here (a
- *   type parameter, an untyped payload). The lowering then falls back to
- *   taking apart any 2-element array at run time — the one place a value's
- *   shape, not its type, decides the binding.
+ * - `"value"`: any other element of a `List`, or the value of an `Option`
+ *   (`map` / `filter`) or a `Result` (`map`) — `$1` is that value whole,
+ *   whatever it is (a 2-element `List` included), and `$2` is not bound.
+ * - `"undecided"`: the receiver's type, or its element's, cannot be decided
+ *   here (a type parameter, an untyped payload).
+ * - `null`: the receiver's type is known, but §2.2.3 gives this method no
+ *   binding on it — a `Set`, whose `_s.filter` hands each element as an
+ *   `[element, true]` entry; `Map.map` / `find` / `sort-by`; `Option.find` /
+ *   `sort-by`; `Result.filter` / `find` / `sort-by`; any receiver that is not
+ *   a container.
+ *
+ * Under `"undecided"` and `null` alike the lowering falls back to the value's
+ * shape at run time, taking apart any 2-element array (`MethodCall` records
+ * both as `"undecided"`). They differ for a `fn` named as the fragment: only
+ * an undecidable receiver lets a `fn` of two through (`checkFragmentFnArity`).
  *
  * The one classifier codegen (through `MethodCall.fragmentShape`), the
  * positional scope and the arity of a bare `fn` fragment all read.
@@ -4814,18 +4844,17 @@ function fragmentShape(
   method: string,
   sym: SymbolTable,
 ): FragmentShape | null {
-  if (!ELEMENT_FRAGMENTS.has(method)) return null;
+  if (isOpaque(recv, sym)) return "undecided";
   const t = unaliasType(recv, sym);
-  if (t?.kind !== "TypeApp") return null;
+  if (t?.kind !== "TypeApp" || !ELEMENT_FRAGMENTS.has(method)) return null;
   const [a] = t.args;
   switch (t.name) {
     case "List":
-    case "Set":
-      return elementShape(a ?? null, sym);
+      return elementShape(a ?? null, sym).shape;
     case "Option":
-      return method === "map" || method === "filter" ? elementShape(a ?? null, sym) : null;
+      return method === "map" || method === "filter" ? elementShape(a ?? null, sym).shape : null;
     case "Result":
-      return method === "map" ? elementShape(a ?? null, sym) : null;
+      return method === "map" ? elementShape(a ?? null, sym).shape : null;
     case "Map":
       return method === "filter" ? "key-value" : null;
     default:
@@ -4834,32 +4863,29 @@ function fragmentShape(
 }
 
 /**
- * Whether the fragment of `recv.method(…)` binds `$2` — `true` also when
- * {@link fragmentShape} cannot decide, where nothing is reported.
+ * Whether one element is a pair the lowering takes apart (see
+ * {@link fragmentShape}), with the pair's halves when it is — read off the
+ * normalised type, so the halves are the ones the answer was made from.
  */
-function bindsSecond(recv: TypeExpr | null, method: string, sym: SymbolTable): boolean {
-  return fragmentShape(recv, method, sym) !== "value";
-}
-
-/** Whether one element is a pair the lowering takes apart; see {@link fragmentShape}. */
-function elementShape(elem: TypeExpr | null, sym: SymbolTable): "pair" | "value" | null {
+function elementShape(
+  elem: TypeExpr | null,
+  sym: SymbolTable,
+):
+  | { shape: "pair"; halves: [TypeExpr | null, TypeExpr | null] }
+  | { shape: "value" | "undecided" } {
   const u = unaliasType(elem, sym);
-  if (u === null || u.kind === "TypeRef") return null;
-  return u.kind === "TypeApp" && u.name === "Tuple" && u.args.length === 2 ? "pair" : "value";
+  if (u === null || u.kind === "TypeRef") return { shape: "undecided" };
+  if (u.kind === "TypeApp" && u.name === "Tuple" && u.args.length === 2) {
+    return { shape: "pair", halves: [u.args[0] ?? null, u.args[1] ?? null] };
+  }
+  return { shape: "value" };
 }
 
 /** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
 function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
-  switch (elementShape(elem, sym)) {
-    case "pair": {
-      const u = unaliasType(elem, sym) as TypeExpr & { kind: "TypeApp" };
-      return [u.args[0] ?? null, u.args[1] ?? null];
-    }
-    case "value":
-      return [elem, null];
-    default:
-      return [null, null];
-  }
+  const el = elementShape(elem, sym);
+  if (el.shape === "pair") return el.halves;
+  return el.shape === "value" ? [elem, null] : [null, null];
 }
 
 /**
