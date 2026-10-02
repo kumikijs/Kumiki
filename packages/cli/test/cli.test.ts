@@ -281,8 +281,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // beside the refused-bind record in core, which every app loads; a counter has
     // no form and still ships it.
     //
-    // Raised once to 63,000 with the owner's approval (61,301 measured, from
-    // 61,184): a `for` keys each tile it renders apart from every sibling, a
+    // Raised once to 63,000 with the owner's approval (61,184 measured on this
+    // branch, from 61,184 on dev): dev had already gone over 61,000 with the
+    // form submit gate above, and the owner chose to raise the budget once
+    // rather than hold every open change at the old line.
+    //
+    // Still 63,000 (61,301 measured, from 61,184):
+    // a `for` keys each tile it renders apart from every sibling, a
     // repeated value included (runtime.md §10.3.10). The 117 bytes are
     // `loopKeys`, which names the loop and the occurrence beside the value's
     // `show`. A counter has no `for` and still ships it, because it sits in the

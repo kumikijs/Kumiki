@@ -62,3 +62,28 @@ describe("formatEvent panic", () => {
     expect(lines.filter((l) => l.trim().startsWith("at "))).toEqual([]);
   });
 });
+
+describe("formatEvent episode-start", () => {
+  // runtime.md §10.5.3: an entry reducer whose recorded result the log does not
+  // carry is reported rather than inferred, on the episode's own line.
+  it("names the entry reducer whose recorded result is missing", () => {
+    const ev: ReplayEvent = {
+      kind: "episode-start",
+      episodeId: "ep_0001",
+      trigger: { kind: "ssr.hydrate", target: "/" },
+      entryResultMissing: "load.ok",
+    };
+    expect(formatEvent(ev)).toBe(
+      "episode ep_0001 — ssr.hydrate on /  (no recorded result for load.ok)",
+    );
+  });
+
+  it("says nothing extra when the log carried it", () => {
+    const ev: ReplayEvent = {
+      kind: "episode-start",
+      episodeId: "ep_0001",
+      trigger: { kind: "ssr.hydrate", target: "/" },
+    };
+    expect(formatEvent(ev)).toBe("episode ep_0001 — ssr.hydrate on /");
+  });
+});
