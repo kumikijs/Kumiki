@@ -921,6 +921,8 @@ export type RoutingImpl = {
    * rendered.
    */
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
+  /** The URL a parsed route was read from: its path, query and hash. */
+  href(route: ParsedRoute): string;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -2799,10 +2801,15 @@ export function mountCore(
       scrollSaved.set(oldRoute.path, { x: sx, y: sy });
     }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
-    // gate the transition. We observe whether any leave reducer emitted
-    // `confirm` — if so, we hold off updating slotValues.route and firing
-    // route.enter until the confirm modal resolves via `_resolveLeave`.
-    if (oldRoute && oldRoute.pattern !== newRoute.pattern) {
+    // gate the transition. A move to another path leaves the old route
+    // (routing.md §3.4), even within one pattern (new params, a sibling
+    // sub-route); a query-only, hash-only or same-path move stays on it, and
+    // the initial mount has nothing to leave. The path alone decides: one path
+    // always parses to one pattern, so a pattern change is a path change. We
+    // observe whether any leave reducer emitted `confirm` — if so, we hold off
+    // updating slotValues.route and firing route.enter until the confirm modal
+    // resolves via `_resolveLeave`.
+    if (oldRoute && oldRoute.path !== newRoute.path) {
       observeLeaveConfirm = true;
       leaveAskedConfirm = false;
       try {
@@ -2891,8 +2898,9 @@ export function mountCore(
       // Revert: rewrite the URL back to the old path without re-firing the
       // leave guard (pendingLeave is already null, but the recursion guard at
       // the top of syncRouteFromLocation also short-circuits if this somehow
-      // re-enters before the new state is observed).
-      if (router) router.replace(p.oldRoute.path);
+      // re-enters before the new state is observed). The URL is rebuilt whole,
+      // so the old route's query and hash come back with its path.
+      if (routing) router?.replace(routing.href(p.oldRoute));
       slotValues.route = p.oldRoute;
       render();
     }

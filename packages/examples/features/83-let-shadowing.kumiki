@@ -3,6 +3,11 @@
 # declared — a reducer's top-level `let`, a `for` bind, an `if` branch, a match
 # arm and a `let … in` expression — and each declaration's own right-hand side
 # still reads the binding it shadows.
+#
+# In a tile, a `let … in` is a value, so it goes where a value belongs: a text
+# builtin's content or a user tile's input (`App` below). Written as a child of
+# a container — `column(let x = 42 in Card(x))` — it is E0128, like any value
+# there: a container renders a positional argument only when it is a tile.
 
 slot note   : Text         = ""
 slot branch : Text         = ""
@@ -57,12 +62,16 @@ tile LoopBtn = button(text="for over let",   onClick=takeLoop)
 tile ArmBtn  = button(text="arm over let",   onClick=takeArm)
 tile BranchBtn = button(text="let in a branch", onClick=takeBranch)
 
+tile Echo in={label: Text} = text("echo: " + $1.label)
+
 tile App = column(
              row(ElBtn, LetBtn, LoopBtn, ArmBtn, BranchBtn) {gap: "sm"},
              text(note),
              text("branch: " + branch),
              text("rounds: " + rounds.show),
-             text(shout("in")))
+             text(shout("in")),
+             text(let note = note + "shadowed" in "tile: " + note),
+             Echo(let rounds = "input " + rounds.show in {label: rounds}))
            {pad: "lg", gap: "md"}
 
 app LetShadowing
