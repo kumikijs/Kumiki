@@ -1104,7 +1104,7 @@ Three kinds of position have one today:
 
 - A `reducer-test`'s `given.mocks` binds an effect to something other than `ok(...)`, `err(...)` or `delay(<ms>, ok(...)|err(...))`. `mockScriptJs` answers anything else with `{outcome: "ok", value: null}`, so a mock written to drive the failure path drove the success one — and a test asserting what happens when an effect fails passed, permanently, having never failed it. ([E0712](#e0712-episode-mock-invalid) is the same rule for an `episode-test`, whose vocabulary also includes `from-log` and `ignore`.)
 - An `expect.effects` that is not a list. `effectListJs` lowers a non-list to `[]`, which is not an absent assertion but the assertion *no effects were emitted* — so `effects: persist(count)`, a forgotten pair of brackets, passes against a reducer that emits nothing, and the effect named inside it is never resolved.
-- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, and the `mocks` and `event` sections of a `given`. Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, and `mocks = 41` scripts nothing, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
+- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, the `mocks` and `event` sections of a `given`, and the slot → value sections: a `given`'s `slots`, a `reducer-test` `expect`'s `slots`, and an `episode-test` `expect`'s `slots-equal` (which also takes the bare name `from-log`). Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, `mocks = 41` scripts nothing, and `given = {slots: 41, …}` with `expect = {slots: 41}` seeds no slot and asserts none, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
@@ -1114,6 +1114,9 @@ Three kinds of position have one today:
 > `` `mocks` must be a record, `{<effect>: <policy>}` ``
 > `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
 > `` `given.event` must be a record, `{type: …, target: …}` ``
+> `` `given.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots-equal` must be a record, `{<slot>: …}`, or `from-log` ``
 
 E0713 is reported once, at the clause, and no name inside it is resolved as a section, so a `tile-test` does not also count its argument as missing. A rule that holds wherever it is written still applies inside: a wildcard in a `given` is still [E0109](#e0109-test-wildcard-misuse), and a `<slots.X>` naming no slot in a `reducer-test`'s `expect` is still [E0103](#e0103-undef-ref-undef-slot).
 
