@@ -562,6 +562,8 @@ issue.copy(status=Done, priority=High)
 
 > **On `.ok`, the first bind has the type the effect's `out=` declares.** On `out=Result(T, E)`, `load.ok($v, _)` binds `$v : T`; any other `out=` is the whole value. So `session := $v` into a slot of another type is **E0201**, and a member call on `$v` answers from `T` as it would on a slot of that type. The first bind on `.err` is not typed from `out=`: what arrives there is the capability's failure value — a built-in storage / session / indexed handler, a provider with none registered and a thrown invoke all deliver a `{message: Text}` record ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), whatever `E` declares — so reads of `$e` are not checked. The second bind (the request key) and a built-in effect's result have no declared type either.
 
+> **In a `fn`, a positional is a parameter.** `$1` is the first parameter and `$2` the second — the same value, with the type the parameter declares — so `fn plus(a: Int, b: Int) -> Int = $1 + $2` is `a + b`. There is one positional per parameter: `$1` in a `fn` with none, or `$2` in a one-parameter `fn`, is an undefined reference (**E0103**). A fragment inside the body binds its own `$1` / `$2`, which shadow the `fn`'s: in `fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` the receiver is `xs` and the fragment's `$1` is each element.
+
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
 ### 1.6.6 Examples
@@ -648,6 +650,7 @@ pattern      ::= identifier
 - `( … )` is the **argument & children list**: positional child tiles (`column(A, B)`), value arguments (`heading("Hi")`), and named arguments (`button(text="Save", onClick=r)`, `input(bind=draft)`). A child tile or another tile call goes **here**.
 - `{ … }` is the **props block**: `key: value` pairs only — style/layout/ARIA props and event-handler bindings (`{pad: "lg", gap: "md"}`, `{todoId: $1}`, `{onClick: r}`). It contains **no tile calls and no children**. Writing a tile call inside `{ … }` (e.g. `link(to="/x") {text("Home")}`) is a parse error.
 - A tile's **label/content** is passed in `( … )`: it is the first **positional** value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) — a named argument is a prop wherever it is written, so `heading(level=2, title)` says `title` and `level` stays a prop — and a **named** arg for the interactive builtins (`button(text="Save")`, `link(to="/x", text="Home")`). The canonical place for a label is the `text=` **argument**, consistent across `button` and `link`. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; both compile to the same node.)
+- A positional argument of a builtin other than the value builtins (`text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image`, `icon`) renders only when it is a tile — a `tile-expr` or the name of a defined tile. A value there — `column(text("a"), 42)`, a slot, `column(let x = 42 in Card(x))` — renders nothing and is [E0128](./errors.md#e0128-value-as-child): show it with a tile (`text(n.show)`), write it where it is used, or compute it in a `fn`. Where a value belongs (a value builtin's content, a user tile's input, a named argument) a `let` is a value, and is checked like one. A tile body and a `when` / `if` / `for` / `match` arm are a `tile-expr` themselves, so a `let` there is a parse error.
 
 **Semantics of `when(cond, tile)`**:
 - `cond` is true → render `tile`
@@ -1009,7 +1012,7 @@ There is no reducer around these arguments either, so an `emit` expression is no
 
 ```kumiki snippet
 # ❌ local state
-tile Foo = let x = 0 in button(text=x.show)   # assignment inside a tile is not allowed (let binds an expression, but is not a substitute for a slot)
+tile Foo = let x = 0 in button(text=x.show)   # a tile body has no `let`: a parse error here, E0128 as a child
 
 # ❌ direct effect call
 reducer r on=ui.click(B) do= http.get("/")   # emit required
