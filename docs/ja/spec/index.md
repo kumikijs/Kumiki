@@ -274,6 +274,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | コア | [§1.7.2](./language.md#_1-7-2-不変条件) inv. 1 |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | ルーティング | [§3.1.2](./routing.md#_3-1-2-マッチ順序) |
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
+| `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
 | `164-decode-refused-value.kumiki` | type, slot, effect, reducer, tile | HTTP/Storage | [§6.7.2](./http.md#_6-7-2-宣言-localstorage) |
 <!-- examples:end -->
 :::
