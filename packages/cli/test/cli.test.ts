@@ -291,7 +291,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,886 measured, from 61,840 on dev at 1a3b24c): a decoded
+    // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
+    // `mapOver` tells a Map apart from a tagged Option / Result and restores
+    // each key as `keys` does; it sits in stdlib, which every app loads.
+    //
+    // Still 63,000 (61,979 measured, from 61,933 on dev at 46d9dca): a decoded
     // value its type refuses is the effect's err (http.md §6.1.4), named by the
     // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
     // now sits in core as an export the decode handlers share instead of inline
