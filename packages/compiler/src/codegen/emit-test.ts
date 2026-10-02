@@ -254,7 +254,10 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     }
   }
   const inJs = inField ? jsOfExpr(inField, ctx) : "undefined";
-  const expectedJs = tileExprJs(t.expect as TileExpr, gen, ctx);
+  // Lowered like any tile, but without the `{…}` blocks' data — §8.4 does
+  // not compare styles, and the runtime compares what is left in `props`.
+  const expectGen: GenCtx = { ...gen, expectedTree: true };
+  const expectedJs = tileExprJs(t.expect as TileExpr, expectGen, { ...ctx, gen: expectGen });
   return `  {
     name: ${nameJs},
     kind: "tile-test",
