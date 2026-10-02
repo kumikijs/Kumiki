@@ -197,7 +197,8 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 
 `app theme = themeName` のように **slot 名で theme を指定**できる。ランタイムは：
 - `app.themeName` が `app.themes` に存在しなければ、`_live[app.themeName]` を読んで theme 名を解決
-- 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルに反映
+- 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルと注入済みのベーススタイルシートに反映
+- 解決された theme が、マウント済みツリーを塗ったときの theme と違えば、ページを塗り直す。トークン prop（`bg`, `color`, `pad`, `gap`, `radius`, `shadow`、タイポグラフィ等）は tile の描画時にリテラル値へ解決されるため、自身の prop が変わらない tile は放っておくと旧 theme の値のままになる。その描画パスは差分を取らず、ツリーを作り直す。切替をまたいで要素の同一性は保たれない：フォーカス中のコントロールは他の再構築と同じ方法でフォーカスと選択範囲を取り戻し、どの slot も持たない DOM 状態は初期状態に戻る：スクロール位置、制御されていない `<details>`、bind されていない input の入力中テキスト、file input の選択、再生中のメディア、そして `bind` が拒否したテキスト（作り直されたコントロールは slot が保持している値を表示し、そのフィールドの `error(field=…)` のメッセージも拒否されたテキストとともに消える）。切替は入場アニメーションを再生し直さない：作り直された要素のうち `transition` や `motion` を持つものは、一回きりのアニメーションなら最終フレームをすぐに表示し、繰り返すアニメーションは動き続ける。アプリのどのビューも、hydration の有無にかかわらず同じように振る舞う
 
 ```kumiki snippet
 slot themeName : Text = "Light"
@@ -210,11 +211,11 @@ app App ... theme = themeName    # ← slot 名を渡す
 ### 10.3.7 polymorphic collection methods
 
 `.filter` / `.map` / `.get-or` などはランタイムで型 dispatch:
-- `.filter(pred)`: Array なら `Array.prototype.filter`、Object なら `mapFilter`
+- `.filter(pred)`: Array なら `Array.prototype.filter`、Option なら `Some` の値、それ以外のオブジェクト — Map、または値が `true` の Set — なら各エントリを 1 つの `[key, value]` ペアとして渡す（`_s.filter`）
 - `.map(fn)`: Array なら要素 map、Option/Result なら Some/Ok の中身に map (`mapOver`)
 - `.flat-map(fn)`: Option/Result の Some/Ok を f に渡し、None/Err は素通り (`flatMapOption`)
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): 引数数で判別
-- `m.entries` は `[[k, v], ...]` で返り、後続の list ops の lambda は `$1=k, $2=v` に自動 destructure される
+- `m.entries` は `[[k, v], ...]` で返る。後続の list ops の lambda が `$1` / `$2` をどう束縛するかはここではなく、受信側の型から型検査器が決める（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— `Tuple(K, V)` の要素は `$1=k, $2=v` に分解される
 
 ### 10.3.8 select の値マッチング
 
@@ -346,10 +347,22 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    ループ変数から `_s.show(<loopVar>)` を暗黙 key として合成する。明示 key
    が常に優先。ネストした `for` は内側のループ変数で上書きされ、`for i in
    inner` 配下のタイルは外側の `for o in outer` の影響を受けず `_s.show(i)`
-   になる。
+   になる。内側の `for`（外側の body、またはそこにある分岐の腕）は外側の
+   反復ごとにリストを描くので、そのノードは項目 3 のリストを描く呼び出しと
+   同じく、外側の key の下のリストとして key が付く。内側の key が同じでも、
+   外側の反復が違う兄弟は区別される。
 3. **ユーザタイル境界** は外側の暗黙 key を body に持ち込まない。`_wk` は
    境界ノードそのものに巻かれ、body 側の identity は body が反復すれば
    body 自身で組む。
+   body が**リスト**を描く（body が `for`）とき、呼び出し側の key — 明示でも
+   暗黙でも — は 1 つのノードではなくリストを名指す。全ノードに同じ key を
+   付ければ 1 つの identity に潰れてしまう。そこで各ノードは、呼び出し側の key
+   と自身の key — どれだけ深く入れ子でも、そのノード自身の `for` が付けた
+   key — （無ければ平坦化したリスト内の位置）の組を JSON 配列 `[callKey, nodeKey]` として
+   符号化した key を持つ。ノードは互いに区別され、2 つの組が同じ文字列になる
+   ことはない。外側のリストを並べ替えると各ノードの要素が移動し、リスト内の
+   並べ替えはノード自身の key で移動する。リストのノードは、それを生んだ `for`
+   がどれだけ入れ子でも、呼び出しが置かれたコンテナの子になる。
 4. **`TileWhen` / `TileIf` / `TileMatch`** は透過。タイルを emit する分岐に
    暗黙 key を素通しで伝える。
 

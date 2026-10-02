@@ -1,0 +1,60 @@
+# Feature (stdlib.md §2.2.3): a `filter` / `map` / `find` / `sort-by`
+# fragment binds `$1` / `$2` from the receiver's TYPE, not from the length
+# of each value.
+#
+# An `Option(List(Int))` and a `List(List(Int))` hand their fragment a list,
+# and `$1` is that list whole — the `[1, 2]` below has two items, which is
+# exactly the shape a `.entries` pair has, and it is still one value. Only a
+# `Tuple(A, B)` (what `.entries` produces) is taken apart into `$1` / `$2`,
+# and a Map's filter is handed the key and the value. Everywhere else the
+# fragment is handed one value, so `$2` there is E0103.
+#
+# A `fn` named as the fragment binds the same way as the call it stands for:
+# `nested.map(len)` is `nested.map(len($1))`. A Set is not one of the
+# receivers §2.2.3 binds whole — its filter is handed each element as an
+# entry and keeps the elements the predicate keeps.
+
+fn len(xs: List(Int)) -> Int = xs.length
+
+slot pair   : Option(List(Int)) = Some([1, 2])
+slot nested : List(List(Int))   = [[1, 2], [3, 4, 5]]
+slot scores : Map(Text, Int)    = {"ann": 2, "bob": 1}
+slot words  : Set(Text)         = ["ann", "bob"]
+
+slot kept    : Option(List(Int)) = None
+slot size    : Option(Int)       = None
+slot longOnes : Int               = 0
+slot sizes   : List(Int)         = []
+slot twoItem : Option(List(Int)) = None
+slot longest : List(List(Int))   = []
+slot byScore : List(Text)        = []
+slot named   : List(Int)         = []
+slot kept2   : List(Text)        = []
+
+reducer run on=ui.click(Run)
+    do= kept     := pair.filter($1.length > 1)
+        size     := pair.map($1.length)
+        longOnes := nested.filter($1.length > 1).length
+        sizes    := nested.map($1.length)
+        twoItem  := nested.find($1.length == 2)
+        longest  := nested.sort-by(0 - $1.length)
+        byScore  := scores.entries.sort-by($2).map($1)
+        named    := nested.map(len)
+        kept2    := words.filter($1 != "bob").to-list
+
+tile Run = button(text="run", onClick=run)
+
+tile App
+    = column(
+        Run,
+        text("kept=" + kept.show + " size=" + size.show),
+        text("longOnes=" + longOnes.show + " sizes=" + sizes.show),
+        text("twoItem=" + twoItem.show + " longest=" + longest.show),
+        text("byScore=" + byScore.show),
+        text("named=" + named.show + " kept2=" + kept2.show))
+      {pad: "lg", gap: "md"}
+
+app FragmentBindsByType
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -1,0 +1,22 @@
+# Feature (stdlib.md §2.3): `heading(level=n, …)` renders `<h1>` … `<h6>`, so a
+# page written as an outline keeps its outline for screen readers and the
+# document structure. No `level` is an `<h1>`. The level may come from a slot;
+# when it changes, the heading is re-created as the new element, since a tag
+# cannot be changed in place.
+
+slot depth : Int = 2
+
+reducer deeper on=ui.click(DeeperBtn) do= depth := depth + 1
+
+tile DeeperBtn = button(text="Deeper", onClick=deeper)
+tile App = column(
+    heading("Guide"),
+    heading(level=2, "Install"),
+    heading("Requirements", level=3),
+    heading("Moving section", level=depth),
+    DeeperBtn)
+
+app HeadingLevel
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

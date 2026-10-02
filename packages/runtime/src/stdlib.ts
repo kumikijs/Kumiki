@@ -321,14 +321,15 @@ export const _stdlibCore = {
     return out;
   },
   /**
-   * Polymorphic `.filter` dispatch — used by codegen when the receiver type
-   * isn't statically known (e.g. `m.keys.filter(...)` vs `m.filter(...)`).
+   * Polymorphic `.filter` dispatch — what codegen emits for every `.filter`,
+   * whatever the receiver (`m.keys.filter(...)` and `m.filter(...)` alike).
    * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
    * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
-   * so it has to be told apart before the Map branch reads its `_tag` / `_0`
-   * fields as entries; other objects (Maps in Kumiki) hand the predicate
-   * each `[key, value]` pair, the key restored to its declared kind as
-   * `keys` restores it.
+   * so it has to be told apart before the object branch reads its `_tag` /
+   * `_0` fields as entries; any other object — a Map, or a Set, whose
+   * elements are its keys and whose values are `true` — hands the predicate
+   * each `[key, value]` pair, the key restored to its declared kind as `keys`
+   * restores it when codegen passes `kind`.
    */
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
@@ -424,8 +425,33 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  listSortBy<T>(xs: T[], keyOf: (x: T) => number): T[] {
-    return [...(xs ?? [])].sort((a, b) => keyOf(a) - keyOf(b));
+  /**
+   * `List(T).sort-by(expr)` (stdlib.md §2.2.3): ascending by the key, in the
+   * order `<` gives it (language.md §1.9.4) — a number, a `Time` (a number at
+   * runtime) or a `Text`, which is all the checker accepts for a key whose type
+   * it knows (a fragment, or a `fn` passed by name with a declared return
+   * type). JavaScript's `<` orders both, so the comparator asks it rather than
+   * subtracting, which answered `NaN` — "equal" — for every pair of Text keys.
+   * `Array.prototype.sort` is stable, so equal keys keep their order.
+   *
+   * A key the checker could not type reaches here as whatever it is. One that
+   * `<` orders against nothing — absent (`undefined` / `null`) or `NaN` — sorts
+   * after every other key, keeping its order: compared as "equal" to every
+   * key, a single missing one would stop the rest from sorting. Any other
+   * pair `<` cannot order (a record, a number against a non-numeric `Text`)
+   * compares as equal, and a numeric key that arrives as `Text` is ordered as
+   * `Text`.
+   */
+  listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
+    const absent = (k: unknown): boolean => k == null || Number.isNaN(k);
+    return [...(xs ?? [])].sort((a, b) => {
+      const ka = keyOf(a) as number | string;
+      const kb = keyOf(b) as number | string;
+      const na = absent(ka);
+      const nb = absent(kb);
+      if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
   },
   /**
    * `List(T).sort` — polymorphic. Numeric elements sort numerically (so

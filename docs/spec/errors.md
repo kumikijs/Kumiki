@@ -246,6 +246,14 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
+A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
+
+> `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`
+
+That holds anywhere inside the fragment, a `$2` in another method's argument included (`xs.map($1.min($2))`): only a fragment declares positionals, so such an argument reads the fragment's. Where the scope around the fragment binds a `$2` of its own — a `fn`'s second parameter, an enclosing pair's value — the fragment hides it, and the message says how to reach it:
+
+> `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
+
 A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and each branch of an `if`, a `for` body and each match arm is a scope of its own. So a name one `if` branch declares is undefined in the other branch and on every statement after the `if`, just as one a `for` body or match arm declares is undefined after it. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
@@ -504,7 +512,7 @@ A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-sh
 | `flat-map`, `map-err` | the only one | `$1` |
 | `update(k, f)` | the second | `$1` (the current value) |
 
-`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A list method's `fn` declares two only over a key/value pair; over any other receiver whose type the checker can decide, a second parameter would receive the JS index or the element again, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
+`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
 
 The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
 
@@ -521,6 +529,23 @@ Codegen drops a value in that position, so `column(text("a"), 42)` rendered only
 A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`).
 
 **Fix**: Show the value with a tile — `column(text(n.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that.
+
+### E0129 `unrendered-arg`
+
+A value builtin is written with an argument as content that it never renders. Each one reads its content from one place ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)): `text`, `heading`, `code` and `markdown` from their first positional argument; `link`, `label` and `editable` from their first positional argument, or `text=` when none is written; `image` and `icon` from `src=` and `name=`. What else is written as content goes nowhere:
+
+- A positional argument past the one the builtin reads. `text("A", "B")` renders `A`; `B` is dropped. On `image` and `icon`, which read no positional argument, every one is dropped.
+- `text=` on `text` / `heading` / `code` / `markdown` with no positional argument. `text=` is the label argument of `button`, `link`, `label` and `editable`, and a prop on the text builtins, so `heading(text=title)` renders an empty heading.
+- `text=` beside a positional argument on `link` / `label` / `editable`. These read `text=` only when no positional argument is written, so `label(text="A", "B")` renders `B`; `A` is dropped.
+
+> `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
+> `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
+> `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
+> `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
+
+Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional`, `text-prop` or `text-shadowed`, in the order above. `check`, `build` and `smoke` were all green on these: the argument parsed, type-checked and never reached the page. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
+
+**Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)` — and join values meant to show together (`text(a + " " + b)`). `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
 ## E02xx — Types
 
@@ -540,6 +565,7 @@ A value does not have the type its position requires.
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
+> `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
@@ -549,7 +575,7 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a variant tag carrying a payload (`onClick=Some(1)`), a tile call carrying arguments (`onClick=box(text("z"))`) or props (`onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 

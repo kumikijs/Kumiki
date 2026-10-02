@@ -64,13 +64,15 @@ const rows: Row[] = [
   },
   {
     kind: "heading",
-    // The issue's own program. `level` is not observable in the DOM (the
-    // renderer draws every heading as an `h1`), so the prop half is held by
-    // `test-id`, written first as well.
+    // The issue's own program: `level` is read as the element's tag, and
+    // `test-id`, written first as well, reaches its attribute.
     tile: 'heading(test-id="probe", level=2, title)',
     says: "Title",
     notSays: "probe",
-    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+    prop: (el) => {
+      expect(el.tagName).toBe("H2");
+      expect(el.getAttribute("data-kumiki-test")).toBe("probe");
+    },
   },
   {
     kind: "heading, content first",
@@ -78,7 +80,10 @@ const rows: Row[] = [
     tile: 'heading(title, test-id="probe", level=2)',
     says: "Title",
     notSays: "probe",
-    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+    prop: (el) => {
+      expect(el.tagName).toBe("H2");
+      expect(el.getAttribute("data-kumiki-test")).toBe("probe");
+    },
   },
   {
     kind: "markdown",
@@ -104,16 +109,35 @@ const rows: Row[] = [
     notSays: "probe",
     prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
   },
+  // `label` and `link` take their label the same way as `editable`: the first
+  // positional argument, or `text=` when none is written (both together is
+  // E0129, see `packages/compiler/test/builtin-content-args.test.ts`). The
+  // positional one used to be parsed and then dropped, so both rendered empty.
   {
-    kind: "editable, text= beside a positional",
-    // `editable` also takes its content from `text=`, but only as a fallback
-    // for a call with no positional argument: written together, the
-    // positional one is the content.
-    tile: 'editable(text="A", "B")',
-    says: "B",
-    notSays: "A",
+    kind: "label",
+    tile: 'label(test-id="probe", title)',
+    says: "Title",
+    notSays: "probe",
+    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+  },
+  {
+    kind: "link",
+    tile: 'link(to="/x", title)',
+    says: "Title",
+    notSays: "/x",
   },
 ];
+
+// The named forms `label` and `link` have always taken still render.
+describe("label and link still take their label as text=", () => {
+  it.each([
+    ['label(text="Named")', "Named"],
+    ['link(to="/x", text="Named")', "Named"],
+    ['link(to="/x") {text: "Prop"}', "Prop"],
+  ])("%s", async (tile, says) => {
+    expect((await render(tile)).textContent).toBe(says);
+  });
+});
 
 describe("a builtin's content is its first positional argument", () => {
   for (const row of rows) {
@@ -127,8 +151,8 @@ describe("a builtin's content is its first positional argument", () => {
 
   // Only the prop half here is a rule: a `test-id` never becomes content. The
   // empty text is today's behaviour for a call that gives no content, and says
-  // nothing about `text(text="…")`, which `check` does not yet report; that
-  // shape is deliberately left unpinned until it gets a diagnostic.
+  // nothing about `text(text="…")`, which is E0129 (see
+  // `packages/compiler/test/builtin-content-args.test.ts`).
   it("text with only a test-id: the test-id is a prop, not the content", async () => {
     const el = await render('text(test-id="probe")');
     expect(el.textContent).toBe("");
