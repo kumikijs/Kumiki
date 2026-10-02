@@ -1,0 +1,36 @@
+# Feature (language.md §1.6.5): within a `fn`, `$1`, `$2`, ... are the
+# arguments in order — each is the parameter at its position, with its type.
+#
+# A fragment inside the body binds its own `$1` / `$2`: in `doubled`, the
+# receiver `$1` is the fn's list and the fragment's `$1` is each element; in
+# `total-from`, `fold`'s seed is the fn's `$2` and the fragment's `$1` / `$2`
+# are the accumulator and the element.
+
+fn plus(a: Int, b: Int) -> Int = $1 + $2
+
+fn doubled(xs: List(Int)) -> List(Int) = $1.map($1 * 2)
+
+fn total-from(xs: List(Int), start: Int) -> Int = xs.fold($2, $1 + $2)
+
+slot sum     : Int       = 0
+slot doubles : List(Int) = []
+slot total   : Int       = 0
+
+reducer go on=ui.click(Go)
+    do=
+        sum := plus(2, 3)
+        doubles := doubled([1, 2, 3])
+        total := total-from([1, 2, 3], 10)
+
+tile Go = button(text="go") {id: "go"}
+
+tile App = column(
+    Go,
+    text("sum: " + sum.show),
+    text("doubles: " + doubles.map($1.show).join(",")),
+    text("total: " + total.show))
+
+app FnPositionalArguments
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
