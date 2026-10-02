@@ -141,7 +141,7 @@ concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
 sort                        : List(T)          ; T は Ord
-sort-by(expr)               : List(T)
+sort-by(expr)               : List(T)          ; expr の昇順（< の順）、安定
 unique                      : List(T)
 map(expr)                   : List(T')
 filter(pred)                : List(T)
@@ -172,6 +172,12 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 **`map` / `filter` / `sort-by` の lambda 引数**:
 - List 要素には `$1` を、`.entries` 後の `[k, v]` ペアには `$1=key, $2=value` を束縛します（ランタイムが自動 destructure）
 - 例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`
+
+**`sort-by(expr)` はキーを `<` が 2 値を並べる順で並べる**（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。数値と `Time` は数値として、`Text` は `<` が 2 つの `Text` を比べる順で並べる。キーが等しい要素は元の順を保つ。順序を持たないキー（record、variant、`Bool`、`Option`、コンテナ）は、同じ 2 値の `a < b` と同じく [E0201](./errors.md#e0201-type-mismatch)。キーは名前で渡した `fn`（`xs.sort-by(keyOf)`）でもよく、その宣言された戻り値型がキーの型になる。
+
+- **`Text` の順序は UTF-16 コード単位の順**で、ロケールの照合順ではない：`"Z" < "a"`、`"B" < "a"` であり、かなや漢字は辞書（読み）順ではなくコードポイント順に並ぶ。
+- **キーは実行時の値として並べる。** 数値や `Time` と宣言されたフィールドでも、値が `Text` として届いたもの（たとえば宣言された型へ変換されない HTTP の JSON 本文）は `Text` として並ぶ：`"10"` が `"9"` より前になる。
+- **並べる値のないキー（欠落、または `NaN`）は他のすべてのキーの後ろに並び**、互いの順を保つ。そうなりうるのは checker が型を決められなかったキーだけである。すべてのキーと「等しい」と比べると、1 つあるだけで残りが並ばなくなるため。
 
 ### 2.2.4 Option(T)
 
