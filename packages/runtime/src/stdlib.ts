@@ -424,8 +424,33 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  listSortBy<T>(xs: T[], keyOf: (x: T) => number): T[] {
-    return [...(xs ?? [])].sort((a, b) => keyOf(a) - keyOf(b));
+  /**
+   * `List(T).sort-by(expr)` (stdlib.md §2.2.3): ascending by the key, in the
+   * order `<` gives it (language.md §1.9.4) — a number, a `Time` (a number at
+   * runtime) or a `Text`, which is all the checker accepts for a key whose type
+   * it knows (a fragment, or a `fn` passed by name with a declared return
+   * type). JavaScript's `<` orders both, so the comparator asks it rather than
+   * subtracting, which answered `NaN` — "equal" — for every pair of Text keys.
+   * `Array.prototype.sort` is stable, so equal keys keep their order.
+   *
+   * A key the checker could not type reaches here as whatever it is. One that
+   * `<` orders against nothing — absent (`undefined` / `null`) or `NaN` — sorts
+   * after every other key, keeping its order: compared as "equal" to every
+   * key, a single missing one would stop the rest from sorting. Any other
+   * pair `<` cannot order (a record, a number against a non-numeric `Text`)
+   * compares as equal, and a numeric key that arrives as `Text` is ordered as
+   * `Text`.
+   */
+  listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
+    const absent = (k: unknown): boolean => k == null || Number.isNaN(k);
+    return [...(xs ?? [])].sort((a, b) => {
+      const ka = keyOf(a) as number | string;
+      const kb = keyOf(b) as number | string;
+      const na = absent(ka);
+      const nb = absent(kb);
+      if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
   },
   /**
    * `List(T).sort` — polymorphic. Numeric elements sort numerically (so
