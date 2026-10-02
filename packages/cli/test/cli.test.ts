@@ -291,7 +291,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,301 measured, from 61,184):
+    // Still 63,000 (61,644 measured, from 61,527):
     // a `for` keys each tile it renders apart from every sibling, a
     // repeated value included (runtime.md §10.3.10). The 117 bytes are
     // `loopKeys`, which names the loop and the occurrence beside the value's
