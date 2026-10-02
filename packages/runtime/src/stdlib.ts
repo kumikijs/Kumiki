@@ -132,12 +132,30 @@ export function valueEqual(a: unknown, b: unknown): boolean {
  * thing an absent field can render as.
  */
 function instantOf(value: unknown): number {
+  // Trimmed here, not in `Time.parse`: the reading refuses padded text, but a
+  // `Time` that arrived as padded text still renders as the instant it names.
   const raw = String(value ?? "").trim();
   if (raw === "") return Number.NaN;
   const n = Number(raw);
   if (Number.isFinite(n)) return n;
   const parsed = _stdlibCore.parseTime(raw);
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
+}
+
+/**
+ * The one text form `Time.parse` reads (stdlib.md §2.2.8): `YYYY-MM-DD`, an
+ * optional `[Tt ]HH:MM(:SS(.fraction)?)?`, and an optional zone (`Z`/`z` or
+ * `±HH:MM`). Groups: year, month, day, hour, minute, second, fraction, zone,
+ * offset sign, offset hours, offset minutes. An absent time is midnight.
+ */
+const ISO_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ]([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.(\d+))?)?)?([Zz]|([+-])([01]\d|2[0-3]):([0-5]\d))?$/;
+
+/** Whether month `m` (1–12) of year `y` has a day `d` — the proleptic Gregorian calendar. */
+function isCalendarDate(y: number, m: number, d: number): boolean {
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const days = m === 2 ? (leap ? 29 : 28) : m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
+  return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
 type PlatformCrypto = {
@@ -205,23 +223,41 @@ export const _stdlibCore = {
    * `Time.parse(text)` (stdlib.md §2.2.8) — `Some(ms)`, or `None` for text that
    * names no instant.
    *
-   * A **date-only** string is read as LOCAL midnight, not the UTC midnight
-   * `Date.parse` gives it. `format` renders local fields, so the UTC reading
-   * round-trips to the day before west of Greenwich: `"2026-08-14"` from a
-   * `type="date"` input would come back as `2026-08-13` in Los Angeles. The two
-   * halves have to agree on which clock a zone-less string is on, and the one
-   * the reader is looking at is the only defensible answer.
+   * The text is ISO 8601 and nothing else: `YYYY-MM-DD`, then optionally a
+   * time `[Tt ]HH:MM(:SS(.fraction)?)?`, then optionally a zone `Z`/`z` or
+   * `±HH:MM`. It is read here field by field rather than handed to
+   * `Date.parse`, which rolls a day past the month's end over into the next
+   * one (`2026-02-30` is March 2nd), reads some non-ISO text with a legacy
+   * parser (`"0050-01-01 10:00"` is 1950), and accepts formats that differ
+   * between engines.
+   *
+   * Without a zone the text is on the LOCAL clock, a date-only string
+   * included: `format` renders local fields, so reading `"2026-08-14"` from a
+   * `type="date"` input as UTC midnight would come back as `2026-08-13` west
+   * of Greenwich. With a zone it is that instant.
    */
   parseTime(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
-    // No early return for a blank: `Date.parse("")` is already NaN, and a
-    // branch that cannot change an answer is a branch the next reader has to
-    // re-derive.
-    const raw = String(text ?? "").trim();
-    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-    const ms = dateOnly
-      ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime()
-      : Date.parse(raw);
-    return Number.isFinite(ms) ? _stdlibCore.Some(ms) : _stdlibCore.None;
+    const m = ISO_TIME.exec(String(text ?? ""));
+    if (!m) return _stdlibCore.None;
+    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    if (!isCalendarDate(y, mo, d)) return _stdlibCore.None;
+    // Milliseconds from the fraction's first three digits; the rest is finer
+    // than a `Time` holds.
+    const [h, mi, s] = [Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0)];
+    const ms = Number((m[7] ?? "").padEnd(3, "0").slice(0, 3));
+    // `setFullYear` / `setUTCFullYear` so a year below 100 is not read as 19xx.
+    const at = new Date(2000, 0, 1);
+    if (m[8] === undefined) {
+      at.setFullYear(y, mo - 1, d);
+      at.setHours(h, mi, s, ms);
+      return _stdlibCore.Some(at.getTime());
+    }
+    at.setUTCFullYear(y, mo - 1, d);
+    at.setUTCHours(h, mi, s, ms);
+    // `+09:00` is nine hours ahead of UTC, so the instant is nine hours earlier.
+    const sign = m[9] === "-" ? 1 : -1;
+    const offset = m[9] ? sign * (Number(m[10]) * 60 + Number(m[11])) * 60_000 : 0;
+    return _stdlibCore.Some(at.getTime() + offset);
   },
   /**
    * `Time.format(pattern)` (stdlib.md §2.2.8). A `Time` is a millisecond

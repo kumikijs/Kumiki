@@ -295,7 +295,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `mapOver` tells a Map apart from a tagged Option / Result and restores
     // each key as `keys` does; it sits in stdlib, which every app loads.
     //
-    // Still 63,000 (62,274 measured, from 61,933 on dev at 46d9dca): an index
+    // Still 63,000 (62,504 measured, from 61,933 on dev at 46d9dca):
+    // `Time.parse` reads ISO 8601 `YYYY-MM-DD` with an optional time and zone
+    // itself, and refuses a date that is not on the calendar (stdlib.md
+    // §2.2.8). The bytes are `ISO_TIME`, `isCalendarDate` and the
+    // field-by-field reading in `parseTime` that replaces the platform's
+    // parser, which rolls `2026-02-30` over into March. A counter parses no
+    // time and still ships it, because `parseTime` sits in the stdlib module
+    // every app loads.
+    //
+    // Still 63,000 (62,845 measured, from 62,504 on dev at f9a999c): an index
     // step reaches the setter apart from a field step (language.md §1.6.3), so
     // a write through a Map key that is absent writes nothing, an index key is
     // never taken for a `.get` unwrap, and a read there panics. The 341 bytes
