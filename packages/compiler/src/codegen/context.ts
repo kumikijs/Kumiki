@@ -65,7 +65,7 @@ export function makeEvalCtx(
  * predicate, a `for` / `if` block — goes through here, so a slot read inside
  * a reducer body keeps reading `_next` first and sees what the body has
  * already written. A tile or other render-time context has no `reducerScope`
- * to hand down, so its nested scopes read `_live` as before.
+ * to hand down, so its nested scopes read `_live`.
  */
 export function childCtx(ctx: EvalCtx): EvalCtx {
   return makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);

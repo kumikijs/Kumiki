@@ -1,11 +1,11 @@
-# Feature (language.md §1.6 / runtime.md §10.3.3): a slot read inside a
+# Feature (language.md §1.6.4 / runtime.md §10.3.3): a slot read inside a
 # reducer body sees what that body has already written — in every position.
 #
 # `go` writes `noteKey := "b"` first and then reads `noteKey` in each nested
 # form: a `match` arm (wildcard, binding, variant, tuple), the body of a
-# `let … in`, and a method's predicate. Each nested form opens a scope of its
-# own; every one of them keeps the reducer's view of the slots, so each read
-# answers `"b"`, not the `"a"` the slot held before the click.
+# `let … in`, and a method's predicate or element lambda. Each nested form
+# opens a scope of its own; every one of them keeps the reducer's view of the
+# slots, so each read answers `"b"`, not the `"a"` the slot held before the click.
 
 type Shape = Circle(Int) | Square(Int)
 

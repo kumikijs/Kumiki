@@ -937,10 +937,9 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
  *
  * The key reads slots in reducer scope unconditionally rather than from
  * `ctx.reducerScope`. `_emits`, which this pushes to, is declared beside
- * `_next` in the reducer body (`emit-reducer.ts`), so `_next` is in scope
- * wherever this code runs — and a lowering on the way here that rebuilt the
- * `EvalCtx` without the flag would otherwise make the key read `_live` and miss
- * the body's own writes.
+ * `_next` in the reducer body (`emit-reducer.ts`), so wherever this code runs
+ * `_next` is in scope and the key sees the body's own writes; the key never
+ * depends on how the `EvalCtx` that reached here was built.
  */
 export function reducerEmitJs(
   effect: string,
@@ -1014,7 +1013,7 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
 // Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
 // the indexed access path. The arm is a `childCtx` of the caller's, so it reads
 // the slots the way the caller does: `_next` first inside a reducer body,
-// `_live` in a tile.
+// `_live` everywhere else.
 export function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,
