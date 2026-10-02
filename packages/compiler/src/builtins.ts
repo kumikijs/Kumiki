@@ -77,6 +77,18 @@ export const BUILTIN_TILES = new Set<string>([
 ]);
 
 /**
+ * Whether `name` renders a positional argument only when it is a tile: a
+ * builtin that is not a value builtin. Codegen lowers a positional argument of
+ * one as a child (`column`, `row`, `card`, …) or not at all (`button`,
+ * `progress`, …), and in either case a value there renders nothing — the
+ * checker reports it (E0128). A user tile's positional argument is its input,
+ * a value.
+ */
+export function positionalIsTile(name: string): boolean {
+  return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+}
+
+/**
  * Which runtime feature module (`@kumikijs/runtime/modules/tiles-*.js`)
  * renders each built-in tile (#71). Codegen uses this to import only the
  * families a compiled app touches; the mapping MUST match the runtime's

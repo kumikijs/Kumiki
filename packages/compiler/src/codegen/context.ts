@@ -33,6 +33,14 @@ export type GenCtx = {
    * every render and the node still compares equal to the last one.
    */
   usedReaders: Set<ParseReading>;
+  /**
+   * Set while lowering a tile-test's `expect` tree. The `{…}` block of each
+   * node there is styling, which a snapshot does not compare (testing.md
+   * §8.4), so its data stays out of the node's `props`: what is left there is
+   * what the expectation states with named arguments, and the runtime
+   * compares all of it.
+   */
+  expectedTree?: boolean;
 };
 
 /**

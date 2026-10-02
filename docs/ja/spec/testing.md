@@ -51,7 +51,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`run-reducer(<reducer>)` が取るのは値ではなく reducer 名であり、呼べるのは property-test の invariant だけである（[§8.3](#_8-3-property-tests)）：trial の束縛を読む形に lowering されるため、それ以外の場所では、生成モジュールがどのテストも結果を出す前に死ぬ。
 
-いくつかの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になり、`given` / `expect` / `mocks`（や `given` の `mocks` / `event`）がレコードでなければ空のレコードとして読まれ、書いたはずのセットアップ・主張・台本が起きない。
+いくつかの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になり、`given` / `expect` / `mocks`（や `given` の `mocks` / `event`）がレコードでなければ空のレコードとして読まれ、書いたはずのセットアップ・主張・台本が起きない。一段下の slot → 値のセクション——`given` の `slots`、`reducer-test` の `expect` の `slots`、`episode-test` の `expect` の `slots-equal`——も同じくレコードであり、そうでなければどの slot も設定せず、どの slot も主張しなかった。`slots-equal` だけはレコードの代わりに裸の名前 `from-log`（ログ自身の最終値）も取る。それ以外のどの位置でも、`from-log` は他と同じただの名前である。
 
 これらが解決されるまで、テスト本体の名前は何を書いても受理され、lowering は読めないものを捨てていた：何も名指さない slot キーはテストを slot の既定値のまま走らせる——**成功**しながら、自分が用意していない前提を主張していた。`invariant` の中の未定義呼び出しはさらに悪い。property ランナーが trial の例外を捕まえて invariant の反証として描画するため、出力は無実のコードを犯人に仕立てていた。
 
@@ -142,10 +142,12 @@ test toggle-is-involution =
 ```
 property-test ::= 'property-test'
                   'for-all'    '=' record-lit       ; 生成する変数
-                  'given'      '=' record-lit
+                  'given'      '=' '{' (property-given (',' property-given)*)? '}'
                   'invariant'  '=' expr
                   ('count'     '=' int)?            ; 試行回数（デフォルト 100）
                   ('shrink'    '=' bool)?           ; 失敗時の最小化（デフォルト true）
+
+property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
 
 `run-reducer(name)` は reducer が残す状態 `{slots: {…}}` を返し、その `slots` はプログラムが宣言した slot（とランタイムの `route`）で型付けされる。これを通した読み取りは slot そのものの読み取りと同じように検査される: `Set(Int)` に対する `run-reducer(add).slots.tags.to-list` はキーが数値として読み戻される `List(Int)` であり（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、プログラムが宣言していない slot 名は、property を反例として失敗させる `undefined` ではなく [E0108](./errors.md#e0108-undef-member) になる。
@@ -193,6 +195,41 @@ test counter-display =
 ```
 
 snapshot は深い構造比較。クラス名やスタイルは比較対象外（明示指定したものだけ）。
+
+比較するのは、期待するノードの `kind`、順序どおりの `children`、そしてそのノードが持つ**すべての内容フィールド**である。内容フィールドとは、ビルトインがノードに載せるフィールド（`text`、`image` の `src`、`link` の `to`、`input` の `value`、`check` のチェック状態、`select` の `options`）と、それ以外にそのノードが書かれた名前付き引数（`image` の `alt`、`button` の `disabled` や `variant`、`aria-*` のラベル、`id` など）である。期待するノードが持たないフィールド（`input(value="x")` は `placeholder` を述べていない）は比較しないので、いくつものフィールドを描くタイルの 1 つだけを snapshot で主張できる。
+
+期待するノードに何が書かれていても、次のものは比較しない：
+
+- `{…}` ブロック：スタイル、クラス、そこに書いたそれ以外のプロパティ。`column(…) {pad: "sm"}` は余白について何も主張しない。プロパティを比較したいときは名前付き引数で書く；
+- ハンドラ（`onClick=…` と、`ui.*` の購読が結びつける reducer）；
+- ノードが持つ同一性と配線：`key`（`{key: …}` で書いたもの、または `for` の暗黙のキー）、コントロールの `bind`、リンクの `prefetch`。
+
+ビルトインは、引数を省いたときにもいくつかのフィールドを補う。期待するノードはそれを他のフィールドと同じように持つ。したがって `check()` はチェックされていない check であり、`details(text("x"))` は空の summary を主張する。別の値を主張するには、その引数を書く：
+
+| ビルトイン | 引数を省いたときに持つもの |
+|---|---|
+| `text`、`heading`、`button`、`label`、`link`、`markdown`、`code`、`editable` | `text: ""` |
+| `link` | `to: ""` |
+| `image` | `src: ""` |
+| `icon` | `name: ""` |
+| `check`、`switch` | チェックなし |
+| `select` | `options: []` |
+| `list` | `ordered: false` |
+| `details` | `summary: ""` |
+| `error` | `field: ""` |
+| `modal`、`drawer`、`popover` | `open: true` |
+
+`aria-*` の属性は、どう書かれていても（`aria-label="…"`、`aria` マップ、実際のタイルの `{…}` ブロック）1 つずつ別のフィールドである。`button(text="x", aria-label="Close")` はラベルを主張し、タイルが同時に描く `aria-describedby` については何も述べない。そのパスは `button.aria-label` であり、`check` / `switch` のチェック状態は、それを決める引数の名前 `value` で報告する。
+
+不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告する。`expected:` / `actual:` の行は比較したフィールドだけを表示する。実際のノードには同じ位置の期待するノードが述べるフィールドを表示するので、実際のノードだけが持つ `placeholder` や `bind` は表示されない。
+
+```
+tile-test ::= 'tile-test' identifier
+              'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
+              'expect' '=' tile-expr
+
+tile-given ::= 'slots' ':' record-lit | 'in' ':' expr
+```
 
 `given.in` はターゲットの引数である。そしてターゲットはプログラムが定義した tile でなければならない——生成されるテストはターゲットに `App._tilesById` 経由で到達し、そこにはユーザ定義の tile しか入っていないので、組み込み tile はターゲットになれない（[E0105](./errors.md#e0105-undef-tile)）。`tile-test` はそのターゲットを tile 本体と同じように適用する——`App._tilesById["<T>"]` に `given.in` を渡す——ので、`in=` を宣言しているターゲットには 1 つ必要、宣言していないターゲットには渡してはならず、いずれの場合も値は宣言された型と照合される：
 
@@ -248,6 +285,20 @@ test bug-2026-05-21 =
             no-panics: true
         }
 ```
+
+```
+episode-test ::= 'episode-test'
+                 'load'   '=' string
+                 'mocks'  '=' '{' (identifier ':' mock-policy (',' identifier ':' mock-policy)*)? '}'
+                 'expect' '=' '{' (episode-expect (',' episode-expect)*)? '}'
+
+mock-policy    ::= 'from-log' | 'ignore' | 'ok' '(' expr ')' | 'err' '(' expr ')'
+episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
+                 | 'no-panics' ':' bool
+                 | 'no-errors' ':' bool
+```
+
+`slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
 
 ### 8.6.1 episode log の形式
 

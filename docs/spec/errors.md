@@ -510,6 +510,18 @@ The count is all the check compares. The `fn`'s parameter types are not checked 
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
 
+### E0128 `value-as-child`
+
+A value is written as a positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` ([Language §1.7.1](./language.md#_1-7-1-syntax)) or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+
+> ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
+
+Codegen drops a value in that position, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
+
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`).
+
+**Fix**: Show the value with a tile — `column(text(n.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that.
+
 ## E02xx — Types
 
 ### E0201 `type-mismatch`
@@ -1089,7 +1101,7 @@ Three kinds of position have one today:
 
 - A `reducer-test`'s `given.mocks` binds an effect to something other than `ok(...)`, `err(...)` or `delay(<ms>, ok(...)|err(...))`. `mockScriptJs` answers anything else with `{outcome: "ok", value: null}`, so a mock written to drive the failure path drove the success one — and a test asserting what happens when an effect fails passed, permanently, having never failed it. ([E0712](#e0712-episode-mock-invalid) is the same rule for an `episode-test`, whose vocabulary also includes `from-log` and `ignore`.)
 - An `expect.effects` that is not a list. `effectListJs` lowers a non-list to `[]`, which is not an absent assertion but the assertion *no effects were emitted* — so `effects: persist(count)`, a forgotten pair of brackets, passes against a reducer that emits nothing, and the effect named inside it is never resolved.
-- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, and the `mocks` and `event` sections of a `given`. Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, and `mocks = 41` scripts nothing, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
+- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, the `mocks` and `event` sections of a `given`, and the slot → value sections: a `given`'s `slots`, a `reducer-test` `expect`'s `slots`, and an `episode-test` `expect`'s `slots-equal` (which also takes the bare name `from-log`). Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, `mocks = 41` scripts nothing, and `given = {slots: 41, …}` with `expect = {slots: 41}` seeds no slot and asserts none, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
@@ -1099,6 +1111,9 @@ Three kinds of position have one today:
 > `` `mocks` must be a record, `{<effect>: <policy>}` ``
 > `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
 > `` `given.event` must be a record, `{type: …, target: …}` ``
+> `` `given.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots-equal` must be a record, `{<slot>: …}`, or `from-log` ``
 
 E0713 is reported once, at the clause, and no name inside it is resolved as a section, so a `tile-test` does not also count its argument as missing. A rule that holds wherever it is written still applies inside: a wildcard in a `given` is still [E0109](#e0109-test-wildcard-misuse), and a `<slots.X>` naming no slot in a `reducer-test`'s `expect` is still [E0103](#e0103-undef-ref-undef-slot).
 
