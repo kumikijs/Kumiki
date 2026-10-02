@@ -1,6 +1,6 @@
 ---
-"@kumikijs/compiler": patch
-"@kumikijs/runtime": patch
+"@kumikijs/compiler": minor
+"@kumikijs/runtime": minor
 ---
 
 Make a decoded value that `Decoder.Json(T)`'s `T` refuses the effect's `.err`
