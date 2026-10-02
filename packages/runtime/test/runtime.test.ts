@@ -1630,11 +1630,11 @@ describe("unhandled effect-error contract (#37)", () => {
     Object.defineProperty(globalThis, "localStorage", { value: throwing, configurable: true });
     try {
       // The err value is the `Text` a storage effect's `out=Result(_, Text)`
-      // declares (http.md §6.7.2), not a record wrapping it.
+      // declares (http.md §6.7), not a record wrapping it.
       const r = await builtinEffects.storageRead({ key: "x" });
       expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
       const w = await builtinEffects.storageWrite({ key: "x", value: 1 });
-      // A failed write names the call and the key (§6.7.2), still as the Text.
+      // A failed write names the call and the key (http.md §6.7.2), still as the Text.
       expect(w).toEqual({
         kind: "err",
         value: 'localStorage.setItem("x") failed: Error: QuotaExceededError',

@@ -9,10 +9,11 @@ import { describe, expect, it } from "vitest";
 // `check` although the same call on a slot receiver is a pair of E0201s.
 //
 // `$1` on `.ok` now has the type `out=` declares: the Ok payload of a
-// `Result(T, E)`, or the whole value of any other `out=`. `$1` on `.err` is the
-// `E` for a storage / session / indexed effect, whose handlers deliver the
-// declared `Text`. `.err` on any other capability, the request key (`$2`) and
-// a result no declaration types stay undecided.
+// `Result(T, E)`, or the whole value of any other `out=`. `$1` on `.err` is
+// `Text` for a storage / session / indexed effect, whose handlers deliver the
+// failure's message, and declaring any other `E` there is E0306. `.err` on any
+// other capability, the request key (`$2`) and a result no declaration types
+// stay undecided.
 //
 // Each case that pins something staying *quiet* shares its program with one
 // that must report, and the expectation is the whole list — so the quiet half
@@ -90,8 +91,8 @@ reducer keep on=loadSession.ok($s, _) do= session := $s`),
 
 describe("the Err payload of a storage-family effect", () => {
   // The storage / session / indexed handlers deliver the `Text` their effects
-  // declare as `E` (http.md §6.7), so `$e` on `.err` is that `E`.
-  it("is the declared E: reading it as Text passes, reading a member Text lacks does not", () => {
+  // declare as `E` (http.md §6.7), so `$e` on `.err` is that `Text`.
+  it("is Text: reading it as Text passes, reading a member Text lacks does not", () => {
     expect(
       diagnostics(
         app(`slot problem : Text = ""
@@ -133,6 +134,103 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []`;
     expect(diagnostics(src)).toEqual(["E0201 6 Expected Int but got Text"]);
+  });
+});
+
+describe("a storage-family effect that declares an E other than Text", () => {
+  // The runtime delivers the failure's message whatever `E` says, so an `E`
+  // that is not `Text` promises a value that never arrives: `$e.message` reads
+  // `undefined`, `n := $e` puts a string into an Int slot. The declaration is
+  // reported, and `$e` is still the `Text` that arrives — so a read written to
+  // the wrong `E` is reported too, and one written to `Text` is not.
+  it("is E0306, and $e is the Text that arrives rather than the declared record", () => {
+    expect(
+      diagnostics(
+        app(`slot problem : Text = ""
+slot raw : Text = ""
+${effect("loadSession", "Result(Option(Session), {message: Text})")}
+reducer failed on=loadSession.err($e, _) do= problem := $e.message
+reducer kept   on=loadSession.err($e, _) do= raw := $e`),
+      ),
+    ).toEqual([
+      'E0306 4 effect "loadSession" with cap=storage.read declares its error as {message: Text}, but storage.read delivers a failure as its message, a Text — declare out=Result(Option(Session), Text)',
+      'E0108 7 Type "Text" has no member ".message"',
+    ]);
+  });
+
+  it("is E0306 for an Int E, and storing $e into an Int slot is still a mismatch", () => {
+    expect(
+      diagnostics(
+        app(`slot n : Int = 0
+${effect("loadSession", "Result(Option(Session), Int)")}
+reducer failed on=loadSession.err($e, _) do= n := $e`),
+      ),
+    ).toEqual([
+      'E0306 3 effect "loadSession" with cap=storage.read declares its error as Int, but storage.read delivers a failure as its message, a Text — declare out=Result(Option(Session), Text)',
+      "E0201 6 Expected Int but got Text",
+    ]);
+  });
+
+  it("an E or a whole out= that names Text through an alias is Text, and an E that does not is reported", () => {
+    // Both halves in one program: the quiet aliases cannot pass merely because
+    // E0306 never fires.
+    expect(
+      diagnostics(
+        app(`type Message = Text
+type Code = Int
+type Loaded = Result(Option(Session), Text)
+slot n : Int = 0
+${effect("viaE", "Result(Option(Session), Message)")}
+${effect("viaOut", "Loaded")}
+${effect("wrong", "Result(Option(Session), Code)")}
+reducer a on=viaE.err($e, _)   do= n := $e
+reducer b on=viaOut.err($e, _) do= n := $e`),
+      ),
+    ).toEqual([
+      'E0306 12 effect "wrong" with cap=storage.read declares its error as Code, but storage.read delivers a failure as its message, a Text — declare out=Result(Option(Session), Text)',
+      "E0201 15 Expected Int but got Text",
+      "E0201 16 Expected Int but got Text",
+    ]);
+  });
+
+  it.each([
+    "storage.write",
+    "session.read",
+    "session.write",
+    "indexed.read",
+    "indexed.write",
+    "indexed.delete",
+  ])("holds for cap=%s", (cap) => {
+    const src = `effect run cap=${cap} in=Unit out=Result(Unit, Int)
+reducer boot on=app.start do= emit run()
+tile App = column(text("x"))
+app A
+    caps   = [${cap}]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+    expect(diagnostics(src)).toEqual([
+      `E0306 1 effect "run" with cap=${cap} declares its error as Int, but ${cap} delivers a failure as its message, a Text — declare out=Result(Unit, Text)`,
+    ]);
+  });
+
+  it("an HTTP effect's E and a storage effect whose out= is not a Result are not this check's", () => {
+    // HTTP delivers the `HttpError` record its `out=` declares; an `out=` that
+    // is not a `Result` makes no claim about the failure. One storage effect
+    // with a non-Text E reports, so the two quiet ones are not quiet because
+    // the check is off.
+    const src = `effect load cap=http.get in=Unit out=Result(Text, HttpError)
+    map-request={url: "/x", decode: Decoder.Text}
+effect peek cap=storage.read in=Unit out=Option(Text)
+    map-request={key: "k", decode: Decoder.Text}
+effect bad cap=storage.read in=Unit out=Result(Option(Text), Int)
+    map-request={key: "k", decode: Decoder.Text}
+reducer boot on=app.start do= emit load()
+tile App = column(text("x"))
+app A
+    caps   = [http.get, storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+    expect(diagnostics(src).map((d) => d.split(" ").slice(0, 2).join(" "))).toEqual(["E0306 5"]);
   });
 });
 

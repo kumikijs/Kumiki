@@ -115,7 +115,9 @@ test t = reducer-test pick
 
   it("is built as a Set in an expected effect's argument and in a mocked result", () => {
     const out = js(
-      `effect save cap=storage.write in=Set(Text) out=Result(Set(Text), Set(Int))
+      // An HTTP effect: a storage-family one must declare its error as Text
+      // (E0306), and this case needs a Set on both sides of the Result.
+      `effect save cap=http.post in=Set(Text) out=Result(Set(Text), Set(Int))
 slot w : Set(Text) = []
 reducer go on=ui.click(Btn) do= emit save(w)
 test t = reducer-test go
@@ -124,7 +126,7 @@ test t = reducer-test go
 test u = reducer-test go
     given  = {event: {type: ui.click, target: Btn}, mocks: {save: delay(5, err([7]))}}
     expect = {slots: {}}`,
-      "[storage.write]",
+      "[http.post]",
     );
     expect(out).toContain('_s.setOf(["m"])');
     expect(out).toContain('_s.setOf(["e"])');

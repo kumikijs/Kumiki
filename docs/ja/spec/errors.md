@@ -72,6 +72,7 @@ type KumikiError = {
 | `E0008` | なし | 同様に、どの出現を残すかはユーザの意図であり、`caps` の場合はケイパビリティの判断そのものである。 |
 | `E0009` | なし | 連鎖上のどの名前がレコード・ユニオン・プリミティブであるべきで、その本体が何かはユーザの意図である。 |
 | `E0304` | なし | 導出値をどこで計算するか（`fn` か、入場時に 1 度だけ走る reducer か）はユーザの意図である。 |
+| `E0306` | なし | `E` を `Text` に書き換えること自体は機械的だが、古い `E` に合わせて書かれた `.err` の読み取り（`$e.message`、`$e.code`）もメッセージに合わせて書き直す必要があり、それらのフィールドで何を得たかったかはユーザの意図である。 |
 | `E0210` | なし | 型引数の追加はユーザの意図の合成であり、静的修復の外側にある。 |
 | その他 | なし | 現時点では自動修復の対象外（よくある形が見つかれば issue を立てること）。 |
 
@@ -965,6 +966,14 @@ slot の初期値がほかの slot——あるいは自分自身、あるいは 
 > `emit "<name>" used as an expression is only allowed inside a reducer body`
 
 **修正**：`emit` を reducer の中へ移す。`app.init` のエントリはそれ自体が dispatch なので、effect を引数ではなくエントリそのものとして書く。
+
+### E0306 `err-type-not-text`
+
+storage / session / indexed の capability の effect が、`Text` でない `E` を持つ `out=Result(T, E)` を宣言している。これらの effect は `E` の宣言にかかわらず失敗のメッセージ、つまり `Text` で失敗し（[ストレージ Effect](./http.md#_6-7-storage-effects)）、`.err($e, _)` は `$e : Text` を束縛する（[位置束縛](./language.md#_1-6-5-positional-binding)）。`E` が `{message: Text}` なら `$e.message` は `undefined` を読み、`E` が `Int` なら `n := $e` は `Int` の slot に文字列を格納することになる。alias 越しに `Text` を名指す `E` は `Text` である。2引数の `Result` でない `out=` は失敗について何も主張しないので、この検査の対象ではない。
+
+> `effect "<name>" with cap=<cap> declares its error as <E>, but <cap> delivers a failure as its message, a Text — declare out=Result(<T>, Text)`
+
+**修正**：エラーを `Text` として宣言し（`out=Result(T, Text)`）、`$e` をそのメッセージとして読む。構造化された失敗が必要なプログラムは、`.err` reducer の中でメッセージから組み立てる。
 
 ## E04xx — モーション
 

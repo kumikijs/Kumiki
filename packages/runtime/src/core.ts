@@ -668,7 +668,14 @@ export type EffectSpec = {
   invoke: (input: unknown, caps: CapabilityRegistry, signal?: AbortSignal) => Promise<EffectResult>;
 };
 
-export type EffectResult = { kind: "ok"; value: unknown } | { kind: "err"; value: unknown };
+/**
+ * What an invoke resolves to. `final` marks an `err` the retry policy must not
+ * retry: compiled code sets it on a throw it caught inside an invoke, which
+ * would have made one attempt had it reached the dispatcher uncaught.
+ */
+export type EffectResult =
+  | { kind: "ok"; value: unknown }
+  | { kind: "err"; value: unknown; final?: boolean };
 
 /**
  * A host-supplied implementation for a custom capability (one registered via
@@ -4015,7 +4022,7 @@ async function runWithRetry(
   if (!policy) return eff.invoke(input, caps, signal);
   let last: EffectResult = await eff.invoke(input, caps, signal);
   for (let attempt = 1; attempt < policy.n; attempt++) {
-    if (last.kind !== "err") return last;
+    if (last.kind !== "err" || last.final) return last;
     // §6.4.1: abort short-circuits retries — re-issuing a cancelled request
     // would defeat the cancel intent.
     if (signal?.aborted) return last;

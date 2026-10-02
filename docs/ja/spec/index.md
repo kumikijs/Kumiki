@@ -115,6 +115,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |
 | [E0304](./errors.md#e0304-derived-slot) | `derived-slot` | slot | コア |
 | [E0305](./errors.md#e0305-fn-impurity) | `fn-impurity` | fn | コア |
+| [E0306](./errors.md#e0306-err-type-not-text) | `err-type-not-text` | effect | HTTP/Storage |
 | [E0401](./errors.md#e0401-motion-unknown-property) | `motion-unknown-property` | tile | スタイル |
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | スタイル |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | スタイル |

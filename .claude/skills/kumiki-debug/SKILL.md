@@ -52,6 +52,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0301` | effect needs a capability not in `app.caps` — including a standard effect (`navigate`, `toast`, `log`, …), which is gated on the cap it is registered behind | add the cap to `caps = [...]` |
 | `E0304` | a slot's initial value reads a slot (its own or another's, or `route` — directly or through a `fn`) | give it a standalone value and derive the rest in a `fn`; for `route`, fill the slot from a `route.enter` reducer |
 | `E0305` | a `fn` reads a slot | pass the value as an argument |
+| `E0306` | a storage / session / indexed effect declares `out=Result(T, E)` with `E` not `Text` — its failure arrives as the message, a `Text` | declare `out=Result(T, Text)` and read `$e` as the message (not `$e.message`) |
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
 | `E0801` | `obj.method(...)` calls a method the runtime doesn't implement (typo, or unimplemented/wrong-type method like `Option.to-result`) | fix the name or rewrite with an implemented op (`match`, `fold`, …); see `KNOWN_METHODS` / docs/spec/stdlib.md |

@@ -315,6 +315,8 @@ effect loadUser cap=http.get
 
 ## 6.7 Storage Effects
 
+**err 値は宣言どおりの `Text`。** 以下の capability の effect はすべて `out=Result(T, Text)` を宣言する。別の `E` を宣言すると **E0306** になる。失敗した effect は失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら呼び出しとキーを示すメッセージ（§6.7.2）、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、その capability に登録されたホストの provider、または組み込みハンドラが例外を投げた場合も同じ `Text` が渡り、渡るのは1度である：`retry=`（[6.5](#_6-5-リトライ)）はそれを再試行しない。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。ホストの provider の err 値が何になるかは [標準 capability](./stdlib.md#_2-5-standard-capabilities) にある。
+
 ### 6.7.1 capability
 
 | capability | 対応 |
@@ -346,8 +348,6 @@ effect storage-clear  cap=storage.write
 クリアは宣言で決まる。`map-request` を持たず `in=Unit`（直接、または別名を通して）と宣言した effect がストレージを空にする。空になるのはこのアプリが書いたキーだけでなく、**オリジン全体**の localStorage である。それ以外の `storage.write` は書き込みか削除で、リクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
 
 このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む。`Map` への添字が何も見つけなかったときにできるのもこれである）、空でない `Text` でない `key`、JSON で表せない `value` がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
-
-**err 値は宣言どおりの `Text`。** storage / session / indexed の effect が失敗すると、失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら上記の呼び出しとキーを示すメッセージ、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、またはその capability に登録されたホストの provider が例外を投げた場合も同じ `Text` が渡る。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。
 
 ### 6.7.3 例
 
