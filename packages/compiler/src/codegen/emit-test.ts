@@ -8,7 +8,14 @@ import {
   type TileExpr,
 } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
-import { expectSection, givenSection, isSectionName, recordFieldsAt } from "../test-sections.ts";
+import {
+  bareNameAt,
+  expectSection,
+  givenSection,
+  isSectionName,
+  recordFieldsAt,
+  recordValueAt,
+} from "../test-sections.ts";
 import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
@@ -144,7 +151,9 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)
       .join(" ");
     const givenSlots = givenSection(t, "property-test", "slots");
-    const initSlotsJs = givenSlots ? jsOfExpr(givenSlots, pctx) : "({})";
+    const initSlotsJs = givenSlots
+      ? jsOfExpr(recordValueAt(givenSlots, "given.slots"), pctx)
+      : "({})";
     const event = givenSection(t, "property-test", "event");
     const eventJs = eventPayloadJs(event, pctx);
     const invariantJs = t.invariant ? jsOfExpr(t.invariant, pctx) : "true";
@@ -172,7 +181,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   if (t.testKind === "reducer-test") {
     const slots = givenSection(t, "reducer-test", "slots");
     const event = givenSection(t, "reducer-test", "event");
-    const slotsJs = slots ? jsOfExpr(slots, ctx) : "({})";
+    const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
     const elJs = eventPayloadJs(event, ctx);
     const panic = expectSection(t, "reducer-test", "panic");
     let expectJs: string;
@@ -181,7 +190,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     } else {
       const xs = expectSection(t, "reducer-test", "slots");
       const xe = expectSection(t, "reducer-test", "effects");
-      const xsJs = xs ? jsOfExpr(xs, ctx) : "({})";
+      const xsJs = xs ? jsOfExpr(recordValueAt(xs, "expect.slots"), ctx) : "({})";
       const effectsJs = xe ? effectListJs(xe, ctx) : "[]";
       expectJs = `{ kind: "state", slots: ${xsJs}, effects: ${effectsJs} }`;
     }
@@ -216,7 +225,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   }
   // tile-test
   const slots = givenSection(t, "tile-test", "slots");
-  const slotsJs = slots ? jsOfExpr(slots, ctx) : "({})";
+  const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
   const inField = givenSection(t, "tile-test", "in");
   // A tile-test applies its target, so `given.in` is that application's single
   // argument and has to agree with the target's `in=`. Emitting the
@@ -351,14 +360,18 @@ function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
       throw new Error(`episode-test expect has no section "${f.name}"`);
     }
     switch (f.name) {
-      case "slots-equal":
-        // `from-log` is the literal that means "take the log's own values".
+      case "slots-equal": {
+        // The position's bare name (the table's `or`) is passed through as
+        // itself; anything else must be a record (`recordValueAt` throws E0713
+        // rather than evaluating it as the expectation).
+        const bare = bareNameAt(f.value, "expect.slots-equal");
         parts.push(
-          f.value.kind === "Ref" && f.value.name === "from-log"
-            ? `slotsEqual: "from-log"`
-            : `slotsEqual: ${jsOfExpr(f.value, ctx)}`,
+          bare !== undefined
+            ? `slotsEqual: ${JSON.stringify(bare)}`
+            : `slotsEqual: ${jsOfExpr(recordValueAt(f.value, "expect.slots-equal"), ctx)}`,
         );
         break;
+      }
       case "no-panics":
         parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
         break;
