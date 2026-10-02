@@ -558,6 +558,8 @@ issue.copy(status=Done, priority=High)
 
 > **`.ok` では、最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` ではその値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` の最初の束縛は `out=` から型付けされない。そこに届くのは capability の失敗値であり、組み込みの storage / session / indexed ハンドラ、provider 未登録の capability、invoke 中の例外はいずれも `E` の宣言にかかわらず `{message: Text}` レコードを渡す（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、`$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
 
+> **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
+
 ### 1.6.6 例
 
 ```kumiki fragment
@@ -640,6 +642,7 @@ pattern      ::= identifier
 
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
+- 値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）以外の builtin の位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになる。
 
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
@@ -990,7 +993,7 @@ app TodoApp
 
 ```kumiki snippet
 # ❌ ローカル状態
-tile Foo = let x = 0 in button(text=x.show)   # tile 内で代入は不可（let で式束縛は可、slot 代わりにはならない）
+tile Foo = let x = 0 in button(text=x.show)   # tile 本体に `let` はない：ここではパースエラー、子としては E0128
 
 # ❌ effect の直接呼び出し
 reducer r on=ui.click(B) do= http.get("/")   # emit 必須

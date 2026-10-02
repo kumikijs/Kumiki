@@ -7,7 +7,7 @@
 // each, written by someone who never saw a compiler error. That makes them the
 // corpus a new check has to survive without inventing a diagnostic.
 //
-// Two of them do not parse and one does not typecheck. Those are *findings*
+// Some of them do not parse or do not typecheck. Those are *findings*
 // about the models, recorded in `learning-cost/summary.md`, so they are listed
 // here with the diagnostic each is expected to produce rather than skipped:
 // a file that stops failing, or fails differently, is drift worth seeing.
@@ -22,8 +22,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const benchmarksDir = join(here, "..", "benchmarks");
 
 /**
- * The corpus entries that are known not to be clean, with the first diagnostic
- * each produces. `summary.md` scores all three as failures; this pins *how*
+ * The corpus entries that are known not to be clean, with the diagnostics
+ * each produces. `summary.md` scores each as a failure; this pins *how*
  * they fail so a change that silently alters the reason shows up.
  */
 const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
@@ -31,6 +31,9 @@ const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
   // `summary.md` records), plus the calls that pass an argument to one of
   // those tiles — accepted before value checking, dropped silently at render.
   "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": ["E0103", "E0213", "W0212"],
+  // `Shell`'s `Text` input written as a child, `column(HeaderBar, $1)`: a
+  // value there renders nothing (E0128).
+  "learning-cost/v3-issue-tracker/results/Codex/output.kumiki": ["E0128"],
   "learning-cost/v4-project-management/results/Claude/output.kumiki": "parse",
   "learning-cost/v4-project-management/results/Gemini/output.kumiki": "parse",
 };

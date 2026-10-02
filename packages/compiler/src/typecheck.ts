@@ -43,7 +43,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES } from "./builtins.ts";
+import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
@@ -60,6 +60,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
@@ -69,6 +70,8 @@ import { type RefinementProblem, refinementBaseProblem, refinementProblem } from
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
+  bareNameAt,
+  fitsRecordPosition,
   type GivenSection,
   givenSection,
   isRecordValue,
@@ -1593,6 +1596,30 @@ function checkTileCall(
     }
     if (isTileExpr(v)) {
       checkTileExpr(v, sym, errors, ctx);
+      continue;
+    }
+    // A positional argument of a builtin that is not a value builtin renders
+    // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
+    // program defines, and drops anything else — so a value there rendered
+    // nothing, and a slot named there lowered to a `null` child. It is
+    // reported at the value, and nothing inside it is checked: a `let` is the
+    // one value that can hold a tile call, which reads as a `fn` call there
+    // and would be reported wrongly, so a correct diagnostic under it (an
+    // undefined name, say) waits until the value is moved too.
+    if (
+      arg.name === undefined &&
+      positionalIsTile(t.name) &&
+      !(v.kind === "Ref" && sym.tiles.has(v.name))
+    ) {
+      errors.push({
+        code: "E0128",
+        kind: "value-as-child",
+        message:
+          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
+          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
+          "for a `let`, write the value where it is used or compute it in a `fn`",
+        pos: v.pos,
+      });
       continue;
     }
     checkExpr(v, sym, errors, ctx);
@@ -4856,17 +4883,14 @@ function currentFnName(ctx: Ctx): string {
 }
 
 function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const scope = fnScope(fn);
   const ctx: Ctx = {
     kind: "fn",
-    localBinds: new Set(),
-    localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    localBinds: new Set(scope.map((b) => b.name)),
+    localTypes: new Map(scope.map((b) => [b.name, b.type])),
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
-  for (const p of fn.params) ctx.localBinds.add(p.name);
-  // also bind $1, $2 used in expression-fragment style
-  ctx.localBinds.add("$1");
-  ctx.localBinds.add("$2");
   for (const p of fn.params) resolveType(p.type, sym, errors);
   if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
@@ -5617,7 +5641,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   for (const f of sectionsOf(t, t.testKind, "given", errors)) {
     switch (f.section) {
       case "slots":
-        checkTestSlotMap(f.value, sym, errors, owned);
+        if (requireRecord(f.value, "given.slots", errors)) {
+          checkTestSlotMap(f.value, sym, errors, owned);
+        }
         break;
       case "event":
         if (requireRecord(f.value, "given.event", errors)) {
@@ -5641,7 +5667,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "reducer-test", "expect", errors)) {
       switch (f.section) {
         case "slots":
-          checkTestSlotMap(f.value, sym, errors, owned);
+          if (requireRecord(f.value, "expect.slots", errors)) {
+            checkTestSlotMap(f.value, sym, errors, owned);
+          }
           break;
         case "effects":
           checkTestEffects(f.value, sym, errors, owned);
@@ -5658,9 +5686,13 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
       switch (f.section) {
         case "slots-equal":
-          // `from-log` is the literal that means "take the log's own values".
-          if (f.value.kind === "Ref" && f.value.name === "from-log") break;
-          checkTestSlotMap(f.value, sym, errors, base);
+          // The position's bare name (`from-log`: the log's own values) has no
+          // slots of its own to check, so it stops here; anything past this
+          // line is a record or E0713.
+          if (bareNameAt(f.value, "expect.slots-equal") !== undefined) break;
+          if (requireRecord(f.value, "expect.slots-equal", errors)) {
+            checkTestSlotMap(f.value, sym, errors, base);
+          }
           break;
         case "no-panics":
         case "no-errors":
@@ -5747,15 +5779,17 @@ function nearestSectionHint(kind: TestKind, part: TestPart, written: string): st
 
 /**
  * E0713 when `value` — written at a test-body `position` the lowering reads
- * as a record — is something else; whether it is a record (or absent) to go on
- * reading. The sentence is the one the lowering throws, from the shared table.
+ * as a record — is something the position does not accept; whether it fits (a
+ * record, the position's bare name, or absent) to go on reading. A caller at a
+ * position with a bare name steps past it (`bareNameAt`) before reading fields.
+ * The sentence is the one the lowering throws, from the shared table.
  */
 function requireRecord(
   value: Expr | TileExpr | undefined,
   position: RecordPosition,
   errors: KumikiError[],
 ): boolean {
-  if (value === undefined || isRecordValue(value)) return true;
+  if (value === undefined || fitsRecordPosition(value, position)) return true;
   errors.push({
     code: "E0713",
     kind: "test-shape-invalid",
@@ -5771,13 +5805,13 @@ function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: 
   return e.fields;
 }
 
-/** `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots`. */
+/**
+ * `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots` /
+ * `slots-equal`, once `requireRecord` has said it fits and the caller has
+ * stepped past a bare name, so `rec` is a record.
+ */
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (rec.kind !== "RecordLit") {
-    checkExpr(rec, sym, errors, ctx);
-    return;
-  }
-  for (const f of rec.fields) {
+  for (const f of recordFieldsOf(rec)) {
     if (!isTestSlot(f.name, sym)) {
       errors.push({
         code: "E0103",
@@ -5982,8 +6016,8 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
  *
  * Asked of the E0120 gate itself, in the `app-init` position, so that which
  * `route` counts (a local bind or a `fn` parameter of that name does not) is
- * decided in one place. `params` and `positional` are the binds in scope: a
- * `fn`'s parameters and the `$1` / `$2` `checkFn` binds, or nothing for a slot
+ * decided in one place. `params` are the binds in scope: a `fn`'s
+ * (`fnScope` — its parameters and their positionals), or nothing for a slot
  * initializer. `routeBind` is the `no-payload` both really have, and says
  * nothing either way here — the gate returns before the branch that reads it,
  * so a `$route` in a `fn` collects a read from this probe and E0103 from
@@ -6000,10 +6034,9 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
 function routeReadsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
-  positional: readonly string[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
-  return preMountProbe(e, sym, params, positional).routeReads;
+  return preMountProbe(e, sym, params).routeReads;
 }
 
 /**
@@ -6017,14 +6050,13 @@ function routeReadsIn(
 function preMountProbe(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[],
-  positional: readonly string[],
+  params: readonly FnScopeBind[],
 ): { routeReads: { name: string; pos: Pos }[]; fragmentFnCalls: { name: string; pos: Pos }[] } {
   const routeReads: { name: string; pos: Pos }[] = [];
   const fragmentFnCalls: { name: string; pos: Pos }[] = [];
   const ctx: Ctx = {
     kind: "app-init",
-    localBinds: new Set([...params.map((p) => p.name), ...positional]),
+    localBinds: new Set(params.map((p) => p.name)),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
     routeReadsSeen: routeReads,
@@ -6044,20 +6076,19 @@ function preMountProbe(
  * runs wherever the method does (`FRAGMENT_ARGUMENTS`). A bare name anywhere
  * else is a value, E0127, and is never applied, so nothing it mentions is
  * evaluated — which is why this is narrower than `referencesIn`, whose edges
- * the cycle check follows. `params` and `positional` are the binds in scope,
- * as for `routeReadsIn`: a parameter named like a `fn` shadows it.
+ * the cycle check follows. `params` are the binds in scope, as for
+ * `routeReadsIn`: a parameter named like a `fn` shadows it.
  */
 function fnCallsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
-  positional: readonly string[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
   const out: { name: string; pos: Pos }[] = [];
   walkExpr(e, (n) => {
     if (n.kind === "Call" && sym.fns.has(n.callee)) out.push({ name: n.callee, pos: n.pos });
   });
-  out.push(...preMountProbe(e, sym, params, positional).fragmentFnCalls);
+  out.push(...preMountProbe(e, sym, params).fragmentFnCalls);
   return out.sort((a, b) => a.pos.line - b.pos.line || a.pos.col - b.pos.col);
 }
 
@@ -6103,9 +6134,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
     const cached = direct.get(name);
     if (cached !== undefined) return cached;
     const fn = sym.fns.get(name);
-    const answer = fn
-      ? (routeReadsIn(fn.body, sym, fn.params, ["$1", "$2"])[0]?.name ?? null)
-      : null;
+    const answer = fn ? (routeReadsIn(fn.body, sym, fnScope(fn))[0]?.name ?? null) : null;
     direct.set(name, answer);
     return answer;
   };
@@ -6113,7 +6142,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   const callsOf = (fn: FnDef): readonly { name: string }[] => {
     const cached = calls.get(fn.name);
     if (cached !== undefined) return cached;
-    const answer = fnCallsIn(fn.body, sym, fn.params, ["$1", "$2"]);
+    const answer = fnCallsIn(fn.body, sym, fnScope(fn));
     calls.set(fn.name, answer);
     return answer;
   };
