@@ -4,7 +4,7 @@
       "label": "the lists render, a repeated value once per occurrence",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["score 7", "score 3", "even 2", "prime 2", "prime 3"]
+        "domIncludes": ["score 7", "score 3", "even 2", "prime 2", "prime 3", "todo a", "todo b"]
       }
     },
     {

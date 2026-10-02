@@ -508,12 +508,17 @@ export const _stdlibCore = {
     return (a as number) + (b as number);
   },
   /**
-   * The implicit key of each tile a `for` renders (runtime.md §10.3.10): the
-   * loop, the occurrence of the element's value, and its `show`, so equal
-   * values in one list, and loops under one parent that share a value, never
-   * key two siblings alike. The first occurrence of a value keeps its key
-   * wherever it moves, which is what keyed reconcile matches on. The loop and
-   * the count are written before the value, so no value's `show` can spell
+   * The implicit key of each tile a `for` renders (runtime.md §10.3.10):
+   * `<loop>|<occurrence>|<shown>`, the loop's name, which occurrence of the
+   * element's shown value this is, and that shown value. So equal values in
+   * one list, and two loops under one parent that share a value, never key two
+   * siblings alike. The exception is one loop in the source expanded twice into
+   * one parent's children, whose expansions are the same loop. The first
+   * occurrence of a value keeps its key wherever it moves, which is what keyed
+   * reconcile matches on. Where `show` is not injective (every record shows
+   * alike, a variant shows its tag), the occurrence is the element's position
+   * among equal shows, so the key is positional. The loop and the count are
+   * written before the value and hold no `|`, so no value's `show` can spell
    * another element's key.
    */
   loopKeys(xs: readonly unknown[], loop: string): string[] {

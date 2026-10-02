@@ -1078,6 +1078,50 @@ describe("codegen", () => {
         expect(w.key).not.toBe(implicitKeyOf(result.js, "o"));
       }
     });
+
+    /**
+     * The loop names `_s.loopKeys` is given in `js`, each once, in emitted
+     * order. A tile is lowered once per place that renders it (a route, the
+     * tile table), so one loop can appear more than once.
+     */
+    function loopNamesIn(js: string): string[] {
+      const names = Array.from(js.matchAll(/_s\.loopKeys\(__xs, ("[^"]*")\)/g), (m) =>
+        JSON.parse(m[1] as string),
+      );
+      return [...new Set(names)];
+    }
+
+    it("names a loop by its tile and its ordinal there, so an edit above it keeps every key", () => {
+      const tiles = `
+        tile Row = text("row")
+        tile App = column(for x in xs Row, for y in xs when(y > 1, Row))`;
+      const program = (above: string) => `
+        slot xs : List(Int) = [1, 2, 3]
+        ${above}${tiles}
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const named = (src: string): string[] => {
+        const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+        if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
+        return loopNamesIn(result.js);
+      };
+      const before = named(program(""));
+      expect(before).toEqual(["App_0", "App_1"]);
+      expect(named(program('\n\n\n        tile Other = text("other")\n'))).toEqual(before);
+    });
+
+    it("computes no implicit keys for a loop whose every tile call has its own key", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2, 3]
+        tile App = column(for x in xs text(x.show) {key: x.show}, for y in xs text(y.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      // Only the second loop, whose `text` has no key, reads an implicit one.
+      expect(loopNamesIn(result.js)).toEqual(["App_1"]);
+    });
   });
 });
 

@@ -255,8 +255,10 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 
 - The field is **additive and optional**. A tile without `key` is a legal
   `TileNode`; old compiled output (no keys anywhere) still mounts on a new
-  runtime, and a new compiler's keyed output still mounts on the old runtime
-  (which simply ignores the field).
+  runtime, and an old runtime ignores the field. That is a statement about the
+  field only: the stdlib helpers the compiler calls to compute a key (the
+  implicit key's `_s.loopKeys`, below) are not forward-compatible, so a new
+  compiler's output needs a runtime at least as new as it (see **Migration**).
 - The reconciler uses **all-or-nothing keyed matching per parent**: when every
   child at a given level carries a `key`, the runtime pairs children across
   renders by key (survives reorder, insert, and remove without rebuilding the
@@ -357,27 +359,66 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 1. **Author-supplied `{key: <expr>}`** on a tile-call's props block is lifted
    to the emitted `TileNode`'s top-level `key` field. The value is coerced to
    a string via `_s.show(...)`. It does **not** also flow into `props.el`.
-   The author promises it is unique among its siblings: two siblings with one
-   explicit key are a `location: "reconcile"` panic on the next render, as
-   described above, because the runtime cannot tell which of them the key meant.
-   So explicit keys must be unique within one loop. A loop whose `{key: …}`
-   values collide (`for s in [7, 3, 7] text(s.show) {key: s.show}`) is a program
-   error: the runtime does not fall back to position, it reports
+   The author promises it is unique among its siblings: within one loop, and
+   across loops and other keyed children under one parent. When every child at
+   that level carries a key (the all-or-nothing rule above), two siblings with
+   one key are a `location: "reconcile"` panic on the next render, because the
+   runtime cannot tell which of them the key meant. A loop whose `{key: …}`
+   values collide (`for s in [7, 3, 7] text(s.show) {key: s.show}`) is then a
+   program error: the runtime does not fall back to position, it reports
    `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`
    and rebuilds the whole tree, replacing every element on the page
-   ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)).
+   ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). When a
+   sibling at that level has no key, the keyed pass does not run, so the
+   colliding keys go unused and the parent takes the structural walk.
 2. **Inside `for` iteration**, tile calls that do not declare their own
-   `{key: ...}` receive an implicit key derived from the loop variable, which is
-   unique among the siblings it can meet. The key is `_s.loopKeys(xs, loop)[i]`:
-   the loop (named by its source position), which occurrence of this value in
-   the list it is (1 for the first `7`, 2 for the second), and `_s.show(<loopVar>)`.
-   A list does not have to hold distinct values. `[7, 3, 7]`, and two loops
-   under one parent that share a value, key every child apart. A reorder of
-   distinct values keeps every key, since each is the first occurrence of its
-   value, so the reuse guarantees above hold as before. Explicit keys always
-   win. Nested `for` loops overwrite the enclosing implicit key with the inner
-   loop's, so a tile call under `for i in inner` is keyed by `i` regardless of
-   any outer `for o in outer`.
+   `{key: ...}` receive an implicit key with three parts, in this order:
+   - the **loop**: an identifier that is stable across renders and distinct
+     per loop in the source;
+   - the **occurrence**: how many elements up to and including this one have
+     the same shown value (1 for the first `7`, 2 for the second);
+   - the **shown value**, `_s.show(<loopVar>)`.
+
+   *Informative:* the implementation names a loop by the tile definition it is
+   written in and its ordinal among that definition's loops in source order
+   (`App_0`, `App_1`, …), so a blank line or an edit outside that definition
+   leaves every key as it was. It joins the parts as `<loop>|<occurrence>|<shown>`
+   with `_s.loopKeys(<list>, "<loop>")`, called once per evaluation of the
+   loop, and hands iteration *i* the *i*-th entry. The loop name and the
+   occurrence hold no `|` and the occurrence is a run of digits, so the three
+   parts read back unambiguously and no shown value can spell another
+   element's key. A loop whose every tile call carries its own `{key: …}` reads
+   no implicit key, and the implementation does not compute them.
+
+   So a list does not have to hold distinct values: `[7, 3, 7]`, and two loops
+   under one parent that share a value, key every child apart. A list of
+   `None`s and an element whose shown value is empty key apart the same way;
+   before the occurrence was part of the key, the first was a duplicate-key
+   panic and the second an empty key that `_wk` refused. The one exception is
+   a single loop in the source that contributes to one parent's children more
+   than once: `tile Items = for x in xs text(x.show)` used as
+   `column(Items, Items)` expands one loop twice, both expansions carry the
+   same keys, and the parent is the duplicate-key panic of item 1. Give each
+   use its own container (`column(row(Items), row(Items))`).
+
+   A reorder of elements with **distinct shown values** keeps every key, since
+   each is the first occurrence of its shown value, so the reuse guarantees
+   above hold as before. Two qualifications follow from the occurrence:
+   - An insert or remove before a repeated value renumbers its later
+     occurrences, so the elements of equal values may trade places, and the
+     moves that makes can take a neighbouring row with them.
+   - Where `show` is not injective for the element type, the implicit key
+     **degenerates to position**. Every record shows alike
+     (`[object Object]`), and a variant shows only its tag, so `Done(1)` and
+     `Done(2)` share one shown value. The occurrence is then the element's
+     position, and a reorder, insert or remove patches rows in place instead
+     of moving them: the guarantees above (minimum moves, `<input>` focus and
+     caret, an open `<select>`, IME composition) do not hold for such a list.
+     A reorderable list of records wants an explicit key, `{key: t.id}`.
+
+   Explicit keys always win. Nested `for` loops overwrite the enclosing
+   implicit key with the inner loop's, so a tile call under `for i in inner` is
+   keyed by `i` regardless of any outer `for o in outer`.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
@@ -390,9 +431,15 @@ included in `TILE_SKIP_TOP` so a key change alone does not trigger
 `replaceWithFreshTile` on the parent — key drives which old child pairs with
 which new child, not whether the tile itself is rebuilt.
 
-**Migration.** Runtime and compiler ship the key contract as a matched pair
-(both in the same minor version bump). Each side degrades gracefully alone,
-but the reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
+**Migration.** Runtime and compiler ship the key contract as a matched pair:
+a change to it bumps both packages in one release, at whatever level its
+changeset names. `@kumikijs/compiler` depends on `@kumikijs/runtime`, and a
+runtime release raises the compiler's range on it, so a compiler installed
+from the registry brings a runtime at least as new.
+An old compiler's output runs on a new runtime. A new compiler's output needs
+a runtime at least as new: it calls `_s.loopKeys`, which an older runtime does
+not have, and fails at the first render with `_s.loopKeys is not a function`.
+The reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
 focus and caret, and event listeners across insert/remove/reorder) require
 both.
 

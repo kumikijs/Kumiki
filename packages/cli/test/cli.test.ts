@@ -291,12 +291,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,644 measured, from 61,527):
-    // a `for` keys each tile it renders apart from every sibling, a
-    // repeated value included (runtime.md §10.3.10). The 117 bytes are
-    // `loopKeys`, which names the loop and the occurrence beside the value's
-    // `show`. A counter has no `for` and still ships it, because it sits in the
-    // stdlib module every app loads.
+    // Still 63,000 (61,644 measured, from 61,527 on dev at 62cc960; the entry
+    // above records 61,430, and the 97 bytes between landed without an entry):
+    // a `for` keys each tile it renders apart from its siblings, a repeated
+    // value included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
+    // writes the loop and the occurrence before the value's `show`. A counter
+    // has no `for` and still ships it, because it sits in the stdlib module
+    // every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

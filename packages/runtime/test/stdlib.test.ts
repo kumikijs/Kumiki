@@ -50,33 +50,6 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
 // (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
 // `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
 // which sorts numerically when every element is a finite number.
-// The implicit key of each tile a `for` renders (runtime.md §10.3.10). It was
-// `show(x)` alone, so equal values keyed two siblings alike and the keyed
-// reconciler refused the render.
-describe("loopKeys (docs/spec/runtime.md §10.3.10)", () => {
-  it("keys equal values apart by their occurrence", () => {
-    const keys = _stdlibCore.loopKeys([7, 3, 7], "4_9");
-    expect(new Set(keys).size).toBe(3);
-    expect(keys).toEqual(["4_9|1|7", "4_9|1|3", "4_9|2|7"]);
-  });
-
-  it("keys two loops' shared value apart by the loop", () => {
-    expect(_stdlibCore.loopKeys([2], "1_1")).not.toEqual(_stdlibCore.loopKeys([2], "1_9"));
-  });
-
-  it("keeps a value's key when the list is reordered", () => {
-    const before = _stdlibCore.loopKeys(["a", "b", "c"], "1_1");
-    const after = _stdlibCore.loopKeys(["c", "a", "b"], "1_1");
-    expect(after).toEqual([before[2], before[0], before[1]]);
-  });
-
-  it("cannot be spelled by another element's value", () => {
-    // A Text value may contain the separator; the count comes first, so the
-    // second "x" and a value spelling "2|x" still differ.
-    expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "1_1")).size).toBe(4);
-  });
-});
-
 // `sort-by` subtracted its keys, and two Text keys subtract to `NaN`, which
 // `Array.prototype.sort` reads as "equal": a list sorted by a name came back
 // in the order it went in.
@@ -144,6 +117,40 @@ describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
     const out = _stdlibCore.listSortBy(xs, (x) => x.k);
     expect(ids(out).sort()).toEqual([0, 1, 2, 3, 4]);
     expect(ids(xs)).toEqual([0, 1, 2, 3, 4]);
+  });
+});
+
+// The implicit key of each tile a `for` renders (runtime.md §10.3.10). It was
+// `show(x)` alone, so equal values keyed two siblings alike and the keyed
+// reconciler refused the render.
+describe("loopKeys (docs/spec/runtime.md §10.3.10)", () => {
+  it("keys equal values apart by their occurrence", () => {
+    const keys = _stdlibCore.loopKeys([7, 3, 7], "App_0");
+    expect(new Set(keys).size).toBe(3);
+    expect(keys).toEqual(["App_0|1|7", "App_0|1|3", "App_0|2|7"]);
+  });
+
+  it("keys two loops' shared value apart by the loop", () => {
+    expect(_stdlibCore.loopKeys([2], "App_0")).not.toEqual(_stdlibCore.loopKeys([2], "App_1"));
+  });
+
+  it("keeps a value's key when the list is reordered", () => {
+    const before = _stdlibCore.loopKeys(["a", "b", "c"], "App_0");
+    const after = _stdlibCore.loopKeys(["c", "a", "b"], "App_0");
+    expect(after).toEqual([before[2], before[0], before[1]]);
+  });
+
+  it("cannot be spelled by another element's value", () => {
+    // A Text value may contain the separator; the count comes first, so the
+    // second "x" and a value spelling "2|x" still differ.
+    expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "App_0")).size).toBe(4);
+  });
+
+  it("keys records by position, since every record shows alike", () => {
+    // `show` is not injective for a record, so the occurrence is all that is
+    // left to tell two of them apart (runtime.md §10.3.10).
+    const keys = _stdlibCore.loopKeys([{ id: 2 }, { id: 1 }], "App_0");
+    expect(keys).toEqual(["App_0|1|[object Object]", "App_0|2|[object Object]"]);
   });
 });
 

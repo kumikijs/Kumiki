@@ -251,8 +251,11 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 **コントラクト**
 
 - `key` は **additive で optional**。key を持たないタイルも合法な `TileNode`
-  で、key を含まない旧コンパイル出力は新 runtime でそのまま mount し、逆に
-  新コンパイラの keyed 出力も旧 runtime で（key を無視して）動く。
+  で、key を含まない旧コンパイル出力は新 runtime でそのまま mount し、旧
+  runtime はこのフィールドを無視する。これはフィールドについての記述に限られる。
+  コンパイラが key を計算するために呼ぶ stdlib ヘルパ（後述の暗黙 key の
+  `_s.loopKeys`）は前方互換ではなく、新コンパイラの出力にはそれ以上に新しい
+  runtime が要る（**Migration** を参照）。
 - reconciler は **親ごとに all-or-nothing** で keyed matching を判断する: ある
   レベルの全子が `key` を持つときのみ key で pairing し、reorder/insert/remove
   を親サブツリー再構築なしで乗り越える。1 つでも key を欠く子があれば、
@@ -341,25 +344,62 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 
 1. **作者が書いた `{key: <expr>}`** はタイル呼び出しのプロップから剥がされ、
    emit される `TileNode` のトップレベル `key` に置かれる。値は `_s.show(...)`
-   で文字列化される。`props.el` には流れない。兄弟の中で一意であることは
-   作者が約束する。同じ明示 key を持つ 2 つの兄弟は、どちらを指すかを runtime
-   が判断できないため、上述のとおり次のレンダで `location: "reconcile"` の
-   panic になる。したがって明示 key は 1 つのループの中で一意でなければならない。
-   `{key: …}` の値が衝突するループ（`for s in [7, 3, 7] text(s.show) {key: s.show}`）
+   で文字列化される。`props.el` には流れない。兄弟の中で一意であること、
+   つまり 1 つのループの中でも、1 つの親の下のループどうしや他の key 付きの子
+   との間でも一意であることは作者が約束する。そのレベルの全子が key を持つとき
+   （上述の all-or-nothing 規則）、同じ key を持つ 2 つの兄弟は、どちらを指すかを
+   runtime が判断できないため、次のレンダで `location: "reconcile"` の panic になる。
+   このとき `{key: …}` の値が衝突するループ（`for s in [7, 3, 7] text(s.show) {key: s.show}`）
    はプログラムの誤りであり、runtime は位置による対応に退避せず、
    `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`
    を報告してツリー全体を再構築し、ページ上のすべての要素を置き換える
    （[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。
+   そのレベルに key を持たない兄弟があるときは keyed pass が走らないため、
+   衝突した key は使われず、親は構造 diff をたどる。
 2. **`for` 反復の内側** で `{key: ...}` を書いていないタイル呼び出しには、
-   ループ変数から暗黙 key を合成する。この key は出会いうる兄弟の中で一意である。
-   key は `_s.loopKeys(xs, loop)[i]` であり、ループ（ソース位置で名付ける）、
-   その値がリスト中で何回目の出現か（最初の `7` は 1、2 つ目は 2）、
-   `_s.show(<loopVar>)` から成る。リストの要素は相異なる必要はない。
-   `[7, 3, 7]` も、1 つの親の下で値を共有する 2 つのループも、すべての子を
-   別の key にする。相異なる値の並べ替えではどの要素もその値の最初の出現なので
-   key は変わらず、上述の再利用の保証はそのまま成り立つ。明示 key が常に優先。
-   ネストした `for` は内側のループの key で上書きされ、`for i in inner`
-   配下のタイルは外側の `for o in outer` の影響を受けず `i` で key 付けされる。
+   次の 3 つの部分をこの順に持つ暗黙 key を合成する。
+   - **ループ**: レンダをまたいで安定し、ソース上のループごとに異なる識別子。
+   - **出現回数**: この要素までに同じ表示値を持つ要素がいくつあるか（最初の
+     `7` は 1、2 つ目は 2）。
+   - **表示値** `_s.show(<loopVar>)`。
+
+   *参考（非規範）:* 実装はループを、それが書かれたタイル定義の名前と、その定義の
+   ループのうちソース順で何番目か（`App_0`、`App_1`、…）で名付ける。したがって
+   空行の追加やその定義の外の編集ではどの key も変わらない。各部分は
+   `<loop>|<occurrence>|<shown>` と連結され、ループの評価ごとに 1 回呼ばれる
+   `_s.loopKeys(<list>, "<loop>")` の *i* 番目の要素が反復 *i* に渡される。
+   ループ名と出現回数は `|` を含まず、出現回数は数字の並びなので、3 つの部分は
+   一意に読み戻せ、どの表示値も別の要素の key を綴れない。本体のすべての
+   タイル呼び出しが `{key: …}` を持つループは暗黙 key を読まないため、実装は
+   それを計算しない。
+
+   したがってリストの要素は相異なる必要はない。`[7, 3, 7]` も、1 つの親の下で
+   値を共有する 2 つのループも、すべての子を別の key にする。`None` だけの
+   リストや表示値が空の要素も同様に区別される。出現回数が key に含まれる前は、
+   前者は重複 key の panic、後者は `_wk` が拒否する空 key だった。唯一の例外は、
+   ソース上の 1 つのループが 1 つの親の子リストに 2 回以上寄与する場合である。
+   `tile Items = for x in xs text(x.show)` を `column(Items, Items)` と使うと
+   1 つのループが 2 回展開され、両方の展開が同じ key を持ち、親は 1. の重複 key
+   の panic になる。それぞれの使用箇所に別のコンテナを与える
+   （`column(row(Items), row(Items))`）。
+
+   **表示値が相異なる**要素の並べ替えでは、どの要素もその表示値の最初の出現
+   なので key は変わらず、上述の再利用の保証はそのまま成り立つ。出現回数から
+   次の 2 つの留保が生じる。
+   - 繰り返される値より前への挿入や削除は、その値の後の出現の番号を振り直す
+     ため、等しい値の要素どうしが入れ替わることがあり、そのための移動が隣の
+     行を巻き込むこともある。
+   - 要素の型について `show` が単射でないとき、暗黙 key は**位置に退化する**。
+     レコードはどれも同じ表示（`[object Object]`）になり、ヴァリアントはタグ
+     だけを表示するので `Done(1)` と `Done(2)` は同じ表示値を持つ。このとき
+     出現回数は要素の位置そのものであり、並べ替え・挿入・削除は行を移動せず
+     その場でパッチする。上述の保証（最小の移動、`<input>` のフォーカスと
+     キャレット、開いた `<select>`、IME composition）はそのようなリストには
+     成り立たない。並べ替えるレコードのリストには明示 key `{key: t.id}` を書く。
+
+   明示 key が常に優先。ネストした `for` は内側のループの key で上書きされ、
+   `for i in inner` 配下のタイルは外側の `for o in outer` の影響を受けず `i` で
+   key 付けされる。
 3. **ユーザタイル境界** は外側の暗黙 key を body に持ち込まない。`_wk` は
    境界ノードそのものに巻かれ、body 側の identity は body が反復すれば
    body 自身で組む。
@@ -372,10 +412,16 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 起こさない — key は「どの旧子がどの新子と対応するか」を決めるだけで、
 タイル自体が再構築されるかどうかを決めるものではない。
 
-**Migration**  runtime とコンパイラは matched pair として同じ minor bump で
-リリースする。片側だけでも壊れない（graceful degradation）が、`<select>`
-value / `<input>` focus と caret / event listener が insert/remove/reorder を
-またいで保持されるという保証は両方が揃って初めて成立する。
+**Migration**  runtime とコンパイラは key コントラクトを matched pair として
+出荷する。コントラクトの変更は、その changeset が指定するレベルで両パッケージを
+同じリリースで bump する。`@kumikijs/compiler` は `@kumikijs/runtime` に依存し、
+runtime のリリースはコンパイラ側の依存範囲を引き上げるので、レジストリから
+入れたコンパイラはそれ以上に新しい runtime を伴う。旧コンパイラの出力は新
+runtime で動く。新コンパイラの出力にはそれ以上に新しい runtime が要る。出力は
+`_s.loopKeys` を呼ぶが、それより古い runtime はこれを持たず、最初のレンダで
+`_s.loopKeys is not a function` で失敗する。`<select>` value / `<input>` focus と
+caret / event listener が insert/remove/reorder をまたいで保持されるという保証は
+両方が揃って初めて成立する。
 
 ### 10.3.11 要素同一性を保った reconciliation (#190)
 

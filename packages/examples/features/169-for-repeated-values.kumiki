@@ -4,8 +4,12 @@
 # Every tile a `for` body renders is keyed so the reconciler can match it
 # across renders (reorder, insert, remove keep their elements). A list may
 # hold equal values, like two equal scores or two loops under one parent that
-# share a value, and each still gets a key unique among its siblings: the
-# value, which occurrence of it this is, and which loop rendered it.
+# share a value, and each still gets a key unique among its siblings: which
+# loop rendered it, which occurrence of the value this is, and the value.
+#
+# A record shows alike for every record, so a list of records is keyed by
+# position. It re-renders in place too; a list of records that is reordered
+# wants an explicit key, like `{key: t.id}`, to keep each row's element.
 #
 # So a re-render caused by anything, here an unrelated counter, reconciles
 # in place. The `input` beside the lists keeps its element, and with it focus
@@ -14,6 +18,7 @@
 slot scores : List(Int) = [7, 3, 7]
 slot evens  : List(Int) = [2, 4]
 slot primes : List(Int) = [2, 3]
+slot todos  : List({id: Int, title: Text}) = [{id: 1, title: "a"}, {id: 2, title: "b"}]
 slot n      : Int       = 0
 slot draft  : Text      = ""
 
@@ -29,7 +34,8 @@ tile App = column(
   input(bind=draft),
   text("n=" + n.show),
   column(for s in scores text("score " + s.show)),
-  column(for e in evens text("even " + e.show), for p in primes text("prime " + p.show)))
+  column(for e in evens text("even " + e.show), for p in primes text("prime " + p.show)),
+  column(for t in todos text("todo " + t.title)))
 
 app ForRepeatedValues
   caps   = []
