@@ -289,5 +289,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 | `166-map-map.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `167-time-parse-calendar.kumiki` | slot, reducer, fn, tile | 標準ライブラリ | [§2.2.8](./stdlib.md#_2-2-8-time) |
 <!-- examples:end -->
 :::

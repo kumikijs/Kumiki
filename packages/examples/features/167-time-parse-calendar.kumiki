@@ -1,0 +1,41 @@
+# Feature (stdlib.md §2.2.8 / §2.4.3): `Time.parse` refuses a date that
+# names no day.
+#
+#   Time.parse(text) : Option(Time)   ; None when the text names no instant
+#
+# The platform's parser rolls a day past the month's end over into the next
+# month, so "2026-02-30" used to be `Some(March 2nd)`. A month or day outside
+# the calendar is `None`, with a time after it or not; a real date is still
+# local midnight of that day. The reading is exact: surrounding blanks are
+# `None`, as they are for `Int.parse`.
+
+slot feb30  : Option(Time) = None
+slot month13 : Option(Time) = None
+slot month0  : Option(Time) = None
+slot feb30At : Option(Time) = None
+slot padded  : Option(Time) = None
+slot leap    : Text = ""
+slot feb28   : Text = ""
+
+fn ymd(o: Option(Time)) -> Text = match o with | Some(t) -> t.format("yyyy-MM-dd") | None -> "none"
+
+reducer read on=ui.click(Read)
+    do= feb30   := Time.parse("2026-02-30")
+        month13 := Time.parse("2026-13-01")
+        month0  := Time.parse("2026-00-10")
+        feb30At := Time.parse("2026-02-30T10:00")
+        padded  := Time.parse(" 2026-02-28")
+        leap    := ymd(Time.parse("2028-02-29"))
+        feb28   := ymd(Time.parse("2026-02-28"))
+
+tile Read = button(text="read", id="read")
+
+tile App = column(
+  Read,
+  text("feb30: " + ymd(feb30)),
+  text("feb28: " + feb28))
+
+app TimeParseCalendar
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
