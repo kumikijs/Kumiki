@@ -7,6 +7,7 @@ import type { ParseReading } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
+  childCtx,
   declareBind,
   type EnclosingTiles,
   type EvalCtx,
@@ -135,7 +136,7 @@ export function tileExprJs(
   switch (t.kind) {
     case "TileFor": {
       const iter = jsOfExpr(t.iter, ctx);
-      const inner = makeEvalCtx(gen, ctx.localBinds);
+      const inner = childCtx(ctx);
       const bind = declareBind(inner, t.bind);
       const impl = `_s.show(${bind})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
@@ -151,7 +152,7 @@ export function tileExprJs(
       const arms = t.arms
         .map((arm) => {
           if (arm.pattern.kind === "PVariant") {
-            const inner = makeEvalCtx(gen, ctx.localBinds);
+            const inner = childCtx(ctx);
             const binds = arm.pattern.binds
               .map((b, i) =>
                 b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
@@ -160,7 +161,7 @@ export function tileExprJs(
             return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
           if (arm.pattern.kind === "PBind") {
-            const inner = makeEvalCtx(gen, ctx.localBinds);
+            const inner = childCtx(ctx);
             const bind = declareBind(inner, arm.pattern.name);
             return `if (true) { const ${bind} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
@@ -169,9 +170,9 @@ export function tileExprJs(
           }
           // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
           // no reducerScope here (tile-match runs in pure render context), so the
-          // helper's `inheritReducerScope=false` path is what we want.
+          // arm reads `_live` like the rest of the tile.
           {
-            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v", false);
+            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
             return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
         })

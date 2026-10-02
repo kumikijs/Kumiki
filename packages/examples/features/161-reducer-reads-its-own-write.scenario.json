@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "one click writes noteKey first, and every nested read after it sees the write",
+      "do": { "click": "button" },
+      "expect": {
+        "state": {
+          "noteKey": "b",
+          "out0": "b",
+          "out1": "b",
+          "out2": "b",
+          "out3": "b",
+          "out4": "b",
+          "out5": "bb,bb,cb",
+          "hits": 2
+        },
+        "domIncludes": ["wildcard=b bind=b variant=b", "tuple=b let=b map=bb,bb,cb", "hits=2"]
+      }
+    }
+  ]
+}

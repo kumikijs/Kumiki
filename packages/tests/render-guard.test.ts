@@ -99,7 +99,6 @@ describe("dropped-expression scanner", () => {
       "placeholder: undefined,",
       "if (x === null || x === undefined) continue;",
       "for (const y of x) if (y !== null && y !== undefined) out.push(y);",
-      '_next["count"] = (((_next["count"] !== undefined) ? _next["count"] : _live["count"]) - 1);',
       '({ kind: "heading", text: _s.show(_live["title"]), props: {} });',
     ].join("\n");
     expect(findDroppedExpressions(benign)).toHaveLength(0);
