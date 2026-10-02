@@ -77,7 +77,12 @@ not `ok(...)` / `err(...)` / `delay(...)` became a success mock, an
 `expect.effects` that is not a list became the assertion that no effect was
 emitted, and a `given` / `expect` / `mocks` (or a `given`'s `mocks` / `event`)
 that is not a record was read as an empty one, so the setup, the assertion or
-the script it was written for did not happen.
+the script it was written for did not happen. The slot → value sections one
+level down — a `given`'s `slots`, a `reducer-test` `expect`'s `slots` and an
+`episode-test` `expect`'s `slots-equal` — are records the same way: one that is
+not seeded no slot, or asserted none. `slots-equal` alone also takes the bare
+name `from-log` (the log's own final values) in place of a record; it is a name
+like any other at every other position.
 
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
@@ -174,10 +179,12 @@ test toggle-is-involution =
 ```
 property-test ::= 'property-test'
                   'for-all'    '=' record-lit       ; variables to generate
-                  'given'      '=' record-lit
+                  'given'      '=' '{' (property-given (',' property-given)*)? '}'
                   'invariant'  '=' expr
                   ('count'     '=' int)?            ; number of trials (default 100)
                   ('shrink'    '=' bool)?           ; minimize on failure (default true)
+
+property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
 
 `run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
@@ -227,6 +234,41 @@ test counter-display =
 ```
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
+
+What is compared is the expected node's `kind`, its `children` in order, and **every content field it carries**: the fields its builtin puts on the node — its `text`, an `image`'s `src`, a `link`'s `to`, an `input`'s `value`, a `check`'s checked state, a `select`'s `options` — and every other named argument it is written with, such as an `image`'s `alt`, a `button`'s `disabled` or `variant`, an `aria-*` label or an `id`. A field the expected node does not carry (an `input(value="x")` states no `placeholder`) is not compared, so a snapshot can assert one field of a tile that renders several.
+
+Some things are never compared, whatever the expected node says:
+
+- the `{…}` block: styles, classes and any other prop written there. `column(…) {pad: "sm"}` asserts no padding; to compare a prop, write it as a named argument;
+- handlers (`onClick=…`, and the reducers a `ui.*` subscription wires);
+- the identity and wiring a node carries: its `key` (written as `{key: …}`, or implicit in a `for`), a control's `bind`, and a link's `prefetch`.
+
+A builtin fills in some fields when their argument is left out, and the expected node carries those like any other field. So `check()` is an unchecked check, and `details(text("x"))` asserts an empty summary. To assert another value, write the argument:
+
+| Builtin | Carried when the argument is left out |
+|---|---|
+| `text`, `heading`, `button`, `label`, `link`, `markdown`, `code`, `editable` | `text: ""` |
+| `link` | `to: ""` |
+| `image` | `src: ""` |
+| `icon` | `name: ""` |
+| `check`, `switch` | unchecked |
+| `select` | `options: []` |
+| `list` | `ordered: false` |
+| `details` | `summary: ""` |
+| `error` | `field: ""` |
+| `modal`, `drawer`, `popover` | `open: true` |
+
+Each `aria-*` attribute is a field of its own, however it was written (as `aria-label="…"`, in the `aria` map, or in the actual tile's `{…}` block): `button(text="x", aria-label="Close")` asserts the label and says nothing about an `aria-describedby` the tile also renders. Its path is `button.aria-label`, and a `check`'s or `switch`'s checked state is reported as `value`, the argument that sets it.
+
+A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
+
+```
+tile-test ::= 'tile-test' identifier
+              'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
+              'expect' '=' tile-expr
+
+tile-given ::= 'slots' ':' record-lit | 'in' ':' expr
+```
 
 `given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
 
@@ -284,6 +326,20 @@ test bug-2026-05-21 =
             no-panics: true
         }
 ```
+
+```
+episode-test ::= 'episode-test'
+                 'load'   '=' string
+                 'mocks'  '=' '{' (identifier ':' mock-policy (',' identifier ':' mock-policy)*)? '}'
+                 'expect' '=' '{' (episode-expect (',' episode-expect)*)? '}'
+
+mock-policy    ::= 'from-log' | 'ignore' | 'ok' '(' expr ')' | 'err' '(' expr ')'
+episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
+                 | 'no-panics' ':' bool
+                 | 'no-errors' ':' bool
+```
+
+`slots-equal: from-log` compares the final slots with the values the log recorded; a record names the slots to compare and their expected values instead.
 
 ### 8.6.1 The Format of the episode log
 
