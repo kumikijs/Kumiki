@@ -136,6 +136,11 @@ describe("Time.format honours its pattern", () => {
     expect(_stdlib.formatTime(iso, "yyyy-MM-dd HH:mm")).toBe(
       `${asDate.getFullYear()}-${two(asDate.getMonth() + 1)}-${two(asDate.getDate())} ${two(asDate.getHours())}:${two(asDate.getMinutes())}`,
     );
+    // Padded text is still read: `Time.parse` refuses blanks, so the formatter
+    // trims before it asks, rather than rendering `NaN-NaN-NaN`.
+    expect(_stdlib.formatTime(` ${iso}\n`, "yyyy-MM-dd HH:mm")).toBe(
+      _stdlib.formatTime(iso, "yyyy-MM-dd HH:mm"),
+    );
     // A numeric string is the millisecond number it spells.
     expect(_stdlib.formatTime(String(at), "yyyy")).toBe(_stdlib.formatTime(at, "yyyy"));
   });
@@ -159,6 +164,123 @@ describe("Time.format honours its pattern", () => {
   it("is None for text that names no instant", () => {
     for (const bad of ["", "   ", "nonsense"]) {
       expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
+    }
+  });
+
+  it("is None for a date outside the calendar, which the platform rolls over", () => {
+    // `new Date(2026, 1, 30)` is March 2nd and `Date.parse` does the same to a
+    // datetime, so each of these used to be `Some` of a different day.
+    for (const bad of [
+      "2026-02-30",
+      "2026-13-01",
+      "2026-00-10",
+      "2026-04-31",
+      "2027-02-29",
+      "2026-02-30T10:00",
+      "2026-02-30 10:00",
+      "2026-02-30Z",
+      "2026-02-30t10:00",
+      "+002026-02-30",
+      "2026-2-30",
+      "2026/02/30",
+    ]) {
+      expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
+    }
+  });
+
+  it("still reads the last day of each month, and Feb 29th of a leap year", () => {
+    for (const [text, y, m, d] of [
+      ["2026-02-28", 2026, 1, 28],
+      ["2028-02-29", 2028, 1, 29],
+      ["2000-02-29", 2000, 1, 29],
+      ["2026-12-31", 2026, 11, 31],
+    ] as const) {
+      expect(_stdlib.parseTime(text), text).toEqual({
+        _tag: "Some",
+        _0: new Date(y, m, d).getTime(),
+      });
+    }
+  });
+
+  it("reads a year below 100 as itself, not as 19xx", () => {
+    // `new Date(50, 0, 1)` is 1950; the calendar check reads the year as
+    // written, so the instant has to be that year too.
+    for (const [text, year] of [
+      ["0050-01-01", 50],
+      ["0050-01-01T10:00", 50],
+      ["0050-01-01 10:00", 50],
+      ["0004-02-29 10:00", 4],
+    ] as const) {
+      const parsed = _stdlib.parseTime(text) as { _0: number };
+      expect(new Date(parsed._0).getFullYear(), text).toBe(year);
+    }
+  });
+
+  it("still reads a datetime on a boundary date", () => {
+    for (const [text, y, m, d] of [
+      ["2028-02-29T10:00", 2028, 1, 29],
+      ["2026-02-28 10:00", 2026, 1, 28],
+      ["2000-02-29T10:00", 2000, 1, 29],
+      ["2026-12-31 10:00", 2026, 11, 31],
+    ] as const) {
+      expect(_stdlib.parseTime(text), text).toEqual({
+        _tag: "Some",
+        _0: new Date(y, m, d, 10).getTime(),
+      });
+    }
+  });
+
+  it("reads the ISO 8601 time part: seconds, a fraction, and a zone", () => {
+    for (const [text, expected] of [
+      ["2026-08-14T21:05", new Date(2026, 7, 14, 21, 5).getTime()],
+      ["2026-08-14t21:05:09", new Date(2026, 7, 14, 21, 5, 9).getTime()],
+      ["2026-08-14 21:05:09.5", new Date(2026, 7, 14, 21, 5, 9, 500).getTime()],
+      ["2026-08-14T21:05:09.123456", new Date(2026, 7, 14, 21, 5, 9, 123).getTime()],
+      ["2026-08-14Z", Date.UTC(2026, 7, 14)],
+      ["2026-08-14T21:05Z", Date.UTC(2026, 7, 14, 21, 5)],
+      ["2026-08-14T21:05:09.250z", Date.UTC(2026, 7, 14, 21, 5, 9, 250)],
+      ["2026-08-14T21:05+09:00", Date.UTC(2026, 7, 14, 12, 5)],
+      ["2026-08-14T21:05:09-07:30", Date.UTC(2026, 7, 15, 4, 35, 9)],
+      // `Date.UTC(50, …)` would be 1950; the year is the one written.
+      ["0050-01-01T10:00Z", new Date(Date.UTC(2000, 0, 1, 10)).setUTCFullYear(50)],
+    ] as const) {
+      expect(_stdlib.parseTime(text), text).toEqual({ _tag: "Some", _0: expected });
+    }
+  });
+
+  it("is None for text that is not ISO 8601 YYYY-MM-DD with an optional time", () => {
+    // The platform's parser reads these too, each in its own way (and some as
+    // a different day); the reading is the one form `; ISO8601` names.
+    for (const bad of [
+      "Aug 14 2026",
+      "14 August 2026 10:00",
+      "2026-08-14T",
+      "2026-08-14T21",
+      "2026-08-14T2:05",
+      "2026-08-14T24:00",
+      "2026-08-14T21:60",
+      "2026-08-14T21:05:60",
+      "2026-08-14T21:05:09.",
+      "2026-08-14T21:05+0900",
+      "2026-08-14T21:05+24:00",
+      "2026-08-14T21:05 Z",
+      "2026-08-14  21:05",
+      "2026-08-14T21:05:09Z ",
+      "+002026-08-14",
+      "-000001-01-01",
+      "12026-08-14",
+      "2026-08",
+      "2026",
+    ]) {
+      expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
+    }
+  });
+
+  it("is None for surrounding blanks, as the other readings are", () => {
+    // `Date.parse(" 2026-02-28")` is UTC midnight, not the local midnight the
+    // unpadded text reads as; the reading is exact instead.
+    for (const bad of [" 2026-02-28", "2026-02-28 ", "\t2026-02-28", " 2026-02-28T10:00"]) {
+      expect(_stdlib.parseTime(bad)._tag, JSON.stringify(bad)).toBe("None");
     }
   });
 
